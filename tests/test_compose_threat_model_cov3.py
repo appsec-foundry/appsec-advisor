@@ -562,6 +562,17 @@ class TestWrapInlineCode:
         assert "```\nPOST /x\n```" in out
         assert "`safeEval`" in out
 
+    def test_line_range_ref_wrapped_as_one_unit(self):
+        # Regression (juice-shop 2026-07-03 §9): the `\b` after `:20` split the
+        # span, shipping `` `request.interceptor.ts:20`-25 ``. Range branch fixes it.
+        out = compose._wrap_inline_code("Remove header at request.interceptor.ts:20-25 now")
+        assert "`request.interceptor.ts:20-25`" in out
+        assert "`request.interceptor.ts:20`-25" not in out
+
+    def test_single_line_ref_unchanged_after_range_widening(self):
+        out = compose._wrap_inline_code("See lib/insecurity.ts:55 here")
+        assert "`lib/insecurity.ts:55`" in out
+
 
 # ---------------------------------------------------------------------------
 # _compute_top_findings_rows — scenario-fallback title + name-resolved comp

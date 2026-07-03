@@ -24,6 +24,6 @@ detection_signals:
   - "WAF body-inspection flagging classical SQLi payloads in POST bodies to endpoints under `{component}`"
 
 attack_steps_template:
-  - "Identify the vulnerable input parameter — `{component}` interpolates it directly into a SQL string at `{file}:{line}`"
-  - "Send a request with an SQL meta-character payload (e.g. `' OR 1=1 --`) in the parameter"
-  - "Server returns the first matching row regardless of the original predicate, granting access or leaking data"
+  - "Find the request parameter that reaches the raw query at `{file}:{line}`"
+  - "Submit an SQL meta-character payload (e.g. `' OR 1=1 --`) in that parameter"
+  - "Read the response: the injected predicate returns the first row, granting access or leaking data"

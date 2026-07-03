@@ -114,6 +114,24 @@ def test_path_wrapping_skips_code_fences_and_markdown_urls():
 # ---------------------------------------------------------------------------
 
 
+def test_line_range_ref_is_wrapped_as_one_unit():
+    # Regression (juice-shop 2026-07-03): `(?::\d+)?` closed the backtick after
+    # `:20`, leaving `-25` bare (`request.interceptor.ts:20`-25). The range
+    # branch keeps the whole `file:line-line` inside one code span.
+    md = "Remove it in routes/fileUpload.ts:62-68 and login.ts:20-25 now.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "`routes/fileUpload.ts:62-68`" in fixed
+    assert "`login.ts:20-25`" in fixed
+    assert "`:62`-68" not in fixed and "`:20`-25" not in fixed
+
+
+def test_single_line_ref_unchanged_after_range_widening():
+    md = "See insecurity.ts:55 and routes/login.ts:34.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "`insecurity.ts:55`" in fixed
+    assert "`routes/login.ts:34`" in fixed
+
+
 def test_url_path_token_is_wrapped():
     md = "Visit /rest/user/login to authenticate.\n"
     fixed, n = prose.apply_fixes(md)

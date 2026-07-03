@@ -1708,7 +1708,7 @@ def _mitigation_locator(m: dict, threats_by_id: dict[str, dict]) -> str:
     a measure still carries a code anchor when its yaml omits one."""
     raw = (m.get("file") or m.get("location") or "").strip()
     if raw:
-        mm = re.search(r"([\w./\-]+\.[A-Za-z0-9]{1,6}(?::\d+)?)", raw)
+        mm = re.search(r"([\w./\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?)", raw)
         if mm:
             return mm.group(1)
     for a in m.get("threat_ids") or m.get("addresses") or []:
@@ -1729,10 +1729,11 @@ def _basename_locator(loc: str) -> str:
     return f"{base}:{line}" if sep else base
 
 
-# A trailing file locator token: `path/file.ext[:line]`, optionally backticked.
-# Requires a real extension or a `:line` so prose words / acronyms like "(IDOR)"
-# are never mistaken for a locator.
-_TRAILING_LOC_TOKEN = r"`?[\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+)?`?"
+# A trailing file locator token: `path/file.ext[:line[-line]]`, optionally
+# backticked. Requires a real extension or a `:line` so prose words / acronyms
+# like "(IDOR)" are never mistaken for a locator. The `(?:-\d+)?` range branch
+# lets a `file.ts:20-25` tail be recognised (and stripped) as one unit.
+_TRAILING_LOC_TOKEN = r"`?[\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?`?"
 
 
 def _strip_trailing_locator(label: str) -> str:
@@ -10362,7 +10363,7 @@ def _normalize_table_column_widths(md: str) -> str:
 
 _REF_TRAILING_LOC_RE = re.compile(
     r"(\[[FTM]-\d+\]\(#[ftm]-\d+\)[^\n|\[<]*?)"  # a finding/mitigation link + its (locator-free) label
-    r"\((?!`)([\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+)?)\)"  # an un-backticked (path/file[:line]) right after
+    r"\((?!`)([\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?)\)"  # an un-backticked (path/file[:line[-line]]) right after
 )
 
 
@@ -10700,6 +10701,105 @@ def _linkify_bare_cwes(md: str) -> str:
         else:
             out_chunks.append(_CWE_BARE.sub(_linkify, chunk))
     return "".join(out_chunks)
+
+
+_CWE_TAXONOMY_CACHE: dict[str, Any] | None = None
+
+
+def _load_cwe_taxonomy() -> dict[str, Any]:
+    """Lazy-load and cache the ``cwes`` map from ``data/cwe-taxonomy.yaml``
+    (``{"CWE-798": {"title": …, "url": …}, …}``). Empty on absence/parse error
+    — callers fall back to a title-less MITRE URL derived from the CWE number."""
+    global _CWE_TAXONOMY_CACHE
+    if _CWE_TAXONOMY_CACHE is not None:
+        return _CWE_TAXONOMY_CACHE
+    candidate = PLUGIN_ROOT / "data" / "cwe-taxonomy.yaml"
+    try:
+        data = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
+        _CWE_TAXONOMY_CACHE = data.get("cwes") or {}
+    except Exception:
+        _CWE_TAXONOMY_CACHE = {}
+    return _CWE_TAXONOMY_CACHE
+
+
+def _cwe_reference_link(num: str) -> str:
+    """``798`` → ``[CWE-798: Use of Hard-coded Credentials](https://cwe.mitre.org/…)``.
+    Falls back to a title-less ``[CWE-798](url)`` when the CWE is not in the
+    taxonomy (URL is always derivable from the number)."""
+    entry = _load_cwe_taxonomy().get(f"CWE-{num}") or {}
+    title = (entry.get("title") or "").strip()
+    url = (entry.get("url") or "").strip() or f"https://cwe.mitre.org/data/definitions/{num}.html"
+    label = f"CWE-{num}: {title}" if title else f"CWE-{num}"
+    return f"[{label}]({url})"
+
+
+# Short human-readable source tag per reference host, prefixed onto the derived
+# link title so a bare URL renders as a titled, self-describing link.
+_REFERENCE_HOST_SOURCE = {
+    "cheatsheetseries.owasp.org": "OWASP Cheat Sheet",
+    "genai.owasp.org": "OWASP GenAI",
+    "owasp.org": "OWASP",
+    "docs.github.com": "GitHub Docs",
+    "docs.sigstore.dev": "Sigstore Docs",
+}
+
+
+def _humanize_url_slug(seg: str) -> str:
+    """``SQL_Injection_Prevention_Cheat_Sheet`` → ``SQL Injection Prevention
+    Cheat Sheet``; ``llm06-excessive-agency`` → ``LLM06 Excessive Agency``."""
+    seg = re.sub(r"\.html?$", "", seg)
+    seg = seg.replace("_", " ").replace("-", " ").strip()
+    words: list[str] = []
+    for w in seg.split():
+        if re.fullmatch(r"llm\d+", w, re.IGNORECASE):
+            words.append(w.upper())
+        elif re.fullmatch(r"[A-Z0-9]{2,}", w):  # already an acronym (SQL, XSS, CI)
+            words.append(w)
+        else:
+            words.append(w.capitalize())
+    return " ".join(words)
+
+
+def _reference_link_title(url: str) -> str:
+    """Derive a human-readable link title from a bare reference URL. Uses the
+    last meaningful path segment (fragment/query stripped), prefixed with a
+    per-host source tag. Never empty — falls back to the host."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    source = _REFERENCE_HOST_SOURCE.get(host, host)
+    segs = [s for s in parsed.path.split("/") if s]
+    # Skip a trailing generic segment ("overview", "index") in favour of a more
+    # descriptive parent (…/cosign/signing/overview/ → "Signing").
+    label = ""
+    for seg in reversed(segs):
+        cand = _humanize_url_slug(seg)
+        if cand and cand.lower() not in {"overview", "index", "en", "latest", "main"}:
+            label = cand
+            break
+    if not label:
+        return source
+    # Avoid stutter when the slug already leads with the source words.
+    if label.lower().startswith(source.lower()):
+        return label
+    return f"{source}: {label}"
+
+
+def _normalize_reference(ref: str) -> str:
+    """Render a mitigation ``reference`` value as a consistent, titled Markdown
+    link. Handles the two shapes the analyst ships raw: a bare ``CWE-NNN`` and a
+    bare URL. Idempotent for values already containing a Markdown link; passes
+    free-text through (linkifying any embedded bare CWEs)."""
+    ref = (ref or "").strip()
+    if not ref or "](" in ref:  # empty, or already a Markdown link
+        return ref
+    m = re.fullmatch(r"CWE-(\d+)", ref, re.IGNORECASE)
+    if m:
+        return _cwe_reference_link(m.group(1))
+    if re.fullmatch(r"https?://\S+", ref):
+        return f"[{_reference_link_title(ref)}]({ref})"
+    return _linkify_bare_cwes(ref)
 
 
 # ---------------------------------------------------------------------------
@@ -14525,9 +14625,11 @@ _INLINE_CODE_PATTERNS: list[str] = [
     r"|node [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*)",
     # HTTP method + path: `POST /rest/user/login`, `GET /api/Users`.
     r"\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /[A-Za-z0-9_/\-{}.:?=&]+",
-    # File path with extension, optionally followed by :line:
-    # `lib/insecurity.ts:23`, `frontend/src/app.module.ts`, `routes/login.js`.
-    r"\b[A-Za-z_][A-Za-z0-9_./\-]*\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|toml|md|html|css|scss)(?::\d+)?\b",
+    # File path with extension, optionally followed by :line or :line-line:
+    # `lib/insecurity.ts:23`, `frontend/src/app.module.ts`, `routes/x.ts:20-25`.
+    # The range branch `(?:-\d+)?` keeps `file.ts:20-25` a single wrapped token —
+    # without it the `\b` after `:20` splits the span, leaving `-25` un-backticked.
+    r"\b[A-Za-z_][A-Za-z0-9_./\-]*\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|toml|md|html|css|scss)(?::\d+(?:-\d+)?)?\b",
     # JS/TS expressions:
     #   `bcrypt.hash(password, 12)`, `crypto.createHash('md5')`,
     #   `process.env.JWT_PRIVATE_KEY`,
@@ -15225,7 +15327,22 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                         _step_n += 1
                         lines.append(f"{_step_n}. {_wrap_inline_code(s)}")
                 lines.append("")
+            # Caption the code block so the reader knows it is an illustrative
+            # sketch (not necessarily a drop-in complete fix), which file it
+            # applies to, and that the numbered steps / How prose are the
+            # authoritative recommendation (juice-shop 2026-07-03 user report: a
+            # bare fence left readers unsure whether the snippet was the full fix
+            # or where it belonged).
+            _has_guidance = bool(how) or bool(isinstance(steps, list) and steps)
+            _cap_loc = f" in `{file_line_inline}`" if file_line_inline else ""
+            _code_caption = (
+                f"_Illustrative change{_cap_loc} — the steps above are the full recommendation:_"
+                if _has_guidance
+                else f"_Illustrative change{_cap_loc}:_"
+            )
             if how_code:
+                lines.append(_code_caption)
+                lines.append("")
                 lines.append(f"```{how_lang}")
                 lines.append(how_code.rstrip())
                 lines.append("```")
@@ -15238,6 +15355,8 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 #   2. Bare code without fences — wrap with how_code_lang.
                 ce = code_example.strip() if isinstance(code_example, str) else ""
                 if ce:
+                    lines.append(_code_caption)
+                    lines.append("")
                     if ce.startswith("```") and ce.rstrip().endswith("```"):
                         lines.append(ce)
                     else:
@@ -15281,7 +15400,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # Use the harvested fallback reference when the mitigation
             # entry itself has none (mitigation_reference was set by the
             # threats[].remediation fallback above).
-            ref = (m.get("reference") or mitigation_reference or "").strip()
+            ref = _normalize_reference(m.get("reference") or mitigation_reference or "")
             if ref:
                 lines.append(f"**Reference:** {ref}")
                 lines.append("")

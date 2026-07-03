@@ -232,21 +232,70 @@ def _weakness_class(title: str) -> str:
 
 _TARGET_LABEL_WORD_RE = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?=[A-Z]|$)")
 
+# Framework dot-suffixes stripped from a stem so `oauth.component.ts` → "Oauth"
+# and `auth.guard.ts` → "Auth" read as the FEATURE, not the file's role.
+_FEATURE_STRIP_SUFFIXES = {
+    "component", "service", "module", "guard", "interceptor", "controller",
+    "middleware", "model", "models", "route", "routes", "startup", "config",
+}
+# Non-feature stems — infrastructure, security libs, and framework plumbing that
+# name no user-facing feature. These fall back to the component zone rather than
+# emitting "in Insecurity" / "in Server" / "in Register Websocket Events".
+_GENERIC_FILE_STEMS = {
+    "index", "server", "app", "main", "constants", "utils", "util",
+    "helpers", "helper", "types", "common", "core", "setup",
+    "insecurity", "security", "verify", "startup", "middleware",
+    "models", "model", "database", "db", "handler", "handlers",
+    "routes", "route", "api", "config", "bootstrap",
+}
+
+
+def _feature_from_file(file_hint: str) -> str:
+    """Prettified FEATURE label from an evidence file: `routes/login.ts` →
+    "Login", `changePassword.ts` → "Change Password". Returns "" — so the caller
+    falls back to the component zone — for non-feature infra stems (`server`,
+    `insecurity`, …) and for verbose (>2-word) stems (`registerWebsocketEvents`)
+    that read better as the curated zone name than as a mangled file label."""
+    stem = Path(file_hint).stem  # login.ts → login ; oauth.component.ts → oauth.component
+    parts = stem.split(".")
+    while len(parts) > 1 and parts[-1].lower() in _FEATURE_STRIP_SUFFIXES:
+        parts.pop()
+    stem = ".".join(parts)
+    if stem.lower() in _GENERIC_FILE_STEMS:
+        return ""
+    words = _TARGET_LABEL_WORD_RE.findall(stem)
+    if not words or len(words) > 2:  # empty or verbose → prefer the zone name
+        return ""
+    return " ".join(_FEATURE_ACRONYMS.get(w.lower(), w.capitalize()) for w in words)
+
+
+# Known acronyms rendered in their canonical casing rather than Title-cased.
+_FEATURE_ACRONYMS = {
+    "oauth": "OAuth", "jwt": "JWT", "sql": "SQL", "xss": "XSS", "csrf": "CSRF",
+    "ssrf": "SSRF", "url": "URL", "id": "ID", "api": "API", "sso": "SSO",
+    "totp": "TOTP", "otp": "OTP", "2fa": "2FA", "mfa": "MFA",
+}
+
 
 def _attack_target_label(threat: dict, yaml_data: dict) -> str:
     """Human-readable attack TARGET for the §3 heading (juice-shop 2026-07-03
-    user request): headings must read as an attack against something concrete
-    — "SQL Injection Attack against Login Authentication" — not a bare
-    weakness class, which reads as a static property, not an attack, and
-    collides whenever two Critical findings share a weakness class (two
-    "SQL Injection" H3 headings were indistinguishable and anchor-colliding).
+    user request): headings must name the concrete FEATURE under attack —
+    "SQL Injection against Login" — not the broad component zone
+    ("… against Authentication & Identity"), which the user flagged as sperrig
+    und unklar.
 
-    Prefers the finding's component's curated name (already human-authored,
-    e.g. "Authentication & Identity") — this also naturally differentiates
-    same-weakness findings that live in different components. Falls back to
-    a prettified evidence-file basename (``changePassword.ts`` → "Change
-    Password") when no component name is available, then a generic label.
+    Prefers the FEATURE derived from the evidence file (``routes/login.ts`` →
+    "Login"), which is both specific and reader-legible, and stays distinct
+    across same-weakness findings that live in different files. Falls back to
+    the component's curated zone name only when the file yields no feature
+    (generic infra stem), then a generic label.
     """
+    evidence = (threat.get("evidence") or [{}])[0] or {}
+    file_hint = (evidence.get("file") or "").strip()
+    if file_hint:
+        feature = _feature_from_file(file_hint)
+        if feature:
+            return feature
     comp_id = (threat.get("component") or "").strip()
     if comp_id:
         for c in yaml_data.get("components") or []:
@@ -254,13 +303,6 @@ def _attack_target_label(threat: dict, yaml_data: dict) -> str:
                 name = (c.get("name") or "").strip()
                 if name:
                     return name
-    evidence = (threat.get("evidence") or [{}])[0] or {}
-    file_hint = (evidence.get("file") or "").strip()
-    if file_hint:
-        base = Path(file_hint).stem
-        words = _TARGET_LABEL_WORD_RE.findall(base)
-        if words:
-            return " ".join(w.capitalize() for w in words[:4])
     return "the Application"
 
 
@@ -599,7 +641,7 @@ def render_prerequisites(
 # evidence refs, quoted injection payloads (`param="…"`), and UPPERCASE SQL
 # statements. SQL keywords are matched case-SENSITIVELY so English words
 # ("the attacker can update …", "users select …") are never mistaken for SQL.
-_STEP_FILELINE_RE = re.compile(r"(?<![`\w])([\w][\w./-]*\.[A-Za-z]{1,6}:\d+)(?![`\w:])")
+_STEP_FILELINE_RE = re.compile(r"(?<![`\w])([\w][\w./-]*\.[A-Za-z]{1,6}:\d+(?:-\d+)?)(?![`\w:])")
 _STEP_PAYLOAD_ASSIGN_RE = re.compile(r'(?<![`\w])([A-Za-z_]\w*="[^"]{0,100}")(?![`])')
 _STEP_SQL_RE = re.compile(
     r"(?<![`\w])((?:UNION\s+)?(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b[^…`;,.]*?)"
@@ -734,9 +776,12 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
     template_steps = list(
         template.get("attack_steps_template")
         or [
-            "Send the crafted payload to the endpoint backed by `{file}:{line}`.",
-            "The vulnerable code path accepts the payload without enforcing the missing control.",
-            "The response confirms the bypass.",
+            # Attacker-action voice (juice-shop 2026-07-03): the attacker is the
+            # subject of each step, not the code. Generic fallback used only when
+            # a CWE template has no `attack_steps_template` and the scenario is short.
+            "Craft a request that reaches the weak spot at `{file}:{line}`.",
+            "Send it — the missing control never rejects the crafted input.",
+            "Read the response confirming the bypass succeeded.",
         ]
     )
 
@@ -1057,10 +1102,15 @@ def _render_walkthrough_block(
     # heading-format contract): NO T-NNN prefix, ≤80 chars (check_heading_hygiene
     # warns >80, errors >100). The T-NNN appears once in the **Source:** line
     # below — wrapping it into the heading inflates the line and trips the gate.
-    # Format is "<Weakness> Attack against <Target>" (juice-shop 2026-07-03 user
-    # request): a bare weakness class ("SQL Injection") reads as a static
-    # property, not an attack, and two Critical findings sharing a weakness
-    # class produced identical, anchor-colliding headings. The `— file:line`
+    # Format is "<Weakness> in <Feature>" (juice-shop 2026-07-03 user request):
+    # concise, feature-scoped, reader-legible, and consistent with §7 finding
+    # titles ("SQL Injection in Login"). The earlier "<Weakness> Attack against
+    # <broad component zone>" form was flagged as sperrig/unklar; the connector
+    # is neutral "in" rather than "against" because the left side is a WEAKNESS
+    # class (a noun phrase by contract, e.g. "Insecure Direct Object Reference"),
+    # not an attack — "against" would over-claim it as one. The target names the
+    # concrete FEATURE (login, search), not the zone, and keeps same-weakness
+    # findings in different files distinct. The `— file:line`
     # tail from the finding title stays OUT of the heading (see _weakness_class):
     # it carries no info the **Source:** line lacks and its em-dash made the
     # GitHub heading anchor diverge from the composer's link target.
@@ -1072,7 +1122,7 @@ def _render_walkthrough_block(
     # part that actually differentiates same-weakness headings, so it must
     # survive intact; the weakness class tolerates abbreviation.
     _target = _attack_target_label(threat, yaml_data)
-    _connector = " Attack against "
+    _connector = " in "
     _weakness_budget = max(20, 78 - len(_connector) - len(_target))
     heading = f"### 3.{walkthrough_index} {_short_title(_weakness_class(title), _weakness_budget)}{_connector}{_target}"
 

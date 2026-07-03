@@ -649,14 +649,14 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 **Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: 0 · **Total findings: 4**
 **STRIDE Coverage:** Spoofing: 1 · Tampering: 3 · Repudiation: 0 · Information Disclosure: 0 · Denial of Service: 0 · Elevation of Privilege: 0
 
-**Findings index:**<br/>🔴 [F-001](#f-001) — injection product search<br/>🔴 [F-002](#f-002) — injection login<br/>🔴 [F-003](#f-003) — Hardcoded private key<br/>🟠 [F-010](#f-010) — Persistent bypassSecurityTrustHtml
+**Findings index:**<br/>🔴 [F-001](#f-001) — SQL injection in product search<br/>🔴 [F-002](#f-002) — SQL injection in login<br/>🔴 [F-003](#f-003) — Hardcoded RSA private key<br/>🟠 [F-010](#f-010) — Persistent XSS via bypassSecurityTrustHtml
 
 <a id="th-01"></a><a id="th-03"></a><a id="th-11"></a>
 
 ### 🔴 Critical (3)
 
 <a id="t-003"></a><a id="f-003"></a>
-#### F-003 · Hardcoded private key
+#### F-003 · Hardcoded RSA private key
 
 **Severity:** 🔴 Critical  ·  **Component:** [C-02](#c-02) - Auth Service  ·  **Location:** -
 
@@ -667,7 +667,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 **Classification:** Cryptographic Failures · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 <a id="t-001"></a><a id="f-001"></a>
-#### F-001 · injection product search
+#### F-001 · SQL injection in product search
 
 **Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - REST API  ·  **Location:** -
 
@@ -678,7 +678,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 **Classification:** Injection · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
 <a id="t-002"></a><a id="f-002"></a>
-#### F-002 · injection login
+#### F-002 · SQL injection in login
 
 **Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - REST API  ·  **Location:** -
 
@@ -691,7 +691,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 ### 🟠 High (1)
 
 <a id="t-010"></a><a id="f-010"></a>
-#### F-010 · Persistent bypassSecurityTrustHtml
+#### F-010 · Persistent XSS via bypassSecurityTrustHtml
 
 **Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - REST API  ·  **Location:** -
 

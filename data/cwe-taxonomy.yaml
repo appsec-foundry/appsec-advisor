@@ -191,6 +191,34 @@ cwes:
     owasp_top10_2021: A01
     owasp_asvs: V12.3
     cwe_top25_2024: 5
+  CWE-20:
+    title: "Improper Input Validation"
+    url: "https://cwe.mitre.org/data/definitions/20.html"
+    pillar: CWE-707
+    owasp_top10_2021: A03
+    owasp_asvs: V5.1
+    cwe_top25_2024: 12
+  CWE-330:
+    title: "Use of Insufficiently Random Values"
+    url: "https://cwe.mitre.org/data/definitions/330.html"
+    pillar: CWE-693
+    owasp_top10_2021: A02
+    owasp_asvs: V6.3
+    cwe_top25_2024: null
+  CWE-602:
+    title: "Client-Side Enforcement of Server-Side Security"
+    url: "https://cwe.mitre.org/data/definitions/602.html"
+    pillar: CWE-693
+    owasp_top10_2021: A04
+    owasp_asvs: V1.1
+    cwe_top25_2024: null
+  CWE-620:
+    title: "Unverified Password Change"
+    url: "https://cwe.mitre.org/data/definitions/620.html"
+    pillar: CWE-284
+    owasp_top10_2021: A07
+    owasp_asvs: V2.1
+    cwe_top25_2024: null
   CWE-400:
     title: "Uncontrolled Resource Consumption"
     url: "https://cwe.mitre.org/data/definitions/400.html"

@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 _EXT = r"(?:ts|tsx|js|jsx|mjs|cjs|yml|yaml|html|json|java|py|rb|go|php|sh|sql|xml|env)"
-_LOC = r"[\w./\\-]+\." + _EXT + r"(?::\d+)?"
+_LOC = r"[\w./\\-]+\." + _EXT + r"(?::\d+(?:-\d+)?)?"
 
 # A link whose visible text is more than a bare ID (carries a separator/title).
 _ID_IN_LINK = re.compile(r"\[([FTM]-\d+)\s*[—–-][^\]]*\]\(#[ftm]-\d+\)")
@@ -38,6 +38,12 @@ _REF = re.compile(r"\[([FTM]-\d+)\]\(#[ftm]-\d+\)([^\n|]*?)(?=$|\n|\||<br/?>|\[)
 # Un-backticked parens locator and em-dash locator inside that trailing segment.
 _PAREN_LOC = re.compile(r"\((?!`)(" + _LOC + r")\)")
 _EMDASH_LOC = re.compile(r"—\s*(?!`)(" + _LOC + r")")
+
+# A `**Reference:** <value>` line (§9 mitigation cards). The value must be a
+# titled Markdown link `[title](url)` — never a bare `CWE-NNN` (unlinked) or a
+# naked URL (untitled). compose._normalize_reference is the producer.
+_BARE_REF_CWE = re.compile(r"^\*\*Reference:\*\*\s+(CWE-\d+)\s*$", re.M)
+_BARE_REF_URL = re.compile(r"^\*\*Reference:\*\*\s+(?!\[)(https?://\S+)\s*$", re.M)
 
 
 def lint_text(md: str) -> list[str]:
@@ -51,6 +57,10 @@ def lint_text(md: str) -> list[str]:
             out.append(f"{ref}: un-backticked locator '({pm.group(1)})' — must be (`{pm.group(1)}`)")
         for em in _EMDASH_LOC.finditer(seg):
             out.append(f"{ref}: em-dash locator '— {em.group(1)}' — locator belongs in backticked parens")
+    for m in _BARE_REF_CWE.finditer(md):
+        out.append(f"bare CWE reference '{m.group(1)}' — must be a titled link [{m.group(1)}: <title>](url)")
+    for m in _BARE_REF_URL.finditer(md):
+        out.append(f"untitled URL reference '{m.group(1)}' — must be a titled link [<title>](url)")
     return out
 
 

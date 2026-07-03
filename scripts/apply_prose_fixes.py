@@ -127,7 +127,9 @@ _EXTENSIONS = (
 _PATH_RE = re.compile(
     r"(?P<path>[A-Za-z][\w.-]*/[\w./-]+\.(?:"
     + "|".join(_EXTENSIONS)
-    + r")(?::\d+)?)"
+    # `(?:-\d+)?` keeps a `:line-line` range inside the wrapped span; without it
+    # the boundary below closes the backtick after `:20`, leaving `-25` bare.
+    + r")(?::\d+(?:-\d+)?)?)"
     # Trailing boundary (mirrors _BARE_FILENAME_RE): without it the extension
     # alternation stops at a PREFIX extension — `.h` is tried before `.html`
     # and matches `administration.component.h`, leaving a bare `tml`. The
@@ -181,7 +183,7 @@ _BARE_FILENAME_RE = re.compile(
     # ``(?:\.[A-Za-z0-9-]+)*`` allows zero or more middle dot-segments
     # before the final recognised extension (was ``?`` which capped at
     # one middle segment).
-    r"(?P<file>[A-Za-z][\w-]+(?:\.[A-Za-z0-9-]+)*\.(?:" + "|".join(_EXTENSIONS) + r")(?::\d+)?)"
+    r"(?P<file>[A-Za-z][\w-]+(?:\.[A-Za-z0-9-]+)*\.(?:" + "|".join(_EXTENSIONS) + r")(?::\d+(?:-\d+)?)?)"
     # Trailing punctuation (period, comma, semicolon, `)`) is allowed —
     # the trailing-punct stripper handles them.
     r"(?![\w/`])"

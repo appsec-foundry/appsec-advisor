@@ -573,10 +573,11 @@ class TestGenAdapter:
             ]
         }
         out = renderer.gen_attack_walkthroughs(ydata)
-        # Attack-framed heading with a target (juice-shop 2026-07-03): no
-        # components[] here, so the target falls back to the prettified
-        # evidence-file basename ("address.ts" -> "Address").
-        assert "### 3.1 Insecure Direct Object Reference Attack against Address\n" in out
+        # Feature-scoped heading (juice-shop 2026-07-03): "<Weakness> in
+        # <Feature>" — the feature comes from the evidence file ("address.ts"
+        # -> "Address"); the "Attack against <zone>" filler form is gone. The
+        # connector is neutral "in" (IDOR is a weakness class, not an attack).
+        assert "### 3.1 Insecure Direct Object Reference in Address\n" in out
         # The em-dash tail is gone from the heading line specifically.
         heading_line = next(ln for ln in out.splitlines() if ln.startswith("### 3.1"))
         assert "—" not in heading_line
@@ -595,18 +596,34 @@ def test_weakness_class_strips_tail():
 
 
 class TestAttackTargetLabel:
-    """§3 headings must read as an attack against something concrete (juice-shop
-    2026-07-03 user request), not a bare weakness class — which also collides
-    whenever two Critical findings share a weakness class."""
+    """§3 headings must name the concrete FEATURE under attack (juice-shop
+    2026-07-03 user request) — "against Login", not the broad zone "against
+    Authentication & Identity" — while staying distinct across same-weakness
+    findings in different files."""
 
-    def test_prefers_component_curated_name(self):
+    def test_prefers_feature_from_evidence_file_over_component_zone(self):
+        # File-derived feature wins over the broad component zone name.
         threat = {"component": "auth-identity", "evidence": [{"file": "routes/login.ts", "line": 34}]}
         ydata = {"components": [{"id": "auth-identity", "name": "Authentication & Identity"}]}
-        assert renderer._attack_target_label(threat, ydata) == "Authentication & Identity"
+        assert renderer._attack_target_label(threat, ydata) == "Login"
 
-    def test_falls_back_to_prettified_evidence_file_basename(self):
-        threat = {"component": "unknown-comp", "evidence": [{"file": "routes/changePassword.ts", "line": 39}]}
+    def test_camel_case_and_framework_suffix_prettified(self):
+        threat = {"component": "", "evidence": [{"file": "routes/changePassword.ts", "line": 39}]}
         assert renderer._attack_target_label(threat, {"components": []}) == "Change Password"
+        threat2 = {"component": "", "evidence": [{"file": "frontend/src/app/oauth/oauth.component.ts", "line": 30}]}
+        assert renderer._attack_target_label(threat2, {"components": []}) == "OAuth"
+
+    def test_verbose_stem_falls_back_to_component_zone(self):
+        # `registerWebsocketEvents.ts` → 3 words → prefer the curated zone.
+        threat = {"component": "backend-api", "evidence": [{"file": "lib/startup/registerWebsocketEvents.ts", "line": 23}]}
+        ydata = {"components": [{"id": "backend-api", "name": "Backend REST API"}]}
+        assert renderer._attack_target_label(threat, ydata) == "Backend REST API"
+
+    def test_generic_file_stem_falls_back_to_component_zone(self):
+        # `index.ts` names no feature → use the curated component zone name.
+        threat = {"component": "backend-api", "evidence": [{"file": "models/index.ts", "line": 46}]}
+        ydata = {"components": [{"id": "backend-api", "name": "Backend REST API"}]}
+        assert renderer._attack_target_label(threat, ydata) == "Backend REST API"
 
     def test_falls_back_to_generic_label_with_no_evidence(self):
         threat = {"component": "", "evidence": []}
@@ -643,8 +660,8 @@ class TestAttackTargetLabel:
             ],
         }
         md = renderer.render_attack_walkthroughs_md(ydata)
-        assert "### 3.1 SQL Injection Attack against Authentication & Identity" in md
-        assert "### 3.2 SQL Injection Attack against Backend REST API" in md
+        assert "### 3.1 SQL Injection in Login" in md
+        assert "### 3.2 SQL Injection in Search" in md
 
 
 def test_zero_criticals_renders_honest_stub_without_diagram():

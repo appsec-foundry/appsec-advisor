@@ -435,3 +435,60 @@ def test_rendered_fixture_is_reference_format_clean(tmp_path):
     rendered, _ = compose.render(CONTRACT, out)
     violations = linter.lint_text(rendered)
     assert violations == [], "rendered fixture has reference-format violations:\n" + "\n".join(violations[:20])
+
+
+# ---------------------------------------------------------------------------
+# §9 mitigation `**Reference:**` normalization (juice-shop 2026-07-03 user
+# report: CWEs unlinked, URLs untitled, inconsistent). compose._normalize_reference
+# renders every reference as a titled Markdown link; the linter guards it.
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_reference_titles_bare_cwe():
+    out = compose._normalize_reference("CWE-798")
+    assert out == "[CWE-798: Use of Hard-coded Credentials](https://cwe.mitre.org/data/definitions/798.html)"
+
+
+def test_normalize_reference_cwe_missing_from_taxonomy_falls_back_to_url_only():
+    # A CWE not in cwe-taxonomy.yaml still becomes a link (URL derivable from
+    # the number), just without the ": title" suffix.
+    out = compose._normalize_reference("CWE-99999")
+    assert out == "[CWE-99999](https://cwe.mitre.org/data/definitions/99999.html)"
+
+
+def test_normalize_reference_titles_bare_url():
+    out = compose._normalize_reference(
+        "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+    )
+    assert out == (
+        "[OWASP Cheat Sheet: SQL Injection Prevention Cheat Sheet]"
+        "(https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html)"
+    )
+
+
+def test_normalize_reference_idempotent_for_existing_link():
+    src = "[CWE-89](https://cwe.mitre.org/data/definitions/89.html)"
+    assert compose._normalize_reference(src) == src
+
+
+def test_normalize_reference_empty_passthrough():
+    assert compose._normalize_reference("") == ""
+    assert compose._normalize_reference(None) == ""
+
+
+def test_linter_flags_bare_cwe_and_url_references():
+    md = (
+        "#### M-001 — Fix it\n\n**Reference:** CWE-798\n\n"
+        "#### M-002 — Fix it\n\n**Reference:** https://cheatsheetseries.owasp.org/x.html\n"
+    )
+    violations = linter.lint_text(md)
+    assert any("bare CWE reference" in v for v in violations), violations
+    assert any("untitled URL reference" in v for v in violations), violations
+
+
+def test_linter_accepts_titled_reference_links():
+    md = (
+        "#### M-001 — Fix it\n\n"
+        "**Reference:** [CWE-798: Use of Hard-coded Credentials](https://cwe.mitre.org/data/definitions/798.html)\n"
+    )
+    assert linter.lint_text(md) == []

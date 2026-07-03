@@ -51,6 +51,29 @@ reproduce it. The second is reproducible but reads as a static code
 observation. The third is reproducible AND narratable: a reader can act
 it out one step at a time, in order, as the attacker.
 
+**Cap on `scenario` / Attack Steps (juice-shop 2026-07-03 user report — steps
+had "viel zu viel unnötige Details"):** write **3–4 steps, one sentence each**.
+Each sentence is a single attacker action as the main clause; the code
+mechanism, if named, is a short subordinate "because…"/"since…" clause, not the
+sentence. **At most one `file:line` per step.** Do not narrate the code's
+internal control flow (which function calls what, which argument is missing,
+which dependency version) — that belongs in the §7/§8 register row, not the
+attack steps. If you cannot say the step as one action a reader could perform,
+cut it.
+
+**Avoid (code-flow narration, over-detailed — one "step" carrying four facts):**
+> `verify()` at `lib/insecurity.ts:55` calls `jws.verify(token, publicKey)`
+> without a third argument or an `algorithms:` allowlist, so the algorithm named
+> in the attacker-supplied JWT header is trusted implicitly rather than pinned
+> server-side to RS256; `isAuthorized()` (line 52) has the same gap.
+
+**Prefer (attacker actions, one per step):**
+> 1. Download the RSA public key served at `/encryptionkeys`.
+> 2. Forge a JWT with `alg:HS256`, signing it with that public key as the HMAC
+>    secret and setting `role: admin` — the server pins no algorithm, so it
+>    accepts the forgery.
+> 3. Call any admin-only endpoint with the forged token to act as admin.
+
 ---
 
 ## Rule 2 — Falsifiability over rhetoric
