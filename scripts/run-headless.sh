@@ -781,18 +781,42 @@ if [ -f "$LOG_FILE" ]; then
     ASSESSMENT_DURATION=$(grep "ASSESSMENT_SUMMARY" "$LOG_FILE" | tail -1 | sed -n 's/.*duration=\([^ ]*\).*/\1/p')
 fi
 
-# Artifact gate: `claude -p` can exit 0 after a *graceful* stop that produced no
-# report — e.g. a broken-Bash environment aborts every script, so the agent
-# diagnoses and stops cleanly. Without this check we'd print "completed
-# successfully" and downstream consumers (the e2e driver) would run assertions
-# against an empty output dir. A create-threat-model run that yields neither
-# threat-model.md nor threat-model.yaml is a failure, not a success.
+# ── Deterministic compose backstop (headless completion) ───────────
+# The in-controller _compose_if_ready backstop (orchestration_controller.py
+# `next`) only fires from an LLM finalize turn (SKILL-full-runtime.md §6). A
+# hard process-kill removes that turn — e.g. CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS
+# terminating `claude -p` while the parallel-render agents' fragments are on
+# disk but threat-model.md was never composed — so nothing invokes it and the
+# run leaves threat-model.yaml + a full .fragments/ set with no report. Invoke
+# `next` here from the shell so the compose is guaranteed however the process
+# ended. Self-gating: it only composes when the render fragments are present,
+# and is a no-op when threat-model.md already exists. Runs regardless of
+# EXIT_CODE so a killed-but-complete run is still salvaged.
+if [ "$SKILL" = "create-threat-model" ] \
+   && ! printf '%s' "$SKILL_FLAGS" | grep -q -- '--dry-run' \
+   && [ -s "$RESULT_DIR/threat-model.yaml" ] \
+   && [ ! -s "$RESULT_DIR/threat-model.md" ]; then
+    info "threat-model.md missing but yaml present — running deterministic compose backstop"
+    python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
+        next --output-dir "$RESULT_DIR" >/dev/null 2>&1 || true
+    [ -s "$RESULT_DIR/threat-model.md" ] && ok "compose backstop produced threat-model.md"
+fi
+
+# Artifact gate (fail-closed): a non-dry create-threat-model run MUST leave a
+# composed threat-model.md. `claude -p` can exit 0 after a *graceful* stop that
+# produced no report (a broken-Bash environment aborts every script, so the
+# agent diagnoses and stops cleanly), and a bg-ceiling process-kill can leave
+# threat-model.yaml + fragments but no composed report. The compose backstop
+# above salvages the latter when the fragments are complete; this gate fails
+# closed when threat-model.md is still absent — a run must never report success
+# with no deliverable report. Checking md alone (not md-OR-yaml) closes the old
+# fail-open path where yaml-without-md was reported as "completed successfully".
 # (--dry-run previews scope without writing a report, so it is exempt.)
-if [ "$EXIT_CODE" -eq 0 ] && [ "$SKILL" = "create-threat-model" ] \
+if [ "$SKILL" = "create-threat-model" ] \
    && ! printf '%s' "$SKILL_FLAGS" | grep -q -- '--dry-run'; then
-    if [ ! -s "$RESULT_DIR/threat-model.md" ] && [ ! -s "$RESULT_DIR/threat-model.yaml" ]; then
-        err "Pipeline exited 0 but produced no threat-model.md/.yaml in $RESULT_DIR — treating as failure."
-        EXIT_CODE=1
+    if [ ! -s "$RESULT_DIR/threat-model.md" ]; then
+        err "No threat-model.md in $RESULT_DIR — treating as failure (fail-closed)."
+        [ "$EXIT_CODE" -eq 0 ] && EXIT_CODE=1
     fi
 fi
 
