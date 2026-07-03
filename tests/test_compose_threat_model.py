@@ -4383,3 +4383,33 @@ def test_evidence_summary_codify_wraps_dotted_method_call() -> None:
     assert "socket.emit" in result
     # The dotted call should be wrapped; backtick count is even and >= 2.
     assert result.count("`") >= 2, f"dotted method call not backticked: {result!r}"
+
+
+def test_section7_title_relevant_findings_titles_bare_bullet_links():
+    ctx = _StubLabelCtx({
+        "F-002": "Insecure JWT Verification — `insecurity.ts:55`",
+        "F-017": "Missing Rate Limiting On Login (`server.ts:596`)",
+    })
+    md = (
+        "## 7. Security Architecture\n\n"
+        "**Relevant findings**\n\n"
+        "- 🔴 [F-002](#f-002) — Even when TOTP gates issuance, this gap bypasses 2FA.\n"
+        "- 🟠 [F-017](#f-017) — No rate limit on the login step.\n\n"
+        "## 8. Findings Register\n\n"
+        "#### F-002 · Insecure JWT Verification\n"
+        "See [F-002](#f-002) elsewhere.\n"
+    )
+    out = compose._section7_title_relevant_findings(ctx, md)
+    # §7 bullet links gain the short register title, rationale preserved.
+    assert "- 🔴 [F-002 — Insecure JWT Verification](#f-002) — Even when TOTP" in out
+    assert "- 🟠 [F-017 — Missing Rate Limiting On Login](#f-017) — No rate limit" in out
+    # §8 (outside §7) is untouched.
+    assert "See [F-002](#f-002) elsewhere." in out
+    # Idempotent — a second pass changes nothing.
+    assert compose._section7_title_relevant_findings(ctx, out) == out
+
+
+def test_section7_title_relevant_findings_noop_without_section7():
+    ctx = _StubLabelCtx({"F-002": "Insecure JWT Verification"})
+    md = "## 8. Findings Register\n\n- 🔴 [F-002](#f-002) — rationale.\n"
+    assert compose._section7_title_relevant_findings(ctx, md) == md

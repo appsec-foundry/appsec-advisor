@@ -1773,9 +1773,29 @@ def _canonical_finding_title(t: dict) -> str:
     Returns the empty string when no input yields a non-trivial label
     (caller decides on a placeholder).
     """
-    cwe_raw = (t.get("cwe") or "").strip()
-    cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
-    class_label = _CWE_CLASS_NAMES.get(cwe_norm.upper(), "")
+    # Prefer the curated register title's weakness-class label so §8's Findings
+    # index + cards stay consistent with §2/§5 and the register summary, which
+    # render ``t['title']`` verbatim. Deriving a *separate* label from the CWE
+    # class name here made §8 diverge (e.g. "Improper Verification of
+    # Cryptographic Signature" vs the register's "Insecure JWT Verification")
+    # — 2026-07-02 user report. The upstream emit_clean_finding_titles enforces
+    # the short title contract; strip any trailing "— file:line" the title may
+    # carry (the yaml threat has it, the merged threat does not) so the evidence
+    # suffix is re-appended uniformly below and BOTH call sites agree. Falls
+    # back to the CWE-class derivation only when no usable short title exists.
+    curated_class = re.sub(r"\s+—\s+.*$", "", (t.get("title") or "").strip()).strip()
+    # A curated title with a leaked code constant (FOO_BAR / DEFAULT_FULL_SCHEMA)
+    # is not a clean class label — fall through to the CWE/token derivation,
+    # which additionally strips package names and over-long token runs. Legit
+    # security acronyms (IDOR, MD5, XXE, SSRF) have no underscore, so they are
+    # preserved and stay consistent with the register.
+    _noisy = re.search(r"[A-Za-z0-9]+_[A-Za-z0-9]", curated_class)
+    class_label = curated_class if (0 < len(curated_class) <= 80 and not _noisy) else ""
+
+    if not class_label:
+        cwe_raw = (t.get("cwe") or "").strip()
+        cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
+        class_label = _CWE_CLASS_NAMES.get(cwe_norm.upper(), "")
     if not class_label:
         # Fallback — derive a short noun phrase from the existing title
         # by stripping the file-suffix and keeping ≤5 non-stopword tokens.
@@ -9966,6 +9986,53 @@ def _section7_inline_findings_id_only(ctx: RenderContext, md: str) -> str:
     return "\n".join(lines)
 
 
+def _section7_title_relevant_findings(ctx: RenderContext, md: str) -> str:
+    """§7 consistency (2026-07-02 user request): give every finding link inside
+    a §7 bullet the same short register title used in §5/§8, so §7 references are
+    never a bare ID or a rationale-sentence-only label.
+
+    ``_section7_inline_findings_id_only`` deliberately SKIPS bullet lines
+    ("keep the title") — but the LLM authors the ``**Relevant findings**``
+    bullets as ``- 🔴 [F-NNN](#f-nnn) — <relevance rationale>`` with no title, so
+    nothing actually titles them. This pass rewrites each bare-ID finding link in
+    a §7 bullet to ``[F-NNN — <class title>](#f-nnn)`` and LEAVES the trailing
+    rationale intact. Only bare-ID links match, so it is idempotent and never
+    touches an already-titled link. Scoped strictly to the §7 chapter."""
+    lines = md.split("\n")
+    start, end = _section7_region_bounds(lines)
+    if start < 0:
+        return md
+    region = "\n".join(lines[start:end])
+    label_map: dict[str, str] = {}
+    for ref in set(re.findall(r"\[(F-\d{3,4})\]\(#f-\d+\)", region)):
+        label = (ctx.lookup_label(ref) or "").strip()
+        short = label.split(" — ", 1)[0].strip()
+        short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()
+        if short:
+            label_map[ref] = short
+    if not label_map:
+        return md
+
+    _bullet_re = re.compile(r"^\s*-\s")
+    _bare_link_re = re.compile(r"\[(F-\d{3,4})\]\(#f-\d+\)")
+
+    def _title_link(m: re.Match[str]) -> str:
+        ref = m.group(1)
+        short = label_map.get(ref)
+        return f"[{ref} — {short}](#{ref.lower()})" if short else m.group(0)
+
+    in_fence = False
+    for i in range(start, end):
+        line = lines[i]
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or not _bullet_re.match(line):
+            continue
+        lines[i] = _bare_link_re.sub(_title_link, line)
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Enrich markdown-fragment tables whose columns link Threat / Mitigation /
 # Finding IDs. Prior LLM-authored fragments emitted bare `[T-003](#t-003)`
@@ -15836,6 +15903,10 @@ def render(
     #    titled enumeration stays in each control's `Relevant findings` block).
     rendered = _section7_number_and_bulletize(rendered)
     rendered = _section7_inline_findings_id_only(ctx, rendered)
+    # Title the finding links inside §7 bullets (Relevant findings) so they
+    # carry the same short register title as §5/§8 — must run AFTER the
+    # id-only pass, which deliberately skips bullets expecting them titled.
+    rendered = _section7_title_relevant_findings(ctx, rendered)
 
     # Section cross-reference linkifier — convert bare `§N` / `§N.M` / `§N.M.K`
     # tokens in prose into anchor-linked form so cross-references are clickable.
