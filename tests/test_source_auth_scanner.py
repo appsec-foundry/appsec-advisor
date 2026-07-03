@@ -219,9 +219,7 @@ def test_served_codefixes_snippets_are_excluded(tmp_path: Path) -> None:
     d = tmp_path / "data" / "static" / "codefixes"
     d.mkdir(parents=True)
     (d / "loginAdminChallenge_1.js").write_text(
-        "function login(req) {\n"
-        "  return db.query(`SELECT * FROM Users WHERE email = '${req.body.email}'`)\n"
-        "}\n"
+        "function login(req) {\n  return db.query(`SELECT * FROM Users WHERE email = '${req.body.email}'`)\n}\n"
     )
     assert "INJ-001" not in _ids(_scan(tmp_path))
 

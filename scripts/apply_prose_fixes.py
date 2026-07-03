@@ -76,7 +76,6 @@ import sys
 from pathlib import Path
 
 from _atomic_io import atomic_write_text
-from _slug import github_slug
 from _slug import github_render_slug
 from perimeter_patterns import strip_perimeter_absence_sentences
 

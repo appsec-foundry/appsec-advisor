@@ -913,8 +913,15 @@ class TestConsolidateByGroup:
         # SAME component are DISTINCT objects with DISTINCT fixes and must NOT
         # fuse into one finding — each class has its own group.
         rows = [
-            _threat(cwe="CWE-89", title="SQL injection", evidence={"file": "routes/search.ts", "line": 23}, component_id="backend-api"),
-            _threat(cwe="CWE-611", title="XXE", evidence={"file": "lib/xml.ts", "line": 21}, component_id="backend-api"),
+            _threat(
+                cwe="CWE-89",
+                title="SQL injection",
+                evidence={"file": "routes/search.ts", "line": 23},
+                component_id="backend-api",
+            ),
+            _threat(
+                cwe="CWE-611", title="XXE", evidence={"file": "lib/xml.ts", "line": 21}, component_id="backend-api"
+            ),
         ]
         out = mt._consolidate_by_group([dict(t) for t in rows])
         groups = {t.get("consolidation_group") for t in out if t.get("systemic")}
@@ -1728,8 +1735,12 @@ class TestCmdCollectFinalizeBranches:
             tmp_path,
             "backend",
             [
-                _threat(cwe="CWE-94", stride="Tampering", title="Code injection a", evidence={"file": "a.ts", "line": 1}),
-                _threat(cwe="CWE-94", stride="Tampering", title="Code injection b", evidence={"file": "b.ts", "line": 2}),
+                _threat(
+                    cwe="CWE-94", stride="Tampering", title="Code injection a", evidence={"file": "a.ts", "line": 1}
+                ),
+                _threat(
+                    cwe="CWE-94", stride="Tampering", title="Code injection b", evidence={"file": "b.ts", "line": 2}
+                ),
             ],
         )
         mt.main(["collect", "--output-dir", str(tmp_path)])

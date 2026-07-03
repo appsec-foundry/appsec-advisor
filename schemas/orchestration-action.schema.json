@@ -112,6 +112,7 @@
           "repo_root",
           "requirements_url_override",
           "reuse_recon_eligible",
+          "run_id",
           "scan_manifest",
           "scope",
           "skip_abuse_case_verification",

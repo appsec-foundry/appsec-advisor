@@ -58,6 +58,7 @@ from `ACTION.dispatch_values`; boolean values retain JSON truth semantics.
 
 ```text
 CLAUDE_PLUGIN_ROOT = plugin_root
+APPSEC_RUN_ID = run_id
 REPO_ROOT = repo_root
 OUTPUT_DIR = output_dir
 WRITE_YAML = write_yaml

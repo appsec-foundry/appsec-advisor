@@ -2674,7 +2674,7 @@ class TestInstancesCard:
             [{"file": f"routes/r{i:02d}.ts", "line": i, "severity": "Critical"} for i in range(1, 13)]
         )  # 12 instances
         card = self._card(tmp_path, t)
-        assert "Instances (12):" in card          # true total surfaced
-        assert "… (+4 more)" in card               # 12 - 8 cap = 4 collapsed
-        assert "routes/r08.ts:8" in card           # 8th shown
-        assert "routes/r09.ts:9" not in card       # 9th collapsed into "+more"
+        assert "Instances (12):" in card  # true total surfaced
+        assert "… (+4 more)" in card  # 12 - 8 cap = 4 collapsed
+        assert "routes/r08.ts:8" in card  # 8th shown
+        assert "routes/r09.ts:9" not in card  # 9th collapsed into "+more"

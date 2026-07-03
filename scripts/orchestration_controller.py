@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -128,6 +129,7 @@ _DISPATCH_KEYS = (
     "requirements_url_override",
     "incremental",
     "reuse_recon_eligible",
+    "run_id",
     "rebuild",
     "keep_runtime_files",
     "scan_manifest",
@@ -690,6 +692,15 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     repo_root = Path(cfg["repo_root"]).resolve()
     cfg["output_dir"] = str(output_dir)
     cfg["repo_root"] = str(repo_root)
+    # Stable per-run token so a Stage-1 agent's own lock acquisition can
+    # re-acquire this controller-held lock re-entrantly instead of
+    # false-blocking on it (mirrors the legacy-runtime fix in SKILL-impl.md
+    # "Skill-layer lock acquisition" — the 2026-07-02 costly re-dispatch).
+    cfg["run_id"] = (
+        os.environ.get("CLAUDE_CODE_SESSION_ID")
+        or os.environ.get("CLAUDE_SESSION_ID")
+        or f"run-{int(time.time())}-{os.getpid()}"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     existing_names = {path.name for path in output_dir.iterdir()}
     if cfg["mode"] == "rebuild":
@@ -731,7 +742,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     )
     lock = _run_script(
         "acquire_lock.py",
-        [str(output_dir / ".appsec-lock")],
+        [str(output_dir / ".appsec-lock"), f"--run-id={cfg['run_id']}"],
         acceptable=(0,),
     )
     first_lock_line = (lock.stdout or "").strip().splitlines()
@@ -782,6 +793,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             "acquire_lock.py",
             [
                 str(output_dir / ".appsec-lock"),
+                f"--run-id={cfg['run_id']}",
                 "--heartbeat",
                 "--phase=skill",
                 "--step=stage1-dispatch",
