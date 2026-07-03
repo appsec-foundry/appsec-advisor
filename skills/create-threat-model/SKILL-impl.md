@@ -1612,8 +1612,12 @@ Background-dispatched Stage 1 / Stage 2 agents do not always run the orchestrato
 The fix is to acquire the lock **at the skill level** — once, before the first Agent dispatch — so the file always exists for the duration of the run. The orchestrator's own per-phase `--heartbeat` calls then see a present lock and refresh it normally. A blocked lock is fatal for this invocation: starting the heartbeat after `LOCK_BLOCKED` refreshes a lock this run does not own and makes headless `--resume` look idle instead of failed.
 
 ```bash
+# Stable per-run token. Prefer the harness session id; fall back to a
+# time+pid token. Threaded into agent prompts so their own acquire_lock
+# call re-acquires re-entrantly instead of false-blocking on our lock.
+export APPSEC_RUN_ID="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-run-$(date +%s)-$$}}"
 set +e
-LOCK_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" 2>&1)
+LOCK_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --run-id="$APPSEC_RUN_ID" 2>&1)
 LOCK_EXIT=$?
 set -e
 printf '%s\n' "$LOCK_OUTPUT" | head -1
@@ -1626,8 +1630,10 @@ if [ "$LOCK_EXIT" != "0" ]; then
 fi
 # Initial heartbeat so the lock has a fresh ts before Stage 1 starts.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" \
-    --heartbeat --phase=skill --step=stage1-dispatch >/dev/null 2>&1 || true
+    --run-id="$APPSEC_RUN_ID" --heartbeat --phase=skill --step=stage1-dispatch >/dev/null 2>&1 || true
 ```
+
+**Run-id re-entrancy (mandatory — 2026-07-02).** Because the skill pre-acquires the lock **and** starts a background watchdog that keeps its heartbeat warm, the Stage-1 analyst's own Pre-Phase lock acquisition would otherwise see a *fresh* lock and hard-abort with `LOCK_BLOCKED` (its PID/heartbeat look like a live concurrent run). This false-positive cost a full Stage-1 re-dispatch on the 2026-07-02 juice-shop run. Fix: mint a stable `APPSEC_RUN_ID` for this invocation (above), tag the skill-held lock with it (`--run-id`), and **thread the same value into every agent dispatch prompt** (see "Passing configuration" → `APPSEC_RUN_ID`). `acquire_lock.py` grants a re-entrant `LOCK_ACQUIRED` when the caller's run-id matches the lock's; a genuinely different run still carries a different (or no) run-id and blocks, so concurrency safety is unchanged. Heartbeats preserve the run-id, so the watchdog keeps it warm across the whole run.
 
 The lock is released with an explicit `rm -f` in the Completion Summary section below — `runtime_cleanup.py --stage post-qa` does **not** include `.appsec-lock` in its whitelist (only `--stage all` and `--stage pre-qa` do).
 
@@ -3085,6 +3091,7 @@ Use the `REPO_ROOT` and `OUTPUT_DIR` values resolved in the Path Resolution sect
 
 Pass the following variables to the agent prompt:
 - `CLAUDE_PLUGIN_ROOT=<absolute plugin path>` (resolved in the "Prerequisites" section above — **always pass this explicitly**; do not rely on the variable being inherited by the sub-session, because some harness/headless configurations drop it)
+- `APPSEC_RUN_ID=<stable per-run token>` (the value minted in "Skill-layer lock acquisition" above — **always pass this explicitly**; env vars do not cross into the sub-agent session, so the analyst's Pre-Phase lock acquisition can only re-acquire the skill-held lock re-entrantly if it receives the run-id through its prompt. Without it the analyst false-blocks on our own watchdog-warmed lock — the 2026-07-02 costly re-dispatch.)
 - `REPO_ROOT=<absolute repo path>`
 - `OUTPUT_DIR=<absolute output path>`
 - `WRITE_YAML=<true|false>`

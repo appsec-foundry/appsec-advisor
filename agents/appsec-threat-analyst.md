@@ -950,14 +950,14 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
 **Pre-Phase checklist — run in this exact order before anything else:**
 
 1. **Resolve paths** — `REPO_ROOT` and `OUTPUT_DIR` are provided by the skill in the prompt. If `REPO_ROOT` is not provided, fall back to `git rev-parse --show-toplevel`. If `OUTPUT_DIR` is not provided, default to `$REPO_ROOT/docs/security`. Store both values.
-2. **Acquire assessment lock** — prevents two concurrent assessments from colliding:
+2. **Acquire assessment lock** — prevents two concurrent assessments from colliding. **Pass `--run-id="$APPSEC_RUN_ID"`** when the skill provided `APPSEC_RUN_ID` in the prompt: the skill pre-acquires this lock and a background watchdog keeps its heartbeat warm, so without the run-id your acquire would see a *fresh* lock and false-abort as if a concurrent run were active (the 2026-07-02 costly Stage-1 re-dispatch). With the matching run-id, `acquire_lock.py` grants a re-entrant `LOCK_ACQUIRED`; a genuinely different run carries a different run-id and still blocks. If `APPSEC_RUN_ID` was **not** provided (direct/legacy invocation), omit the flag — behaviour is unchanged.
    ```bash
    LOCK_FILE="$OUTPUT_DIR/.appsec-lock"
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$LOCK_FILE"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$LOCK_FILE" ${APPSEC_RUN_ID:+--run-id="$APPSEC_RUN_ID"}
    ```
    Check the output of this command:
    - If output contains `LOCK_BLOCKED` or the exit code is non-zero → **you MUST stop the entire assessment immediately.** Print `⚠ Assessment aborted — concurrent lock detected. Remove the lock file manually if the other assessment has ended.` and then run `rm -f "$OUTPUT_DIR/.appsec-lock"` cleanup is NOT your responsibility — the other running assessment owns the lock. **Do not proceed to any further step or phase.**
-   - If output contains `LOCK_ACQUIRED` → continue normally. If the lock file existed but was older than 1 hour, it was stale and has been overwritten.
+   - If output contains `LOCK_ACQUIRED` → continue normally. If the lock file existed but was older than 1 hour, it was stale and has been overwritten. A re-entrant grant (same `--run-id` as the skill-held lock) also prints `LOCK_ACQUIRED` — that is expected, not a takeover.
    Store `LOCK_FILE` path for cleanup at the end.
 3. `date +%s` → store as `START_EPOCH`
 3b. **Capture git state — MANDATORY on every run, regardless of mode.** The Phase 11 yaml writer needs `CURRENT_SHA` for `meta.git.commit_sha`. Without this, future incremental runs cannot resolve a baseline.

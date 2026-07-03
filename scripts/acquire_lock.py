@@ -173,8 +173,25 @@ def _parse_lock(lock_path: Path) -> tuple[int | None, int | None]:
     return (pid, heartbeat)
 
 
-def _write_lock(lock_path: Path, pid: int, heartbeat_ts: int) -> None:
-    lock_path.write_text(f"{pid}\n{heartbeat_ts}\n", encoding="utf-8")
+def _write_lock(lock_path: Path, pid: int, heartbeat_ts: int, run_id: str = "") -> None:
+    body = f"{pid}\n{heartbeat_ts}\n"
+    if run_id:
+        # Optional 3rd line — a stable per-run token so an agent dispatched by
+        # the same logical run can re-acquire a skill-held lock (see main()).
+        body += f"{run_id}\n"
+    lock_path.write_text(body, encoding="utf-8")
+
+
+def _read_run_id(lock_path: Path) -> str:
+    """Return the optional run-id on the lock's 3rd line, or '' if absent.
+
+    Backward compatible: v2 locks (pid + heartbeat only) return ''.
+    """
+    try:
+        lines = [l for l in lock_path.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
+    except OSError:
+        return ""
+    return lines[2].strip() if len(lines) >= 3 else ""
 
 
 def _read_phase_from_checkpoint(output_dir: Path) -> tuple[str | None, str | None]:
@@ -366,9 +383,9 @@ def _do_heartbeat(lock_path: Path, phase: str = "?", step: str = "") -> int:
         )
         print("HEARTBEAT_SKIP: lock file malformed", file=sys.stderr)
         return 0
-    # Preserve the original acquirer PID — only bump the heartbeat timestamp.
+    # Preserve the original acquirer PID and run-id — only bump the heartbeat.
     now = int(time.time())
-    _write_lock(lock_path, pid, now)
+    _write_lock(lock_path, pid, now, _read_run_id(lock_path))
     _emit_hook_event(
         output_dir, "INFO", _HEARTBEAT_EVENT, f"pid={pid}  phase={phase}{('  step=' + step) if step else ''}  ts={now}"
     )
@@ -385,6 +402,11 @@ def main(argv: list[str]) -> int:
     heartbeat = "--heartbeat" in rest
     phase = "?"
     step = ""
+    # Stable per-run token. Lets an agent dispatched by the same logical run
+    # re-acquire a lock the skill pre-acquired (and a watchdog keeps warm)
+    # instead of hard-blocking on it. Env is the fallback so callers that
+    # cannot thread a CLI flag still opt in. Empty → legacy behaviour.
+    run_id = os.environ.get("APPSEC_RUN_ID", "").strip()
     args: list[str] = []
     for tok in rest:
         if tok in bare_flags:
@@ -395,11 +417,14 @@ def main(argv: list[str]) -> int:
         if tok.startswith("--step="):
             step = tok.split("=", 1)[1]
             continue
+        if tok.startswith("--run-id="):
+            run_id = tok.split("=", 1)[1].strip() or run_id
+            continue
         args.append(tok)
 
     if len(args) != 1:
         print(
-            f"usage: {argv[0]} <lock_file_path> [--reset-dirs | --heartbeat [--phase=<P>] [--step=<S>]]",
+            f"usage: {argv[0]} <lock_file_path> [--run-id=<id>] [--reset-dirs | --heartbeat [--phase=<P>] [--step=<S>]]",
             file=sys.stderr,
         )
         return 2
@@ -422,6 +447,18 @@ def main(argv: list[str]) -> int:
     state, info = _classify_lock(lock_path)
 
     if state == "fresh":
+        # Re-entrant grant: a fresh lock carrying THIS run's id belongs to the
+        # same logical assessment (the skill pre-acquired it and a background
+        # watchdog keeps its heartbeat warm). An agent dispatched by that run
+        # re-acquiring must not be mistaken for a concurrent assessment — that
+        # false LOCK_BLOCKED aborted the 2026-07-02 juice-shop Stage-1 dispatch
+        # and forced a costly re-dispatch. Concurrency safety is preserved: a
+        # genuinely different run carries a different (or no) run-id and blocks.
+        existing_run_id = _read_run_id(lock_path)
+        if run_id and existing_run_id and run_id == existing_run_id:
+            _write_lock(lock_path, os.getpid(), int(time.time()), run_id)
+            print("LOCK_ACQUIRED")
+            return 0
         hb = info.get("heartbeat_age")
         hb_str = f", hb_age={hb}s" if hb is not None else ""
         print(
@@ -456,7 +493,7 @@ def main(argv: list[str]) -> int:
         )
     # state == "absent" — fall through and write a fresh lock.
 
-    _write_lock(lock_path, os.getpid(), int(time.time()))
+    _write_lock(lock_path, os.getpid(), int(time.time()), run_id)
     print("LOCK_ACQUIRED")
     return 0
 
