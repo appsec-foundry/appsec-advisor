@@ -615,7 +615,10 @@ class TestAttackTargetLabel:
 
     def test_verbose_stem_falls_back_to_component_zone(self):
         # `registerWebsocketEvents.ts` → 3 words → prefer the curated zone.
-        threat = {"component": "backend-api", "evidence": [{"file": "lib/startup/registerWebsocketEvents.ts", "line": 23}]}
+        threat = {
+            "component": "backend-api",
+            "evidence": [{"file": "lib/startup/registerWebsocketEvents.ts", "line": 23}],
+        }
         ydata = {"components": [{"id": "backend-api", "name": "Backend REST API"}]}
         assert renderer._attack_target_label(threat, ydata) == "Backend REST API"
 

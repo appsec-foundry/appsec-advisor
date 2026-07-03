@@ -235,18 +235,53 @@ _TARGET_LABEL_WORD_RE = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?=[A-Z]|$)")
 # Framework dot-suffixes stripped from a stem so `oauth.component.ts` → "Oauth"
 # and `auth.guard.ts` → "Auth" read as the FEATURE, not the file's role.
 _FEATURE_STRIP_SUFFIXES = {
-    "component", "service", "module", "guard", "interceptor", "controller",
-    "middleware", "model", "models", "route", "routes", "startup", "config",
+    "component",
+    "service",
+    "module",
+    "guard",
+    "interceptor",
+    "controller",
+    "middleware",
+    "model",
+    "models",
+    "route",
+    "routes",
+    "startup",
+    "config",
 }
 # Non-feature stems — infrastructure, security libs, and framework plumbing that
 # name no user-facing feature. These fall back to the component zone rather than
 # emitting "in Insecurity" / "in Server" / "in Register Websocket Events".
 _GENERIC_FILE_STEMS = {
-    "index", "server", "app", "main", "constants", "utils", "util",
-    "helpers", "helper", "types", "common", "core", "setup",
-    "insecurity", "security", "verify", "startup", "middleware",
-    "models", "model", "database", "db", "handler", "handlers",
-    "routes", "route", "api", "config", "bootstrap",
+    "index",
+    "server",
+    "app",
+    "main",
+    "constants",
+    "utils",
+    "util",
+    "helpers",
+    "helper",
+    "types",
+    "common",
+    "core",
+    "setup",
+    "insecurity",
+    "security",
+    "verify",
+    "startup",
+    "middleware",
+    "models",
+    "model",
+    "database",
+    "db",
+    "handler",
+    "handlers",
+    "routes",
+    "route",
+    "api",
+    "config",
+    "bootstrap",
 }
 
 
@@ -271,9 +306,20 @@ def _feature_from_file(file_hint: str) -> str:
 
 # Known acronyms rendered in their canonical casing rather than Title-cased.
 _FEATURE_ACRONYMS = {
-    "oauth": "OAuth", "jwt": "JWT", "sql": "SQL", "xss": "XSS", "csrf": "CSRF",
-    "ssrf": "SSRF", "url": "URL", "id": "ID", "api": "API", "sso": "SSO",
-    "totp": "TOTP", "otp": "OTP", "2fa": "2FA", "mfa": "MFA",
+    "oauth": "OAuth",
+    "jwt": "JWT",
+    "sql": "SQL",
+    "xss": "XSS",
+    "csrf": "CSRF",
+    "ssrf": "SSRF",
+    "url": "URL",
+    "id": "ID",
+    "api": "API",
+    "sso": "SSO",
+    "totp": "TOTP",
+    "otp": "OTP",
+    "2fa": "2FA",
+    "mfa": "MFA",
 }
 
 

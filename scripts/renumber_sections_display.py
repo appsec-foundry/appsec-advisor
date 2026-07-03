@@ -61,7 +61,7 @@ def _new_top_level(old_top: str) -> str | None:
 
 
 def _renumber_token(old_number: str) -> str | None:
-    """"7.2.1" -> "6.2.1"; "7b" -> "6b"; "11" -> "10". None when not in scope."""
+    """ "7.2.1" -> "6.2.1"; "7b" -> "6b"; "11" -> "10". None when not in scope."""
     m = _TOP_TOKEN_RE.match(old_number)
     if not m:
         return None

@@ -902,7 +902,10 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     # Mechanical structural fragments (idempotent backstop), then the strict
     # compose, then the prose-fix + autofix tail (AGENTS.md "Critical ordering").
     _run(
-        str(SCRIPT_DIR / "pregenerate_fragments.py"), str(output_dir), "--force", "--only",
+        str(SCRIPT_DIR / "pregenerate_fragments.py"),
+        str(output_dir),
+        "--force",
+        "--only",
         "system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md",
     )
     # Conditional MS fragments (idempotent, self-gating — a renderer-authored
@@ -911,7 +914,9 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     # callout silently vanishes even though the yaml carries an LLM surface
     # (2026-07-02). Deriving it here from the yaml guarantees the section.
     _run(
-        str(SCRIPT_DIR / "pregenerate_fragments.py"), str(output_dir), "--only",
+        str(SCRIPT_DIR / "pregenerate_fragments.py"),
+        str(output_dir),
+        "--only",
         "ms-ai-exposure.json,ms-critical-attack-tree.json",
     )
     if not _run(str(SCRIPT_DIR / "compose_threat_model.py"), "--output-dir", str(output_dir), "--strict"):

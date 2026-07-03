@@ -429,7 +429,7 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     monkeypatch.setattr(controller.subprocess, "run", fake_run)
 
     action = controller.next_action(output)
-    assert md.is_file()               # composed deterministically
+    assert md.is_file()  # composed deterministically
     assert action["stage"] == "stage3"  # routed to QA, NOT re-dispatched as stage2
 
 

@@ -161,8 +161,7 @@ def test_cwe306_maps_to_general_title_no_truncation():
     "...scope notification broadcast to" — the object "the authenticated user"
     was silently dropped)."""
     long_title = (
-        "Add JWT-verifying Socket.IO connection middleware and scope "
-        "notification broadcast to the authenticated user"
+        "Add JWT-verifying Socket.IO connection middleware and scope notification broadcast to the authenticated user"
     )
     d = _data(
         {"id": "M-038", "title": long_title, "threat_ids": ["T-006"]},

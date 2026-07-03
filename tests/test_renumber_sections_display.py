@@ -60,7 +60,7 @@ def test_anchor_ids_and_hrefs_renumbered_consistently():
     doc = _canonical(
         '<a id="7-security-architecture"></a>\n'
         "### 7.2 Identity and Authentication Controls\n\n"
-        'See [§7.2](#72-identity-and-authentication-controls) and [§7](#7-security-architecture).\n'
+        "See [§7.2](#72-identity-and-authentication-controls) and [§7](#7-security-architecture).\n"
     )
     out = rsd.renumber_sections_display(doc)
     assert 'id="6-security-architecture"' in out
@@ -113,7 +113,9 @@ def test_html_comment_markers_renumbered():
 
 
 def test_gap_note_box_removed():
-    doc = _canonical("> _Section numbering is non-contiguous: §6 was retired in a prior revision. The remaining sections keep their original numbers so existing cross-references stay valid._\n")
+    doc = _canonical(
+        "> _Section numbering is non-contiguous: §6 was retired in a prior revision. The remaining sections keep their original numbers so existing cross-references stay valid._\n"
+    )
     out = rsd.renumber_sections_display(doc)
     assert "non-contiguous" not in out
 

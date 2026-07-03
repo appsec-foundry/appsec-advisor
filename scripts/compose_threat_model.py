@@ -1795,7 +1795,9 @@ def _canonical_finding_title(t: dict) -> str:
 
     if not class_label:
         cwe_raw = (t.get("cwe") or "").strip()
-        cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
+        cwe_norm = (
+            cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
+        )
         class_label = _CWE_CLASS_NAMES.get(cwe_norm.upper(), "")
     if not class_label:
         # Fallback — derive a short noun phrase from the existing title

@@ -1972,7 +1972,7 @@ def _data_with_hyps(*hypotheses):
 
 
 class TestSection72ThreatHypothesesTable:
-    """"Threat Hypotheses Requiring Validation" is disabled in the report
+    """ "Threat Hypotheses Requiring Validation" is disabled in the report
     (juice-shop 2026-07-03 user request): every row read Evidence/Validation
     from the wrong field name (`evidence`/`validation_objective` instead of
     the actual `positive_signals[]`), so it always rendered "_?_" placeholders

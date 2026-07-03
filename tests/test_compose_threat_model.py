@@ -4432,10 +4432,12 @@ def test_evidence_summary_codify_wraps_dotted_method_call() -> None:
 
 
 def test_section7_title_relevant_findings_titles_bare_bullet_links():
-    ctx = _StubLabelCtx({
-        "F-002": "Insecure JWT Verification — `insecurity.ts:55`",
-        "F-017": "Missing Rate Limiting On Login (`server.ts:596`)",
-    })
+    ctx = _StubLabelCtx(
+        {
+            "F-002": "Insecure JWT Verification — `insecurity.ts:55`",
+            "F-017": "Missing Rate Limiting On Login (`server.ts:596`)",
+        }
+    )
     md = (
         "## 7. Security Architecture\n\n"
         "**Relevant findings**\n\n"
