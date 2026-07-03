@@ -261,6 +261,32 @@ def test_ai_exposure_renders_after_anti_patterns(tmp_path: Path) -> None:
     assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), (
         f"no linkified finding in ai-exposure callout: {ms_slice[a:s]!r}"
     )
+    # An authored `summary` replaces the generic fallback sentence — it must
+    # not render both (juice-shop 2026-07-02: two near-identical "this system
+    # embeds an LLM surface" sentences appeared back to back).
+    assert frag["summary"] in ms_slice
+    assert "This system embeds an LLM / AI-agent surface" not in ms_slice
+
+
+def test_ai_exposure_no_summary_uses_generic_fallback_sentence(tmp_path: Path) -> None:
+    """When the fragment omits the optional `summary`, the generic fallback
+    intro sentence renders exactly once (no authored summary to replace it)."""
+    out = _prepare_output_dir(tmp_path)
+    frag = {
+        "ai_risks": [
+            {
+                "name": "Prompt Injection",
+                "description": "User chat input reaches the system prompt unsanitized.",
+                "findings": [{"ref": "T-001", "label": "Unsanitized prompt assembly"}],
+            },
+        ],
+    }
+    (out / ".fragments" / "ms-ai-exposure.json").write_text(json.dumps(frag))
+
+    rendered, _ = compose.render(CONTRACT, out)
+    ms_slice = rendered.split("## Management Summary", 1)[1].split("\n## ", 1)[0]
+
+    assert ms_slice.count("This system embeds an LLM / AI-agent surface") == 1
 
 
 def test_render_is_deterministic(tmp_path: Path) -> None:
@@ -1305,6 +1331,26 @@ def test_codify_inline_identifiers_no_mid_token_backticks() -> None:
     assert "`frontend/src/app/last-login-ip/last-login-ip.component.ts:39`" in out2
     assert "last-login-`ip" not in out2
     assert "`bypassSecurityTrustHtml()`" in out2
+
+
+def test_codify_inline_identifiers_does_not_rewrap_escaped_brand_dot() -> None:
+    """`_CODE_FILE_RE` must not re-match a brand name that `_escape_dot_tld_identifiers`
+    already backslash-escaped (`Node\\.js`) as if it were a `.js` file path.
+
+    Regression (juice-shop 2026-07-02): the escaped dot was still followed by a
+    known extension ("js"), so the file-path matcher's backslash-inclusive char
+    class swallowed the escape and re-wrapped it in backticks — inside a code
+    span the backslash no longer renders invisibly, so the Runtime infobox row
+    showed the literal text `` `Node\\.js` `` instead of "Node.js".
+    """
+    escaped = compose._escape_dot_tld_identifiers("Runtime: Node.js 22 - 26, Express 4")
+    assert escaped == "Runtime: Node\\.js 22 - 26, Express 4"
+    out = compose._codify_inline_code_in_prose(escaped)
+    assert "`Node\\.js`" not in out
+    assert "Node\\.js" in out
+    # A genuine file path with the same extension is still wrapped normally.
+    out2 = compose._codify_inline_code_in_prose("see lib/insecurity.ts for the fix")
+    assert "`lib/insecurity.ts`" in out2
 
 
 def test_balance_code_spans_merges_partially_wrapped_expression() -> None:

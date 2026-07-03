@@ -1195,7 +1195,6 @@ class TestRenderIdentifiedActorsExtra:
         out = compose._render_identified_actors(ctx, None, {})
         assert "Identified Actors" in out
 
-
 class TestSubsectionDriftHint:
     def test_no_present_subsections(self):
         out = compose._subsection_drift_hint("no headings here", {}, 3)

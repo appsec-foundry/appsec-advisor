@@ -104,6 +104,39 @@ def test_remediation_string_fallback_and_priority_rules(tmp_path: Path, monkeypa
     assert by_threat["T-002"]["priority"] == "P2"
 
 
+def test_structured_steps_omit_how_to_avoid_duplicate_rendering(tmp_path: Path, monkeypatch) -> None:
+    """When `remediation.steps` is a structured list, the card must NOT carry a
+    `how` paragraph that just joins those same steps — compose's render-time
+    fallback harvests `remediation.steps` from the addressed threat and renders
+    it as an ordered list. Setting `how` too would render the identical content
+    twice (juice-shop 2026-07-02 / M-038: a paragraph followed by a redundant
+    1./2./3. list restating the same three sentences).
+    """
+    _write_yaml(
+        tmp_path,
+        {
+            "threats": [
+                _threat(
+                    "T-001",
+                    mitigation_title="Add JWT-verifying middleware",
+                    remediation={
+                        "effort": "Medium",
+                        "steps": ["Add middleware.", "Attach the verified user.", "Update the client."],
+                        "code_example": "io.use((socket, next) => {})",
+                    },
+                ),
+            ]
+        },
+    )
+
+    assert _run(tmp_path, monkeypatch) == 0
+
+    data = _read_yaml(tmp_path)
+    card = data["mitigations"][0]
+    assert card["title"] == "Add JWT-verifying middleware"
+    assert "how" not in card
+
+
 def test_skips_config_scan_existing_links_and_empty_remediation(tmp_path: Path, monkeypatch, capsys) -> None:
     _write_yaml(
         tmp_path,

@@ -106,6 +106,46 @@ class TestAttackStepsPlaceholderSubstitution:
             assert "{file}" not in s and "{line}" not in s, f"placeholder leaked from padding into step: {s!r}"
 
 
+class TestAttackStepsChronologicalOrder:
+    """Regression (juice-shop 2026-07-03 user report): Attack Steps must read
+    in attacker-followable chronological order. A template padding step
+    describes an earlier stage than free-authored scenario prose (cwe-89's
+    template opens with "Identify the vulnerable input parameter…", a
+    reconnaissance step) — appending it AFTER the real scenario sentences put
+    "identify the parameter" after "submit the exploit", reversing the attack.
+    """
+
+    def test_missing_template_step_prepended_not_appended(self):
+        # scenario gives exactly 2 sentences; MIN_ATTACK_STEPS=3 needs 1 more.
+        threat = _make_threat(
+            "Submit a crafted email containing an SQL meta-character. "
+            "The server returns the first matching row regardless of the intended predicate."
+        )
+        template = {
+            "attack_steps_template": [
+                "Identify the vulnerable input parameter at `{file}:{line}`.",
+                "Send a request with an SQL meta-character payload in the parameter.",
+                "Server returns the first matching row regardless of the original predicate.",
+            ],
+        }
+        steps = renderer.render_attack_steps(threat, template=template)
+        assert len(steps) == 3
+        assert "Identify the vulnerable input parameter" in steps[0], (
+            f"recon-stage padding step must come FIRST, not last; got: {steps}"
+        )
+        assert "Submit a crafted email" in steps[1]
+        assert "returns the first matching row" in steps[2]
+
+    def test_no_padding_needed_scenario_order_untouched(self):
+        # scenario already has >= MIN_ATTACK_STEPS sentences — no template
+        # padding involved, so order must be exactly as authored.
+        threat = _make_threat("First step happens. Second step happens. Third step happens.")
+        steps = renderer.render_attack_steps(threat, template={})
+        assert "First step happens" in steps[0]
+        assert "Second step happens" in steps[1]
+        assert "Third step happens" in steps[2]
+
+
 class TestSequenceDiagramAltElseBlock:
     """QA Check 8e/8.0 — every §3 sequenceDiagram must carry an
     `alt Current state — T-NNN` / `else After M-NNN — <mitigation>` block and
@@ -533,7 +573,10 @@ class TestGenAdapter:
             ]
         }
         out = renderer.gen_attack_walkthroughs(ydata)
-        assert "### 3.1 Insecure Direct Object Reference\n" in out
+        # Attack-framed heading with a target (juice-shop 2026-07-03): no
+        # components[] here, so the target falls back to the prettified
+        # evidence-file basename ("address.ts" -> "Address").
+        assert "### 3.1 Insecure Direct Object Reference Attack against Address\n" in out
         # The em-dash tail is gone from the heading line specifically.
         heading_line = next(ln for ln in out.splitlines() if ln.startswith("### 3.1"))
         assert "—" not in heading_line
@@ -549,6 +592,59 @@ def test_weakness_class_strips_tail():
     )
     # No tail → unchanged (e.g. a consolidated systemic title).
     assert renderer._weakness_class("Insecure Direct Object Reference") == "Insecure Direct Object Reference"
+
+
+class TestAttackTargetLabel:
+    """§3 headings must read as an attack against something concrete (juice-shop
+    2026-07-03 user request), not a bare weakness class — which also collides
+    whenever two Critical findings share a weakness class."""
+
+    def test_prefers_component_curated_name(self):
+        threat = {"component": "auth-identity", "evidence": [{"file": "routes/login.ts", "line": 34}]}
+        ydata = {"components": [{"id": "auth-identity", "name": "Authentication & Identity"}]}
+        assert renderer._attack_target_label(threat, ydata) == "Authentication & Identity"
+
+    def test_falls_back_to_prettified_evidence_file_basename(self):
+        threat = {"component": "unknown-comp", "evidence": [{"file": "routes/changePassword.ts", "line": 39}]}
+        assert renderer._attack_target_label(threat, {"components": []}) == "Change Password"
+
+    def test_falls_back_to_generic_label_with_no_evidence(self):
+        threat = {"component": "", "evidence": []}
+        assert renderer._attack_target_label(threat, {"components": []}) == "the Application"
+
+    def test_two_findings_sharing_weakness_class_get_distinct_headings(self):
+        """Regression: two Critical SQL Injection findings in different
+        components previously produced identical "### 3.X SQL Injection"
+        headings — anchor-colliding and indistinguishable to the reader."""
+        ydata = {
+            "threats": [
+                {
+                    "id": "T-007",
+                    "title": "SQL Injection — routes/login.ts:34",
+                    "component": "auth-identity",
+                    "cwe": "CWE-89",
+                    "risk": "critical",
+                    "scenario": "Attacker submits an OR 1=1 payload.",
+                    "evidence": [{"file": "routes/login.ts", "line": 34}],
+                },
+                {
+                    "id": "T-009",
+                    "title": "SQL Injection — routes/search.ts:23",
+                    "component": "backend-api",
+                    "cwe": "CWE-89",
+                    "risk": "critical",
+                    "scenario": "Attacker submits a UNION SELECT payload.",
+                    "evidence": [{"file": "routes/search.ts", "line": 23}],
+                },
+            ],
+            "components": [
+                {"id": "auth-identity", "name": "Authentication & Identity"},
+                {"id": "backend-api", "name": "Backend REST API"},
+            ],
+        }
+        md = renderer.render_attack_walkthroughs_md(ydata)
+        assert "### 3.1 SQL Injection Attack against Authentication & Identity" in md
+        assert "### 3.2 SQL Injection Attack against Backend REST API" in md
 
 
 def test_zero_criticals_renders_honest_stub_without_diagram():

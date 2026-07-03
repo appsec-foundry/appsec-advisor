@@ -2498,8 +2498,8 @@ def _toc_children_for_section(ctx: RenderContext, sid: str, sec: dict[str, Any])
     return children
 
 
-from _slug import github_slug as _slug_github_slug  # noqa: E402  (R8 — single source of truth)
 from _slug import github_render_slug as _slug_github_render_slug  # noqa: E402  (link targets → GitHub-rendered anchor)
+from _slug import github_slug as _slug_github_slug  # noqa: E402  (R8 — single source of truth)
 
 
 def _anchor_from_heading(heading: str) -> str:
@@ -11186,11 +11186,22 @@ def _escape_dot_tld_identifiers(md: str) -> str:
         return f"`{full}`"
 
     for chunk in re.split(
-        r"(```[^\n]*\n.*?\n```|`[^`\n]+`|<!--.*?-->|\[[^\]]+\]\([^)]+\))",
+        r"(```[^\n]*\n.*?\n```|`[^`\n]+`|<!--.*?-->|\[[^\]]+\]\([^)]+\)|https?://[^\s<>()\]]+)",
         md,
         flags=re.DOTALL,
     ):
-        if chunk.startswith("```") or chunk.startswith("`") or chunk.startswith("<!--") or chunk.startswith("["):
+        if (
+            chunk.startswith("```")
+            or chunk.startswith("`")
+            or chunk.startswith("<!--")
+            or chunk.startswith("[")
+            or chunk.startswith("http://")
+            or chunk.startswith("https://")
+        ):
+            # Bare URLs (not just markdown-link syntax) are protected too —
+            # a domain segment inside a plain `https://owasp-juice.shop` would
+            # otherwise be treated as a standalone ccTLD-shaped token and
+            # backtick-wrapped mid-URL, corrupting the link (juice-shop 2026-07-02).
             out_chunks.append(chunk)
         else:
             out_chunks.append(_DOT_IDENT_TLD_RE.sub(_wrap_if_unknown, chunk))
@@ -13028,7 +13039,13 @@ def _fix_action_lead(cwe_norm: str) -> str:
 # and never doubles existing backticks.
 _CODE_FILE_RE = re.compile(
     r"(?<![`/\w])"  # not already in backticks or inside a path
-    r"([A-Za-z_][A-Za-z0-9_./\\-]*\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|"
+    # `(?<!\\)` immediately before the extension-dot: a backslash there means
+    # `_escape_dot_tld_identifiers` already deliberately escaped this token as
+    # a known brand name (`Node\.js`) — do not re-match it as a fake ".js file"
+    # and re-wrap it in backticks, which leaks the backslash in the rendered
+    # code span (juice-shop 2026-07-02). Genuine paths (`bar.ts`) are unaffected
+    # since the char right before their extension-dot is never a backslash.
+    r"([A-Za-z_][A-Za-z0-9_./\\-]*(?<!\\)\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|"
     r"yml|yaml|json|xml|toml|ini|env|sh|sql|html|css|scss|md|conf)"
     r"(?::\d+(?:-\d+)?)?)"  # optional :line[-end]
     r"(?![`\w.])"

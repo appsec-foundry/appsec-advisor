@@ -90,13 +90,19 @@ def _norm_title(title: str) -> str:
 
 
 def _remediation_how(threat: dict) -> str:
-    """Build the `how` prose from the threat's remediation.steps."""
+    """Build the `how` prose from the threat's remediation — prose-only.
+
+    When `remediation.steps` is a structured list, this returns "" instead of
+    joining the steps into one paragraph: compose's render-time fallback
+    already harvests `remediation.steps` from the addressed threat and renders
+    it as an ordered list, so joining it here too would duplicate the same
+    content twice under one mitigation card — once as a paragraph, once as a
+    numbered list (juice-shop 2026-07-02 / M-038).
+    """
     rem = threat.get("remediation") or {}
     steps = rem.get("steps") if isinstance(rem, dict) else None
-    if isinstance(steps, list) and steps:
-        clean = [str(s).strip() for s in steps if str(s).strip()]
-        if clean:
-            return " ".join(s if s.endswith((".", ";", ":")) else s + "." for s in clean)
+    if isinstance(steps, list) and steps and any(str(s).strip() for s in steps):
+        return ""
     # Fall back to a single remediation string or the mitigation title.
     if isinstance(rem, str) and rem.strip():
         return rem.strip()
@@ -171,8 +177,12 @@ def _synthesize(data: dict, state: dict) -> list[dict]:
             continue
         how = _remediation_how(t)
         title = (t.get("mitigation_title") or "").strip()
-        if not title and not how:
-            # No remediation content at all — nothing to synthesise.
+        rem = t.get("remediation") or {}
+        has_steps = isinstance(rem, dict) and any(str(s).strip() for s in (rem.get("steps") or []))
+        if not title and not how and not has_steps:
+            # No remediation content at all — nothing to synthesise. (`how`
+            # is deliberately "" when `remediation.steps` exists — see
+            # _remediation_how — so `has_steps` covers that case here.)
             continue
         if not title:
             title = f"Remediate {t.get('title', tid)}"
@@ -224,10 +234,11 @@ def _synthesize(data: dict, state: dict) -> list[dict]:
             "severity": sev,
             "effort": effort.capitalize(),
             "threat_ids": [m["id"] for m in members],
-            "how": g["how"],
             "auto_emitted": True,
             "auto_source": "finding-fix",
         }
+        if g["how"]:
+            card["how"] = g["how"]
         if cwes:
             card["prevents"] = cwes
         new_cards.append(card)

@@ -13,23 +13,43 @@ in real generated reports; the examples are taken from those reports.
 
 ---
 
-## Rule 1 — Specificity over generality
+## Rule 1 — Specificity over generality, attacker as the subject
 
 Name the file, line, library version, config key, API call, or HTTP
 method+route. Generic phrases ("an attacker could", "in the codebase",
 "various endpoints") are not findings — they are placeholders.
 
-**Avoid:**
+Specificity does not mean writing the *code's* behaviour as the subject
+of every sentence ("`req.body.email` flows into…", "the payload
+short-circuits…") — that reads as a passive code-review note, not
+something a reader can act out step by step. The attacker's action is
+the subject; the code mechanism is the reason the action works, not the
+main clause. This governs `scenario` fields and §3 Attack Walkthrough
+steps directly (juice-shop 2026-07-03 user report: Attack Steps must be
+"aus der Sicht des Angreifers" — from the attacker's point of view,
+clear and traceable).
+
+**Avoid (vague — no file/line/payload):**
 > An attacker could exploit the application to gain administrative access
 > by submitting crafted input to the login endpoint.
 
-**Prefer:**
+**Avoid (specific, but the code is the subject — not attacker-actionable):**
 > `req.body.email` flows unescaped into `models.sequelize.query()` at
 > `routes/login.ts:34`. The payload `' OR '1'='1` short-circuits the
 > WHERE clause and returns the first user row, which is the seeded
 > admin account.
 
-The second version is reproducible. The first is rhetoric.
+**Prefer (specific AND the attacker is the subject):**
+> An attacker submits `' OR '1'='1` as the login form's email field.
+> Because `req.body.email` flows unescaped into `models.sequelize.query()`
+> at `routes/login.ts:34`, the crafted value short-circuits the WHERE
+> clause — the query returns the first user row, the seeded admin
+> account, and the attacker is authenticated as admin without a password.
+
+All three name the same fact. The first is rhetoric — no reader can
+reproduce it. The second is reproducible but reads as a static code
+observation. The third is reproducible AND narratable: a reader can act
+it out one step at a time, in order, as the attacker.
 
 ---
 

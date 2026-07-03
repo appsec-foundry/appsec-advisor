@@ -230,6 +230,40 @@ def _weakness_class(title: str) -> str:
     return re.split(r"\s+—\s+", (title or "").strip(), maxsplit=1)[0].strip()
 
 
+_TARGET_LABEL_WORD_RE = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?=[A-Z]|$)")
+
+
+def _attack_target_label(threat: dict, yaml_data: dict) -> str:
+    """Human-readable attack TARGET for the §3 heading (juice-shop 2026-07-03
+    user request): headings must read as an attack against something concrete
+    — "SQL Injection Attack against Login Authentication" — not a bare
+    weakness class, which reads as a static property, not an attack, and
+    collides whenever two Critical findings share a weakness class (two
+    "SQL Injection" H3 headings were indistinguishable and anchor-colliding).
+
+    Prefers the finding's component's curated name (already human-authored,
+    e.g. "Authentication & Identity") — this also naturally differentiates
+    same-weakness findings that live in different components. Falls back to
+    a prettified evidence-file basename (``changePassword.ts`` → "Change
+    Password") when no component name is available, then a generic label.
+    """
+    comp_id = (threat.get("component") or "").strip()
+    if comp_id:
+        for c in yaml_data.get("components") or []:
+            if isinstance(c, dict) and c.get("id") == comp_id:
+                name = (c.get("name") or "").strip()
+                if name:
+                    return name
+    evidence = (threat.get("evidence") or [{}])[0] or {}
+    file_hint = (evidence.get("file") or "").strip()
+    if file_hint:
+        base = Path(file_hint).stem
+        words = _TARGET_LABEL_WORD_RE.findall(base)
+        if words:
+            return " ".join(w.capitalize() for w in words[:4])
+    return "the Application"
+
+
 def _mermaid_safe(label: str) -> str:
     """Strip Mermaid-hostile characters from a node label.
 
@@ -721,13 +755,21 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
     body.extend(sentences[:MIN_ATTACK_STEPS])
     if not body:
         body.extend(template_steps)
-    # Pad up to MIN_ATTACK_STEPS with template_steps (template-specific, with
-    # `{file}` / `{line}` already substituted) — no generic boilerplate.
-    for cand in template_steps:
-        if len(body) >= MIN_ATTACK_STEPS:
-            break
-        if cand not in body:
-            body.append(cand)
+    else:
+        # Pad up to MIN_ATTACK_STEPS with template_steps (template-specific,
+        # with `{file}` / `{line}` already substituted) — no generic
+        # boilerplate. PREPEND the missing steps rather than appending them:
+        # a template step describes a stage the free-authored `scenario`
+        # prose typically already assumes happened (e.g. cwe-89's template
+        # opens with "Identify the vulnerable input parameter…", a
+        # reconnaissance step) — appending it after real scenario sentences
+        # put "identify the parameter" AFTER "submit the exploit payload",
+        # reversing attack chronology (juice-shop 2026-07-03 user report:
+        # Attack Steps must read in a clear, attacker-followable order).
+        missing = [s for s in template_steps if s not in body]
+        needed = MIN_ATTACK_STEPS - len(body)
+        if needed > 0:
+            body = missing[:needed] + body
     return [f"{i + 1}. {_format_step_code(s.rstrip('.'))}." for i, s in enumerate(body[:MIN_ATTACK_STEPS])]
 
 
@@ -1012,15 +1054,27 @@ def _render_walkthrough_block(
     diagram = render_sequence_diagram(threat, template, primary_mit_id, primary_mit_title)
 
     # Heading HARD RULE (per agents/phases/phase-group-finalization.md §3
-    # heading-format contract): 2-6 words, ≤60 chars, NO T-NNN prefix.
-    # The T-NNN appears once in the **Source:** line below — wrapping it
-    # into the heading inflates the line to 70+ chars and trips
-    # qa_checks.py:check_heading_hygiene. The previous behaviour
-    # (`### 3.X {tid} — {title}` with `_short_title(title, 90)`) violated
-    # both rules. The `— file:line` tail is dropped too (see _weakness_class):
+    # heading-format contract): NO T-NNN prefix, ≤80 chars (check_heading_hygiene
+    # warns >80, errors >100). The T-NNN appears once in the **Source:** line
+    # below — wrapping it into the heading inflates the line and trips the gate.
+    # Format is "<Weakness> Attack against <Target>" (juice-shop 2026-07-03 user
+    # request): a bare weakness class ("SQL Injection") reads as a static
+    # property, not an attack, and two Critical findings sharing a weakness
+    # class produced identical, anchor-colliding headings. The `— file:line`
+    # tail from the finding title stays OUT of the heading (see _weakness_class):
     # it carries no info the **Source:** line lacks and its em-dash made the
     # GitHub heading anchor diverge from the composer's link target.
-    heading = f"### 3.{walkthrough_index} {_short_title(_weakness_class(title), 60)}"
+    # Truncate the WEAKNESS class, not the combined string — some weakness
+    # classes are long verb-phrases ("Mass assignment privileged field
+    # accepted from request") that would otherwise eat the budget and leave
+    # "… Attack against Back…" (target cut mid-word). The target is always
+    # short (a curated component name or a 1-4 word file label) and is the
+    # part that actually differentiates same-weakness headings, so it must
+    # survive intact; the weakness class tolerates abbreviation.
+    _target = _attack_target_label(threat, yaml_data)
+    _connector = " Attack against "
+    _weakness_budget = max(20, 78 - len(_connector) - len(_target))
+    heading = f"### 3.{walkthrough_index} {_short_title(_weakness_class(title), _weakness_budget)}{_connector}{_target}"
 
     lines: list[str] = []
     lines.append(heading)

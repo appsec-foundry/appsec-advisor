@@ -387,6 +387,20 @@ class TestEscapeDotTldIdentifiers:
         assert "```\nNode.js\n```" in out
         assert "`req.bo`" in out
 
+    def test_bare_url_domain_segment_not_wrapped(self):
+        """A ccTLD-shaped word inside a bare `https://` URL (not markdown-link
+        syntax) must not be backtick-wrapped mid-URL — that corrupts the link
+        (juice-shop 2026-07-02: `https://owasp-juice.shop` rendered with a
+        stray code span around `juice.shop`)."""
+        out = compose._escape_dot_tld_identifiers("Homepage: https://owasp-juice.shop and more text")
+        assert "https://owasp-juice.shop" in out
+        assert "`juice.shop`" not in out
+
+    def test_bare_url_with_git_suffix_not_wrapped(self):
+        out = compose._escape_dot_tld_identifiers("Repo: https://github.com/juice-shop/juice-shop.git done")
+        assert "https://github.com/juice-shop/juice-shop.git" in out
+        assert "`shop.git`" not in out
+
 
 # ---------------------------------------------------------------------------
 # _inject_security_architecture_links.linkify_line — all ref-count branches

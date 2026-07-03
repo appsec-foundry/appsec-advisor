@@ -282,6 +282,90 @@ class TestAiExposure:
                 assert re.match(r"^C-\d{2,}$", c)
         assert 20 <= len(data.get("summary", "")) <= 300
 
+    def test_role_confusion_title_categorised_as_prompt_injection(self):
+        """Regression (juice-shop 2026-07-02): a client-supplied message-array/
+        role-confusion finding is a Prompt Injection variant even when its
+        title never says "prompt injection" literally."""
+        d = {
+            "components": [{"id": "llm-chatbot", "name": "AI Chatbot"}],
+            "threats": [
+                {
+                    "id": "T-028",
+                    "title": "Client-Supplied Message Array Accepted Without Role — routes/chat.ts:191",
+                    "component": "llm-chatbot",
+                    "risk": "High",
+                    "evidence_summary": "routes/chat.ts:191 assigns req.body?.messages directly with no role check.",
+                    "impact_description": "Attacker-controlled role fields let the client override or fabricate "
+                    "system/tool context, defeating the server-authored system prompt's guardrails.",
+                },
+            ],
+        }
+        out = pf.gen_ai_exposure(d)
+        assert out is not None
+        data = json.loads(out)
+        by_id = {r["owasp_llm_id"]: r for r in data["ai_risks"]}
+        assert "LLM01" in by_id
+        assert "T-028" in {f["ref"] for f in by_id["LLM01"]["findings"]}
+
+    def test_llm_context_found_in_impact_description_not_just_title(self):
+        """Regression (juice-shop 2026-07-02): T-040 lived on the generic
+        "backend-api" component (not the LLM component) and its title said
+        "Chat Endpoint", not "chatbot"/"llm"/"prompt" — only the impact prose
+        ("...a metered external LLM API...") carried the LLM-context signal
+        the weak-rule gate needs. Scanning title alone dropped it entirely."""
+        d = {
+            "components": [
+                {"id": "backend-api", "name": "Backend REST API"},
+                {"id": "llm-chatbot", "name": "AI Chatbot"},
+            ],
+            "threats": [
+                {
+                    "id": "T-040",
+                    "title": "Unauthenticated Rate-Unlimited Chat Endpoint — server.ts:638",
+                    "component": "backend-api",
+                    "risk": "High",
+                    "evidence_summary": "server.ts:638 registers /rest/chat with no rateLimit() middleware.",
+                    "impact_description": "Unbounded, unauthenticated calls to a metered external LLM API can "
+                    "exhaust budget/rate limits and degrade or deny the chat feature for legitimate customers.",
+                },
+            ],
+        }
+        out = pf.gen_ai_exposure(d)
+        assert out is not None
+        data = json.loads(out)
+        refs = {f["ref"] for r in data["ai_risks"] for f in r["findings"]}
+        assert "T-040" in refs
+
+    def test_precisely_titled_threat_not_stolen_by_generic_prompt_injection_match(self):
+        """Regression caught in review (juice-shop 2026-07-03): widening the
+        keyword-match scan to evidence/impact text caused a threat titled
+        "LLM Tool-Calling Guardrail Bypass" (Excessive Agency) to fall under the
+        generic LLM01 Prompt Injection bucket instead, because its impact
+        sentence names "prompt injection" as the underlying attack technique.
+        Categorization must stay title-scoped; only the weak-rule context gate
+        reads the wider blob."""
+        d = {
+            "components": [{"id": "llm-chatbot", "name": "AI Chatbot"}],
+            "threats": [
+                {
+                    "id": "T-045",
+                    "title": "LLM Tool-Calling Guardrail Bypass — routes/chat.ts:184",
+                    "component": "llm-chatbot",
+                    "risk": "High",
+                    "evidence_summary": "chat.ts:181-185 calls security.generateCoupon(discount) with the "
+                    "model-supplied discount value with no server-side upper-bound check.",
+                    "impact_description": "A successful prompt injection can mint discount coupons up to 100% "
+                    "off, directly enabling unbounded free-product fraud through an unauthenticated chat interface.",
+                },
+            ],
+        }
+        out = pf.gen_ai_exposure(d)
+        data = json.loads(out)
+        by_id = {r["owasp_llm_id"]: r for r in data["ai_risks"]}
+        assert "LLM06" in by_id
+        assert "T-045" in {f["ref"] for f in by_id["LLM06"]["findings"]}
+        assert "LLM01" not in by_id
+
 
 class TestCriticalAttackTree:
     """Deterministic ms-critical-attack-tree.json generator
@@ -1888,142 +1972,33 @@ def _data_with_hyps(*hypotheses):
 
 
 class TestSection72ThreatHypothesesTable:
+    """"Threat Hypotheses Requiring Validation" is disabled in the report
+    (juice-shop 2026-07-03 user request): every row read Evidence/Validation
+    from the wrong field name (`evidence`/`validation_objective` instead of
+    the actual `positive_signals[]`), so it always rendered "_?_" placeholders
+    regardless of how much real evidence a hypothesis had — no value in this
+    form. `_render_threat_hypotheses_table` is still defined for whenever it's
+    redesigned; `gen_security_architecture` no longer calls it, so these tests
+    lock in that it stays absent from the rendered report. See
+    docs/internal/analysis/proposal-threat-hypotheses-promotion.md for what
+    re-enabling it actually requires (linked Findings, not a bare hypothesis
+    list) before removing these "stays absent" assertions."""
+
     def test_table_absent_when_no_hypotheses(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
         assert "Threat Hypotheses Requiring Validation" not in md
 
-    def test_table_present_when_hypotheses_exist(self):
+    def test_table_absent_even_when_hypotheses_exist(self):
         md = pf.gen_security_architecture(_data_with_hyps(_hyp()))
-        assert "#### Threat Hypotheses Requiring Validation" in md
+        assert "Threat Hypotheses Requiring Validation" not in md
+        assert "HYP-001" not in md
 
-    def test_table_lives_inside_section_72(self):
+    def test_controls_covered_bullet_list_has_no_dangling_link(self):
+        """The mechanically-derived '**Controls covered:**' list scans the H4
+        headings actually emitted — with the table disabled, it must never
+        link to the now-nonexistent hypotheses heading."""
         md = pf.gen_security_architecture(_data_with_hyps(_hyp()))
-        # Anchor: between the 7.2 heading and the 7.3 heading
-        m72 = md.index("### 7.2 Identity and Authentication Controls")
-        m73 = md.index("### 7.3 ")
-        block = md[m72:m73]
-        assert "#### Threat Hypotheses Requiring Validation" in block
-        assert "| ID | Hypothesis |" in block
-
-    def test_hypothesis_id_rendered(self):
-        md = pf.gen_security_architecture(_data_with_hyps(_hyp(id="HYP-007")))
-        assert "| HYP-007 |" in md
-
-    def test_promoted_hypothesis_excluded(self):
-        """Promoted hypotheses live in Section 8 as their T-NNN row —
-        they MUST NOT be re-listed in §7.2."""
-        md = pf.gen_security_architecture(
-            _data_with_hyps(
-                _hyp(id="HYP-001"),
-                _hyp(id="HYP-099", promoted_threat_id="T-014"),
-            )
-        )
-        assert "HYP-001" in md
-        assert "HYP-099" not in md
-
-    def test_evidence_renders_with_file_and_line(self):
-        md = pf.gen_security_architecture(
-            _data_with_hyps(
-                _hyp(
-                    evidence=[{"file": "src/server.ts", "line": 42, "signal": "x"}],
-                )
-            )
-        )
-        assert "`src/server.ts:42`" in md
-
-    def test_evidence_renders_file_only_when_line_missing(self):
-        md = pf.gen_security_architecture(
-            _data_with_hyps(
-                _hyp(
-                    evidence=[{"file": "src/server.ts", "signal": "x"}],
-                )
-            )
-        )
-        assert "`src/server.ts`" in md
-
-    def test_evidence_counts_additional_entries(self):
-        md = pf.gen_security_architecture(
-            _data_with_hyps(
-                _hyp(
-                    evidence=[
-                        {"file": "a.ts", "line": 1, "signal": "x"},
-                        {"file": "b.ts", "line": 2, "signal": "y"},
-                        {"file": "c.ts", "line": 3, "signal": "z"},
-                    ],
-                )
-            )
-        )
-        assert "`a.ts:1` +2" in md
-
-    def test_control_gap_renders_weak_or_missing_controls(self):
-        md = pf.gen_security_architecture(
-            _data_with_hyps(
-                _hyp(
-                    weak_or_missing_controls=["Parameterized Queries", "ORM Layer"],
-                )
-            )
-        )
-        assert "Parameterized Queries" in md
-        assert "ORM Layer" in md
-
-    def test_validation_column_uses_validation_objective(self):
-        md = pf.gen_security_architecture(
-            _data_with_hyps(
-                _hyp(
-                    validation_objective="Send UNION SELECT to /login email param.",
-                )
-            )
-        )
-        assert "Send UNION SELECT to /login email param." in md
-
-    def test_validation_column_fallback_when_objective_missing(self):
-        h = _hyp()
-        h.pop("validation_objective", None)
-        md = pf.gen_security_architecture(_data_with_hyps(h))
-        assert "_pending validation objective_" in md
-
-    def test_validation_text_truncated_when_overlong(self):
-        long = "x" * 300
-        md = pf.gen_security_architecture(
-            _data_with_hyps(
-                _hyp(
-                    validation_objective=long,
-                )
-            )
-        )
-        # Truncated form ends with ellipsis and is shorter than original
-        assert "…" in md
-        assert "x" * 300 not in md
-
-    def test_pipe_character_escaped_in_user_text(self):
-        """The renderer must escape pipes so table layout stays intact."""
-        md = pf.gen_security_architecture(
-            _data_with_hyps(
-                _hyp(
-                    title="Risky | column-breaker",
-                )
-            )
-        )
-        assert "Risky \\| column-breaker" in md
-
-    def test_hypothesis_table_not_emitted_inside_section_8(self):
-        """§7.2 hypothesis table must NEVER end up in Section 8 register.
-        gen_security_architecture only renders §7, so a presence check on
-        the `## 8.` heading is sufficient — Section 8 is a different
-        generator entirely. The bare phrase ``Threat Register`` legitimately
-        appears in §7 prose as part of cross-references like
-        ``[§8 Threat Register](#8-threat-register)``; only the actual
-        `## 8.` heading is forbidden."""
-        md = pf.gen_security_architecture(_data_with_hyps(_hyp()))
-        assert "## 8." not in md
-        assert "## 8. Threat Register" not in md
-
-    def test_max_20_hypotheses_listed(self):
-        """Defensive cap — 20 rows max so the table stays readable."""
-        many = [_hyp(id=f"HYP-{i:03d}") for i in range(1, 30)]
-        md = pf.gen_security_architecture(_data_with_hyps(*many))
-        assert "HYP-020" in md
-        assert "HYP-021" not in md
+        assert "#threat-hypotheses-requiring-validation" not in md
 
 
 class TestSecurityArchitectureV2:

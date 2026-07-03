@@ -5118,7 +5118,26 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             inv = _build_auth_mechanism_inventory(yaml_data)
             if inv:
                 lines.extend(inv)
-            lines.extend(_render_threat_hypotheses_table(yaml_data))
+            # "Threat Hypotheses Requiring Validation" table disabled (juice-shop
+            # 2026-07-03 user request): every row read Evidence/Validation from
+            # `h.get("evidence")` / `h.get("validation_objective")`, but the
+            # actual threat_hypotheses[] entries carry that content under
+            # `positive_signals[]` — a field-name mismatch that made every row
+            # render "_?_" / "_pending validation objective_" regardless of how
+            # much real evidence the hypothesis actually had.
+            #
+            # The fix is bigger than renaming the field, though — the user's
+            # bar is: unpromoted hypotheses must not appear in the report as a
+            # disconnected "maybe" list at all. Each one needs a real Finding
+            # derived from it and linked in before this table is report-ready
+            # again. See docs/internal/analysis/proposal-threat-hypotheses-
+            # promotion.md for the resume-work record (what "done" means, which
+            # existing promotion machinery in arch_coverage_to_threats.py to
+            # build on, open design questions). _render_threat_hypotheses_table
+            # is left defined, just uncalled, until that's done. The "Controls
+            # covered" bullet list below is mechanically derived from the H4 headings
+            # actually emitted, so removing this call also removes it from
+            # there automatically — no dangling link.
 
         if quick_depth and not control_names:
             continue
@@ -5351,7 +5370,24 @@ _LLM_TOP10_RULES = [
     (
         "LLM01",
         "Prompt Injection",
-        ["prompt injection", "prompt-injection", "jailbreak"],
+        [
+            "prompt injection",
+            "prompt-injection",
+            "jailbreak",
+            # Role-confusion is a prompt-injection VARIANT — a client-supplied
+            # "system"/"assistant" role message overrides the server's own
+            # system prompt without ever touching the literal phrase "prompt
+            # injection" (juice-shop 2026-07-02: "Client-Supplied Message
+            # Array Accepted Without Role" fell through every rule).
+            "without role",
+            "message array",
+            "role field",
+            "role spoofing",
+            "role confusion",
+            "role injection",
+            "fabricate system",
+            "override system",
+        ],
         "Untrusted user input reaches the LLM prompt/context without sufficient "
         "trust separation, letting an attacker override system instructions, "
         "redirect tool calls, or coerce unintended model behaviour.",
@@ -5513,20 +5549,37 @@ def gen_ai_exposure(yaml_data: dict):
     llm_component_ids = {c.get("id") for c in components if _is_llm_component(c)}
     llm_component_names = [c.get("name") for c in components if _is_llm_component(c) and c.get("name")]
 
-    def _llm_context(threat: dict, title_lc: str) -> bool:
+    def _llm_context(threat: dict, blob_lc: str) -> bool:
         if threat.get("component") in llm_component_ids:
             return True
-        return any(h in title_lc for h in ("llm", "chatbot", "prompt", "model api"))
+        return any(h in blob_lc for h in ("llm", "chatbot", "prompt", "model api"))
 
     # First-match-wins categorization of each threat into an LLM Top-10 bucket.
+    # Categorization itself stays TITLE-scoped: many threats' impact/evidence
+    # prose mentions "prompt injection" as the underlying ATTACK TECHNIQUE even
+    # when the finding is really about a more specific risk (T-045's title is
+    # "LLM Tool-Calling Guardrail Bypass" — Excessive Agency — but its impact
+    # sentence says "A successful prompt injection can mint discount coupons",
+    # which would wrongly steal it into the generic LLM01 bucket if the keyword
+    # scan read impact text too; regression caught in review, juice-shop
+    # 2026-07-03). Only the WEAK-rule `_llm_context` gate — which just vetoes
+    # an already-title-matched weak keyword, never decides categorization —
+    # reads the wider title+evidence+impact blob, so a title like
+    # "Unauthenticated Rate-Unlimited Chat Endpoint" (no "llm"/"chatbot") can
+    # still pass the gate via its impact prose ("...a metered external LLM
+    # API...") once its OWN title already matched a keyword (juice-shop
+    # 2026-07-02: T-040 lived on the generic "backend-api" component).
     buckets: dict[str, dict] = {}
     for th in threats:
         title = th.get("title", "") or ""
         title_lc = title.lower()
+        context_blob_lc = " ".join(
+            str(th.get(f, "") or "") for f in ("title", "evidence_summary", "impact_description")
+        ).lower()
         for llm_id, name, keywords, description, strong in _LLM_TOP10_RULES:
             if not any(kw in title_lc for kw in keywords):
                 continue
-            if not strong and not _llm_context(th, title_lc):
+            if not strong and not _llm_context(th, context_blob_lc):
                 continue
             b = buckets.setdefault(
                 llm_id,
