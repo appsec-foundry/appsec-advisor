@@ -1727,8 +1727,13 @@ class TestAssessmentSummaryDuration:
 
         text = (tmp_path / ".hook-events.log").read_text(encoding="utf-8")
         tokens = next(l for l in text.splitlines() if "ASSESSMENT_TOKENS" in l)
-        # both current-run stops summed (out 200+400=600); prior run's 9,999 excluded.
-        assert "output=600" in tokens, tokens
+        # SESSION_STOP lines are CUMULATIVE per-session snapshots, so the two
+        # cb7b5188 stops dedup to the latest/largest (out=400), NOT 200+400=600
+        # — summing re-emitted snapshots is the bug that reported $2636 for a
+        # ~$40 run (2026-07-02 juice-shop). The prior [aaaaaaaa] run (out=9,999)
+        # is still excluded by the SCAN_START boundary.
+        assert "output=400" in tokens, tokens
+        assert "9,999" not in tokens, tokens
 
 
 class TestAssessmentSummaryIdle:
