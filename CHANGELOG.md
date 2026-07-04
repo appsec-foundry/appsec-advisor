@@ -2,17 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
-
-### Changed
-
-- Full and rebuild scans now use the compact orchestrator runtime by default; it produces the same findings at lower cost. Opt out with `APPSEC_THIN_ORCHESTRATOR=0`.
-
-### Fixed
-
-- Headless runs (`run-headless.sh`) no longer report success when no report was produced. A run that ends after analysis but before the report is composed now composes it deterministically, or fails with a non-zero exit if it can't.
-
-## 0.4.0-beta (2026-06-28)
+## 0.4.0-beta (2026-07-05)
 
 First public release. Still a beta: good for guided use, but not ready to run unattended in CI yet.
 
