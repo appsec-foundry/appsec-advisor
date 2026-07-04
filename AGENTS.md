@@ -194,7 +194,7 @@ Resolved by `scripts/resolve_config.py:resolve_extended_models` + `MODEL_MATRIX`
 | `appsec-recon-scanner` | Haiku | Always; override `APPSEC_RECON_SCANNER_MODEL`. |
 | `appsec-config-scanner` | Haiku | Always; override `APPSEC_CONFIG_SCANNER_MODEL`. |
 | `appsec-stride-analyzer` | Sonnet (resolved; Opus at thorough) | Opus only at `thorough` (`opus` tier) or explicit `--reasoning-model opus` / `--stride-model opus`; Sonnet at `quick` / `standard` (`sonnet-economy`) / `opus-cheap` / `sonnet`. **Caveat:** the parallel dispatch must set each Agent call's `model` param or the analyzer silently runs on its frontmatter default (`sonnet`) — `aggregate_run_issues.py` flags a `stride_model_mismatch` run-issue when it happens. |
-| `appsec-threat-merger` | Opus | Opus at `opus` / `opus-cheap`; Sonnet at `sonnet` / `sonnet-economy`. |
+| `appsec-threat-merger` | Sonnet (Opus at `opus` / `opus-cheap`) | Opus at `opus` / `opus-cheap`; Sonnet at `sonnet` / `sonnet-economy` (the `quick` / `standard` default). |
 | `appsec-triage-validator` | Sonnet (Opus at thorough) | Opus at `thorough` or explicit `--reasoning-model opus` / `--triage-model opus`; deterministic floor in `triage_validate_ratings.py`; Sonnet at `quick` / `standard` (`sonnet-economy`) / `opus-cheap` / `sonnet`. |
 | `appsec-evidence-verifier` | Sonnet | Sampled re-read. |
 | `appsec-threat-renderer` | Sonnet | Fresh Stage-2 budget. |
