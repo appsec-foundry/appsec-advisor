@@ -85,16 +85,28 @@ MODEL_MATRIX = {
         "triage": "opus",
         "merger": "opus",
     },
-    # sonnet-economy: STRIDE/triage/merger bleiben wie bei sonnet — der
-    # Hauptwertbeitrag (Threat-Reasoning) wird NICHT auf Haiku geroutet.
-    # Der Haiku-Hebel greift bei den deterministisch-näheren Agenten via
-    # EXTENDED_MODEL_MATRIX (context-resolver, recon-scanner, qa-routine,
-    # config-scanner). Quick-Mode bekommt zusätzlich eine STRIDE-Tiefe-
-    # Reduktion via resolve_stride_profile(). (Alias: haiku-economy.)
+    # sonnet-economy: Threat-Reasoning (STRIDE/triage/merger) bleibt auf
+    # Sonnet-TIER — es wird NICHT auf Haiku geroutet (das Prinzip: der
+    # Hauptwertbeitrag darf nicht heruntergestuft werden). Der Haiku-Hebel
+    # greift bei den deterministisch-näheren Agenten via EXTENDED_MODEL_MATRIX
+    # (context-resolver, recon-scanner, qa-routine, config-scanner). Quick-Mode
+    # bekommt zusätzlich eine STRIDE-Tiefe-Reduktion via resolve_stride_profile().
+    # (Alias: haiku-economy.)
+    #
+    # COST PIN (2026-07-04): der konkrete Sonnet ist hier auf ``claude-sonnet-4-6``
+    # festgenagelt statt den bloßen Alias ``"sonnet"`` (→ jetzt Sonnet 5) zu nutzen.
+    # Grund: gleicher Preis/Token, aber der 4.6-Tokenizer zählt denselben Text in
+    # ~30% WENIGER Tokens als Sonnet 5 (+ kein adaptives Denken-by-default) → die
+    # Subagent-Hälfte eines Full-Scans fällt von ~$60 zurück auf ~$37-Niveau, ohne
+    # das Sonnet-Tier-Prinzip zu verletzen (4.6 IST Sonnet, nur die vorige Version).
+    # sonnet-economy ist der Default für quick/standard, greift also automatisch
+    # für alle Plugin-Nutzer. Opt-in auf Sonnet 5 (Qualität): ``--reasoning-model
+    # sonnet``. Exakter Pin pro Stufe: ``APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL=…``.
+    # Deprecation-Hinweis: wenn claude-sonnet-4-6 abgekündigt wird, hier bumpen.
     "sonnet-economy": {
-        "stride": "sonnet",
-        "triage": "sonnet",
-        "merger": "sonnet",
+        "stride": "claude-sonnet-4-6",
+        "triage": "claude-sonnet-4-6",
+        "merger": "claude-sonnet-4-6",
     },
 }
 
@@ -452,11 +464,16 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     (APPSEC_STRIDE_MODEL / APPSEC_TRIAGE_MODEL / APPSEC_MERGER_MODEL)
     take highest precedence for fine-grained overrides.
 
-    The ``sonnet-economy`` tier keeps STRIDE/triage/merger on Sonnet
-    (Threat-Reasoning is the tool's primary value contribution and
-    must not be downgraded). The Haiku savings come from the
-    deterministic-leaning agents (context-resolver, recon-scanner,
-    qa-routine fixes, config-scanner) — see resolve_extended_models.
+    The ``sonnet-economy`` tier keeps STRIDE/triage/merger on the Sonnet
+    TIER (Threat-Reasoning is the tool's primary value contribution and
+    must not be downgraded to Haiku). Since 2026-07-04 the concrete Sonnet
+    is cost-pinned to ``claude-sonnet-4-6`` (same tier, ~30% fewer tokens
+    than Sonnet 5 at equal per-token price — see the MODEL_MATRIX comment).
+    Opt into Sonnet 5 with ``--reasoning-model sonnet``; pin an exact model
+    per stage with ``APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL``. The Haiku savings
+    come from the deterministic-leaning agents (context-resolver,
+    recon-scanner, qa-routine fixes, config-scanner) — see
+    resolve_extended_models.
     """
     # Step 1: pick the base mode (normalising deprecated aliases).
     if ns.reasoning_model:
@@ -2529,7 +2546,7 @@ def _format_reasoning_summary(cfg: dict) -> str:
     if cfg.get("opus_disabled"):
         return f"{mode}; no-opus ceiling → all Opus selections downgraded to Sonnet"
     if mode == "sonnet-economy":
-        return "sonnet-economy; cheap phases Haiku; STRIDE/triage/merge Sonnet"
+        return "sonnet-economy; cheap phases Haiku; STRIDE/triage/merge Sonnet 4.6 (cost-pinned; --reasoning-model sonnet for Sonnet 5)"
 
     def short(model: str | None) -> str:
         raw = (model or "unknown").replace("claude-", "")

@@ -202,9 +202,11 @@ class TestResolveReasoningModel:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["reasoning_model"] == "sonnet-economy"
-        assert out["stride_model"] == "sonnet"
-        assert out["triage_model"] == "sonnet"
-        assert out["merger_model"] == "sonnet"
+        # Cost-pinned to the concrete Sonnet 4.6 (still Sonnet tier; ~30% fewer
+        # tokens than Sonnet 5). Opt into Sonnet 5 via --reasoning-model sonnet.
+        assert out["stride_model"] == "claude-sonnet-4-6"
+        assert out["triage_model"] == "claude-sonnet-4-6"
+        assert out["merger_model"] == "claude-sonnet-4-6"
 
     def test_default_thorough_still_opus(self):
         ns = rc.build_parser().parse_args([])
@@ -216,10 +218,11 @@ class TestResolveReasoningModel:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "quick")
         assert out["reasoning_model"] == "sonnet-economy"
-        # sonnet-economy keeps the Reasoning core on Sonnet
-        assert out["stride_model"] == "sonnet"
-        assert out["triage_model"] == "sonnet"
-        assert out["merger_model"] == "sonnet"
+        # sonnet-economy keeps the Reasoning core on the Sonnet tier,
+        # cost-pinned to the concrete Sonnet 4.6.
+        assert out["stride_model"] == "claude-sonnet-4-6"
+        assert out["triage_model"] == "claude-sonnet-4-6"
+        assert out["merger_model"] == "claude-sonnet-4-6"
 
     def test_explicit_opus(self):
         ns = rc.build_parser().parse_args(["--reasoning-model", "opus"])
@@ -972,10 +975,11 @@ class TestIntegrationScenarios:
         assert cfg["mode"] == "full"
         assert cfg["mode_label"] == "full (first run)"
         # standard default is sonnet-economy since 2026-06-23 (cost; Opus opt-in).
+        # Concrete Sonnet cost-pinned to 4.6 since 2026-07-04.
         assert cfg["reasoning_model"] == "sonnet-economy"
-        assert cfg["stride_model"] == "sonnet"
-        assert cfg["triage_model"] == "sonnet"
-        assert cfg["merger_model"] == "sonnet"
+        assert cfg["stride_model"] == "claude-sonnet-4-6"
+        assert cfg["triage_model"] == "claude-sonnet-4-6"
+        assert cfg["merger_model"] == "claude-sonnet-4-6"
         assert cfg["architect_review"] is False
         assert cfg["check_requirements"] is False
 
@@ -1040,7 +1044,8 @@ class TestOpusBan:
         cfg = rc.resolve(["--no-opus"], REPO_ROOT)
         assert cfg["opus_disabled"] is True
         assert cfg["reasoning_model"] == "sonnet-economy"
-        assert cfg["merger_model"] == "sonnet"
+        # already Sonnet (4.6, cost-pinned) → nothing for --no-opus to clamp.
+        assert cfg["merger_model"] == "claude-sonnet-4-6"
 
     def test_no_opus_clamps_architect_model(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

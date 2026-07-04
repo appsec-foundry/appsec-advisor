@@ -66,6 +66,13 @@ DEPTH & MODEL
                                Defaults: sonnet-economy at quick & standard,
                                          opus at thorough
                                          (Opus opt-in at standard)
+                               NOTE: sonnet-economy runs STRIDE/triage/merger on
+                               the cost-pinned Sonnet 4.6 (~30% fewer tokens than
+                               Sonnet 5 at equal price). Opt into Sonnet 5 (best
+                               quality) with --reasoning-model sonnet.
+                               This tunes only the SUBAGENTS; the orchestrator is
+                               your session model (set via /model or, headless,
+                               scripts/run-headless.sh --model).
   --stride-model <m>           Override just the STRIDE stage: sonnet | opus
   --triage-model <m>           Override just the triage (severity) stage:
                                sonnet | opus. Inline equivalent of
@@ -190,3 +197,4 @@ PIPELINE
 
 See /appsec-advisor:status for plugin version and last-run info.
 Full flag reference: docs/threat-modeler.md
+Model selection, cost & context window: docs/model-selection.md
