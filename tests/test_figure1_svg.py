@@ -246,6 +246,35 @@ def test_display_width_capped_but_viewbox_full():
     assert view_w >= disp_w  # full detail preserved in the viewBox (zoomable)
 
 
+def _actor_card_rects(svg):
+    # attacker cards fill #fff7f7; the legitimate Shop User card fill #f4faf6.
+    return sorted((r for r in _rects(svg) if r[4] in ("#fff7f7", "#f4faf6")), key=lambda r: r[0])
+
+
+def test_actor_cards_legible_on_narrow_model():
+    # Regression: a NARROW model (few components → small content width) with
+    # several distinct, non-collapsed actors must NOT squeeze the one-row actor
+    # band until the cards overlap into an unreadable strip. Each card keeps at
+    # least _MIN_ACTOR_CARD_W and adjacent cards never horizontally overlap.
+    svg = _build(app=1, attackers=("internet-anon", "internet-user", "internet-priv-user", "supply-chain"))
+    cards = _actor_card_rects(svg)
+    assert len(cards) == 5  # 4 attackers + the legitimate Shop User
+    for x, y, w, h, *_ in cards:
+        assert w >= F._MIN_ACTOR_CARD_W - 0.5, f"actor card too narrow to be legible: {w}"
+    for a, b in zip(cards, cards[1:]):
+        assert a[0] + a[2] <= b[0] + 0.5, "actor cards overlap horizontally"
+
+
+def test_actor_floor_is_noop_for_wide_models():
+    # The floor must only WIDEN a too-narrow band, never touch a model whose
+    # component grid is already wide enough for its (few) actors — else it would
+    # change the width of typical/large reports. Width tracks the grid, not the
+    # actor count, when the actors fit.
+    two = _viewbox_w(_build(app=6, attackers=("internet-anon", "internet-user")))
+    one = _viewbox_w(_build(app=6, attackers=("internet-anon",)))
+    assert two == one
+
+
 # ---- multi-actor ------------------------------------------------------------
 def test_multiple_attacker_cards():
     svg = _build(

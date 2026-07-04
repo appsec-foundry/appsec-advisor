@@ -74,6 +74,15 @@ _ACTOR_H = 94
 # space, so the figure renders as a compact OVERVIEW but stays vector-crisp and
 # is zoomable to full detail. Bigger models still grow in height, not width.
 _MAX_DISPLAY_W = 760
+# Actor cards render in a SINGLE row (multi-row wastes vertical space). On a
+# NARROW model — few components → small content width `cw` — that one row would
+# squeeze the cards until wrapped names overlap into an unreadable strip. Floor
+# the per-card width and widen the shared content width to honour it; the
+# component grids just centre in the wider band and the display-width cap still
+# renders a compact overview. This only bites the rare "few components + several
+# distinct (non-collapsed) actors" model; typical/large models are untouched.
+_ACTOR_CGAP = 14  # horizontal gap between actor cards
+_MIN_ACTOR_CARD_W = 132  # below this, wrapped actor names collide (measured)
 
 
 def _esc(s: str) -> str:
@@ -387,6 +396,11 @@ def build_figure1_svg(
     max_row = max([max(sizes) for _r, sizes in tier_grid.values() if sizes] + [1])
     cols = max(1, min(_MAXC, max_row))
     cw = cols * _BW + (cols - 1) * _GX
+    # Floor the content width so the one-row actor band stays legible when few
+    # components would otherwise make `cw` too small for the cards (see
+    # _MIN_ACTOR_CARD_W). n cards = attackers + the legitimate Shop User.
+    _n_actor_cards = len(actor_order) + 1
+    cw = max(cw, _n_actor_cards * _MIN_ACTOR_CARD_W + (_n_actor_cards - 1) * _ACTOR_CGAP)
 
     c = _Canvas()
     band_left = _PAD
@@ -412,10 +426,11 @@ def build_figure1_svg(
     # attack arrow on the right originates next to an attacker card (user request).
     cards = [("good", None, "Shop User")] + [("bad", s, actor_name(s)) for s in actor_order]
     ncards = len(cards)
-    cgap = 14
-    # ALWAYS one row — actor cards auto-narrow to fit (user: multi-row wastes
-    # space; narrower boxes, all on one line). The subtitle is dropped when a
-    # card gets too narrow (many actors) so the names stay readable.
+    cgap = _ACTOR_CGAP
+    # ALWAYS one row — cards sized off the (floored) content width so they never
+    # narrow below _MIN_ACTOR_CARD_W (user: multi-row wastes space; narrower
+    # boxes, all on one line). The subtitle is dropped when a card gets too
+    # narrow (many actors) so the names stay readable.
     # Adaptive band title: "Internet" only fits while every attacker is
     # internet-facing; once an internal/other actor is present, say so (user).
     _INTERNET = {"internet-anon", "internet-user", "internet-priv-user", "b2b-partner", "victim-required"}
