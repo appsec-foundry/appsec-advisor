@@ -235,7 +235,7 @@ def _resolve(argv: list[str]) -> dict[str, Any]:
 
 def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
     thin = (
-        os.environ.get("APPSEC_THIN_ORCHESTRATOR") == "1"
+        os.environ.get("APPSEC_THIN_ORCHESTRATOR") != "0"
         and cfg.get("mode") in {"full", "rebuild"}
         and not cfg.get("dry_run")
         and not cfg.get("resume")
@@ -251,15 +251,15 @@ def route(argv: list[str]) -> dict[str, Any]:
     cfg = _resolve(argv)
     runtime, instruction = _runtime_for(cfg)
     if runtime == "thin-full":
-        reason = "opt-in full/rebuild compact runtime selected"
+        reason = "default full/rebuild compact runtime selected (opt out with APPSEC_THIN_ORCHESTRATOR=0)"
     elif (
         cfg.get("mode") in {"full", "rebuild"}
         and not cfg.get("dry_run")
         and not cfg.get("resume")
         and not cfg.get("rerender")
-        and os.environ.get("APPSEC_THIN_ORCHESTRATOR") != "1"
+        and os.environ.get("APPSEC_THIN_ORCHESTRATOR") == "0"
     ):
-        reason = "compact runtime is rollout-gated; set APPSEC_THIN_ORCHESTRATOR=1 for parity benchmarks"
+        reason = "compact runtime opted out via APPSEC_THIN_ORCHESTRATOR=0; using legacy parity runtime"
     else:
         reason = "special mode retains the parity runtime"
     return {

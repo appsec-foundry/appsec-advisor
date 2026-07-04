@@ -41,8 +41,10 @@ def _completed(stdout: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(["test"], 0, stdout=stdout, stderr="")
 
 
-def test_route_uses_thin_runtime_only_for_full_or_rebuild(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+def test_route_defaults_to_thin_for_full_or_rebuild(monkeypatch, tmp_path):
+    # Default (no env): full/rebuild route to the compact runtime; incremental
+    # keeps the legacy runtime.
+    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
     monkeypatch.setattr(controller, "_resolve", lambda argv: _cfg(tmp_path, argv[0]))
     full = controller.route(["full"])
     rebuild = controller.route(["rebuild"])
@@ -555,10 +557,14 @@ def test_duration_estimate_forwards_resolved_profile(monkeypatch, tmp_path):
     assert captured[captured.index("--max-stride-components") + 1] == "7"
 
 
-def test_thin_runtime_is_opt_in_until_parity_runs_pass(monkeypatch, tmp_path):
+def test_thin_runtime_is_default_with_opt_out(monkeypatch, tmp_path):
+    # Post-parity flip: the compact runtime is the default for full/rebuild;
+    # APPSEC_THIN_ORCHESTRATOR=0 is the explicit opt-out back to legacy.
     cfg = _cfg(tmp_path)
-    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
+    assert controller.route([])["runtime"] == "thin-full"
+    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "0")
     assert controller.route([])["runtime"] == "legacy"
 
 

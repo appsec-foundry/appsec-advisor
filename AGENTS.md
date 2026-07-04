@@ -43,15 +43,16 @@ Template edits are never standalone. For every `{{ ... }}` value, trace the sour
 
 The orchestrator is `agents/appsec-threat-analyst.md`. Detailed phase instructions belong in `agents/phases/`; copying phase logic into the orchestrator bloats the cache-stable prefix and gives future edits two places to drift.
 
-Opted-in full/rebuild invocations (`APPSEC_THIN_ORCHESTRATOR=1`) route through
-`scripts/orchestration_controller.py` and
-`skills/create-threat-model/SKILL-full-runtime.md`. The controller owns
-deterministic preflight and emits schema-valid fixed actions; the skill owns
-Agent/Task calls and reads only the Stage-1 slice plus the post-boundary tail.
-Incremental, rerender, resume, dry-run, deadline, and live-phase paths retain
-the legacy runtime. The compact path remains rollout-gated until the
-quick/standard/thorough parity and context matrix passes. Prompt byte ceilings
-live in `data/context-budgets.yaml`; runtime occupancy is measured with
+Full/rebuild invocations route through `scripts/orchestration_controller.py`
+and `skills/create-threat-model/SKILL-full-runtime.md` by default; opt out with
+`APPSEC_THIN_ORCHESTRATOR=0` to fall back to the legacy runtime. The controller
+owns deterministic preflight and emits schema-valid fixed actions; the skill
+owns Agent/Task calls and reads only the Stage-1 slice plus the post-boundary
+tail. Incremental, rerender, resume, dry-run, deadline, and live-phase paths
+retain the legacy runtime. The compact path became the default after the
+juice-shop standard parity A/B held (2026-07-04); `APPSEC_THIN_ORCHESTRATOR=0`
+remains the permanent escape hatch. Prompt byte ceilings live in
+`data/context-budgets.yaml`; runtime occupancy is measured with
 `scripts/context_window_report.py`. Action ownership, security, and rollout
 rules are in `docs/internal/contracts/orchestration-actions.md`.
 

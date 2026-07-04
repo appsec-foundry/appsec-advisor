@@ -575,11 +575,11 @@ The spawn counter only catches previous `appsec-threat-analyst` invocations. Ord
 
 **What the signal can and cannot do.** The orchestrator cannot selectively
 evict earlier turns from its interactive session; only `/clear` starts a fresh
-session. The skill can still reduce the context it adds. During the parity
-rollout, opted-in full/rebuild runs (`APPSEC_THIN_ORCHESTRATOR=1`) use
-`SKILL-full-runtime.md` plus deterministic `orchestration_controller.py`,
-avoiding the large preflight prefix. This detector remains useful for
-conversation context that predates the skill.
+session. The skill can still reduce the context it adds. Full/rebuild runs use
+`SKILL-full-runtime.md` plus deterministic `orchestration_controller.py` by
+default (opt out with `APPSEC_THIN_ORCHESTRATOR=0`), avoiding the large
+preflight prefix. This detector remains useful for conversation context that
+predates the skill.
 `--rebuild` wipes disk artifacts, not conversation history. A larger-window
 model may delay compaction when the session cannot be cleared, but it does not
 reduce cache throughput.

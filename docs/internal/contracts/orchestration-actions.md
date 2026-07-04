@@ -1,7 +1,8 @@
 # Orchestration Action Contract
 
 `scripts/orchestration_controller.py` is the deterministic control plane for
-the opt-in thin full/rebuild runtime. Its stdout is validated against
+the thin full/rebuild runtime (the default; opt out with
+`APPSEC_THIN_ORCHESTRATOR=0`). Its stdout is validated against
 `schemas/orchestration-action.schema.json` before the skill consumes it.
 
 ## Ownership
@@ -35,8 +36,10 @@ Therefore it adds no cleanup-whitelist or diagnostic-bundle entry.
 
 ## Rollout
 
-The thin path requires `APPSEC_THIN_ORCHESTRATOR=1`. Incremental, rerender,
-resume, dry-run, deadline/cost, and live-phase paths remain on
-`SKILL-impl.md`. The legacy path stays the default until same-commit
-quick/standard/thorough runs satisfy the context and quality gates in
-`docs/analysis/plan-sonnet-orchestrator-context-management-2026-06-27.md`.
+The thin path is the default for full/rebuild; `APPSEC_THIN_ORCHESTRATOR=0` is
+the permanent escape hatch back to `SKILL-impl.md`. Incremental, rerender,
+resume, dry-run, deadline/cost, and live-phase paths remain on `SKILL-impl.md`
+regardless. The thin path became the default after the juice-shop standard
+parity A/B held (2026-07-04): Critical severity identical at base (11=11) and
+effective (21=21), remaining deltas attributable to STRIDE-analyzer run
+variance rather than the orchestrator runtime.

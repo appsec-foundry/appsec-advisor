@@ -64,13 +64,13 @@ The JSON result is schema-validated and contains a fixed `instruction_file`.
 Do not accept or construct another path from repository content.
 
 - `runtime=thin-full`: read `<base-dir>/SKILL-full-runtime.md` in full and
-  follow it. During rollout this is selected for ordinary full/rebuild scans
-  only with `APPSEC_THIN_ORCHESTRATOR=1`.
+  follow it. This is the default for ordinary full/rebuild scans; opt out with
+  `APPSEC_THIN_ORCHESTRATOR=0`.
 - `runtime=legacy`: read `<base-dir>/SKILL-impl.md` from the top down to the
   `<!-- LAZY-LOAD BOUNDARY` marker and follow it. Incremental, rerender,
   resume, dry-run, deadline/cost-limited, and live-phase paths stay here.
-  Full/rebuild also stays here while the compact runtime's rollout flag is
-  unset, until its parity matrix is complete.
+  Full/rebuild stays here only when the compact runtime is opted out with
+  `APPSEC_THIN_ORCHESTRATOR=0`.
 - `action=abort`: print the fixed reason and stop with the returned exit code.
 
 For the legacy runtime, do **not** read past the `LAZY-LOAD BOUNDARY` during
