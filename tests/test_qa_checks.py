@@ -2008,6 +2008,31 @@ class TestRepairPlanStatusClassification:
         assert status == "fail"
         assert actionable is True
 
+    def test_blocking_without_fragment_wins_over_cosmetic(self):
+        """2026-07 regression: a blocking action with NO writable fragment
+        (e.g. a computed Top Threats table-schema drift) must route to
+        manual_review even when a cosmetic action carries a writable fragment.
+        Previously it was silently demoted to cosmetic_advisory (exit 4, treated
+        like the clean fast path), skipping a real contract defect."""
+        issues = ["Top Threats table does not match contract column schema (expected one of: ['...'])"]
+        actions = [
+            {
+                "raw_issue": issues[0],
+                "type": "table_schema_drift",
+                "severity": "blocking",
+                "fragments_to_rewrite": [],
+            },
+            {
+                "raw_issue": "walkthrough too short",
+                "type": "walkthrough_too_short",
+                "severity": "cosmetic",
+                "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+            },
+        ]
+        status, actionable = qa._classify_plan_status(issues, actions)
+        assert status == "manual_review"
+        assert actionable is False
+
     def test_clean_md_end_to_end_returns_pass(self, tmp_path):
         """Smoke test: an MD with no contract violations returns status=pass
         through the full `build_repair_plan` pipeline."""
@@ -2021,6 +2046,53 @@ class TestRepairPlanStatusClassification:
         # and `actionable` is consistent with the action set.
         assert plan["status"] in {"pass", "fail", "manual_review"}
         assert plan["actionable"] == any(a.get("fragments_to_rewrite") for a in plan["actions"])
+
+
+class TestTableSchemaDriftClassification:
+    """Pin table-schema-drift repair classification. 2026-07 bug: the checker
+    emitted 'Top Threats' / 'Top Mitigations' in an `(expected one of: [...])`
+    form, but the label→section map hard-coded the retired 'Top Findings' /
+    'Prioritized Mitigations' labels and the parser only matched the legacy
+    `(expected: '<one>')` form — so every drift fell through to an
+    unclassified, no-fragment action that the plan-status bug then demoted."""
+
+    def test_label_map_derives_from_checks_and_uses_current_labels(self):
+        assert qa._TABLE_LABEL_TO_SECTION == {label: sid for sid, label, _ in qa._TABLE_SCHEMA_CHECKS}
+        assert set(qa._TABLE_LABEL_TO_SECTION) == {
+            "Top Threats",
+            "Operational Strengths",
+            "Top Mitigations",
+        }
+        assert "Top Findings" not in qa._TABLE_LABEL_TO_SECTION
+        assert "Prioritized Mitigations" not in qa._TABLE_LABEL_TO_SECTION
+        # retired orphan section id removed from the fragment map
+        assert "top_findings" not in qa.CONTRACT_SECTION_FRAGMENTS
+
+    def test_top_threats_header_drift_classifies_not_unclassified(self, tmp_path):
+        """End-to-end through build_repair_plan: a wrong Top Threats column
+        schema produces a `table_schema_drift` action (section_id=top_threats,
+        computed table → empty fragment target), NOT `unclassified`."""
+        md = _write_minimal_model(
+            tmp_path,
+            "## Management Summary\n\n"
+            "### Security Posture & Top Threats\n\n"
+            "| Wrong | Columns | Here |\n|---|---|---|\n| a | b | c |\n\n"
+            "## 8. Findings Register\n\n_no threats_\n",
+        )
+        (tmp_path / "threat-model.yaml").write_text(
+            "meta:\n  schema_version: 1\nthreats: []\nmitigations: []\n", encoding="utf-8"
+        )
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        drift = [a for a in plan["actions"] if a.get("type") == "table_schema_drift"]
+        assert drift, "Top Threats header drift did not classify as table_schema_drift"
+        assert drift[0]["label"] == "Top Threats"
+        assert drift[0]["section_id"] == "top_threats"
+        assert drift[0]["fragments_to_rewrite"] == []
+        assert not [
+            a
+            for a in plan["actions"]
+            if a.get("raw_issue", "").startswith("Top Threats") and a.get("type") == "unclassified"
+        ]
 
 
 # ---------------------------------------------------------------------------

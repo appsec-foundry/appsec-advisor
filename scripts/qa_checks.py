@@ -1645,62 +1645,8 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
                 if compiled.match(title):
                     report.issues.append(f"forbidden MS heading matches /{pat}/: {title!r}")
 
-    # 3. Required table column schemas.
-    # Each entry may carry one or MORE accepted header signatures (any-match
-    # is OK). The Operational Strengths and Top Mitigations tables both
-    # switched layouts in M3.10; the legacy form is intentionally NOT in
-    # the accept-list so reports rendered by old code are flagged.
-    table_checks = [
-        # 2026-05 — Top Threats merged Top Findings into one section. One row per attack class.
-        (
-            "top_threats",
-            "Top Threats",
-            [
-                "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |",
-            ],
-        ),
-        (
-            "operational_strengths",
-            "Operational Strengths",
-            [
-                # M3.10 — categorical-cluster layout
-                "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
-                # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
-                "| Strength | What's in Place | Effectiveness |",
-                # Post-2026-05 empty-state — every cluster demoted to Weak, no
-                # table rendered, only an italic explanatory banner. Accept the
-                # banner's stable opener as evidence the section was authored.
-                "No defensive cluster currently rates above Weak",
-            ],
-        ),
-        (
-            "mitigations",
-            "Top Mitigations",
-            [
-                # 2026-06-03 — Priority column dropped: the rollout priority now
-                # rides on the linked mitigation as a leading prefix (2026-06-04
-                # Variant B: a monochrome circled digit, `❶`…`❹`), so the
-                # dedicated column is redundant.
-                "| # | Component | Mitigation | Addresses | Effort |",
-                # Post-2026-05-29 — numbered table with a dedicated Component
-                # column (label printed once per group, blank on continuation
-                # rows). Replaces the in-table divider-row form, which rendered
-                # the component label displaced in the `#`/ID column.
-                "| # | Priority | Component | Mitigation | Addresses | Effort |",
-                # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
-                # added so each data row carries an at-a-glance position; divider
-                # rows continue to carry the component label in the first cell.
-                "| # | Priority | Mitigation | Addresses | Effort |",
-                # Post-2026-05 iteration 1 — single central table, sub-grouped by
-                # component via divider rows; Component column dropped.
-                "| Priority | Mitigation | Addresses | Effort |",
-                # M3.10 legacy — kept as accepted form so legacy reports are not
-                # falsely flagged.
-                "| Priority | Mitigation | Component | Addresses | Effort |",
-            ],
-        ),
-    ]
-    for _sid, label, accepted_headers in table_checks:
+    # 3. Required table column schemas — see module-level _TABLE_SCHEMA_CHECKS.
+    for _sid, label, accepted_headers in _TABLE_SCHEMA_CHECKS:
         if label not in text:
             continue
         # Also accept the fixed-layout HTML form: qa autofix rewrites some tables
@@ -1758,7 +1704,6 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
     "verdict": [".fragments/ms-verdict.json"],
     "architectural_anti_patterns": [".fragments/ms-anti-patterns.json"],
     "ai_exposure_ms": [".fragments/ms-ai-exposure.json"],  # optional — only when LLM/AI surface
-    "top_findings": [],  # computed
     "mitigations": [],  # computed
     "operational_strengths": [".fragments/operational-strengths-overrides.json"],
     "system_overview": [".fragments/system-overview.md"],
@@ -1778,14 +1723,74 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
 }
 
 
-# Label → contract section id mapping for table-schema-drift issues
-# (Top Findings / Operational Strengths / Prioritized Mitigations).
-# Used to point the orchestrator at the correct fragment when a column schema does not match.
-_TABLE_LABEL_TO_SECTION: dict[str, str] = {
-    "Top Findings": "top_findings",
-    "Operational Strengths": "operational_strengths",
-    "Prioritized Mitigations": "mitigations",
-}
+# Required table column schemas, checked by check_contract(). Each entry is
+# (section_id, label, [accepted header signatures]); any-match is OK. The
+# Operational Strengths and Top Mitigations tables switched layouts in M3.10;
+# the legacy form is intentionally NOT in the accept-list so reports rendered by
+# old code are flagged. Single source for BOTH the column-schema check and the
+# label → section-id repair mapping below, so they can never drift apart.
+_TABLE_SCHEMA_CHECKS: list[tuple[str, str, list[str]]] = [
+    # 2026-05 — Top Threats merged Top Findings into one section. One row per attack class.
+    (
+        "top_threats",
+        "Top Threats",
+        [
+            "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |",
+        ],
+    ),
+    (
+        "operational_strengths",
+        "Operational Strengths",
+        [
+            # M3.10 — categorical-cluster layout
+            "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
+            # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
+            "| Strength | What's in Place | Effectiveness |",
+            # Post-2026-05 empty-state — every cluster demoted to Weak, no
+            # table rendered, only an italic explanatory banner. Accept the
+            # banner's stable opener as evidence the section was authored.
+            "No defensive cluster currently rates above Weak",
+        ],
+    ),
+    (
+        "mitigations",
+        "Top Mitigations",
+        [
+            # 2026-06-03 — Priority column dropped: the rollout priority now
+            # rides on the linked mitigation as a leading prefix (2026-06-04
+            # Variant B: a monochrome circled digit, `❶`…`❹`), so the
+            # dedicated column is redundant.
+            "| # | Component | Mitigation | Addresses | Effort |",
+            # Post-2026-05-29 — numbered table with a dedicated Component
+            # column (label printed once per group, blank on continuation
+            # rows). Replaces the in-table divider-row form, which rendered
+            # the component label displaced in the `#`/ID column.
+            "| # | Priority | Component | Mitigation | Addresses | Effort |",
+            # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
+            # added so each data row carries an at-a-glance position; divider
+            # rows continue to carry the component label in the first cell.
+            "| # | Priority | Mitigation | Addresses | Effort |",
+            # Post-2026-05 iteration 1 — single central table, sub-grouped by
+            # component via divider rows; Component column dropped.
+            "| Priority | Mitigation | Addresses | Effort |",
+            # M3.10 legacy — kept as accepted form so legacy reports are not
+            # falsely flagged.
+            "| Priority | Mitigation | Component | Addresses | Effort |",
+        ],
+    ),
+]
+
+
+# Label → contract section id for table-schema-drift repair routing, derived
+# from _TABLE_SCHEMA_CHECKS so it can NEVER drift from the checker's own labels.
+# The 2026-07 bug: this map hard-coded the retired 'Top Findings' /
+# 'Prioritized Mitigations' labels, which no longer matched the emitted
+# 'Top Threats' / 'Top Mitigations' labels, so every table-schema drift fell
+# through to an unclassified, no-fragment repair action. `top_threats` and
+# `mitigations` are computed tables (no fragment → `.get(sid, [])` yields []),
+# so their drift routes to manual_review; operational_strengths carries a
+# rewritable override fragment.
+_TABLE_LABEL_TO_SECTION: dict[str, str] = {label: sid for sid, label, _ in _TABLE_SCHEMA_CHECKS}
 
 
 def _heading_to_section_id(heading: str, contract: dict) -> str | None:
@@ -2468,10 +2473,15 @@ def build_repair_plan(
             )
             actions.append(action)
             continue
-        # <label> table does not match contract column schema (expected: '<header>')
+        # <label> table does not match contract column schema
+        #   (expected: '<header>')   — legacy single-signature form
+        #   (expected one of: [...]) — current multi-signature form (any-match)
+        # check_contract emits the multi form; the parser must capture the
+        # label for BOTH or the drift falls through to an unclassified action
+        # (2026-07 QA bug: parser only matched the single form).
         m = re.match(
             r"(.+?) table does not match contract column schema "
-            r"\(expected: ['\"](.+?)['\"]\)$",
+            r"\(expected(?: one of)?: (.+)\)$",
             raw,
         )
         if m:
@@ -2629,13 +2639,22 @@ def _classify_plan_status(
     run's all-``posture_renderer_bug`` repair plan would have burnt 3 ×
     ~10 min loop iterations on a problem only a code change can fix.
     """
-    blocking = any(a.get("fragments_to_rewrite") and a.get("severity") != "cosmetic" for a in actions)
+    # A blocking action is ANY non-cosmetic action, whether or not it has a
+    # writable fragment. `actionable` stays gated on a fragment (the re-render
+    # loop can only fix a fragment-backed defect); a blocking action with no
+    # fragment is real but needs manual review, not re-rendering. Blocking must
+    # always win over co-occurring cosmetic advisories — the 2026-07 QA bug was
+    # that a genuine contract defect with no fragment target (e.g. a computed
+    # Top Threats table-schema drift) was silently demoted to
+    # `cosmetic_advisory` (exit 4, treated like pass) whenever any cosmetic
+    # action happened to carry a writable fragment.
+    blocking = any(a.get("severity") != "cosmetic" for a in actions)
+    actionable = any(a.get("fragments_to_rewrite") and a.get("severity") != "cosmetic" for a in actions)
     cosmetic = any(a.get("fragments_to_rewrite") and a.get("severity") == "cosmetic" for a in actions)
-    actionable = blocking
     if not issues:
         return "pass", actionable
     if blocking:
-        return "fail", actionable
+        return ("fail" if actionable else "manual_review"), actionable
     if cosmetic:
         return "cosmetic_advisory", actionable
     return "manual_review", actionable

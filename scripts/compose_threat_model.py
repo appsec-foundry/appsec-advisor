@@ -135,7 +135,7 @@ class FragmentError(Exception):
 
 # Single source of truth: section id → fragment path that drives it. Mirrors
 # CONTRACT_SECTION_FRAGMENTS in scripts/qa_checks.py (kept in sync by
-# tests/test_qa_fragment_map.py). Used by the pre-render repair-plan writer
+# scripts/check_fragment_registry.py). Used by the pre-render repair-plan writer
 # to point the orchestrator at the exact file to edit when compose aborts
 # with a FragmentError — eliminates the fix-loop where the agent re-writes
 # the wrong fragment (e.g. architecture-diagrams.md instead of the offending
