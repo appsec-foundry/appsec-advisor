@@ -251,6 +251,68 @@ class TestRenderIdentifiedActorsExtra:
 
 
 # ---------------------------------------------------------------------------
+# _render_identified_actors — reach-equivalence consolidation (fold map)
+# ---------------------------------------------------------------------------
+
+
+def _resolved(tmp_path, ids):
+    """Write .actors-resolved.json with the given plugin actors all active."""
+    return _json.dumps(
+        {"resolved_actors": [{"id": i, "label": lbl, "_provenance": {"active": True, "layer": "plugin"}} for i, lbl in ids]}
+    )
+
+
+class TestIdentifiedActorsConsolidation:
+    def test_fold_map_open_self_registration_and_always_insider(self):
+        # low-priv folds into anon only when open_user_registration; insider-ops
+        # folds into insider-dev unconditionally (always rule).
+        active = {"ACT-D-01", "ACT-D-02", "ACT-D-04", "ACT-D-05"}
+        folded, reason = compose._actor_fold_map(active, {"open_user_registration": True})
+        assert folded["ACT-D-02"] == "ACT-D-01"
+        assert folded["ACT-D-05"] == "ACT-D-04"
+        assert "ACT-D-01" not in folded and "ACT-D-04" not in folded
+        assert reason["ACT-D-02"] == "open-self-registration"
+        assert reason["ACT-D-05"] == "no-distinct-production-environment"
+
+    def test_fold_map_no_open_reg_keeps_lowpriv_but_still_folds_insider(self):
+        active = {"ACT-D-01", "ACT-D-02", "ACT-D-04", "ACT-D-05"}
+        folded, _ = compose._actor_fold_map(active, {})
+        assert "ACT-D-02" not in folded  # open-reg gate not met
+        assert folded["ACT-D-05"] == "ACT-D-04"  # always rule fires regardless
+
+    def test_fold_skipped_when_primary_inactive(self):
+        # ACT-D-01 disabled → not active → its class members are NOT folded away.
+        folded, _ = compose._actor_fold_map({"ACT-D-02"}, {"open_user_registration": True})
+        assert folded == {}
+
+    def test_table_folds_lowpriv_rolls_up_counts_and_lists_consolidated(self, tmp_path):
+        ctx = _mk_ctx(
+            tmp_path,
+            yaml_data={
+                "meta": {"open_user_registration": True},
+                "threats": [
+                    {"component": "API", "actor_ids": ["ACT-D-01"]},
+                    {"component": "API", "actor_ids": ["ACT-D-01"]},
+                    {"component": "SPA", "actor_ids": ["ACT-D-02"]},
+                    {"component": "SPA", "actor_ids": ["ACT-D-02"]},
+                    {"component": "SPA", "actor_ids": ["ACT-D-02"]},
+                ],
+            },
+        )
+        (ctx.output_dir / ".actors-resolved.json").write_text(
+            _resolved(tmp_path, [("ACT-D-01", "anonymous-internet-attacker"), ("ACT-D-02", "authenticated-low-priv-user")]),
+            encoding="utf-8",
+        )
+        out = compose._render_identified_actors(ctx, None, {})
+        # D-02's 3 findings roll into D-01's 2 → primary shows 5; no D-02 active row.
+        assert "| `ACT-D-01` | anonymous-internet-attacker | plugin | active | 5 |" in out
+        assert "| `ACT-D-02` | authenticated-low-priv-user | plugin | active |" not in out
+        # Folded actor is surfaced, never dropped silently (actors.md §0).
+        assert "#### Consolidated actors" in out
+        assert "| `ACT-D-02` | authenticated-low-priv-user | `ACT-D-01` | open-self-registration |" in out
+
+
+# ---------------------------------------------------------------------------
 # _render_operational_strengths — legacy per-control fallback path
 # ---------------------------------------------------------------------------
 

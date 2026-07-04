@@ -410,7 +410,7 @@ def test_annotate_id_refs_adds_dot_and_circle(tmp_path):
     assert changed == 1
     out = p.read_text()
     assert "🔴 [F-001](#f-001)" in out
-    assert "❶ [M-001](#m-001)" in out
+    assert "● [M-001](#m-001)" in out  # p1 → ● (fill-ramp)
 
 
 def test_annotate_id_refs_maps_all_priorities_and_repairs_stale_digit(tmp_path):
@@ -428,7 +428,7 @@ def test_annotate_id_refs_maps_all_priorities_and_repairs_stale_digit(tmp_path):
         "[M-001](#m-001), ❹ [M-002](#m-002), ❸&nbsp;[M-003](#m-003), [M-004](#m-004)\n",
     )
     assert qa._annotate_id_refs(p) == 1
-    assert p.read_text() == ("❶ [M-001](#m-001), ❷ [M-002](#m-002), ❸&nbsp;[M-003](#m-003), ❹ [M-004](#m-004)\n")
+    assert p.read_text() == ("● [M-001](#m-001), ◕ [M-002](#m-002), ◑&nbsp;[M-003](#m-003), ○ [M-004](#m-004)\n")
     assert qa._annotate_id_refs(p) == 0
 
 
@@ -450,7 +450,7 @@ def test_annotate_id_refs_priority_from_threat_sev(tmp_path):
     )
     p = _md(tmp_path, "[M-003](#m-003)\n")
     qa._annotate_id_refs(p)
-    assert "❸ [M-003](#m-003)" in p.read_text()  # medium → p3 → ❸
+    assert "◑ [M-003](#m-003)" in p.read_text()  # medium → p3 → ◑
 
 
 # ---------------------------------------------------------------------------

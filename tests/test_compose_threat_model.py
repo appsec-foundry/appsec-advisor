@@ -1521,12 +1521,12 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
 
     Layout (2026-06-03 — the dedicated `Priority` column was dropped; the
     rollout priority now rides on the linked mitigation as a leading prefix.
-    2026-06-04 — Variant B: a single monochrome circled digit whose number is
-    the priority, `❶` … `❹`):
+    2026-07-04 — fill-ramp restored: a single monochrome circle whose FILL is
+    the priority as a dark→light ramp, `●` … `○`):
         | # | Component               | Mitigation                  | Addresses | Effort |
         |---|---|---|---|---|
-        | 1 | **Express Backend (c-…)**  | ❶ [M-001](#m-001) — …      | ...       | ...    |
-        | 2 |                            | ❶ [M-002](#m-002) — …      | ...       | ...    |
+        | 1 | **Express Backend (c-…)**  | ● [M-001](#m-001) — …      | ...       | ...    |
+        | 2 |                            | ● [M-002](#m-002) — …      | ...       | ...    |
     """
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
@@ -1554,13 +1554,13 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
     # No `↳` group glyph anywhere in the section any more.
     assert "↳" not in ms_slice, "component grouping no longer uses the ↳ glyph"
 
-    # Priority now rides on the linked mitigation as a single colourless circled
-    # digit whose number is the priority (Variant B, 2026-06-04 — ❶❷❸❹) rather
-    # than a dedicated bold column cell. Assert the circled-digit prefix renders.
-    assert _re.search(r"[❶❷❸❹]\s+\[M-", ms_slice), "expected a Variant-B `❶ [M-NNN]` circled-digit priority prefix"
-    assert "❶ [M-001](#m-001)" in ms_slice
-    assert "❶ [M-002](#m-002)" in ms_slice
-    assert "❷ [M-003](#m-003)" in ms_slice
+    # Priority now rides on the linked mitigation as a single monochrome circle
+    # whose FILL is the priority as a dark→light ramp (2026-07-04 user request —
+    # ●◕◑○) rather than a dedicated bold column cell. Assert the ramp prefix renders.
+    assert _re.search(r"[●◕◑○]\s+\[M-", ms_slice), "expected a `● [M-NNN]` fill-ramp priority prefix"
+    assert "● [M-001](#m-001)" in ms_slice
+    assert "● [M-002](#m-002)" in ms_slice
+    assert "◕ [M-003](#m-003)" in ms_slice
 
     # The Component column carries a label on the first row of each group,
     # linked to the component anchor exactly like the Architecture Assessment
@@ -3469,7 +3469,7 @@ def test_linkify_no_dot_for_mitigation_or_component(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("priority", "digit"),
-    [("P1", "❶"), ("P2", "❷"), ("P3", "❸"), ("P4", "❹")],
+    [("P1", "●"), ("P2", "◕"), ("P3", "◑"), ("P4", "○")],
 )
 def test_linkify_mitigation_uses_monochrome_priority_digit(tmp_path: Path, priority: str, digit: str) -> None:
     ctx = _dot_ctx(
@@ -3599,7 +3599,7 @@ def test_global_mitigation_circle_pass_dots_bare_link_and_is_idempotent(tmp_path
     )
     md = "Blocking: [M-003](#m-003) breaks the chain."
     once = compose._prepend_mitigation_prio_circles(ctx, md)
-    assert once == "Blocking: ❶ [M-003](#m-003) breaks the chain."
+    assert once == "Blocking: ● [M-003](#m-003) breaks the chain."
     assert compose._prepend_mitigation_prio_circles(ctx, once) == once
 
 
@@ -3615,7 +3615,7 @@ def test_global_mitigation_circle_pass_maps_all_priorities_and_repairs_stale_dig
         ],
     )
     md = "[M-001](#m-001), ❹ [M-002](#m-002), ❸&nbsp;[M-003](#m-003), [M-004](#m-004)"
-    expected = "❶ [M-001](#m-001), ❷ [M-002](#m-002), ❸&nbsp;[M-003](#m-003), ❹ [M-004](#m-004)"
+    expected = "● [M-001](#m-001), ◕ [M-002](#m-002), ◑&nbsp;[M-003](#m-003), ○ [M-004](#m-004)"
     assert compose._prepend_mitigation_prio_circles(ctx, md) == expected
 
 

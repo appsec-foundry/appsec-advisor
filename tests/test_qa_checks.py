@@ -3634,6 +3634,8 @@ def test_apply_priority_circle_styling_reports_only_real_changes(tmp_path: Path)
 
 
 def test_autofix_priority_circle_styling_is_idempotent(tmp_path: Path):
+    # A legacy ❶ digit is migrated to the fill-ramp glyph (● for P1) and stays
+    # colourless — the ramp encodes priority by fill, not by a colour span.
     md = _write_minimal_model(tmp_path, "❶ [M-001](#m-001)\n")
     (tmp_path / "threat-model.yaml").write_text(
         "threats: []\nmitigations:\n  - id: M-001\n    priority: p1\n",
@@ -3644,5 +3646,6 @@ def test_autofix_priority_circle_styling_is_idempotent(tmp_path: Path):
     qa.cmd_autofix(md, tmp_path)
     second = md.read_text(encoding="utf-8")
     assert first == second
-    assert second.count('<span style="color:#111111">❶</span>') == 1
-    assert second.count("❶") == 1
+    assert second.count("●") == 1
+    assert "❶" not in second  # legacy digit migrated away
+    assert 'style="color:' not in second  # no fragile colour span

@@ -3791,12 +3791,17 @@ def check_section7_finding_reference_semantic(md_path: Path) -> Report:
 
 
 _SEV_DOT_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
-_PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
+# Fill-ramp priority glyphs (● P1 … ○ P4), matching compose_threat_model.py.
+# 2026-07-04: reverted from the ❶❷❸❹ digit form; the ramp encodes priority as a
+# dark→light fill so it needs no fragile colour span to convey the gray tone.
+_PRIO_RAMP_TBL = {"p1": "●", "p2": "◕", "p3": "◑", "p4": "○"}
 _F_REF_RE = re.compile(r"(?P<dot>[🔴🟠🟡🟢⚪](?:\s|&nbsp;|•)*)?(?P<link>\[F-(?P<num>\d+)\]\(#f-\d+\))")
 _M_REF_RE = re.compile(
+    # Recognise the ramp glyphs (idempotent re-annotation) and the superseded
+    # ❶❷❸❹ digits (migrate a stale glyph from an older render to the ramp).
     r"(?:(?P<circ>"
     r'(?:<span style="color:#[0-9a-fA-F]{3,6}">)?'
-    r"[❶❷❸❹❺❻❼❽❾]"
+    r"[●◕◑○❶❷❸❹❺❻❼❽❾]"
     r"(?:</span>)?"
     r")(?P<sep>(?:\s|&nbsp;|•)*))?"
     r"(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))"
@@ -3850,7 +3855,7 @@ def _annotate_id_refs(md_path: Path) -> int:
             continue
         raw = str(mit.get("priority") or "").strip().lower().replace("p", "p")
         key = ""
-        if raw in _PRIO_DIGIT_TBL:
+        if raw in _PRIO_RAMP_TBL:
             key = raw
         elif raw in sev_to_prio:
             key = sev_to_prio[raw]
@@ -3872,7 +3877,7 @@ def _annotate_id_refs(md_path: Path) -> int:
         return f"{dot} {m.group('link')}" if dot else m.group("link")
 
     def _m_sub(m: re.Match) -> str:
-        expected = _PRIO_DIGIT_TBL.get(prio_by_num.get(m.group("num").zfill(3), ""), "")
+        expected = _PRIO_RAMP_TBL.get(prio_by_num.get(m.group("num").zfill(3), ""), "")
         if not expected:
             return m.group(0)
         circ = m.group("circ") or ""

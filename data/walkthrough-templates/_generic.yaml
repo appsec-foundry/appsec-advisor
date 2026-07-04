@@ -15,9 +15,9 @@ sequence_diagram: |
       actor Attacker
       participant App
       Note over App: {component} — {file}:{line}
-      Attacker->>App: Crafted request exercising the weakness at {file} line {line}
+      Attacker->>App: The attacker sends a crafted request targeting {file} line {line}
       App->>App: Vulnerable branch executes without the missing control
-      App-->>Attacker: Response confirms the weakness — {cwe}
+      App-->>Attacker: The attacker reads the response confirming the weakness — {cwe}
   ```
 
 detection_signals:

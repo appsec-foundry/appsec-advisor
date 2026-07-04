@@ -506,7 +506,7 @@ class TestDefenseInDepth:
         idx = {"T-1": [{"id": f"M-{n}", "title": "Fix it — lib/x.ts", "priority": f"p{n}"} for n in range(1, 5)]}
         bullets, pid = renderer.render_defense_in_depth({"id": "T-1"}, idx)
         assert pid == "M-1"
-        for n, digit in enumerate(("❶", "❷", "❸", "❹"), start=1):
+        for n, digit in enumerate(("●", "◕", "◑", "○"), start=1):
             assert f"{digit} [M-{n}](#m-{n})" in bullets[n - 1]
         # Short-label rule: the ` — file` tail is dropped.
         assert all("lib/x.ts" not in bullet for bullet in bullets)
@@ -631,6 +631,22 @@ class TestAttackTargetLabel:
     def test_falls_back_to_generic_label_with_no_evidence(self):
         threat = {"component": "", "evidence": []}
         assert renderer._attack_target_label(threat, {"components": []}) == "the Application"
+
+    def test_component_zone_fallback_is_anchor_stable(self):
+        # Regression (2026-07-03/04): a component name carrying " & " or " / "
+        # reached the §3 heading via the zone fallback, making the ToC link's
+        # github_slug (single hyphen) diverge from the rendered github_render_slug
+        # (double hyphen) — an unresolvable anchor that hard-failed the broken-link
+        # gate. The label must be sanitized so both sluggers agree.
+        from scripts._slug import github_render_slug, github_slug
+
+        for comp_name in ("Authentication & Session Surface", "Web3 / Wallet / NFT Surface"):
+            threat = {"component": "c1", "evidence": [{"file": "models/index.ts", "line": 1}]}
+            ydata = {"components": [{"id": "c1", "name": comp_name}]}
+            label = renderer._attack_target_label(threat, ydata)
+            assert "&" not in label and "/" not in label
+            heading = f"3.1 Insecure JWT Verification in {label}"
+            assert github_slug(heading) == github_render_slug(heading)
 
     def test_two_findings_sharing_weakness_class_get_distinct_headings(self):
         """Regression: two Critical SQL Injection findings in different

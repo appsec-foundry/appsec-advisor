@@ -184,10 +184,11 @@ def _to_fid(ref: str) -> str:
     return re.sub(r"^T-(\d+)$", r"F-\1", (ref or "").strip())
 
 
-# Monochrome circled-digit priority glyphs (❶ P1 … ❹ P4). Mirrors
-# compose_threat_model.py:_PRIO_DIGIT_TBL — kept in sync so a linked measure
-# in §3 carries the same annotation as the composer-rendered M-NNN links.
-_PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
+# Monochrome fill-ramp priority glyphs (● P1 full … ○ P4 empty). Mirrors
+# compose_threat_model.py:_PRIO_RAMP_TBL — kept in sync so a linked measure
+# in §3 carries the same dark→light priority ramp as the composer-rendered
+# M-NNN links (2026-07-04 user request, restored over the ❶❷❸❹ digit form).
+_PRIO_RAMP_TBL = {"p1": "●", "p2": "◕", "p3": "◑", "p4": "○"}
 
 
 def _short_title(title: str, limit: int = 70) -> str:
@@ -323,6 +324,34 @@ _FEATURE_ACRONYMS = {
 }
 
 
+def _anchor_stable_label(label: str) -> str:
+    """Normalise a §3-heading target so its GitHub anchor is renderer-stable.
+
+    The heading's slug must be identical whether produced by ``github_slug``
+    (the link-target generator, which collapses whitespace to a single hyphen)
+    or ``github_render_slug`` (what GitHub/pandoc actually render, which maps
+    each space to a hyphen with no collapse). The two DIVERGE exactly when the
+    text carries punctuation-surrounded-by-whitespace — ``" & "``, ``" / "``,
+    ``" — "`` — because stripping the punctuation leaves two adjacent spaces
+    that ``github_render_slug`` turns into ``--`` but ``github_slug`` turns into
+    ``-`` (the 2026-07-03 §3 ToC breakage: a component-name fallback of
+    "Authentication & Session Surface" produced an unresolvable ToC anchor).
+
+    This is the same anchor-stability guarantee ``_weakness_class`` already
+    enforces by dropping the ``— file:line`` tail; here we neutralise the
+    remaining separators in the feature/component fallback: ``&`` → "and",
+    other stray punctuation → space, then collapse to single spaces.
+    """
+    label = (label or "").strip()
+    label = re.sub(r"\s*&\s*", " and ", label)
+    # Any residual non-word / non-space / non-hyphen char (e.g. "/", "—") would
+    # slugify unstably when surrounded by whitespace; drop it and let the
+    # whitespace collapse below close the gap.
+    label = re.sub(r"[^\w\s-]", " ", label)
+    label = re.sub(r"\s+", " ", label).strip()
+    return label
+
+
 def _attack_target_label(threat: dict, yaml_data: dict) -> str:
     """Human-readable attack TARGET for the §3 heading (juice-shop 2026-07-03
     user request): headings must name the concrete FEATURE under attack —
@@ -335,20 +364,24 @@ def _attack_target_label(threat: dict, yaml_data: dict) -> str:
     across same-weakness findings that live in different files. Falls back to
     the component's curated zone name only when the file yields no feature
     (generic infra stem), then a generic label.
+
+    Every return path is routed through ``_anchor_stable_label`` so the
+    resulting §3 heading anchor resolves identically on GitHub, VS Code, and
+    pandoc regardless of ``&`` / ``/`` in a component name.
     """
     evidence = (threat.get("evidence") or [{}])[0] or {}
     file_hint = (evidence.get("file") or "").strip()
     if file_hint:
         feature = _feature_from_file(file_hint)
         if feature:
-            return feature
+            return _anchor_stable_label(feature)
     comp_id = (threat.get("component") or "").strip()
     if comp_id:
         for c in yaml_data.get("components") or []:
             if isinstance(c, dict) and c.get("id") == comp_id:
                 name = (c.get("name") or "").strip()
                 if name:
-                    return name
+                    return _anchor_stable_label(name)
     return "the Application"
 
 
@@ -825,9 +858,9 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
             # Attacker-action voice (juice-shop 2026-07-03): the attacker is the
             # subject of each step, not the code. Generic fallback used only when
             # a CWE template has no `attack_steps_template` and the scenario is short.
-            "Craft a request that reaches the weak spot at `{file}:{line}`.",
-            "Send it — the missing control never rejects the crafted input.",
-            "Read the response confirming the bypass succeeded.",
+            "The attacker crafts a request targeting the weak spot at `{file}:{line}`.",
+            "The attacker sends it; the missing control never rejects the crafted input.",
+            "The attacker reads the response and confirms the bypass succeeded.",
         ]
     )
 
@@ -927,10 +960,10 @@ def _ensure_alt_else_block(diagram: str, tid: str, mid: str, mit_title: str) -> 
     attacker, target = _diagram_actors(diagram)
     block_lines = [
         f"    {alt_label}",
-        f"        {attacker}->>{target}: Crafted request exploiting {tid or 'the weakness'} succeeds",
-        f"        {target}-->>{attacker}: Exploitation confirmed",
+        f"        {attacker}->>{target}: The attacker sends the exploit for {tid or 'the weakness'}",
+        f"        {target}-->>{attacker}: Exploit succeeds",
         f"    {else_label}",
-        f"        {attacker}->>{target}: Same request after the fix is applied",
+        f"        {attacker}->>{target}: The attacker retries the same request after the fix",
         f"        {target}-->>{attacker}: Request rejected",
         "    end",
     ]
@@ -1061,11 +1094,11 @@ def render_defense_in_depth(threat: dict, mitigations_by_threat: dict[str, list[
         # Short-label rule mirrors RenderContext.linkify_with_short_label:
         # drop the ` — <file>` Stage-1-LLM tail.
         short_title = title.split(" — ", 1)[0].strip()[:160]
-        # Leading monochrome priority digit (❶ P1 … ❹ P4) so a linked measure
-        # in §3 carries the same rollout-priority annotation as every other
-        # M-NNN link (MS Top-Mitigations, §8 Fix cells). Variant B, 2026-06-04.
+        # Leading monochrome priority circle (● P1 … ○ P4) so a linked measure
+        # in §3 carries the same dark→light rollout-priority ramp as every other
+        # M-NNN link (MS Top-Mitigations, §8 Fix cells). Fill-ramp, 2026-07-04.
         prio = str(m.get("priority") or "").strip().lower()
-        digit = _PRIO_DIGIT_TBL.get(prio, "")
+        digit = _PRIO_RAMP_TBL.get(prio, "")
         prefix = f"{digit} " if digit else ""
         bullets.append(f"{label}: {prefix}[{mid}](#{_anchor(mid)}) ({short_title})")
     # No padding bullet — bullets list is intentionally short when only one

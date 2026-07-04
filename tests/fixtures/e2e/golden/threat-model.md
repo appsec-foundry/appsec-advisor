@@ -168,9 +168,9 @@ Highest-impact P1/P2 mitigations - 3 of 3 qualifying (3 total). Full detail in [
 
 | # | Component | Mitigation | Addresses | Effort |
 |---|-------------------|--------------------------------------|------------------------------------------------|------|
-| **1** | [C-01](#c-01) — REST API | ❶ [M-001](#m-001) — Parameterize SQL queries | 🔴 [F-001](#f-001) — SQL injection in product search<br/>🔴 [F-002](#f-002) — SQL injection in login | Medium |
-| **2** | [C-02](#c-02) — Auth Service | ❶ [M-002](#m-002) — Externalize RSA key | 🔴 [F-003](#f-003) — Hardcoded RSA private key | Medium |
-| **3** | [C-01](#c-01) — REST API | ❷ [M-003](#m-003) — Remove DomSanitizer bypasses | 🟠 [F-010](#f-010) — Persistent XSS via bypassSecurityTrustHtml | Medium |
+| **1** | [C-01](#c-01) — REST API | ● [M-001](#m-001) — Parameterize SQL queries | 🔴 [F-001](#f-001) — SQL injection in product search<br/>🔴 [F-002](#f-002) — SQL injection in login | Medium |
+| **2** | [C-02](#c-02) — Auth Service | ● [M-002](#m-002) — Externalize RSA key | 🔴 [F-003](#f-003) — Hardcoded RSA private key | Medium |
+| **3** | [C-01](#c-01) — REST API | ◕ [M-003](#m-003) — Remove DomSanitizer bypasses | 🟠 [F-010](#f-010) — Persistent XSS via bypassSecurityTrustHtml | Medium |
 
 ### Operational Strengths
 
@@ -662,7 +662,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Issue:** RSA private key committed to public repo allows offline admin JWT forgery.
 
-**Fix:** ❶ [M-002](#m-002) — Externalize RSA key
+**Fix:** ● [M-002](#m-002) — Externalize RSA key
 
 **Classification:** Cryptographic Failures · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
@@ -673,7 +673,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Issue:** Product search builds raw SQL via template literal, enabling UNION dump.
 
-**Fix:** ❶ [M-001](#m-001) — Parameterize SQL queries
+**Fix:** ● [M-001](#m-001) — Parameterize SQL queries
 
 **Classification:** Injection · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
@@ -684,7 +684,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Issue:** Login concatenates email/password into SQL; `--` comments bypass the password check.
 
-**Fix:** ❶ [M-001](#m-001) — Parameterize SQL queries
+**Fix:** ● [M-001](#m-001) — Parameterize SQL queries
 
 **Classification:** Injection · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
@@ -697,7 +697,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Issue:** Angular component bypasses DomSanitizer, enabling stored XSS in reviews.
 
-**Fix:** ❷ [M-003](#m-003) — Remove DomSanitizer bypasses
+**Fix:** ◕ [M-003](#m-003) — Remove DomSanitizer bypasses
 
 **Classification:** Cross-Site Scripting (XSS) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
@@ -713,7 +713,7 @@ _No abuse cases were identified or mandated for this assessment._
 
 Each mitigation block lists the findings it **Addresses**, the CWEs it **Prevents**, and the **Priority** (P1 = before deployment, P2 = current sprint, P3 = next quarter, P4 = backlog). The **Why** / **How** / **Verification** fields are populated only when authored; if a field is omitted, refer to the linked finding's *Evidence* line for file:line context and to the threat-category description in [§8 Findings Register](#8-findings-register) for the underlying weakness.
 
-**Mitigations index:**<br/>❶ [M-001](#m-001) — Parameterize SQL queries<br/>❶ [M-002](#m-002) — Externalize RSA key<br/>❷ [M-003](#m-003) — Remove DomSanitizer bypasses
+**Mitigations index:**<br/>● [M-001](#m-001) — Parameterize SQL queries<br/>● [M-002](#m-002) — Externalize RSA key<br/>◕ [M-003](#m-003) — Remove DomSanitizer bypasses
 
 ### P1 — Immediate
 

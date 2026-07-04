@@ -592,12 +592,12 @@ class RenderContext:
                 dot = f"{emoji} "
         elif re.match(r"^M-\d+$", r):
             # Measures analogue of the finding severity dot: a single colourless
-            # circled digit whose number IS the rollout priority (❶ P1 … ❹ P4),
+            # fill-ramp circle whose fill IS the rollout priority (● P1 … ○ P4),
             # Variant B (2026-06-04). It sits OUTSIDE the markdown link for the
             # same reason the severity dot does: `_enrich_linked_id_cells`
             # extracts `[ID](#…)` and re-linkifies, so the prefix is regenerated
             # exactly once. Mirrors the finding form `🔴 [F-NNN] — title`.
-            digit = _PRIO_DIGIT_TBL.get(self.priority_for_ref(r), "")
+            digit = _PRIO_RAMP_TBL.get(self.priority_for_ref(r), "")
             if digit:
                 dot = f"{digit} "
         if compact:
@@ -785,7 +785,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             }.get(kind, "")
             if mid:
                 # Variant B (2026-06-04): lead with the monochrome priority
-                # prefix (`❶ ` for P1) — same as every other linked measure —
+                # prefix (`● ` for P1) — same as every other linked measure —
                 # then the action-kind glyph (orthogonal signal). Supersedes the
                 # old trailing `(P1)` token.
                 line = f"{_measure_prio_prefix(ctx, mid)}{glyph}[{mid}](#{mid.lower()})"
@@ -4853,14 +4853,16 @@ _SEV_ICON_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "�
 # P4 = backlog) so the jump-list reflects remediation urgency, not finding
 # severity (2026-05-31 user request).
 _PRIO_ICON_TBL = {"p1": "🔴", "p2": "🟠", "p3": "🟡", "p4": "🟢"}
-# Variant B (2026-06-04 user decision): measures are annotated with a single
-# MONOCHROME circled digit — the colourless parallel to the finding severity
-# dot, where the digit IS the rollout priority (❶ P1, ship now … ❹ P4, backlog).
-# Self-explanatory, so no `P1` text tag is needed alongside it (the earlier
-# fill-ramp `●◕◑○` + text form is superseded). Verified DejaVu-safe (U+2776–2779)
-# so it renders in the WeasyPrint PDF without tofu. The filled glyphs ❶❷❸❹
-# distinguish priority from the OUTLINE ①②③④ used for attack-path classes.
-_PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
+# Fill-ramp (2026-07-04 user request, restored): measures are annotated with a
+# monochrome circle whose FILL encodes rollout priority as a dark→light gray tone
+# (● P1 ship-now, full … ○ P4 backlog, empty). The tonal ramp reads as priority
+# at a glance and needs no `P1` text tag. Chosen over the ❶❷❸❹ digit form (Variant
+# B, 2026-06-04) which the user reverted. Medium-agnostic: the tone lives in the
+# glyph fill, so it survives raw-markdown/GitHub (which strips colour spans) and
+# the WeasyPrint PDF alike. All four glyphs are DejaVu-safe (U+25CF/25D5/25D1/25CB,
+# verified). The mitigation §9 index (M-NNN) stays distinct from the §8 finding
+# dots (🔴🟠🟡🟢) by section + ID prefix.
+_PRIO_RAMP_TBL = {"p1": "●", "p2": "◕", "p3": "◑", "p4": "○"}
 
 # §8 / §9 register jump-list helpers. The index lines used to be bare
 # `[F-NNN](#f-nnn)` chips with no title or criticality, which is unreadable
@@ -4987,7 +4989,7 @@ def _build_register_index(
 
 
 def _measure_prio_prefix(ctx: RenderContext, mid: str) -> str:
-    """Variant-B priority prefix (`❶ `) for a BARE measure chip `[M-NNN]`.
+    """Fill-ramp priority prefix (`● ` for P1) for a BARE measure chip `[M-NNN]`.
 
     The full-label form (`[M-NNN](#m-nnn) — title`) gets this prefix from
     `linkify_with_label`; this helper is for the compact bare-chip cells
@@ -4995,7 +4997,7 @@ def _measure_prio_prefix(ctx: RenderContext, mid: str) -> str:
     that deliberately omit the title but must still carry the same annotation.
     Returns "" when the priority is unknown (no prefix rather than a bare digit).
     """
-    digit = _PRIO_DIGIT_TBL.get(ctx.priority_for_ref(mid), "")
+    digit = _PRIO_RAMP_TBL.get(ctx.priority_for_ref(mid), "")
     return f"{digit} " if digit else ""
 
 
@@ -11615,15 +11617,16 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
 
 _MITIGATION_CIRCLE_REF_RE = re.compile(
     # Same `&nbsp;` / bullet tolerance as _FINDING_DOT_REF_RE so an existing
-    # `❶&nbsp;[M-001]` / `→ ❶ [M-002]` prefix can be retained or normalized
-    # without changing its separator.
-    r"(?P<circ>[❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))"
+    # `●&nbsp;[M-001]` / `→ ● [M-002]` prefix can be retained or normalized
+    # without changing its separator. The class keeps the superseded ❶❷❸❹ digits
+    # so a stale glyph from an older render is stripped and re-mapped to the ramp.
+    r"(?P<circ>[●◕◑○❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))"
 )
 
 
 def _prepend_mitigation_prio_circles(ctx: RenderContext, md: str) -> str:
     """Prefix every mitigation cross-reference ``[M-NNN](#m-nnn)`` with its
-    rollout-priority circle (❶ for P1 … ❹ for P4) — the colourless parallel to
+    rollout-priority circle (● for P1 … ○ for P4) — the colourless parallel to
     the finding severity dot. Brings §3 Attack Walkthroughs and §9 Abuse Cases
     in line with §1/§2/§8/§10, where the computed renderers already emit the
     circle inline via ``linkify_with_label`` / ``_measure_prio_prefix``.
@@ -11637,7 +11640,7 @@ def _prepend_mitigation_prio_circles(ctx: RenderContext, md: str) -> str:
         return md
 
     def _sub(m: re.Match[str]) -> str:
-        digit = _PRIO_DIGIT_TBL.get(ctx.priority_for_ref(f"M-{m.group('num')}"), "")
+        digit = _PRIO_RAMP_TBL.get(ctx.priority_for_ref(f"M-{m.group('num')}"), "")
         if not digit:
             return m.group(0)
         circ = m.group("circ") or ""
@@ -14106,6 +14109,56 @@ def _build_threat_card(
     return f"{anchors}\n{heading}\n\n" + "\n\n".join(fields)
 
 
+# Signals live in the recon signal-set; the self-registration state, however, is
+# resolved into `meta` (detect_open_registration.py), not emitted as a signal.
+# The Identified Actors table folds on meta, so alias the rule's condition_signal
+# to its meta key here. Keep in sync with the reach_equivalence_rules note in
+# data/actors/default-library.yaml.
+_ACTOR_FOLD_SIGNAL_TO_META = {"has_open_self_registration": "open_user_registration"}
+
+
+def _actor_fold_map(active_ids: set[str], meta: dict) -> tuple[dict[str, str], dict[str, str]]:
+    """Map non-primary active actors → their primary per default-library
+    reach_equivalence_rules, so the Identified Actors table lists each trust
+    position once and stays consistent with the collapsed Figure.
+
+    A rule folds when `always: true` or when the meta flag aliased from its
+    `condition_signal` is truthy. Both the primary and the child must be active
+    for the fold to apply (a disabled/inactive actor is never a fold target).
+
+    Returns (folded_into, fold_reason): child_id → primary_id and child_id → reason.
+    """
+    lib_path = PLUGIN_ROOT / "data" / "actors" / "default-library.yaml"
+    try:
+        rules = (yaml.safe_load(lib_path.read_text(encoding="utf-8")) or {}).get("reach_equivalence_rules") or []
+    except (OSError, yaml.YAMLError):
+        return {}, {}
+    folded: dict[str, str] = {}
+    reason: dict[str, str] = {}
+    for rule in rules:
+        fires = bool(rule.get("always"))
+        if not fires:
+            meta_key = _ACTOR_FOLD_SIGNAL_TO_META.get(rule.get("condition_signal"), rule.get("condition_signal"))
+            fires = bool(meta.get(meta_key))
+        if not fires:
+            continue
+        ids = rule.get("actor_ids") or []
+        primary = rule.get("primary_actor") or (ids[0] if ids else None)
+        if not primary or primary not in active_ids:
+            continue
+        for aid in ids:
+            if aid == primary or aid not in active_ids:
+                continue
+            # Resolve to the root primary in case rules chain (A→B, B→C).
+            root, guard = primary, set()
+            while root in folded and root not in guard:
+                guard.add(root)
+                root = folded[root]
+            folded[aid] = root
+            reason[aid] = rule.get("collapse_reason") or ""
+    return folded, reason
+
+
 def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Identified Actors — table of resolved ACT-* actors with layer, status,
     finding counts, and per-component relevance (actors.md §14). Rendered as an
@@ -14161,6 +14214,19 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         lines.append("")
 
     active = [a for a in actors if (a.get("_provenance") or {}).get("active")]
+
+    # Consolidate reach-equivalent actors so the inventory lists each trust
+    # position once and stays consistent with the collapsed Figure (actors.md
+    # §0: folded actors are surfaced below, never dropped silently).
+    active_ids = {a.get("id") for a in active}
+    meta = ctx.yaml_data.get("meta") or {}
+    folded_into, fold_reason = _actor_fold_map(active_ids, meta)
+    for child, primary in folded_into.items():
+        counts[primary] = counts.get(primary, 0) + counts.get(child, 0)
+        components.setdefault(primary, set()).update(components.get(child, set()))
+    label_by_id = {a.get("id"): a.get("label", "") for a in active}
+    active = [a for a in active if a.get("id") not in folded_into]
+
     if active:
         lines.append("| ID | Label | Layer | Status | Findings | Relevant for |")
         lines.append("|---|---|---|---|---|---|")
@@ -14180,6 +14246,23 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         lines.append("")
     else:
         lines.append("_No actors resolved for this run._")
+        lines.append("")
+
+    if folded_into:
+        lines.append("#### Consolidated actors")
+        lines.append("")
+        lines.append(
+            "These actors share reach with a primary actor, so the inventory folds "
+            "them into it and lists each trust position once; their findings roll up "
+            "into the primary."
+        )
+        lines.append("")
+        lines.append("| ID | Label | Consolidated into | Reason |")
+        lines.append("|---|---|---|---|")
+        for child in sorted(folded_into):
+            primary = folded_into[child]
+            reason = fold_reason.get(child) or "—"
+            lines.append(f"| `{child}` | {label_by_id.get(child, '')} | `{primary}` | {reason} |")
         lines.append("")
 
     proposed_actors = [a for a in active if (a.get("_provenance") or {}).get("proposed")]
@@ -14922,7 +15005,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         lines.append(
             _build_register_index(
                 # Variant B (2026-06-04): a single MONOCHROME circled digit
-                # (❶❷❸❹) whose number is the priority — the colourless parallel
+                # (●◕◑○) whose fill is the priority — the colourless parallel
                 # to the §8 Findings-index severity dots, self-explanatory so no
                 # P-tag is needed (supersedes the fill-ramp+text form).
                 "Mitigations index",
@@ -14930,7 +15013,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 _m_nums_by_prio,
                 _m_title,
                 _m_prio,
-                icon_tbl=_PRIO_DIGIT_TBL,
+                icon_tbl=_PRIO_RAMP_TBL,
                 key_label_tbl=None,
                 show_icon=True,
             )
