@@ -189,7 +189,7 @@ These clean OWASP Juice Shop runs were measured on 2026-07-02. They compare mode
 
 | Tier | STRIDE · triage · merge | When to use |
 |---|---|---|
-| `sonnet-economy` | 4.6 · Sonnet-5\* · Sonnet-5\* | Default for quick and standard. Helper tasks use Haiku. **\*Standard buy-back:** at `standard`, triage + merger (and renderer + abuse-verifier) resolve to `claude-sonnet-5`; STRIDE stays 4.6. `quick` is all-4.6. |
+| `sonnet-economy` | Sonnet 4.6 · Sonnet 5\* · Sonnet 5\* | Default for quick and standard. Helper tasks use Haiku. **\*Standard buy-back:** at `standard`, triage + merger (and renderer + abuse-verifier) resolve to Sonnet 5; STRIDE stays Sonnet 4.6. `quick` is all-Sonnet 4.6. |
 | `sonnet` | Sonnet · Sonnet · Sonnet | Keeps helper tasks on Sonnet. |
 | `opus-cheap` | Sonnet · Sonnet · **Opus** | Uses Opus only for merging. |
 | `opus` | **Opus** · **Opus** · **Opus** | Default for thorough. In the standard benchmark it cost $40.78, compared with $30.01 for `sonnet-economy`, with similar finding counts. |
@@ -202,10 +202,10 @@ These clean OWASP Juice Shop runs were measured on 2026-07-02. They compare mode
 
 | Role | Agents | quick | standard | thorough |
 |---|---|---|---|---|
-| Reasoning — discovery | STRIDE | 4.6 | 4.6 | Opus |
-| Reasoning — judgment | triage, merge | 4.6 | **Sonnet 5** | Opus |
-| Quality showcase | renderer, abuse-verifier | 4.6 | **Sonnet 5** | **Sonnet 5** |
-| Mechanical / contract | qa-content, qa-routine | 4.6¹ | 4.6¹ | 4.6 |
+| Reasoning — discovery | STRIDE | Sonnet 4.6 | Sonnet 4.6 | Opus |
+| Reasoning — judgment | triage, merge | Sonnet 4.6 | **Sonnet 5** | Opus |
+| Quality showcase | renderer, abuse-verifier | Sonnet 4.6 | **Sonnet 5** | **Sonnet 5** |
+| Mechanical / contract | qa-content, qa-routine | Sonnet 4.6¹ | Sonnet 4.6¹ | Sonnet 4.6 |
 | Deterministic helpers | context-resolver, recon-scanner, config-scanner | Haiku | Haiku | Haiku |
 | Session | orchestrator | follows session² | follows session² | follows session² |
 

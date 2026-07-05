@@ -37,11 +37,11 @@ bare `sonnet` alias (which follows the session):
 
 | Role | Agents | quick | standard | thorough |
 |---|---|---|---|---|
-| Reasoning core | STRIDE | 4.6 | 4.6 | Opus |
-| Reasoning core | triage, merger | 4.6 | **Sonnet 5** | Opus |
-| Quality showcase | renderer, abuse-verifier | 4.6 | **Sonnet 5** | **Sonnet 5** |
-| Mechanical/contract | qa_content, qa_routine | 4.6 (qa_routine Haiku) | 4.6 (qa_routine Haiku) | 4.6 |
-| Session | orchestrator | alias (= host session) | alias | alias |
+| Reasoning — discovery | STRIDE | Sonnet 4.6 | Sonnet 4.6 | Opus |
+| Reasoning — judgment | triage, merger | Sonnet 4.6 | **Sonnet 5** | Opus |
+| Quality showcase | renderer, abuse-verifier | Sonnet 4.6 | **Sonnet 5** | **Sonnet 5** |
+| Mechanical / contract | qa_content, qa_routine | Sonnet 4.6 (qa_routine Haiku) | Sonnet 4.6 (qa_routine Haiku) | Sonnet 4.6 |
+| Session | orchestrator | follows session | follows session | follows session |
 
 STRIDE stays 4.6 (Sonnet 5 regressed recall). renderer + abuse-verifier are the
 quality-showcase stages → latest Sonnet 5 at standard AND thorough, 4.6 only at the
