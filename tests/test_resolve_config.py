@@ -304,6 +304,16 @@ class TestResolveExtendedModelsRendererAbuse:
         assert out["renderer_model"] == "claude-sonnet-5"
         assert out["abuse_verifier_model"] == "claude-sonnet-5"
 
+    def test_thorough_showcase_pins_sonnet5(self):
+        # thorough is a quality tier → renderer + abuse-verifier on latest Sonnet 5
+        # (NOT 4.6). thorough resolves the extended models via the opus tier.
+        out = rc.resolve_extended_models("opus", "thorough")
+        assert out["renderer_model"] == "claude-sonnet-5"
+        assert out["abuse_verifier_model"] == "claude-sonnet-5"
+        # ...while the mechanical qa stages stay on cheap 4.6.
+        assert out["qa_content_model"] == "claude-sonnet-4-6"
+        assert out["qa_routine_model"] == "claude-sonnet-4-6"
+
     def test_defaults_on_non_economy_tier(self):
         out = rc.resolve_extended_models("sonnet", "standard")
         assert out["renderer_model"] == "sonnet"
@@ -1539,15 +1549,17 @@ class TestSessionModelAdvisoryInPreflightBox:
 
 class TestRenderEffectiveRouting:
     def test_alias_resolves_to_session_model(self):
-        # sonnet-economy: core is concretely 4.6-pinned; alias-following agents
-        # (orchestrator/renderer/abuse) resolve to the injected session model.
+        # sonnet-economy standard: reasoning core + qa concretely 4.6-pinned,
+        # renderer/abuse on the Sonnet-5 buy-back. The ORCHESTRATOR is now the only
+        # alias-follower → it alone resolves to the injected session model.
         cfg = _base_cfg(reasoning_model="sonnet-economy")
         out = rc.render_effective_routing(cfg, "claude-opus-4-8")
         assert "host session: claude-opus-4-8" in out
-        assert "claude-sonnet-4-6" in out  # pinned reasoning core
+        assert "claude-sonnet-4-6" in out  # pinned STRIDE + qa stages
+        assert "claude-sonnet-5" in out    # standard buy-back renderer/abuse
         assert "Renderer" in out and "Abuse-case verifier" in out
-        # Renderer/abuse have no cfg knob → follow the session model.
-        assert out.count("claude-opus-4-8") >= 3
+        # header + the orchestrator row both name the session model.
+        assert out.count("claude-opus-4-8") >= 2
 
     def test_undetected_session_is_explicit(self):
         out = rc.render_effective_routing(_base_cfg(reasoning_model="sonnet-economy"), "")

@@ -31,17 +31,23 @@ model used for STRIDE / triage / merger. Tiers:
 | `opus-cheap` | Sonnet STRIDE/triage, Opus merger | opt-in |
 | `opus` | Opus everywhere | thorough default; opt-in elsewhere |
 
-**Standard quality buy-back (2026-07-05).** At the everyday `standard` depth the
-`sonnet-economy` tier is *not* uniformly 4.6: the aggregation/judgment stages —
-**triage, merger** (via `MODEL_MATRIX` overlay) and **renderer, abuse-case
-verifier** (via `EXTENDED_MODEL_MATRIX`) — are pinned to **`claude-sonnet-5`**,
-where the benchmark below measured a real gain. **STRIDE stays on 4.6** (Sonnet 5
-regressed discovery recall). **`quick` and `thorough` go the other way:** every
-Sonnet-tier subagent (qa_content, qa_routine, renderer, abuse-verifier) is pinned to
-the concrete **`claude-sonnet-4-6`** rather than the bare `sonnet` alias — only the
-orchestrator stays the session-following alias (the plugin cannot set the session
-model), and the pin is skipped for the explicit `sonnet` tier
-(`--reasoning-model sonnet`). `thorough` keeps STRIDE/triage/merger on Opus.
+**Per-role model split (2026-07-05).** The `sonnet-economy` / default tiers are
+*not* uniformly 4.6 — the subagents split by role, always a concrete id, never the
+bare `sonnet` alias (which follows the session):
+
+| Role | Agents | quick | standard | thorough |
+|---|---|---|---|---|
+| Reasoning core | STRIDE | 4.6 | 4.6 | Opus |
+| Reasoning core | triage, merger | 4.6 | **Sonnet 5** | Opus |
+| Quality showcase | renderer, abuse-verifier | 4.6 | **Sonnet 5** | **Sonnet 5** |
+| Mechanical/contract | qa_content, qa_routine | 4.6 (qa_routine Haiku) | 4.6 (qa_routine Haiku) | 4.6 |
+| Session | orchestrator | alias (= host session) | alias | alias |
+
+STRIDE stays 4.6 (Sonnet 5 regressed recall). renderer + abuse-verifier are the
+quality-showcase stages → latest Sonnet 5 at standard AND thorough, 4.6 only at the
+cheap quick tier. qa_content + qa_routine are mechanical → 4.6 everywhere. The
+orchestrator can't be pinned (it IS the session model). The whole split is skipped
+for the explicit `sonnet` tier (`--reasoning-model sonnet`, latest Sonnet).
 **Caveat:** these explicit-id pins only bite on the **headless path** (or
 the hybrid-merger path) — an *interactive* run's subagents inherit the session
 model regardless (the Agent-tool `model` param takes only tier aliases, and the

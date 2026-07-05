@@ -198,7 +198,20 @@ These clean OWASP Juice Shop runs were measured on 2026-07-02. They compare mode
 
 > **`--merger-model` caveat.** STRIDE and triage run as separate model-pinned sub-agents, so their pins always take effect. The merge, however, runs **inline/deterministic** (`merge_threats.py` + inline judgment) on the everyday `sonnet-economy` path — a separate `appsec-threat-merger` sub-agent is only dispatched on the opt-in *hybrid* path, which activates when `--merger-model` (or `APPSEC_MERGER_MODEL`) resolves to an **Opus** id, or at `--assessment-depth thorough`. Setting `--merger-model claude-sonnet-5` at standard therefore has **no effect** — there is no merger sub-agent to pin. The effective-routing table shown at scan start marks the merger row `inline unless hybrid/Opus` accordingly.
 
-**Economy buy-back is now the standard default (2026-07-05).** At `--assessment-depth standard` the stages where Sonnet-5 measurably pays — triage (severity calibration), merger (dedup), renderer (CISO framing), abuse-verifier (decisive verdicts) — resolve to `claude-sonnet-5` automatically, while STRIDE and all helper tasks stay on the cheap 4.6/Haiku tier. You no longer pin them by hand. Two caveats: (1) these are **explicit-id pins** that only take effect on the **headless path** — an *interactive* run's sub-agents inherit the session model regardless; and (2) the **merger pin stays inert at standard** (the merge is inline — see the `--merger-model` caveat above), so the merger buy-back only materializes on the hybrid/thorough path. On a cost-optimal Sonnet-4.6 session, the net effect on headless is: cheap 4.6 core + Sonnet-5 triage/renderer/abuse where they pay.
+**Per-role model routing (2026-07-05).** The pipeline no longer leaves any subagent on the bare `sonnet` alias (which silently follows your session). Each role gets a concrete model per depth:
+
+| Role | Agents | quick | standard | thorough |
+|---|---|---|---|---|
+| Reasoning — discovery | STRIDE | 4.6 | 4.6 | Opus |
+| Reasoning — judgment | triage, merge | 4.6 | **Sonnet 5** | Opus |
+| Quality showcase | renderer, abuse-verifier | 4.6 | **Sonnet 5** | **Sonnet 5** |
+| Mechanical / contract | qa-content, qa-routine | 4.6¹ | 4.6¹ | 4.6 |
+| Deterministic helpers | context-resolver, recon-scanner, config-scanner | Haiku | Haiku | Haiku |
+| Session | orchestrator | follows session² | follows session² | follows session² |
+
+¹ qa-routine (mechanical link/anchor fixes) runs on Haiku at quick/standard. ² the orchestrator *is* the session model — the plugin can't pin it; see *Session model* below.
+
+The rationale: STRIDE stays on 4.6 (Sonnet 5 measured *worse* discovery recall); triage/merge/renderer/abuse-verifier get Sonnet 5 where a benchmark showed a real gain (severity calibration, dedup, CISO framing, decisive verdicts) — at standard *and* thorough; the mechanical stages stay on cheap 4.6. Two caveats: (1) these are **explicit-id pins** that only take effect on the **headless path** — an *interactive* run's subagents inherit the session model regardless; and (2) the **merger pin stays inert at standard** (the merge is inline — see the `--merger-model` caveat above). The whole split is skipped when you opt into the explicit `sonnet` tier (`--reasoning-model sonnet`, latest Sonnet everywhere).
 
 For standard assessments, using Opus only for triage cost about $2 more than the all-Sonnet benchmark, compared with about $11 more for the full Opus tier:
 

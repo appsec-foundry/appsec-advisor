@@ -640,25 +640,24 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
     else:
         models = dict(_DEFAULT_EXTENDED_ROUTING)
 
-    # Quality buy-back at `standard` (mirror of resolve_reasoning_model): the renderer
-    # (MS / CISO framing) and abuse-case verifier (verdict decisiveness — 4.6 punts to
-    # `inconclusive`) → Sonnet 5. Same headless-vs-interactive caveat: the pin bites on
-    # the headless path; interactive dispatch inherits the session model. Env overrides
-    # below still win.
-    if reasoning_mode == "sonnet-economy" and depth == "standard":
-        models["renderer"] = SONNET5
-        models["abuse_verifier"] = SONNET5
-
-    # quick / thorough: pin every Sonnet-tier SUBAGENT to the concrete Sonnet 4.6
-    # instead of leaving the bare `sonnet` alias (which silently follows the host
-    # session — Opus / Sonnet 5). Deterministic + cheapest. Only the bare alias is
-    # rewritten, so Haiku stays Haiku and (at thorough) Opus stays Opus. The
-    # ORCHESTRATOR is deliberately left as the alias: it IS the session model, which
-    # the plugin cannot set, and hardcoding it would make the routing table lie.
-    # Skipped when the user explicitly opts into the Sonnet-5 tier
-    # (`--reasoning-model sonnet`). Env overrides below still win.
-    if depth in ("quick", "thorough") and reasoning_mode != "sonnet":
-        for _k in ("qa_content", "qa_routine", "renderer", "abuse_verifier"):
+    # Extended Sonnet-tier routing. The bare `sonnet` alias would silently follow the
+    # host session (Opus / 4.6 / 5), so we replace it with concrete ids per role.
+    # Skipped for the explicit `sonnet` tier (`--reasoning-model sonnet`), which keeps
+    # the alias so the user gets latest Sonnet. The ORCHESTRATOR is never touched — it
+    # IS the session model, which the plugin cannot set (hardcoding would make the
+    # routing table lie). NOTE: these explicit-id pins bite on the headless/hybrid
+    # path; an interactive run's subagents inherit the session model. Env overrides win.
+    if reasoning_mode != "sonnet":
+        # renderer + abuse-case verifier are the quality-showcase stages (MS / CISO
+        # framing; verdict decisiveness — 4.6 punts to `inconclusive`): latest Sonnet
+        # (Sonnet 5) at standard AND thorough, cheapest 4.6 only at the quick tier.
+        showcase = SONNET5 if depth in ("standard", "thorough") else "claude-sonnet-4-6"
+        for _k in ("renderer", "abuse_verifier"):
+            if models.get(_k) == SONNET:
+                models[_k] = showcase
+        # qa_content + qa_routine are mechanical / contract stages → concrete 4.6
+        # wherever they would otherwise be the bare alias (Haiku stays Haiku).
+        for _k in ("qa_content", "qa_routine"):
             if models.get(_k) == SONNET:
                 models[_k] = "claude-sonnet-4-6"
 

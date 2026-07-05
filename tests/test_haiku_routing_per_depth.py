@@ -10,16 +10,20 @@ cheapest) instead of the bare `sonnet` alias (which follows the host session);
 the ORCHESTRATOR stays the alias because it IS the session model. Standard keeps
 its buy-back (renderer + abuse-verifier on Sonnet 5).
 
+renderer + abuse-verifier are quality-showcase stages → latest Sonnet (5) at
+standard AND thorough, cheapest 4.6 only at quick. qa_content + qa_routine are
+mechanical/contract stages → concrete 4.6 everywhere.
+
 | Agent              | Quick     | Standard      | Thorough  |
 |--------------------|-----------|---------------|-----------|
 | context-resolver   | Haiku     | Haiku         | Haiku     |
 | recon-scanner      | Haiku     | Haiku         | Haiku     |
 | qa-routine         | Haiku     | Haiku         | Sonnet 4.6|
-| qa-content         | Sonnet 4.6| Sonnet(alias) | Sonnet 4.6|
+| qa-content         | Sonnet 4.6| Sonnet 4.6    | Sonnet 4.6|
 | config-scanner     | Haiku     | Haiku         | Haiku     |
 | orchestrator       | alias     | alias         | alias     | (= host session)
-| renderer           | Sonnet 4.6| Sonnet 5      | Sonnet 4.6|
-| abuse-verifier     | Sonnet 4.6| Sonnet 5      | Sonnet 4.6|
+| renderer           | Sonnet 4.6| Sonnet 5      | Sonnet 5  |
+| abuse-verifier     | Sonnet 4.6| Sonnet 5      | Sonnet 5  |
 
 Default tier (sonnet / opus-cheap / opus) routes the three pure-extraction
 agents (context-resolver, recon-scanner, config-scanner) to Haiku as well.
@@ -70,12 +74,12 @@ SONNET46 = "claude-sonnet-4-6"
         ("quick", "qa_content", SONNET46),
         ("quick", "config_scanner", HAIKU),
         ("quick", "orchestrator", SONNET),
-        # Standard — qa_content keeps the alias (only quick/thorough are pinned);
+        # Standard — qa_content pinned to 4.6 (mechanical/contract stage);
         # renderer/abuse take the Sonnet-5 buy-back (asserted elsewhere).
         ("standard", "context_resolver", HAIKU),
         ("standard", "recon_scanner", HAIKU),
         ("standard", "qa_routine", HAIKU),
-        ("standard", "qa_content", SONNET),
+        ("standard", "qa_content", SONNET46),
         ("standard", "config_scanner", HAIKU),
         ("standard", "orchestrator", SONNET),
         # Thorough — qa_routine + qa_content pinned to 4.6; extraction trio Haiku;
@@ -114,9 +118,9 @@ def test_default_tier_extraction_agents_on_haiku(tier, depth):
     assert out["context_resolver_model"] == HAIKU
     assert out["recon_scanner_model"] == HAIKU
     assert out["config_scanner_model"] == HAIKU
-    # qa_routine / qa_content: pinned to 4.6 at quick/thorough (except the explicit
-    # `sonnet` tier, which keeps the alias); the alias otherwise.
-    expected_qa = SONNET if (tier == "sonnet" or depth == "standard") else SONNET46
+    # qa_routine / qa_content are mechanical/contract stages → concrete 4.6 at every
+    # depth, except the explicit `sonnet` tier which keeps the alias (latest Sonnet).
+    expected_qa = SONNET if tier == "sonnet" else SONNET46
     assert out["qa_routine_model"] == expected_qa
     assert out["qa_content_model"] == expected_qa
     # Orchestrator always stays the alias (= host session; plugin can't pin it).
