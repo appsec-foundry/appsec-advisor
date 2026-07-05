@@ -67,7 +67,7 @@ options (recommended first):
 
 On the answer, before the run plan / Stage 1:
 - resolves to the current `ACTION.session_model` → emit the run plan, go to §3.
-- resolves to a **different** model → do NOT continue: `rm -f "$OUTPUT_DIR/.appsec-lock"`, print `Restart on the chosen model:  claude --model <choice>  (or /clear then /model <choice>), then re-run.` and stop.
+- resolves to a **different** model → do NOT continue: `rm -f "$OUTPUT_DIR/.appsec-lock"`, then print the switch instructions and stop. Prefer the in-session path (no relaunch flags needed): `run /clear then /model <choice>, then re-run the skill`. For a fresh terminal, add: `claude --model <choice>` **plus the launch flags this session started with** (e.g. `--plugin-dir <dir>`) — fill those in from how the session was launched; a bare `claude --model <choice>` would drop the plugin.
 
 Never binding — the prompt exists so the user chooses.
 

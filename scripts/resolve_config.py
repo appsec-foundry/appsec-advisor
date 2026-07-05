@@ -2267,9 +2267,11 @@ def _session_model_advisory(session_model: str) -> str:
     if "sonnet-4-6" in s:
         return "Sonnet-4.6 session — the cheapest setting for this skill."
     switch = (
-        "Cheapest: restart a fresh session with `claude --model claude-sonnet-4-6` "
-        "(or /clear then /model claude-sonnet-4-6), then re-run. Buy back per stage "
-        "where Sonnet-5 pays: --triage-model, APPSEC_RENDERER_MODEL, APPSEC_ABUSE_VERIFIER_MODEL."
+        "Cheapest: /clear then /model claude-sonnet-4-6 (in-session — keeps the plugin "
+        "loaded, no relaunch flags needed), then re-run. Fresh terminal: `claude --model "
+        "claude-sonnet-4-6` PLUS the launch flags you started this session with "
+        "(e.g. --plugin-dir). Buy back per stage where Sonnet-5 pays: --triage-model, "
+        "APPSEC_RENDERER_MODEL, APPSEC_ABUSE_VERIFIER_MODEL."
     )
     if "opus" in s:
         return (
@@ -2314,8 +2316,9 @@ def _render_orchestrator_box_lines(cfg: dict, session_model: str) -> list[str]:
     out = [f"Orchestrator (session) — recommend {rec}  ({size}{tail}"]
     if session_model and not _same_model(session_model, rec):
         out.append(
-            f"  This session is {session_model}; restart `claude --model {rec}` to "
-            f"switch (optional — this is only a recommendation)."
+            f"  This session is {session_model}; switch with /clear then /model {rec} "
+            f"(in-session, keeps the plugin loaded), then re-run (optional — only a "
+            f"recommendation)."
         )
     return out
 
@@ -2382,9 +2385,10 @@ def render_orchestrator_recommendation(cfg: dict, session_model: str) -> str:
     else:
         lines.append(f"  This session: {session_model}  (⚠ differs from the recommendation)")
         lines.append(
-            f"  To scan on {rec}: restart with `claude --model {rec}` (or /clear then "
-            f"/model {rec}), then re-run. Keeping the current model is fine too — this "
-            f"is only a recommendation."
+            f"  To scan on {rec}: /clear then /model {rec} (in-session — keeps the plugin "
+            f"loaded, no relaunch flags needed), then re-run. Fresh terminal: `claude "
+            f"--model {rec}` PLUS the launch flags you started this session with (e.g. "
+            f"--plugin-dir). Keeping the current model is fine too — only a recommendation."
         )
     return "\n".join(lines) + "\n"
 
