@@ -36,8 +36,13 @@ model used for STRIDE / triage / merger. Tiers:
 **triage, merger** (via `MODEL_MATRIX` overlay) and **renderer, abuse-case
 verifier** (via `EXTENDED_MODEL_MATRIX`) — are pinned to **`claude-sonnet-5`**,
 where the benchmark below measured a real gain. **STRIDE stays on 4.6** (Sonnet 5
-regressed discovery recall). `quick` keeps the all-4.6 economy floor; `thorough`
-uses Opus. **Caveat:** these explicit-id pins only bite on the **headless path** (or
+regressed discovery recall). **`quick` and `thorough` go the other way:** every
+Sonnet-tier subagent (qa_content, qa_routine, renderer, abuse-verifier) is pinned to
+the concrete **`claude-sonnet-4-6`** rather than the bare `sonnet` alias — only the
+orchestrator stays the session-following alias (the plugin cannot set the session
+model), and the pin is skipped for the explicit `sonnet` tier
+(`--reasoning-model sonnet`). `thorough` keeps STRIDE/triage/merger on Opus.
+**Caveat:** these explicit-id pins only bite on the **headless path** (or
 the hybrid-merger path) — an *interactive* run's subagents inherit the session
 model regardless (the Agent-tool `model` param takes only tier aliases, and the
 `sonnet` alias resolves to the session). So on an interactive scan the session

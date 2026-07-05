@@ -285,9 +285,16 @@ class TestResolveExtendedModelsRendererAbuse:
     buy-back the default is the `sonnet` alias (host session); at `standard`
     they take the Sonnet-5 buy-back. Pinnable via env vars; opus-banned."""
 
-    def test_defaults_follow_sonnet_alias(self):
-        # quick has no buy-back → renderer + abuse follow the `sonnet` alias.
+    def test_quick_pins_renderer_abuse_to_46(self):
+        # quick/thorough pin every Sonnet-tier subagent to concrete 4.6.
         out = rc.resolve_extended_models("sonnet-economy", "quick")
+        assert out["renderer_model"] == "claude-sonnet-4-6"
+        assert out["abuse_verifier_model"] == "claude-sonnet-4-6"
+
+    def test_sonnet_tier_optin_keeps_alias(self):
+        # The explicit `sonnet` tier (--reasoning-model sonnet) opts into latest
+        # Sonnet → the 4.6 pin is skipped, the alias survives.
+        out = rc.resolve_extended_models("sonnet", "quick")
         assert out["renderer_model"] == "sonnet"
         assert out["abuse_verifier_model"] == "sonnet"
 

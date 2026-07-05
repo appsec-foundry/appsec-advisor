@@ -649,6 +649,19 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
         models["renderer"] = SONNET5
         models["abuse_verifier"] = SONNET5
 
+    # quick / thorough: pin every Sonnet-tier SUBAGENT to the concrete Sonnet 4.6
+    # instead of leaving the bare `sonnet` alias (which silently follows the host
+    # session — Opus / Sonnet 5). Deterministic + cheapest. Only the bare alias is
+    # rewritten, so Haiku stays Haiku and (at thorough) Opus stays Opus. The
+    # ORCHESTRATOR is deliberately left as the alias: it IS the session model, which
+    # the plugin cannot set, and hardcoding it would make the routing table lie.
+    # Skipped when the user explicitly opts into the Sonnet-5 tier
+    # (`--reasoning-model sonnet`). Env overrides below still win.
+    if depth in ("quick", "thorough") and reasoning_mode != "sonnet":
+        for _k in ("qa_content", "qa_routine", "renderer", "abuse_verifier"):
+            if models.get(_k) == SONNET:
+                models[_k] = "claude-sonnet-4-6"
+
     env_map = {
         "context_resolver": "APPSEC_CONTEXT_RESOLVER_MODEL",
         "recon_scanner":    "APPSEC_RECON_SCANNER_MODEL",
