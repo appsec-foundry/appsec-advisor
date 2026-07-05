@@ -836,9 +836,9 @@ def test_evidence_check_badge_renders_on_refuted_and_ambiguous(tmp_path: Path) -
     # The unchecked verdict stays silent.
     assert "(evidence unchecked)" not in rendered
 
-    # Footnote present once.
-    assert "**Evidence verification:**" in rendered
-    assert rendered.count("**Evidence verification:**") == 1
+    # Footnote removed 2026-07-05 (user request): the inline row markers stay,
+    # but the long explanatory "**Evidence verification:**" paragraph is gone.
+    assert "**Evidence verification:**" not in rendered
 
 
 def test_evidence_check_footnote_omitted_when_no_drift(tmp_path: Path) -> None:
@@ -1035,9 +1035,7 @@ def test_chain_map_resolves_owner_with_severity_dot_on_source_line(tmp_path: Pat
         "Any unauthenticated caller logs in as admin.\n",
         encoding="utf-8",
     )
-    ctx = compose.RenderContext(
-        output_dir=tmp_path, contract={}, yaml_data={}, triage={}, fragments_dir=frag_dir
-    )
+    ctx = compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data={}, triage={}, fragments_dir=frag_dir)
     chain_map = compose._build_finding_to_chain_map(ctx)
     assert chain_map.get("F-003") == ("Walkthrough §3.2", "32-sql-injection-authentication-bypass")
     assert chain_map.get("T-003") == ("Walkthrough §3.2", "32-sql-injection-authentication-bypass")

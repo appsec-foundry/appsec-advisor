@@ -9113,13 +9113,12 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             body = _render_by_id(ctx, env, sid, sec)
         else:
             raise ContractError(f"unsupported fragment_type for MS subsection {sid}: {ftype}")
-        if sid == "verdict":
-            # Append the deterministic abuse-chain provenance note INSIDE the
-            # verdict block (not as a new subsection) so the MS structure
-            # contract is unaffected. No-ops when no verified chain exists.
-            chain_note = _abuse_chain_ms_note(ctx)
-            if chain_note:
-                body = (body.rstrip() + "\n\n" + chain_note) if body.strip() else chain_note
+        # The generic "Attack-chain analysis" note (findings anchoring chains,
+        # with F-NNN ids) was removed from the verdict block 2026-07-05: it
+        # duplicated the abuse-case integration and violated verdict brevity
+        # (no F-/T-NNN in the verdict). The abuse cases are now surfaced ONCE,
+        # properly, by _build_ms_abuse_chain_line ("Verified attack chains …",
+        # AC-T-NNN) in the Security Posture section below.
         if body.strip():
             parts.append(body.rstrip())
     return "\n\n".join(parts) + "\n"
@@ -14239,176 +14238,70 @@ def _actor_fold_map(active_ids: set[str], meta: dict) -> tuple[dict[str, str], d
 
 
 def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """Identified Actors — table of resolved ACT-* actors with layer, status,
-    finding counts, and per-component relevance (actors.md §14). Rendered as an
-    unnumbered `### Identified Actors` subsection of §1 System Overview (peer of
-    "### Scope"), nested under System Overview in the ToC. Conditional on
-    `has_resolved_actors`; gracefully renders empty on legacy / pre-Phase-2.7 runs.
+    """Threat Actors — §1 table over the SAME consolidated actor taxonomy the
+    Management Summary uses (the posture actors that drive the numbered attack
+    paths), NOT the raw ACT-* discovery library.
+
+    The set is derived from each finding's ``vektor`` — identical to the MS
+    "Threat actors" legend by construction — and the public-repo collapse
+    (``repo-read`` → ``internet-anon``, mirroring ``_collapse_public_repo_actors``)
+    is applied the same way, so §1 and the Management Summary never disagree on
+    who the actors are. Per-actor finding counts and components add the detail
+    the MS legend omits.
+
+    The earlier ACT-* library table (2026-07-05 user request) is gone: it
+    introduced actors absent from the MS (insider-dev / supply-chain /
+    physical-device) and carried process-only sub-subsections (Consolidated /
+    Disabled / proposed / flagged) that were noise in a delivered report.
+    Renders nothing when no finding carries a vektor (legacy runs).
     """
-    resolved_path = ctx.output_dir / ".actors-resolved.json"
-    if not resolved_path.is_file():
-        return ""
-    try:
-        resolved = json.loads(resolved_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-
-    actors = resolved.get("resolved_actors", []) or []
     threats = ctx.yaml_data.get("threats") or []
+    public_repo = bool((ctx.yaml_data.get("meta") or {}).get("public_source_repo"))
 
-    # Tabulate per-actor finding counts and components.
     counts: dict[str, int] = {}
     components: dict[str, set[str]] = {}
     for t in threats:
-        comp = t.get("component", "")
-        for aid in t.get("actor_ids") or []:
-            counts[aid] = counts.get(aid, 0) + 1
-            if comp:
-                components.setdefault(aid, set()).add(comp)
+        if not isinstance(t, dict):
+            continue
+        vek = (t.get("vektor") or "").strip()
+        if not vek:
+            continue
+        # A committed secret in a PUBLIC repo is readable by any anonymous
+        # attacker, so the repo-reader folds into internet-anon — the same
+        # collapse the MS figures apply (_collapse_public_repo_actors).
+        if public_repo and vek == "repo-read":
+            vek = "internet-anon"
+        counts[vek] = counts.get(vek, 0) + 1
+        comp = (t.get("component") or "").strip()
+        if comp:
+            components.setdefault(vek, set()).add(comp)
 
-    # The resolver is the trust boundary for the LLM-authored discovery
-    # sidecar. Never read `.actors-discovered.json` directly here: invalid
-    # discovery output is rejected before review flags are copied into this
-    # authoritative artifact.
-    inputs_questioned = [item for item in (resolved.get("inputs_questioned") or []) if isinstance(item, dict)]
+    if not counts:
+        return ""
+
+    labels = _load_posture_actor_labels() or {}
+    actor_meta = labels.get("actors") or {}
+    order = labels.get("order") or []
+    present = [a for a in order if a in counts] + [a for a in counts if a not in order]
 
     lines: list[str] = ['<a id="identified-actors"></a>', "### Identified Actors", ""]
-
-    # Quick-mode transparency notice (actors.md §12).
-    skip_reason = resolved.get("discovery_skip_reason")
-    if skip_reason is None and (ctx.output_dir / ".discovery-skipped.json").is_file():
-        skip_reason = "quick-mode"  # legacy sentinel
-    if skip_reason:
-        if skip_reason == "disabled-by-repo-config":
-            lines.append(
-                "> _Note: Actor discovery is disabled by `.appsec/actors.yaml`; "
-                "this run used the configured static actor layers only._"
-            )
-        else:
-            lines.append(
-                "> _Note: This run used the static actor library only. "
-                "Re-run with `--standard` or `--thorough` to enable LLM-based actor discovery "
-                "for repo-specific actor identification._"
-            )
-        lines.append("")
-
-    active = [a for a in actors if (a.get("_provenance") or {}).get("active")]
-
-    # Consolidate reach-equivalent actors so the inventory lists each trust
-    # position once and stays consistent with the collapsed Figure (actors.md
-    # §0: folded actors are surfaced below, never dropped silently).
-    active_ids = {a.get("id") for a in active}
-    meta = ctx.yaml_data.get("meta") or {}
-    folded_into, fold_reason = _actor_fold_map(active_ids, meta)
-    for child, primary in folded_into.items():
-        counts[primary] = counts.get(primary, 0) + counts.get(child, 0)
-        components.setdefault(primary, set()).update(components.get(child, set()))
-    label_by_id = {a.get("id"): a.get("label", "") for a in active}
-    active = [a for a in active if a.get("id") not in folded_into]
-
-    if active:
-        lines.append("| ID | Label | Layer | Status | Findings | Relevant for |")
-        lines.append("|---|---|---|---|---|---|")
-        for a in sorted(active, key=lambda x: x.get("id", "")):
-            aid = a.get("id", "?")
-            label = a.get("label", "")
-            prov = a.get("_provenance") or {}
-            layer = prov.get("layer", "?")
-            proposed = bool(prov.get("proposed"))
-            status = "proposed" if proposed else "active"
-            if prov.get("stale"):
-                status += " (stale)"
-            display_layer = f"{layer} (proposed)" if proposed else layer
-            comps = sorted(components.get(aid, set()))
-            comps_str = ", ".join(comps) if comps else "_(no findings)_"
-            lines.append(f"| `{aid}` | {label} | {display_layer} | {status} | {counts.get(aid, 0)} | {comps_str} |")
-        lines.append("")
-    else:
-        lines.append("_No actors resolved for this run._")
-        lines.append("")
-
-    if folded_into:
-        lines.append("#### Consolidated actors")
-        lines.append("")
-        lines.append(
-            "These actors share reach with a primary actor, so the inventory folds "
-            "them into it and lists each trust position once; their findings roll up "
-            "into the primary."
-        )
-        lines.append("")
-        lines.append("| ID | Label | Consolidated into | Reason |")
-        lines.append("|---|---|---|---|")
-        for child in sorted(folded_into):
-            primary = folded_into[child]
-            reason = fold_reason.get(child) or "—"
-            lines.append(f"| `{child}` | {label_by_id.get(child, '')} | `{primary}` | {reason} |")
-        lines.append("")
-
-    proposed_actors = [a for a in active if (a.get("_provenance") or {}).get("proposed")]
-    if proposed_actors:
-        lines.append("#### Newly identified actors — please confirm")
-        lines.append("")
-        lines.append(
-            "The following actors were proposed by LLM discovery (Phase 2.7) and are "
-            "active in this run. Promote them to `.appsec/actors.yaml` to stabilize "
-            "them across re-runs (actors.md §8)."
-        )
-        lines.append("")
-        for a in proposed_actors:
-            aid = a.get("id", "?")
-            label = a.get("label", "")
-            rationale = a.get("rationale") or a.get("description", "")
-            suffix = f" — {rationale}" if rationale else ""
-            lines.append(f"- **`{aid}` ({label})**{suffix}")
-        lines.append("")
-
-    if inputs_questioned:
-        lines.append("#### Actors flagged for review")
-        lines.append("")
-        lines.append(
-            "Discovery flagged these actors as questionable — recon shows no plausible "
-            "reach for them in this repo. Consider disabling in your next run."
-        )
-        lines.append("")
-        for q in inputs_questioned:
-            qid = q.get("id", "?")
-            reason = q.get("reason", "")
-            rec = q.get("recommendation", "")
-            tail = f" _(recommendation: {rec})_" if rec else ""
-            lines.append(f"- **`{qid}`** — {reason}{tail}")
-        lines.append("")
-
-    disabled = [a for a in actors if (a.get("_provenance") or {}).get("disabled_by")]
-    if disabled:
-        lines.append("#### Disabled actors")
-        lines.append("")
-        lines.append("| ID | Label | Disabled by | Reason |")
-        lines.append("|---|---|---|---|")
-        for a in sorted(disabled, key=lambda x: x.get("id", "")):
-            aid = a.get("id", "?")
-            label = a.get("label", "")
-            prov = a.get("_provenance") or {}
-            by = prov.get("disabled_by", "")
-            reason = prov.get("disable_reason") or "_(no reason given)_"
-            lines.append(f"| `{aid}` | {label} | {by} | {reason} |")
-        lines.append("")
-
-    dormant_threats = [t for t in threats if t.get("_status") == "dormant"]
-    if dormant_threats:
-        lines.append("#### Dormant findings")
-        lines.append("")
-        lines.append(
-            "Findings preserved across re-runs whose structurally-required actor was "
-            "disabled (actors.md §10 Stable-ID Garantie Fall 3). Re-enable the actor "
-            "in your next run to surface them as live findings again."
-        )
-        lines.append("")
-        for t in dormant_threats:
-            tid = t.get("id", "?")
-            title = t.get("title", "")
-            ca = (t.get("_provenance") or {}).get("created_by_actor", "?")
-            lines.append(f"- **{tid}** — {title} _(was tagged: `{ca}`)_")
-        lines.append("")
+    lines.append(
+        "The consolidated threat actors that drive this model — the same set named "
+        "in the Management Summary. Each row aggregates the findings reachable from "
+        "that actor's position; the **Shop User** appears as the *victim* of "
+        "client-side attacks, not an attacker."
+    )
+    lines.append("")
+    lines.append("| Actor | Role | Reach | Findings | Components |")
+    lines.append("|---|---|---|---|---|")
+    for a in present:
+        m = actor_meta.get(a) or {}
+        name = m.get("label") or _FIG1_ACTOR_LABEL.get(a) or a
+        role = "victim" if (m.get("role") == "victim" or a == "victim-required") else "attacker"
+        reach = m.get("default_subtitle") or "—"
+        comps = ", ".join(sorted(components.get(a, set()))) or "—"
+        lines.append(f"| {name} | {role} | {reach} | {counts.get(a, 0)} | {comps} |")
+    lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -14458,13 +14351,6 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             continue
         deduped.append(t)
     threats = deduped
-    # Tracks whether any finding row carries the `(raw Critical)`
-    # annotation — set inside the per-row loop. When True we emit a
-    # one-line footnote at the end of §8 explaining the convention.
-    has_raw_downgrade = False
-    # M3: tracks whether any row carries an evidence_check marker
-    # (refuted or ambiguous). Drives the §8 evidence-check footnote.
-    has_evidence_drift = False
     # Tracks whether any row was carried forward from a prior deeper scan
     # without re-verification (incremental depth-downgrade). Drives a
     # depth-independent §8 footnote — unlike the quick-only banner line, this
@@ -14657,14 +14543,10 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         ),
     )
 
-    # Footnote conditions (raw-Critical caps, evidence drift) — detected up
-    # front so the footnotes below render once.
+    # Carried-forward footnote condition — detected up front so the footnote
+    # below renders once. (The raw-Critical and evidence-drift footnotes were
+    # removed 2026-07-05; their detection flags went with them.)
     for t in all_threats_sorted:
-        sev_t = (t.get("risk") or t.get("severity") or "").lower()
-        if (t.get("impact") or "").strip().lower() == "critical" and sev_t != "critical":
-            has_raw_downgrade = True
-        if (t.get("evidence_check") or "").strip().lower() in {"refuted", "ambiguous"}:
-            has_evidence_drift = True
         if (t.get("evidence_check") or "").strip().lower() == "carried-unverified-shallower-depth":
             has_carried_unverified = True
 
@@ -14703,35 +14585,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             )
             lines.append("")
 
-    # ---- §8 footnote: raw-severity convention ----------------------------
-    if has_raw_downgrade:
-        lines.append("---")
-        lines.append("")
-        lines.append(
-            "_**Severity annotation:** rows tagged `*(raw Critical)*` had a "
-            "Critical-class impact that was capped to a lower effective severity "
-            "by the triage stage (likelihood downgrade or `data/severity-caps.yaml` "
-            "rule). The rendered severity is the **effective** severity used for "
-            "ranking and prioritisation; the raw severity is preserved here so "
-            "reviewers can re-evaluate the cap decision._"
-        )
-        lines.append("")
-
-    # ---- §8 footnote: evidence-check convention (M3) ---------------------
-    if has_evidence_drift:
-        lines.append("---")
-        lines.append("")
-        lines.append(
-            "_**Evidence verification:** rows tagged `⚠ (evidence refuted)` "
-            "were re-checked by the Phase 10a evidence-verifier (see "
-            "`.evidence-verification.json`) and the cited `file:line` did "
-            "**not** show the claimed weakness. Their raw severity is preserved, "
-            "but chain-elevation has been suppressed by the triage stage. "
-            "Rows tagged `◌ (evidence ambiguous)` could not be confirmed or "
-            "refuted from the cited snippet alone — a human reviewer should "
-            "decide whether to keep, downgrade, or remove these findings._"
-        )
-        lines.append("")
+    # §8 footnotes for the `(raw Critical)` severity-cap convention and the
+    # `⚠/◌` evidence-check convention were removed per user request
+    # (2026-07-05): the inline markers stay on the rows but the long
+    # explanatory paragraphs are dropped. The carried-forward footnote below
+    # is retained (it flags un-reverified incremental content, not a marker
+    # legend).
 
     # ---- §8 footnote: carried-forward (incremental depth-downgrade) ------
     # Depth-independent so a standard re-scan that downgraded from thorough
@@ -15934,10 +15793,16 @@ def render(
             # perf anomalies / recovery events). Drives the §Run Issues
             # appendix include/skip decision.
             "run_warned": _run_warned_signal(output_dir),
-            # §1.5 Identified Actors gate (actors.md §14). True iff Phase 2.7
-            # produced .actors-resolved.json — legacy runs and pre-Phase-2.7
-            # caches gracefully skip the section instead of failing the contract.
-            "has_resolved_actors": (output_dir / ".actors-resolved.json").is_file(),
+            # §1 Identified Actors gate. The section now renders the consolidated
+            # posture-actor taxonomy derived from finding `vektor` values (the
+            # same set the Management Summary uses), so it is in scope exactly
+            # when at least one finding carries a vektor. Legacy runs without
+            # vektor data gracefully skip the section instead of failing the
+            # contract. (Was file-based on .actors-resolved.json before the
+            # 2026-07-05 taxonomy switch.)
+            "has_resolved_actors": any(
+                (t.get("vektor") or "").strip() for t in (yaml_data.get("threats") or []) if isinstance(t, dict)
+            ),
             # Quick-mode §7 gate. False suppresses §7 in both TOC and body
             # (resolver returned `""` — current depth is quick and no rich
             # prior content was found). True keeps §7 — either via the

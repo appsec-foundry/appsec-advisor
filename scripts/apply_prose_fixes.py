@@ -71,13 +71,17 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 import re
 import sys
 from pathlib import Path
 
+import yaml
 from _atomic_io import atomic_write_text
 from _slug import github_render_slug
 from perimeter_patterns import strip_perimeter_absence_sentences
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 _EXTENSIONS = (
     "ts",
@@ -871,6 +875,67 @@ def _escape_bare_dollars(text: str) -> tuple[str, int]:
     return "".join(out_parts), fixes
 
 
+_ACTOR_ID_RE = re.compile(r"\bACT-[A-Z]-\d+\b")
+_ACTOR_LABEL_EXPAND = {"dev": "developer", "ops": "operator"}
+
+
+@functools.lru_cache(maxsize=1)
+def _actor_id_labels() -> dict:
+    """id → human noun phrase from the actor library (e.g. ACT-D-04 →
+    'malicious insider developer')."""
+    path = PLUGIN_ROOT / "data" / "actors" / "default-library.yaml"
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    out: dict[str, str] = {}
+    for a in data.get("actors") or []:
+        aid = a.get("id")
+        label = a.get("label") or ""
+        if not aid or not label:
+            continue
+        out[aid] = " ".join(_ACTOR_LABEL_EXPAND.get(w, w) for w in label.split("-"))
+    return out
+
+
+def _humanize_actor_ids(text: str) -> tuple[str, int]:
+    """Replace bare ``ACT-<layer>-NN`` library ids in prose with the actor's
+    human label (``ACT-D-04`` → ``a malicious insider developer``).
+
+    The §1 actor table now uses the consolidated Management-Summary taxonomy
+    (posture ``vektor`` values), so raw ACT-* ids left in LLM-authored scenario
+    prose are dangling references. Humanising them keeps the document
+    self-consistent without reintroducing the discovery-library codes. Skips
+    fenced code, is article-aware (a/an), capitalises at sentence start, and is
+    idempotent (the rendered phrase no longer matches the id pattern)."""
+    labels = _actor_id_labels()
+    if not labels:
+        return text, 0
+    count = 0
+
+    def _sub(m: re.Match) -> str:
+        nonlocal count
+        phrase = labels.get(m.group(0))
+        if not phrase:
+            return m.group(0)
+        count += 1
+        article = "an" if phrase[:1].lower() in "aeiou" else "a"
+        prefix = m.string[: m.start()].rstrip()
+        if (not prefix) or prefix.endswith((".", "!", "?", ":")):
+            article = article.capitalize()
+        return f"{article} {phrase}"
+
+    out_lines: list[str] = []
+    in_fence = False
+    for raw in text.splitlines(keepends=True):
+        if raw.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out_lines.append(raw)
+            continue
+        out_lines.append(raw if in_fence else _ACTOR_ID_RE.sub(_sub, raw))
+    return "".join(out_lines), count
+
+
 def apply_fixes(text: str) -> tuple[str, int]:
     """Apply all prose-fix classes outside fenced blocks. Returns
     (new_text, n_fixes_total)."""
@@ -941,6 +1006,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
     body, title_fixes = _normalize_title_path_tail(body)
     body, bullet_fixes = _bulletize_relevant_findings(body)
     body, anchor_collapse_fixes = _collapse_consecutive_anchors(body)
+    body, actor_id_fixes = _humanize_actor_ids(body)
     body, dollar_fixes = _escape_bare_dollars(body)  # run LAST
     body, section8_fixes = _canonicalize_section8_name(body)
     total = (
@@ -952,6 +1018,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
         + title_fixes
         + bullet_fixes
         + anchor_collapse_fixes
+        + actor_id_fixes
         + dollar_fixes
         + section8_fixes
     )

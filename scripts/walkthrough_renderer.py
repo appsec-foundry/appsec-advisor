@@ -1200,10 +1200,31 @@ def _render_walkthrough_block(
     # short (a curated component name or a 1-4 word file label) and is the
     # part that actually differentiates same-weakness headings, so it must
     # survive intact; the weakness class tolerates abbreviation.
+    # Heading composition (2026-07-05 user request): NEVER ellipsis-truncate the
+    # weakness class. The earlier form gave the weakness only `78 - len(" in " +
+    # target)` chars, so a long weakness class + a long component-zone target
+    # (e.g. "JWT Role Claim Accepted Without Server-Side Verification" in
+    # "Authentication and Identity Module") produced "…Server-…", which is both
+    # ugly AND anchor-breaking: the trailing "-…" makes github_slug ("server-")
+    # and github_render_slug ("server--") diverge, orphaning the §3 ToC link.
+    # New rule, in preference order — pick the first that fits HEADING_BUDGET:
+    #   1. "<weakness> in <target>"  (feature-scoped, e.g. "SQL Injection in Login")
+    #   2. "<weakness>"              (drop the target rather than clip the weakness;
+    #                                the "3.N" prefix keeps the anchor unique and
+    #                                the **Source:** line already names the file)
+    #   3. clipped weakness          (last resort — a weakness class >78 chars,
+    #                                which the finding-title contract makes rare)
+    _HEADING_BUDGET = 78
     _target = _attack_target_label(threat, yaml_data)
-    _connector = " in "
-    _weakness_budget = max(20, 78 - len(_connector) - len(_target))
-    heading = f"### 3.{walkthrough_index} {_short_title(_weakness_class(title), _weakness_budget)}{_connector}{_target}"
+    _weakness = _weakness_class(title)
+    _combined = f"{_weakness} in {_target}"
+    if len(_combined) <= _HEADING_BUDGET:
+        _heading_text = _combined
+    elif len(_weakness) <= _HEADING_BUDGET:
+        _heading_text = _weakness
+    else:
+        _heading_text = _short_title(_weakness, _HEADING_BUDGET)
+    heading = f"### 3.{walkthrough_index} {_heading_text}"
 
     lines: list[str] = []
     lines.append(heading)

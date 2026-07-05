@@ -1156,44 +1156,26 @@ class TestDeriveAttackPathsFallback:
 
 
 class TestRenderIdentifiedActorsExtra:
-    def _ctx(self, tmp_path):
-        return compose.RenderContext(
+    def test_vektor_taxonomy_ignores_actor_ids(self, tmp_path):
+        # The section is driven by `vektor` (the MS posture taxonomy), not the
+        # removed ACT-* actor_ids library (2026-07-05).
+        ctx = compose.RenderContext(
             output_dir=tmp_path,
             contract={},
-            yaml_data={"threats": [{"component": "C-01", "actor_ids": ["ACT-1"]}]},
+            yaml_data={
+                "meta": {"public_source_repo": True},
+                "threats": [
+                    {"component": "C-01", "vektor": "internet-anon", "actor_ids": ["ACT-1"]},
+                    {"component": "C-02", "vektor": "internet-user"},
+                ],
+            },
             triage={},
             fragments_dir=tmp_path / ".fragments",
         )
-
-    def test_inputs_questioned_and_stale(self, tmp_path):
-        (tmp_path / ".actors-resolved.json").write_text(
-            json.dumps(
-                {
-                    "resolved_actors": [
-                        {
-                            "id": "ACT-1",
-                            "label": "Anon",
-                            "_provenance": {"active": True, "layer": "client", "stale": True},
-                        }
-                    ],
-                    "inputs_questioned": [{"id": "ACT-9", "reason": "no plausible reach", "recommendation": "disable"}],
-                }
-            )
-        )
-        ctx = self._ctx(tmp_path)
         out = compose._render_identified_actors(ctx, None, {})
-        assert "Actors flagged for review" in out
-        assert "ACT-9" in out
-        assert "(stale)" in out
-
-    def test_discovered_json_malformed_tolerated(self, tmp_path):
-        (tmp_path / ".actors-resolved.json").write_text(
-            json.dumps({"resolved_actors": [{"id": "A", "label": "L", "_provenance": {"active": True}}]})
-        )
-        (tmp_path / ".actors-discovered.json").write_text(json.dumps({"inputs_questioned": ["invalid-raw-entry"]}))
-        ctx = self._ctx(tmp_path)
-        out = compose._render_identified_actors(ctx, None, {})
-        assert "Identified Actors" in out
+        assert "Anonymous Internet Attacker" in out
+        assert "Authenticated Internet Attacker" in out
+        assert "ACT-" not in out
 
 
 class TestSubsectionDriftHint:
@@ -1335,14 +1317,19 @@ class TestRenderRunStatisticsViaPipeline:
 
 
 class TestRenderAbuseChainAndBoundaries:
-    def test_verified_chain_ids_ms_note(self, tmp_path):
+    def test_generic_attack_chain_note_removed_from_verdict(self, tmp_path):
+        # 2026-07-05: the generic "Attack-chain analysis" note (with F-NNN ids)
+        # was removed from the verdict — it duplicated the abuse-case
+        # integration and violated verdict brevity. The abuse cases are now
+        # surfaced only via the "Verified attack chains …" line (AC-T-NNN) in
+        # the Security Posture section (see test_abuse_cases_json_verdict_link).
         out = _prepare_output_dir(tmp_path)
         data = _load_fixture_yaml(out)
         data["threats"][0]["verified_chain_ids"] = ["AC-001"]
         data["threats"][0]["effective_severity"] = "Critical"
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
-        assert "Attack-chain analysis" in rendered
+        assert "Attack-chain analysis" not in rendered
 
     def test_abuse_cases_json_verdict_link(self, tmp_path):
         out = _prepare_output_dir(tmp_path)

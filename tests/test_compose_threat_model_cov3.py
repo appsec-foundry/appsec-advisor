@@ -201,65 +201,30 @@ class TestRenderTitleMetaFallback:
 
 
 class TestRenderIdentifiedActorsExtra:
-    def test_inputs_questioned_section(self, tmp_path):
+    def test_empty_when_no_vektor_findings(self, tmp_path):
+        # No finding carries a vektor → nothing to consolidate → empty section.
+        ctx = _mk_ctx(tmp_path, yaml_data={"threats": [{"component": "API"}]})
+        assert compose._render_identified_actors(ctx, None, {}) == ""
+
+    def test_victim_row_marked_and_ordered_first(self, tmp_path):
         ctx = _mk_ctx(
             tmp_path,
-            yaml_data={"threats": [{"component": "API", "actor_ids": ["ACT-01"]}]},
-        )
-        (ctx.output_dir / ".actors-resolved.json").write_text(
-            _json.dumps(
-                {
-                    "resolved_actors": [
-                        {
-                            "id": "ACT-01",
-                            "label": "User",
-                            "_provenance": {"active": True, "layer": "client"},
-                        }
-                    ],
-                    "inputs_questioned": [
-                        {
-                            "id": "ACT-QQ",
-                            "reason": "no plausible reach",
-                            "recommendation": "disable",
-                        },
-                        {"id": "ACT-RR", "reason": "unused"},
-                    ],
-                }
-            ),
-            encoding="utf-8",
+            yaml_data={
+                "meta": {"public_source_repo": True},
+                "threats": [
+                    {"component": "API", "vektor": "internet-anon"},
+                    {"component": "SPA", "vektor": "victim-required"},
+                ],
+            },
         )
         out = compose._render_identified_actors(ctx, None, {})
-        assert "Actors flagged for review" in out
-        assert "ACT-QQ" in out
-        assert "(recommendation: disable)" in out
-        assert "ACT-RR" in out
-
-    def test_discovery_file_malformed_swallowed(self, tmp_path):
-        ctx = _mk_ctx(tmp_path, yaml_data={"threats": []})
-        (ctx.output_dir / ".actors-resolved.json").write_text(
-            _json.dumps({"resolved_actors": [{"id": "ACT-01", "label": "U", "_provenance": {"active": True}}]}),
-            encoding="utf-8",
-        )
-        (ctx.output_dir / ".actors-discovered.json").write_text(
-            _json.dumps({"inputs_questioned": ["not-a-mapping"]}),
-            encoding="utf-8",
-        )
-        out = compose._render_identified_actors(ctx, None, {})
-        # Raw discovery output is never consumed by the renderer.
-        assert "Actors flagged for review" not in out
-        assert "ACT-01" in out
+        rows = [ln for ln in out.splitlines() if ln.startswith("| ") and "Role" not in ln and "---" not in ln]
+        assert "Shop User" in rows[0] and "victim" in rows[0]  # order puts victim first
 
 
 # ---------------------------------------------------------------------------
 # _render_identified_actors — reach-equivalence consolidation (fold map)
 # ---------------------------------------------------------------------------
-
-
-def _resolved(tmp_path, ids):
-    """Write .actors-resolved.json with the given plugin actors all active."""
-    return _json.dumps(
-        {"resolved_actors": [{"id": i, "label": lbl, "_provenance": {"active": True, "layer": "plugin"}} for i, lbl in ids]}
-    )
 
 
 class TestIdentifiedActorsConsolidation:
@@ -285,31 +250,11 @@ class TestIdentifiedActorsConsolidation:
         folded, _ = compose._actor_fold_map({"ACT-D-02"}, {"open_user_registration": True})
         assert folded == {}
 
-    def test_table_folds_lowpriv_rolls_up_counts_and_lists_consolidated(self, tmp_path):
-        ctx = _mk_ctx(
-            tmp_path,
-            yaml_data={
-                "meta": {"open_user_registration": True},
-                "threats": [
-                    {"component": "API", "actor_ids": ["ACT-D-01"]},
-                    {"component": "API", "actor_ids": ["ACT-D-01"]},
-                    {"component": "SPA", "actor_ids": ["ACT-D-02"]},
-                    {"component": "SPA", "actor_ids": ["ACT-D-02"]},
-                    {"component": "SPA", "actor_ids": ["ACT-D-02"]},
-                ],
-            },
-        )
-        (ctx.output_dir / ".actors-resolved.json").write_text(
-            _resolved(tmp_path, [("ACT-D-01", "anonymous-internet-attacker"), ("ACT-D-02", "authenticated-low-priv-user")]),
-            encoding="utf-8",
-        )
-        out = compose._render_identified_actors(ctx, None, {})
-        # D-02's 3 findings roll into D-01's 2 → primary shows 5; no D-02 active row.
-        assert "| `ACT-D-01` | anonymous-internet-attacker | plugin | active | 5 |" in out
-        assert "| `ACT-D-02` | authenticated-low-priv-user | plugin | active |" not in out
-        # Folded actor is surfaced, never dropped silently (actors.md §0).
-        assert "#### Consolidated actors" in out
-        assert "| `ACT-D-02` | authenticated-low-priv-user | `ACT-D-01` | open-self-registration |" in out
+    # NOTE: the old `_render_identified_actors` table-fold test was removed
+    # 2026-07-05 — the §1 table no longer sources from the ACT-* library or
+    # `_actor_fold_map`; it derives from the MS posture-actor `vektor` taxonomy
+    # (see TestRenderIdentifiedActors in test_compose_threat_model_cov.py). The
+    # `_actor_fold_map` unit tests above are retained since the helper survives.
 
 
 # ---------------------------------------------------------------------------

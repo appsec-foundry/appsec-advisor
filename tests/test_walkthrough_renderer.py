@@ -682,6 +682,42 @@ class TestAttackTargetLabel:
         assert "### 3.1 SQL Injection in Login" in md
         assert "### 3.2 SQL Injection in Search" in md
 
+    def test_long_weakness_drops_zone_target_instead_of_ellipsis(self):
+        """#6 (2026-07-05): a long weakness class + a long component-zone target
+        must NOT be ellipsis-truncated ("…Server-…"). The weakness class is the
+        primary identifier, so the " in <zone>" suffix is dropped rather than the
+        weakness clipped. This also keeps the heading anchor stable (the trailing
+        "-…" made github_slug and github_render_slug diverge and orphaned the
+        §3 ToC link)."""
+        from scripts._slug import github_render_slug, github_slug
+
+        ydata = {
+            "threats": [
+                {
+                    "id": "T-012",
+                    "title": "JWT Role Claim Accepted Without Server-Side Verification — lib/insecurity.ts:157",
+                    "component": "auth-identity",
+                    "cwe": "CWE-285",
+                    "risk": "critical",
+                    "vektor": "internet-anon",
+                    "scenario": "Attacker forges a token with role=admin; the server trusts the claim.",
+                    # models/index.ts is a generic stem → target falls back to the
+                    # (long) component zone name, forcing the combined string >78.
+                    "evidence": [{"file": "models/index.ts", "line": 157}],
+                }
+            ],
+            "components": [{"id": "auth-identity", "name": "Authentication and Identity Module"}],
+        }
+        md = renderer.render_attack_walkthroughs_md(ydata)
+        heading = next(ln for ln in md.splitlines() if ln.startswith("### 3.1"))
+        # Full weakness class survives, no ellipsis, zone target dropped.
+        assert heading == "### 3.1 JWT Role Claim Accepted Without Server-Side Verification"
+        assert "…" not in heading
+        assert "Authentication and Identity Module" not in heading
+        # Anchor stability: the two sluggers must agree on the heading text.
+        text = heading[len("### ") :]
+        assert github_slug(text) == github_render_slug(text)
+
 
 def test_zero_criticals_renders_honest_stub_without_diagram():
     """Regression: a clean report with zero Critical findings must render §3 as

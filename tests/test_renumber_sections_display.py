@@ -180,3 +180,114 @@ def test_main_missing_file_returns_error(tmp_path, capsys):
     rc = rsd.main([str(tmp_path / "nope.md")])
     assert rc == 1
     assert "no such file" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Holistic consistency guard (2026-07-05) — catches the "§6 heading then §7.1
+# subsection" class the earlier per-transform tests could each pass while the
+# document as a whole stayed inconsistent. Parses the RENDERED result and
+# asserts document-level invariants rather than individual string presence.
+# ---------------------------------------------------------------------------
+
+import re  # noqa: E402
+
+
+def _assert_numbering_consistent(md: str) -> list[int]:
+    """Assert the '6 then 7.1' invariants on a rendered document:
+      - every `### N.M` / `#### N.M.K` subsection's major N equals its parent
+        `## N.` section (the exact "§6 heading then §7.1 subsection" bug),
+      - the top-level `## N.` numbering is contiguous (no gaps/jumps).
+    Returns the ordered list of top-level section numbers.
+    """
+    lines = md.splitlines()
+    tops: list[int] = []
+    cur: int | None = None
+    for l in lines:
+        mt = re.match(r"^## (\d+)(b?)\. (.+)", l)
+        if mt:
+            cur = int(mt.group(1))
+            if not mt.group(2):  # ignore 'b' variants (e.g. 6b Requirements)
+                tops.append(cur)
+            continue
+        ms = re.match(r"^#{3,4} (\d+)\.\d+", l)
+        if ms and cur is not None:
+            assert int(ms.group(1)) == cur, f"subsection major {ms.group(1)} != parent §{cur}: {l!r}"
+    assert tops, "no top-level sections found"
+    assert tops == list(range(tops[0], tops[0] + len(tops))), f"non-contiguous top-level numbering: {tops}"
+    return tops
+
+
+def test_renumbered_document_is_fully_consistent_no_6_then_7_1():
+    doc = (
+        "## Table of Contents\n\n"
+        "5. [Attack Surface](#5-attack-surface)\n"
+        "7. [Security Architecture](#7-security-architecture)\n"
+        "   - [7.1 Security Control Overview](#71-security-control-overview)\n"
+        "   - [7.2 Identity and Authentication Controls](#72-identity-and-authentication-controls)\n"
+        "8. [Findings Register](#8-findings-register)\n"
+        "9. [Abuse Cases](#9-abuse-cases)\n"
+        "10. [Mitigation Register](#10-mitigation-register)\n"
+        "11. [Out of Scope](#11-out-of-scope)\n\n"
+        "## 5. Attack Surface\n\n"
+        "See [§7.2 Identity and Authentication Controls](#72-identity-and-authentication-controls) "
+        "and [§7 Security Architecture](#7-security-architecture) for control detail.\n\n"
+        "## 7. Security Architecture\n\n"
+        "### 7.1 Security Control Overview\n\n"
+        "### 7.2 Identity and Authentication Controls\n\n"
+        "#### 7.2.1 Threat Hypotheses Requiring Validation\n\n"
+        "### 7.3 Session and Token Controls\n\n"
+        "## 8. Findings Register\n\n"
+        "## 9. Abuse Cases\n\n"
+        "## 10. Mitigation Register\n\n"
+        "## 11. Out of Scope\n"
+    )
+    out = rsd.renumber_sections_display(doc)
+
+    # 1) Document-level structural consistency (the core guard).
+    tops = _assert_numbering_consistent(out)
+    assert tops == [5, 6, 7, 8, 9, 10], tops  # §6 gap closed, contiguous
+
+    # 2) No Security-Architecture artefact keeps the old §7 number anywhere.
+    assert "## 7. Security Architecture" not in out
+    assert "### 7.1 Security Control Overview" not in out
+    assert "### 7.2 Identity and Authentication Controls" not in out
+    assert "#### 7.2.1" not in out
+    assert "#72-identity-and-authentication-controls" not in out
+    assert "#7-security-architecture" not in out
+    assert "§7.2 Identity" not in out and "§7 Security Architecture" not in out
+
+    # 3) The Findings Register correctly BECOMES the new §7 (a consistent shift,
+    #    not a stale leftover) — heading, TOC entry and any refs all agree.
+    assert "## 7. Findings Register" in out
+    assert "7. [Findings Register](#7-findings-register)" in out
+
+    # 4) Security Architecture is fully §6 (heading + all subsections + TOC + refs).
+    assert "## 6. Security Architecture" in out
+    assert "### 6.1 Security Control Overview" in out
+    assert "#### 6.2.1 Threat Hypotheses Requiring Validation" in out
+    assert "[6.2 Identity and Authentication Controls](#62-identity-and-authentication-controls)" in out
+    assert "[§6.2 Identity and Authentication Controls](#62-identity-and-authentication-controls)" in out
+
+
+def test_canonical_seven_document_is_internally_consistent_before_renumber():
+    # The canonical (pre-renumber) doc keeps the §6 gap (§5 → §7). That is an
+    # allowed *consistent* jump: §7 heading with §7.x subsections, no §6.x
+    # dangling under a §7 heading. Guards against a half-renumbered canonical.
+    doc = (
+        "## 5. Attack Surface\n\n"
+        "## 7. Security Architecture\n\n"
+        "### 7.1 Security Control Overview\n\n"
+        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 8. Findings Register\n"
+    )
+    # No renumber applied — assert the source itself has no major mismatch.
+    lines = doc.splitlines()
+    cur = None
+    for l in lines:
+        mt = re.match(r"^## (\d+)\. ", l)
+        if mt:
+            cur = int(mt.group(1))
+            continue
+        ms = re.match(r"^### (\d+)\.\d+", l)
+        if ms:
+            assert int(ms.group(1)) == cur, f"canonical inconsistency: {l!r} under §{cur}"

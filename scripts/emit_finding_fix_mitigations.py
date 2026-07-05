@@ -160,19 +160,59 @@ def _clear_stale_threat_refs(data: dict, stale_ids: set[str]) -> None:
 
 _RISK_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
 
+# G3 (2026-07-05) — kinds that are evidence-confidence NOTES, not remediations.
+# A finding covered only by one of these still needs its real fix mitigation.
+_NON_REMEDIATION_KINDS = {"review", "investigate"}
+
+
+def _threat_ids_with_real_mitigation(data: dict) -> set[str]:
+    """Threat IDs already covered by a genuine (non-review) mitigation.
+
+    A ``kind:review`` / ``kind:investigate`` card is an evidence-confidence note
+    ("have a human re-check this line") — NOT a code fix. Before this guard, a
+    single review card set ``threats[].mitigation_ids`` and suppressed the real
+    ``kind:fix`` mitigation here (2026-07-05 juice-shop: a degenerate all-
+    ambiguous verifier produced 51 review cards, collapsing the Mitigation
+    Register to all-P3 with zero P1). Only a real mitigation counts as coverage.
+    """
+    by_id = {m.get("id"): m for m in (data.get("mitigations") or []) if isinstance(m, dict) and m.get("id")}
+    covered: set[str] = set()
+    for t in data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("id") or "").strip()
+        if not tid:
+            continue
+        mids = t.get("mitigation_ids") or []
+        if not mids:
+            continue
+        # A threat is genuinely covered UNLESS every *resolvable* link is a
+        # review/investigate note. Dangling links (no matching M-NNN in
+        # mitigations[]) are conservatively treated as pre-existing real
+        # coverage — only a fully review-only link set uncovers the finding so
+        # its real fix card gets synthesised.
+        resolvable = [by_id[mid] for mid in mids if mid in by_id]
+        if resolvable and all((m.get("kind") or "").strip().lower() in _NON_REMEDIATION_KINDS for m in resolvable):
+            continue
+        covered.add(tid)
+    return covered
+
 
 def _synthesize(data: dict, state: dict) -> list[dict]:
     """Group uncovered code findings by fix title and emit one card each."""
+    covered = _threat_ids_with_real_mitigation(data)
     groups: dict[str, dict] = {}
     order: list[str] = []
     for t in data.get("threats") or []:
         if not isinstance(t, dict):
             continue
-        if t.get("mitigation_ids"):
+        tid = (t.get("id") or "").strip()
+        # G3 — skip only when a real (non-review) mitigation already covers the
+        # finding; a lone review/investigate card must NOT block the fix card.
+        if tid in covered:
             continue
         if (t.get("source") or "") == "config-scan":
             continue
-        tid = (t.get("id") or "").strip()
         if not tid:
             continue
         how = _remediation_how(t)

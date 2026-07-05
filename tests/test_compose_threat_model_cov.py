@@ -2101,81 +2101,63 @@ class TestRenderRunIssues:
 
 
 class TestRenderIdentifiedActors:
-    def test_no_resolved_file(self, tmp_path):
-        ctx = _mk_ctx(tmp_path)
+    """§1 Identified Actors now renders the consolidated posture-actor taxonomy
+    derived from finding `vektor` values (the same set the Management Summary
+    uses), NOT the ACT-* discovery library (removed 2026-07-05)."""
+
+    def test_no_vektor_data_renders_empty(self, tmp_path):
+        ctx = _mk_ctx(tmp_path, yaml_data={"threats": [{"id": "T-1"}]})
         assert compose._render_identified_actors(ctx, None, {}) == ""
 
-    def test_malformed(self, tmp_path):
-        ctx = _mk_ctx(tmp_path)
-        (ctx.output_dir / ".actors-resolved.json").write_text("{bad", encoding="utf-8")
-        assert compose._render_identified_actors(ctx, None, {}) == ""
-
-    def test_active_actors_table(self, tmp_path):
-        resolved = {
-            "resolved_actors": [
-                {
-                    "id": "ACT-01",
-                    "label": "Anon User",
-                    "_provenance": {"active": True, "layer": "client"},
-                },
-                {
-                    "id": "ACT-02",
-                    "label": "Proposed One",
-                    "rationale": "found in code",
-                    "_provenance": {"active": True, "layer": "server", "proposed": True},
-                },
-                {
-                    "id": "ACT-03",
-                    "label": "Off",
-                    "_provenance": {"disabled_by": "org-profile", "disable_reason": "n/a"},
-                },
-            ]
-        }
+    def test_consolidated_posture_taxonomy_from_vektors(self, tmp_path):
+        # Public-repo collapse folds repo-read into internet-anon so §1 matches
+        # the MS "Threat actors" legend exactly.
         ctx = _mk_ctx(
             tmp_path,
             yaml_data={
+                "meta": {"public_source_repo": True},
                 "threats": [
-                    {"component": "API", "actor_ids": ["ACT-01"]},
-                    {
-                        "_status": "dormant",
-                        "id": "T-009",
-                        "title": "Dormant one",
-                        "_provenance": {"created_by_actor": "ACT-X"},
-                    },
-                ]
+                    {"id": "T-1", "vektor": "internet-anon", "component": "api"},
+                    {"id": "T-2", "vektor": "repo-read", "component": "auth"},
+                    {"id": "T-3", "vektor": "internet-user", "component": "api"},
+                    {"id": "T-4", "vektor": "victim-required", "component": "spa"},
+                ],
             },
         )
-        (ctx.output_dir / ".actors-resolved.json").write_text(_json.dumps(resolved), encoding="utf-8")
         out = compose._render_identified_actors(ctx, None, {})
         assert "### Identified Actors" in out
-        assert "ACT-01" in out
-        assert "Newly identified actors" in out
-        assert "Disabled actors" in out
-        assert "Dormant findings" in out
-        assert "T-009" in out
+        assert "Anonymous Internet Attacker" in out
+        assert "Authenticated Internet Attacker" in out
+        assert "Shop User" in out
+        # repo-read folded into internet-anon → 2 findings on the anon row.
+        anon_row = next(ln for ln in out.splitlines() if "Anonymous Internet Attacker" in ln)
+        assert "| 2 |" in anon_row
+        assert "auth" in anon_row and "api" in anon_row
+        # Shop User carries the victim role.
+        victim_row = next(ln for ln in out.splitlines() if "Shop User" in ln and ln.startswith("|"))
+        assert "victim" in victim_row
+        # No ACT-* library codes or process sub-subsections leak in.
+        assert "ACT-" not in out
+        assert "Consolidated actors" not in out
+        assert "Disabled actors" not in out
+        assert "Newly identified actors" not in out
 
-    def test_quick_mode_notice(self, tmp_path):
-        ctx = _mk_ctx(tmp_path)
-        (ctx.output_dir / ".actors-resolved.json").write_text(_json.dumps({"resolved_actors": []}), encoding="utf-8")
-        (ctx.output_dir / ".discovery-skipped.json").write_text("{}", encoding="utf-8")
-        out = compose._render_identified_actors(ctx, None, {})
-        assert "static actor library only" in out
-        assert "No actors resolved" in out
-
-    def test_discovery_disabled_notice_uses_configuration_reason(self, tmp_path):
-        ctx = _mk_ctx(tmp_path)
-        (ctx.output_dir / ".actors-resolved.json").write_text(
-            _json.dumps(
-                {
-                    "resolved_actors": [],
-                    "discovery_skip_reason": "disabled-by-repo-config",
-                }
-            ),
-            encoding="utf-8",
+    def test_repo_read_not_folded_when_private(self, tmp_path):
+        # Without public_source_repo the repo-reader stays its own actor row.
+        ctx = _mk_ctx(
+            tmp_path,
+            yaml_data={
+                "meta": {},
+                "threats": [
+                    {"id": "T-1", "vektor": "internet-anon", "component": "api"},
+                    {"id": "T-2", "vektor": "repo-read", "component": "auth"},
+                ],
+            },
         )
         out = compose._render_identified_actors(ctx, None, {})
-        assert "disabled by `.appsec/actors.yaml`" in out
-        assert "Re-run with `--standard`" not in out
+        assert "Internal Developer" in out  # repo-read label, not folded
+        anon_row = next(ln for ln in out.splitlines() if "Anonymous Internet Attacker" in ln)
+        assert "| 1 |" in anon_row
 
 
 class TestPostureShortLabel:

@@ -503,3 +503,25 @@ def test_apply_code_formatting_is_formatting_only():
     md2 = "#### M-001 — Sanitize next() in b2bOrder.ts\n"
     out2, _ = prose.apply_code_formatting(md2)
     assert out2 == md2  # heading untouched
+
+
+def test_humanize_actor_ids_replaces_dangling_library_ids():
+    # ACT-* library ids left in scenario prose become human labels (the §1
+    # actor table now uses the MS posture taxonomy, not ACT-* codes).
+    md = "Recovered via ACT-D-04, who has local-fs access. Also (ACT-D-01 reads it)."
+    out, n = prose._humanize_actor_ids(md)
+    assert "ACT-D-04" not in out and "ACT-D-01" not in out
+    assert "a malicious insider developer" in out
+    assert "an anonymous internet attacker" in out
+    assert n == 2
+    # Sentence-start article is capitalised.
+    md2 = "ACT-D-04 acts."
+    assert prose._humanize_actor_ids(md2)[0].startswith("A malicious insider developer")
+    # Idempotent — the rendered phrase no longer matches the id pattern.
+    assert prose._humanize_actor_ids(out)[1] == 0
+
+
+def test_humanize_actor_ids_skips_fenced_code():
+    md = "```\nACT-D-04 stays as an id in code\n```\n"
+    out, n = prose._humanize_actor_ids(md)
+    assert "ACT-D-04" in out and n == 0

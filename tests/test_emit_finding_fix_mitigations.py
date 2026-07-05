@@ -183,6 +183,70 @@ def test_rerun_clears_stale_auto_cards_and_writes_even_without_new_cards(tmp_pat
     assert data["threats"][0]["mitigation_ids"] == ["M-001"]
 
 
+def test_review_only_coverage_does_not_suppress_fix_card(tmp_path: Path, monkeypatch) -> None:
+    # G3 (2026-07-05) regression: a lone kind:review card (an evidence-confidence
+    # note, e.g. from an all-ambiguous verifier) must NOT block the real fix
+    # mitigation. A Critical SQLi still needs its P1 "parameterize queries" card.
+    _write_yaml(
+        tmp_path,
+        {
+            "mitigations": [
+                {
+                    "id": "M-020",
+                    "title": "Manual review: verify SQL Injection at routes/login.ts:34",
+                    "kind": "review",
+                    "priority": "P3",
+                    "threat_ids": ["T-001"],
+                    "auto_emitted": True,
+                    "auto_source": "evidence-check-ambiguous",
+                },
+            ],
+            "threats": [
+                _threat("T-001", risk="Critical", vektor="internet-anon", mitigation_ids=["M-020"]),
+            ],
+        },
+    )
+
+    assert _run(tmp_path, monkeypatch) == 0
+
+    data = _read_yaml(tmp_path)
+    ids = [m["id"] for m in data["mitigations"]]
+    # The review card is preserved AND a real fix card is now synthesised.
+    assert "M-020" in ids
+    fix_cards = [m for m in data["mitigations"] if m.get("kind") == "fix"]
+    assert len(fix_cards) == 1
+    assert fix_cards[0]["priority"] == "P1"
+    assert fix_cards[0]["severity"] == "Critical"
+    assert fix_cards[0]["threat_ids"] == ["T-001"]
+    # The threat now links both the review note and the real fix.
+    assert set(data["threats"][0]["mitigation_ids"]) == {"M-020", fix_cards[0]["id"]}
+
+
+def test_real_mitigation_still_suppresses_fix_card(tmp_path: Path, monkeypatch, capsys) -> None:
+    # A genuine (non-review) mitigation already covers the finding → no duplicate.
+    _write_yaml(
+        tmp_path,
+        {
+            "mitigations": [
+                {
+                    "id": "M-001",
+                    "title": "Parameterize raw queries",
+                    "kind": "fix",
+                    "priority": "P1",
+                    "threat_ids": ["T-001"],
+                },
+            ],
+            "threats": [_threat("T-001", risk="Critical", mitigation_ids=["M-001"])],
+        },
+    )
+
+    assert _run(tmp_path, monkeypatch) == 0
+
+    data = _read_yaml(tmp_path)
+    assert [m["id"] for m in data["mitigations"]] == ["M-001"]
+    assert "no uncovered code findings" in capsys.readouterr().err
+
+
 def test_invalid_inputs_are_best_effort_noops(tmp_path: Path, monkeypatch, capsys) -> None:
     assert _run(tmp_path, monkeypatch) == 0
     assert "no" in capsys.readouterr().err
