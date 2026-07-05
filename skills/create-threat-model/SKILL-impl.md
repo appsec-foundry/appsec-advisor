@@ -1417,6 +1417,19 @@ case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
     #   • SARIF (--sarif) is a Stage-2 RENDER product, not a post-stage export;
     #     if it is requested-but-missing, re-rendering is required — tell the
     #     user to re-run with --rerender rather than silently doing nothing.
+    # Reader-facing §6 renumbering for these backstop exports too (mirrors the
+    # "Reader-facing section renumbering" step in Normal Completion): relabel a
+    # working copy to §6 before export, restore canonical §7 after, so the
+    # regenerated PDF/HTML match the §6 deliverables the original run produced
+    # while the persisted threat-model.md stays §7 for cross-run reuse.
+    _BACKSTOP_EXPORT=false
+    { [ "${WRITE_PDF:-false}"  = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.pdf"  ]; } && _BACKSTOP_EXPORT=true
+    { [ "${WRITE_HTML:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.html" ]; } && _BACKSTOP_EXPORT=true
+    if [ "$_BACKSTOP_EXPORT" = "true" ]; then
+      cp "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR/.threat-model.canonical7.md"
+      python3 "$CLAUDE_PLUGIN_ROOT/scripts/renumber_sections_display.py" \
+        "$OUTPUT_DIR/threat-model.md" 2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+    fi
     if [ "${WRITE_PDF:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.pdf" ]; then
       printf '\n  No source changes — reusing existing threat model; requested PDF is missing, generating it now.\n' >&2
       # UNSANDBOXED: mermaid → headless Chrome needs socket() (see PDF Export §). Non-fatal.
@@ -1429,6 +1442,9 @@ case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
       python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" \
         --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.html" \
         2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+    fi
+    if [ -f "$OUTPUT_DIR/.threat-model.canonical7.md" ]; then
+      mv -f "$OUTPUT_DIR/.threat-model.canonical7.md" "$OUTPUT_DIR/threat-model.md"
     fi
     if [ "${WRITE_SARIF:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.sarif.json" ]; then
       printf '\n  Note: --sarif requested but threat-model.sarif.json is absent. SARIF is a render product;\n  re-run with --rerender to regenerate it from the existing Stage-1 artifacts.\n' >&2
@@ -4412,6 +4428,34 @@ rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 
 `post-qa` runs the Phase 11 whitelist plus QA-specific artifacts (`.qa-status.json`, empty `.qa-repair-plan.json`, `.fragments/`). `post-architect` additively removes architect-review status files. Exit code 1 (safety-gate block) is silenced with `|| true` — the summary has already been printed. Both `runtime_cleanup.py` invocations are skipped under `--keep-runtime-files` so the kept artifacts survive, matching the conditional `Final summary` task label (no "+ cleanup" advertised when no cleanup runs).
 
+### Reader-facing section renumbering (display-only, §7→§6)
+
+Runs **after** the three read-only gates (`final_structure`, `assert_completeness`,
+`section_integrity`) have validated the canonical **§7-numbered** document, and
+**before** the PDF / HTML / slug deliverables are produced — so every delivered
+artifact shows contiguous **§1–§10** numbering (the retired-§6 gap is closed:
+Security Architecture becomes §6, Findings §7, …) and the now-inaccurate
+"numbering is non-contiguous" note is dropped.
+
+**Why the canonical file is restored afterwards.** `renumber_sections_display.py`
+relabels headings/anchors/TOC/`§N` in place. The persisted `threat-model.md` must
+stay **§7** because the next run reads it back expecting canonical `## 7.`
+headings (`snapshot_preserved_sections.py` §7 carry-forward and
+`compose_threat_model.py` quick-depth §7 preservation both grep `^## 7\. `), and
+`qa_checks.py` validates against the contract's literal §7.x titles. So the
+renumber runs on the working copy only for the export window, then the canonical
+§7 numbering is restored from the backup. The delivered copies
+(`threat-model-<slug>.md` / `.pdf` / `.html`) keep the §6 display numbering; the
+canonical `threat-model.md` on disk ends at §7. It is a **no-op** at `--quick`
+depth when §7 was never rendered (the tool's canonical-marker guard skips).
+
+```bash
+cp "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR/.threat-model.canonical7.md"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/renumber_sections_display.py" \
+    "$OUTPUT_DIR/threat-model.md" \
+    2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+```
+
 ### PDF Export (only when `WRITE_PDF=true`)
 
 The PDF export runs **after** all four stages, the Completion Summary, and `runtime_cleanup`. Placing it last is intentional: at this point `threat-model.md` is final (no more QA / architect re-render passes), so the PDF can never go stale. The export script is the same one used by `/appsec-advisor:export-threat-model --formats pdf`.
@@ -4480,6 +4524,20 @@ fi
 ```
 
 `stamp_threat_model.py` is idempotent per slug (a re-run with the same slug overwrites its own stamped set, never the canonical files) and lists the created paths. `scripts/runtime_cleanup.py` treats `threat-model-*` stamped deliverables the same as the canonical ones (never touched).
+
+### Restore canonical §7 numbering
+
+Runs **last**, after all deliverables (PDF / HTML / slug copies) have been produced
+from the §6 display copy. Restores the canonical **§7** numbering to the persisted
+`threat-model.md` so the next run's §7 carry-forward, snapshot preservation, and
+`qa_checks.py` contract validation still match the literal contract titles. The
+delivered copies keep §6; only the working `threat-model.md` reverts.
+
+```bash
+if [ -f "$OUTPUT_DIR/.threat-model.canonical7.md" ]; then
+    mv -f "$OUTPUT_DIR/.threat-model.canonical7.md" "$OUTPUT_DIR/threat-model.md"
+fi
+```
 
 **Explicit success exit.** After the slug-stamping block (or after the cleanup block when both `WRITE_PDF=false` and `WRITE_HTML=false`) emit an unambiguous success exit so that no subsequent code path can accidentally run:
 

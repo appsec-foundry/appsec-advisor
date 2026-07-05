@@ -87,28 +87,26 @@ _Append-only history of assessment runs. Most recent first._
 5. [Attack Surface](#5-attack-surface)
    - [5.1 Unauthenticated Entry Points](#51-unauthenticated-entry-points)
    - [5.2 Authenticated Entry Points](#52-authenticated-entry-points)
-7. [Security Architecture](#7-security-architecture)
-   - [7.1 Security Control Overview](#71-security-control-overview)
-   - [7.2 Identity and Authentication Controls](#72-identity-and-authentication-controls)
-   - [7.3 Session and Token Controls](#73-session-and-token-controls)
-   - [7.4 Authorization Controls](#74-authorization-controls)
-   - [7.5 Query Construction and Data Access Controls](#75-query-construction-and-data-access-controls)
-   - [7.6 Input Boundary Validation Controls](#76-input-boundary-validation-controls)
-   - [7.7 Output Encoding and Rendering Controls](#77-output-encoding-and-rendering-controls)
-   - [7.8 Browser and Cross-Origin Controls](#78-browser-and-cross-origin-controls)
-   - [7.9 Cryptography Secrets and Data Protection](#79-cryptography-secrets-and-data-protection)
-   - [7.10 File Parser and Outbound Request Controls](#710-file-parser-and-outbound-request-controls)
-   - [7.11 Operations Runtime and Supply Chain Controls](#711-operations-runtime-and-supply-chain-controls)
-   - [7.12 Real-time and Not Applicable Controls](#712-real-time-and-not-applicable-controls)
-   - [7.13 Defense-in-Depth Summary](#713-defense-in-depth-summary)
-8. [Findings Register](#8-findings-register)
-9. [Abuse Cases](#9-abuse-cases)
-10. [Mitigation Register](#10-mitigation-register)
-11. [Out of Scope](#11-out-of-scope)
+6. [Security Architecture](#6-security-architecture)
+   - [6.1 Security Control Overview](#61-security-control-overview)
+   - [6.2 Identity and Authentication Controls](#62-identity-and-authentication-controls)
+   - [6.3 Session and Token Controls](#63-session-and-token-controls)
+   - [6.4 Authorization Controls](#64-authorization-controls)
+   - [6.5 Query Construction and Data Access Controls](#65-query-construction-and-data-access-controls)
+   - [6.6 Input Boundary Validation Controls](#66-input-boundary-validation-controls)
+   - [6.7 Output Encoding and Rendering Controls](#67-output-encoding-and-rendering-controls)
+   - [6.8 Browser and Cross-Origin Controls](#68-browser-and-cross-origin-controls)
+   - [6.9 Cryptography Secrets and Data Protection](#69-cryptography-secrets-and-data-protection)
+   - [6.10 File Parser and Outbound Request Controls](#610-file-parser-and-outbound-request-controls)
+   - [6.11 Operations Runtime and Supply Chain Controls](#611-operations-runtime-and-supply-chain-controls)
+   - [6.12 Real-time and Not Applicable Controls](#612-real-time-and-not-applicable-controls)
+   - [6.13 Defense-in-Depth Summary](#613-defense-in-depth-summary)
+7. [Findings Register](#7-findings-register)
+8. [Abuse Cases](#8-abuse-cases)
+9. [Mitigation Register](#9-mitigation-register)
+10. [Out of Scope](#10-out-of-scope)
 - [Appendix: Run Statistics](#appendix-run-statistics)
 - [Appendix A - Vektor Taxonomy](#appendix-a-vektor-taxonomy)
-
-> _Section numbering is non-contiguous: §6 was retired in a prior revision. The remaining sections keep their original numbers so existing cross-references stay valid._
 
 ---
 
@@ -139,13 +137,13 @@ _Append-only history of assessment runs. Most recent first._
 
 Mitigations cover all critical paths. Three structural repairs matter most: move secrets out of source into runtime injection, replace raw SQL concatenation with parameterized queries, and add server-side authorization to every privileged route.
 
-**Attack-chain analysis.** 3 findings anchor 3 code-verified attack chains (see [§9](#9-abuse-cases) Abuse Cases): 🔴 [F-004](#f-004) — Hardcoded RSA Private Key (`insecurity.ts:21`), 🔴 [F-005](#f-005) — Insecure JWT Verification (`insecurity.ts:52`), 🔴 [F-033](#f-033) — Insecure Direct Object Reference (`address.ts:11`). Their Critical/High ratings reflect exploitability confirmed end-to-end across the chain, not the individual weakness alone.
+**Attack-chain analysis.** 3 findings anchor 3 code-verified attack chains (see [§8](#8-abuse-cases) Abuse Cases): 🔴 [F-004](#f-004) — Hardcoded RSA Private Key (`insecurity.ts:21`), 🔴 [F-005](#f-005) — Insecure JWT Verification (`insecurity.ts:52`), 🔴 [F-033](#f-033) — Insecure Direct Object Reference (`address.ts:11`). Their Critical/High ratings reflect exploitability confirmed end-to-end across the chain, not the individual weakness alone.
 
 ### AI / LLM Exposure
 
 The chatbot-llm component exposes a POST /rest/chatbot/respond endpoint backed by @ai-sdk/openai-compatible (Ollama/OpenAI-compatible), with tool-calling capabilities including coupon generation - creating an LLM attack surface reachable by unauthenticated internet users.
 
-This system embeds an LLM / AI-agent surface. The risks below are architectural - each follows from how untrusted input reaches an AI sink (prompt, tool call, retrieval, model supply chain). See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.
+This system embeds an LLM / AI-agent surface. The risks below are architectural - each follows from how untrusted input reaches an AI sink (prompt, tool call, retrieval, model supply chain). See **[§6 Security Architecture](#6-security-architecture)** for the per-control detail.
 
 - **LLM01 Prompt Injection** — At `chat.ts:191`, `req.body.messages` is passed directly to `streamText()` with no sanitization or injection detection. An attacker sends a crafted message that overrides the system prompt, causing the model to perform actions outside its intended scope. _([C-06](#c-06))_
   - ↳ 🔴 [F-034](#f-034) — Prompt injection via unsanitized message array (`chat.ts:191`)
@@ -249,7 +247,7 @@ flowchart LR
 - **Shop User** — legitimate customer; target of client-side attacks; target of ⑥ Output Encoding / Cross-Site Scripting.
 - **Anonymous Internet Attacker** — no account; registers in seconds when needed; drives ① Insecure Query Construction & Data Access, ② Hardcoded Secrets & Weak Cryptography, ③ Broken Authorization & Access Control, ④ Sensitive File & Secret Exposure, ⑤ Remote Code Execution (unsafe eval).
 
-**6 structural threats**, grouped by weakness class - each row is one threat, not one finding. *Threat Description* states the general architectural weakness (STRIDE in brackets); *Findings* lists the concrete instances, each linked to [§8 Findings Register](#8-findings-register) with its component; *Risk & Impact* combines severity with business consequence.
+**6 structural threats**, grouped by weakness class - each row is one threat, not one finding. *Threat Description* states the general architectural weakness (STRIDE in brackets); *Findings* lists the concrete instances, each linked to [§7 Findings Register](#7-findings-register) with its component; *Risk & Impact* combines severity with business consequence.
 
 | # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |
 |---|------------------------------------|------------------------------------------------|------------------------------------|--------|
@@ -262,11 +260,11 @@ flowchart LR
 
 _STRIDE: S spoofing · T tampering · R repudiation · I information disclosure · D denial of service · E elevation of privilege. Risk, findings, components, impact and Fix are derived deterministically; only the one-line weakness description is authored._
 
-**Verified attack chains.** 3 fully viable ([AC-T-003](#ac-t-003), [AC-T-004](#ac-t-004), [AC-T-005](#ac-t-005)); 1 partially blocked ([AC-T-001](#ac-t-001)). These chains combine individual findings into end-to-end exploitation paths verified step-by-step against the code - see [§9 Abuse Cases](#9-abuse-cases) for the per-step breakdown and blocking mitigations.
+**Verified attack chains.** 3 fully viable ([AC-T-003](#ac-t-003), [AC-T-004](#ac-t-004), [AC-T-005](#ac-t-005)); 1 partially blocked ([AC-T-001](#ac-t-001)). These chains combine individual findings into end-to-end exploitation paths verified step-by-step against the code - see [§8 Abuse Cases](#8-abuse-cases) for the per-step breakdown and blocking mitigations.
 
 ### Top Mitigations
 
-Highest-impact P1/P2 mitigations - 25 of 51 qualifying (57 total). Full detail in [§10 Mitigation Register](#10-mitigation-register). All 25 mitigation(s) that fix a Critical finding are always listed here.
+Highest-impact P1/P2 mitigations - 25 of 51 qualifying (57 total). Full detail in [§9 Mitigation Register](#9-mitigation-register). All 25 mitigation(s) that fix a Critical finding are always listed here.
 
 | # | Component | Mitigation | Addresses | Effort |
 |---|----------------------|------------------------------------------------|------------------------------------------------|------|
@@ -296,17 +294,17 @@ Highest-impact P1/P2 mitigations - 25 of 51 qualifying (57 total). Full detail i
 | **24** | [C-08](#c-08) — Real-time WebSocket Channel | ❷ [M-022](#m-022) — Add Socket\.IO authentication middleware to reject unauthenticated connections (`registerWebsocketEvents.ts:23`) | 🔴 [F-048](#f-048) — Unauthenticated WebSocket Channel (`registerWebsocketEvents.ts`) | Medium |
 | **25** | [C-08](#c-08) — Real-time WebSocket Channel | ❷ [M-049](#m-049) — Enforce server-side authorization on every endpoint (`challengeUtils.ts:29`) | 🔴 [F-075](#f-075) — Challenge Score Inflation (`lib/challengeUtils.ts`) | Medium |
 
-*26 additional P1/P2 mitigations capped from the leader-board · 6 P3 backlog items in [§10 Mitigation Register](#10-mitigation-register). Sorted by priority (P1 first), then component, then leverage (most findings first), severity (Critical first), and effort (Low first).*
+*26 additional P1/P2 mitigations capped from the leader-board · 6 P3 backlog items in [§9 Mitigation Register](#9-mitigation-register). Sorted by priority (P1 first), then component, then leverage (most findings first), severity (Critical first), and effort (Low first).*
 
 ### Operational Strengths
 
-Operational controls rated Adequate or Partial - grouped into broad clusters (full per-control breakdown in [§7](#7-security-architecture)). Clusters demoted to Weak by open Critical/High findings appear in [§7](#7-security-architecture) instead, not here.
+Operational controls rated Adequate or Partial - grouped into broad clusters (full per-control breakdown in [§6](#6-security-architecture)). Clusters demoted to Weak by open Critical/High findings appear in [§6](#6-security-architecture) instead, not here.
 
 | Strength | What's in Place | Effectiveness | Gap | Mitigates |
 |----------------------|----------------------|-------------|----------------------|----------------------------|
 | **Container & Supply-Chain Hardening** | _Build-time and runtime hardening - minimal base image, non-root execution, dependency inventory._<br/>Automated SCA scanning | ✅ Adequate | - | - |
-| **Hardened HTTP Stack** | _Browser-facing HTTP hardening — security headers, cookie flags, cross-origin policy, and abuse-protection limits._<br/>Rate Limiting<br/>CORS Policy | ⚠️ Partial | 1 medium/low-severity finding(s) within the cluster's remit remain open — see [§8](#8-findings-register) Findings Register for details. | 🟡 [F-081](#f-081) — SSRF (`chat.ts:111`) |
-| **Observability & Audit** | _Runtime visibility - access logging, audit trails, and operational telemetry for post-incident review._<br/>Security Logging and Monitoring | ⚠️ Partial | Coverage incomplete - see [§7](#7-security-architecture) control assessment. | - |
+| **Hardened HTTP Stack** | _Browser-facing HTTP hardening — security headers, cookie flags, cross-origin policy, and abuse-protection limits._<br/>Rate Limiting<br/>CORS Policy | ⚠️ Partial | 1 medium/low-severity finding(s) within the cluster's remit remain open — see [§7](#7-findings-register) Findings Register for details. | 🟡 [F-081](#f-081) — SSRF (`chat.ts:111`) |
+| **Observability & Audit** | _Runtime visibility - access logging, audit trails, and operational telemetry for post-incident review._<br/>Security Logging and Monitoring | ⚠️ Partial | Coverage incomplete - see [§6](#6-security-architecture) control assessment. | - |
 
 
 **Bottom line:** These controls narrow specific attack surfaces but none eliminates a Critical finding on its own.
@@ -380,7 +378,7 @@ graph LR
     classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
 ```
 
-**Findings** (full detail in [§8 Findings Register](#8-findings-register)): 🔴 [F-003](#f-003) SQL Injection Authentication Bypass · 🔴 [F-004](#f-004) Hardcoded RSA Private Key · 🔴 [F-005](#f-005) Insecure JWT Verification · 🔴 [F-006](#f-006) SQL injection request data interpolated into a SQL · 🔴 [F-007](#f-007) SQL injection request data interpolated into a SQL · 🔴 [F-008](#f-008) SQL injection request data interpolated into a SQL · 🔴 [F-009](#f-009) SQL injection request data interpolated into a SQL · 🔴 [F-010](#f-010) SQL injection request data interpolated into a SQL · 🔴 [F-011](#f-011) SQL injection request data interpolated into a SQL · 🔴 [F-012](#f-012) SQL injection request data interpolated into a SQL · 🔴 [F-013](#f-013) SQL injection request data interpolated into a SQL · 🔴 [F-014](#f-014) SQL injection request data interpolated into a SQL · 🔴 [F-015](#f-015) SQL injection request data interpolated into a SQL · 🔴 [F-016](#f-016) SQL injection request data interpolated into a SQL · 🔴 [F-017](#f-017) SQL injection request data interpolated into a SQL · 🔴 [F-018](#f-018) SQL injection request data interpolated into a SQL · 🔴 [F-019](#f-019) SQL injection request data interpolated into a SQL · 🔴 [F-020](#f-020) SQL injection request data interpolated into a SQL · 🔴 [F-021](#f-021) SQL injection request data interpolated into a SQL · 🔴 [F-022](#f-022) SQL injection request data interpolated into a SQL · 🔴 [F-023](#f-023) SQL injection request data interpolated into a SQL · 🔴 [F-001](#f-001) JWT Session Token Stored in localStorage
+**Findings** (full detail in [§7 Findings Register](#7-findings-register)): 🔴 [F-003](#f-003) SQL Injection Authentication Bypass · 🔴 [F-004](#f-004) Hardcoded RSA Private Key · 🔴 [F-005](#f-005) Insecure JWT Verification · 🔴 [F-006](#f-006) SQL injection request data interpolated into a SQL · 🔴 [F-007](#f-007) SQL injection request data interpolated into a SQL · 🔴 [F-008](#f-008) SQL injection request data interpolated into a SQL · 🔴 [F-009](#f-009) SQL injection request data interpolated into a SQL · 🔴 [F-010](#f-010) SQL injection request data interpolated into a SQL · 🔴 [F-011](#f-011) SQL injection request data interpolated into a SQL · 🔴 [F-012](#f-012) SQL injection request data interpolated into a SQL · 🔴 [F-013](#f-013) SQL injection request data interpolated into a SQL · 🔴 [F-014](#f-014) SQL injection request data interpolated into a SQL · 🔴 [F-015](#f-015) SQL injection request data interpolated into a SQL · 🔴 [F-016](#f-016) SQL injection request data interpolated into a SQL · 🔴 [F-017](#f-017) SQL injection request data interpolated into a SQL · 🔴 [F-018](#f-018) SQL injection request data interpolated into a SQL · 🔴 [F-019](#f-019) SQL injection request data interpolated into a SQL · 🔴 [F-020](#f-020) SQL injection request data interpolated into a SQL · 🔴 [F-021](#f-021) SQL injection request data interpolated into a SQL · 🔴 [F-022](#f-022) SQL injection request data interpolated into a SQL · 🔴 [F-023](#f-023) SQL injection request data interpolated into a SQL · 🔴 [F-001](#f-001) JWT Session Token Stored in localStorage
 
 ---
 
@@ -479,7 +477,7 @@ flowchart TB
 ### 2.3 Components
 
 
-Who reaches each component, and through which trust zone. Four columns map external actors to the internal tiers (Client / Application / Data); solid green arrows show legitimate data flow, dashed red arrows mark intrusion vectors. The component table directly below holds source paths and linked threats per `C-NN`; per-finding evidence is in [§8 Findings Register](#8-findings-register).
+Who reaches each component, and through which trust zone. Four columns map external actors to the internal tiers (Client / Application / Data); solid green arrows show legitimate data flow, dashed red arrows mark intrusion vectors. The component table directly below holds source paths and linked threats per `C-NN`; per-finding evidence is in [§7 Findings Register](#7-findings-register).
 
 ```mermaid
 flowchart TD
@@ -525,7 +523,7 @@ flowchart TD
 | <a id="c-09"></a><a id="web3-nft"></a><span style="white-space:nowrap">C-09</span> | Web3 / Wallet / NFT Surface | application | `routes/checkKeys.ts`<br/>`routes/nftMint.ts`<br/>`routes/redirect.ts`<br/>`routes/web3Wallet.ts` | 🔴 [F-038](#f-038) — Hardcoded BIP-39 Mnemonic Exposes Ethereum Private Key (`checkKeys.ts:10`)<br/>🟠 [F-049](#f-049) — Open Redirect (`insecurity.ts:136`)<br/>🟠 [F-069](#f-069) — Unbounded In-Memory Set Growth (`web3Wallet.ts:16`)<br/>🟠 [F-077](#f-077) — Unauthenticated Wallet Address Registration Allows (`web3Wallet.ts:15`)<br/>🟡 [F-082](#f-082) — Differential Error Responses Reveal Ethereum Key (`checkKeys.ts:21`)<br/>🟠 [F-084](#f-084) — `ALCHEMY_API_KEY` May Leak (`nftMint.ts:18`) |
 ### 2.4 Technology Architecture
 
-The technology stack the system is built on. Each box names the framework or runtime that fills that role; per-component findings live in the [§2.3](#23-components) component table above, and the full per-finding catalogue is in [§8 Findings Register](#8-findings-register).
+The technology stack the system is built on. Each box names the framework or runtime that fills that role; per-component findings live in the [§2.3](#23-components) component table above, and the full per-finding catalogue is in [§7 Findings Register](#7-findings-register).
 
 ```mermaid
 flowchart TD
@@ -561,7 +559,7 @@ flowchart TD
     linkStyle 5,6 stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:3 3
 ```
 
-**Key takeaway:** The stack spans 1 data-tier store(s) behind the application tier; injection and data-at-rest exposure track the data tier, detailed per finding in [§8 Findings Register](#8-findings-register).
+**Key takeaway:** The stack spans 1 data-tier store(s) behind the application tier; injection and data-at-rest exposure track the data tier, detailed per finding in [§7 Findings Register](#7-findings-register).
 
 > **Legend:** **red border** ≥ 3 Critical threats on the component · **amber border** ≥ 2 High threats
 
@@ -569,13 +567,13 @@ flowchart TD
 
 ## 3. Attack Walkthroughs
 
-This section walks through how the highest-risk findings are exploited - one short walkthrough per Critical, each with attack steps, a focused sequence diagram, and the primary mitigation. The cross-finding view (which weaknesses combine toward the worst-case goal, and where one fix severs several paths) is in the [Critical Attack Tree](#critical-attack-tree). Full per-finding context - severity rationale, assets, detection signals - is in the [§8 Findings Register](#8-findings-register) row for each finding.
+This section walks through how the highest-risk findings are exploited - one short walkthrough per Critical, each with attack steps, a focused sequence diagram, and the primary mitigation. The cross-finding view (which weaknesses combine toward the worst-case goal, and where one fix severs several paths) is in the [Critical Attack Tree](#critical-attack-tree). Full per-finding context - severity rationale, assets, detection signals - is in the [§7 Findings Register](#7-findings-register) row for each finding.
 
 ### 3.1 JWT Session Token Stored in localStorage
 
 **Source:** 🔴 [F-001](#f-001) — `frontend/src/app/Services/request.interceptor.ts:13`
 
-Severity **Critical** ([CWE-922](https://cwe.mitre.org/data/definitions/922.html)). STRIDE: Information Disclosure. See [§8 F-001](#f-001) for the full register row.
+Severity **Critical** ([CWE-922](https://cwe.mitre.org/data/definitions/922.html)). STRIDE: Information Disclosure. See [§7 F-001](#f-001) for the full register row.
 
 **Attack Steps**
 
@@ -613,7 +611,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-003](#f-003) — `routes/login.ts:34`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Spoofing. See [§8 F-003](#f-003) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Spoofing. See [§7 F-003](#f-003) for the full register row.
 
 **Attack Steps**
 
@@ -654,7 +652,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-004](#f-004) — `lib/insecurity.ts:21`
 
-Severity **Critical** ([CWE-321](https://cwe.mitre.org/data/definitions/321.html)). STRIDE: Spoofing. See [§8 F-004](#f-004) for the full register row.
+Severity **Critical** ([CWE-321](https://cwe.mitre.org/data/definitions/321.html)). STRIDE: Spoofing. See [§7 F-004](#f-004) for the full register row.
 
 **Attack Steps**
 
@@ -695,7 +693,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-005](#f-005) — `lib/insecurity.ts:52`
 
-Severity **Critical** ([CWE-347](https://cwe.mitre.org/data/definitions/347.html)). STRIDE: Spoofing. See [§8 F-005](#f-005) for the full register row.
+Severity **Critical** ([CWE-347](https://cwe.mitre.org/data/definitions/347.html)). STRIDE: Spoofing. See [§7 F-005](#f-005) for the full register row.
 
 **Attack Steps**
 
@@ -733,7 +731,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-006](#f-006) — `data/datacreator.ts:147`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-006](#f-006) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-006](#f-006) for the full register row.
 
 **Attack Steps**
 
@@ -774,7 +772,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-007](#f-007) — `data/datacreator.ts:164`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-007](#f-007) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-007](#f-007) for the full register row.
 
 **Attack Steps**
 
@@ -815,7 +813,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-008](#f-008) — `data/datacreator.ts:181`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-008](#f-008) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-008](#f-008) for the full register row.
 
 **Attack Steps**
 
@@ -856,7 +854,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-009](#f-009) — `data/datacreator.ts:210`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-009](#f-009) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-009](#f-009) for the full register row.
 
 **Attack Steps**
 
@@ -897,7 +895,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-010](#f-010) — `data/datacreator.ts:244`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-010](#f-010) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-010](#f-010) for the full register row.
 
 **Attack Steps**
 
@@ -938,7 +936,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-011](#f-011) — `data/datacreator.ts:285`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-011](#f-011) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-011](#f-011) for the full register row.
 
 **Attack Steps**
 
@@ -979,7 +977,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-012](#f-012) — `data/datacreator.ts:291`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-012](#f-012) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-012](#f-012) for the full register row.
 
 **Attack Steps**
 
@@ -1020,7 +1018,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-013](#f-013) — `data/datacreator.ts:434`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-013](#f-013) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-013](#f-013) for the full register row.
 
 **Attack Steps**
 
@@ -1061,7 +1059,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-014](#f-014) — `data/datacreator.ts:464`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-014](#f-014) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-014](#f-014) for the full register row.
 
 **Attack Steps**
 
@@ -1102,7 +1100,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-015](#f-015) — `data/datacreator.ts:493`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-015](#f-015) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-015](#f-015) for the full register row.
 
 **Attack Steps**
 
@@ -1143,7 +1141,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-016](#f-016) — `data/datacreator.ts:546`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-016](#f-016) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-016](#f-016) for the full register row.
 
 **Attack Steps**
 
@@ -1184,7 +1182,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-017](#f-017) — `data/datacreator.ts:580`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-017](#f-017) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-017](#f-017) for the full register row.
 
 **Attack Steps**
 
@@ -1225,7 +1223,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-018](#f-018) — `data/datacreator.ts:589`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-018](#f-018) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-018](#f-018) for the full register row.
 
 **Attack Steps**
 
@@ -1266,7 +1264,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-019](#f-019) — `data/datacreator.ts:672`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-019](#f-019) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-019](#f-019) for the full register row.
 
 **Attack Steps**
 
@@ -1307,7 +1305,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-020](#f-020) — `data/datacreator.ts:684`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-020](#f-020) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-020](#f-020) for the full register row.
 
 **Attack Steps**
 
@@ -1348,7 +1346,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-021](#f-021) — `data/datacreator.ts:692`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-021](#f-021) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-021](#f-021) for the full register row.
 
 **Attack Steps**
 
@@ -1389,7 +1387,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-022](#f-022) — `data/datacreator.ts:789`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-022](#f-022) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-022](#f-022) for the full register row.
 
 **Attack Steps**
 
@@ -1430,7 +1428,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-023](#f-023) — `data/static/codefixes/dbSchemaChallenge_3.ts:11`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-023](#f-023) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-023](#f-023) for the full register row.
 
 **Attack Steps**
 
@@ -1471,7 +1469,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-024](#f-024) — `data/static/codefixes/loginAdminChallenge_1.ts:18`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-024](#f-024) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-024](#f-024) for the full register row.
 
 **Attack Steps**
 
@@ -1512,7 +1510,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-025](#f-025) — `data/static/codefixes/loginAdminChallenge_2.ts:15`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-025](#f-025) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-025](#f-025) for the full register row.
 
 **Attack Steps**
 
@@ -1553,7 +1551,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-026](#f-026) — `data/static/codefixes/loginBenderChallenge_1.ts:18`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-026](#f-026) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-026](#f-026) for the full register row.
 
 **Attack Steps**
 
@@ -1594,7 +1592,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-027](#f-027) — `data/static/codefixes/loginBenderChallenge_3.ts:15`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-027](#f-027) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-027](#f-027) for the full register row.
 
 **Attack Steps**
 
@@ -1635,7 +1633,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-028](#f-028) — `data/static/codefixes/loginBenderChallenge_4.ts:15`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-028](#f-028) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-028](#f-028) for the full register row.
 
 **Attack Steps**
 
@@ -1676,7 +1674,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-029](#f-029) — `data/static/codefixes/loginJimChallenge_2.ts:15`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-029](#f-029) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-029](#f-029) for the full register row.
 
 **Attack Steps**
 
@@ -1717,7 +1715,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-030](#f-030) — `data/static/codefixes/loginJimChallenge_4.ts:18`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-030](#f-030) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-030](#f-030) for the full register row.
 
 **Attack Steps**
 
@@ -1758,7 +1756,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-031](#f-031) — `data/static/codefixes/unionSqlInjectionChallenge_1.ts:6`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-031](#f-031) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-031](#f-031) for the full register row.
 
 **Attack Steps**
 
@@ -1799,7 +1797,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-032](#f-032) — `data/static/codefixes/unionSqlInjectionChallenge_3.ts:10`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-032](#f-032) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-032](#f-032) for the full register row.
 
 **Attack Steps**
 
@@ -1840,7 +1838,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-033](#f-033) — `routes/address.ts:11`
 
-Severity **Critical** ([CWE-639](https://cwe.mitre.org/data/definitions/639.html)). STRIDE: Tampering. See [§8 F-033](#f-033) for the full register row.
+Severity **Critical** ([CWE-639](https://cwe.mitre.org/data/definitions/639.html)). STRIDE: Tampering. See [§7 F-033](#f-033) for the full register row.
 
 **Attack Steps**
 
@@ -1878,7 +1876,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-034](#f-034) — `routes/chat.ts:191`
 
-Severity **Critical** ([CWE-1336](https://cwe.mitre.org/data/definitions/1336.html)). STRIDE: Tampering. See [§8 F-034](#f-034) for the full register row.
+Severity **Critical** ([CWE-1336](https://cwe.mitre.org/data/definitions/1336.html)). STRIDE: Tampering. See [§7 F-034](#f-034) for the full register row.
 
 **Attack Steps**
 
@@ -1916,7 +1914,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-035](#f-035) — `routes/search.ts:23`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 F-035](#f-035) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§7 F-035](#f-035) for the full register row.
 
 **Attack Steps**
 
@@ -1957,7 +1955,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-036](#f-036) — `frontend/src/app/about/about.component.ts:119`
 
-Severity **Critical** ([CWE-79](https://cwe.mitre.org/data/definitions/79.html)). STRIDE: Tampering. See [§8 F-036](#f-036) for the full register row.
+Severity **Critical** ([CWE-79](https://cwe.mitre.org/data/definitions/79.html)). STRIDE: Tampering. See [§7 F-036](#f-036) for the full register row.
 
 **Attack Steps**
 
@@ -1997,7 +1995,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-037](#f-037) — `lib/xml.ts:21`
 
-Severity **Critical** ([CWE-611](https://cwe.mitre.org/data/definitions/611.html)). STRIDE: Information Disclosure. See [§8 F-037](#f-037) for the full register row.
+Severity **Critical** ([CWE-611](https://cwe.mitre.org/data/definitions/611.html)). STRIDE: Information Disclosure. See [§7 F-037](#f-037) for the full register row.
 
 **Attack Steps**
 
@@ -2035,7 +2033,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-038](#f-038) — `routes/checkKeys.ts:10`
 
-Severity **Critical** ([CWE-321](https://cwe.mitre.org/data/definitions/321.html)). STRIDE: Information Disclosure. See [§8 F-038](#f-038) for the full register row.
+Severity **Critical** ([CWE-321](https://cwe.mitre.org/data/definitions/321.html)). STRIDE: Information Disclosure. See [§7 F-038](#f-038) for the full register row.
 
 **Attack Steps**
 
@@ -2076,7 +2074,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-039](#f-039) — `routes/verify.ts:53`
 
-Severity **Critical** ([CWE-915](https://cwe.mitre.org/data/definitions/915.html)). STRIDE: Elevation of Privilege. See [§8 F-039](#f-039) for the full register row.
+Severity **Critical** ([CWE-915](https://cwe.mitre.org/data/definitions/915.html)). STRIDE: Elevation of Privilege. See [§7 F-039](#f-039) for the full register row.
 
 **Attack Steps**
 
@@ -2114,7 +2112,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-040](#f-040) — `routes/chat.ts:179`
 
-Severity **Critical** ([CWE-862](https://cwe.mitre.org/data/definitions/862.html)). STRIDE: Elevation of Privilege. See [§8 F-040](#f-040) for the full register row.
+Severity **Critical** ([CWE-862](https://cwe.mitre.org/data/definitions/862.html)). STRIDE: Elevation of Privilege. See [§7 F-040](#f-040) for the full register row.
 
 **Attack Steps**
 
@@ -2152,7 +2150,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-041](#f-041) — `routes/b2bOrder.ts:23`
 
-Severity **Critical** ([CWE-94](https://cwe.mitre.org/data/definitions/94.html)). STRIDE: Elevation of Privilege. See [§8 F-041](#f-041) for the full register row.
+Severity **Critical** ([CWE-94](https://cwe.mitre.org/data/definitions/94.html)). STRIDE: Elevation of Privilege. See [§7 F-041](#f-041) for the full register row.
 
 **Attack Steps**
 
@@ -2193,7 +2191,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-042](#f-042) — `routes/userProfile.ts:61`
 
-Severity **Critical** ([CWE-94](https://cwe.mitre.org/data/definitions/94.html)). STRIDE: Elevation of Privilege. See [§8 F-042](#f-042) for the full register row.
+Severity **Critical** ([CWE-94](https://cwe.mitre.org/data/definitions/94.html)). STRIDE: Elevation of Privilege. See [§7 F-042](#f-042) for the full register row.
 
 **Attack Steps**
 
@@ -2234,7 +2232,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-043](#f-043) — `routes/fileUpload.ts:31`
 
-Severity **Critical** ([CWE-22](https://cwe.mitre.org/data/definitions/22.html)). STRIDE: Elevation of Privilege. See [§8 F-043](#f-043) for the full register row.
+Severity **Critical** ([CWE-22](https://cwe.mitre.org/data/definitions/22.html)). STRIDE: Elevation of Privilege. See [§7 F-043](#f-043) for the full register row.
 
 **Attack Steps**
 
@@ -2272,7 +2270,7 @@ sequenceDiagram
 
 **Source:** 🔴 [F-044](#f-044) — `frontend/src/app/app.guard.ts:52`
 
-Severity **Critical** ([CWE-285](https://cwe.mitre.org/data/definitions/285.html)). STRIDE: Elevation of Privilege. See [§8 F-044](#f-044) for the full register row.
+Severity **Critical** ([CWE-285](https://cwe.mitre.org/data/definitions/285.html)). STRIDE: Elevation of Privilege. See [§7 F-044](#f-044) for the full register row.
 
 **Attack Steps**
 
@@ -2312,7 +2310,7 @@ sequenceDiagram
 
 ## 4. Assets
 
-Information assets and the classification level that drives the Confidentiality / Integrity / Availability targets used in [§8 Findings Register](#8-findings-register) risk scoring.
+Information assets and the classification level that drives the Confidentiality / Integrity / Availability targets used in [§7 Findings Register](#7-findings-register) risk scoring.
 
 | Asset | ID | Classification | Description | Linked Threats |
 |----------------------|-----|--------------|------------------------------------|------------------------------------------------|
@@ -2407,46 +2405,46 @@ _25 further entry point(s) in this category carry no linked finding and no eleva
 
 ---
 
-## 7. Security Architecture
+## 6. Security Architecture
 
 This section evaluates the application's security control posture across 13 control domains. Each domain is assessed against code evidence from the source tree. Ratings: 🟢 Adequate | 🟡 Partial | 🟠 Weak | 🔴 Missing.
 
-### 7.1 Security Control Overview
+### 6.1 Security Control Overview
 
-<!-- §7.1 MECHANICAL-FROZEN -->
+<!-- §6.1 MECHANICAL-FROZEN -->
 | Control category | Verdict | Main reason |
 |----------------------|---------|------------------------------------|
-| [7.2 Identity and Authentication](#72-identity-and-authentication-controls) | 🔴 Unsafe | SQL injection bypasses the login query<br/>entirely; passwords hashed with unsalted MD5 |
-| [7.3 Session and Token Controls](#73-session-and-token-controls) | 🔴 Unsafe | RSA private key committed in public source;<br/>jsonwebtoken 0.4.0 accepts alg:none |
-| [7.4 Authorization Controls](#74-authorization-controls) | 🔴 Unsafe | IDOR via client-supplied UserId;<br/>inconsistent role middleware across 20+<br/>routes |
-| [7.5 Query Construction and Data Access](#75-query-construction-and-data-access-controls) | 🔴 Unsafe | Raw SQL string interpolation in `login.ts` and<br/>`search.ts`; NoSQL injection in `chat.ts` |
-| [7.6 Input Boundary Validation](#76-input-boundary-validation-controls) | 🔴 Unsafe | XXE enabled with host filesystem access; Zip<br/>Slip; `eval()` on user-supplied username |
-| [7.7 Output Encoding and Rendering](#77-output-encoding-and-rendering-controls) | 🔴 Unsafe | `bypassSecurityTrustHtml()` on feedback; SSTI<br/>via `eval()` on username |
-| [7.8 Browser and Cross-Origin Controls](#78-browser-and-cross-origin-controls) | 🔴 Unsafe | No CSRF protection; wildcard CORS; no global<br/>CSP; xssFilter intentionally disabled |
-| [7.9 Cryptography Secrets and Data Protection](#79-cryptography-secrets-and-data-protection) | 🔴 Unsafe | MD5 without salt for passwords; RSA private<br/>key and BIP-39 mnemonic committed to repo |
-| [7.10 File Parser and Outbound Request Controls](#710-file-parser-and-outbound-request-controls) | 🟠 Weak | Zip Slip path guard bypassable; XXE<br/>filesystem access; LLM URL configurable<br/>without allowlist |
-| [7.11 Operations Runtime and Supply Chain Controls](#711-operations-runtime-and-supply-chain-controls) | 🟡 Partial | Dependabot configured; CI workflows lack<br/>permissions blocks; third-party Actions<br/>unpinned |
-| [7.12 Real-time and Not Applicable Controls](#712-real-time-and-not-applicable-controls) | 🔴 Unsafe | `Socket.IO` unauthenticated; prompt injection;<br/>system-prompt exfiltration; LLM executes<br/>discount without authorization |
-<!-- §7.1 MECHANICAL-FROZEN -->
+| [6.2 Identity and Authentication](#62-identity-and-authentication-controls) | 🔴 Unsafe | SQL injection bypasses the login query<br/>entirely; passwords hashed with unsalted MD5 |
+| [6.3 Session and Token Controls](#63-session-and-token-controls) | 🔴 Unsafe | RSA private key committed in public source;<br/>jsonwebtoken 0.4.0 accepts alg:none |
+| [6.4 Authorization Controls](#64-authorization-controls) | 🔴 Unsafe | IDOR via client-supplied UserId;<br/>inconsistent role middleware across 20+<br/>routes |
+| [6.5 Query Construction and Data Access](#65-query-construction-and-data-access-controls) | 🔴 Unsafe | Raw SQL string interpolation in `login.ts` and<br/>`search.ts`; NoSQL injection in `chat.ts` |
+| [6.6 Input Boundary Validation](#66-input-boundary-validation-controls) | 🔴 Unsafe | XXE enabled with host filesystem access; Zip<br/>Slip; `eval()` on user-supplied username |
+| [6.7 Output Encoding and Rendering](#67-output-encoding-and-rendering-controls) | 🔴 Unsafe | `bypassSecurityTrustHtml()` on feedback; SSTI<br/>via `eval()` on username |
+| [6.8 Browser and Cross-Origin Controls](#68-browser-and-cross-origin-controls) | 🔴 Unsafe | No CSRF protection; wildcard CORS; no global<br/>CSP; xssFilter intentionally disabled |
+| [6.9 Cryptography Secrets and Data Protection](#69-cryptography-secrets-and-data-protection) | 🔴 Unsafe | MD5 without salt for passwords; RSA private<br/>key and BIP-39 mnemonic committed to repo |
+| [6.10 File Parser and Outbound Request Controls](#610-file-parser-and-outbound-request-controls) | 🟠 Weak | Zip Slip path guard bypassable; XXE<br/>filesystem access; LLM URL configurable<br/>without allowlist |
+| [6.11 Operations Runtime and Supply Chain Controls](#611-operations-runtime-and-supply-chain-controls) | 🟡 Partial | Dependabot configured; CI workflows lack<br/>permissions blocks; third-party Actions<br/>unpinned |
+| [6.12 Real-time and Not Applicable Controls](#612-real-time-and-not-applicable-controls) | 🔴 Unsafe | `Socket.IO` unauthenticated; prompt injection;<br/>system-prompt exfiltration; LLM executes<br/>discount without authorization |
+<!-- §6.1 MECHANICAL-FROZEN -->
 
-### 7.2 Identity and Authentication Controls
+### 6.2 Identity and Authentication Controls
 
 **Verdict:** 🔴 Unsafe - The login endpoint is SQL-injectable, bypassing credential verification entirely. Passwords are hashed with unsalted MD5, reversible in seconds with rainbow tables.
 
 **Controls covered:**
 
-- [7.2.1 Password-Based Authentication](#721-password-based-authentication)
-- [7.2.2 Multi-Factor Authentication (TOTP)](#722-multi-factor-authentication-totp)
-- [7.2.3 Social Login Adapter (OAuth)](#723-social-login-adapter-oauth)
-- [7.2.4 Password Reset](#724-password-reset)
-- [7.2.5 Password Change](#725-password-change)
+- [6.2.1 Password-Based Authentication](#621-password-based-authentication)
+- [6.2.2 Multi-Factor Authentication (TOTP)](#622-multi-factor-authentication-totp)
+- [6.2.3 Social Login Adapter (OAuth)](#623-social-login-adapter-oauth)
+- [6.2.4 Password Reset](#624-password-reset)
+- [6.2.5 Password Change](#625-password-change)
 
 **Implemented controls:** TOTP/2FA optional via speakeasy; Google OAuth via passport; security-question password reset; basic password change flow.
 
-**Assessment:** Authentication is broken at the credential verification layer. The SQL injection in `routes/login.ts:34` allows bypassing the password check with `' OR 1=1--`. Even when the SQL path executes correctly, unsalted MD5 reduces offline cracking to a rainbow-table lookup. The TOTP implementation is mechanically correct but orthogonal - the SQLi bypass never reaches the 2FA challenge. Each successful flow terminates in the server issuing a session token; the signing, validation, propagation, storage, and lifecycle of that token are described in [§7.3 Session and Token Controls](#73-session-and-token-controls).
+**Assessment:** Authentication is broken at the credential verification layer. The SQL injection in `routes/login.ts:34` allows bypassing the password check with `' OR 1=1--`. Even when the SQL path executes correctly, unsalted MD5 reduces offline cracking to a rainbow-table lookup. The TOTP implementation is mechanically correct but orthogonal - the SQLi bypass never reaches the 2FA challenge. Each successful flow terminates in the server issuing a session token; the signing, validation, propagation, storage, and lifecycle of that token are described in [§6.3 Session and Token Controls](#63-session-and-token-controls).
 
-<a id="721-password-based-authentication"></a>
-#### 7.2.1 Password-Based Authentication
+<a id="621-password-based-authentication"></a>
+#### 6.2.1 Password-Based Authentication
 
 **Status:** 🔴 Unsafe - The credential lookup is SQL-injectable and password storage uses unsalted MD5, defeating both authentication verification and offline credential resistance.
 
@@ -2485,8 +2483,8 @@ Two independent weaknesses break the password control boundary:
 - 🟠 [F-057](#f-057) — Unsalted MD5 password hashing means any common password is reversible via rainbow table.
 - 🟠 [F-062](#f-062) — No rate limit on the login endpoint enables unrestricted credential brute-force.
 
-<a id="722-multi-factor-authentication-totp"></a>
-#### 7.2.2 Multi-Factor Authentication (TOTP)
+<a id="622-multi-factor-authentication-totp"></a>
+#### 6.2.2 Multi-Factor Authentication (TOTP)
 
 **Status:** 🟡 Partial - The TOTP verification call is mechanically correct, but 2FA is optional and the SQL injection login path never reaches the 2FA challenge.
 
@@ -2519,8 +2517,8 @@ The `speakeasy.totp.verifySync()` call with `epochTolerance: 30` is a standard T
 
 - 🔴 [F-003](#f-003) — SQL injection bypass routes around the TOTP challenge; 2FA does not protect accounts when the login SQL is exploitable.
 
-<a id="723-social-login-adapter-oauth"></a>
-#### 7.2.3 Social Login Adapter (OAuth)
+<a id="623-social-login-adapter-oauth"></a>
+#### 6.2.3 Social Login Adapter (OAuth)
 
 **Status:** 🟡 Partial - OAuth is implemented as a frontend adapter that converts a Google-supplied email into a local Juice Shop account, not a server-side OIDC authorization-code flow.
 
@@ -2554,8 +2552,8 @@ Because OAuth terminates in the same SQL-injectable login route, it inherits all
 - 🔴 [F-003](#f-003) — OAuth login terminates in the injectable login route, so SQLi bypass applies to OAuth-registered accounts too.
 - 🟠 [F-057](#f-057) — Derived local password is stored as unsalted MD5, same as password-registered accounts.
 
-<a id="724-password-reset"></a>
-#### 7.2.4 Password Reset
+<a id="624-password-reset"></a>
+#### 6.2.4 Password Reset
 
 **Status:** 🔴 Unsafe - Password reset uses a single enumerable security question answer; no time-limited token, no email-link step.
 
@@ -2571,8 +2569,8 @@ Because OAuth terminates in the same SQL-injectable login route, it inherits all
 
 - 🟠 [F-045](#f-045) — Security-question password reset with enumerable answer set allows account takeover via guessing.
 
-<a id="725-password-change"></a>
-#### 7.2.5 Password Change
+<a id="625-password-change"></a>
+#### 6.2.5 Password Change
 
 **Status:** 🔴 Unsafe - Password change does not verify the current password, enabling account takeover for any session with a valid JWT.
 
@@ -2586,24 +2584,24 @@ Because OAuth terminates in the same SQL-injectable login route, it inherits all
 
 - 🟠 [F-070](#f-070) — Password change without current-password verification allows session hijacking to escalate to full account takeover.
 
-### 7.3 Session and Token Controls
+### 6.3 Session and Token Controls
 
 **Verdict:** 🔴 Unsafe - The RSA private key used to sign all session JWTs is hardcoded at `lib/insecurity.ts:21` and publicly visible on GitHub. Express-jwt 0.1.3 (2013) lacks algorithm-enforcement, enabling alg:none bypass.
 
 **Controls covered:**
 
-- [7.3.1 Session Token Signing (JWT Based)](#731-session-token-signing-jwt-based)
-- [7.3.2 Session Token Validation (JWT Based)](#732-session-token-validation-jwt-based)
-- [7.3.3 Session Token Storage (Browser localStorage)](#733-session-token-storage-browser-localstorage)
-- [7.3.4 Session Token Revocation](#734-session-token-revocation)
-- [7.3.5 Session Token Expiry](#735-session-token-expiry)
+- [6.3.1 Session Token Signing (JWT Based)](#631-session-token-signing-jwt-based)
+- [6.3.2 Session Token Validation (JWT Based)](#632-session-token-validation-jwt-based)
+- [6.3.3 Session Token Storage (Browser localStorage)](#633-session-token-storage-browser-localstorage)
+- [6.3.4 Session Token Revocation](#634-session-token-revocation)
+- [6.3.5 Session Token Expiry](#635-session-token-expiry)
 
 **Implemented controls:** RS256 JWT signing (`lib/insecurity.ts:54`); 6-hour token expiry (`expiresIn: '6h'`); token stored client-side in browser localStorage.
 
-**Assessment:** This application uses a single locally-signed token format (commonly called JWT) for every authenticated session, regardless of the login flow in [§7.2](#72-identity-and-authentication-controls) that established it. The sub-sections below trace one token through its lifecycle: signing on issuance, validation on every protected request, storage in the browser, manual revocation, and time-based expiry. The signing key's public availability on GitHub makes every downstream control moot - any caller can mint an arbitrary `role=admin` token and the server will accept it.
+**Assessment:** This application uses a single locally-signed token format (commonly called JWT) for every authenticated session, regardless of the login flow in [§6.2](#62-identity-and-authentication-controls) that established it. The sub-sections below trace one token through its lifecycle: signing on issuance, validation on every protected request, storage in the browser, manual revocation, and time-based expiry. The signing key's public availability on GitHub makes every downstream control moot - any caller can mint an arbitrary `role=admin` token and the server will accept it.
 
-<a id="731-session-token-signing-jwt-based"></a>
-#### 7.3.1 Session Token Signing (JWT Based)
+<a id="631-session-token-signing-jwt-based"></a>
+#### 6.3.1 Session Token Signing (JWT Based)
 
 **Status:** 🔴 Unsafe - The RSA private key is a string constant in `lib/insecurity.ts:21`, committed to the public GitHub repository. Any caller can mint a valid token.
 
@@ -2637,8 +2635,8 @@ sequenceDiagram
 - 🔴 [F-004](#f-004) — Hardcoded RSA private key in public source means any caller can forge admin JWTs without server interaction.
 - 🔴 [F-005](#f-005) — Insecure JWT verification via express-jwt 0.1.3 allows algorithm confusion, including alg:none bypass.
 
-<a id="732-session-token-validation-jwt-based"></a>
-#### 7.3.2 Session Token Validation (JWT Based)
+<a id="632-session-token-validation-jwt-based"></a>
+#### 6.3.2 Session Token Validation (JWT Based)
 
 **Status:** 🔴 Unsafe - express-jwt 0.1.3 is used without an explicit algorithm allowlist; the `any` TypeScript cast suppresses type-level enforcement.
 
@@ -2653,8 +2651,8 @@ sequenceDiagram
 
 - 🔴 [F-005](#f-005) — JWT verification without algorithm allowlist enables alg:none and algorithm-confusion attacks against the session layer.
 
-<a id="733-session-token-storage-browser-localstorage"></a>
-#### 7.3.3 Session Token Storage (Browser localStorage)
+<a id="633-session-token-storage-browser-localstorage"></a>
+#### 6.3.3 Session Token Storage (Browser localStorage)
 
 **Status:** 🔴 Unsafe - The session JWT is stored in browser localStorage, reachable by any same-origin JavaScript including XSS payloads.
 
@@ -2664,15 +2662,15 @@ sequenceDiagram
 
 **Security assessment**
 
-- **localStorage is JavaScript-readable** — unlike an `HttpOnly Secure SameSite=Strict` cookie, localStorage is fully accessible to `document.cookie`-free XSS. The 36 Angular frontend `[innerHTML]` and `bypassSecurityTrustHtml()` sinks documented in [§7.7](#77-output-encoding-and-rendering-controls) are all co-located on the same origin, meaning any of those XSS vectors directly yields token theft.
+- **localStorage is JavaScript-readable** — unlike an `HttpOnly Secure SameSite=Strict` cookie, localStorage is fully accessible to `document.cookie`-free XSS. The 36 Angular frontend `[innerHTML]` and `bypassSecurityTrustHtml()` sinks documented in [§6.7](#67-output-encoding-and-rendering-controls) are all co-located on the same origin, meaning any of those XSS vectors directly yields token theft.
 - **No Backend-for-Frontend pattern** — the canonical fix is a BFF that holds the token server-side and sets it as an `HttpOnly` cookie, eliminating the localStorage surface entirely. This is an architectural gap, not a one-line patch.
 
 **Relevant findings**
 
 - 🔴 [F-001](#f-001) — JWT stored in localStorage allows token theft via any XSS payload on the same origin.
 
-<a id="734-session-token-revocation"></a>
-#### 7.3.4 Session Token Revocation
+<a id="634-session-token-revocation"></a>
+#### 6.3.4 Session Token Revocation
 
 **Status:** 🔴 Missing - No server-side token revocation exists. Logging out clears localStorage client-side but the issued JWT remains valid for its full 6-hour window.
 
@@ -2688,8 +2686,8 @@ The logout action in the Angular frontend calls `localStorage.removeItem('token'
 - 🔴 [F-004](#f-004) — The hardcoded signing key means revocation would require re-keying the server, which cannot happen in the current architecture.
 - 🟠 [F-070](#f-070) — Password change does not revoke existing sessions; a token stolen before the change remains valid.
 
-<a id="735-session-token-expiry"></a>
-#### 7.3.5 Session Token Expiry
+<a id="635-session-token-expiry"></a>
+#### 6.3.5 Session Token Expiry
 
 **Status:** 🟡 Partial - A 6-hour `expiresIn` claim is configured but is the only temporal control; no refresh-token rotation, no idle-timeout, no forced re-authentication for sensitive operations.
 
@@ -2704,21 +2702,21 @@ The logout action in the Angular frontend calls `localStorage.removeItem('token'
 
 - 🔴 [F-001](#f-001) — The 6-hour token window combined with localStorage storage and no revocation maximises the utility of a stolen token.
 
-### 7.4 Authorization Controls
+### 6.4 Authorization Controls
 
 **Verdict:** 🔴 Unsafe - Resource-level authorization trusts the client-supplied `UserId` from the request body rather than the JWT subject claim, enabling IDOR across addresses, wallet, basket, and order data for any authenticated user.
 
 **Controls covered:**
 
-- [7.4.1 Role-Based Access Control](#741-role-based-access-control)
-- [7.4.2 Resource-Level Authorization (IDOR)](#742-resource-level-authorization-idor)
+- [6.4.1 Role-Based Access Control](#641-role-based-access-control)
+- [6.4.2 Resource-Level Authorization (IDOR)](#642-resource-level-authorization-idor)
 
 **Implemented controls:** Role enum (customer/deluxe/accounting/admin) in the User model; `isAuthorized()` middleware on protected route groups; admin panel route group; `security.isAdminAuthenticated()` for admin-only operations.
 
 **Assessment:** The role model is architecturally present but inconsistently applied. The deeper structural problem is that resource ownership checks across nearly all user-scoped endpoints trust a `UserId` field from the request body rather than the authenticated `sub` claim from the JWT, making IDOR trivial for any authenticated user.
 
-<a id="741-role-based-access-control"></a>
-#### 7.4.1 Role-Based Access Control
+<a id="641-role-based-access-control"></a>
+#### 6.4.1 Role-Based Access Control
 
 **Status:** 🟠 Weak - Role middleware exists but is inconsistently applied; several admin-tier routes are reachable without authentication.
 
@@ -2737,8 +2735,8 @@ The logout action in the Angular frontend calls `localStorage.removeItem('token'
 - 🔴 [F-076](#f-076) — Mass assignment of the role field during registration allows privilege escalation to admin tier.
 - 🔴 [F-044](#f-044) — Admin privilege escalation via client-side-only Angular route guard.
 
-<a id="742-resource-level-authorization-idor"></a>
-#### 7.4.2 Resource-Level Authorization (IDOR)
+<a id="642-resource-level-authorization-idor"></a>
+#### 6.4.2 Resource-Level Authorization (IDOR)
 
 **Status:** 🔴 Unsafe - Ownership checks across address, wallet, basket, delivery, and order routes trust a client-supplied `UserId` body parameter instead of the JWT subject claim.
 
@@ -2761,21 +2759,21 @@ AddressModel.findOne({ where: { id: req.params.id, UserId: req.body.UserId } })
 - 🔴 [F-033](#f-033) — Insecure direct object reference at `routes/address.ts:11` via client-supplied UserId.
 - 🔴 [F-039](#f-039) — Mass assignment of privileged fields accepted from request body at `routes/verify.ts`:53.
 
-### 7.5 Query Construction and Data Access Controls
+### 6.5 Query Construction and Data Access Controls
 
 **Verdict:** 🔴 Unsafe - Two confirmed SQL injection points use raw string interpolation in the login and product-search endpoints. An additional NoSQL injection exists in the chat route.
 
 **Controls covered:**
 
-- [7.5.1 SQL Query Construction (Sequelize + Raw Queries)](#751-sql-query-construction-sequelize--raw-queries)
-- [7.5.2 NoSQL Query Construction (MarsDB + Direct Selectors)](#752-nosql-query-construction-marsdb--direct-selectors)
+- [6.5.1 SQL Query Construction (Sequelize + Raw Queries)](#751-sql-query-construction-sequelize--raw-queries)
+- [6.5.2 NoSQL Query Construction (MarsDB + Direct Selectors)](#752-nosql-query-construction-marsdb--direct-selectors)
 
 **Implemented controls:** Sequelize ORM available for model-backed routes; MarsDB for order history; parameterized queries used in some model `find()` calls.
 
 **Assessment:** The Sequelize ORM is present and used for most model operations, which are parameterized by default. The two critical attack paths - login and product search - bypass the ORM and use `models.sequelize.query()` with string interpolation. The chat route uses MarsDB with a user-controlled selector field.
 
 <a id="751-sql-query-construction-sequelize--raw-queries"></a>
-#### 7.5.1 SQL Query Construction (Sequelize + Raw Queries)
+#### 6.5.1 SQL Query Construction (Sequelize + Raw Queries)
 
 **Status:** 🔴 Unsafe - Both the login and product-search routes bypass Sequelize's parameterized API and interpolate request parameters directly into SQL strings.
 
@@ -2802,7 +2800,7 @@ models.sequelize.query(
 - 🔴 [F-035](#f-035) — UNION SQL injection in product search at `routes/search.ts:23` allows schema and data exfiltration.
 
 <a id="752-nosql-query-construction-marsdb--direct-selectors"></a>
-#### 7.5.2 NoSQL Query Construction (MarsDB + Direct Selectors)
+#### 6.5.2 NoSQL Query Construction (MarsDB + Direct Selectors)
 
 **Status:** 🟠 Weak - The product-review and order-history routes pass user-controlled values directly to MarsDB selectors without type coercion or operator filtering.
 
@@ -2817,36 +2815,36 @@ models.sequelize.query(
 
 - 🔴 [F-050](#f-050) — NoSQL injection at `routes/chat.ts:149` passes user-supplied selector to database query.
 
-### 7.6 Input Boundary Validation Controls
+### 6.6 Input Boundary Validation Controls
 
 **Verdict:** 🔴 Unsafe - No global input validation framework. Critical sinks (eval, XML parser, ZIP extractor) process user input without adequate sanitization.
 
 **Controls covered:**
 
-- [7.6.1 Validation Approach](#761-validation-approach)
-- [7.6.2 File Upload Validation](#762-file-upload-validation)
-- [7.6.3 XML External Entity Prevention (libxmljs2)](#763-xml-external-entity-prevention-libxmljs2)
-- [7.6.4 Server-Side Code Evaluation Prevention (notevil sandbox)](#764-server-side-code-evaluation-prevention-notevil-sandbox)
+- [6.6.1 Validation Approach](#661-validation-approach)
+- [6.6.2 File Upload Validation](#662-file-upload-validation)
+- [6.6.3 XML External Entity Prevention (libxmljs2)](#663-xml-external-entity-prevention-libxmljs2)
+- [6.6.4 Server-Side Code Evaluation Prevention (notevil sandbox)](#664-server-side-code-evaluation-prevention-notevil-sandbox)
 
 **Implemented controls:** `sanitize-html 1.4.2` for HTML content; `sanitizeFilename()` helper in `insecurity.ts`; file extension check on upload; multer file-size limit.
 
 **Assessment:** Point-fixes (sanitizeFilename, extension check) are applied to some routes but no framework-level input validation exists. The XML parser is configured with explicit XXE-enabling options. `eval()` is invoked directly on username content in `userProfile.ts`.
 
-<a id="761-validation-approach"></a>
-#### 7.6.1 Validation Approach
+<a id="661-validation-approach"></a>
+#### 6.6.1 Validation Approach
 
 This codebase applies input validation within individual route handlers and parsing layers (see the boundary-specific sub-blocks below) rather than through a single application-wide validation schema enforced across all endpoints.
 
 **Security assessment**
 
-_Not assessed in detail; see the control overview in [§7.1](#71-security-control-overview)._
+_Not assessed in detail; see the control overview in [§6.1](#61-security-control-overview)._
 
 **Relevant findings**
 
 - None identified for this control.
 
-<a id="762-file-upload-validation"></a>
-#### 7.6.2 File Upload Validation
+<a id="662-file-upload-validation"></a>
+#### 6.6.2 File Upload Validation
 
 **Status:** 🟠 Weak - A file extension check and multer file-size limit are present, but the ZIP extraction path contains an insufficient path-traversal guard.
 
@@ -2865,8 +2863,8 @@ _Not assessed in detail; see the control overview in [§7.1](#71-security-contro
 - 🟠 [F-066](#f-066) — Zip bomb decompression bomb via `routes/fileUpload.ts`:34.
 - 🟠 [F-074](#f-074) — Unauthenticated file upload endpoint (`server.ts:309`) allows anonymous exploitation of all upload weaknesses.
 
-<a id="763-xml-external-entity-prevention-libxmljs2"></a>
-#### 7.6.3 XML External Entity Prevention (libxmljs2)
+<a id="663-xml-external-entity-prevention-libxmljs2"></a>
+#### 6.6.3 XML External Entity Prevention (libxmljs2)
 
 **Status:** 🔴 Unsafe - The XML parser is intentionally configured to enable external entity substitution and host filesystem access.
 
@@ -2890,8 +2888,8 @@ parseXml(xmlInput, { noent: true, dtdload: true })
 - 🟠 [F-055](#f-055) — XML external entity file disclosure at `routes/fileUpload.ts`:76.
 - 🟠 [F-067](#f-067) — XML and YAML decompression bomb via `routes/fileUpload.ts`:76.
 
-<a id="764-server-side-code-evaluation-prevention-notevil-sandbox"></a>
-#### 7.6.4 Server-Side Code Evaluation Prevention (notevil sandbox)
+<a id="664-server-side-code-evaluation-prevention-notevil-sandbox"></a>
+#### 6.6.4 Server-Side Code Evaluation Prevention (notevil sandbox)
 
 **Status:** 🔴 Unsafe - `routes/userProfile.ts:61` calls `eval()` on a string extracted from the username field when the username matches a `#{...}` pattern. There is no sandbox.
 
@@ -2907,21 +2905,21 @@ parseXml(xmlInput, { noent: true, dtdload: true })
 - 🔴 [F-042](#f-042) — Server-side template injection via `eval()` on username at `routes/userProfile.ts`:61.
 - 🔴 [F-041](#f-041) — Remote code execution at `routes/b2bOrder.ts:23` (separate eval surface via B2B order XML).
 
-### 7.7 Output Encoding and Rendering Controls
+### 6.7 Output Encoding and Rendering Controls
 
 **Verdict:** 🔴 Unsafe - Multiple Angular `[innerHTML]` bindings use `bypassSecurityTrustHtml()` for user-controlled content. Server-side `eval()` in `userProfile.ts` creates SSTI.
 
 **Controls covered:**
 
-- [7.7.1 HTML Output Encoding (Angular Template Sanitization)](#771-html-output-encoding-angular-template-sanitization)
-- [7.7.2 Server-Side Template Injection Prevention](#772-server-side-template-injection-prevention)
+- [6.7.1 HTML Output Encoding (Angular Template Sanitization)](#671-html-output-encoding-angular-template-sanitization)
+- [6.7.2 Server-Side Template Injection Prevention](#672-server-side-template-injection-prevention)
 
 **Implemented controls:** Angular's built-in template sanitization (bypassed in several components); `html-entities` library used in some contexts; `sanitize-html 1.4.2` for feedback content.
 
-**Assessment:** Angular's default escaping is present and would prevent XSS by default, but it is actively disabled at several rendering sinks via `DomSanitizer.bypassSecurityTrustHtml()`. The server-side SSTI via `eval()` is independent of the frontend rendering stack and is described in [§7.6.3](#763-xml-external-entity-prevention-libxmljs2).
+**Assessment:** Angular's default escaping is present and would prevent XSS by default, but it is actively disabled at several rendering sinks via `DomSanitizer.bypassSecurityTrustHtml()`. The server-side SSTI via `eval()` is independent of the frontend rendering stack and is described in [§6.6.3](#663-xml-external-entity-prevention-libxmljs2).
 
-<a id="771-html-output-encoding-angular-template-sanitization"></a>
-#### 7.7.1 HTML Output Encoding (Angular Template Sanitization)
+<a id="671-html-output-encoding-angular-template-sanitization"></a>
+#### 6.7.1 HTML Output Encoding (Angular Template Sanitization)
 
 **Status:** 🔴 Unsafe - Angular's built-in sanitization is explicitly disabled for user-controlled content at several `[innerHTML]` sinks.
 
@@ -2945,12 +2943,12 @@ this.userFeedback.comment = this.sanitizer.bypassSecurityTrustHtml(feedbacks[i].
 - 🔴 [F-036](#f-036) — Cross-site scripting via `bypassSecurityTrustHtml()` on user feedback at `about.component.ts`:119.
 - 🔴 [F-073](#f-073) — CSP header injection via user-controlled profileImage at `routes/userProfile.ts:88`, compounding XSS exploitability.
 
-<a id="772-server-side-template-injection-prevention"></a>
-#### 7.7.2 Server-Side Template Injection Prevention
+<a id="672-server-side-template-injection-prevention"></a>
+#### 6.7.2 Server-Side Template Injection Prevention
 
 **Status:** 🔴 Missing - No server-side template engine is used; instead, `eval()` is called directly on user-supplied username content. There is no sandbox or allow-list.
 
-`routes/userProfile.ts:61` implements a custom server-side expression evaluator by running JavaScript `eval()` on a substring of the username field. The notevil sandboxed evaluator is not used. This is described in depth in [§7.6.3 Server-Side Code Evaluation Prevention](#763-server-side-code-evaluation-prevention-notevil-sandbox); the finding is cross-referenced here because it also represents a rendering-layer boundary failure.
+`routes/userProfile.ts:61` implements a custom server-side expression evaluator by running JavaScript `eval()` on a substring of the username field. The notevil sandboxed evaluator is not used. This is described in depth in [§6.6.3 Server-Side Code Evaluation Prevention](#763-server-side-code-evaluation-prevention-notevil-sandbox); the finding is cross-referenced here because it also represents a rendering-layer boundary failure.
 
 **Security assessment**
 
@@ -2961,23 +2959,23 @@ this.userFeedback.comment = this.sanitizer.bypassSecurityTrustHtml(feedbacks[i].
 
 - 🔴 [F-042](#f-042) — Server-side template injection via `eval()` on username at `routes/userProfile.ts:61` achieves RCE, not merely HTML injection.
 
-### 7.8 Browser and Cross-Origin Controls
+### 6.8 Browser and Cross-Origin Controls
 
 **Verdict:** 🔴 Unsafe - No CSRF protection exists anywhere. Wildcard CORS allows cross-origin requests from any domain. No global CSP is configured. `helmet.xssFilter()` is intentionally disabled.
 
 **Controls covered:**
 
-- [7.8.1 Content Security Policy](#781-content-security-policy)
-- [7.8.2 CORS Policy](#782-cors-policy)
-- [7.8.3 CSRF Protection](#783-csrf-protection)
-- [7.8.4 Cookie Security and Clickjacking Protection](#784-cookie-security-and-clickjacking-protection)
+- [6.8.1 Content Security Policy](#681-content-security-policy)
+- [6.8.2 CORS Policy](#682-cors-policy)
+- [6.8.3 CSRF Protection](#683-csrf-protection)
+- [6.8.4 Cookie Security and Clickjacking Protection](#684-cookie-security-and-clickjacking-protection)
 
 **Implemented controls:** `helmet.noSniff()` (X-Content-Type-Options: nosniff) globally; `helmet.frameguard()` (X-Frame-Options: SAMEORIGIN) globally; HSTS configured; Socket\.IO CORS restricted to localhost:4200.
 
 **Assessment:** The browser hardening controls that do exist (noSniff, frameguard, HSTS) are correct but insufficient given the complete absence of CSRF protection and the wildcard REST CORS policy. The per-route CSP in `userProfile.ts` is the only Content-Security-Policy deployed, and it is itself injectable.
 
-<a id="781-content-security-policy"></a>
-#### 7.8.1 Content Security Policy
+<a id="681-content-security-policy"></a>
+#### 6.8.1 Content Security Policy
 
 **Status:** 🔴 Unsafe - No global CSP header. The only deployed CSP is a per-route user-profile header that incorporates a user-controlled value, making it a CSP injection vulnerability.
 
@@ -2998,8 +2996,8 @@ res.set('Content-Security-Policy', CSP)
 
 - 🔴 [F-073](#f-073) — CSP header injection via user-controlled profileImage at `routes/userProfile.ts`:88.
 
-<a id="782-cors-policy"></a>
-#### 7.8.2 CORS Policy
+<a id="682-cors-policy"></a>
+#### 6.8.2 CORS Policy
 
 **Status:** 🟠 Weak - The REST API CORS policy is wildcard; all cross-origin requests are accepted from any domain.
 
@@ -3014,8 +3012,8 @@ res.set('Content-Security-Policy', CSP)
 
 - No dedicated CORS finding ID is in scope; the wildcard policy is the prerequisite that elevates the CSRF absence to Critical impact.
 
-<a id="783-csrf-protection"></a>
-#### 7.8.3 CSRF Protection
+<a id="683-csrf-protection"></a>
+#### 6.8.3 CSRF Protection
 
 **Status:** 🔴 Missing - No CSRF middleware or token pattern exists in the codebase. All state-changing endpoints are CSRF-exploitable from any cross-origin page.
 
@@ -3024,44 +3022,44 @@ Neither `csurf` nor any equivalent synchronizer-token, double-submit-cookie, or 
 **Security assessment**
 
 - **All state-changing endpoints exposed** — password change (`PATCH /rest/user/change-password`), address creation (`POST /api/Addresss`), wallet operations, and all order flows are state-changing routes with no CSRF token requirement.
-- **Combined with wildcard CORS** — the wildcard CORS policy ([§7.8.2](#782-cors-policy)) means even cross-origin preflight is accepted, removing the last implicit browser barrier. Exploitation is a simple `fetch()` from an attacker-controlled page.
+- **Combined with wildcard CORS** — the wildcard CORS policy ([§6.8.2](#682-cors-policy)) means even cross-origin preflight is accepted, removing the last implicit browser barrier. Exploitation is a simple `fetch()` from an attacker-controlled page.
 
 **Relevant findings**
 
 - 🔴 [F-073](#f-073) — CSP injection compounds CSRF by allowing an attacker to eliminate script-src restrictions from the response.
 - 🔴 [F-046](#f-046) — Missing authentication on `server.ts:638` means some CSRF-exploitable routes do not even require a victim session.
 
-<a id="784-cookie-security-and-clickjacking-protection"></a>
-#### 7.8.4 Cookie Security and Clickjacking Protection
+<a id="684-cookie-security-and-clickjacking-protection"></a>
+#### 6.8.4 Cookie Security and Clickjacking Protection
 
 **Status:** 🟡 Partial - Helmet's noSniff and frameguard are correctly applied; HSTS is configured. Session tokens are in localStorage rather than cookies, so cookie-flag hardening is moot for session security.
 
-`server.ts` applies `helmet.noSniff()` (sets `X-Content-Type-Options: nosniff`) and `helmet.frameguard({action: 'sameorigin'})` (sets `X-Frame-Options: SAMEORIGIN`) as global middleware. HSTS is enabled. No auth cookies are set, so `HttpOnly`/`Secure`/`SameSite` cookie flags are not relevant to session protection - that gap is architectural (see [§7.3.3](#733-session-token-storage-browser-localstorage)).
+`server.ts` applies `helmet.noSniff()` (sets `X-Content-Type-Options: nosniff`) and `helmet.frameguard({action: 'sameorigin'})` (sets `X-Frame-Options: SAMEORIGIN`) as global middleware. HSTS is enabled. No auth cookies are set, so `HttpOnly`/`Secure`/`SameSite` cookie flags are not relevant to session protection - that gap is architectural (see [§6.3.3](#633-session-token-storage-browser-localstorage)).
 
 **Security assessment**
 
-The Helmet middleware configuration is adequate for the headers it covers. The frameguard `SAMEORIGIN` directive prevents the SPA from being framed on third-party domains. The missing element is not in Helmet's configuration but in the absence of CSP (covered in [§7.8.1](#781-content-security-policy)) and CSRF (covered in [§7.8.3](#783-csrf-protection)).
+The Helmet middleware configuration is adequate for the headers it covers. The frameguard `SAMEORIGIN` directive prevents the SPA from being framed on third-party domains. The missing element is not in Helmet's configuration but in the absence of CSP (covered in [§6.8.1](#681-content-security-policy)) and CSRF (covered in [§6.8.3](#683-csrf-protection)).
 
 **Relevant findings**
 
 - No standalone finding for cookie security; the relevant architectural gap is 🔴 [F-001](#f-001) (localStorage token storage).
 
-### 7.9 Cryptography Secrets and Data Protection
+### 6.9 Cryptography Secrets and Data Protection
 
 **Verdict:** 🔴 Unsafe - MD5 without salt for all password storage; RSA private key hardcoded and publicly committed; BIP-39 Ethereum mnemonic hardcoded in source.
 
 **Controls covered:**
 
-- [7.9.1 Password Storage (Hashing Algorithm)](#791-password-storage-hashing-algorithm)
-- [7.9.2 Secret Management (Keys and Credentials)](#792-secret-management-keys-and-credentials)
-- [7.9.3 Data Encryption at Rest](#793-data-encryption-at-rest)
+- [6.9.1 Password Storage (Hashing Algorithm)](#691-password-storage-hashing-algorithm)
+- [6.9.2 Secret Management (Keys and Credentials)](#692-secret-management-keys-and-credentials)
+- [6.9.3 Data Encryption at Rest](#693-data-encryption-at-rest)
 
 **Implemented controls:** RSA-2048 for JWT signing (algorithm correct, key public); AES-256 used for some challenge-verification data; bcrypt available in npm but not used.
 
 **Assessment:** The cryptographic primitives chosen (RSA-2048, AES-256) are appropriate algorithms. The failures are in key-management and hash-function selection: the private key is public, the password hash function is MD5 without salt, and Ethereum wallet credentials are committed to the repository.
 
-<a id="791-password-storage-hashing-algorithm"></a>
-#### 7.9.1 Password Storage (Hashing Algorithm)
+<a id="691-password-storage-hashing-algorithm"></a>
+#### 6.9.1 Password Storage (Hashing Algorithm)
 
 **Status:** 🔴 Unsafe - All passwords are hashed with unsalted MD5, which is a fast non-salted digest function not designed for password storage.
 
@@ -3077,8 +3075,8 @@ The Helmet middleware configuration is adequate for the headers it covers. The f
 
 - 🟠 [F-057](#f-057) — Unsalted MD5 password hashing at `lib/insecurity.ts:41` means any common password is reversible via rainbow table.
 
-<a id="792-secret-management-keys-and-credentials"></a>
-#### 7.9.2 Secret Management (Keys and Credentials)
+<a id="692-secret-management-keys-and-credentials"></a>
+#### 6.9.2 Secret Management (Keys and Credentials)
 
 **Status:** 🔴 Unsafe - Multiple production-equivalent secrets are hardcoded in source and committed to the public GitHub repository.
 
@@ -3097,8 +3095,8 @@ The Helmet middleware configuration is adequate for the headers it covers. The f
 - 🟠 [F-059](#f-059) — FTP and encryption-key directories exposed unauthenticated, leaking additional key material.
 - 🟠 [F-061](#f-061) — Unauthenticated encryption key directory exposure at `server.ts`:277.
 
-<a id="793-data-encryption-at-rest"></a>
-#### 7.9.3 Data Encryption at Rest
+<a id="693-data-encryption-at-rest"></a>
+#### 6.9.3 Data Encryption at Rest
 
 **Status:** 🟠 Weak - SQLite database stores user passwords, payment card numbers, and personal data without field-level encryption. Challenge data uses AES but production PII is plaintext.
 
@@ -3114,22 +3112,22 @@ The SQLite database at `data/juiceshop.sqlite` contains all user records, orders
 - 🔴 [F-035](#f-035) — UNION SQL injection allows dumping the SQLite schema and all table data including PII.
 - 🟠 [F-057](#f-057) — MD5 password hashes are effectively plaintext given rainbow-table precomputation.
 
-### 7.10 File Parser and Outbound Request Controls
+### 6.10 File Parser and Outbound Request Controls
 
 **Verdict:** 🟠 Weak - Zip Slip path-traversal guard is bypassable; XXE is fully enabled with host filesystem access; the configurable LLM URL has no allowlist; FTP and key directories served without authentication.
 
 **Controls covered:**
 
-- [7.10.1 File Path Traversal Prevention (ZIP Extraction)](#7101-file-path-traversal-prevention-zip-extraction)
-- [7.10.2 SSRF Prevention (LLM API URL)](#7102-ssrf-prevention-llm-api-url)
-- [7.10.3 Unauthenticated Static Directory Exposure](#7103-unauthenticated-static-directory-exposure)
+- [6.10.1 File Path Traversal Prevention (ZIP Extraction)](#6101-file-path-traversal-prevention-zip-extraction)
+- [6.10.2 SSRF Prevention (LLM API URL)](#6102-ssrf-prevention-llm-api-url)
+- [6.10.3 Unauthenticated Static Directory Exposure](#6103-unauthenticated-static-directory-exposure)
 
 **Implemented controls:** `sanitize-filename` applied to uploaded filenames; `path.resolve()` for path canonicalization; multer file-size limit (200 kB compressed); extension check on upload.
 
 **Assessment:** Point controls are in place for filename sanitization and size limiting but the two highest-risk paths (ZIP entry traversal, XML XXE) have confirmed bypasses. The serve-static mounts for FTP and encryption-key directories have no authentication middleware.
 
-<a id="7101-file-path-traversal-prevention-zip-extraction"></a>
-#### 7.10.1 File Path Traversal Prevention (ZIP Extraction)
+<a id="6101-file-path-traversal-prevention-zip-extraction"></a>
+#### 6.10.1 File Path Traversal Prevention (ZIP Extraction)
 
 **Status:** 🟠 Weak - The path-traversal guard in `extractZipBuffer()` uses a string-inclusion check that is insufficient against certain ZIP entry naming patterns.
 
@@ -3146,8 +3144,8 @@ The SQLite database at `data/juiceshop.sqlite` contains all user records, orders
 - 🟠 [F-054](#f-054) — Zip Slip path traversal at `routes/fileUpload.ts`:34.
 - 🟠 [F-066](#f-066) — Zip bomb decompression at `routes/fileUpload.ts`:34.
 
-<a id="7102-ssrf-prevention-llm-api-url"></a>
-#### 7.10.2 SSRF Prevention (LLM API URL)
+<a id="6102-ssrf-prevention-llm-api-url"></a>
+#### 6.10.2 SSRF Prevention (LLM API URL)
 
 **Status:** 🟠 Weak - The LLM API base URL is read from application config without URL allowlisting or scheme restriction, creating an SSRF path via the chatbot route.
 
@@ -3162,8 +3160,8 @@ The SQLite database at `data/juiceshop.sqlite` contains all user records, orders
 
 - 🟡 [F-081](#f-081) — SSRF via configurable LLM API URL at `routes/chat.ts`:111.
 
-<a id="7103-unauthenticated-static-directory-exposure"></a>
-#### 7.10.3 Unauthenticated Static Directory Exposure
+<a id="6103-unauthenticated-static-directory-exposure"></a>
+#### 6.10.3 Unauthenticated Static Directory Exposure
 
 **Status:** 🔴 Missing - FTP and encryption-key directories are served via `express.static()` without any authentication middleware.
 
@@ -3180,22 +3178,22 @@ The SQLite database at `data/juiceshop.sqlite` contains all user records, orders
 - 🟠 [F-059](#f-059) — Unauthenticated FTP directory listing exposes internal files at `server.ts`:269.
 - 🟠 [F-061](#f-061) — Unauthenticated encryption key directory exposure at `server.ts`:277.
 
-### 7.11 Operations Runtime and Supply Chain Controls
+### 6.11 Operations Runtime and Supply Chain Controls
 
 **Verdict:** 🟡 Partial - Dependabot is configured and active; `package-lock.json` is committed. CI workflows lack explicit `permissions` blocks (default write-all `GITHUB_TOKEN`) and third-party Actions are pinned to mutable tags rather than SHA digests.
 
 **Controls covered:**
 
-- [7.11.1 Dependency Management (Dependabot + Lockfile)](#7111-dependency-management-dependabot--lockfile)
-- [7.11.2 CI/CD Pipeline Security (GitHub Actions)](#7112-cicd-pipeline-security-github-actions)
-- [7.11.3 Security Logging and Monitoring (Winston + Prometheus)](#7113-security-logging-and-monitoring-winston--prometheus)
+- [6.11.1 Dependency Management (Dependabot + Lockfile)](#7111-dependency-management-dependabot--lockfile)
+- [6.11.2 CI/CD Pipeline Security (GitHub Actions)](#6112-cicd-pipeline-security-github-actions)
+- [6.11.3 Security Logging and Monitoring (Winston + Prometheus)](#7113-security-logging-and-monitoring-winston--prometheus)
 
 **Implemented controls:** `.github/dependabot.yml` configured; `package-lock.json` committed; Winston console logger; Prometheus metrics with Grafana dashboard; `npm audit` in CI.
 
 **Assessment:** The supply-chain posture has the right structural elements (Dependabot, lockfile, audit) but three gaps undermine CI pipeline integrity: write-all token scope, mutable Action tags, and a remote shell script executed without integrity verification.
 
 <a id="7111-dependency-management-dependabot--lockfile"></a>
-#### 7.11.1 Dependency Management (Dependabot + Lockfile)
+#### 6.11.1 Dependency Management (Dependabot + Lockfile)
 
 **Status:** 🟡 Partial - Dependabot is configured and `package-lock.json` is committed for reproducible installs. Intentionally vulnerable library versions are pinned to prevent automatic remediation.
 
@@ -3210,8 +3208,8 @@ The Dependabot + lockfile combination is adequate for a production application. 
 - 🟠 [F-052](#f-052) — GitHub Actions pinned to mutable tags (`image_actions.yml:33`) — tag values can change without a PR.
 - 🟠 [F-053](#f-053) — Unpinned GitHub Action at `ci.yml`:188.
 
-<a id="7112-cicd-pipeline-security-github-actions"></a>
-#### 7.11.2 CI/CD Pipeline Security (GitHub Actions)
+<a id="6112-cicd-pipeline-security-github-actions"></a>
+#### 6.11.2 CI/CD Pipeline Security (GitHub Actions)
 
 **Status:** 🟠 Weak - 10 workflow files found; most use default write-all `GITHUB_TOKEN` scope; third-party Actions reference mutable tags; one workflow fetches and executes a remote shell script.
 
@@ -3237,7 +3235,7 @@ The remote shell execution in `ci.yml` that lacks integrity verification is:
 - 🟠 [F-072](#f-072) — Missing permissions block allows write-all `GITHUB_TOKEN` at `ci.yml`:1.
 
 <a id="7113-security-logging-and-monitoring-winston--prometheus"></a>
-#### 7.11.3 Security Logging and Monitoring (Winston + Prometheus)
+#### 6.11.3 Security Logging and Monitoring (Winston + Prometheus)
 
 **Status:** 🟡 Partial - Winston provides console-level logging and Prometheus/Grafana expose operational metrics. Neither provides security-event audit logging; the `/metrics` endpoint is unauthenticated.
 
@@ -3254,24 +3252,24 @@ Winston is configured in `lib/logger.ts` and logs request information to the con
 - 🟠 [F-056](#f-056) — Missing security event logging at `routes/login.ts:32` means failed authentication attempts are not auditable.
 - 🟠 [F-063](#f-063) — No rate limiting or input size cap on LLM chat endpoint (`server.ts:638`) also lacks logging of unusual usage patterns.
 
-### 7.12 Real-time and Not Applicable Controls
+### 6.12 Real-time and Not Applicable Controls
 
 **Verdict:** 🔴 Unsafe - The chatbot LLM integration has confirmed prompt injection, system-prompt exfiltration, and unconstrained agency over business logic. The `Socket.IO` WebSocket server accepts all connections without JWT verification.
 
 **Controls covered:**
 
-- [7.12.1 WebSocket / `Socket.IO` Security](#7121-websocket--socketio-security)
-- [7.12.2 Rate Limiting](#7122-rate-limiting)
-- [7.12.3 Prompt Injection Prevention (LLM Chat)](#7123-prompt-injection-prevention-llm-chat)
-- [7.12.4 LLM Output Handling and Agency Limits](#7124-llm-output-handling-and-agency-limits)
-- [7.12.5 System Prompt Confidentiality](#7125-system-prompt-confidentiality)
+- [6.12.1 WebSocket / `Socket.IO` Security](#7121-websocket--socketio-security)
+- [6.12.2 Rate Limiting](#6122-rate-limiting)
+- [6.12.3 Prompt Injection Prevention (LLM Chat)](#6123-prompt-injection-prevention-llm-chat)
+- [6.12.4 LLM Output Handling and Agency Limits](#6124-llm-output-handling-and-agency-limits)
+- [6.12.5 System Prompt Confidentiality](#6125-system-prompt-confidentiality)
 
 **Implemented controls:** `Socket.IO` CORS restricted to `http://localhost:4200`; rate limiting on password-reset and three other endpoints; system prompt defined for the chatbot; LLM endpoint configurable via application config.
 
 **Assessment:** Two real-time domains are covered here. For WebSocket: `Socket.IO` is used for real-time challenge notifications and score updates; the server correctly restricts CORS to localhost but does not authenticate incoming WebSocket connections. For the LLM chatbot: user-supplied chat messages are concatenated into the prompt context without sanitization; the LLM has executable agency over discount application with no server-side authorization gate.
 
 <a id="7121-websocket--socketio-security"></a>
-#### 7.12.1 WebSocket / `Socket.IO` Security
+#### 6.12.1 WebSocket / `Socket.IO` Security
 
 **Status:** 🟠 Weak - `Socket.IO` accepts all incoming connections without verifying a JWT or session credential. CORS is restricted to localhost but direct WebSocket clients bypass browser-enforced CORS.
 
@@ -3289,8 +3287,8 @@ Winston is configured in `lib/logger.ts` and logs request information to the con
 - 🟠 [F-068](#f-068) — Unbounded unauthenticated WebSocket connection flood at `registerWebsocketEvents.ts`:20.
 - 🔴 [F-075](#f-075) — Challenge score inflation via unauthenticated socket observation.
 
-<a id="7122-rate-limiting"></a>
-#### 7.12.2 Rate Limiting
+<a id="6122-rate-limiting"></a>
+#### 6.12.2 Rate Limiting
 
 **Status:** 🟡 Partial - `express-rate-limit` is applied to the password-reset endpoint and three others but is absent from the login endpoint and all other high-value credential endpoints.
 
@@ -3308,8 +3306,8 @@ Winston is configured in `lib/logger.ts` and logs request information to the con
 - 🔴 [F-047](#f-047) — Rate limit IP spoofing via X-Forwarded-For at `server.ts`:346.
 - 🟠 [F-063](#f-063) — No rate limiting or input size cap on LLM chat endpoint (`server.ts:638`).
 
-<a id="7123-prompt-injection-prevention-llm-chat"></a>
-#### 7.12.3 Prompt Injection Prevention (LLM Chat)
+<a id="6123-prompt-injection-prevention-llm-chat"></a>
+#### 6.12.3 Prompt Injection Prevention (LLM Chat)
 
 **Status:** 🔴 Unsafe - User chat messages are concatenated directly into the LLM prompt context. No structural separation exists between the user turn and the system instruction.
 
@@ -3326,8 +3324,8 @@ Winston is configured in `lib/logger.ts` and logs request information to the con
 - 🔴 [F-034](#f-034) — Prompt injection at `routes/chat.ts:191` allows overriding system instructions.
 - 🟠 [F-060](#f-060) — LLM prompt injection extracts confidential system prompt at `routes/chat.ts`:105.
 
-<a id="7124-llm-output-handling-and-agency-limits"></a>
-#### 7.12.4 LLM Output Handling and Agency Limits
+<a id="6124-llm-output-handling-and-agency-limits"></a>
+#### 6.12.4 LLM Output Handling and Agency Limits
 
 **Status:** 🔴 Unsafe - The LLM has unconstrained ability to apply discount codes as a side effect of chat responses; no confirmation step or business-logic authorization gate exists.
 
@@ -3342,8 +3340,8 @@ Winston is configured in `lib/logger.ts` and logs request information to the con
 
 - 🔴 [F-040](#f-040) — Excessive LLM agency: unconstrained discount application at `routes/chat.ts`:179.
 
-<a id="7125-system-prompt-confidentiality"></a>
-#### 7.12.5 System Prompt Confidentiality
+<a id="6125-system-prompt-confidentiality"></a>
+#### 6.12.5 System Prompt Confidentiality
 
 **Status:** 🔴 Unsafe - The system prompt is exfiltrable via prompt injection. The prompt is treated as a trust anchor but is not protected from disclosure.
 
@@ -3359,7 +3357,7 @@ Winston is configured in `lib/logger.ts` and logs request information to the con
 - 🟠 [F-058](#f-058) — System prompt exfiltration at `routes/chat.ts:105` via direct disclosure request.
 - 🟠 [F-060](#f-060) — LLM prompt injection extracts confidential system prompt via role-switching payload.
 
-### 7.13 Defense-in-Depth Summary
+### 6.13 Defense-in-Depth Summary
 
 OWASP Juice Shop is designed as a deliberately insecure training application, so every control domain in this assessment is intentionally broken. Documenting the positive controls that do exist provides a baseline for understanding what a remediated posture would look like.
 
@@ -3371,7 +3369,7 @@ The control-boundary repairs that would restore meaningful layered defense: repl
 
 ---
 
-## 8. Findings Register
+## 7. Findings Register
 
 Findings are grouped by severity (Critical → High → Medium → Low); within a tier they are ordered by attack vektor (Repo-Read → Internet-Anon → Internet-User → Victim-Required). Each finding is a card with the same fixed fields, in order: **Severity · Component · Location** → **Issue** → **Root cause** → **Evidence** → **Fix** → **Classification** (with external CWE / OWASP links).
 
@@ -5429,9 +5427,9 @@ _**Severity annotation:** rows tagged `*(raw Critical)*` had a Critical-class im
 
 ---
 
-## 9. Abuse Cases
+## 8. Abuse Cases
 
-_Abuse cases describe end-to-end attack scenarios that chain individual findings into an exploitation path. Each case is **mandatory** - defined in the org profile / plugin library and evaluated against every repository. Every chain step references a finding from [§8 Findings Register](#8-findings-register); each step is code-confirmed against the repository and the chain verdict is folded deterministically from the per-step results, never rated by hand._
+_Abuse cases describe end-to-end attack scenarios that chain individual findings into an exploitation path. Each case is **mandatory** - defined in the org profile / plugin library and evaluated against every repository. Every chain step references a finding from [§7 Findings Register](#7-findings-register); each step is code-confirmed against the repository and the chain verdict is folded deterministically from the per-step results, never rated by hand._
 
 | # | Scenario | Actor | Combined Risk | Verdict |
 |--------|------------------------------------|------------------|-------------|--------------|
@@ -5609,9 +5607,9 @@ Implementing any single mitigation below severs the chain at the named step, so 
 
 ---
 
-## 10. Mitigation Register
+## 9. Mitigation Register
 
-Each mitigation block lists the findings it **Addresses**, the CWEs it **Prevents**, and the **Priority** (P1 = before deployment, P2 = current sprint, P3 = next quarter, P4 = backlog). The **Why** / **How** / **Verification** fields are populated only when authored; if a field is omitted, refer to the linked finding's *Evidence* line for file:line context and to the threat-category description in [§8 Findings Register](#8-findings-register) for the underlying weakness.
+Each mitigation block lists the findings it **Addresses**, the CWEs it **Prevents**, and the **Priority** (P1 = before deployment, P2 = current sprint, P3 = next quarter, P4 = backlog). The **Why** / **How** / **Verification** fields are populated only when authored; if a field is omitted, refer to the linked finding's *Evidence* line for file:line context and to the threat-category description in [§7 Findings Register](#7-findings-register) for the underlying weakness.
 
 **Mitigations index:**<br/>❶ [M-001](#m-001) — Store session tokens in HttpOnly, Secure cookies<br/>❶ [M-003](#m-003) — Use parameterized database queries<br/>❶ [M-004](#m-004) — Move cryptographic keys to a managed secret store<br/>❶ [M-005](#m-005) — Enforce JWT signature and algorithm verification<br/>❶ [M-006](#m-006) — Use parameterized database queries<br/>❶ [M-007](#m-007) — Enforce object-level (ownership) authorization<br/>❶ [M-008](#m-008) — Remove server-side evaluation of untrusted input<br/>❶ [M-009](#m-009) — Use parameterized database queries<br/>❶ [M-010](#m-010) — Encode output instead of bypassing the framework sanitizer<br/>❶ [M-011](#m-011) — Disable XML external entity (XXE) resolution<br/>❶ [M-012](#m-012) — Move cryptographic keys to a managed secret store<br/>❶ [M-013](#m-013) — Apply an allowlist filter before passing the body to any model, and…<br/>❶ [M-014](#m-014) — Enforce server-side authorization on every endpoint<br/>❶ [M-015](#m-015) — Remove server-side evaluation of untrusted input<br/>❶ [M-016](#m-016) — Remove server-side evaluation of untrusted input<br/>❶ [M-017](#m-017) — Constrain file paths to a safe base directory<br/>❶ [M-018](#m-018) — Enforce server-side authorization<br/>❷ [M-002](#m-002) — Enforce server-side authorization checks on all admin and…<br/>❷ [M-020](#m-020) — Add `security.isAuthorized` middleware to `/rest/chat` route…<br/>❷ [M-021](#m-021) — Restrict trust proxy to known reverse-proxy CIDR and remove…<br/>❷ [M-022](#m-022) — Add Socket\.IO authentication middleware to reject unauthenticated…<br/>❷ [M-023](#m-023) — Validate redirect targets against an allowlist<br/>❷ [M-024](#m-024) — Use parameterized database queries<br/>❷ [M-025](#m-025) — Pin third-party dependencies to immutable versions<br/>❷ [M-026](#m-026) — Pin third-party dependencies to immutable versions<br/>❷ [M-027](#m-027) — Pin the container base image to an immutable digest<br/>❷ [M-028](#m-028) — Constrain file paths to a safe base directory<br/>❷ [M-029](#m-029) — Disable XML external entity (XXE) resolution<br/>❷ [M-030](#m-030) — Add security audit logging<br/>❷ [M-031](#m-031) — Hash passwords with a strong, salted algorithm<br/>❷ [M-032](#m-032) — Stop exposing internal information to clients<br/>❷ [M-033](#m-033) — Add authentication middleware to /ftp directory serving routes<br/>❷ [M-034](#m-034) — Remove server-side evaluation of untrusted input<br/>❷ [M-035](#m-035) — Apply isAuthorized middleware to all /encryptionkeys routes and remove…<br/>❷ [M-036](#m-036) — Rate-limit and lock out repeated authentication attempts<br/>❷ [M-037](#m-037) — Add rate limiting middleware and input size validation to `/rest/chat`<br/>❷ [M-038](#m-038) — Remove `global.sleep` registration and replace \$where with a typed…<br/>❷ [M-039](#m-039) — Add express-rate-limit to POST /rest/user/login with per-IP and…<br/>❷ [M-040](#m-040) — Enforce a decompressed-size limit per ZIP entry and per archive during…<br/>❷ [M-041](#m-041) — Bound parser resource consumption<br/>❷ [M-042](#m-042) — Apply connection rate limiting and a maximum connection cap to the…<br/>❷ [M-043](#m-043) — Rate-limit and lock out repeated authentication attempts<br/>❷ [M-044](#m-044) — Enforce current-password verification unconditionally and change to…<br/>❷ [M-045](#m-045) — Enforce server-side authorization on every endpoint<br/>❷ [M-046](#m-046) — Apply least-privilege permissions<br/>❷ [M-047](#m-047) — Encode output instead of bypassing the framework sanitizer<br/>❷ [M-048](#m-048) — Add `security.isAuthorized` middleware to POST /file-upload and POST…<br/>❷ [M-049](#m-049) — Enforce server-side authorization on every endpoint<br/>❷ [M-050](#m-050) — Strip privileged fields from user-controlled input in registration and…<br/>❷ [M-051](#m-051) — Add JWT authentication and user-session binding to wallet registration…<br/>❷ [M-052](#m-052) — Add isAuthorized middleware to all web3 key and wallet endpoints<br/>❸ [M-019](#m-019) — Replace security-question reset with email-token-based reset and…<br/>❸ [M-053](#m-053) — Pin third-party dependencies to immutable versions<br/>❸ [M-054](#m-054) — Pin the container base image to an immutable digest<br/>❸ [M-055](#m-055) — Validate and allowlist outbound request targets<br/>❸ [M-056](#m-056) — Return a single generic 401 response for all incorrect key submissions…<br/>❹ [M-057](#m-057) — Sanitize WebSocket error log output and assert API key presence
 
@@ -7242,7 +7240,7 @@ if (!ALLOWED_HOSTS.includes(parsedUrl.hostname)) {
 
 ---
 
-## 11. Out of Scope
+## 10. Out of Scope
 
 The following items are **explicitly excluded** from this threat model. Findings against these areas should be tracked separately.
 
@@ -7294,7 +7292,7 @@ The following items are **explicitly excluded** from this threat model. Findings
 | Phase 10 | Scan Synthesis - 2 secrets from recon, 2<br/>sca-practice MF, 4 known-bad-libs MF… | threat-analyst (sonnet-4-6) | 1m 06s |
 | Phase 10b | Triage Validation - 45 total flags (38<br/>warnings) [pre-flight + ranking] | appsec-triage-validator (sonnet-4-6) | 5m 05s |
 | Phase 11 | Phase 11 Substeps 1-3 complete - yaml built<br/>(83 threats, 57 mitigations), baseline… | threat-analyst (sonnet-4-6) | 2m 29s |
-| Phase 11 | [§7](#7-security-architecture) enrichment complete | threat-analyst (sonnet-4-6) | 12m 44s |
+| Phase 11 | [§6](#6-security-architecture) enrichment complete | threat-analyst (sonnet-4-6) | 12m 44s |
 | Phase 11 | Finalization (parallel renderer) | threat-analyst (sonnet-4-6) | 13m 36s |
 
 ---
@@ -7302,7 +7300,7 @@ The following items are **explicitly excluded** from this threat model. Findings
 <a id="appendix-a-vektor-taxonomy"></a>
 ## Appendix A — Vektor Taxonomy
 
-This appendix defines the attacker-starting-position labels used in the Top Threats table and throughout [§8 Findings Register](#8-findings-register). Each label answers the question *what does the attacker need before the exploit begins?*
+This appendix defines the attacker-starting-position labels used in the Top Threats table and throughout [§7 Findings Register](#7-findings-register). Each label answers the question *what does the attacker need before the exploit begins?*
 
 <a id="vektor-internet-anon"></a>
 ### Internet Anon

@@ -216,9 +216,20 @@ def test_marker_lifecycle_section_is_single_source(skill_impl_text, heading):
     )
 
 
-def test_no_post_qa_report_mutator_is_wired(skill_impl_text):
-    """The canonical section numbers and QA-clean report must reach exports unchanged."""
-    assert "renumber_sections.py" not in skill_impl_text
+def test_display_renumber_is_wired_but_canonical_is_restored(skill_impl_text):
+    """The ONE sanctioned last-mile mutator is `renumber_sections_display.py`:
+    it relabels §7→§6 for the delivered MD/PDF/HTML so the reader sees contiguous
+    §1–§10, but the canonical `threat-model.md` is restored to §7 afterwards so
+    next-run §7 carry-forward + qa_checks contract validation still match.
+
+    No OTHER post-QA report mutator may be wired (they would silently change the
+    QA-clean report content), and the gray-ramp presentation remains owned by
+    `qa_checks.py autofix`."""
+    # The display renumber IS wired, and the canonical §7 file is restored after
+    # the export window (so persistence stays reusable across runs).
+    assert "renumber_sections_display.py" in skill_impl_text
+    assert ".threat-model.canonical7.md" in skill_impl_text
+    # No other content-mutating post-QA passes.
     assert "style_priority_circles.py" not in skill_impl_text
     assert "`qa_checks.py autofix` owns the final presentation-only gray ramp" in skill_impl_text
 
