@@ -28,6 +28,21 @@ a mirror file to bridge them. This is fragile: any consumer that reads the
 persisted §6 file expecting §7 breaks, and the quick-carry round-trip
 (standard → quick re-run) has only been unit-verified, not full-e2e verified.
 
+**Why the display-relabel is inherently fragile (the mechanism to eliminate).**
+The TOC is a markdown **ordered list** keyed on each section's literal number.
+CommonMark renderers (VS Code preview, GitHub) ignore the literal numbers and
+renumber ordered-list items **by position**. So the moment the list is
+non-contiguous — the retired-§6 gap (`5.`, `7.`, `8.` …), or a conditionally
+omitted section (a `--quick` run that drops a top-level section) — the rendered
+number drifts from both the literal number and the plain-text subsection
+numbers: `7. Security Architecture` renders as "6." while its `7.1` children
+stay "7.1". `renumber_sections_display.py` papers over this only for the
+fixed §7→§6 remap; a *conditional omission* still reopens a gap that no fixed
+remap closes. Native contiguous numbering (or position-derived numbering) is
+the only durable fix. (Related: the HTML-`href` anchor form of the relabel was
+itself a latent bug — fixed 2026-07-05, commit d81b1c4 — a symptom of the
+relabel having to chase every reference form by hand.)
+
 ## Goal
 
 Make the pipeline emit **contiguous §1–§10 natively**, end to end — Security
