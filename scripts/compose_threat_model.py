@@ -14282,7 +14282,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
     labels = _load_posture_actor_labels() or {}
     actor_meta = labels.get("actors") or {}
     order = labels.get("order") or []
-    present = [a for a in order if a in counts] + [a for a in counts if a not in order]
+    present = [a for a in order if a in counts] + sorted(a for a in counts if a not in order)
 
     lines: list[str] = ['<a id="identified-actors"></a>', "### Identified Actors", ""]
     lines.append(

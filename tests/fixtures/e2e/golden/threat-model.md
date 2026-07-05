@@ -31,6 +31,7 @@ _Append-only history of assessment runs. Most recent first._
 - [Management Summary](#management-summary)
 - [Critical Attack Tree](#critical-attack-tree)
 1. [System Overview](#1-system-overview)
+   - [Identified Actors](#identified-actors)
 2. [Architecture Diagrams](#2-architecture-diagrams)
    - [2.1 System Context](#21-system-context)
    - [2.2 Container Architecture](#22-container-architecture)
@@ -219,6 +220,19 @@ graph LR
 ## 1. System Overview
 
 The fixture project is a small Express/Angular monolith used in the compose_threat_model determinism tests. It intentionally implements every injection pattern that the contract must render correctly.
+
+---
+
+<a id="identified-actors"></a>
+### Identified Actors
+
+The consolidated threat actors that drive this model - the same set named in the Management Summary. Each row aggregates the findings reachable from that actor's position; the **Shop User** appears as the *victim* of client-side attacks, not an attacker.
+
+| Actor | Role | Reach | Findings | Components |
+|---------------|--------|--------|----------------|------------|
+| Internet Anon | attacker | - | 2 | REST API |
+| Repo-Read | attacker | - | 1 | Auth Service |
+| Victim-Required | attacker | - | 1 | REST API |
 
 ---
 
