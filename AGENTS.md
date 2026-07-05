@@ -121,6 +121,8 @@ Authoritative style anchor: `agents/shared/prose-style.md`; worked examples: `ag
 
 Generated artifacts, code, schemas, prompts, and rule catalogs should be boring to review: human-readable, structurally consistent, and explicit about why a check fires.
 
+Always write code comments, docstrings, commit messages, and in-repo documentation in **English**, regardless of the language the user converses in. The conversation may be in any language; the committed artifact is English.
+
 Security checks must clearly state what signal they inspect, when they trigger, false positives they exclude, CWE/severity/type mapping, and required evidence.
 
 Do not bake a specific assessed application into production behavior. If a real app exposed a gap, turn it into a generic rule with neutral examples and regression tests. App-specific names, paths, domains, routes, accounts, challenge mechanics, or fixture-only exclusions belong only in docs, examples, fixtures, or clearly scoped tests.
