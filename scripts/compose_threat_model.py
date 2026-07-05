@@ -2609,8 +2609,21 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
             f"The other {n_exc} (lower-priority / internal) were not individually assessed at this depth "
             f"(see [§1 Scope](#scope))."
         )
+    # Badge worst-case bullets whose findings anchor a code-verified
+    # (fully_viable) abuse chain. Data-level (per bullet.refs) — no fuzzy
+    # markdown parsing. Empty suffix when no viable chain / abuse skipped.
+    fmap = _verified_chain_map(ctx)
+    verified_suffixes = [_verdict_bullet_badge(b.get("refs") or [], fmap) for b in (data.get("bullets") or [])]
     tpl = env.get_template(section["template"])
-    return tpl.render(data=data, risk_distribution=risk_distribution, scope_coverage=scope_coverage).rstrip() + "\n"
+    return (
+        tpl.render(
+            data=data,
+            risk_distribution=risk_distribution,
+            scope_coverage=scope_coverage,
+            verified_suffixes=verified_suffixes,
+        ).rstrip()
+        + "\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3336,7 +3349,12 @@ def _build_finding_to_chain_map(ctx: RenderContext) -> dict[str, tuple[str, str]
         block_start = m.end()
         block_end = sec_matches[i + 1].start() if i + 1 < len(sec_matches) else len(text)
         block = text[block_start:block_end]
-        src_match = re.search(r"\*\*Source:\*\*\s*\[[FT]-(\d+)\]", block)
+        # `[^\[\n]*` tolerates the severity dot the walkthrough renderer emits
+        # between the label and the ref (`**Source:** 🔴 [F-003]`, see
+        # walkthrough_renderer._source_line) — a plain `\s*` did NOT match the
+        # emoji, so the owner never resolved and the §8 back-link silently never
+        # rendered in production (masked by dotless test fixtures).
+        src_match = re.search(r"\*\*Source:\*\*[^\[\n]*\[[FT]-(\d+)\]", block)
         owner = src_match or re.search(r"\b[FT]-(\d+)\b", title)
         if not owner:
             continue
@@ -6558,6 +6576,67 @@ def _build_ms_abuse_chain_line(ctx: RenderContext) -> str:
         "[§9 Abuse Cases](#9-abuse-cases) for the per-step breakdown and "
         "blocking mitigations."
     )
+
+
+def _verified_chain_map(ctx: RenderContext) -> dict[str, list[str]]:
+    """Map each finding id (canonical F-NNN) → the fully-viable abuse-case
+    chain(s) it participates in, read from `.fragments/abuse-cases.json`.
+
+    Only ``fully_viable`` chains qualify — the code-verified, end-to-end
+    exploitable paths (``partially_blocked`` / ``inconclusive`` are excluded,
+    matching ``triage_compute_ranking._detect_verified_abuse_chains``). Used to
+    badge the worst-case bullets in the MS Verdict blockquote with the chain
+    that proves the path end-to-end. Returns {} when the sidecar is missing
+    (quick depth / ``--no-abuse-cases``) or holds no viable chain.
+    """
+    path = ctx.fragments_dir / "abuse-cases.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    fmap: dict[str, list[str]] = {}
+    for c in doc.get("abuse_cases") or []:
+        if c.get("chain_verdict") != "fully_viable":
+            continue
+        cid = str(c.get("id") or "").strip()
+        if not cid:
+            continue
+        for raw in c.get("matched_finding_ids") or []:
+            fid = str(raw).strip().upper()
+            m = re.match(r"^T-(\d+)$", fid)
+            if m:
+                fid = f"F-{m.group(1)}"
+            if not re.match(r"^F-\d+$", fid):
+                continue
+            fmap.setdefault(fid, [])
+            if cid not in fmap[fid]:
+                fmap[fid].append(cid)
+    return fmap
+
+
+def _verdict_bullet_badge(refs: list[str], fmap: dict[str, list[str]]) -> str:
+    """Return the ` — ✓ **end-to-end verified** (AC-…)` suffix for a Verdict
+    bullet whose refs anchor one or more fully-viable abuse chains, else ''.
+
+    The badge makes the code-proven worst-case bullets stand out inside the red
+    blockquote without adding a separate line (see ms-template.md Verdict spec).
+    T-NNN refs are normalised to F-NNN to match ``matched_finding_ids``.
+    """
+    if not fmap or not refs:
+        return ""
+    chains: list[str] = []
+    for r in refs:
+        fid = str(r).strip().upper()
+        m = re.match(r"^T-(\d+)$", fid)
+        if m:
+            fid = f"F-{m.group(1)}"
+        for cid in fmap.get(fid, []):
+            if cid not in chains:
+                chains.append(cid)
+    if not chains:
+        return ""
+    links = ", ".join(f"[{c}](#{c.lower()})" for c in chains)
+    return f" — ✓ **end-to-end verified** ({links})"
 
 
 def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:

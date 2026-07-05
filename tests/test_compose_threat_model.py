@@ -1021,6 +1021,28 @@ def test_chain_map_reads_owner_from_source_line(tmp_path: Path) -> None:
     assert "T-005" not in chain_map
 
 
+def test_chain_map_resolves_owner_with_severity_dot_on_source_line(tmp_path: Path) -> None:
+    """Production regression: walkthrough_renderer emits the severity dot
+    between the label and the ref (`**Source:** 🔴 [F-003]`). The owner regex
+    must tolerate it — a plain `\\s*` did not, so the §8 back-link silently
+    never rendered in real reports (dotless fixtures masked the drift)."""
+    frag_dir = tmp_path / ".fragments"
+    frag_dir.mkdir()
+    (frag_dir / "attack-walkthroughs.md").write_text(
+        "## 3. Attack Walkthroughs\n\n"
+        "### 3.2 SQL Injection Authentication Bypass\n\n"
+        "**Source:** 🔴 [F-003](#f-003) — `routes/login.ts:34`\n\n"
+        "Any unauthenticated caller logs in as admin.\n",
+        encoding="utf-8",
+    )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data={}, triage={}, fragments_dir=frag_dir
+    )
+    chain_map = compose._build_finding_to_chain_map(ctx)
+    assert chain_map.get("F-003") == ("Walkthrough §3.2", "32-sql-injection-authentication-bypass")
+    assert chain_map.get("T-003") == ("Walkthrough §3.2", "32-sql-injection-authentication-bypass")
+
+
 def test_chain_map_returns_empty_when_fragment_missing(tmp_path: Path) -> None:
     """No `.fragments/attack-walkthroughs.md` → empty map, no exception."""
     frag_dir = tmp_path / ".fragments"
@@ -3868,6 +3890,84 @@ def test_verdict_scope_coverage_line(tmp_path: Path) -> None:
     out = compose._render_verdict(ctx, env, section)
     assert "**Scope:** 2 of 4 components received full STRIDE analysis" in out
     assert "other 2 (lower-priority / internal) were not individually assessed" in out
+
+
+def _verdict_ctx_with_abuse(tmp_path: Path, bullets: list[dict], abuse_cases: list[dict] | None):
+    """Build a RenderContext + section for _render_verdict, writing the verdict
+    fragment and (optionally) the abuse-cases.json sidecar."""
+    frag = tmp_path / ".fragments"
+    frag.mkdir(parents=True, exist_ok=True)
+    (frag / "ms-verdict.json").write_text(
+        json.dumps(
+            {
+                "severity": "red",
+                "opening": "Not production-ready. The application leaves sensitive operations open to anyone.",
+                "bullets": bullets,
+                "closing": "Address authentication and authorization before any production use.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    if abuse_cases is not None:
+        (frag / "abuse-cases.json").write_text(
+            json.dumps({"schema_version": 1, "abuse_cases": abuse_cases}), encoding="utf-8"
+        )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data={"threats": []}, triage={}, fragments_dir=frag
+    )
+    env = compose._build_jinja_env(ctx)
+    section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
+    return ctx, env, section
+
+
+def test_verdict_badges_bullet_anchoring_fully_viable_chain(tmp_path: Path) -> None:
+    ctx, env, section = _verdict_ctx_with_abuse(
+        tmp_path,
+        bullets=[
+            {"title": "Full DB theft", "body": "Any internet user extracts the customer table.", "refs": ["F-001"]},
+            {"title": "Customer data reachable", "body": "Any logged-in user reads other records.", "refs": ["F-002"]},
+        ],
+        abuse_cases=[
+            {"id": "AC-T-001", "chain_verdict": "fully_viable", "matched_finding_ids": ["F-001"]},
+            {"id": "AC-T-009", "chain_verdict": "partially_blocked", "matched_finding_ids": ["F-002"]},
+        ],
+    )
+    out = compose._render_verdict(ctx, env, section)
+    # Fully-viable chain badges its bullet, linking §9.
+    assert "✓ **end-to-end verified** ([AC-T-001](#ac-t-001))" in out
+    # partially_blocked chains do NOT badge — no contradiction with the red box.
+    assert "AC-T-009" not in out
+
+
+def test_verdict_badge_normalises_t_ref_and_omits_when_no_chain(tmp_path: Path) -> None:
+    ctx, env, section = _verdict_ctx_with_abuse(
+        tmp_path,
+        bullets=[
+            {"title": "Server takeover", "body": "A crafted order runs OS commands.", "refs": ["T-003"]},
+            {"title": "Weak password policy", "body": "Short passwords are accepted.", "refs": ["F-050"]},
+        ],
+        abuse_cases=[{"id": "AC-T-002", "chain_verdict": "fully_viable", "matched_finding_ids": ["F-003"]}],
+    )
+    out = compose._render_verdict(ctx, env, section)
+    # T-003 ref normalises to F-003, which anchors AC-T-002.
+    assert "✓ **end-to-end verified** ([AC-T-002](#ac-t-002))" in out
+    # The bullet with no chain-anchoring finding is left un-badged.
+    assert out.count("end-to-end verified") == 1
+
+
+def test_verdict_no_badge_when_abuse_sidecar_absent(tmp_path: Path) -> None:
+    ctx, env, section = _verdict_ctx_with_abuse(
+        tmp_path,
+        bullets=[
+            {"title": "Full DB theft", "body": "Any internet user extracts the customer table.", "refs": ["F-001"]},
+            {"title": "Customer data reachable", "body": "Any logged-in user reads other records.", "refs": ["F-002"]},
+        ],
+        abuse_cases=None,  # quick depth / --no-abuse-cases: sidecar not written
+    )
+    out = compose._render_verdict(ctx, env, section)
+    assert "end-to-end verified" not in out
+    # Red box still renders fine without the badge.
+    assert "Full DB theft" in out and "blockquote" in out
 
 
 def test_quick_banner_shows_n_of_m(tmp_path: Path) -> None:
