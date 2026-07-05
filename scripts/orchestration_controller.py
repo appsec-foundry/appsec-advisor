@@ -33,6 +33,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import detect_session_model  # noqa: E402
 import resolve_config  # noqa: E402
 from event_log import format_line  # noqa: E402
 
@@ -816,7 +817,14 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "ORCHESTRATION_READY",
         f"mode={cfg['mode']} depth={cfg['assessment_depth']} runtime=thin-full",
     )
-    run_plan = resolve_config.render_run_plan(cfg, None, None, "equal")
+    # Detect the host session model (fail-safe: '' on any miss) so the Pre-flight
+    # box can fold in the effective routing + cost advisory. resolve_config is
+    # otherwise blind to the session; this is the thin-path injection point.
+    try:
+        session_model = detect_session_model.detect_session_model()
+    except Exception:
+        session_model = ""
+    run_plan = resolve_config.render_run_plan(cfg, None, None, "equal", session_model)
     if cfg["mode"] == "rebuild":
         workspace_note = (
             f"removed {removed_preexisting} prior item(s); changelog audit archived when present"

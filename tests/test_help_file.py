@@ -32,6 +32,11 @@ KNOWN_UNDOCUMENTED_FLAGS = {
     # table (the skill defers to run-headless.sh for them).
     "--trust-mode",
     "--strict-urls",
+    # Session (main-loop) model — a Claude Code / run-headless.sh setting, not a
+    # skill flag (a running loop cannot switch its own model). HELP.txt references
+    # it as guidance ("set via /model or, headless, run-headless.sh --model");
+    # run-headless.sh defaults it to claude-sonnet-4-6 (economy).
+    "--model",
     # Real flag wired via REFRESH_ACTOR_DISCOVERY (SKILL-impl.md) and described
     # in HELP.txt, but driven through an env var rather than the parse table.
     "--refresh-discovery",

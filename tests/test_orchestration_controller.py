@@ -137,6 +137,56 @@ def test_full_prepare_wipes_only_intermediates(monkeypatch, tmp_path):
     assert persisted["mode"] == "full"
 
 
+def test_prepare_passes_detected_session_model_to_box(monkeypatch, tmp_path):
+    # Thin-path fix: the controller must detect the host session model and pass
+    # it to render_run_plan so the Pre-flight box can fold in the cost advisory.
+    # (The rendered content itself is unit-tested in test_resolve_config.py.)
+    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+    cfg = _cfg(tmp_path)
+    Path(cfg["output_dir"]).mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir(exist_ok=True)
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+    monkeypatch.setattr(controller.detect_session_model, "detect_session_model", lambda *a, **k: "claude-sonnet-5")
+    captured = {}
+
+    def _spy(*args):
+        captured["session_model"] = args[4] if len(args) > 4 else None
+        return "Threat Model — Pre-flight\n"
+
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", _spy)
+    controller.prepare(["--full"])
+    assert captured["session_model"] == "claude-sonnet-5"
+
+
+def test_prepare_passes_empty_when_session_undetected(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+    cfg = _cfg(tmp_path)
+    Path(cfg["output_dir"]).mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir(exist_ok=True)
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+
+    # Detection raises → controller must swallow it and pass "" (fail-safe).
+    def _boom(*a, **k):
+        raise RuntimeError("transcript unreadable")
+
+    monkeypatch.setattr(controller.detect_session_model, "detect_session_model", _boom)
+    captured = {}
+
+    def _spy(*args):
+        captured["session_model"] = args[4] if len(args) > 4 else None
+        return "Threat Model — Pre-flight\n"
+
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", _spy)
+    controller.prepare(["--full"])
+    assert captured["session_model"] == ""
+
+
 def test_rebuild_need_render_aborts_before_wipe(monkeypatch, tmp_path):
     monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path, "rebuild")

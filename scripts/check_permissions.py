@@ -104,7 +104,7 @@ def load_required(path: Path = DATA_FILE) -> list[dict]:
 
 # ---------- template expansion -------------------------------------------
 
-_PLACEHOLDER_RE = re.compile(r"\$\{(OUTPUT_DIR|REPO_ROOT|PLUGIN_ROOT)\}")
+_PLACEHOLDER_RE = re.compile(r"\$\{(OUTPUT_DIR|REPO_ROOT|PLUGIN_ROOT|HOME)\}")
 
 
 def expand_entry(entry: str, repo_root: Path, output_dir: Path, plugin_dir: Path | None = None) -> str:
@@ -114,6 +114,8 @@ def expand_entry(entry: str, repo_root: Path, output_dir: Path, plugin_dir: Path
             return str(output_dir)
         if key == "REPO_ROOT":
             return str(repo_root)
+        if key == "HOME":
+            return str(Path.home())
         return str(plugin_dir) if plugin_dir else m.group(0)
 
     return _PLACEHOLDER_RE.sub(_sub, entry)

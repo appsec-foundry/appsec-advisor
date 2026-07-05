@@ -25,7 +25,7 @@ The deterministic matcher (`match_abuse_cases.py`) can only say *a finding whose
 
 ## Model identification
 
-Use the `MODEL_ID` passed in the invocation prompt. Operational runs dispatch with `sonnet` (single-pass — see Stage 1c in `SKILL-impl.md`; the former haiku-first + sonnet-escalation two-tier was removed 2026-06 because on complex repos most candidates escalated anyway, making the sequential haiku wave wasted wall-time for identical final verdicts). The frontmatter `model: sonnet` matches this and satisfies the repo-wide agent-contract gate (`tests/test_agent_definitions.py`). The skill-level dispatch in `SKILL-impl.md` (Stage 1c) is authoritative for operational runs. Opus is never appropriate here.
+Use the `MODEL_ID` passed in the invocation prompt. Operational runs dispatch with `$ABUSE_VERIFIER_MODEL`, which defaults to `sonnet` → the host session (single-pass — see Stage 1c in `SKILL-impl.md`; the former haiku-first + sonnet-escalation two-tier was removed 2026-06 because on complex repos most candidates escalated anyway, making the sequential haiku wave wasted wall-time for identical final verdicts). The default is pinnable via `APPSEC_RENDERER_MODEL`'s sibling `APPSEC_ABUSE_VERIFIER_MODEL` (e.g. `claude-sonnet-5` for verdict decisiveness); a 4.6 pin reintroduces `inconclusive` verdicts, so 4.6 is never the default. The frontmatter `model: sonnet` is the fallback and satisfies the repo-wide agent-contract gate (`tests/test_agent_definitions.py`). The skill-level dispatch in `SKILL-impl.md` (Stage 1c) is authoritative for operational runs. Opus is never appropriate here (the `--no-opus` ceiling / `apply_opus_ban()` clamps any Opus pin to Sonnet).
 
 ## Progress format
 

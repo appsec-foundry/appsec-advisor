@@ -576,8 +576,10 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 
 | Flag | Purpose |
 |---|---|
-| `--model <model>` | Override the default Claude model (default: sonnet) |
+| `--model <model>` | Session (main-loop) model. **Defaults to `claude-sonnet-4-6` (economy)** — the biggest cost lever; it drives cache-read cost and the alias-following agents (renderer, abuse-verifier, orchestrator, content-QA). Override per run with an explicit id. |
 | `--reasoning-model <tier>` | Reasoning tier for STRIDE/triage/merger: `opus`, `opus-cheap`, `sonnet`, `sonnet-economy` |
+
+The session-model default is where headless runs get their ~half-cost economy automatically. Buy back quality per stage with `--triage-model claude-sonnet-5` and the `APPSEC_RENDERER_MODEL` / `APPSEC_ABUSE_VERIFIER_MODEL` env vars — see *Session model — the cost lever* in `docs/threat-modeler.md`.
 
 ### Gates & caps
 

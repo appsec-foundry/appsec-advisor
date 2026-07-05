@@ -1821,15 +1821,17 @@ The matcher reads `.threats-merged.json`, applies each case's `scope_qualifier` 
 ```
 subagent_type: "appsec-advisor:appsec-abuse-case-verifier"
 description: "Verify abuse-case chain <AC-ID> end-to-end against code"
-model: sonnet
+model: $ABUSE_VERIFIER_MODEL
 run_in_background: false
 prompt: |
   ABUSE_CASE_ID=<AC-ID>
   MATCH_RESULT_PATH=<OUTPUT_DIR>/.abuse-case-matches.json
   REPO_ROOT=<REPO_ROOT>
   OUTPUT_DIR=<OUTPUT_DIR>
-  MODEL_ID=sonnet
+  MODEL_ID=$ABUSE_VERIFIER_MODEL
 ```
+
+`$ABUSE_VERIFIER_MODEL` defaults to `sonnet` (→ host session); pin via `APPSEC_ABUSE_VERIFIER_MODEL`. SKILL-impl.md Stage 1c is authoritative for operational runs. Set the Agent `model` param explicitly or the frontmatter `sonnet` default silently wins.
 
 Dispatch all candidates together (wall-clock ≈ the slowest single case, not the sum). Each agent writes one `.abuse-case-verdict-<AC-ID>.json`. **Budget-critical guard:** if `$OUTPUT_DIR/.budget-critical` exists before this step, skip the fan-out — the merge below records every candidate as `inconclusive`.
 

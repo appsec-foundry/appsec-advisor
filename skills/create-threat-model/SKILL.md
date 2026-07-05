@@ -21,18 +21,23 @@ perceive as a slow start):
 
 > 🔧 Building threat-model pipeline — resolving config and running pre-flight checks …
 
-**Then, only if you (the orchestrator) are running on an Opus-tier model**, emit
-exactly this one advisory line directly beneath the status line — otherwise emit
-nothing extra. The session model you started with only assembles and writes the
-report; it does **not** deepen the security analysis itself, so Opus here mostly
-multiplies cost (~5x) without finding more:
+**Then, unless you are running on Sonnet-4.6** (cost-optimal here) **or Haiku**
+(its own warning below), emit exactly this one advisory directly beneath the status
+line — the earliest, most visible surface. This covers **Opus and Sonnet-5** sessions
+alike. The session model writes the report + runs the abuse-verifier + content-QA and
+drives the dominant cache-read cost, but does **not** deepen the analysis (that core
+already runs on Sonnet-4.6). Fill in your model **and** the exact re-invocation —
+the launch line is `claude --model claude-sonnet-4-6` **plus every launch flag the
+current session was started with** (e.g. `--plugin-dir <path>` if this plugin was
+loaded from a directory), and the re-run is this skill command **with its original
+arguments**. Emit verbatim:
 
-> ⚠ Heads-up: running on Opus mainly increases cost, not depth — the model picked here only writes up the report, it doesn't find more threats. Orchestration is ~half of an Opus-driven run, so this adds roughly +25–55% to the run's total (a proportional share that grows with repo size, not a fixed amount). For a deeper assessment, put the threat analysis itself on Opus with `--reasoning-model opus`, and/or widen coverage with a thorough scan via `--assessment-depth thorough`. You can safely continue this run on a cheaper model.
+> ⚠ Cost — this session runs on `<your model>`. Sonnet-4.6 costs ~half at the same coverage (the analysis core already runs on 4.6). Cheapest fix: **restart a fresh session** — `claude --model claude-sonnet-4-6 <same launch flags, e.g. --plugin-dir …>` — then re-run `/appsec-advisor:create-threat-model <your original args>`. In-session alternative: `/clear`, then `/model claude-sonnet-4-6`. Make it the default: `"model": "claude-sonnet-4-6"` in `.claude/settings.json`. Or continue as-is.
 
-This advisory is console-only — never write it to any file or report artifact,
-emit it at most once, and skip it entirely on non-Opus models. (Headless
-`--model opus` runs also get a deterministic pre-launch warning from
-`scripts/run-headless.sh`; a duplicate there is harmless.)
+Console-only, at most once, skip on Sonnet-4.6. Substitute `<your model>` (e.g.
+`Sonnet 5`, `Opus 4.8`), `<same launch flags …>` with the flags the session was
+actually started with (omit the clause if none), and `<your original args>` with
+this invocation's arguments. Headless defaults to Sonnet-4.6 via `run-headless.sh`.
 
 **Conversely, only if you (the orchestrator) are running on a Haiku-tier
 model**, emit this line instead (mutually exclusive with the Opus advisory —
@@ -78,7 +83,7 @@ the initial load. Stage 2 / 3 / 4 / Completion / Error-Handling below it are
 read just-in-time at the Stage-2 handoff. For the thin runtime, its own
 bounded-read instructions select only the Stage 1 slice and then the tail.
 
-Apart from the single status line above (and the conditional Opus/Haiku advisory),
+Apart from the single status line above (and the conditional session-cost / Haiku advisory),
 read it **silently** and proceed
 straight to execution. Do **not** narrate
 your reading: no "this is a large file", no "let me map its structure first",

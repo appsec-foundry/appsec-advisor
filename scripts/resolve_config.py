@@ -116,6 +116,11 @@ MODEL_MATRIX = {
 # sonnet-economy hat depth-spezifisches Routing.
 HAIKU = "haiku"
 SONNET = "sonnet"
+# Explicit latest-Sonnet pin used for the `standard` quality buy-back (2026-07-05):
+# the aggregation/judgment stages measurably improve on Sonnet 5 (see
+# docs/model-selection.md "Benchmarks"). Kept as an exact id, not the `sonnet`
+# alias, so a headless run pins the version rather than following the session.
+SONNET5 = "claude-sonnet-5"
 
 EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
     # sonnet-economy: extended-agent routing.
@@ -132,6 +137,12 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         "qa_content":       SONNET,
         "config_scanner":   HAIKU,
         "orchestrator":     SONNET,
+        # renderer + abuse_verifier follow the `sonnet` alias → host session at
+        # every depth (no depth variation, like orchestrator). Manual pin via
+        # APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL for quality buy-back
+        # (Sonnet-5) or cost (4.6) without moving the whole session.
+        "renderer":         SONNET,
+        "abuse_verifier":   SONNET,
     },
     ("sonnet-economy", "standard"): {
         "context_resolver": HAIKU,
@@ -140,6 +151,8 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         "qa_content":       SONNET,
         "config_scanner":   HAIKU,
         "orchestrator":     SONNET,
+        "renderer":         SONNET,
+        "abuse_verifier":   SONNET,
     },
     ("sonnet-economy", "thorough"): {
         "context_resolver": HAIKU,
@@ -148,6 +161,8 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         "qa_content":       SONNET,
         "config_scanner":   HAIKU,
         "orchestrator":     SONNET,
+        "renderer":         SONNET,
+        "abuse_verifier":   SONNET,
     },
 }
 
@@ -163,6 +178,8 @@ _DEFAULT_EXTENDED_ROUTING = {
     "qa_content":       SONNET,
     "config_scanner":   HAIKU,
     "orchestrator":     SONNET,
+    "renderer":         SONNET,
+    "abuse_verifier":   SONNET,
 }
 
 # Quick-Mode STRIDE-Tiefe-Reduktion. Modell bleibt Sonnet — reduziert
@@ -375,6 +392,17 @@ def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
 # timeout 480s) bounds any cold-cache hang instead of pre-emptively dropping
 # attack surface. Cost is controlled by the tier, not by blind spots.
 LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
+
+# Orchestrator (session-model) recommendation threshold — DISTINCT from and much
+# higher than LARGE_REPO_SOURCE_FILE_THRESHOLD above (which only flags "longer run").
+# The orchestrator holds the largest resident context; on a *very* large repo a
+# small-window session model (Sonnet 4.6 in the harness) risks mid-run compaction,
+# which can drop finalization steps. At/above this source-file count we RECOMMEND the
+# large-window Sonnet 5 as the SESSION model (higher cost, but compaction-safe); below
+# it we recommend Sonnet 4.6 (~half cost, no orchestrator quality delta). Advisory
+# only — the user always chooses (see the interactive prompt in SKILL-impl.md).
+# Calibrated ABOVE Juice-Shop (~641 source files) so a normal app recommends 4.6.
+ORCHESTRATOR_SONNET5_FILE_THRESHOLD = 2500
 SOURCE_FILE_EXTENSIONS = (
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".py", ".go", ".java", ".kt", ".rb", ".php",
@@ -449,6 +477,47 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
     }
 
 
+def _same_model(a: str, b: str) -> bool:
+    """Loose model-id equality (tolerates date suffixes / alias vs id)."""
+    a, b = (a or "").strip(), (b or "").strip()
+    if not a or not b:
+        return False
+    return a == b or a.startswith(b) or b.startswith(a)
+
+
+def recommend_orchestrator_model(src_count: int) -> dict:
+    """Advisory session-model recommendation from repo source-file count.
+
+    The orchestrator = the CC session model; the plugin cannot switch it. This
+    only RECOMMENDS — the skill surfaces it and the user chooses (a divergent
+    choice needs a session restart because a running loop cannot change its own
+    model). Recommends Sonnet 5 only for *very* large repos (window safety);
+    otherwise Sonnet 4.6 (≈half cost, no orchestrator quality delta).
+    """
+    if src_count >= ORCHESTRATOR_SONNET5_FILE_THRESHOLD:
+        model = "claude-sonnet-5"
+        reason = (
+            f"very large repo ({src_count} source files >= "
+            f"{ORCHESTRATOR_SONNET5_FILE_THRESHOLD}) — the orchestrator accumulates a "
+            f"large resident context; Sonnet 5's larger window avoids mid-run "
+            f"compaction (higher cost, but prevents compaction-induced finalization "
+            f"skips)"
+        )
+    else:
+        model = "claude-sonnet-4-6"
+        reason = (
+            f"normal-sized repo ({src_count} source files < "
+            f"{ORCHESTRATOR_SONNET5_FILE_THRESHOLD}) — Sonnet 4.6 as the session model "
+            f"is ~half the cost with no measured orchestrator quality delta, and its "
+            f"window is sufficient here"
+        )
+    return {
+        "orchestrator_recommended_model": model,
+        "orchestrator_recommendation_reason": reason,
+        "orchestrator_recommendation_repo_files": src_count,
+    }
+
+
 def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     """Resolution order: env-vars → --reasoning-model → depth default.
 
@@ -495,6 +564,18 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
         mode = "opus"
 
     models = dict(MODEL_MATRIX[mode])
+
+    # Quality buy-back at the everyday `standard` default (2026-07-05): upgrade the
+    # aggregation/judgment stages — triage (severity calibration) and merger (dedup)
+    # — to Sonnet 5, where a Juice-Shop A/B measured a real gain (see
+    # docs/model-selection.md "Benchmarks"). STRIDE stays on 4.6: Sonnet 5 REGRESSED
+    # discovery recall. `quick` keeps the all-4.6 economy floor; `thorough` is Opus.
+    # Env/CLI overrides below still win. Caveat: an explicit version id only takes
+    # effect on the headless / hybrid-dispatch path — an interactive run inherits the
+    # session model regardless (the bare `sonnet` alias resolves to the session).
+    if mode == "sonnet-economy" and depth == "standard":
+        models["triage"] = SONNET5
+        models["merger"] = SONNET5
 
     # Step 2: env var override (over the matrix default).
     env_map = {
@@ -557,6 +638,15 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
     else:
         models = dict(_DEFAULT_EXTENDED_ROUTING)
 
+    # Quality buy-back at `standard` (mirror of resolve_reasoning_model): the renderer
+    # (MS / CISO framing) and abuse-case verifier (verdict decisiveness — 4.6 punts to
+    # `inconclusive`) → Sonnet 5. Same headless-vs-interactive caveat: the pin bites on
+    # the headless path; interactive dispatch inherits the session model. Env overrides
+    # below still win.
+    if reasoning_mode == "sonnet-economy" and depth == "standard":
+        models["renderer"] = SONNET5
+        models["abuse_verifier"] = SONNET5
+
     env_map = {
         "context_resolver": "APPSEC_CONTEXT_RESOLVER_MODEL",
         "recon_scanner":    "APPSEC_RECON_SCANNER_MODEL",
@@ -564,6 +654,8 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
         "qa_content":       "APPSEC_QA_CONTENT_MODEL",
         "config_scanner":   "APPSEC_CONFIG_SCANNER_MODEL",
         "orchestrator":     "APPSEC_ORCHESTRATOR_MODEL",
+        "renderer":         "APPSEC_RENDERER_MODEL",
+        "abuse_verifier":   "APPSEC_ABUSE_VERIFIER_MODEL",
     }
     for k, env in env_map.items():
         if os.environ.get(env):
@@ -576,6 +668,8 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
         "qa_content_model":       models["qa_content"],
         "config_scanner_model":   models["config_scanner"],
         "orchestrator_model":     models["orchestrator"],
+        "renderer_model":         models["renderer"],
+        "abuse_verifier_model":   models["abuse_verifier"],
     }
 
 
@@ -585,6 +679,7 @@ _MODEL_FIELDS = (
     "architect_model", "orchestrator_model",
     "context_resolver_model", "recon_scanner_model",
     "qa_routine_model", "qa_content_model", "config_scanner_model",
+    "renderer_model", "abuse_verifier_model",
 )
 
 
@@ -786,13 +881,11 @@ def resolve_architect_review(ns: argparse.Namespace, depth: str,
         return {"architect_review": False, "architect_model": None,
                 "architect_label": f"disabled ({trigger})"}
 
-    # Model resolution — default opus when on, override via flag or env.
-    if ns.architect_model == "sonnet":
-        model = "sonnet"
-    elif ns.architect_model == "opus":
-        model = "opus"
-    else:
-        model = "opus"  # default
+    # Model resolution — default opus when on; the flag overrides with a tier
+    # alias (sonnet|opus) OR an explicit version id (claude-sonnet-5, …), passed
+    # through verbatim — same contract as the APPSEC_ARCHITECT_MODEL env var
+    # below. --no-opus still clamps any Opus id to Sonnet in apply_opus_ban().
+    model = ns.architect_model or "opus"
     if os.environ.get("APPSEC_ARCHITECT_MODEL"):
         model = os.environ["APPSEC_ARCHITECT_MODEL"]
 
@@ -1238,9 +1331,21 @@ def build_parser() -> argparse.ArgumentParser:
     # selectors EXCEPT --no-opus, which still clamps Opus→Sonnet last. Example:
     # `--reasoning-model sonnet-economy --triage-model opus` = Sonnet STRIDE with
     # Opus triage (cheap run, calibrated severities).
-    p.add_argument("--stride-model", choices=("sonnet", "opus"), default=None)
-    p.add_argument("--triage-model", choices=("sonnet", "opus"), default=None)
-    p.add_argument("--merger-model", choices=("sonnet", "opus"), default=None)
+    # Accept EITHER a tier alias (``sonnet`` / ``opus``) OR an explicit version id
+    # (``claude-sonnet-5`` / ``claude-sonnet-4-6`` / ``claude-opus-4-7``). No
+    # ``choices=`` whitelist: the version set changes too often to hardcode, and
+    # the ``APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL`` env vars already accept any
+    # string — the CLI flags now match that. A typo'd id is passed through to the
+    # Agent ``model`` param and surfaces at dispatch (same failure mode as the env
+    # vars), not at parse time. The ``sonnet`` alias still follows the session; a
+    # concrete id pins that exact version regardless of the host. --no-opus still
+    # clamps any Opus id (alias or ``claude-opus-*``) to Sonnet last.
+    _model_help = ("Tier alias (sonnet|opus) or explicit version id "
+                   "(e.g. claude-sonnet-5, claude-sonnet-4-6). Overrides the "
+                   "--reasoning-model tier for this stage only.")
+    p.add_argument("--stride-model", default=None, metavar="MODEL", help=_model_help)
+    p.add_argument("--triage-model", default=None, metavar="MODEL", help=_model_help)
+    p.add_argument("--merger-model", default=None, metavar="MODEL", help=_model_help)
     # Opus ceiling. When set, every Opus selection anywhere in the run is
     # downgraded to Sonnet (cost/compliance ceiling). Also settable org-wide
     # via the org-profile `policy.disable_opus` key, or via the environment
@@ -1273,7 +1378,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Architect
     p.add_argument("--architect-review",   action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
-    p.add_argument("--architect-model",    choices=("sonnet", "opus"))
+    p.add_argument("--architect-model", default=None, metavar="MODEL",
+                   help="Tier alias (sonnet|opus) or explicit version id for the "
+                        "architect reviewer. --no-opus clamps any Opus id to Sonnet.")
     # Architecture-fragment enrichment (M3.3 / D2). On by default at standard
     # and thorough; off at quick since 2026-05.
     p.add_argument("--no-enrich-arch", action="store_true",
@@ -1561,6 +1668,12 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # the final repo_root value, and after resolve_assessment_depth so we
     # know the tier.
     cfg.update(resolve_repo_size_cap(cfg, Path(cfg["repo_root"])))
+
+    # Orchestrator (session-model) recommendation — advisory, runs at ALL depths.
+    # Surfaced in the pre-flight box and, interactively, an optional prompt
+    # (SKILL-impl.md). The user always makes the final choice; a divergent choice
+    # requires a session restart (a running loop cannot switch its own model).
+    cfg.update(recommend_orchestrator_model(_count_source_files(Path(cfg["repo_root"]))))
 
     # (Removed 2026-06: the B2d large-repo reasoning-tier auto-downgrade.
     # Large repos are exactly where Opus reasoning pays off — better
@@ -1881,6 +1994,7 @@ def render_run_plan(
     pre_check: dict | None,
     dirty_set: dict | None,
     compat_label: str | None,
+    session_model: str = "",
 ) -> str:
     """Render the consolidated Create-Threat-Model box, post-pre-check.
 
@@ -1968,6 +2082,18 @@ def render_run_plan(
     if verdict.get("reason"):
         lines.extend(kv("Reason", verdict["reason"]))
 
+    # --- Section: Session-model cost callout (prominent — right under the
+    # verdict so a pricey Opus/Sonnet-5 session is impossible to miss). ---
+    if verdict.get("will_run"):
+        cost_callout = _render_session_cost_callout(session_model)
+        if cost_callout:
+            lines.append("")
+            lines.extend(cost_callout)
+        orch_lines = _render_orchestrator_box_lines(cfg, session_model)
+        if orch_lines:
+            lines.append("")
+            lines.extend(orch_lines)
+
     # --- Section: Files / Components (only when pre-check ran) ---
     if pre_check:
         sec_count = pre_check.get("security_relevant_change_count", 0)
@@ -2054,23 +2180,30 @@ def render_run_plan_notes(
     pre_check: dict | None,
     dirty_set: dict | None,
     compat_label: str | None,
+    session_model: str = "",
 ) -> str:
-    """Render the advisory tail of the run-plan box — the depth-tradeoff callout
-    plus the Notes / Recommendations block.
+    """Render the advisory tail of the run-plan box — the session-model cost
+    callout, the depth-tradeoff callout, and the Notes / Recommendations block.
 
     The create-threat-model skill renders the full Pre-flight banner LLM-side
     (to avoid the Bash output double-fold) but emits this tail via a
-    deterministic Bash call so the depth-vs-coverage callout and advisory hints
-    never depend on the model re-typing them. Same inputs and same formatting as
-    ``render_run_plan``; the callout (when present) leads, then ``Notes``.
-    Returns "" when there is nothing to emit so the caller can omit it.
+    deterministic Bash call so the cost callout + depth-vs-coverage callout
+    never depend on the model re-typing them. This is the LEGACY-path surface for
+    the session-model cost callout; the thin-full runtime folds the same callout
+    into the box via ``render_run_plan``. Returns "" when there is nothing to
+    emit so the caller can omit it.
     """
     verdict = _run_plan_verdict(cfg, pre_check, dirty_set, compat_label)
     tradeoff = _render_depth_tradeoff(cfg)
     notes = _run_plan_notes(verdict, cfg, pre_check, dirty_set, compat_label)
-    if not tradeoff and not notes:
+    cost_callout = _render_session_cost_callout(session_model) if verdict.get("will_run") else []
+    if not tradeoff and not notes and not cost_callout:
         return ""
     lines: list[str] = []
+    if cost_callout:
+        lines.extend(cost_callout)
+        if tradeoff or notes:
+            lines.append("")
     if tradeoff:
         lines.extend(tradeoff)
     if notes:
@@ -2090,6 +2223,164 @@ def render_run_plan_notes(
             lines.append(prefix + chunks[0])
             cont = " " * len(prefix)
             lines.extend(cont + c for c in chunks[1:])
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Effective per-agent model routing + session-model cost callout (transparency;
+# needs the host session id, injected by the caller — resolve_config is blind).
+# ---------------------------------------------------------------------------
+
+# Every value-agent whose model the user cares about, in dispatch order. Each
+# carries a resolved value in ``cfg`` (concrete id under sonnet-economy, or the
+# bare ``sonnet`` alias otherwise). renderer + abuse_verifier default to the
+# ``sonnet`` alias (host session) but are pinnable via APPSEC_RENDERER_MODEL /
+# APPSEC_ABUSE_VERIFIER_MODEL. Keep in sync with the AGENTS.md routing table.
+_ROUTING_ROWS: list[tuple[str, str | None, str]] = [
+    # (display label, cfg key or None, note)
+    ("STRIDE (discovery)",       "stride_model",           "reasoning core"),
+    ("Triage (severity)",        "triage_model",           "reasoning core"),
+    ("Merger (dedup)",           "merger_model",           "inline unless hybrid/Opus"),
+    ("Context resolver",         "context_resolver_model", "deterministic"),
+    ("Recon scanner",            "recon_scanner_model",    "deterministic"),
+    ("Config scanner",           "config_scanner_model",   "deterministic"),
+    ("QA routine",               "qa_routine_model",       "mechanical fixes"),
+    ("QA content",               "qa_content_model",       "contract reasoning"),
+    ("Orchestrator (main loop)", "orchestrator_model",     "= host session"),
+    ("Renderer (§7 ‖ MS)",       "renderer_model",         "follows session; pin APPSEC_RENDERER_MODEL"),
+    ("Abuse-case verifier",      "abuse_verifier_model",   "follows session; pin APPSEC_ABUSE_VERIFIER_MODEL"),
+]
+
+
+def _session_model_advisory(session_model: str) -> str:
+    """Short cost advisory keyed on the host session. Flags EVERY non-4.6 session
+    (Sonnet-5 and Opus) since a Sonnet-4.6 session ~halves the cost. Empty
+    (undetected) → no advisory. Informational, never a blocker."""
+    s = (session_model or "").lower()
+    if not s:
+        return ""
+    if "sonnet-4-6" in s:
+        return "Sonnet-4.6 session — the cheapest setting for this skill."
+    switch = (
+        "Cheapest: restart a fresh session with `claude --model claude-sonnet-4-6` "
+        "(or /clear then /model claude-sonnet-4-6), then re-run. Buy back per stage "
+        "where Sonnet-5 pays: --triage-model, APPSEC_RENDERER_MODEL, APPSEC_ABUSE_VERIFIER_MODEL."
+    )
+    if "opus" in s:
+        return (
+            "Opus session — the report/verification agents follow it and the "
+            "dominant cache-read cost is billed at Opus rates. " + switch
+        )
+    return (
+        "Non-4.6 session — a Sonnet-4.6 session is ~half the cost at the same "
+        "coverage (the analysis core already runs on 4.6). " + switch
+    )
+
+
+def _render_session_cost_callout(session_model: str) -> list[str]:
+    """Prominent ⚠/ℹ callout for the Pre-flight box: ⚠ for any non-4.6 session
+    (Sonnet-5 or Opus), low-key ℹ for Sonnet-4.6, nothing when undetected."""
+    advisory = _session_model_advisory(session_model)
+    if not advisory:
+        return []
+    marker = "ℹ" if "sonnet-4-6" in session_model.lower() else "⚠"
+    head = f"{marker} Session model — {session_model}"
+    width = _summary_width()
+    prefix = "  "
+    chunks = wrap(
+        advisory,
+        width=max(20, width - len(prefix)),
+        break_long_words=True,
+        break_on_hyphens=False,
+    ) or [""]
+    return [head, *[prefix + c for c in chunks]]
+
+
+def _render_orchestrator_box_lines(cfg: dict, session_model: str) -> list[str]:
+    """Compact in-box orchestrator-recommendation lines for the Pre-flight box.
+    Always states the repo-size-derived recommendation; adds a one-line restart
+    hint only when the detected session diverges. Advisory — never binding."""
+    rec = cfg.get("orchestrator_recommended_model")
+    if not rec:
+        return []
+    files = cfg.get("orchestrator_recommendation_repo_files")
+    size = "very large repo" if rec == "claude-sonnet-5" else "normal-sized repo"
+    tail = f", {files} files)" if files is not None else ")"
+    out = [f"Orchestrator (session) — recommend {rec}  ({size}{tail}"]
+    if session_model and not _same_model(session_model, rec):
+        out.append(
+            f"  This session is {session_model}; restart `claude --model {rec}` to "
+            f"switch (optional — this is only a recommendation)."
+        )
+    return out
+
+
+def _resolve_routing_value(value: str | None, session_model: str) -> str:
+    """Resolve a routing cell for display. The bare ``sonnet`` alias resolves to
+    the host session model; a concrete id or other tier alias is shown verbatim."""
+    v = str(value or "").strip()
+    if v == "sonnet":
+        return session_model if session_model else "sonnet → host session (undetected)"
+    return v or "(default)"
+
+
+def render_effective_routing(cfg: dict, session_model: str) -> str:
+    """Human-readable effective per-agent routing table, with the ``sonnet`` alias
+    resolved to the detected host session version ('' when detection missed)."""
+    header_session = session_model or "undetected"
+    lines = [f"Effective model routing (host session: {header_session})", ""]
+    resolved: list[tuple[str, str, str]] = []
+    for label, key, note in _ROUTING_ROWS:
+        raw = cfg.get(key) if key else "sonnet"
+        resolved.append((label, _resolve_routing_value(raw, session_model), note))
+    label_w = max(len(r[0]) for r in resolved)
+    model_w = max(len(r[1]) for r in resolved)
+    for label, model, note in resolved:
+        lines.append(f"  {label:<{label_w}}  {model:<{model_w}}  {note}")
+    if not session_model:
+        lines.append("")
+        lines.append(
+            "  Session model undetected — alias-following agents (orchestrator, "
+            "renderer, abuse-verifier) run on whatever model this session uses."
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_orchestrator_recommendation(cfg: dict, session_model: str) -> str:
+    """Human-readable pre-flight justification for the orchestrator/session model.
+
+    Advisory: states the repo-size-derived recommendation, compares it to the
+    detected session model, and — on divergence — gives the restart command (a
+    running loop cannot switch its own model). The recommendation is NEVER
+    binding; the user may keep the current model. Empty string when there is no
+    recommendation in cfg (should not happen after resolve())."""
+    rec = cfg.get("orchestrator_recommended_model")
+    if not rec:
+        return ""
+    reason = cfg.get("orchestrator_recommendation_reason", "")
+    lines = ["Orchestrator (session model) — advisory", f"  Recommended : {rec}"]
+    if reason:
+        width = _summary_width()
+        prefix = "  Rationale   : "
+        chunks = wrap(
+            reason,
+            width=max(20, width - len(prefix)),
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [""]
+        lines.append(prefix + chunks[0])
+        lines.extend(" " * len(prefix) + c for c in chunks[1:])
+    if not session_model:
+        lines.append("  This session: undetected — recommendation is advisory only.")
+    elif _same_model(session_model, rec):
+        lines.append(f"  This session: {session_model}  (✓ matches — nothing to change)")
+    else:
+        lines.append(f"  This session: {session_model}  (⚠ differs from the recommendation)")
+        lines.append(
+            f"  To scan on {rec}: restart with `claude --model {rec}` (or /clear then "
+            f"/model {rec}), then re-run. Keeping the current model is fine too — this "
+            f"is only a recommendation."
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -2864,6 +3155,21 @@ def main(argv: list[str] | None = None) -> int:
     run_plan_flag = "--run-plan" in argv
     run_plan_notes_flag = "--run-plan-notes" in argv
     any_run_plan = run_plan_flag or run_plan_notes_flag
+
+    # ``--effective-routing`` renders the per-agent routing table. Its companion
+    # ``--session-model <id>`` carries the detected host session model (from
+    # scripts/detect_session_model.py) so the ``sonnet`` alias resolves to a
+    # concrete version, and is ALSO folded into the --run-plan box (cost callout).
+    routing_flag = "--effective-routing" in argv
+    # ``--orchestrator-recommendation`` renders the advisory session-model
+    # justification block (repo-size → recommended model + restart hint). Uses the
+    # same ``--session-model <id>`` companion as --effective-routing.
+    orch_rec_flag = "--orchestrator-recommendation" in argv
+    session_model_arg = ""
+    for i, a in enumerate(argv):
+        if a == "--session-model" and i + 1 < len(argv):
+            session_model_arg = argv[i + 1]
+            break
     pre_check_path: str | None = None
     dirty_set_path: str | None = None
     compat_label: str | None = None
@@ -2887,8 +3193,23 @@ def main(argv: list[str] | None = None) -> int:
 
     filtered = [a for a in argv if a not in (
         "--emit-file", "--config-summary", "--validate-only", "--force",
-        "--run-plan", "--run-plan-notes",
+        "--run-plan", "--run-plan-notes", "--effective-routing",
+        "--orchestrator-recommendation",
     )]
+    # Strip the --session-model companion flag + its value (used by both
+    # --effective-routing and --run-plan) so resolve() doesn't choke on it.
+    if "--session-model" in filtered:
+        clean_r: list[str] = []
+        skip_next_r = False
+        for a in filtered:
+            if skip_next_r:
+                skip_next_r = False
+                continue
+            if a == "--session-model":
+                skip_next_r = True
+                continue
+            clean_r.append(a)
+        filtered = clean_r
     # Strip the run-plan companion flags + their values too.
     if any_run_plan:
         clean: list[str] = []
@@ -2902,6 +3223,40 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             clean.append(a)
         filtered = clean
+
+    if routing_flag:
+        # Load the already-resolved cfg (same pattern as --run-plan), then
+        # render the effective routing table with the injected session model.
+        try:
+            cfg_candidate = resolve(filtered, plugin_root)
+            sc_path = Path(cfg_candidate["output_dir"]) / ".skill-config.json"
+            if sc_path.is_file():
+                cfg = json.loads(sc_path.read_text(encoding="utf-8"))
+            else:
+                cfg = cfg_candidate
+        except SystemExit:
+            raise
+        except Exception:
+            cfg = resolve(filtered, plugin_root)
+        print(render_effective_routing(cfg, session_model_arg), end="")
+        return 0
+
+    if orch_rec_flag:
+        # Same cfg-load pattern as --effective-routing: prefer the persisted
+        # .skill-config.json, fall back to a fresh resolve.
+        try:
+            cfg_candidate = resolve(filtered, plugin_root)
+            sc_path = Path(cfg_candidate["output_dir"]) / ".skill-config.json"
+            if sc_path.is_file():
+                cfg = json.loads(sc_path.read_text(encoding="utf-8"))
+            else:
+                cfg = cfg_candidate
+        except SystemExit:
+            raise
+        except Exception:
+            cfg = resolve(filtered, plugin_root)
+        print(render_orchestrator_recommendation(cfg, session_model_arg), end="")
+        return 0
 
     if any_run_plan:
         # The skill has already resolved the cfg and persisted it to
@@ -2940,11 +3295,11 @@ def main(argv: list[str] | None = None) -> int:
         dirty_set = _read_json(dirty_set_path)
         if run_plan_notes_flag:
             print(
-                render_run_plan_notes(cfg, pre_check, dirty_set, compat_label),
+                render_run_plan_notes(cfg, pre_check, dirty_set, compat_label, session_model_arg),
                 end="",
             )
         else:
-            print(render_run_plan(cfg, pre_check, dirty_set, compat_label), end="")
+            print(render_run_plan(cfg, pre_check, dirty_set, compat_label, session_model_arg), end="")
         return 0
 
     cfg = resolve(filtered, plugin_root)

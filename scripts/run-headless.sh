@@ -40,7 +40,7 @@
 #   --clean-cache           Delete cache & transient files (keeps the model); exits
 #   --clean-all             Delete everything in <output-dir> (with confirmation); exits
 #   --force                 Skip confirmation for --clean-all (auto in CI)
-#   --model <model>         Override the Claude model (default: sonnet)
+#   --model <model>         Override the session model (default: claude-sonnet-4-6, economy)
 #   --reasoning-model <t>   Reasoning tier for STRIDE/triage/merger: opus,
 #                           opus-cheap, sonnet, sonnet-economy
 #   --assessment-depth <l>  Assessment depth: quick, standard (default), thorough
@@ -109,7 +109,7 @@ Options:
   --clean-all                Delete everything in \$OUTPUT_DIR (interactive confirm
                              unless --force / CI=true). Exits without running.
   --force                    Skip the interactive confirmation for --clean-all
-  --model <model>            Override the Claude model (default: sonnet)
+  --model <model>            Override the session model (default: claude-sonnet-4-6, economy)
   --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
                              opus, opus-cheap, sonnet, sonnet-economy
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
@@ -337,14 +337,22 @@ if [ "$BILLING_MODE" = "subscription" ]; then
     fi
 fi
 
+# ── Economy default: session model (both billing modes) ─────────────
+# The host session model drives the dominant cache-read cost AND every
+# alias-following agent (renderer, abuse-verifier, orchestrator, qa-content).
+# Default it to the cost-optimal Sonnet-4.6 (same price/token as Sonnet-5 but
+# ~30% fewer tokens; the reasoning core is already 4.6-cost-pinned) — the single
+# biggest saving on an unattended run. Opt out with --model <id>. In API billing
+# mode a model MUST be explicit anyway (billed per-token), so this also satisfies
+# that requirement. Quality buy-back per stage: --triage-model claude-sonnet-5,
+# APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL (see docs/threat-modeler.md).
+if [ -z "$MODEL" ]; then
+    MODEL="claude-sonnet-4-6"
+    info "Economy default: session model '$MODEL' (use --model to override)"
+fi
+
 # ── API billing mode adjustments ────────────────────────────────────
 if [ "$BILLING_MODE" = "api" ]; then
-    # In API billing mode a model must be explicit (billed per-token).
-    # Default to sonnet when the caller didn't specify one.
-    if [ -z "$MODEL" ]; then
-        MODEL="claude-sonnet-4-5"
-        info "API billing mode: defaulting to model '$MODEL' (use --model to override)"
-    fi
     # Warn if spending is uncapped — easy to run up unexpected charges.
     if [ -z "$MAX_BUDGET" ]; then
         warn "API billing mode active with no budget cap — consider --max-budget <usd>"
@@ -559,6 +567,11 @@ if [ -n "$MAX_DURATION" ]; then
 fi
 
 # Export env-vars the skill/orchestrator can pick up
+# Headless marker: this run has no interactive user, so the skill must SKIP the
+# interactive orchestrator-model prompt (AskUserQuestion would block/error) and
+# proceed on the current session model. See SKILL-impl.md "Orchestrator
+# (session-model) recommendation — interactive prompt".
+export APPSEC_HEADLESS=1
 [ "$NO_QA" = "1" ]         && export APPSEC_SKIP_QA=1
 [ "$PR_MODE" = "1" ]       && export APPSEC_PR_MODE=1
 [ -n "$BASE_REF" ]         && export APPSEC_BASE_REF="$BASE_REF"

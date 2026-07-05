@@ -66,26 +66,35 @@ DEPTH & MODEL
                                Defaults: sonnet-economy at quick & standard,
                                          opus at thorough
                                          (Opus opt-in at standard)
-                               NOTE: sonnet-economy runs STRIDE/triage/merger on
-                               the cost-pinned Sonnet 4.6 (~30% fewer tokens than
-                               Sonnet 5 at equal price). Opt into Sonnet 5 (best
-                               quality) with --reasoning-model sonnet.
+                               NOTE: sonnet-economy runs STRIDE on the cost-pinned
+                               Sonnet 4.6 (~30% fewer tokens; Sonnet 5 also had
+                               worse STRIDE recall). At STANDARD a quality buy-back
+                               resolves triage/merger/renderer/abuse-verifier to
+                               claude-sonnet-5 (measured gain); quick stays all-4.6.
+                               These id pins bite on the headless path; an
+                               interactive run's subagents follow the session model.
                                This tunes only the SUBAGENTS; the orchestrator is
                                your session model (set via /model or, headless,
-                               scripts/run-headless.sh --model).
-  --stride-model <m>           Override just the STRIDE stage: sonnet | opus
-  --triage-model <m>           Override just the triage (severity) stage:
-                               sonnet | opus. Inline equivalent of
+                               scripts/run-headless.sh --model). At scan start a
+                               repo-size recommendation (4.6 normal / Sonnet-5 for
+                               very large repos) is shown and, interactively,
+                               offered as a choice.
+  --stride-model <m>           Override just the STRIDE stage. <m> = tier alias
+                               (sonnet | opus) or explicit version id
+                               (e.g. claude-sonnet-5, claude-sonnet-4-6).
+  --triage-model <m>           Override just the triage (severity) stage.
+                               Alias or version id. Inline equivalent of
                                APPSEC_TRIAGE_MODEL (no settings.json/restart).
                                E.g. --reasoning-model sonnet-economy
-                               --triage-model opus = cheap STRIDE + calibrated
-                               severities. Wins over the tier; --no-opus still
-                               clamps Opus->Sonnet.
-  --merger-model <m>           Override just the merge stage: sonnet | opus
+                               --triage-model claude-sonnet-5 = cheap STRIDE +
+                               Sonnet-5 severities. Wins over the tier; --no-opus
+                               still clamps Opus->Sonnet.
+  --merger-model <m>           Override just the merge stage. Alias or version id.
   --architect-review           Run an advisory architect review (Stage 4)
                                Auto-enabled at depth=thorough
   --no-architect-review        Disable Stage 4 even at depth=thorough
-  --architect-model <m>        Model for Stage 4: sonnet | opus (default: opus)
+  --architect-model <m>        Model for Stage 4: tier alias (sonnet | opus) or
+                               explicit version id (default: opus)
   --no-opus                    Forbid Opus anywhere; downgrade any Opus model
                                selection to Sonnet (also via org-profile
                                policy.disable_opus or APPSEC_DISABLE_OPUS=1)

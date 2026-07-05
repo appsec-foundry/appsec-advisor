@@ -192,11 +192,12 @@ class TestDefaultCoupling:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["reasoning_model"] == "sonnet-economy"
-        # STRIDE/triage/merger on the Sonnet tier at the standard default,
-        # cost-pinned to the concrete Sonnet 4.6 (Sonnet 5 via --reasoning-model
-        # sonnet).
+        # STRIDE stays cost-pinned to Sonnet 4.6 (Sonnet 5 REGRESSED discovery
+        # recall). The `standard` quality buy-back (2026-07-05) upgrades the
+        # aggregation/judgment stages triage + merger to Sonnet 5.
         assert out["stride_model"] == "claude-sonnet-4-6"
-        assert out["triage_model"] == "claude-sonnet-4-6"
+        assert out["triage_model"] == "claude-sonnet-5"
+        assert out["merger_model"] == "claude-sonnet-5"
 
     def test_standard_opus_still_opt_in(self):
         rc = _load_resolver()
@@ -250,11 +251,12 @@ class TestPerStageModelFlags:
         rc = _load_resolver()
         ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet-economy", "--triage-model", "opus"])
         out = rc.resolve_reasoning_model(ns, "standard")
-        # stride/merger inherit the cost-pinned economy tier (Sonnet 4.6);
-        # only triage is overridden to Opus by the per-stage flag.
+        # stride stays cost-pinned to Sonnet 4.6; merger takes the standard
+        # buy-back (Sonnet 5); only triage is overridden to Opus by the
+        # per-stage flag (the flag wins over the buy-back).
         assert out["stride_model"] == "claude-sonnet-4-6"
         assert out["triage_model"] == "opus"
-        assert out["merger_model"] == "claude-sonnet-4-6"
+        assert out["merger_model"] == "claude-sonnet-5"
 
     def test_all_three_flags_independent(self):
         rc = _load_resolver()
@@ -280,7 +282,8 @@ class TestPerStageModelFlags:
         rc = _load_resolver()
         ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet-economy"])
         out = rc.resolve_reasoning_model(ns, "standard")
-        assert out["triage_model"] == "claude-sonnet-4-6"
+        # standard buy-back: triage upgraded to Sonnet 5 (STRIDE stays 4.6).
+        assert out["triage_model"] == "claude-sonnet-5"
 
     def test_triage_flag_label_reflects_override(self):
         rc = _load_resolver()

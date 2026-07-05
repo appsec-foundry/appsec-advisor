@@ -111,6 +111,16 @@ def test_expand_entry_substitutes_placeholders():
     assert out3 == "Read(/tmp/plugin/**)"
 
 
+def test_expand_entry_substitutes_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    out = cp.expand_entry(
+        "Read(${HOME}/.claude/projects/**)",
+        Path("/tmp/repo"),
+        Path("/tmp/out"),
+    )
+    assert out == f"Read({tmp_path}/.claude/projects/**)"
+
+
 def test_expand_entry_is_noop_without_placeholders():
     assert cp.expand_entry("Bash(grep:*)", Path("/x"), Path("/y")) == "Bash(grep:*)"
 

@@ -12,6 +12,8 @@
 
 It also supports requirements audits, change reviews, prompt-time security guidance, and CI gates. AppSec teams can supply their own requirements, threat context, presets, and guardrails.
 
+**Model compatibility.** The plugin runs on the latest Anthropic models and is tuned for Sonnet 5, but the defaults favor economy: the token-heavy analysis stages are pinned to the cheaper Sonnet-4.6, and Sonnet-5 is an opt-in for the few stages where its sharper judgement is worth the extra cost. You can pin any agent to a specific model (e.g. `claude-sonnet-5`, `claude-sonnet-4-6`), and the scan prints the model for every agent at start. See [Session model — the cost lever](docs/threat-modeler.md#session-model--the-cost-lever).
+
 ## Problem
 
 Threat models created during workshops or design reviews become stale as the implementation changes.
@@ -131,6 +133,8 @@ An assessment produces a report covering architecture observations, trust bounda
 ![Threat Model Juice Shop Thorough](./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
 
 Assessments consume model tokens and typically take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) compares measured costs by depth and model and documents hard cost and time limits.
+
+**Model selection.** By default, analysis is routed to minimize cost: the token-intensive majority of the work runs on the lower-cost Sonnet-4.6, and Sonnet-5 is applied only to the stages where its stronger reasoning measurably improves the output. The most significant remaining cost factor is the session model — the model on which the Claude Code session itself runs. Because Sonnet-5 encodes equivalent source text as a greater number of tokens, running an entire session on Sonnet-5 approximately doubles the cost of a run, and in internal testing it produced no material improvement in the resulting threat models. A Sonnet-4.6 session is therefore recommended for routine use (`/model claude-sonnet-4-6`; `scripts/run-headless.sh` applies it by default). See [Session model — the cost lever](docs/threat-modeler.md#session-model--the-cost-lever).
 
 ## Requirements Audit
 

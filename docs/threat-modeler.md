@@ -189,12 +189,16 @@ These clean OWASP Juice Shop runs were measured on 2026-07-02. They compare mode
 
 | Tier | STRIDE · triage · merge | When to use |
 |---|---|---|
-| `sonnet-economy` | Sonnet · Sonnet · Sonnet | Lowest-cost tier and the default for quick and standard. Helper tasks use Haiku. |
+| `sonnet-economy` | 4.6 · Sonnet-5\* · Sonnet-5\* | Default for quick and standard. Helper tasks use Haiku. **\*Standard buy-back:** at `standard`, triage + merger (and renderer + abuse-verifier) resolve to `claude-sonnet-5`; STRIDE stays 4.6. `quick` is all-4.6. |
 | `sonnet` | Sonnet · Sonnet · Sonnet | Keeps helper tasks on Sonnet. |
 | `opus-cheap` | Sonnet · Sonnet · **Opus** | Uses Opus only for merging. |
 | `opus` | **Opus** · **Opus** · **Opus** | Default for thorough. In the standard benchmark it cost $40.78, compared with $30.01 for `sonnet-economy`, with similar finding counts. |
 
-`--stride-model`, `--triage-model`, and `--merger-model` override one part of the selected tier. Direct flags take precedence over the matching `APPSEC_*_MODEL` environment variables. `--no-opus` disables all Opus selections.
+`--stride-model`, `--triage-model`, and `--merger-model` override one part of the selected tier. Each accepts either a tier alias (`sonnet` / `opus`) or an explicit version id (e.g. `claude-sonnet-5`, `claude-sonnet-4-6`) to pin an exact model regardless of the session — the bare `sonnet` alias otherwise follows the host session model. Direct flags take precedence over the matching `APPSEC_*_MODEL` environment variables. `--no-opus` disables all Opus selections (alias or `claude-opus-*` id).
+
+> **`--merger-model` caveat.** STRIDE and triage run as separate model-pinned sub-agents, so their pins always take effect. The merge, however, runs **inline/deterministic** (`merge_threats.py` + inline judgment) on the everyday `sonnet-economy` path — a separate `appsec-threat-merger` sub-agent is only dispatched on the opt-in *hybrid* path, which activates when `--merger-model` (or `APPSEC_MERGER_MODEL`) resolves to an **Opus** id, or at `--assessment-depth thorough`. Setting `--merger-model claude-sonnet-5` at standard therefore has **no effect** — there is no merger sub-agent to pin. The effective-routing table shown at scan start marks the merger row `inline unless hybrid/Opus` accordingly.
+
+**Economy buy-back is now the standard default (2026-07-05).** At `--assessment-depth standard` the stages where Sonnet-5 measurably pays — triage (severity calibration), merger (dedup), renderer (CISO framing), abuse-verifier (decisive verdicts) — resolve to `claude-sonnet-5` automatically, while STRIDE and all helper tasks stay on the cheap 4.6/Haiku tier. You no longer pin them by hand. Two caveats: (1) these are **explicit-id pins** that only take effect on the **headless path** — an *interactive* run's sub-agents inherit the session model regardless; and (2) the **merger pin stays inert at standard** (the merge is inline — see the `--merger-model` caveat above), so the merger buy-back only materializes on the hybrid/thorough path. On a cost-optimal Sonnet-4.6 session, the net effect on headless is: cheap 4.6 core + Sonnet-5 triage/renderer/abuse where they pay.
 
 For standard assessments, using Opus only for triage cost about $2 more than the all-Sonnet benchmark, compared with about $11 more for the full Opus tier:
 
@@ -203,6 +207,36 @@ For standard assessments, using Opus only for triage cost about $2 more than the
 ```
 
 The report records the resolved model mix in *Run Statistics*.
+
+### Session model — the cost lever
+
+By default the pipeline keeps the token-heavy work cheap. The analysis stages — STRIDE, triage, and the merge — run on a fixed model tier that does not follow your session, and on quick and standard that tier is the lower-cost Sonnet-4.6. So the bulk of a routine scan never costs Sonnet-5 rates, whatever session you launch it from. The economy default is deliberate: you don't have to opt into it.
+
+The one part the defaults can't set for you is the **session model** — the model the main Claude Code loop itself runs on — and it turns out to be the biggest single cost driver. It pays for the dominant cache-read of a full run (one Juice-Shop scan re-read ~179M cached tokens, most of an ≈$80 bill) and for every agent that isn't pinned to something else: the orchestrator, the Stage-2 renderer, the abuse-case verifier, and content-QA. A running session can't switch its own model, so this is a Claude Code setting rather than a plugin flag — which makes it the one cost decision left in your hands.
+
+Running the session on **Sonnet-4.6** roughly **halves** the cost of a run versus Sonnet-5 for the same report — see *Background: why Sonnet 4.6 costs less* below for the reason. Set it:
+
+- **Interactive:** `/model claude-sonnet-4-6` before launching the scan, or add `"model": "claude-sonnet-4-6"` to `.claude/settings.json` (project-scoped) or `~/.claude/settings.json` (global). The scan warns at start when it detects a **non**-4.6 host (Sonnet-5 or Opus) and prints the exact restart command; the effective per-agent routing is shown in the Pre-flight box.
+- **Headless / CI:** `scripts/run-headless.sh` **defaults** the session to `claude-sonnet-4-6` (the economy default) — no flag needed. Override per run with `--model <id>`.
+
+**Golden rule: run the session on Sonnet-4.6 and pin *up* only the few stages where Sonnet-5 measurably pays — never run the session on Sonnet-5 for quality.** On a 4.6 session everything runs on Sonnet-4.6 (or Haiku for the deterministic helpers); no agent silently runs on Sonnet-5. A Sonnet-5 session is strictly more expensive for the same result, because you then pay Sonnet-5 rates for the dominant cache-read plus the orchestrator, renderer, abuse-verifier and content-QA — while STRIDE/triage/merger stay 4.6 either way.
+
+| Stage | Pin to Sonnet-5? | Why |
+|---|---|---|
+| Triage (severity) | ✅ `--triage-model claude-sonnet-5` | better severity calibration |
+| Renderer (§7 + MS) | ✅ `APPSEC_RENDERER_MODEL=claude-sonnet-5` | sharper CISO framing |
+| Abuse-case verifier | ✅ `APPSEC_ABUSE_VERIFIER_MODEL=claude-sonnet-5` | decisive verdicts (no "inconclusive") |
+| STRIDE | ❌ keep 4.6 | 4.6 has **better** recall *and* is cheaper |
+| Merger | ❌ | runs inline on the default path (pin has no effect) |
+| Helpers / content-QA | ❌ | Haiku / no measurable Sonnet-5 gain |
+
+These buy-backs are cheap: triage, renderer and the verifier are small token slices, so the run stays close to a pure-4.6 cost while gaining Sonnet-5 quality exactly where it counts. Interactively, `--triage-model` works as a flag; the two `APPSEC_*_MODEL` pins must sit in the `.claude/settings.json` `"env"` block (an inline `VAR=… /command` does not reach the skill). Headless, all three can be passed inline before `run-headless.sh`.
+
+#### Background: why Sonnet 4.6 costs less
+
+A threat-model scan is token-heavy and largely mechanical: it reads an entire repository into context and emits structured fragments, so the bill is dominated by the number of tokens processed (mostly cached input re-read across the run), not by hard reasoning. Sonnet 5 and Sonnet 4.6 are billed at comparable per-token rates, but Sonnet 5 uses an updated tokenizer that represents the same source text with **more** tokens — in this project's A/B runs, roughly 30 % more for the same repository and report. Because the work is token-bound rather than reasoning-bound, that difference flows straight through to cost: the same assessment simply costs more on Sonnet 5 for equivalent output.
+
+Sonnet 5's edge is reasoning *quality* — sharper severity calibration, outcome-first framing, and more decisive verdicts — not token efficiency. So the economical setup keeps the token-heavy, mechanical majority (the reasoning core, the orchestrator, the deterministic helpers) on Sonnet 4.6 and spends Sonnet 5 only on the few stages where its reasoning measurably improves the result. This is also why STRIDE stays on 4.6: threat *discovery* depends on recall, where 4.6 matched or beat Sonnet 5 in the measurements while costing less.
 
 ### Budget guardrails
 
