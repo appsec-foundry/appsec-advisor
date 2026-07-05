@@ -374,10 +374,19 @@ class TestOrchestratorRecommendation:
         monkeypatch.chdir(tmp_path)
         rc_path = str(REPO_ROOT / "scripts" / "resolve_config.py")
         res = subprocess.run(
-            ["python3", rc_path, "--orchestrator-recommendation",
-             "--session-model", "claude-sonnet-4-6",
-             "--repo", str(REPO_ROOT), "--output", str(tmp_path / "out")],
-            capture_output=True, text=True,
+            [
+                "python3",
+                rc_path,
+                "--orchestrator-recommendation",
+                "--session-model",
+                "claude-sonnet-4-6",
+                "--repo",
+                str(REPO_ROOT),
+                "--output",
+                str(tmp_path / "out"),
+            ],
+            capture_output=True,
+            text=True,
         )
         assert res.returncode == 0
         assert "Orchestrator (session model)" in res.stdout
@@ -1580,14 +1589,35 @@ class TestFormatReasoningSummary:
         assert "no-opus ceiling" in s
 
     def test_sonnet_economy_special(self):
+        # standard buy-back: STRIDE stays 4.6, triage + merge on Sonnet 5.
         s = rc._format_reasoning_summary(
             _base_cfg(
                 opus_disabled=False,
                 reasoning_auto_switched=False,
                 reasoning_model="sonnet-economy",
+                stride_model="claude-sonnet-4-6",
+                triage_model="claude-sonnet-5",
+                merger_model="claude-sonnet-5",
             )
         )
         assert "cheap phases Haiku" in s
+        assert "STRIDE Sonnet 4.6" in s
+        assert "triage Sonnet 5" in s
+        assert "merge Sonnet 5" in s
+
+    def test_sonnet_economy_quick_all_46(self):
+        # quick has no buy-back → all three collapse to Sonnet 4.6.
+        s = rc._format_reasoning_summary(
+            _base_cfg(
+                opus_disabled=False,
+                reasoning_auto_switched=False,
+                reasoning_model="sonnet-economy",
+                stride_model="claude-sonnet-4-6",
+                triage_model="claude-sonnet-4-6",
+                merger_model="claude-sonnet-4-6",
+            )
+        )
+        assert "STRIDE/triage/merge Sonnet 4.6" in s
 
     def test_alias_normalised(self):
         s = rc._format_reasoning_summary(

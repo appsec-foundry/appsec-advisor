@@ -2845,22 +2845,27 @@ def _format_reasoning_summary(cfg: dict) -> str:
     mode = canonical_reasoning_model(cfg.get("reasoning_model")) or "unknown"
     if cfg.get("opus_disabled"):
         return f"{mode}; no-opus ceiling → all Opus selections downgraded to Sonnet"
-    if mode == "sonnet-economy":
-        return "sonnet-economy; cheap phases Haiku; STRIDE/triage/merge Sonnet 4.6 (cost-pinned; --reasoning-model sonnet for Sonnet 5)"
 
     def short(model: str | None) -> str:
+        # Keep the concrete version — with the standard buy-back the tier mixes
+        # Sonnet 4.6 and Sonnet 5, so a bare "Sonnet" would be ambiguous.
         raw = (model or "unknown").replace("claude-", "")
         return (
-            raw.replace("sonnet-4-6", "Sonnet")
+            raw.replace("sonnet-4-6", "Sonnet 4.6")
+            .replace("sonnet-5", "Sonnet 5")
+            .replace("opus-4-8", "Opus 4.8")
             .replace("opus-4-7", "Opus")
             .replace("haiku-4-5", "Haiku")
         )
 
-    return (
-        f"{mode}; STRIDE {short(cfg.get('stride_model'))}; "
-        f"triage {short(cfg.get('triage_model'))}; "
-        f"merge {short(cfg.get('merger_model'))}"
-    )
+    stride = short(cfg.get("stride_model"))
+    triage = short(cfg.get("triage_model"))
+    merge = short(cfg.get("merger_model"))
+    # sonnet-economy routes the deterministic-leaning periphery to Haiku.
+    prefix = "cheap phases Haiku; " if mode == "sonnet-economy" else ""
+    if stride == triage == merge:
+        return f"{mode}; {prefix}STRIDE/triage/merge {stride}"
+    return f"{mode}; {prefix}STRIDE {stride}; triage {triage}; merge {merge}"
 
 
 def _format_stride_cap(cfg: dict) -> str:
