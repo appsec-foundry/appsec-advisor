@@ -855,6 +855,19 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             level="WARN",
         )
     estimate = _duration_estimate(cfg)
+    # Interactive orchestrator-model selection signal for the thin runtime. The
+    # prompt is needed when the host session model is detected AND diverges from
+    # the repo-size recommendation (covers BOTH a Sonnet-5 and an Opus session,
+    # since neither matches the 4.6/5 recommendation set), and the run is
+    # interactive (never headless — APPSEC_HEADLESS=1 has no user to answer).
+    _orch_rec = cfg.get("orchestrator_recommended_model", "")
+    _headless = os.environ.get("APPSEC_HEADLESS", "").strip().lower() in ("1", "true", "yes", "on")
+    _orch_prompt_needed = bool(
+        session_model
+        and _orch_rec
+        and not resolve_config._same_model(session_model, _orch_rec)
+        and not _headless
+    )
     return {
         "schema_version": 1,
         "action": "dispatch_agent",
@@ -865,6 +878,10 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "run_plan": run_plan,
         "config_path": str(config_path),
         "dispatch_values": _dispatch_values(cfg, estimate),
+        "session_model": session_model,
+        "orchestrator_recommended_model": _orch_rec,
+        "orchestrator_recommendation_reason": cfg.get("orchestrator_recommendation_reason", ""),
+        "orchestrator_prompt_needed": _orch_prompt_needed,
         "receipts": receipts,
     }
 

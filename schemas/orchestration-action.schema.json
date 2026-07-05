@@ -53,6 +53,21 @@
       "type": "string",
       "maxLength": 10000
     },
+    "session_model": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "orchestrator_recommended_model": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "orchestrator_recommendation_reason": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "orchestrator_prompt_needed": {
+      "type": "boolean"
+    },
     "config_path": {
       "type": "string",
       "minLength": 1,

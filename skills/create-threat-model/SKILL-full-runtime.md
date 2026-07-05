@@ -51,6 +51,31 @@ Emit `ACTION.preflight_status` once when non-empty. Then emit
 print controller receipts. These are the only pre-Stage-1 lines after the
 router's `🔧 Building …` line.
 
+### 2b. Interactive orchestrator-model selection
+
+This is the **one** sanctioned interactive step between the run plan and Stage 1
+(the hard "only preflight_status + run_plan" rule is about *console text*; an
+`AskUserQuestion` is an interactive tool call, not narration). Run it **only when
+`ACTION.orchestrator_prompt_needed` is `true`** — the controller has already
+verified the host session model is detected, diverges from the repo-size
+recommendation (this fires for **both** a Sonnet-5 and an Opus session), and the
+run is interactive (it is forced `false` under `APPSEC_HEADLESS=1`). When the flag
+is `false`, skip this entirely and go straight to §3.
+
+When it is `true`, call `AskUserQuestion` with a single question:
+- **header:** `Session model`
+- **question:** state the repo-size rationale (`ACTION.orchestrator_recommendation_reason`), the recommended model (`ACTION.orchestrator_recommended_model`), and the current session model (`ACTION.session_model`); ask which model to scan with.
+- **options (recommended first):**
+  1. **the recommended model** — label it with its benefit: for `claude-sonnet-4-6` → “deutlich bessere Wirtschaftlichkeit (≈halbe Kosten)”; for `claude-sonnet-5` → “größeres Fenster für sehr große Repos, höhere Kosten”.
+  2. **keep the current session model** (`ACTION.session_model`) — label “aktuelles Modell beibehalten”. This is what makes a conscious override work (e.g. keep Sonnet 5 / Opus, or keep 4.6 on a large repo).
+
+Act on the answer **before** any Stage-1 work:
+- Choice resolves to the **current** `ACTION.session_model` → proceed to §3 unchanged (the user consciously kept it).
+- Choice resolves to a **different** model → do **NOT** continue. Release the run lock (`rm -f "$OUTPUT_DIR/.appsec-lock"`), print exactly:
+  `Restart on the chosen model:  claude --model <choice>   (or /clear then /model <choice>), then re-run the skill.` and **stop** — do not dispatch Stage 1.
+
+The recommendation is never binding; the prompt exists so the user *chooses*.
+
 ## 3. Bind compact state
 
 Use these uppercase aliases for the Stage instructions. Values come directly
