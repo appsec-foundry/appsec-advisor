@@ -96,6 +96,17 @@ two lines you may emit are: (1) the single `PREFLIGHT_STATUS` line that
 SKILL-impl tells you to print after config resolution (e.g.
 `📋 Existing threat model found — computing the incremental delta …`), and then
 (2) the `Threat Model — Pre-flight` summary. Nothing may appear between them.
+
+**One sanctioned exception — the interactive orchestrator-model prompt.** After
+the Pre-flight summary and before Stage 1 begins, when the thin runtime's prepare
+ACTION reports `orchestrator_prompt_needed: true` (SKILL-full-runtime.md §2b), you
+MUST call `AskUserQuestion` to let the user choose the session model. This is an
+interactive tool call, not narration, and it is explicitly permitted here despite
+the rule above — do not suppress it. It fires whenever the detected session model
+diverges from the repo-size recommendation (a Sonnet-5 or an Opus session on a
+normal-sized repo), and is skipped under `APPSEC_HEADLESS=1`. The passive `⚠ Cost`
+advisory is NOT a substitute — it is emitted earlier and is not a choice.
+
 In particular do **not** announce your own actions — the following are all
 contract violations, even though they are *true*: "I've read through to the
 LAZY-LOAD BOUNDARY", "Now executing the combined pre-flight preamble", "Now
