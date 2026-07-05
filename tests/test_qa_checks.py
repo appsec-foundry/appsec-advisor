@@ -1109,10 +1109,10 @@ class TestYamlMdConsistencyCheck:
             ## 4. Assets
 
             <table style="table-layout:fixed;width:100%">
-            <colgroup><col style="width:20%"><col style="width:6%"><col style="width:12%"><col style="width:29%"><col style="width:33%"></colgroup>
-            <thead><tr><th>Asset</th><th>ID</th><th>Classification</th><th>Description</th><th>Linked Threats</th></tr></thead>
+            <colgroup><col style="width:22%"><col style="width:13%"><col style="width:32%"><col style="width:33%"></colgroup>
+            <thead><tr><th>Asset</th><th>Classification</th><th>Description</th><th>Linked Threats</th></tr></thead>
             <tbody>
-            <tr><td>Creds</td><td style="white-space:nowrap">A-001</td><td>Restricted</td><td>x</td><td><a href="#f-001">F-001</a><br/><a href="#f-002">F-002</a></td></tr>
+            <tr><td>Creds</td><td>Restricted</td><td>x</td><td><a href="#f-001">F-001</a><br/><a href="#f-002">F-002</a></td></tr>
             </tbody>
             </table>
 
@@ -1127,7 +1127,7 @@ class TestYamlMdConsistencyCheck:
             threats: [{id: F-001}, {id: F-002}]
             mitigations: []
             assets:
-              - {id: A-001, linked_threats: [T-001, T-002]}
+              - {id: A-001, name: Creds, linked_threats: [T-001, T-002]}
             """
         ).strip()
         m, y = self._write_pair(tmp_path, md, yml)
@@ -1141,7 +1141,7 @@ class TestYamlMdConsistencyCheck:
             ## 4. Assets
 
             <table><tbody>
-            <tr><td>Creds</td><td style="white-space:nowrap">A-001</td><td>R</td><td>x</td><td><a href="#f-001">F-001</a></td></tr>
+            <tr><td>Creds</td><td>R</td><td>x</td><td><a href="#f-001">F-001</a></td></tr>
             </tbody></table>
 
             ## 8. Findings
@@ -1155,7 +1155,7 @@ class TestYamlMdConsistencyCheck:
             threats: [{id: F-001}, {id: F-002}]
             mitigations: []
             assets:
-              - {id: A-001, linked_threats: [T-001, T-002]}
+              - {id: A-001, name: Creds, linked_threats: [T-001, T-002]}
             """
         ).strip()
         m, y = self._write_pair(tmp_path, md, yml)
@@ -3521,20 +3521,20 @@ def test_attack_surface_tables_to_html_leaves_other_tables_alone():
 
 
 _ASSET_GFM = (
-    "| Asset | ID | Classification | Description | Linked Threats |\n"
-    "|------|----|------|------|------|\n"
-    "| User Credentials | A-001 | Restricted | User email and `MD5`-hashed<br/>passwords stored in SQLite. | "
+    "| Asset | Classification | Description | Linked Threats |\n"
+    "|------|------|------|------|\n"
+    "| User Credentials | Restricted | User email and `MD5`-hashed<br/>passwords stored in SQLite. | "
     "🔴 [F-006](#f-006) — SQL Injection<br/>🟠 [F-013](#f-013) — Weak Hash |\n"
 )
 
 
-def test_asset_table_converts_with_nowrap_id_and_reflowed_description():
+def test_asset_table_converts_and_reflows_description():
     out, count = qa._attack_surface_tables_to_html(f"## 4. Assets\n\n{_ASSET_GFM}\n")
     assert count == 1
     assert '<table style="table-layout:fixed;width:100%">' in out
     assert "".join(f'<col width="{w}" style="width:{w}">' for w in qa._ASSET_COL_WIDTHS) in out
-    # A-001 ID cell is nowrap so the hyphen never breaks ("A-\n001").
-    assert '<td style="white-space:nowrap">A-001</td>' in out
+    # No ID column any more (dropped deterministically in compose).
+    assert "A-001" not in out
     # Description (prose col) has its soft-wrap <br/> stripped → reflows clean.
     desc_cell = out.split("<td>User email and", 1)[1].split("</td>", 1)[0]
     assert "<br/>" not in desc_cell and "<code>MD5</code>" in desc_cell

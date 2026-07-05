@@ -3955,14 +3955,14 @@ _AS_TABLE_HEADERS = ("Method", "Route", "Risk", "Notes")
 # Shared column widths (must sum to 100). Route is deliberately kept modest so
 # long routes wrap to several short lines rather than one wide column.
 _AS_COL_WIDTHS = ("9%", "30%", "14%", "47%")
-_ASSET_TABLE_HEADERS = ("Asset", "ID", "Classification", "Description", "Linked Threats")
-_ASSET_COL_WIDTHS = ("20%", "6%", "12%", "29%", "33%")
+_ASSET_TABLE_HEADERS = ("Asset", "Classification", "Description", "Linked Threats")
+_ASSET_COL_WIDTHS = ("22%", "13%", "32%", "33%")
 _STRENGTH_TABLE_HEADERS = ("Strength", "What's in Place", "Effectiveness", "Gap", "Mitigates")
 _STRENGTH_COL_WIDTHS = ("18%", "28%", "13%", "30%", "11%")
 # Each spec: (headers, widths, {col_idx: inline-style}, prose_col_indices).
-# - inline-style per column: `white-space:nowrap` pins short IDs (A-004 must
-#   never break at its hyphen); `overflow-wrap:anywhere` lets a long route /
-#   asset name wrap inside its fixed column.
+# - inline-style per column: `overflow-wrap:anywhere` lets a long route / asset
+#   name wrap inside its fixed column; `white-space:nowrap` pins short tokens so
+#   they never break at a hyphen.
 # - prose_col_indices: columns whose soft-wrap `<br/>` (inserted by compose's
 #   `_softwrap_prose_table_cells` for narrow GFM rendering) is stripped so the
 #   prose reflows cleanly to the fixed column width instead of breaking at the
@@ -3973,8 +3973,8 @@ _FIXED_LAYOUT_SPECS = (
     (
         _ASSET_TABLE_HEADERS,
         _ASSET_COL_WIDTHS,
-        {0: "overflow-wrap:anywhere", 1: "white-space:nowrap", 4: "overflow-wrap:anywhere"},
-        frozenset({3}),  # Description reflows; Linked Threats keeps its <br/> stack
+        {0: "overflow-wrap:anywhere", 3: "overflow-wrap:anywhere"},
+        frozenset({2}),  # Description (col 2) reflows; Linked Threats keeps its <br/> stack
     ),
     (
         _STRENGTH_TABLE_HEADERS,
@@ -9504,36 +9504,40 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
         if sec4_body is None:
             report.warnings.append("Section 4 (Assets) not found in MD; asset linked_threats check skipped")
         else:
-            # Build a per-asset-ID → set-of-T-NNN map from the MD table cells.
-            # Each row that contains an asset ID (A-NNN) is parsed; the last
-            # cell is expected to be the Linked Threats column. Both the GFM
-            # pipe-table form AND the fixed-layout HTML form (qa autofix rewrites
-            # the §4 Assets table to <table> for stable column widths) are parsed
-            # so the cross-reference check survives the conversion.
-            _ASSET_ROW_RE = re.compile(
-                r"\|\s*[^|]+\|\s*(A-\d{3,4})\s*\|[^|]*\|[^|]*\|([^|\n]*)",
-                re.MULTILINE,
-            )
+            # Build a per-asset-NAME → set-of-T-NNN map from the MD table cells.
+            # The §4 Assets table carries no ID column (dropped deterministically
+            # in compose — the A-NNN ids have no in-document cross-reference), so
+            # the row is joined to the YAML asset by its NAME (first column); the
+            # last cell is the Linked Threats column. Both the GFM pipe-table form
+            # AND the fixed-layout HTML form (qa autofix rewrites the §4 Assets
+            # table to <table> for stable column widths) are parsed so the
+            # cross-reference check survives the conversion.
             _ANY_FINDING_RE = re.compile(r"\b([TF]-(\d{3,4}))\b")
+
+            def _norm_name(s: str) -> str:
+                return re.sub(r"\s+", " ", _strip_md(re.sub(r"<[^>]+>", "", s))).strip().lower()
+
             md_asset_lt: dict[str, set[str]] = {}
-            for m in _ASSET_ROW_RE.finditer(sec4_body):
-                aid = m.group(1).strip()
-                cell = m.group(2)
-                tids = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(cell)}
-                md_asset_lt[aid] = tids
-            # HTML `<tr>` rows (fixed-layout conversion): the ID column is the
-            # <td> whose text is exactly A-NNN; the Linked Threats column is the
-            # last <td>.
+            # GFM pipe rows: skip the header ("Asset …") and separator (`|---|`).
+            for line in sec4_body.splitlines():
+                if not line.lstrip().startswith("|"):
+                    continue
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                if len(cells) < 2:
+                    continue
+                name = _norm_name(cells[0])
+                if not name or name == "asset" or set(cells[0]) <= set("-: "):
+                    continue
+                md_asset_lt[name] = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(cells[-1])}
+            # HTML `<tr>` rows (fixed-layout conversion): first <td> is the asset
+            # name; the Linked Threats column is the last <td>.
             for tr in re.finditer(r"<tr>(.*?)</tr>", sec4_body, re.DOTALL):
                 tds = re.findall(r"<td[^>]*>(.*?)</td>", tr.group(1), re.DOTALL)
-                aid = None
-                for cell in tds:
-                    am = re.match(r"^\s*(A-\d{3,4})\s*$", re.sub(r"<[^>]+>", "", cell))
-                    if am:
-                        aid = am.group(1)
-                        break
-                if aid and tds:
-                    md_asset_lt[aid] = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(tds[-1])}
+                if len(tds) < 2:
+                    continue
+                name = _norm_name(tds[0])
+                if name and name != "asset":
+                    md_asset_lt[name] = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(tds[-1])}
 
             def _normalize_id(s: str) -> str:
                 # Normalize T-NNN ↔ F-NNN: compose renders threat IDs with the
@@ -9544,14 +9548,15 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
                 return f"T-{m.group(1)}" if m else s.upper()
 
             for asset in assets:
-                aid = str(asset.get("id") or "")
-                if not aid:
+                name = _norm_name(str(asset.get("name") or ""))
+                if not name:
                     continue
                 yaml_lt = {_normalize_id(str(t)) for t in (asset.get("linked_threats") or [])}
-                md_lt = {_normalize_id(t) for t in md_asset_lt.get(aid, set())}
+                md_lt = {_normalize_id(t) for t in md_asset_lt.get(name, set())}
                 if yaml_lt != md_lt:
                     report.issues.append(
-                        f"asset {aid} linked_threats mismatch: yaml={sorted(yaml_lt)} md={sorted(md_lt)}"
+                        f"asset {asset.get('id') or name} linked_threats mismatch: "
+                        f"yaml={sorted(yaml_lt)} md={sorted(md_lt)}"
                     )
 
     report.ok = 1 if not report.issues else 0

@@ -2348,23 +2348,28 @@ def gen_assets(yaml_data: dict) -> str:
 
     # Check whether any asset has linked_threats to decide if the column is needed
     any_linked = any(a.get("linked_threats") for a in assets)
+    # No ID column: the A-NNN ids are an internal yaml key with no in-document
+    # cross-reference (nothing links to `#a-NNN`), so they are omitted from the
+    # rendered table per the agent-prompt layout. compose's _drop_asset_id_column
+    # also strips a stray ID column from LLM-authored fragments, so the table
+    # shape is 4-col (or 3-col without Linked Threats) everywhere.
     if any_linked:
-        lines.append("| Asset | ID | Classification | Description | Linked Threats |")
+        lines.append("| Asset | Classification | Description | Linked Threats |")
         # Linked Threats ships `·`-joined BARE `[F-NNN](#f-nnn)` chips here;
         # compose's `_enrich_linked_id_cells` rewrites them to the canonical
         # `[F-NNN](#f-nnn) — title` stacked form (2026-06-02 user request —
         # supersedes the earlier bare-chip-only preference). Emitting bare IDs
         # keeps the short-title as a single source of truth in compose.
-        lines.append(_proportional_separator(20, 6, 12, 40, 22))
+        lines.append(_proportional_separator(22, 13, 43, 22))
     else:
-        lines.append("| Asset | ID | Classification | Description |")
-        lines.append(_proportional_separator(18, 6, 14, 40))
+        lines.append("| Asset | Classification | Description |")
+        lines.append(_proportional_separator(20, 20, 60))
     for idx, a in enumerate(assets, start=1):
         # Auto-assign A-NNN deterministically when the yaml-writer omitted
         # the id field (LLM schema-drift: some orchestrator runs produce
-        # assets with name/classification/description but no id). Renderers
-        # downstream depend on the ID column being non-"?" — fall back to
-        # positional A-NNN so the column is usable.
+        # assets with name/classification/description but no id) so the name
+        # fallback below is always usable, even though the id is no longer a
+        # rendered column.
         aid = a.get("id") or f"A-{idx:03d}"
         name = a.get("name", aid)
         clazz = a.get("classification", "_n/a_")
@@ -2374,9 +2379,9 @@ def gen_assets(yaml_data: dict) -> str:
             # `·`-joined bare chips; compose's `_enrich_linked_id_cells` adds
             # the `— title` labels (2026-06-02 user request).
             lt_cell = " · ".join(f"[{t}](#{t.lower()})" for t in lt) if lt else "—"
-            lines.append(f"| {name} | {aid} | {clazz} | {desc} | {lt_cell} |")
+            lines.append(f"| {name} | {clazz} | {desc} | {lt_cell} |")
         else:
-            lines.append(f"| {name} | {aid} | {clazz} | {desc} |")
+            lines.append(f"| {name} | {clazz} | {desc} |")
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 

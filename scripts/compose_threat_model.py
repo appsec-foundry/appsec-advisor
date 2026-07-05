@@ -10446,7 +10446,7 @@ def _wrap_segment_words(seg: str, width: int) -> str:
 _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
     {
         ("Method", "Route", "Risk", "Notes"),
-        ("Asset", "ID", "Classification", "Description", "Linked Threats"),
+        ("Asset", "Classification", "Description", "Linked Threats"),
         ("Strength", "What's in Place", "Effectiveness", "Gap", "Mitigates"),
     }
 )
@@ -15544,6 +15544,43 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
 # ---------------------------------------------------------------------------
 
 
+def _drop_asset_id_column(md: str) -> str:
+    """Remove the ``ID`` column from the §4 Assets table.
+
+    The asset ids (``A-NNN``) are an internal yaml key: the rendered document
+    carries no ``#a-NNN`` anchor and nothing links to them, so the column is
+    display-only noise. The agent prompt already specifies the 4-column layout
+    ``| Asset | Classification | Description | Linked Threats |`` — but the LLM
+    routinely re-adds an ``ID`` column, so we drop it deterministically here
+    (prefer deterministic Python over trusting the fragment). Matched by header
+    set (a table carrying both ``Asset`` and ``ID``) and dropped by header name,
+    so it is order-independent and a no-op once the column is already absent.
+    """
+    lines = md.split("\n")
+    for header_idx, block in _iter_md_table_blocks(md):
+        header_cells = _split_table_row(block[0])
+        norm = [h.strip().lower() for h in header_cells]
+        if "asset" not in norm or "id" not in norm:
+            continue
+        drop_i = norm.index("id")
+        for off in range(len(block)):
+            row_idx = header_idx + off
+            if row_idx >= len(lines):
+                break
+            cells = _split_table_row(lines[row_idx])
+            if len(cells) != len(header_cells):
+                continue  # ragged row — leave for the QA gate to flag
+            del cells[drop_i]
+            lines[row_idx] = "| " + " | ".join(cells) + " |"
+    return "\n".join(lines)
+
+
+def _render_assets(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """§4 Assets — LLM-authored fragment passthrough with the stray ``ID``
+    column stripped deterministically (see :func:`_drop_asset_id_column`)."""
+    return _drop_asset_id_column(_render_markdown_fragment(ctx, "assets", section))
+
+
 def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, section: dict) -> str:
     dispatcher: dict[str, Any] = {
         "infobox": _render_infobox,
@@ -15557,6 +15594,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "critical_attack_tree": _render_critical_attack_tree,
         "verdict": _render_verdict,
         "identified_actors": _render_identified_actors,
+        "assets": _render_assets,
         "security_posture_at_a_glance": _render_security_posture_at_a_glance,
         "skipped_sections_placeholder": _render_skipped_sections_placeholder,
         "top_findings": _render_top_findings,
