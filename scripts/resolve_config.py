@@ -85,24 +85,23 @@ MODEL_MATRIX = {
         "triage": "opus",
         "merger": "opus",
     },
-    # sonnet-economy: Threat-Reasoning (STRIDE/triage/merger) bleibt auf
-    # Sonnet-TIER — es wird NICHT auf Haiku geroutet (das Prinzip: der
-    # Hauptwertbeitrag darf nicht heruntergestuft werden). Der Haiku-Hebel
-    # greift bei den deterministisch-näheren Agenten via EXTENDED_MODEL_MATRIX
-    # (context-resolver, recon-scanner, qa-routine, config-scanner). Quick-Mode
-    # bekommt zusätzlich eine STRIDE-Tiefe-Reduktion via resolve_stride_profile().
-    # (Alias: haiku-economy.)
+    # sonnet-economy: threat reasoning (STRIDE/triage/merger) stays on the
+    # Sonnet TIER — it is NOT routed to Haiku (the principle: the main value
+    # contributor must not be downgraded). The Haiku lever kicks in for the
+    # more-deterministic agents via EXTENDED_MODEL_MATRIX (context-resolver,
+    # recon-scanner, qa-routine, config-scanner). Quick mode additionally gets
+    # a STRIDE depth reduction via resolve_stride_profile(). (Alias: haiku-economy.)
     #
-    # COST PIN (2026-07-04): der konkrete Sonnet ist hier auf ``claude-sonnet-4-6``
-    # festgenagelt statt den bloßen Alias ``"sonnet"`` (→ jetzt Sonnet 5) zu nutzen.
-    # Grund: gleicher Preis/Token, aber der 4.6-Tokenizer zählt denselben Text in
-    # ~30% WENIGER Tokens als Sonnet 5 (+ kein adaptives Denken-by-default) → die
-    # Subagent-Hälfte eines Full-Scans fällt von ~$60 zurück auf ~$37-Niveau, ohne
-    # das Sonnet-Tier-Prinzip zu verletzen (4.6 IST Sonnet, nur die vorige Version).
-    # sonnet-economy ist der Default für quick/standard, greift also automatisch
-    # für alle Plugin-Nutzer. Opt-in auf Sonnet 5 (Qualität): ``--reasoning-model
-    # sonnet``. Exakter Pin pro Stufe: ``APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL=…``.
-    # Deprecation-Hinweis: wenn claude-sonnet-4-6 abgekündigt wird, hier bumpen.
+    # COST PIN (2026-07-04): the concrete Sonnet is pinned here to ``claude-sonnet-4-6``
+    # rather than the bare alias ``"sonnet"`` (→ now Sonnet 5). Reason: same
+    # price/token, but the 4.6 tokenizer counts the same text in ~30% FEWER tokens
+    # than Sonnet 5 (+ no adaptive thinking by default) → the subagent half of a
+    # full scan drops from ~$60 back to the ~$37 level, without violating the
+    # Sonnet-tier principle (4.6 IS Sonnet, just the previous version).
+    # sonnet-economy is the default for quick/standard, so it applies automatically
+    # for all plugin users. Opt in to Sonnet 5 (quality): ``--reasoning-model
+    # sonnet``. Exact pin per stage: ``APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL=…``.
+    # Deprecation note: when claude-sonnet-4-6 is retired, bump it here.
     "sonnet-economy": {
         "stride": "claude-sonnet-4-6",
         "triage": "claude-sonnet-4-6",
@@ -110,10 +109,10 @@ MODEL_MATRIX = {
     },
 }
 
-# Routing für Agenten jenseits von stride/triage/merger.
-# Schlüssel: (reasoning_tier, depth) → agent_type → model.
-# Default-Routing greift für sonnet/opus-cheap/opus (= unverändert zu heute).
-# sonnet-economy hat depth-spezifisches Routing.
+# Routing for agents beyond stride/triage/merger.
+# Key: (reasoning_tier, depth) → agent_type → model.
+# Default routing applies for sonnet/opus-cheap/opus (= unchanged from today).
+# sonnet-economy has depth-specific routing.
 HAIKU = "haiku"
 SONNET = "sonnet"
 # Explicit latest-Sonnet pin used for the `standard` quality buy-back (2026-07-05):
@@ -166,11 +165,11 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
     },
 }
 
-# Default-Routing für sonnet/opus-cheap/opus.
-# Auch bei den Default-Tiers werden context-resolver, recon-scanner und
-# config-scanner auf Haiku geroutet — diese Phasen sind reine Extraktion /
-# Grep / Lookup-Tabellen-Anwendung und brauchen keinen Sonnet-Floor.
-# Wer das überschreiben möchte, setzt APPSEC_RECON_SCANNER_MODEL etc.
+# Default routing for sonnet/opus-cheap/opus.
+# Even on the default tiers, context-resolver, recon-scanner and
+# config-scanner are routed to Haiku — these phases are pure extraction /
+# grep / lookup-table application and need no Sonnet floor.
+# To override, set APPSEC_RECON_SCANNER_MODEL etc.
 _DEFAULT_EXTENDED_ROUTING = {
     "context_resolver": HAIKU,
     "recon_scanner":    HAIKU,
@@ -182,9 +181,9 @@ _DEFAULT_EXTENDED_ROUTING = {
     "abuse_verifier":   SONNET,
 }
 
-# Quick-Mode STRIDE-Tiefe-Reduktion. Modell bleibt Sonnet — reduziert
-# wird nur der Aufgabenumfang. Greift unabhängig von der Reasoning-Tier
-# wenn assessment_depth == "quick".
+# Quick-mode STRIDE depth reduction. The model stays Sonnet — only the
+# task scope is reduced. Applies independently of the reasoning tier
+# when assessment_depth == "quick".
 #
 # P3 (A6) re-balance: ``skip_evidence_excerpt`` was demoted from True to
 # False. The evidence excerpt is a yaml-side string trim of the threat's

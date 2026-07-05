@@ -1,4 +1,4 @@
-# §9 Mitigation Register (Maßnahmenregister) — formatting analysis
+# §9 Mitigation Register — formatting analysis
 
 **Date:** 2026-07-03 · **Scope:** analysis only, no changes applied.
 **Reference run:** `/home/mrohr/juice-shop/docs/security-thin/threat-model.md` (§9 = lines 3169–4540).
@@ -197,7 +197,7 @@ implementation detail. From §3.1 (F-002):
    `agents/shared/prose-style.md` **Rule 1 was already updated** (2026-07-03) to require
    "attacker as the subject", but **this run's scenarios were authored 2026-07-02, before the
    update** → they predate the fix. Remaining gap: Rule 1 addresses POV but not the *volume* /
-   over-detail ("viel zu viel unnötige Details"). Fix: (a) re-run to pick up Rule 1; (b) add an
+   over-detail ("far too much unnecessary detail"). Fix: (a) re-run to pick up Rule 1; (b) add an
    explicit detail cap to the scenario guidance (attacker action as main clause; ≤1 `file:line` per
    step; code mechanism as a subordinate "because…" clause, not the sentence).
    **Caveat: verifiable only after a live re-scan — not deterministically reproducible on the

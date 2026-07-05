@@ -4984,7 +4984,7 @@ def _build_register_index(
     ``show_icon=False`` suppresses the leading colour circle and renders the
     text tag only — used by the §10 Mitigations index where the priority is
     the sole signal and the circle was visual noise (2026-06-02 user request:
-    "nur die Prio anzeigen, nicht den farblichen Kreis").
+    show only the priority, not the coloured circle).
     """
     icon_tbl = icon_tbl if icon_tbl is not None else _SEV_ICON_TBL
     chips = []
@@ -5636,7 +5636,7 @@ _FIG1_TIER_LABEL = {
 # wide strip.
 _FIG1_MAX_TIER_DRAW = 6
 # Uniform component-box footprint so every C-NN box is the SAME size regardless
-# of label length (user: "alle gleich groß"). Fixed width + height + flex
+# of label length (user request: all the same size). Fixed width + height + flex
 # centering. The height fits the worst case (2-line wrapped name + badge) — the
 # box no longer carries a glyph chip, so a compact height never clips.
 _FIG1_COMP_BOX_W = "182px"
@@ -6015,8 +6015,8 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     prop_glyphs: dict[tuple[str, str], list[str]] = {}
     victim_present = False
     victim_props: list[tuple[str, str]] = []  # (client node, glyph) → dotted ··> Shop User
-    # Per-actor colour-coding (user: "die angriffe müssen klar einem akteur
-    # zuordbar sein"). Each malicious actor gets a colour used by its attack
+    # Per-actor colour-coding (user request: attacks must clearly map to an
+    # actor). Each malicious actor gets a colour used by its attack
     # arrows + its legend entry, so any attack traces to its actor by colour.
     # One attacker → one colour (juice-shop); more → distinct colours.
     actor_order: list[str] = []  # malicious actor slugs in first-seen order
@@ -6104,7 +6104,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     # Attack classes are now NAMED directly on their (solid) actor⇒component
     # edges (e.g. "① Injection"), so the diagram is self-explanatory without a
     # decoder legend and the boxes no longer carry a glyph chip (2026-06-14 user
-    # request — "selbsterklärend, ohne eine Tabelle zu öffnen"). The box stays a
+    # request — self-explanatory, without opening a table). The box stays a
     # plain name + 🔴/🟠 finding-count badge.
 
     # Grey legitimate-flow backbone (tier-ordered; corroborated by
@@ -6160,8 +6160,8 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     # ---- Emit the Mermaid block -------------------------------------------
     # Use the ELK layered renderer (same as Figure 2): its crossing-minimisation
     # routes the actor→tier and propagation edges with far fewer edge/box
-    # crossings than the default dagre renderer (2026-05-30 request — "Pfeile
-    # sollen nach Möglichkeit keine anderen Boxen/Pfeile schneiden"). ELK also
+    # crossings than the default dagre renderer (2026-05-30 request — arrows
+    # should, where possible, not cross other boxes/arrows). ELK also
     # aligns same-rank nodes (the actor row, each tier's components) on one line.
     # NB Mermaid flowchart has no fixed node-width — box widths stay content-
     # driven; ELK only equalises their row placement, not their pixel size.
@@ -6235,8 +6235,8 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
 
         def _box_line(cid: str) -> str:
             # Uniform-footprint box: fixed width + height + flex centering so all
-            # C-NN boxes share one size regardless of label length (user: "alle
-            # gleich groß"). The height fits the worst case (2-line wrapped name +
+            # C-NN boxes share one size regardless of label length (user request:
+            # all the same size). The height fits the worst case (2-line wrapped name +
             # badge); content always fits and flex-centres, so nothing overflows
             # the border now that the box no longer carries a glyph chip.
             _sev = comp_sev_count.get(cid) or {}
@@ -6349,11 +6349,11 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             _tb_name.setdefault((_tt, _ft), _nm)
 
     # In-figure legend — a single light reference card. NOT wrapped in a
-    # subgraph (that added an empty title bar + a second border — the "unnötiger
-    # Rand oben" the user flagged). Because the attack classes are NAMED on the
+    # subgraph (that added an empty title bar + a second border — the "unnecessary
+    # top border" the user flagged). Because the attack classes are NAMED on the
     # arrows, the legend only has to explain the line/colour key; it never makes
-    # the reader decode numbers (2026-06-14 user request — "Legende klar
-    # verständlich, nicht überladen; selbsterklärend").
+    # the reader decode numbers (2026-06-14 user request — legend clearly
+    # understandable, not overloaded; self-explanatory).
     def _actor_name(slug: str) -> str:
         return _fig1_label(_FIG1_ACTOR_LABEL.get(slug) or (actor_labels.get(slug) or {}).get("label") or slug)
 
@@ -6430,8 +6430,8 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             prop_idx.append(edge_idx)
             edge_idx += 1
     lines.append("")
-    # Tier bands — all NEUTRAL slate (2026-06-14 user request: "rot nur für
-    # Angriffe und Angreifer verwenden"). The application tier kept a red band
+    # Tier bands — all NEUTRAL slate (2026-06-14 user request: use red only for
+    # attacks and attackers). The application tier kept a red band
     # before, which collided with red = attack; now every tier reads as the same
     # calm horizontal zone and the only red in the figure is the attacker node +
     # its attack arrows. The app tier keeps a marginally thicker stroke for a
@@ -14910,7 +14910,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
     if _m_nums:
         # Each chip carries the mitigation title plus a PRIORITY circle
         # (P1🔴 P2🟠 P3🟡 P4🟢) = the mitigation's own remediation urgency
-        # (2026-05-31 user request: "statt Kritikalität die Priorität").
+        # (2026-05-31 user request: priority instead of criticality).
         # When a mitigation has no explicit priority, fall back to the
         # highest severity among the findings it addresses, mapped onto the
         # P-scale (Critical→P1 … Low→P4) so every chip still carries a circle.

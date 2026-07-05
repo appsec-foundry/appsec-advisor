@@ -3699,7 +3699,7 @@ def test_softwrap_never_breaks_inside_backtick_span():
 # When a STRIDE analyzer skips the optional remediation.blueprint lookup, the
 # Requirements Traceability table still links each violated requirement to the
 # blueprint section that references it (blueprints[].sections[].references[].id),
-# so blueprints reach findings/maßnahmen/MS without depending on LLM behaviour.
+# so blueprints reach findings/mitigations/MS without depending on LLM behaviour.
 # ---------------------------------------------------------------------------
 
 

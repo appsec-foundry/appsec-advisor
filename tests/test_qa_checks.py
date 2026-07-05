@@ -701,7 +701,7 @@ def test_auth_flow_method_accepts_diagram(monkeypatch, tmp_path: Path):
 
 def test_auth_nonflow_method_exempt_from_diagram(monkeypatch, tmp_path: Path):
     """API-key / anonymous auth has no meaningful sequence — the per-flow gate
-    must NOT demand a diagram for it (Freiräume: only flow methods are gated)."""
+    must NOT demand a diagram for it (spacing: only flow methods are gated)."""
     qa._PrePass.reset()
     md = _write_minimal_model(
         tmp_path,

@@ -1,203 +1,203 @@
-# Plan: Headless-Fortschritt + Laufzeit + Kosten (Analyse, NICHT umgesetzt)
+# Plan: headless progress + runtime + cost (analysis, NOT implemented)
 
-Status: Element 1+2 **UMGESETZT** 2026-06-20 (branch feature/skill-impl-sonnet-cleanup),
-Element 3 weiterhin **deferred** (trockene Token-Pipe). Drei Anzeige-Elemente in einem
-periodischen Headless-Liner + End-Summary: (1) grober Prozent-Fortschritt, (2) Netto-
-Laufzeit (gesamt − Standby), (3) Kosten (tatsächlich + API-äquivalent).
+Status: Element 1+2 **IMPLEMENTED** 2026-06-20 (branch feature/skill-impl-sonnet-cleanup),
+Element 3 still **deferred** (dry token pipe). Three display elements in a
+periodic headless liner + end summary: (1) rough percent progress, (2) net
+runtime (total − standby), (3) cost (actual + API-equivalent).
 
-UMSETZUNG Element 1+2 (`scripts/skill_watchdog.py`): neues `RUN_PROGRESS`-Event im
-60s-Watchdog-Loop (Sektion 7d). Gewichte aus `estimate_duration._PHASE_DURATION`
-(guarded import), Depth aus `.skill-config.json`, Phase aus `.appsec-checkpoint`,
-Wall aus `.scan-start-epoch`, Standby = kumulierte RUN_RESUMED-Peaks (`idle_total`).
-Prozent monoton geklemmt, lower-bound (completed phases), `status=completed`→100.
-Nur für timeable Runs (scan-start-epoch vorhanden). 6 neue Tests, suite 56 grün,
-ruff clean. Kosten bewusst NICHT im Liner.
+IMPLEMENTATION Element 1+2 (`scripts/skill_watchdog.py`): new `RUN_PROGRESS` event in the
+60s watchdog loop (section 7d). Weights from `estimate_duration._PHASE_DURATION`
+(guarded import), depth from `.skill-config.json`, phase from `.appsec-checkpoint`,
+wall from `.scan-start-epoch`, standby = cumulative RUN_RESUMED peaks (`idle_total`).
+Percent clamped monotonically, lower-bound (completed phases), `status=completed`→100.
+Only for timeable runs (scan-start-epoch present). 6 new tests, suite 56 green,
+ruff clean. Cost deliberately NOT in the liner.
 
-Leitprinzip: **kleine Lösung**. Keine neue Infrastruktur, wo bestehende wiederverwendbar
-ist. Alles deterministisches Python im bestehenden 60s-Watchdog-Loop + End-Summary.
-
----
-
-## Element 1 — Grober Prozent-Fortschritt  (Aufwand: KLEIN, alle Bausteine da)
-
-Bausteine existieren:
-- Aktuelle Phase liegt durabel auf Platte: `.appsec-checkpoint` (`phase=<N>`),
-  geparst in `acquire_lock.py:181-230` (`_current_phase_label`).
-- Periodischer Emitter existiert: `skill_watchdog.py:593-647`, 60s-Loop, kennt Phase,
-  ruft `event_log.format_line()`. Neue Zeile additiv, kein Schema-Constraint.
-- Gewichtung: ZWEI unabhängige Phasen-Gewichtstabellen existieren (nicht eine!) —
-  wählen, nicht vermengen:
-  - `data/phase-budgets.yaml` — Wall-Time-Budget je Phase × Depth; gepflegt für
-    Watchdog-Stall-Klassifikation. Nur 1/2/3/9/10b/11 explizit, 4–8 = Fallback.
-  - `scripts/estimate_duration.py:164` `_PHASE_DURATION` — eigene hartkodierte
-    Minuten-Tabelle je Depth, MIT Bruchgewichten (Zeile 451-457: ×0.5/×0.3 für
-    Phasen 3–6). Summen-über-Phasen-Pattern existiert dort bereits (Resume-Restzeit).
-  - Empfehlung: `_PHASE_DURATION` ist die feinere Basis (deckt 4–8 ab), aber für
-    Konsistenz mit Stall-Logik ggf. `phase-budgets.yaml` + Fallback. Eine Quelle wählen.
-
-Berechnung: `pct = Σ(gewicht[erledigte Phasen]) / Σ(gewicht[alle Phasen])`.
-
-Ehrliche Grenzen (warum „ungefähr"):
-- Checkpoint-Granularität = ganze Phasen → Wert steht in langen Phasen (v.a. Phase 9
-  STRIDE) minutenlang still.
-- Phasenliste hartkodiert + VERSTREUT (kein zentrales Enum): `[Phase N/11]`-Echos
-  liegen in `appsec-threat-analyst.md` UND 4 phase-group-Docs (phase-group-recon/
-  -architecture/-threats/-finalization.md, ~67 Treffer gesamt). (Korrigiert: NICHT
-  an `appsec-threat-analyst.md:1154-1319` — diese Zeilenangabe war falsch.)
-  `phase-budgets.yaml` listet nur 1/2/3/9/10b/11 explizit; 4–8 teilen
-  `unlisted_phase_fallback_seconds` (180s) → bei dieser Tabelle Kurve ruckelt dort
-  (bei `_PHASE_DURATION` nicht, da 4–8 dort eigene Werte haben).
-- Phase 2.5 konditional (`HAS_IAC_SURFACE`), Inkremental überspringt Phasen →
-  Nenner ist lauf-abhängig, nicht konstant.
-- **Monoton klemmen** (nie zurückspringen bei Resume/Inkremental).
-
-Optionale Verfeinerung (NICHT für kleine Lösung): Sub-Fortschritt nur dort, wo er
-existiert — Phase 2 recon `[k/26]`, Phase 9 `.appsec-progress.json` (`step/step_total`).
-Mehr Aufwand pro Phase, geringer Mehrwert für „nur Eindruck". Weglassen.
+Guiding principle: **small solution**. No new infrastructure where existing infrastructure is reusable.
+All deterministic Python in the existing 60s watchdog loop + end summary.
 
 ---
 
-## Element 2 — Netto-Laufzeit (gesamt − Standby)  (Aufwand: KLEIN-MITTEL)
+## Element 1 — rough percent progress  (effort: SMALL, all building blocks present)
 
-Bausteine existieren:
-- Run-Start durabel: `.scan-start-epoch` (geschrieben `SKILL-impl.md:1866`,
-  gelesen `run_timing.py:226`). Wall = `now − scan-start-epoch`, trivial.
-- **End-Summary rechnet Netto bereits**: `render_completion_summary.py:918` →
-  `run_timing.compute_timing(output_dir)` liefert `net_compute_secs`, `wall_secs`,
-  `standby_secs`; Standby aus Event-Lücken (`_standby_from_event_gaps`). Rendert
-  „Net agent compute" + „Idle / standby". → **Für das Ende ist nichts zu bauen.**
+The building blocks exist:
+- The current phase is durably on disk: `.appsec-checkpoint` (`phase=<N>`),
+  parsed in `acquire_lock.py:181-230` (`_current_phase_label`).
+- A periodic emitter exists: `skill_watchdog.py:593-647`, 60s loop, knows the phase,
+  calls `event_log.format_line()`. New line is additive, no schema constraint.
+- Weighting: TWO independent phase-weight tables exist (not one!) —
+  choose, don't mix:
+  - `data/phase-budgets.yaml` — wall-time budget per phase × depth; maintained for
+    watchdog stall classification. Only 1/2/3/9/10b/11 explicit, 4–8 = fallback.
+  - `scripts/estimate_duration.py:164` `_PHASE_DURATION` — its own hardcoded
+    minutes table per depth, WITH fractional weights (line 451-457: ×0.5/×0.3 for
+    phases 3–6). The sum-over-phases pattern already exists there (resume remaining time).
+  - Recommendation: `_PHASE_DURATION` is the finer basis (covers 4–8), but for
+    consistency with the stall logic possibly `phase-budgets.yaml` + fallback. Pick one source.
 
-Mid-Run-Lücke (das einzige echte Stück Arbeit):
-- Watchdog trackt nur den Peak des *aktuellen* Stalls (`run_idle_peak`), resettet bei
-  `RUN_RESUMED`. Es gibt KEINE laufende kumulierte Idle-Summe.
-- Zwei Wege:
-  - (A, bevorzugt) `run_timing.compute_timing()` mid-run aufrufen — liest dieselben
-    Logs/Event-Lücken wie am Ende, autoritativ, eine Quelle. O(N)-Logscan je Tick
-    (alle 60s, billig).
-  - (B) `.agent-run.log` einmal nach allen `RUN_RESUMED`-Peaks grep'en und summieren.
-    Weniger autoritativ als (A); nur wählen, falls (A) mid-run nicht sauber läuft.
-- Anzeige: `elapsed 45m23s | netto 38m11s (idle 7m12s)`.
+Calculation: `pct = Σ(weight[completed phases]) / Σ(weight[all phases])`.
 
-Empfehlung: Weg (A) — vermeidet Doppel-Definition von „Standby" (Watchdog-Peak vs
-Event-Gap). Gleiche Zahl mid-run wie am Ende = konsistent.
+Honest limits (why "approximate"):
+- Checkpoint granularity = whole phases → the value stands still for minutes in long phases (esp. phase 9
+  STRIDE).
+- Phase list hardcoded + SCATTERED (no central enum): `[Phase N/11]` echoes
+  live in `appsec-threat-analyst.md` AND 4 phase-group docs (phase-group-recon/
+  -architecture/-threats/-finalization.md, ~67 hits total). (Corrected: NOT
+  at `appsec-threat-analyst.md:1154-1319` — that line reference was wrong.)
+  `phase-budgets.yaml` lists only 1/2/3/9/10b/11 explicitly; 4–8 share
+  `unlisted_phase_fallback_seconds` (180s) → with this table the curve stutters there
+  (not with `_PHASE_DURATION`, since 4–8 have their own values there).
+- Phase 2.5 conditional (`HAS_IAC_SURFACE`), incremental skips phases →
+  the denominator is run-dependent, not constant.
+- **Clamp monotonically** (never jump back on resume/incremental).
+
+Optional refinement (NOT for the small solution): sub-progress only where it
+exists — phase 2 recon `[k/26]`, phase 9 `.appsec-progress.json` (`step/step_total`).
+More effort per phase, low added value for "just an impression". Omit.
 
 ---
 
-## HARTE ANFORDERUNG (User, 2026-06-20)
-Kosten DÜRFEN nur angezeigt werden, wenn sie SICHER sind — `/cost`-genau, nie
-geschätzt. Geschätzte Werte (tokens × hand-gepflegte Tabelle bei kaputten Eingaben)
-waren in der Vergangenheit immer falsch. Lieber GAR KEINE Zahl als eine falsche.
+## Element 2 — net runtime (total − standby)  (effort: SMALL-MEDIUM)
 
-Korrektur einer Annahme: `/cost` ist KEINE vom Backend abgerechnete Exakt-Zahl. Es
-liest dieselben Transcript-`usage`-Blöcke (API-gemeldete, authoritative TOKEN-Zahlen)
-× Claude Codes Preistabelle. Es existiert KEINE Kostenzahl, die autoritativer ist als
-tokens×Preis — auch `/cost` nicht. Mid-run gibt es kein abgreifbares server-`total_cost_usd`
-(nur am Session-Ende im Headless-JSON, für einen laufenden Skill nicht erreichbar).
+The building blocks exist:
+- Run start durable: `.scan-start-epoch` (written `SKILL-impl.md:1866`,
+  read `run_timing.py:226`). Wall = `now − scan-start-epoch`, trivial.
+- **The end summary already computes net**: `render_completion_summary.py:918` →
+  `run_timing.compute_timing(output_dir)` returns `net_compute_secs`, `wall_secs`,
+  `standby_secs`; standby from event gaps (`_standby_from_event_gaps`). Renders
+  "Net agent compute" + "Idle / standby". → **Nothing to build for the end.**
 
-→ „`/cost`-genau" = dieselbe Quelle wie `/cost` KORREKT lesen: authoritative Usage über
-Haupt- + ALLE Sub-Agent-Transcripts, mit korrektem Preis je Modell. Dann per
-Konstruktion = `/cost`. Frühere Falschwerte kamen von kaputten Eingaben (trockene
-SESSION_STOP-Pipe → unterzählt; Modell pauschal sonnet → falscher Preis; Sub-Agent-
-Transcripts separat → lückenhaft aggregiert), nicht vom Konzept tokens×Preis.
+Mid-run gap (the only real piece of work):
+- The watchdog tracks only the peak of the *current* stall (`run_idle_peak`), resets on
+  `RUN_RESUMED`. There is NO running cumulative idle sum.
+- Two ways:
+  - (A, preferred) call `run_timing.compute_timing()` mid-run — reads the same
+    logs/event gaps as at the end, authoritative, one source. O(N) log scan per tick
+    (every 60s, cheap).
+  - (B) grep `.agent-run.log` once for all `RUN_RESUMED` peaks and sum them.
+    Less authoritative than (A); only choose if (A) doesn't run cleanly mid-run.
+- Display: `elapsed 45m23s | net 38m11s (idle 7m12s)`.
 
-DREISTUFIGE ANZEIGE-POLICY (verfeinert 2026-06-20): nicht binär. Unsicherheit ist
-messbar — Stufe aus Signal ableiten, nicht raten.
+Recommendation: way (A) — avoids a double definition of "standby" (watchdog peak vs
+event gap). Same number mid-run as at the end = consistent.
 
-Unsicherheits-Signal (aus vorhandenen Logs):
-- `coverage` = Agenten-mit-erfasster-Usage / dispatchte Agenten
-  (SESSION_STOP-mit-Usage vs. AGENT_SPAWN in `.hook-events.log`).
-- `modell_bekannt` = Modell je Agent aus AGENT_SPAWN `model=` auflösbar.
-- `preis_aktuell` = `PRICING_MODELS`-Keys gegen real genutzte Modell-IDs geprüft
-  (stale `opus-4-6` vs. Opus 4.8 = nicht aktuell).
+---
 
-Stufen:
-1. SICHER (coverage ~vollständig + modell_bekannt + preis_aktuell) → normal anzeigen,
-   ehrliches Label „= /cost-Methode". Das ist die Parität-mit-`/cost`-Stufe.
-2. ETWAS UNSICHER (eine Bedingung wackelt: Preistabelle evtl. veraltet, vereinzelt
-   Agenten ohne Usage) → anzeigen MIT Warnhinweis: `~$X (geschätzt, kann abweichen)`.
-3. SEHR UNSICHER (keine/kaum Usage erfasst — aktuell 0 SESSION_STOP; Modelle
-   unbekannt) → GAR NICHT anzeigen. Lieber nichts als falsch.
+## HARD REQUIREMENT (user, 2026-06-20)
+Cost MAY only be displayed when it is CERTAIN — `/cost`-accurate, never
+estimated. Estimated values (tokens × a hand-maintained table on broken inputs)
+have always been wrong in the past. Better NO number at all than a wrong one.
 
-Harte Zusatzregel — MID-RUN immer Stufe 3: noch laufende Agenten tragen 0 bei, jede
-Zwischensumme ist ein wandernder Unterzähler → im periodischen Liner NIE Kosten,
-unabhängig vom Signal. Nur Element 1 (Prozent) + 2 (Laufzeit). Kosten ausschließlich
-in der End-Summary, dort Stufe 1/2/3 nach obigem Signal.
+Correcting an assumption: `/cost` is NOT an exact number billed by the backend. It
+reads the same transcript `usage` blocks (API-reported, authoritative TOKEN counts)
+× Claude Code's pricing table. There is NO cost number more authoritative than
+tokens×price — not even `/cost`. Mid-run there is no accessible server `total_cost_usd`
+(only at session end in the headless JSON, unreachable for a running skill).
 
-## Element 3 — Kosten: NUR am Ende, NUR /cost-genau  (Aufwand: MITTEL — durch Quelle blockiert)
+→ "`/cost`-accurate" = read the same source as `/cost` CORRECTLY: authoritative usage across
+the main + ALL sub-agent transcripts, with the correct price per model. Then by
+construction = `/cost`. Earlier wrong values came from broken inputs (dry
+SESSION_STOP pipe → undercounted; model flat-set to sonnet → wrong price; sub-agent
+transcripts separate → aggregated with gaps), not from the tokens×price concept.
 
-### Was bereits existiert UND verdrahtet ist
-- Pricing-Tabelle: `config.json:7-11` + `verify_run_costs.py:49-68` `PRICING_MODELS`
+THREE-TIER DISPLAY POLICY (refined 2026-06-20): not binary. Uncertainty is
+measurable — derive the tier from the signal, don't guess.
+
+Uncertainty signal (from existing logs):
+- `coverage` = agents-with-captured-usage / dispatched agents
+  (SESSION_STOP-with-usage vs. AGENT_SPAWN in `.hook-events.log`).
+- `model_known` = model per agent resolvable from AGENT_SPAWN `model=`.
+- `price_current` = `PRICING_MODELS` keys checked against actually used model IDs
+  (stale `opus-4-6` vs. Opus 4.8 = not current).
+
+Tiers:
+1. CERTAIN (coverage ~complete + model_known + price_current) → display normally,
+   honest label "= /cost method". This is the parity-with-`/cost` tier.
+2. SOMEWHAT UNCERTAIN (one condition wobbles: pricing table possibly outdated, occasional
+   agents without usage) → display WITH a warning: `~$X (estimated, may deviate)`.
+3. VERY UNCERTAIN (no/barely any usage captured — currently 0 SESSION_STOP; models
+   unknown) → do NOT display at all. Better nothing than wrong.
+
+Hard additional rule — MID-RUN always tier 3: still-running agents contribute 0, any
+subtotal is a moving undercount → NEVER cost in the periodic liner,
+regardless of the signal. Only element 1 (percent) + 2 (runtime). Cost exclusively
+in the end summary, there tier 1/2/3 per the signal above.
+
+## Element 3 — cost: ONLY at the end, ONLY /cost-accurate  (effort: MEDIUM — blocked by the source)
+
+### What already exists AND is wired
+- Pricing table: `config.json:7-11` + `verify_run_costs.py:49-68` `PRICING_MODELS`
   (sonnet/opus/haiku, input/output/cache_write/cache_read).
-- Berechnung + Banner: `cost_running_total.py` (`aggregate_running_total`,
-  `format_banner` → „↳ running total: 45k tokens, $0.18").
-- Bereits aufgerufen: `appsec-threat-analyst.md:356` (nach Phase 8, non-fatal),
-  `SKILL-impl.md:1742` (Budget-Check). **Der Banner ist also schon im Pipeline-Flow.**
-- Modell-Attribution: jede `agents/*.md` Frontmatter `model:`; Dispatch-Override
-  geloggt in AGENT_SPAWN (`agent_logger.py:_agent_model`).
+- Calculation + banner: `cost_running_total.py` (`aggregate_running_total`,
+  `format_banner` → "↳ running total: 45k tokens, $0.18").
+- Already called: `appsec-threat-analyst.md:356` (after phase 8, non-fatal),
+  `SKILL-impl.md:1742` (budget check). **So the banner is already in the pipeline flow.**
+- Model attribution: each `agents/*.md` frontmatter `model:`; dispatch override
+  logged in AGENT_SPAWN (`agent_logger.py:_agent_model`).
 
-### Der echte Blocker (empirisch verifiziert 2026-06-20)
-Token-Quelle = `SESSION_STOP`-Zeilen, die der `Stop`/`SubagentStop`-Hook
-(`agent_logger.py:handle_stop`, parst `transcript_path`-Usage) schreiben soll.
-Hooks sind registriert (`hooks/hooks.json:33-48`).
+### The real blocker (empirically verified 2026-06-20)
+Token source = `SESSION_STOP` lines that the `Stop`/`SubagentStop` hook
+(`agent_logger.py:handle_stop`, parses `transcript_path` usage) is supposed to write.
+Hooks are registered (`hooks/hooks.json:33-48`).
 
-**ABER: 0 SESSION_STOP in 3 realen Run-Logs** (`/tmp/tm-sonnet-standard`,
-`/tmp/tm-phase-d-quick`, `/tmp/tm-verbose-quick`). Vorhandene Events nur:
-HEARTBEAT (Watchdog), AGENT_SPAWN (PreToolUse), PHASE_*/SCAN_START (Bash-Echos).
-Kein SESSION_STOP, kein PostToolUse-SCAN_COMPLETE, kein BUDGET_*.
+**BUT: 0 SESSION_STOP in 3 real run logs** (`/tmp/tm-sonnet-standard`,
+`/tmp/tm-phase-d-quick`, `/tmp/tm-verbose-quick`). Existing events only:
+HEARTBEAT (watchdog), AGENT_SPAWN (PreToolUse), PHASE_*/SCAN_START (bash echoes).
+No SESSION_STOP, no PostToolUse SCAN_COMPLETE, no BUDGET_*.
 
-→ Stop/SubagentStop/PostToolUse-Hooks feuern in diesen Headless-Läufen nicht (oder
-liefern keine Usage). **Aktuell wäre jede Kostenanzeige $0 / n/a.** Die Kosten-Pipe
-ist verdrahtet, aber trocken.
+→ Stop/SubagentStop/PostToolUse hooks don't fire in these headless runs (or
+deliver no usage). **Currently any cost display would be $0 / n/a.** The cost pipe
+is wired, but dry.
 
-Vor Kostenanzeige zu klären (Root-Cause, separate Untersuchung):
-- Feuert `SubagentStop` im `claude -p`-Headless-Pfad überhaupt?
-- Liefert das Headless-Transcript Usage-Blöcke an den Hook?
-- Wird das Plugin (und damit `hooks/hooks.json`) in der juice-shop-Session geladen?
-  (Memory `gotcha_env_var_reaches_skill_bash`: cross-project Settings greifen nicht
-  immer — analoger Verdacht für Plugin-Hooks.)
+To clarify before a cost display (root cause, separate investigation):
+- Does `SubagentStop` fire at all in the `claude -p` headless path?
+- Does the headless transcript deliver usage blocks to the hook?
+- Is the plugin (and thus `hooks/hooks.json`) loaded in the juice-shop session?
+  (Memory `gotcha_env_var_reaches_skill_bash`: cross-project settings don't always
+  take effect — an analogous suspicion for plugin hooks.)
 
-### Subscription vs. „was es gekostet hätte"
-User läuft auf Subscription → marginaler Real-Cost ≈ $0. Gewünscht ist die
-**API-äquivalente hypothetische Summe** = Tokens × Listenpreis. Das ist exakt die
-Zahl, die `format_banner` ohnehin liefert. Kein Subscription-Markup-Logik nötig —
-nur Label: „API-äquivalent (hypothetisch)". `~$`-Konvention für Subscription ist in
-QA/Docs schon vorgesehen (`appsec-qa-reviewer.md`), Berechnung identisch.
+### Subscription vs. "what it would have cost"
+The user runs on a subscription → marginal real cost ≈ $0. What's wanted is the
+**API-equivalent hypothetical total** = tokens × list price. That's exactly the
+number `format_banner` already produces. No subscription-markup logic needed —
+just a label: "API-equivalent (hypothetical)". The `~$` convention for subscriptions is
+already provided in QA/docs (`appsec-qa-reviewer.md`), calculation identical.
 
-→ „Tatsächlich" und „API-äquivalent" fallen für Subscription-User zusammen; sinnvoll
-ist EINE Zahl mit Label „hypothetische API-Kosten ~$X (Subscription: real $0)".
+→ "Actual" and "API-equivalent" coincide for subscription users; the sensible thing
+is ONE number with the label "hypothetical API cost ~$X (subscription: real $0)".
 
 ---
 
-## Zusammenfassung Aufwand / Reihenfolge
+## Effort / order summary
 
-| Element | Bausteine da? | Echte Arbeit | Risiko |
+| Element | Building blocks present? | Real work | Risk |
 |---|---|---|---|
-| 1 Prozent | Phase+Loop+Gewichtung | Helper: budget-summe/checkpoint→pct + 1 Emitterzeile; Phasen 4–8 budgetieren f. glatte Kurve | niedrig |
-| 2 Netto-Laufzeit | End-Summary rechnet schon | `compute_timing` mid-run aufrufen + in Liner | niedrig-mittel |
-| 3 Kosten | Pricing+Calc+Banner verdrahtet, aber Quelle trocken | NUR am Ende; authoritative Transcript-Usage (Haupt+alle Sub-Agents) × Preis je Modell; Parität-mit-`/cost` garantieren, sonst nichts | hoch — blockiert, MID-RUN ausgeschlossen |
+| 1 percent | phase+loop+weighting | helper: budget-sum/checkpoint→pct + 1 emitter line; budget phases 4–8 for a smooth curve | low |
+| 2 net runtime | end summary already computes | call `compute_timing` mid-run + into liner | low-medium |
+| 3 cost | pricing+calc+banner wired, but source dry | ONLY at end; authoritative transcript usage (main+all sub-agents) × price per model; guarantee parity with `/cost`, otherwise nothing | high — blocked, MID-RUN excluded |
 
-Empfohlene Sequenz wenn umgesetzt wird:
-1. Element 1 + 2 zusammen — beide leben im selben Watchdog-Tick, teilen das eine neue
-   Liner-Format, null externe Abhängigkeit, KEINE Kostenabhängigkeit. Sofort lieferbar.
-2. Element 3 NUR als End-Summary-Feld, separat, NACH:
-   (a) Root-Cause warum SESSION_STOP/Transcript-Usage headless nicht aggregiert wird,
-   (b) korrekte Preis-je-Modell-Attribution (nicht pauschal sonnet). ACHTUNG Preis-
-       Drift: `PRICING_MODELS` (verify_run_costs.py:49-68) hat Keys `opus-4-6`/
-       `sonnet-4-6`/`haiku-4-5` — `opus-4-6` ist veraltet ggü. aktuellem Opus 4.8;
-       solche stale Keys sind genau die Ursache früherer Falschwerte → Tabelle muss
-       gegen tatsächlich genutzte Modell-IDs geprüft werden,
-   (c) Nachweis Parität mit `/cost` (gleiche Inputs → gleiche Zahl).
-   Bis (a)–(c) bewiesen sind: KEINE Kostenanzeige. Lieber nichts als falsch.
+Recommended sequence if implemented:
+1. Element 1 + 2 together — both live in the same watchdog tick, share the one new
+   liner format, zero external dependency, NO cost dependency. Immediately shippable.
+2. Element 3 ONLY as an end-summary field, separately, AFTER:
+   (a) root cause why SESSION_STOP/transcript usage isn't aggregated headless,
+   (b) correct price-per-model attribution (not flat sonnet). WATCH OUT for price
+       drift: `PRICING_MODELS` (verify_run_costs.py:49-68) has keys `opus-4-6`/
+       `sonnet-4-6`/`haiku-4-5` — `opus-4-6` is outdated vs. the current Opus 4.8;
+       such stale keys are exactly the cause of earlier wrong values → the table must
+       be checked against the actually used model IDs,
+   (c) proof of parity with `/cost` (same inputs → same number).
+   Until (a)–(c) are proven: NO cost display. Better nothing than wrong.
 
-Mid-run-Liner ( OHNE Kosten — nach User-Regel):
+Mid-run liner (WITHOUT cost — per the user rule):
 ```
-  ~42%  |  elapsed 45m23s  netto 38m11s (idle 7m12s)
+  ~42%  |  elapsed 45m23s  net 38m11s (idle 7m12s)
 ```
-End-Summary ergänzt Kosten nach Stufe (siehe Policy oben):
+End summary adds cost per tier (see policy above):
 ```
-  Laufzeit: 45m23s (netto 38m11s, idle 7m12s)
-  # Stufe 1: Kosten (API-äquiv, = /cost): $3.10
-  # Stufe 2: Kosten (geschätzt, kann abweichen): ~$3.10
-  # Stufe 3: Zeile komplett weglassen
+  Runtime: 45m23s (net 38m11s, idle 7m12s)
+  # Tier 1: Cost (API-equiv, = /cost): $3.10
+  # Tier 2: Cost (estimated, may deviate): ~$3.10
+  # Tier 3: omit the line entirely
 ```
-Laufzeit-Felder am Ende existieren bereits (`run_timing.compute_timing`).
+The runtime fields at the end already exist (`run_timing.compute_timing`).

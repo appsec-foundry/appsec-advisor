@@ -1,51 +1,51 @@
-# Rollout-Plan: Thin/Compact Orchestrator als Default
+# Rollout Plan: Thin/Compact Orchestrator as Default
 
-**Status:** verifiziert am Code (2026-07-03), noch nicht umgesetzt.
-**Ziel:** Die compact runtime (`SKILL-full-runtime.md`, via `orchestration_controller.py`) von **opt-in** (`APPSEC_THIN_ORCHESTRATOR=1`) auf **Default mit opt-out** (`=0`) umstellen — aber nur, wenn Parität nachgewiesen ist.
+**Status:** verified against the code (2026-07-03), not yet implemented.
+**Goal:** Switch the compact runtime (`SKILL-full-runtime.md`, via `orchestration_controller.py`) from **opt-in** (`APPSEC_THIN_ORCHESTRATOR=1`) to **default with opt-out** (`=0`) — but only if parity is proven.
 
-**Ausführung:** neuer Branch off `dev` (nicht `main`/`dev` direkt), targeted test suite + `make check`, **Stop vor Push/Merge** → Summary + Diff. `AGENTS.md` vor nicht-trivialen Änderungen lesen (Contract-/Drift-Regeln). Arbeitsverzeichnis: `/home/mrohr/appsec-advisor`.
-
----
-
-## Phase 1 — Headless-Completion verifizieren *(zuerst)*
-
-Der Commit `d57d5a3` (2026-07-03) hat einen deterministischen Compose-Backstop `_compose_if_ready()` in `scripts/orchestration_controller.py` eingebaut: wenn Render-Fragmente da sind (`ms-verdict.json` + `security-architecture.md`) aber `threat-model.md` fehlt, komponiert er deterministisch (pregenerate → `compose_threat_model.py --strict` → `apply_prose_fixes` → `qa_checks autofix`). Gerufen über den finalize-`next`-Call (in `SKILL-full-runtime.md §6` mandatory vor jeder completion-summary).
-
-**Offene Verifikations-Aufgabe:** Feuert `_compose_if_ready` auch im headless **bg-ceiling PROZESS-KILL**-Fall (Claude Code terminiert den `-p`-Prozess bei `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=600s`), oder **nur** wenn der Orchestrator noch einen finalize-Turn bekommt (turn-budget / skipped-step)?
-- **Wenn nicht abgedeckt:** in `scripts/run-headless.sh` für Headless `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` **oder** `APPSEC_PARALLEL_RENDER=0` exportieren, und Headless **fail-closed** machen (exit≠0 wenn `threat-model.md` fehlt — aktuell meldet es fälschlich `✓ completed` / exit 0).
-
-## Phase 0 — Parität nachweisen *(hartes Gate, kein Merge-Code)*
-
-Kontrolliertes A/B: **thin vs legacy, gleiches Modell, Repo `/home/mrohr/juice-shop`, gleiche Depth**, je 2–3 Läufe (Varianz-Baseline). YAML vergleichen.
-
-Bereits ~Parität (Vergleich thin `docs/security-thin` vs baseline `docs/security`):
-- Threats 53 vs 55, Mitigations 53 vs 55, Komponenten 11 vs 10, Attack-Surface **107=107**, STRIDE alle 6 Kategorien vergleichbar, LLM/AI 5=5, 0 Threats ohne Evidence/Mitigation-Link.
-
-**Der eine offene Punkt — Severity-Drift:** thin **C24/H25/M4** vs baseline **C17/H23/M15**. Thin ist Critical-lastiger. Wahrscheinlich Run-/Modell-Varianz (thin-Subagenten liefen `sonnet-4-6`), NICHT der Orchestrator (er fasst die triage-Logik nicht an). **A/B muss das klären.**
-
-**Gate:** Zeigt das A/B eine echte thin-verursachte Severity-Regression → **NICHT flippen**, Findings berichten, stoppen.
-
-## Phase 2 — Gate flippen *(nur wenn Phase 0 hält; ~10 Zeilen an 4 Stellen)*
-
-1. `scripts/orchestration_controller.py:238` — Gate `APPSEC_THIN_ORCHESTRATOR == "1"` → **`!= "0"`** (opt-in → opt-out).
-2. `scripts/orchestration_controller.py:260,262` — `route()`-reason-Strings aktualisieren.
-3. `skills/create-threat-model/SKILL.md:68` — Doku „only with `=1`" → „**Default; opt-out via `=0`**".
-4. `skills/create-threat-model/SKILL-impl.md:579` — analoge Doku-Anpassung.
-
-**Beibehalten:** alle Special-Mode-Exclusions (`resume`/`dry-run`/`rerender`/`max_cost`/`max_wall`/`LIVE_PHASE`) routen weiter auf Legacy. `APPSEC_THIN_ORCHESTRATOR=0` bleibt als permanenter Escape-Hatch.
-
-## Phase 3 — Tests + Drift
-
-- `tests/test_orchestration_controller.py`: opt-in → opt-out Assertions (Default=thin, `=0`→legacy, special modes→legacy). Den neuen `test_compose_if_ready_*`-Test behalten.
-- Changelog-Eintrag; `make check` + targeted subset (CONTRIBUTING.md).
-
-## Phase 4 — Safe Rollout
-
-Escape-Hatch behalten; optional Canary-Phase, bevor der Opt-out-Hinweis aus der Doku verschwindet.
+**Execution:** new branch off `dev` (not `main`/`dev` directly), targeted test suite + `make check`, **stop before push/merge** → summary + diff. Read `AGENTS.md` before non-trivial changes (contract/drift rules). Working directory: `/home/mrohr/appsec-advisor`.
 
 ---
 
-**Kontext-Referenzen (Stand 2026-07-03):**
-- Thin-Prompt `SKILL-full-runtime.md` = 263 Zeilen vs Legacy `SKILL-impl.md` = 4441 Zeilen (~17× kleiner → weniger cache_read/Turn = der Kostenhebel).
-- Router-Logik: `orchestration_controller.py:_runtime_for()` (`:236-245`) + `route()` (`:250-269`).
-- Nur 2 Commits haben die Thin-Dateien je berührt (jüngster `d57d5a3`) → Beta, noch in Härtung.
+## Phase 1 — Verify headless completion *(first)*
+
+Commit `d57d5a3` (2026-07-03) added a deterministic compose backstop `_compose_if_ready()` in `scripts/orchestration_controller.py`: when render fragments are present (`ms-verdict.json` + `security-architecture.md`) but `threat-model.md` is missing, it composes deterministically (pregenerate → `compose_threat_model.py --strict` → `apply_prose_fixes` → `qa_checks autofix`). Invoked via the finalize `next` call (mandatory in `SKILL-full-runtime.md §6` before every completion summary).
+
+**Open verification task:** Does `_compose_if_ready` also fire in the headless **bg-ceiling PROCESS-KILL** case (Claude Code terminates the `-p` process at `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=600s`), or **only** when the orchestrator still gets a finalize turn (turn budget / skipped step)?
+- **If not covered:** in `scripts/run-headless.sh` export `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` **or** `APPSEC_PARALLEL_RENDER=0` for headless, and make headless **fail-closed** (exit≠0 if `threat-model.md` is missing — currently it wrongly reports `✓ completed` / exit 0).
+
+## Phase 0 — Prove parity *(hard gate, no merge code)*
+
+Controlled A/B: **thin vs legacy, same model, repo `/home/mrohr/juice-shop`, same depth**, 2–3 runs each (variance baseline). Compare YAML.
+
+Already ~parity (comparison thin `docs/security-thin` vs baseline `docs/security`):
+- Threats 53 vs 55, mitigations 53 vs 55, components 11 vs 10, attack surface **107=107**, STRIDE all 6 categories comparable, LLM/AI 5=5, 0 threats without evidence/mitigation link.
+
+**The one open point — severity drift:** thin **C24/H25/M4** vs baseline **C17/H23/M15**. Thin skews more Critical. Probably run/model variance (thin subagents ran `sonnet-4-6`), NOT the orchestrator (it doesn't touch the triage logic). **A/B has to settle this.**
+
+**Gate:** If the A/B shows a real thin-caused severity regression → **do NOT flip**, report findings, stop.
+
+## Phase 2 — Flip the gate *(only if Phase 0 holds; ~10 lines in 4 places)*
+
+1. `scripts/orchestration_controller.py:238` — gate `APPSEC_THIN_ORCHESTRATOR == "1"` → **`!= "0"`** (opt-in → opt-out).
+2. `scripts/orchestration_controller.py:260,262` — update the `route()` reason strings.
+3. `skills/create-threat-model/SKILL.md:68` — docs "only with `=1`" → "**Default; opt-out via `=0`**".
+4. `skills/create-threat-model/SKILL-impl.md:579` — analogous docs adjustment.
+
+**Keep:** all special-mode exclusions (`resume`/`dry-run`/`rerender`/`max_cost`/`max_wall`/`LIVE_PHASE`) still route to legacy. `APPSEC_THIN_ORCHESTRATOR=0` remains a permanent escape hatch.
+
+## Phase 3 — Tests + drift
+
+- `tests/test_orchestration_controller.py`: opt-in → opt-out assertions (default=thin, `=0`→legacy, special modes→legacy). Keep the new `test_compose_if_ready_*` test.
+- Changelog entry; `make check` + targeted subset (CONTRIBUTING.md).
+
+## Phase 4 — Safe rollout
+
+Keep the escape hatch; optional canary phase before the opt-out note disappears from the docs.
+
+---
+
+**Context references (as of 2026-07-03):**
+- Thin prompt `SKILL-full-runtime.md` = 263 lines vs legacy `SKILL-impl.md` = 4441 lines (~17× smaller → less cache_read/turn = the cost lever).
+- Router logic: `orchestration_controller.py:_runtime_for()` (`:236-245`) + `route()` (`:250-269`).
+- Only 2 commits have ever touched the thin files (most recent `d57d5a3`) → beta, still hardening.

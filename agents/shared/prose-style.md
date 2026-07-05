@@ -52,7 +52,7 @@ observation. The third is reproducible AND narratable: a reader can act
 it out one step at a time, in order, as the attacker.
 
 **Cap on `scenario` / Attack Steps (juice-shop 2026-07-03 user report — steps
-had "viel zu viel unnötige Details"):** write **3–4 steps, one sentence each**.
+had "far too much unnecessary detail"):** write **3–4 steps, one sentence each**.
 Each sentence is a single attacker action as the main clause; the code
 mechanism, if named, is a short subordinate "because…"/"since…" clause, not the
 sentence. **At most one `file:line` per step.** Do not narrate the code's

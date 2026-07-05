@@ -341,7 +341,7 @@ def load_repo_actors(
     disables is a list of {id, reason} dicts (actors.md §7).
     inherit_org defaults to True per actors.md §7 example.
     Actors with `renamed_from` get `_provenance.aliases` populated for downstream re-tagging
-    (actors.md §3 Promotion-ID-Stabilität).
+    (actors.md §3 Promotion-ID stability).
     """
     path = os.path.join(repo_root, ".appsec", "actors.yaml")
     if not os.path.exists(path):

@@ -4267,7 +4267,7 @@ def _emit_v2_subcontrol_block(
         anchors = {_v2_slug(original_title), _v2_slug(title)}
         # All anchors on ONE line: stacked empty <a id> lines render with
         # inconsistent vertical gaps before a heading (1 vs 2 anchors → uneven
-        # whitespace, 2026-05-30 user "Freiräume" fix).
+        # whitespace, 2026-05-30 user "spacing" fix).
         lines.append("".join(f'<a id="{s}"></a>' for s in sorted(anchors)))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
@@ -4456,7 +4456,7 @@ def _emit_v2_subcontrol_legacy(
         anchors = {_v2_slug(name), _v2_slug(title)}
         # All anchors on ONE line: stacked empty <a id> lines render with
         # inconsistent vertical gaps before a heading (1 vs 2 anchors → uneven
-        # whitespace, 2026-05-30 user "Freiräume" fix).
+        # whitespace, 2026-05-30 user "spacing" fix).
         lines.append("".join(f'<a id="{s}"></a>' for s in sorted(anchors)))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
@@ -4545,7 +4545,7 @@ def _emit_v2_subcontrol_legacy(
 # schema_v2 catalogues controls by domain — identity/login → §7.2,
 # session/token (JWT) → §7.3, password hashing → §7.9 — so the §7.2 section
 # only ever decomposes the control(s) Stage-1 filed under the identity domain
-# (usually just "Password Login"). That made §7.2 read "ausgedünnt": OAuth /
+# (usually just "Password Login"). That made §7.2 read "thinned out": OAuth /
 # JWT / MFA were either elsewhere or absent. This inventory is a DETERMINISTIC
 # table emitted at the top of §7.2 that reconstructs the COMPLETE authentication
 # surface from the yaml (controls + threats + meta) — status, where it is

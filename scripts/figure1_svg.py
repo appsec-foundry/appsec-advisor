@@ -494,8 +494,8 @@ def build_figure1_svg(
             box_pos["__shopuser__"] = (bx + w / 2, by, by + h, bx)
 
     # Capture the attacker-card bounding box so the attack arrows can VISIBLY
-    # originate from the attacker zone (user: "die Pfeile gehen nicht eindeutig
-    # von den Akteuren aus"). `atk_x0/atk_x1` bracket the red cards; `atk_bottom`
+    # originate from the attacker zone (user request: the arrows do not clearly
+    # originate from the actors). `atk_x0/atk_x1` bracket the red cards; `atk_bottom`
     # is their lower edge; `atk_cx` is the zone centre.
     atk_x0 = atk_x1 = None
     for j, (kind, slug, label) in enumerate(cards):
@@ -907,7 +907,7 @@ def build_figure1_svg(
     body = "\n".join(c.el)
     # Display size is capped to an OVERVIEW width (the viewBox keeps the full
     # coordinate space, so the vector stays crisp and the reader can open/zoom
-    # figure1.svg for detail) — user: "nicht zu riesig, dient der Übersicht".
+    # figure1.svg for detail) — user request: not too huge, it serves as an overview.
     disp_w = min(total_w, _MAX_DISPLAY_W)
     disp_h = total_h * disp_w / total_w
     return (

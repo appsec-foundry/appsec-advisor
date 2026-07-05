@@ -819,7 +819,7 @@ def _collapse_consecutive_anchors(text: str) -> tuple[str, int]:
     """Join runs of consecutive anchor-only lines (``<a id="x"></a>``) into ONE
     line. Stacked empty-anchor blocks render with inconsistent vertical gaps
     before headings (a heading with 2 alias anchors gets more whitespace than
-    one with 1 — the 2026-05-30 "uneinheitliche Freiräume vor 7.8.1" report).
+    one with 1 — the 2026-05-30 "inconsistent spacing before 7.8.1" report).
     Collapsing every run to a single line makes the pre-heading spacing uniform.
     Skips fenced code blocks."""
     lines = text.split("\n")

@@ -6022,7 +6022,7 @@ def _run_auth_v2_structural_checks(
     # flow `sequenceDiagram` — the auth flow is the architecture view §7.2 is
     # built around. Scoped to flow-token headings so it never fires on static
     # primitives, API keys, anonymous access, or methods the agent adds that
-    # have no meaningful sequence (Freiräume preserved). The grouped
+    # have no meaningful sequence (spacing preserved). The grouped
     # "Password-Based Authentication" lifecycle block matches via the
     # `password-based` token and gets its login-flow diagram from the scaffold.
     if flow_methods_require_diagram and (flow_method_tokens or []):

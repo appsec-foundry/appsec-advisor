@@ -1092,7 +1092,7 @@ sections:
             # `sequenceDiagram`. This is the architecture view the section is
             # built around: one flow picture per real authentication path.
             #
-            # SCOPE / FREIRÄUME: the gate fires ONLY on flow-token headings.
+            # SCOPE / LEEWAY: the gate fires ONLY on flow-token headings.
             # Non-flow mechanisms (API key, bearer token, anonymous access) and
             # static primitives are exempt — they have no meaningful sequence.
             # The grouped "Password-Based Authentication" lifecycle block DOES

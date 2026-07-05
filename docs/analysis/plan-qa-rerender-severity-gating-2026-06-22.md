@@ -1,33 +1,33 @@
-# QA Re-Render: Severity-Gating (blocking vs cosmetic)
+# QA re-render: severity gating (blocking vs cosmetic)
 
-**Datum:** 2026-06-22
-**Status:** UMGESETZT 2026-06-22 (qa_checks.py + SKILL-impl.md + Tests + CHANGELOG; uncommitted)
-**Ziel:** Re-Render-Loop nur bei echten Defekten auslösen, nicht bei kosmetischen
-Befunden. Kosmetik wird weiterhin sichtbar gemacht (Warnings), aber verbrennt
-keine Loop-Iterationen (Fragment-Fixer-Dispatch + Recompose, LLM, ~Minuten).
+**Date:** 2026-06-22
+**Status:** IMPLEMENTED 2026-06-22 (qa_checks.py + SKILL-impl.md + tests + CHANGELOG; uncommitted)
+**Goal:** Trigger the re-render loop only on genuine defects, not on cosmetic
+findings. Cosmetics are still surfaced (warnings), but burn
+no loop iterations (fragment-fixer dispatch + recompose, LLM, ~minutes).
 
 ---
 
-## 1. Ist-Zustand (verifiziert im Code)
+## 1. Current state (verified in code)
 
-Vor jedem Agent-Dispatch läuft deterministisch:
+Before each agent dispatch, this runs deterministically:
 
 ```bash
 python3 scripts/qa_checks.py repair_plan threat-model.md $OUTPUT_DIR
 GATE_EXIT=$?
 ```
 
-`cmd_repair_plan` (qa_checks.py:2413) → Exit-Code steuert den Skill-Flow
+`cmd_repair_plan` (qa_checks.py:2413) → the exit code drives the skill flow
 (SKILL-impl.md ~3280–3550):
 
-| Exit | `status`        | Skill-Aktion |
+| Exit | `status`        | Skill action |
 |------|-----------------|--------------|
-| 0    | `pass`          | kein Re-Render |
-| 1    | `fail`          | **Re-Render-Loop** (apply_repair_plan → fragment-fixer → recompose), max 3 Iter. |
-| 2    | (Tool-Fehler)   | QA-Agent als Fallback |
-| 3    | `manual_review` | Loop übersprungen, einmal QA-Agent (kein Fragment kann's fixen) |
+| 0    | `pass`          | no re-render |
+| 1    | `fail`          | **re-render loop** (apply_repair_plan → fragment-fixer → recompose), max 3 iter. |
+| 2    | (tool error)    | QA agent as fallback |
+| 3    | `manual_review` | loop skipped, QA agent once (no fragment can fix it) |
 
-**Die einzige Schwelle** (`_classify_plan_status`, qa_checks.py:2405):
+**The only threshold** (`_classify_plan_status`, qa_checks.py:2405):
 
 ```python
 actionable = any(a.get("fragments_to_rewrite") for a in actions)
@@ -36,71 +36,71 @@ if actions and not actionable: return "manual_review", actionable  # exit 3
 return "fail", actionable                                    # exit 1 → Re-Render
 ```
 
-**→ Es gibt keinerlei Severity-Unterscheidung.** Sobald *irgendeine* Aktion ein
-nicht-leeres `fragments_to_rewrite` trägt, ist es Exit 1 → Re-Render. `thorough`
-verschärft das, weil `QA_DEPTH=extended` *mehr* dieser Checks scharfschaltet und
-zusätzlich Stage 4 (Architect-Review, eigener Loop) aktiviert.
+**→ There is no severity distinction whatsoever.** As soon as *any* action carries a
+non-empty `fragments_to_rewrite`, it's exit 1 → re-render. `thorough`
+makes this worse, because `QA_DEPTH=extended` arms *more* of these checks and
+additionally activates stage 4 (architect review, its own loop).
 
 ---
 
-## 2. Alle Re-Render-treibenden Action-Typen + Vorschlag
+## 2. All re-render-driving action types + proposal
 
-Nur Typen mit nicht-leerem `fragments_to_rewrite` treiben heute den Loop (Exit 1).
-Typen mit leerem `fragments_to_rewrite` (infobox, posture_*, placeholders,
-yaml_md_consistency) gehen schon heute auf `manual_review`/Exit 3 — **nicht
-Gegenstand dieser Änderung.**
+Only types with a non-empty `fragments_to_rewrite` drive the loop today (exit 1).
+Types with an empty `fragments_to_rewrite` (infobox, posture_*, placeholders,
+yaml_md_consistency) already go to `manual_review`/exit 3 today — **not
+the subject of this change.**
 
-| # | `type` | Check / Befund | Heute | **Vorschlag** | Begründung |
+| # | `type` | Check / finding | Today | **Proposal** | Rationale |
 |---|--------|----------------|-------|---------------|------------|
-| 1 | `mermaid_syntax` | ungültiger Mermaid-Block | Loop | **blocking** | bricht Diagramm-Render |
-| 2 | `toc_nested_link` | Link in §3-Heading | Loop | **blocking** | bricht §3-TOC |
-| 3 | `auth_method_decomposition` | §7.2 IAM nicht nach Mechanismus zerlegt | Loop | **blocking** | §7-Contract-Struktur |
-| 4 | `validation_approach_first` | §7.6 öffnet nicht mit Approach-Block | Loop | **blocking** | §7-Contract-Struktur |
-| 5 | `control_subsection_coverage` | §7.x H4-Control-Shape fehlt | Loop | **blocking** | §7 v2 Contract |
-| 6 | `missing_required_subsection` | Pflicht-Subsection fehlt | Loop | **blocking** | Contract |
-| 7 | `missing_section` | ganze Sektion fehlt | Loop | **blocking** | Contract |
-| 8 | `forbidden_ms_heading` | unerlaubtes MS-`###` | Loop | **blocking** | MS-Struktur |
-| 9 | `table_schema_drift` | Tabellen-Spalten ≠ Contract | Loop | **blocking** | Datendarstellung falsch |
-| 10 | `walkthrough_coverage` | Critical-Walkthrough fehlt ganz | Loop | **blocking** | echte Inhalts-Lücke |
-| 11 | `unclassified` | unbekannter Befund | Loop | **blocking** | sicherer Default |
-| 12 | `section_order_drift` | Sektion in falscher Reihenfolge | Loop | **blocking** | i.d.R. reiner Recompose, billig |
-| 13 | `required_subsection_order_drift` | Subsection-Reihenfolge | Loop | **blocking** | Contract-Order |
-| 14 | `relevant_findings_bullet_list` | inline statt Bullet-Liste `**Relevant findings**` | Loop | **cosmetic** | rein darstellerisch (Entscheidung User) |
-| 15 | `chain_tid_consistency` | Chain-Node zitiert „falsches" T-NNN (Keyword-Heuristik) | Loop | **blocking** | falsche T-ID-Referenz = Korrektheit (Entscheidung User) |
-| 16 | `walkthrough_depth` | §3.x-Body kürzer als Schwelle / fehlendes alt/else / 3-Node-Stub | Loop | **cosmetic** | Inhalts-Dünne, keine Korrektheit |
-| 17 | `chain_compactness` | §3.1-Chain >6 Nodes / Layout-Keyword | Loop | **cosmetic** | reine Lesbarkeit |
-| 18 | `diagram_compactness` | §2.3/§2.4-Diagramm >7 Nodes | Loop | **cosmetic** | reine Lesbarkeit |
-| 19 | `recon_iam_bridge` | Recon-MFA-Evidenz fehlt in §7 | Loop | **cosmetic** | Inhalts-Hinweis (Entscheidung User) |
+| 1 | `mermaid_syntax` | invalid Mermaid block | loop | **blocking** | breaks diagram render |
+| 2 | `toc_nested_link` | link in §3 heading | loop | **blocking** | breaks §3 TOC |
+| 3 | `auth_method_decomposition` | §7.2 IAM not decomposed by mechanism | loop | **blocking** | §7 contract structure |
+| 4 | `validation_approach_first` | §7.6 doesn't open with an approach block | loop | **blocking** | §7 contract structure |
+| 5 | `control_subsection_coverage` | §7.x H4 control shape missing | loop | **blocking** | §7 v2 contract |
+| 6 | `missing_required_subsection` | required subsection missing | loop | **blocking** | contract |
+| 7 | `missing_section` | whole section missing | loop | **blocking** | contract |
+| 8 | `forbidden_ms_heading` | disallowed MS `###` | loop | **blocking** | MS structure |
+| 9 | `table_schema_drift` | table columns ≠ contract | loop | **blocking** | data rendering wrong |
+| 10 | `walkthrough_coverage` | Critical walkthrough missing entirely | loop | **blocking** | genuine content gap |
+| 11 | `unclassified` | unknown finding | loop | **blocking** | safe default |
+| 12 | `section_order_drift` | section in wrong order | loop | **blocking** | usually pure recompose, cheap |
+| 13 | `required_subsection_order_drift` | subsection order | loop | **blocking** | contract order |
+| 14 | `relevant_findings_bullet_list` | inline instead of bullet list `**Relevant findings**` | loop | **cosmetic** | purely presentational (user decision) |
+| 15 | `chain_tid_consistency` | chain node cites the "wrong" T-NNN (keyword heuristic) | loop | **blocking** | wrong T-ID reference = correctness (user decision) |
+| 16 | `walkthrough_depth` | §3.x body shorter than threshold / missing alt/else / 3-node stub | loop | **cosmetic** | content thinness, no correctness |
+| 17 | `chain_compactness` | §3.1 chain >6 nodes / layout keyword | loop | **cosmetic** | pure readability |
+| 18 | `diagram_compactness` | §2.3/§2.4 diagram >7 nodes | loop | **cosmetic** | pure readability |
+| 19 | `recon_iam_bridge` | recon MFA evidence missing in §7 | loop | **cosmetic** | content hint (user decision) |
 
-**Borderline-Entscheidungen (2026-06-22 final):**
-- **#14 `relevant_findings_bullet_list` → cosmetic** (User: „inline vs Bullet" trivial).
-- **#15 `chain_tid_consistency` → blocking** (User: falsche T-ID-Referenz ist kritisch).
-- **#19 `recon_iam_bridge` → cosmetic** (User).
+**Borderline decisions (2026-06-22 final):**
+- **#14 `relevant_findings_bullet_list` → cosmetic** (user: "inline vs bullet" trivial).
+- **#15 `chain_tid_consistency` → blocking** (user: a wrong T-ID reference is critical).
+- **#19 `recon_iam_bridge` → cosmetic** (user).
 
-**`COSMETIC_ACTION_TYPES` (Code, qa_checks.py):** `diagram_compactness`,
+**`COSMETIC_ACTION_TYPES` (code, qa_checks.py):** `diagram_compactness`,
 `chain_compactness`, `walkthrough_depth`, `relevant_findings_bullet_list`,
-`recon_iam_bridge`. Alles andere = blocking.
+`recon_iam_bridge`. Everything else = blocking.
 
 ---
 
-## 3. Umsetzung (Severity-Feld + Loop-Gate — gewählter Ansatz)
+## 3. Implementation (severity field + loop gate — chosen approach)
 
 ### 3a. Producer: `qa_checks.py`
 
-1. **Zentrale Map** statt verstreuter Strings:
+1. **Central map** instead of scattered strings:
    ```python
    COSMETIC_ACTION_TYPES = frozenset({
        "diagram_compactness", "chain_compactness",
        "walkthrough_depth", "chain_tid_consistency", "recon_iam_bridge",
-   })  # exakte Menge nach deiner Freigabe von #14/#15/#19
+   })  # exact set per your approval of #14/#15/#19
    ```
-2. Jede `actions.append({...})` bekommt:
+2. Every `actions.append({...})` gets:
    ```python
    "severity": "cosmetic" if a_type in COSMETIC_ACTION_TYPES else "blocking",
    ```
-   (Eine Hilfsfunktion `_severity_for(type)` statt 19× Hand-Edit; setzt das Feld
-   nachträglich in der Dedup-Schleife bei 2351 für alle Aktionen.)
-3. **Gate umschreiben** (`_classify_plan_status`, 2384):
+   (A helper `_severity_for(type)` instead of 19× hand-edit; sets the field
+   afterward in the dedup loop at 2351 for all actions.)
+3. **Rewrite the gate** (`_classify_plan_status`, 2384):
    ```python
    blocking = any(a.get("fragments_to_rewrite")
                   and a.get("severity") != "cosmetic" for a in actions)
@@ -108,77 +108,77 @@ Gegenstand dieser Änderung.**
                   and a.get("severity") == "cosmetic" for a in actions)
    if not issues:                       return "pass", blocking
    if blocking:                         return "fail", blocking          # exit 1
-   if cosmetic:                         return "cosmetic_advisory", blocking  # NEU → exit 4
+   if cosmetic:                         return "cosmetic_advisory", blocking  # NEW → exit 4
    return "manual_review", blocking                                      # exit 3
    ```
 4. **`cmd_repair_plan`** (2413): neuer Branch
    ```python
    if plan["status"] == "cosmetic_advisory":
-       plan_path.write_text(...)   # Plan ERHALTEN für Surfacing
+       plan_path.write_text(...)   # plan PRESERVED for surfacing
        return 4
    ```
-   Plan-Datei bleibt liegen (anders als `pass`, das sie löscht) → Completion-
-   Summary kann die Kosmetik-Advisories anzeigen.
+   The plan file stays (unlike `pass`, which deletes it) → the completion
+   summary can display the cosmetic advisories.
 
-### 3b. Consumer: `SKILL-impl.md` Re-Render-Loop (~3280–3330)
+### 3b. Consumer: `SKILL-impl.md` re-render loop (~3280–3330)
 
-Neuer Exit-Branch neben 0/1/2/3:
+New exit branch alongside 0/1/2/3:
 ```
 GATE_EXIT == 4 → cosmetic_advisory:
-   - KEIN Re-Render, KEIN Fragment-Fixer.
-   - .qa-status.json: status="pass" + cosmetic_advisories[] aus .qa-repair-plan.json.
-   - Banner: "N kosmetische QA-Hinweise (kein Re-Render)" + Liste.
-   - Loop-Exit wie bei pass.
+   - NO re-render, NO fragment-fixer.
+   - .qa-status.json: status="pass" + cosmetic_advisories[] from .qa-repair-plan.json.
+   - Banner: "N cosmetic QA notices (no re-render)" + list.
+   - Loop exit as for pass.
 ```
 
-### 3c. Opt-out (Repo-Muster, optional)
+### 3c. Opt-out (repo pattern, optional)
 
-`APPSEC_QA_COSMETIC_BLOCKING=1` → `COSMETIC_ACTION_TYPES = frozenset()` zur
-Laufzeit, d.h. altes Verhalten (alles blocking). Default = neues Verhalten.
+`APPSEC_QA_COSMETIC_BLOCKING=1` → `COSMETIC_ACTION_TYPES = frozenset()` at
+runtime, i.e. old behavior (everything blocking). Default = new behavior.
 
-### 3d. Contract-Pflichten (AGENTS.md §4 — bidirektional)
+### 3d. Contract obligations (AGENTS.md §4 — bidirectional)
 
-- [ ] `qa_checks.py` — severity-Feld + Gate + Exit 4 (Producer)
-- [ ] `SKILL-impl.md` — Exit-4-Branch (Consumer)
-- [ ] `data/required-permissions.yaml` — prüfen, ob neuer Pfad/Befehl nötig (vmtl. nein)
-- [ ] Repair-plan-Schema (falls vorhanden) — `severity` + `status: cosmetic_advisory` zulassen
+- [ ] `qa_checks.py` — severity field + gate + exit 4 (producer)
+- [ ] `SKILL-impl.md` — exit-4 branch (consumer)
+- [ ] `data/required-permissions.yaml` — check whether a new path/command is needed (probably not)
+- [ ] Repair-plan schema (if present) — allow `severity` + `status: cosmetic_advisory`
 - [ ] Tests: `_classify_plan_status` (blocking-only→fail, cosmetic-only→cosmetic_advisory,
-      mixed→fail, empty-fragments→manual_review), `cmd_repair_plan` Exit-4,
-      Opt-out-Env. Drift-Guard für SKILL-impl Exit-Branch.
+      mixed→fail, empty-fragments→manual_review), `cmd_repair_plan` exit-4,
+      opt-out env. Drift guard for the SKILL-impl exit branch.
 
 ---
 
-## 4. Wirkung & Risiko
+## 4. Impact & risk
 
-- **Thorough profitiert am meisten:** genau die `extended`-Checks (#15–#19) sind
-  die kosmetischen — Re-Render fällt künftig nur bei Render-/Contract-/Inhalts-
-  Defekten an.
-- **Kein stilles Verschlucken:** Kosmetik bleibt im Plan + Completion-Summary
-  sichtbar (Exit 4, Plan-Datei erhalten).
-- **„Fix the producer" bleibt intakt:** wir relaxen kein Schema, wir patchen
-  nichts downstream — wir stufen nur die Loop-Auslösung ab.
-- **Risiko niedrig:** rein in der Gate-Klassifizierung; Default-Verhalten per
-  Env umkehrbar; Borderline-Fälle explizit dir zur Freigabe vorgelegt.
-- **Nicht abgedeckt:** Stage-4 Architect-Repair-Loop (`.architect-repair-plan.json`)
-  ist ein separater Mechanismus. Falls dort dasselbe Severity-Gating gewünscht
-  ist → eigener Folge-Schritt.
+- **Thorough benefits most:** exactly the `extended` checks (#15–#19) are
+  the cosmetic ones — re-render will henceforth occur only on render/contract/content
+  defects.
+- **No silent swallowing:** cosmetics remain visible in the plan + completion summary
+  (exit 4, plan file preserved).
+- **"Fix the producer" stays intact:** we relax no schema, we patch
+  nothing downstream — we only downgrade the loop trigger.
+- **Low risk:** purely in the gate classification; default behavior reversible via
+  env; borderline cases explicitly presented to you for approval.
+- **Not covered:** the stage-4 architect repair loop (`.architect-repair-plan.json`)
+  is a separate mechanism. If the same severity gating is wanted there
+  → its own follow-up step.
 
 ---
 
-## 5. Entscheidungen (2026-06-22, final & umgesetzt)
+## 5. Decisions (2026-06-22, final & implemented)
 
 1. Borderline: #14 cosmetic, #15 blocking, #19 cosmetic.
-2. **Exit-Code 4** (`cosmetic_advisory`) — Plan-Datei bleibt fürs Surfacing.
-3. **Opt-out-Env `APPSEC_QA_COSMETIC_BLOCKING=1`** umgesetzt.
+2. **Exit code 4** (`cosmetic_advisory`) — plan file stays for surfacing.
+3. **Opt-out env `APPSEC_QA_COSMETIC_BLOCKING=1`** implemented.
 
-## 6. Verifikation
+## 6. Verification
 
-- `tests/test_qa_checks_cov_band1.py`: `_action_severity` (cosmetic/blocking/env-
+- `tests/test_qa_checks_cov_band1.py`: `_action_severity` (cosmetic/blocking/env
   override), `_classify_plan_status` (cosmetic-only→`cosmetic_advisory`+
   actionable False, mixed→fail, no-severity→blocking-default), `cmd_repair_plan`
-  cosmetic-only→Exit 4 + Plan-Erhalt.
-- Subset grün: `test_qa_checks_cov_band1` / `test_qa_checks` / `test_apply_repair_plan`
-  (314 passed, 1 skipped) + Regression `test_skill_auto_retry` /
+  cosmetic-only→exit 4 + plan preservation.
+- Subset green: `test_qa_checks_cov_band1` / `test_qa_checks` / `test_apply_repair_plan`
+  (314 passed, 1 skipped) + regression `test_skill_auto_retry` /
   `test_compose_threat_model_cov2` / `test_check_inline_shortcut` (211 passed).
-- ruff clean. Bestehende `_classify_plan_status`-Tests unverändert grün
-  (Rückwärtskompatibilität: Aktion ohne `severity` = blocking).
+- ruff clean. Existing `_classify_plan_status` tests unchanged, green
+  (backward compatibility: action without `severity` = blocking).

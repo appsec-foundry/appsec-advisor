@@ -20,197 +20,197 @@
 
 ## Pair A — MS Verdict Opening (`ms-verdict.json::verdict_prose`)
 
-### BEFORE (95 Wörter, 5 Sätze, AI-flavored)
+### BEFORE (95 words, 5 sentences, AI-flavored)
 
 > 🔴 Not production-ready. This deliberately vulnerable training application embeds intentional weaknesses across every tier of its architecture. The application exposes multiple independent paths to full account and host compromise that require no elevated privilege or specialised tooling - a user with only a browser and repository read access can bypass authentication entirely. Closing the risk requires structural changes at the authentication, data-access, and secret-management layers, not a single-point patch.
 
 ### Diagnose
-- "embedding intentional weaknesses across every tier of its architecture" — drei Nominalisierungen in einem Atemzug
-- "exposes multiple independent paths to full account and host compromise" — Nominalstil; "compromise" als Substantiv
-- "a user with only a browser and repository read access" — lange noun-phrase; ein Mensch schreibt "anyone"
-- Schluss-Satz "Closing the risk requires structural changes at the X, Y, and Z layers, not a single-point patch" — typische AI-Kadenz: Triplet + "not a single X" Antithese
+- "embedding intentional weaknesses across every tier of its architecture" — three nominalizations in one breath
+- "exposes multiple independent paths to full account and host compromise" — nominal style; "compromise" as a noun
+- "a user with only a browser and repository read access" — long noun phrase; a human writes "anyone"
+- Closing sentence "Closing the risk requires structural changes at the X, Y, and Z layers, not a single-point patch" — typical AI cadence: triplet + "not a single X" antithesis
 
-### AFTER (62 Wörter, 4 Sätze, menschlich)
+### AFTER (62 words, 4 sentences, human)
 
 > 🔴 Not production-ready. The app is a training target — intentional weaknesses live in every tier. Anyone with a browser and repo read access can take over admin accounts and the host server through several independent paths, none of which need elevated privilege or special tooling. Fixing this means rebuilding authentication, data access, and secret management — not patching a single bug.
 
-### Regel
-1. **Nominalisierungen auflösen**: "embedding weaknesses" → "weaknesses live"
-2. **Triplet-Kadenz brechen**: nicht "X, Y, and Z layers" — sondern Verb-Form mit em-dash-Schluss
-3. **"a user with only a browser…" → "anyone with…"**: kürzer, menschlicher
-4. **Wortzahl-Reduktion ~30 %** ohne Inhaltsverlust
+### Rule
+1. **Dissolve nominalizations**: "embedding weaknesses" → "weaknesses live"
+2. **Break the triplet cadence**: not "X, Y, and Z layers" — instead a verb form with an em-dash close
+3. **"a user with only a browser…" → "anyone with…"**: shorter, more human
+4. **Word-count reduction ~30 %** with no loss of content
 
 ---
 
 ## Pair B — MS Verdict Closing (`ms-verdict.json::closing_prose`)
 
-### BEFORE (37 Wörter, 1 Satz, AI-flavored)
+### BEFORE (37 words, 1 sentence, AI-flavored)
 
 > Nineteen mitigations are identified; replacing the hardcoded secrets with runtime-injected values, switching to parameterized database queries, and upgrading the password hashing algorithm address the highest-impact paths and are prerequisites for any production readiness evaluation.
 
 ### Diagnose
-- "Nineteen mitigations are identified" — Passiv-Eröffnung
-- triple-parallel "replacing... switching... upgrading..." — symmetrische Triplet, klassisch AI
-- "are prerequisites for any production readiness evaluation" — Bürokraten-Deutsch; nominalisiert "prerequisite"
+- "Nineteen mitigations are identified" — passive opener
+- triple-parallel "replacing... switching... upgrading..." — symmetric triplet, classic AI
+- "are prerequisites for any production readiness evaluation" — bureaucratic prose; nominalizes "prerequisite"
 
-### AFTER (40 Wörter, 3 Sätze, menschlich)
+### AFTER (40 words, 3 sentences, human)
 
 > Nineteen mitigations follow. Three matter most: move secrets out of source, switch raw SQL to parameterized queries, replace MD5 password hashes. Without those three, production readiness is not on the table.
 
-### Regel
-5. **Aktiv statt Passiv** im Opener
-6. **Kolon-Liste statt Triplet-Gerundium**: "X, Y, and Z" mit `-ing`-Formen → "X. Y. Z." mit Verb-Imperativ
-7. **Punchline-Schluss**: konkretes Bild ("not on the table") statt Floskel ("are prerequisites for any production readiness evaluation")
-8. **Kürzere Sätze**: 1 Satz → 3 Sätze, gleicher Inhalt, lesbarer
+### Rule
+5. **Active over passive** in the opener
+6. **Colon list instead of gerund triplet**: "X, Y, and Z" with `-ing` forms → "X. Y. Z." with imperative verbs
+7. **Punchline close**: a concrete image ("not on the table") instead of a cliché ("are prerequisites for any production readiness evaluation")
+8. **Shorter sentences**: 1 sentence → 3 sentences, same content, more readable
 
 ---
 
 ## Pair C — Crypto Weakness Description (`ms-architecture-assessment.json::weaknesses[0].description`)
 
-### BEFORE (54 Wörter, 2 Sätze)
+### BEFORE (54 words, 2 sentences)
 
 > A 1024-bit RSA private key, an HMAC secret, and a cookie-signing secret are all hardcoded as string literals in `lib/insecurity.ts`. These are repository-public values — anyone who clones the repo can sign arbitrary JWTs or forge session cookies without server access.
 
 ### Diagnose
-Schon ziemlich gut — konkret, file-path drin, Punchline am Ende. Aber:
-- "are all hardcoded" — Passiv
-- "These are repository-public values" — Demonstrativpronomen-Opener + Kopulasatz; etwas stiff
+Already pretty good — concrete, has the file path, punchline at the end. But:
+- "are all hardcoded" — passive
+- "These are repository-public values" — demonstrative-pronoun opener + copula sentence; a bit stiff
 
-### AFTER (45 Wörter, 2 Sätze)
+### AFTER (45 words, 2 sentences)
 
 > Three secrets live as hardcoded string literals in `lib/insecurity.ts`: a 1024-bit RSA private key, an HMAC secret, and a cookie-signing secret. Cloning the repo gives you everything needed to sign JWTs or forge session cookies — no server access required.
 
-### Regel
-9. **Punchline-Opener mit Zählung**: "Three secrets live as…" benennt den Skandal sofort
-10. **Kolon statt Aufzählung-im-Subjekt**: erst die Aussage, dann der Beleg
-11. **"You" als Subjekt** wenn natürlich: "Cloning the repo gives you everything…" liest sich wie ein Reviewer-Kommentar, nicht wie ein Compliance-Bericht. (Nur sparsam einsetzen, nicht als Standard.)
+### Rule
+9. **Punchline opener with a count**: "Three secrets live as…" names the scandal immediately
+10. **Colon instead of a list-in-the-subject**: the claim first, then the evidence
+11. **"You" as the subject** when it reads naturally: "Cloning the repo gives you everything…" reads like a reviewer comment, not a compliance report. (Use sparingly, not as the default.)
 
 ---
 
 ## Pair D — Authorization Weakness Description (`ms-architecture-assessment.json::weaknesses[3].description`)
 
-### BEFORE (53 Wörter, 2 Sätze)
+### BEFORE (53 words, 2 sentences)
 
 > Several REST endpoints exposed via `finale-rest` accept mass-assignment updates to privileged model fields; the product update endpoint at `server.ts:361` has no authentication middleware; and Angular route guards enforce access control only in the browser without a server-side equivalent. Authorization is inconsistent across the API surface.
 
 ### Diagnose
-- "Several" — vage; wieviele genau?
-- Drei Semikolon-getrennte Klauseln in einem Satz — symmetrisch, formell
-- Schluss-Satz "Authorization is inconsistent across the API surface" — generische AI-Schluss-Kadenz "X is Y across Z"
+- "Several" — vague; exactly how many?
+- Three semicolon-separated clauses in one sentence — symmetric, formal
+- Closing sentence "Authorization is inconsistent across the API surface" — generic AI closing cadence "X is Y across Z"
 
-### AFTER (51 Wörter, 4 Sätze)
+### AFTER (51 words, 4 sentences)
 
 > `finale-rest` exposes REST endpoints that accept mass-assignment to privileged model fields. The product update at `server.ts:361` runs without auth middleware. Angular route guards run only in the browser; there is no server-side equivalent. Three different gaps, one missing piece: server-side authorization as a pattern.
 
-### Regel
-12. **Variation Satz-Länge**: 4 Sätze mit Längen 11/7/13/13 — Rhythmus statt Symmetrie
-13. **Schluss mit Diagnose statt Generalisierung**: nicht "X is inconsistent across Y" — sondern "die fehlende Pattern ist X". Benennt den Root-Cause.
-14. **Drop "Several"**: entweder Zahl nennen oder die Klausel umbauen sodass die Zahl im Kontext steht
+### Rule
+12. **Vary sentence length**: 4 sentences of lengths 11/7/13/13 — rhythm instead of symmetry
+13. **Close with a diagnosis instead of a generalization**: not "X is inconsistent across Y" — instead "the missing pattern is X". Names the root cause.
+14. **Drop "Several"**: either give the number or rebuild the clause so the number sits in the context
 
 ---
 
-## Pair E — Operational Strengths Intro (out of Iteration 1 — Referenz für später)
+## Pair E — Operational Strengths Intro (out of Iteration 1 — reference for later)
 
-### BEFORE (61 Wörter, 2 Sätze)
+### BEFORE (61 words, 2 sentences)
 
 > Despite the structurally deficient design, the project carries a baseline of categorical strengths. The table below groups individual controls into broad-stroke clusters (full per-control breakdown in [Section 7](#7-security-architecture)). Only clusters that genuinely rate as a strength (Adequate or Partial) appear here - clusters demoted to Weak by open Critical/High findings in their defensive remit are excluded from this section and live in [§7](#7-security-architecture) instead.
 
 ### Diagnose
-- "Despite the structurally deficient design" — formelle contrastive Eröffnung
-- "carries a baseline of categorical strengths" — "carries a baseline of" = Bürokraten-Deutsch
-- "The table below groups individual controls into broad-stroke clusters" — Meta-Narration über die Tabelle (Leser sieht die Tabelle)
-- "broad-stroke clusters" — vague Adjektiv-Substantiv-Kombi
-- Schluss-Satz: 36 Wörter, 3 verschachtelte Klauseln
+- "Despite the structurally deficient design" — formal contrastive opener
+- "carries a baseline of categorical strengths" — "carries a baseline of" = bureaucratic prose
+- "The table below groups individual controls into broad-stroke clusters" — meta-narration about the table (the reader can see the table)
+- "broad-stroke clusters" — vague adjective-noun combo
+- Closing sentence: 36 words, 3 nested clauses
 
-### AFTER (44 Wörter, 3 Sätze)
+### AFTER (44 words, 3 sentences)
 
 > Not everything is broken. The clusters below list controls that actually work (Adequate or Partial). Anything weakened by an open Critical/High finding moved to [§7](#7-security-architecture) instead — appearing here would be misleading.
 
-### Regel
-15. **Drop Meta-Narration**: kein "the table below shows…" — die Tabelle zeigt sich selbst
-16. **Drop formal contrastive opener**: "Despite the X, Y" → kurzer direkter Satz
+### Rule
+15. **Drop meta-narration**: no "the table below shows…" — the table shows itself
+16. **Drop formal contrastive opener**: "Despite the X, Y" → a short, direct sentence
 17. **Drop empty adjective-noun-combos**: "broad-stroke clusters", "categorical strengths", "structurally deficient design"
-18. **Begründung am Ende statt Hierarchie-Erklärung**: "appearing here would be misleading" sagt das Warum in 4 Wörtern
+18. **Reason at the end instead of a hierarchy explanation**: "appearing here would be misleading" says the why in 4 words
 
 ---
 
 ## Pair F — §7 H4 Control Intro (`security-architecture.md` H4 positive-case intro)
 
-### BEFORE (40 Wörter, 1 Satz, AI-flavored)
+### BEFORE (40 words, 1 sentence, AI-flavored)
 
 > The application uses Sequelize as an ORM layer to query SQLite, with the intention that user-supplied values are passed as bound parameters rather than concatenated into query strings, preventing query structure from being altered by attacker-controlled input.
 
 ### Diagnose
-- Opener "The application uses …" — formelhafter Subjekt-Stem; 9 von 13 §7-Intros im selben Report starten so
-- "with the intention that … rather than … " — Textbook-Zweck der Kontrollklasse, nicht was DIESE App tut
-- "preventing query structure from being altered by attacker-controlled input" — derselbe Zweck nochmal, in Worten umschrieben
-- Ein 40-Wort-Satz; der konkrete Fakt (welche Routes ORM umgehen) fehlt ganz
+- Opener "The application uses …" — formulaic subject stem; 9 of 13 §7 intros in the same report start this way
+- "with the intention that … rather than … " — the textbook purpose of the control class, not what THIS app does
+- "preventing query structure from being altered by attacker-controlled input" — the same purpose again, paraphrased
+- A single 40-word sentence; the concrete fact (which routes bypass the ORM) is missing entirely
 
-### AFTER (32 Wörter, 2 Sätze, menschlich)
+### AFTER (32 words, 2 sentences, human)
 
 > Sequelize backs most relational queries in this codebase. Two routes opt out and build SQL by hand — the password login (`routes/login.ts:34`) and product search (`routes/search.ts:23`) call raw `models.sequelize.query()`.
 
-### Regel
-19. **Konkretes Subjekt zuerst**: "Sequelize backs most queries …" statt "The application uses Sequelize …" — der Domain-Experte benennt das Artefakt, nicht den generischen Akteur
-20. **Zweck-Padding streichen**: kein "with the intention that … preventing …" — der Leser weiß, wofür parametrisierte Queries da sind
-21. **Den eigentlichen Fakt liefern**: WELCHE Routes weichen ab, mit file:line — das ist die Information, die nur in DIESEN Report gehört
+### Rule
+19. **Concrete subject first**: "Sequelize backs most queries …" instead of "The application uses Sequelize …" — the domain expert names the artifact, not the generic actor
+20. **Cut the purpose padding**: no "with the intention that … preventing …" — the reader knows what parameterized queries are for
+21. **Deliver the actual fact**: WHICH routes deviate, with file:line — that is the information that belongs only in THIS report
 
 ---
 
 ## Pair G — §7 Security-Assessment Block (`security-architecture.md` `**Security assessment**`)
 
-### BEFORE (1 dichter Absatz, 2 verschweißte Schwächen)
+### BEFORE (1 dense paragraph, 2 welded-together weaknesses)
 
 > The login query at `routes/login.ts:34` builds its SQL string by directly interpolating `req.body.email` and the pre-hashed password into a raw `models.sequelize.query()` call, bypassing Sequelize's parameter binding entirely. A `' OR 1=1--` payload in the email field short-circuits the WHERE clause and returns the first database row, which is the seeded admin account. Separately, `lib/insecurity.ts:43` hashes passwords with unsalted MD5, so any database dump obtained through injection immediately yields recoverable plaintext credentials for all accounts.
 
 ### Diagnose
-- Zwei unabhängige Schwächen (SQLi + MD5) in einem 70-Wort-Block; "Separately, …" ist der Naht-Marker
-- Der Leser muss den Absatz parsen, um zwei getrennte Findings zu erkennen
-- Kausal NICHT verkettet — SQLi und MD5 sind unabhängig → gehören in getrennte Bullets
+- Two independent weaknesses (SQLi + MD5) in one 70-word block; "Separately, …" is the seam marker
+- The reader has to parse the paragraph to spot two separate findings
+- NOT causally chained — SQLi and MD5 are independent → they belong in separate bullets
 
-### AFTER (Framing-Satz + 2 Bullets)
+### AFTER (framing sentence + 2 bullets)
 
 > Two independent weaknesses sit on the login path:
 >
 > - `routes/login.ts:34` interpolates `req.body.email` into a raw `models.sequelize.query()` string. `' OR 1=1--` short-circuits the WHERE clause and returns the seeded admin row.
 > - `lib/insecurity.ts:43` hashes passwords with unsalted MD5, so any dump from that injection yields plaintext for every account.
 
-### Regel
-22. **≥2 getrennte Schwächen → Bullet-Liste** mit einem Framing-Satz; ein Bullet pro Schwäche
-23. **"Separately, …" / "In addition, …" als Naht-Signal lesen**: taucht es auf, war es wahrscheinlich schon eine Liste
-24. **Fließtext nur bei Kausalkette behalten**: "key committed → forged token passes → route guard moot" liest sich als Narrativ besser; unabhängige Schwächen nicht
+### Rule
+22. **≥2 separate weaknesses → bullet list** with one framing sentence; one bullet per weakness
+23. **Read "Separately, …" / "In addition, …" as a seam signal**: if it shows up, it was probably already a list
+24. **Keep running prose only for a causal chain**: "key committed → forged token passes → route guard moot" reads better as a narrative; independent weaknesses do not
 
 ---
 
-## Abgeleitetes Vocabulary
+## Derived vocabulary
 
-### Banned (in Polisher-Output, weil AI-Tells)
+### Banned (in polisher output, because they are AI tells)
 
-Adjektive: `robust`, `comprehensive`, `holistic`, `seamless`, `crucial`, `vital`, `key` (als modifier), `categorical`, `broad-stroke`, `structurally deficient`
+Adjectives: `robust`, `comprehensive`, `holistic`, `seamless`, `crucial`, `vital`, `key` (as a modifier), `categorical`, `broad-stroke`, `structurally deficient`
 
-Verben: `leverage`, `facilitate`, `ensure`, `enable`, `embed` (außer im Sinn von "embedded systems"), `carry a baseline of`
+Verbs: `leverage`, `facilitate`, `ensure`, `enable`, `embed` (except in the sense of "embedded systems"), `carry a baseline of`
 
-Quantoren ohne Zahl: `several`, `multiple`, `various`, `numerous`, `many`
+Quantifiers without a number: `several`, `multiple`, `various`, `numerous`, `many`
 
 Transitions: `furthermore`, `moreover`, `additionally`, `in essence`, `in summary`, `notably`, `importantly`
 
-Meta-Floskeln: `it is worth noting`, `it should be noted`, `it is important to note`, `the table below shows`, `as can be seen`
+Meta-clichés: `it is worth noting`, `it should be noted`, `it is important to note`, `the table below shows`, `as can be seen`
 
-Generische Schluss-Kadenzen: `X is Y across the Z`, `X requires Y at the A, B, and C layers`, `X are prerequisites for any Y`
+Generic closing cadences: `X is Y across the Z`, `X requires Y at the A, B, and C layers`, `X are prerequisites for any Y`
 
-Formelhafte Opener-Stems (max. 1× pro §7.X-Sektion): `The application <verb>s …`, `The system …`, `The server …`, `The framework …` — stattdessen mit Route/Datei/Library/Komponente beginnen
+Formulaic opener stems (max. 1× per §7.X section): `The application <verb>s …`, `The system …`, `The server …`, `The framework …` — instead, begin with a route/file/library/component
 
-Zweck-Padding-Klauseln (immer streichen): `with the intention that …`, `with the expectation that …`, `is expected to …`, `is intended to …`, `preventing X from being Y`, `so that <generischer Zweck>`
+Purpose-padding clauses (always cut): `with the intention that …`, `with the expectation that …`, `is expected to …`, `is intended to …`, `preventing X from being Y`, `so that <generic purpose>`
 
 ### Preferred Idioms (positive)
 
-- **Em-dash für Punchline-Schluss**: `… — no server access required.`
-- **Kolon für Listen im Satz**: `Three matter most: X, Y, Z.`
-- **Variable Satz-Länge**: 3-15 Wörter, gemischt
-- **Diagnose-Schluss**: "the missing piece is X" / "the pattern that's absent is X"
-- **Zahl statt Quantor**: "three", "four", "every", "all" — nicht "several", "multiple"
-- **Aktiv-Voice** für Opener
-- **Imperativ-Verben in Mitigation-Listen**: "move", "switch", "replace" — nicht "moving", "switching", "replacing"
+- **Em-dash for a punchline close**: `… — no server access required.`
+- **Colon for lists within a sentence**: `Three matter most: X, Y, Z.`
+- **Variable sentence length**: 3-15 words, mixed
+- **Diagnosis close**: "the missing piece is X" / "the pattern that's absent is X"
+- **Number instead of a quantifier**: "three", "four", "every", "all" — not "several", "multiple"
+- **Active voice** for openers
+- **Imperative verbs in mitigation lists**: "move", "switch", "replace" — not "moving", "switching", "replacing"
 
 ---
 

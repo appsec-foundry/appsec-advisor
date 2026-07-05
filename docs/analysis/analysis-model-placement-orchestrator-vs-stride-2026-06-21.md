@@ -1,104 +1,103 @@
-# Analyse: Modell-Platzierung — Orchestrator (Opus vs Sonnet) und STRIDE (Opus vs Sonnet)
+# Analysis: Model Placement — Orchestrator (Opus vs Sonnet) and STRIDE (Opus vs Sonnet)
 
-> **⚠ KORREKTUR 2026-06-22 — der STRIDE-Teil dieser Analyse ist unvalidiert.**
-> Später wurde verifiziert (`_agent_model`-Auflösung + Real-Logs), dass der
-> Parallel-STRIDE-Dispatch den Agent-`model`-Parameter **nicht setzt**, sodass die
-> STRIDE-Analyzer still auf ihren Frontmatter-Default **Sonnet** zurückfallen — auch
-> in den hier ausgewerteten Läufen lief STRIDE faktisch auf **Sonnet**, nur Triage auf
-> Opus. Die Kernaussage „Opus-STRIDE ist besser **und** billiger" beruht damit auf
-> Läufen, in denen Opus-STRIDE **nie ausgeführt wurde** — sie ist **nicht belegt**.
-> Der `$9 opus`-Anteil von V3 war vermutlich Triage/Merger, nicht STRIDE. Erst ein Lauf
-> mit beweisbar auf Opus laufendem STRIDE (Dispatch-Fix + `stride_model_mismatch`-Gate,
-> umgesetzt 2026-06-22) erlaubt eine echte Messung. Die Orchestrator-Aussagen (§3/§4)
-> sind davon unberührt.
+> **⚠ CORRECTION 2026-06-22 — the STRIDE part of this analysis is unvalidated.**
+> It was later verified (`_agent_model` resolution + real logs) that the
+> parallel STRIDE dispatch does **not set** the agent `model` parameter, so the
+> STRIDE analyzers silently fall back to their frontmatter default **Sonnet** — even
+> in the runs evaluated here, STRIDE effectively ran on **Sonnet**, only triage on
+> Opus. The core claim "Opus STRIDE is better **and** cheaper" therefore rests on
+> runs in which Opus STRIDE was **never executed** — it is **not substantiated**.
+> V3's `$9 opus` share was probably triage/merger, not STRIDE. Only a run
+> with STRIDE provably running on Opus (dispatch fix + `stride_model_mismatch` gate,
+> implemented 2026-06-22) allows a real measurement. The orchestrator claims (§3/§4)
+> are unaffected by this.
 >
-> **UPDATE 2026-06-23 — diese Messung liegt jetzt vor (§10): die A/B widerlegt §5a.**
-> Mit beweisbar auf Opus laufendem STRIDE und sonst identischen Flags ist Opus-Reasoning
-> **$40.78 vs $30.01 = $10.77 teurer**, nicht billiger. Die „Opus-billiger"-These ist falsch;
-> es bleibt ein reiner Qualität-gegen-Kosten-Trade-off. Details + Severity-/Surface-Daten in §10.
+> **UPDATE 2026-06-23 — this measurement is now available (§10): the A/B refutes §5a.**
+> With STRIDE provably running on Opus and otherwise identical flags, Opus reasoning is
+> **$40.78 vs $30.01 = $10.77 more expensive**, not cheaper. The "Opus is cheaper" thesis is wrong;
+> it remains a pure quality-vs-cost trade-off. Details + severity/surface data in §10.
 
-Status: **Analyse / Empfehlung — Code NICHT umgesetzt.** Die Doku-Klarstellungen zur
-Orchestrierungs-Kostenformel sind umgesetzt (siehe §8); die Modell-Default-Änderung
-(`opus` fürs Reasoning + B2d-Invertierung) ist offen und an eine Verifikation (Stufe 0)
-gebunden.
+Status: **Analysis / recommendation — code NOT implemented.** The documentation clarifications on the
+orchestration cost formula are implemented (see §8); the model default change
+(`opus` for reasoning + B2d inversion) is open and tied to a verification (Stage 0).
 
-Empirische Basis: **N = 1 Repo** (OWASP Juice Shop), drei Standard-Full-Läufe vom
-2026-06-21. Richtungsaussagen sind belastbar; exakte Prozent-/Kostenwerte sind
-benchmark-abhängig und nicht zu verallgemeinern. Quelle der Rohdaten: die drei
-`/cost`-Ausgaben + Run-State unter `~/scans2/juice-shop/{standard-opus-orchestrator,
+Empirical basis: **N = 1 repo** (OWASP Juice Shop), three standard full runs from
+2026-06-21. Directional claims are robust; exact percentage/cost values are
+benchmark-dependent and not generalizable. Source of the raw data: the three
+`/cost` outputs + run state under `~/scans2/juice-shop/{standard-opus-orchestrator,
 standard-stride-orchestrator,standard-stride-orchestrator-opus-reasoning}/`.
 
 ---
 
 ## 0. TL;DR
 
-- **Gleiches Modell — der Hebel ist die *Platzierung*, nicht das Modell.**
-- **Opus auf den Orchestrator = verbranntes Geld.** Die Orchestrierungsschicht ist
-  ~40–50 % eines Opus-getriebenen Laufs; sie auf Opus zu fahren addiert grob **+25–55 %
-  aufs Total** (proportional, wächst mit Lauf-Länge/Repo-Größe — kein Fixbetrag) und
-  vertieft die Analyse **nicht**.
-- **Opus auf STRIDE/Triage/Merge = der einzige Hebel, der die Qualität hebt** — und auf
-  diesem (großen) Repo war es sogar **billiger** als reines Sonnet.
-- **Empfehlung:** Default `standard`/`thorough` → STRIDE auf **Opus**; den
-  größen-getriggerten Auto-Downgrade (`B2d`) **abschalten/invertieren**; `opus-cheap`
-  deprecaten. Sonnet-STRIDE nur noch in `quick` + explizitem Opt-out.
+- **Same model — the lever is *placement*, not the model.**
+- **Opus on the orchestrator = burned money.** The orchestration layer is
+  ~40–50 % of an Opus-driven run; running it on Opus adds roughly **+25–55 %
+  to the total** (proportional, grows with run length/repo size — not a fixed amount) and
+  does **not** deepen the analysis.
+- **Opus on STRIDE/triage/merge = the only lever that raises quality** — and on
+  this (large) repo it was even **cheaper** than pure Sonnet.
+- **Recommendation:** Default `standard`/`thorough` → STRIDE on **Opus**; **disable/invert**
+  the size-triggered auto-downgrade (`B2d`); deprecate `opus-cheap`.
+  Sonnet STRIDE only in `quick` + explicit opt-out.
 
 ---
 
-## 1. Versuchsaufbau
+## 1. Experimental setup
 
-Drei Läufe, alle `--assessment-depth standard --full`, gegen dasselbe Juice-Shop-Repo.
-Der Verzeichnisname beschreibt die **treibende Claude-Code-Session**, nicht die interne
-Pipeline. Intern ist `orchestrator_model` in allen drei `sonnet` (per Matrix immer
+Three runs, all `--assessment-depth standard --full`, against the same Juice Shop repo.
+The directory name describes the **driving Claude Code session**, not the internal
+pipeline. Internally, `orchestrator_model` is `sonnet` in all three (per matrix always
 `claude-sonnet-4-6`).
 
-| Variante | Treiber-Session | `reasoning_model` | `stride/triage/merger` |
+| Variant | Driver session | `reasoning_model` | `stride/triage/merger` |
 |---|---|---|---|
 | **V1** `standard-opus-orchestrator` | **Opus** | sonnet-economy (auto) | sonnet / sonnet / sonnet |
 | **V2** `standard-stride-orchestrator` | Sonnet | sonnet-economy (auto) | sonnet / sonnet / sonnet |
 | **V3** `…-opus-reasoning` | Sonnet | **opus** | **opus / opus / opus** |
 
-Wichtig: V1 und V2 haben **byte-identische interne Pipeline-Configs** — der einzige
-Unterschied ist das Modell der Treiber-Session. Das macht **V1 − V2 = Effekt von
-Opus-als-Orchestrator** und **V3 − V2 = Effekt von Opus-im-Reasoning** (gegen dieselbe
-Sonnet-Treiber-Session) zu zwei sauberen natürlichen Experimenten.
+Important: V1 and V2 have **byte-identical internal pipeline configs** — the only
+difference is the model of the driver session. That makes **V1 − V2 = effect of
+Opus-as-orchestrator** and **V3 − V2 = effect of Opus-in-reasoning** (against the same
+Sonnet driver session) two clean natural experiments.
 
-Beleg, dass V1/V2 intern keine Analyse-Phase auf Opus hatten — das `reasoning_label`
-aus `.skill-config.json`:
+Evidence that V1/V2 had no internal analysis phase on Opus — the `reasoning_label`
+from `.skill-config.json`:
 
 > sonnet-economy (auto — large repo: economy tier across all criteria-selected
 > components; **Opus on merger/triage uneconomical at this scale, STRIDE stays Sonnet**)
 
-Der Auto-Switcher hat die Pipeline wegen Repo-Größe heruntergestuft; `.agent-run.log`
-zeigt in V1/V2 **0 Opus-Subagenten** (nur sonnet+haiku). In V1 ging der gesamte
-Opus-Betrag also in die äußere Session (Glue/Dispatch), nicht in die Analyse.
+The auto-switcher downgraded the pipeline because of repo size; `.agent-run.log`
+shows **0 Opus subagents** in V1/V2 (only sonnet+haiku). In V1, the entire
+Opus amount therefore went into the outer session (glue/dispatch), not the analysis.
 
 ---
 
-## 2. Rohdaten
+## 2. Raw data
 
-| | V1 opus-orchestrator | V2 sonnet (Kontrolle) | V3 opus-reasoning |
+| | V1 opus-orchestrator | V2 sonnet (control) | V3 opus-reasoning |
 |---|---|---|---|
-| **Kosten** | **$42.01** | $33.66 | **$31.78** |
-| davon Opus | $21.46 | – | $9.08 |
-| davon Sonnet | $20.36 | $33.66 | $22.06 |
-| davon Haiku | $0.19 | – | $0.64 |
-| API-Dauer | 1h 55m | 2h 10m | 2h 05m |
-| Wall-Dauer | 1h 12m | 1h 44m | *8h 42m ⚠️* |
+| **Cost** | **$42.01** | $33.66 | **$31.78** |
+| of which Opus | $21.46 | – | $9.08 |
+| of which Sonnet | $20.36 | $33.66 | $22.06 |
+| of which Haiku | $0.19 | – | $0.64 |
+| API duration | 1h 55m | 2h 10m | 2h 05m |
+| Wall duration | 1h 12m | 1h 44m | *8h 42m ⚠️* |
 | **Findings** | 71 | 50 | **74** |
 | Mitigations | 74 | 50 | **76** |
 | Severity (C/H/M/L) | 13 / 50 / 5 / 3 | 14 / 27 / 8 / 1 | **8 / 38 / 18 / 10** |
 | % Crit/High | 89 % | 82 % | **62 %** |
-| „✓ verified"-Marker | 64 / 71 | 45 / 50 | **70 / 74 (95 %)** |
-| STRIDE-Komponenten | 8 (+ai-chatbot, +b2b-api) | 7 (+marsdb) | 8 (**+web3**, +llm-chat) |
+| "✓ verified" markers | 64 / 71 | 45 / 50 | **70 / 74 (95 %)** |
+| STRIDE components | 8 (+ai-chatbot, +b2b-api) | 7 (+marsdb) | 8 (**+web3**, +llm-chat) |
 
-⚠️ **V3-Wall (8h 42m) ist kontaminiert** — die Session lag idle/suspended. Nur API-Zeit
-und Kosten sind belastbar. V1s 1h 12m Wall ist auffällig niedrig (API-Latenz-Glück,
-nicht strukturell schneller); alle drei API-Zeiten liegen im Band 1h55–2h10.
+⚠️ **V3 wall (8h 42m) is contaminated** — the session was idle/suspended. Only API time
+and cost are reliable. V1's 1h 12m wall is conspicuously low (API-latency luck,
+not structurally faster); all three API times fall in the 1h55–2h10 band.
 
-Token-Deltas (aus `/cost`, autoritativ über den ganzen Lauf):
+Token deltas (from `/cost`, authoritative over the whole run):
 
-| Sonnet-Verbrauch | V2 | V3 | Δ |
+| Sonnet consumption | V2 | V3 | Δ |
 |---|---|---|---|
 | output | 355.2k | 220.5k | **−38 %** |
 | cache-read | 67.4m | 41.6m | **−38 % (−25.8m)** |
@@ -106,259 +105,259 @@ Token-Deltas (aus `/cost`, autoritativ über den ganzen Lauf):
 
 ---
 
-## 3. Befund A — Opus als Orchestrator: kein analytischer Mehrwert, hoher Preis
+## 3. Finding A — Opus as orchestrator: no analytical added value, high price
 
-V1 (Opus-Session) liefert 71 Findings gegen V2s 50 — aber da Opus in V1 **null Analyse**
-machte (Pipeline byte-identisch zu V2, 0 Opus-Subagenten), ist dieser Vorsprung nur
-zuzuordnen auf (a) bessere Orchestrierungs-/Inventar-Urteile der Opus-Session oder
-(b) Lauf-zu-Lauf-Rauschen (N=1). **Qualitativ** zeigt sich, dass Opus-als-Orchestrator
-die Kernschwäche *nicht* behebt:
+V1 (Opus session) delivers 71 findings against V2's 50 — but since Opus did **zero analysis**
+in V1 (pipeline byte-identical to V2, 0 Opus subagents), this lead is only
+attributable to (a) better orchestration/inventory judgments by the Opus session or
+(b) run-to-run noise (N=1). **Qualitatively**, it turns out that Opus-as-orchestrator
+does *not* fix the core weakness:
 
-- **Severity-Inflation bleibt:** 89 % aller V1-Findings sind Crit/High (13 C + 50 H),
-  nur 8 Med/Low. Das kann Opus nicht reparieren, weil `triage_model` = Sonnet war.
+- **Severity inflation persists:** 89 % of all V1 findings are Crit/High (13 C + 50 H),
+  only 8 Med/Low. Opus cannot fix this, because `triage_model` = Sonnet.
 
-→ **$21.46 für einen indirekten, teils-Rausch-Effekt, der die Qualität nicht hebt.**
-Geld in den Glue.
+→ **$21.46 for an indirect, partly-noise effect that does not raise quality.**
+Money into the glue.
 
 ---
 
-## 4. Befund B — Orchestrierungs-Kostenformel (proportional, nicht fix)
+## 4. Finding B — orchestration cost formula (proportional, not fixed)
 
-V1 trennt die Kosten sauber nach Modell, weil Opus dort *nur* die Orchestrierung war:
+V1 separates the cost cleanly by model, because Opus there was *only* the orchestration:
 
-- **Orchestrierung (Opus) = $21.46 = 51 % des $42.01-Laufs.**
+- **Orchestration (Opus) = $21.46 = 51 % of the $42.01 run.**
 - Pipeline (Sonnet) = $20.36 = 48 %.
 
-Also ist die Orchestrierungsschicht **~40–50 % eines Opus-getriebenen Laufs** — kein
-kleiner Posten, sondern dominiert von **cache-read** der Langzeit-Session (der
-Orchestrator liest den wachsenden gecachten Kontext bei *jedem* Dispatch erneut).
+So the orchestration layer is **~40–50 % of an Opus-driven run** — not a
+small item, but dominated by the long-lived session's **cache-read** (the
+orchestrator re-reads the growing cached context on *every* dispatch).
 
-**Aufpreis Opus- vs Sonnet-Orchestrierung:**
-- Unser Lauf: V1 − V2 = $42.01 − $33.66 = **$8.35 ≈ +25 %** aufs Total.
-- Doku-Benchmark (`docs/threat-modeler.md`): $47 (Opus-Session) vs $30 (Sonnet-Session)
+**Surcharge for Opus vs Sonnet orchestration:**
+- Our run: V1 − V2 = $42.01 − $33.66 = **$8.35 ≈ +25 %** on the total.
+- Documentation benchmark (`docs/threat-modeler.md`): $47 (Opus session) vs $30 (Sonnet session)
   ≈ **+57 %**.
 
-→ Der Aufpreis ist **proportional, nicht fix**: er skaliert mit Lauf-Länge × Kontext-
-größe, also mit Repo-Größe. Auf größeren/längeren Läufen wächst der absolute Aufpreis.
-Faustregel: **+25–55 % aufs Total, für null Gegenwert.** Orchestrator daher **immer
-Sonnet** (Haiku ist zu schwach — treibt JSON-Contracts/Gates/Repair-Loops).
+→ The surcharge is **proportional, not fixed**: it scales with run length × context
+size, i.e. with repo size. On larger/longer runs the absolute surcharge grows.
+Rule of thumb: **+25–55 % on the total, for zero return.** Orchestrator therefore **always
+Sonnet** (Haiku is too weak — it drives JSON contracts/gates/repair loops).
 
-**Vorbehalt / nicht sauber isolierbar:** V2 faltet Orchestrierung + Pipeline in *einen*
-Sonnet-Betrag, daher ist der Sonnet-Orchestrierungs-Anteil nicht exakt bestimmbar. Die
-„+25 %" unterstellen V1-Pipeline ≈ V2-Pipeline (gleiches Sonnet); die „5×"-Aussage der
-Altdoku ist die *Per-Token-Rate* (Opus ≈ 5× Sonnet), kein Gesamtlauf-Faktor. Beide
-Lesarten ergeben dieselbe Richtung, unterschiedliche Magnitude → Spanne statt Punktwert.
+**Caveat / not cleanly isolable:** V2 folds orchestration + pipeline into *one*
+Sonnet amount, so the Sonnet orchestration share cannot be determined exactly. The
+"+25 %" assumes V1 pipeline ≈ V2 pipeline (same Sonnet); the "5×" claim in the
+old docs is the *per-token rate* (Opus ≈ 5× Sonnet), not a whole-run factor. Both
+readings give the same direction, different magnitude → range rather than point value.
 
 ---
 
-## 5. Befund C — Opus vs Sonnet für STRIDE: besser UND (hier) billiger
+## 5. Finding C — Opus vs Sonnet for STRIDE: better AND (here) cheaper
 
-### 5a. Kosten-Inversion (V3 < V2)
+### 5a. Cost inversion (V3 < V2)
 
-V3 (Opus-Reasoning) war **billiger** als V2 (reines Sonnet): **$31.78 < $33.66**.
-Mechanik:
+V3 (Opus reasoning) was **cheaper** than V2 (pure Sonnet): **$31.78 < $33.66**.
+Mechanics:
 
-- Sonnet-Seite fiel um **−$11.60** ($33.66 → $22.06), weil die churn-intensivsten Phasen
-  (STRIDE/Triage/Merge) den Sonnet-Zähler verließen: Sonnet-output −38 %, Sonnet-
+- The Sonnet side fell by **−$11.60** ($33.66 → $22.06), because the most churn-intensive phases
+  (STRIDE/triage/merge) left the Sonnet counter: Sonnet output −38 %, Sonnet
   cache-read −38 % (−25.8m).
-- Opus + Haiku addierten nur **+$9.72**. Opus' eigener cache-read war nur **7.0m** —
-  weit unter den 25.8m, die dieselbe Arbeit auf Sonnet erzeugt hätte, weil Opus in
-  **weniger Tool-Iterationen** konvergiert.
-- Netto **−$1.88**.
+- Opus + Haiku added only **+$9.72**. Opus's own cache-read was only **7.0m** —
+  far below the 25.8m that the same work would have generated on Sonnet, because Opus
+  converges in **fewer tool iterations**.
+- Net **−$1.88**.
 
-Rechenbeispiel zur Verdeutlichung (Per-Modell-Summen aus `/cost`):
+Worked example for clarity (per-model totals from `/cost`):
 
 ```
-                 V2 (alles Sonnet)     V3 (STRIDE/triage/merge → Opus)
+                 V2 (all Sonnet)       V3 (STRIDE/triage/merge → Opus)
   sonnet         $33.66                $22.06        (−$11.60)
   opus           –                     $9.08
   haiku          –                     $0.64
   ───────        ──────                ──────
   Σ              $33.66                $31.78        (netto −$1.88)
 
-  Treiber = Sonnet-cache-read:   67.4m  →  41.6m   (−25.8m)
+  Driver = Sonnet cache-read:    67.4m  →  41.6m   (−25.8m)
 ```
 
-Warum `cache-read` der Treiber ist: Es ist der **mit Abstand größte Kostenposten** des
-Laufs — bei V2 grob **~$20 von $33.66** (geschätzt: 67.4m Tokens × ~$0.30/M Sonnet-
-cache-read-Rate; `/cost` liefert nur Per-Modell-Summen, keine Per-Zeilen-Dollar, daher
-abgeleitet). Jeder Subagenten-Turn liest den gesamten gecachten Kontext (Millionen
-Tokens) erneut → mehr Turns = mehr cache-read-Dollar. Opus erledigt dieselben Reasoning-
-Phasen in **weniger Turns** und erzeugt deshalb nur **7.0m** Opus-cache-read statt der
-~25m, die das auf Sonnet kostet. Der Opus-Aufpreis (**+$9.72**) ist kleiner als die so
-freigesetzte Sonnet-Ersparnis (**−$11.60**) → der Lauf wird unterm Strich billiger.
+Why `cache-read` is the driver: it is **by far the largest cost item** of the
+run — in V2 roughly **~$20 of $33.66** (estimated: 67.4m tokens × ~$0.30/M Sonnet
+cache-read rate; `/cost` only provides per-model totals, no per-line dollars, hence
+derived). Every subagent turn re-reads the entire cached context (millions of
+tokens) → more turns = more cache-read dollars. Opus does the same reasoning
+phases in **fewer turns** and therefore generates only **7.0m** Opus cache-read instead of the
+~25m it costs on Sonnet. The Opus surcharge (**+$9.72**) is smaller than the Sonnet
+saving thus freed up (**−$11.60**) → the run ends up cheaper on balance.
 
-Kernpunkt: Der teuerste Posten ist **cache-read**, der mit der Turn-Zahl skaliert. Ein
-Sonnet, das STRIDE stemmt, „thrasht" (viele Re-Reads/Retries → viel cache-read). Opus
-ist *token-effizienter* auf genau dem teuersten Posten. **Es ist nicht „Opus < Sonnet
-pro Token" — es ist „weniger, aber entscheidendere Turns".**
+Key point: the most expensive item is **cache-read**, which scales with the turn count. A
+Sonnet that shoulders STRIDE "thrashes" (many re-reads/retries → lots of cache-read). Opus
+is *more token-efficient* on exactly the most expensive item. **It is not "Opus < Sonnet
+per token" — it is "fewer, but more decisive turns".**
 
-Anmerkung: `estimate_duration._MODEL_FACTOR` kodiert `opus: 1.40` (= 1,4× teurer/
-langsamer). Die **Kosten**seite dieser Annahme widerlegt der Lauf; die **Zeit**seite
-(Opus-Latenz) bleibt plausibel, ist aber wegen der kontaminierten V3-Wall ungemessen.
+Note: `estimate_duration._MODEL_FACTOR` encodes `opus: 1.40` (= 1.4× more expensive/
+slower). The **cost** side of this assumption is refuted by the run; the **time** side
+(Opus latency) remains plausible but is unmeasured because of the contaminated V3 wall.
 
-### 5b. Qualität (nicht nur Anzahl)
+### 5b. Quality (not just count)
 
-- **Severity-Kalibrierung deutlich besser:** V3 hat 8 Critical (vs 13/14) und einen
-  echten Med/Low-Schwanz (28 Findings) statt der 89 %/82 %-Crit/High-Inflation von
-  V1/V2. Konservativere, prioritisierbarere Verteilung — und das ist **direkt kausal**,
-  denn `triage_model = opus` *ist* die Severity-Zuweisungsstufe.
-- **Mehr verifizierte Evidenz:** 70/74 (95 %) „✓ verified" vs 90 %/90 %.
-- **Reale neue Angriffsfläche:** eigene Web3-Komponente analysiert (Wallet-Ownership aus
-  Request-Body, Web3-Endpoints ohne Auth/Rate-Limit, NFT-Mint-Error-Leak, Alchemy-RPC
-  ungeprüft) + LLM-Chat (Prompt Injection, Excessive Agency). Das sind echte
-  Juice-Shop-Challenges, die V2 (reines Sonnet) komplett verfehlt.
+- **Severity calibration clearly better:** V3 has 8 Critical (vs 13/14) and a
+  real Med/Low tail (28 findings) instead of the 89 %/82 % Crit/High inflation of
+  V1/V2. A more conservative, more prioritizable distribution — and this is **directly causal**,
+  because `triage_model = opus` *is* the severity-assignment stage.
+- **More verified evidence:** 70/74 (95 %) "✓ verified" vs 90 %/90 %.
+- **Real new attack surface:** analyzed the custom Web3 component (wallet ownership from
+  request body, Web3 endpoints without auth/rate-limit, NFT mint error leak, Alchemy RPC
+  unchecked) + LLM chat (prompt injection, excessive agency). These are real
+  Juice Shop challenges that V2 (pure Sonnet) misses entirely.
 
-Qualitätsranking: **V3 ≳ V1 > V2.**
-
----
-
-## 6. Wodurch ist Sonnet für STRIDE überhaupt gerechtfertigt?
-
-Stress-Test der naheliegenden Gründe — die meisten kollabieren:
-
-1. **Latenz (Opus ~1,4× langsamer):** schwach. STRIDE läuft parallel-fan-out pro
-   Komponente (default-on), der Wall-Aufschlag ist *eine* Komponenten-Latenz, nicht N×;
-   bei einem ~2h-Lauf für ein periodisches Dokument vernachlässigbar. Zudem **ungemessen**
-   (V3-Wall kontaminiert).
-2. **Kleine/einfache Repos (Sonnet billiger, kein Thrash):** ökonomisch irrelevant. Dort
-   ist Sonnet zwar *relativ* billiger, aber *absolut* reden wir über ~$1,50 statt ~$3 —
-   Kostenoptimierung lohnt nur, wo Kosten groß sind, und das sind die **großen** Repos,
-   wo Opus gewinnt. (Hypothese — auf kleinen Repos ungetestet.)
-3. **Kapazität / Rate-Limit / harter Cost-Cap:** überlebt — aber als **degradierter
-   Notfallmodus** beim Massen-Scan, nicht als Default.
-
-Schärfer noch: **`opus-cheap` ist verkehrt herum allokiert.** Es gibt Opus an den
-**merger** (eine Phase, die der Code selbst als „zu klein für Opus-Raten" beschreibt) und
-lässt **STRIDE — die wertschöpfende Reasoning-Phase — auf Sonnet hungern**. Opus auf die
-billige, strukturierte Phase; Sonnet auf die offene, wertbestimmende. Das widerspricht der
-eigenen Code-Begründung.
-
-**Legitime Heimat für Sonnet-STRIDE:** nur **`quick`** (nutzergewählt schnell/flach, mit
-ohnehin reduzierter STRIDE-Tiefe) + explizites `--reasoning-model sonnet-economy` /
-`--max-cost-usd`. **Nie** als automatischer, größen-getriggerter Downgrade von `standard`.
+Quality ranking: **V3 ≳ V1 > V2.**
 
 ---
 
-## 7. Heutiges Verhalten im Code (`scripts/resolve_config.py`)
+## 6. What justifies Sonnet for STRIDE at all?
 
-- **Default `standard`/`thorough`** = `opus-cheap` (`resolve_reasoning_model`, ~Z. 498) →
+Stress-test of the obvious reasons — most of them collapse:
+
+1. **Latency (Opus ~1.4× slower):** weak. STRIDE runs parallel fan-out per
+   component (default-on), the wall surcharge is *one* component's latency, not N×;
+   for a ~2h run producing a periodic document, negligible. Also **unmeasured**
+   (V3 wall contaminated).
+2. **Small/simple repos (Sonnet cheaper, no thrash):** economically irrelevant. There
+   Sonnet is *relatively* cheaper, but in *absolute* terms we're talking about ~$1.50 instead of ~$3 —
+   cost optimization only pays off where costs are large, and those are the **large** repos,
+   where Opus wins. (Hypothesis — untested on small repos.)
+3. **Capacity / rate limit / hard cost cap:** survives — but as a **degraded
+   emergency mode** for mass scans, not as a default.
+
+Sharper still: **`opus-cheap` is allocated backwards.** It gives Opus to the
+**merger** (a phase the code itself describes as "too small for Opus rates") and
+lets **STRIDE — the value-generating reasoning phase — starve on Sonnet**. Opus on the
+cheap, structured phase; Sonnet on the open-ended, value-determining one. This contradicts the
+code's own rationale.
+
+**Legitimate home for Sonnet STRIDE:** only **`quick`** (user-chosen fast/shallow, with
+already-reduced STRIDE depth) + explicit `--reasoning-model sonnet-economy` /
+`--max-cost-usd`. **Never** as an automatic, size-triggered downgrade of `standard`.
+
+---
+
+## 7. Current behavior in the code (`scripts/resolve_config.py`)
+
+- **Default `standard`/`thorough`** = `opus-cheap` (`resolve_reasoning_model`, ~line 498) →
   `MODEL_MATRIX["opus-cheap"]` = **stride: sonnet, triage: sonnet, merger: opus**.
-- **`LARGE_REPO_SOURCE_FILE_THRESHOLD = 400`** (Z. 343). Juice-Shop > 400 →
-  `resolve_repo_size_cap` setzt `repo_size_capped = True`.
-- **`resolve_default_tier_for_capped_repos` (B2d, ~Z. 415)** stuft dann (ohne explizites
-  `--reasoning-model`) `opus-cheap` → `sonnet-economy` herunter — **alles Sonnet**. Das
-  hat V1/V2 auf die *schlechteste* Reasoning-Variante gezwungen. Der Größen-Trigger steht
-  **verkehrt**: groß ist genau das Regime, in dem Opus-STRIDE sich rechnet.
-- `MODEL_MATRIX["opus"]` = stride/triage/merger **alle opus** (= V3, via explizitem
+- **`LARGE_REPO_SOURCE_FILE_THRESHOLD = 400`** (line 343). Juice Shop > 400 →
+  `resolve_repo_size_cap` sets `repo_size_capped = True`.
+- **`resolve_default_tier_for_capped_repos` (B2d, ~line 415)** then (without explicit
+  `--reasoning-model`) downgrades `opus-cheap` → `sonnet-economy` — **all Sonnet**. This
+  forced V1/V2 onto the *worst* reasoning variant. The size trigger is
+  **backwards**: large is exactly the regime in which Opus STRIDE pays off.
+- `MODEL_MATRIX["opus"]` = stride/triage/merger **all opus** (= V3, via explicit
   `--reasoning-model opus`).
 
 ---
 
-## 8. Empfehlung & Einbau
+## 8. Recommendation & integration
 
-### Bereits umgesetzt (2026-06-21) — nur Doku/Prosa, keine Test-Pins betroffen
-Klarstellung der Orchestrierungs-Kostenformel an vier Stellen: bare „~5×" → „+25–55 %
-aufs Total, proportional zur Repo-Größe; Orchestrierung ≈ halber Opus-Lauf":
+### Already implemented (2026-06-21) — docs/prose only, no test pins affected
+Clarification of the orchestration cost formula in four places: bare "~5×" → "+25–55 %
+on the total, proportional to repo size; orchestration ≈ half an Opus run":
 `docs/threat-modeler.md` (×2), `skills/create-threat-model/SKILL.md`,
 `scripts/run-headless.sh` (×2).
 
-### Offen — Modell-Routing (an Verifikation gebunden)
+### Open — model routing (tied to verification)
 
-**Stufe 0 — Verifikation (vor jeder Code-Änderung):** 3×3-Matrix
-(klein / mittel / groß × `sonnet-economy` / `opus-cheap` / `opus`). Schließt die
-fehlende `opus-cheap`-Zelle auf Juice-Shop und isoliert, ob **STRIDE-auf-Sonnet** der
-Kostentreiber ist (oder triage/merger). Bestätigt die *Magnitude*; die *Richtung* steht
-schon.
+**Stage 0 — verification (before any code change):** 3×3 matrix
+(small / medium / large × `sonnet-economy` / `opus-cheap` / `opus`). Closes the
+missing `opus-cheap` cell on Juice Shop and isolates whether **STRIDE-on-Sonnet** is the
+cost driver (or triage/merger). Confirms the *magnitude*; the *direction* is
+already settled.
 
-**Stufe 1 — risikoarm, direkt belegt:** B2d-Größen-Downgrade (`:415`) streichen/neutral
-schalten, damit große Repos nicht auf alles-Sonnet gezwungen werden. Test-Pins
-bidirektional (`test_resolve_config.py`, `test_reasoning_model_resolution.py`,
+**Stage 1 — low-risk, directly evidenced:** delete/neutralize the B2d size downgrade (`:415`),
+so large repos are not forced onto all-Sonnet. Test pins
+bidirectional (`test_resolve_config.py`, `test_reasoning_model_resolution.py`,
 `test_haiku_routing_per_depth.py`).
 
-**Stufe 2 — der eigentliche Hebel:** Default `standard`/`thorough` → **`opus`**
-(STRIDE auf Opus). `opus-cheap` deprecaten/neu definieren. `estimate_duration`-Anker
-nach echtem Opus-Standard-Lauf neu kalibrieren (`_MODEL_FACTOR`-Dauer ggf. bei 1.40
-lassen — nur die Kostenannahme war falsch). Sonnet-STRIDE bleibt für `quick` + Opt-out.
+**Stage 2 — the actual lever:** Default `standard`/`thorough` → **`opus`**
+(STRIDE on Opus). Deprecate/redefine `opus-cheap`. Recalibrate the `estimate_duration` anchors
+after a real Opus standard run (leave `_MODEL_FACTOR` duration at 1.40 if appropriate —
+only the cost assumption was wrong). Sonnet STRIDE stays for `quick` + opt-out.
 
-Kein neuer Tier nötig — eher **weniger** (Default umstellen + Auto-Switch invertieren).
-
----
-
-## 9. Grenzen der Aussagekraft
-
-- **N = 1 Repo, eine Sprache (Node/Express), drei Einzelläufe.** Keine Varianz-Kontrolle
-  (API-Latenz, Tageszeit, Repair-/Retry-Churn). V2 könnte mehr Churn gehabt haben, was
-  seinen cache-read aufbläht.
-- **V3-Wall kontaminiert** (8h Idle) → Dauer-Vergleich nur über API-Zeit.
-- **Orchestrierungs-Split nicht exakt isolierbar** (V2 faltet alles in Sonnet).
-- **Kleine-Repo-Regime ungetestet** → das „absolut trivial"-Argument ist Schluss, nicht
-  Messung.
-- Belastbar ist die **Richtung** (Opus aufs Reasoning hebt Qualität und ist auf großen
-  Repos mindestens kostenneutral; Opus auf den Orchestrator ist reiner Aufpreis). Die
-  **exakten Prozentwerte** sind benchmark-abhängig.
+No new tier needed — rather **fewer** (change the default + invert the auto-switch).
 
 ---
 
-## 10. VALIDIERT 2026-06-23 — saubere A/B-Messung widerlegt die Kosten-These (§5a)
+## 9. Limits of significance
 
-Die in §5a fehlende saubere Messung wurde nachgeholt: zwei Läufe gegen dasselbe
-Juice-Shop-Repo, **identische Flags** (`--rebuild --assessment-depth standard --stride-cap 2`,
-gleiche Code-Version mit Dispatch-Fix), beide **clean** (0 Resumes), **gleiche Threat-Zahl**.
-Einzige Variable: der Reasoning-Tier. Erstmals lief Opus-STRIDE **beweisbar** (12 Opus-Dispatches);
-der Sonnet-Lauf hatte **0 Opus** (reasoning_model=sonnet-economy, stride/triage/merger=sonnet).
+- **N = 1 repo, one language (Node/Express), three single runs.** No variance control
+  (API latency, time of day, repair/retry churn). V2 may have had more churn, which
+  inflates its cache-read.
+- **V3 wall contaminated** (8h idle) → duration comparison only via API time.
+- **Orchestration split not exactly isolable** (V2 folds everything into Sonnet).
+- **Small-repo regime untested** → the "absolutely trivial" argument is inference, not
+  measurement.
+- What is robust is the **direction** (Opus on reasoning raises quality and is at least
+  cost-neutral on large repos; Opus on the orchestrator is pure surcharge). The
+  **exact percentage values** are benchmark-dependent.
 
-| | Opus-Reasoning | Sonnet-economy | Δ |
+---
+
+## 10. VALIDATED 2026-06-23 — clean A/B measurement refutes the cost thesis (§5a)
+
+The clean measurement missing in §5a has been supplied: two runs against the same
+Juice Shop repo, **identical flags** (`--rebuild --assessment-depth standard --stride-cap 2`,
+same code version with dispatch fix), both **clean** (0 resumes), **same threat count**.
+The only variable: the reasoning tier. For the first time, Opus STRIDE ran **provably** (12 Opus dispatches);
+the Sonnet run had **0 Opus** (reasoning_model=sonnet-economy, stride/triage/merger=sonnet).
+
+| | Opus reasoning | Sonnet-economy | Δ |
 |---|---|---|---|
-| **Kosten (`/cost`)** | **$40.78** | **$30.01** | **Sonnet −$10.77 (−26 %)** |
-| Threats | 53 | 52 | ~gleich |
-| Opus-Dispatches | 12 (STRIDE+triage+merger) | 0 | — |
-| Lauf | clean (77 min) | clean (API 2h09; Wall kontaminiert) | — |
+| **Cost (`/cost`)** | **$40.78** | **$30.01** | **Sonnet −$10.77 (−26 %)** |
+| Threats | 53 | 52 | ~same |
+| Opus dispatches | 12 (STRIDE+triage+merger) | 0 | — |
+| Run | clean (77 min) | clean (API 2h09; wall contaminated) | — |
 
-**Befund: §5a ist falsch.** Bei sonst gleichen Bedingungen ist Opus-Reasoning **$10.77 teurer**,
-nicht billiger. Die ursprüngliche „Kosten-Inversion" (V3 $31.78 < V2 $33.66) war ein Artefakt —
-in V1/V2/V3 lief STRIDE faktisch auf Sonnet; der $1.88-Unterschied war opus- vs sonnet-**Triage/Merger**
-+ Rauschen, kein STRIDE-Effekt. Mechanik der Widerlegung: der dominante Kostenposten cache-read sitzt
-beim **immer-Sonnet-Orchestrator** (im Sonnet-Lauf ~$17.70 von $30, 59.0m Tokens) — der ist invariant
-gegen das STRIDE-Modell. Opus auf dem Reasoning **senkt** diesen Block nicht, es **addiert** nur seine
-eigene Schicht. Opus = strikt additive Kosten.
+**Finding: §5a is wrong.** All else equal, Opus reasoning is **$10.77 more expensive**,
+not cheaper. The original "cost inversion" (V3 $31.78 < V2 $33.66) was an artifact —
+in V1/V2/V3, STRIDE effectively ran on Sonnet; the $1.88 difference was opus- vs sonnet-**triage/merger**
++ noise, not a STRIDE effect. Mechanics of the refutation: the dominant cost item, cache-read, sits
+with the **always-Sonnet orchestrator** (in the Sonnet run ~$17.70 of $30, 59.0m tokens) — which is invariant
+to the STRIDE model. Opus on the reasoning does **not lower** this block, it only **adds** its
+own layer. Opus = strictly additive cost.
 
-**§5b (Qualität) bleibt — aber gehört zu Triage, nicht STRIDE, und der Trade-off ist real und gemessen.**
-Der günstige Sonnet-economy-Lauf zeigt genau die in §5b benannten Schwächen, weil `triage_model` jetzt
-ebenfalls Sonnet ist:
+**§5b (quality) stands — but belongs to triage, not STRIDE, and the trade-off is real and measured.**
+The cheap Sonnet-economy run shows exactly the weaknesses named in §5b, because `triage_model` is now
+also Sonnet:
 
-- **Severity-Inflation:** 11 Critical / 31 High / 8 Medium / **2 Low** = **81 % Crit/High** (vs. der
-  opus-triage-kalibrierten 62 % mit 10 Low). Schlechter priorisierbar.
-- **Surface-Lücke:** **keine** Web3/NFT-Komponente analysiert (der verifizierte Opus-Standardlauf hatte
-  eine). LLM/AI-Chatbot-Surface ist abgedeckt.
+- **Severity inflation:** 11 Critical / 31 High / 8 Medium / **2 Low** = **81 % Crit/High** (vs. the
+  opus-triage-calibrated 62 % with 10 Low). Harder to prioritize.
+- **Surface gap:** **no** Web3/NFT component analyzed (the verified Opus standard run had
+  one). LLM/AI chatbot surface is covered.
 
-**`--stride-cap 2` verifiziert (live, key-gated):** 43 STRIDE-Threats, **kein** Cap-Verstoß
-(≤2 pro Kategorie/Komponente, Criticals exempt — Critical-safe hält). Die 9 CI/CD-Threats stammen aus
-`source=architectural-anti-pattern` und unterliegen dem STRIDE-Cap korrekt **nicht**.
+**`--stride-cap 2` verified (live, key-gated):** 43 STRIDE threats, **no** cap violation
+(≤2 per category/component, Criticals exempt — Critical-safe holds). The 9 CI/CD threats come from
+`source=architectural-anti-pattern` and correctly are **not** subject to the STRIDE cap.
 
-**Konsequenz für die offene Default-Empfehlung (§8 Stufe 2):** Die Begründung „Opus-STRIDE besser **und**
-billiger" trägt nicht mehr — billiger ist es nicht. Es bleibt ein reiner **Qualität-gegen-Kosten**-Trade-off
-($10.77 / +36 % für bessere Severity-Kalibrierung + Web3-Surface). Ein Opus-Default ist damit **nicht**
-durch Kosten gedeckt; sinnvoller Mittelweg wäre **Opus nur auf Triage** (die Kalibrierungsstufe) bei
-**Sonnet-STRIDE** — ungemessen, nächster Test.
+**Consequence for the open default recommendation (§8 Stage 2):** The rationale "Opus STRIDE better **and**
+cheaper" no longer holds — cheaper it is not. It remains a pure **quality-vs-cost** trade-off
+($10.77 / +36 % for better severity calibration + Web3 surface). An Opus default is therefore **not**
+covered by cost; a sensible middle ground would be **Opus on triage only** (the calibration stage) with
+**Sonnet STRIDE** — unmeasured, the next test.
 
-### ENTSCHEIDUNG 2026-06-23 — standard-Default → sonnet-economy (umgesetzt)
+### DECISION 2026-06-23 — standard default → sonnet-economy (implemented)
 
-Nach der A/B (§10) und einem inhaltlichen Vergleich der beiden Läufe (opus-triage vs sonnet-triage, beide
-sonnet-STRIDE + cap) wurde entschieden: **`standard` defaultet wieder auf `sonnet-economy`; nur `thorough`
-bleibt Opus.** Begründung:
+After the A/B (§10) and a content comparison of the two runs (opus-triage vs sonnet-triage, both
+sonnet-STRIDE + cap), it was decided: **`standard` defaults back to `sonnet-economy`; only `thorough`
+stays Opus.** Rationale:
 
-- **Kosten:** Opus-Reasoning bei standard ist ~+$10.77 (+36 %) ohne belegten Nutzen → der everyday-Default
-  optimiert auf Kosten. Damit sind die Tiers endlich eine echte Kosten-Leiter (quick≈$8 / standard≈$30 /
-  thorough≈$42), was den Ausgangsbefund „standard ≈ thorough" auflöst.
-- **Qualität:** Der inhaltliche Vergleich zeigte, dass der Unterschied zwischen Läufen **Run-Varianz der
-  (Sonnet-)STRIDE/Architektur-Phasen** ist (zwei „gleiche" Läufe teilten nur ~6 von ~50 Findings exakt;
-  einer fand Web3, der andere LLM). Der Triage-Modell-Effekt war **nicht messbar** (0 Severity-Diffs auf den
-  6 gematchten). Opus-Triage-Kalibrierung ist unter dem Cap confounded. → kein belastbarer Qualitätsgrund für
-  einen Opus-Default.
-- **Opt-in erhalten:** Opus bleibt an standard verfügbar (`--reasoning-model opus`), ebenso der Mittelweg
-  `--triage-model opus` (per-stage flag, neu). Wer volle Coverage will → `thorough` (mehr Komponenten/Turns)
-  schlägt die Tier-Wahl, weil die Lücke Run-Varianz ist, nicht das Modell.
+- **Cost:** Opus reasoning at standard is ~+$10.77 (+36 %) with no substantiated benefit → the everyday default
+  optimizes for cost. This finally makes the tiers a real cost ladder (quick≈$8 / standard≈$30 /
+  thorough≈$42), which resolves the initial finding "standard ≈ thorough".
+- **Quality:** The content comparison showed that the difference between runs is **run variance of the
+  (Sonnet) STRIDE/architecture phases** (two "identical" runs shared only ~6 of ~50 findings exactly;
+  one found Web3, the other LLM). The triage-model effect was **not measurable** (0 severity diffs on the
+  6 matched). Opus triage calibration is confounded under the cap. → no robust quality reason for
+  an Opus default.
+- **Opt-in preserved:** Opus stays available at standard (`--reasoning-model opus`), as does the middle ground
+  `--triage-model opus` (per-stage flag, new). Whoever wants full coverage → `thorough` (more components/turns)
+  beats the tier choice, because the gap is run variance, not the model.
 
-§8 Stufe 2 (Opus als Default) ist damit **verworfen**. Umsetzung: `resolve_reasoning_model` (standard→
-sonnet-economy), Tests, AGENTS.md/threat-modeler.md/HELP/SKILL-Tabelle, CHANGELOG.
+§8 Stage 2 (Opus as default) is thus **rejected**. Implementation: `resolve_reasoning_model` (standard→
+sonnet-economy), tests, AGENTS.md/threat-modeler.md/HELP/SKILL table, CHANGELOG.

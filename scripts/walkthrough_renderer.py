@@ -356,8 +356,8 @@ def _attack_target_label(threat: dict, yaml_data: dict) -> str:
     """Human-readable attack TARGET for the §3 heading (juice-shop 2026-07-03
     user request): headings must name the concrete FEATURE under attack —
     "SQL Injection against Login" — not the broad component zone
-    ("… against Authentication & Identity"), which the user flagged as sperrig
-    und unklar.
+    ("… against Authentication & Identity"), which the user flagged as bulky
+    and unclear.
 
     Prefers the FEATURE derived from the evidence file (``routes/login.ts`` →
     "Login"), which is both specific and reader-legible, and stays distinct

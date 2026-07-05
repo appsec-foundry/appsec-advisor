@@ -1,181 +1,181 @@
-# Umsetzungsplan: Opus als Default für STRIDE-Reasoning (außer `quick`)
+# Implementation plan: Opus as default for STRIDE reasoning (except `quick`)
 
-Status: **PLAN — NICHT umgesetzt. Code-Claims verifiziert 2026-06-21** (file:line +
-Konsumenten gegen `scripts/resolve_config.py` geprüft; Korrekturen eingearbeitet). Folgt
-der Empfehlung aus
+Status: **PLAN — NOT implemented. Code claims verified 2026-06-21** (file:line +
+consumers checked against `scripts/resolve_config.py`; corrections incorporated). Follows
+the recommendation from
 [`analysis-model-placement-orchestrator-vs-stride-2026-06-21.md`](analysis-model-placement-orchestrator-vs-stride-2026-06-21.md).
 
-Ziel: **Vereinheitlichte Verwendung von Opus für die Reasoning-Phase** (STRIDE/Triage/
-Merge) bei `standard`/`thorough`. `quick` bleibt auf Sonnet (bewusst flacher Modus). Der
-größen-getriggerte Auto-Downgrade auf alles-Sonnet entfällt.
+Goal: **unified use of Opus for the reasoning phase** (STRIDE/triage/
+merge) at `standard`/`thorough`. `quick` stays on Sonnet (deliberately shallow mode). The
+size-triggered auto-downgrade to all-Sonnet is dropped.
 
 ---
 
-## 0. Entscheidung / Scope
+## 0. Decision / scope
 
-- **„Opus für STRIDE" = der volle `opus`-Tier** (stride **+ triage + merger** auf Opus).
-  Begründung: Kalibrierungsgewinn kommt aus `triage=opus`, Kostenersparnis aus
-  `stride=opus` — nur zusammen ergeben sie das gemessene V3-Ergebnis (besser **und** auf
-  großen Repos billiger). Ein „nur-stride"-Tier würde die Kalibrierung halb liegen lassen
-  und einen neuen, unnötigen Tier einführen.
-- **`quick` unangetastet:** bleibt `sonnet-economy` (reduzierte STRIDE-Tiefe, Sonnet
-  passt). Sonnet-STRIDE ist nur dort + bei explizitem Opt-out legitim.
-- **Vereinheitlichung = flach, nicht size-adaptiv:** Default flach `opus` für
-  standard/thorough, **kein** automatischer Größen-Switch mehr. Kleine Repos kosten etwas
-  mehr — bewusster Trade-off zugunsten Einheitlichkeit + Qualität; Opt-out via
-  `--reasoning-model sonnet-economy` / `--max-cost`. (Die size-adaptive *Inversion* —
-  klein→economy, groß→opus — ist als optionale Phase 4 vermerkt, nicht Teil des
-  Kern-Plans.)
-
----
-
-## 1. Verifikations-Gate (Phase 0 — empfohlen, nicht zwingend)
-
-Die Kosten-Inversion ist **N=1** (nur Juice-Shop, großes Repo). Vor dem flachen Flip
-empfohlen: **Stufe-0-Matrix** auf 1 kleinem + 1 mittleren Repo, je
-`sonnet-economy` / `opus-cheap` / `opus`. Liefert:
-- den fehlenden `opus-cheap`-Datenpunkt (isoliert, ob STRIDE-auf-Sonnet der Kostentreiber
-  ist oder triage/merger),
-- ob die Kosten-Inversion auf kleinen Repos kippt (erwartet: ja → bestätigt den
-  Opt-out-Bedarf, nicht die Richtung),
-- echte Opus-Standard-**Wall-Zeit** (V3 war idle-kontaminiert) → Eingang für die
-  Duration-Rekalibrierung in Phase 3.
-
-Entscheidungsregel: Die **Richtung** (Opus-Reasoning als Default) hängt **nicht** vom
-Ergebnis ab — sie ist durch Qualität (Kalibrierung/Evidenz/Fläche) getragen. Stufe 0
-kalibriert nur Magnitude + Duration. Wer das Gate überspringen will, kann direkt zu
-Phase 2; dann Phase 3 mit konservativer Schätzung statt Messung.
+- **"Opus for STRIDE" = the full `opus` tier** (stride **+ triage + merger** on Opus).
+  Rationale: the calibration gain comes from `triage=opus`, the cost saving from
+  `stride=opus` — only together do they produce the measured V3 result (better **and** on
+  large repos cheaper). A "stride-only" tier would leave calibration half done
+  and introduce a new, unnecessary tier.
+- **`quick` untouched:** stays `sonnet-economy` (reduced STRIDE depth, Sonnet
+  fits). Sonnet STRIDE is legitimate only there + with explicit opt-out.
+- **Unification = flat, not size-adaptive:** default flat `opus` for
+  standard/thorough, **no** automatic size switch anymore. Small repos cost somewhat
+  more — a deliberate trade-off in favor of uniformity + quality; opt-out via
+  `--reasoning-model sonnet-economy` / `--max-cost`. (The size-adaptive *inversion* —
+  small→economy, large→opus — is noted as optional Phase 4, not part of the
+  core plan.)
 
 ---
 
-## 2. Kern-Änderung (Producer: `scripts/resolve_config.py`)
+## 1. Verification gate (Phase 0 — recommended, not mandatory)
 
-### 2a. Default-Tier umstellen
-`resolve_reasoning_model` (~Z. 498-501): `standard`/`thorough`-Default
-`"opus-cheap"` → `"opus"`. `quick` bleibt `"sonnet-economy"`.
+The cost inversion is **N=1** (only Juice Shop, large repo). Before the flat flip,
+recommended: **Stage-0 matrix** on 1 small + 1 medium repo, each
+`sonnet-economy` / `opus-cheap` / `opus`. Delivers:
+- the missing `opus-cheap` data point (isolates whether STRIDE-on-Sonnet is the cost driver
+  or triage/merger),
+- whether the cost inversion flips on small repos (expected: yes → confirms the
+  opt-out need, not the direction),
+- real Opus standard **wall time** (V3 was idle-contaminated) → input for the
+  duration recalibration in Phase 3.
+
+Decision rule: the **direction** (Opus reasoning as default) does **not** depend on the
+result — it is carried by quality (calibration/evidence/surface). Stage 0
+only calibrates magnitude + duration. Whoever wants to skip the gate can go straight to
+Phase 2; then Phase 3 with a conservative estimate instead of a measurement.
+
+---
+
+## 2. Core change (producer: `scripts/resolve_config.py`)
+
+### 2a. Change the default tier
+`resolve_reasoning_model` (~line 498-501): `standard`/`thorough` default
+`"opus-cheap"` → `"opus"`. `quick` stays `"sonnet-economy"`.
 
 ```
 elif depth == "quick":
     mode = "sonnet-economy"
 else:
-    mode = "opus"          # war: "opus-cheap"
+    mode = "opus"          # was: "opus-cheap"
 ```
 
-### 2b. Größen-Downgrade entfernen  *(verifiziert 2026-06-21)*
-`resolve_default_tier_for_capped_repos` (B2d, Z. 415) + Aufrufstelle **Z. 1508**
-(`cfg.update(resolve_default_tier_for_capped_repos(cfg, ns))`) **entfernen**. Mit neuem
-Default `opus` würde B2d ohnehin no-op'en (Guard `!= "opus-cheap"`), aber als toter Pfad
-mit falscher Philosophie raus.
+### 2b. Remove the size downgrade  *(verified 2026-06-21)*
+**Remove** `resolve_default_tier_for_capped_repos` (B2d, line 415) + the call site **line 1508**
+(`cfg.update(resolve_default_tier_for_capped_repos(cfg, ns))`). With the new
+default `opus`, B2d would no-op anyway (guard `!= "opus-cheap"`), but out it goes as a dead path
+with the wrong philosophy.
 
-- `resolve_repo_size_cap` (Z. 373) **behalten**, aber nur noch **label-informativ**
-  (`repo_size_capped`, `repo_size_source_files`, `depth_label`-Marker). Es reduziert
-  ohnehin keine Komponenten (Kommentar Z. 383-385). **Hinweis:** der B2d-Docstring Z. 433
-  („the large-repo cap reduces MAX_STRIDE_COMPONENTS to 3") ist **stale** — kein Code
-  reduziert das; `max_stride_components` = `STRIDE_COMPONENT_CEILING = 10` (Z. 209/298),
-  depth-unabhängig. Entfällt mit B2d.
-- **Verifiziert: `repo_size_capped` hat 3 Konsumenten, ALLE reine Anzeige** (kein
-  Verhalten) → Entfernen von B2d ist verhaltens-sicher. ABER beide Anzeige-Notes sagen
-  „→ economy reasoning tier" und werden nach der Umstellung **falsch** → Text mitändern:
-  - `scripts/resolve_config.py:2196` (Config-Summary-Note)
-  - `scripts/resolve_config.py:2536` (Post-Summary-Note) ← *im ersten Plan übersehen*
-  - `skills/create-threat-model/SKILL-impl.md:1171` (Label-String)
-  Neue Aussage z.B.: „Large repo (<N> source files) → längerer Lauf erwartet; Reasoning
-  bleibt auf dem Default-Opus-Tier (alle kriterien-selektierten Komponenten analysiert)."
-- `reasoning_auto_switched`: wird nicht mehr gesetzt (nur in B2d, Z. 471). Einziger Leser
-  ist **`scripts/resolve_config.py:2359`** (display-only, `_format_reasoning_summary`) →
-  wird toter Branch → mit entfernen.
-- **Bestehender „alles→Sonnet"-Opt-out bleibt erhalten:** `--no-opus` / `opus_disabled`
-  (Resolver ~Z. 609 „Opus→Sonnet ceiling", Anzeige Z. 2358). Nach der Umstellung ist das
-  der saubere Weg, den neuen Opus-Default komplett auf Sonnet zu zwingen — neben
+- **Keep** `resolve_repo_size_cap` (line 373), but only as **label-informative**
+  (`repo_size_capped`, `repo_size_source_files`, `depth_label` markers). It reduces
+  no components anyway (comment line 383-385). **Note:** the B2d docstring line 433
+  ("the large-repo cap reduces MAX_STRIDE_COMPONENTS to 3") is **stale** — no code
+  reduces this; `max_stride_components` = `STRIDE_COMPONENT_CEILING = 10` (line 209/298),
+  depth-independent. Dropped with B2d.
+- **Verified: `repo_size_capped` has 3 consumers, ALL display-only** (no
+  behavior) → removing B2d is behavior-safe. BUT both display notes say
+  "→ economy reasoning tier" and become **wrong** after the change → change the text too:
+  - `scripts/resolve_config.py:2196` (config summary note)
+  - `scripts/resolve_config.py:2536` (post-summary note) ← *overlooked in the first plan*
+  - `skills/create-threat-model/SKILL-impl.md:1171` (label string)
+  New wording e.g.: "Large repo (<N> source files) → longer run expected; reasoning
+  stays on the default Opus tier (all criteria-selected components analyzed)."
+- `reasoning_auto_switched`: no longer set (only in B2d, line 471). The only reader
+  is **`scripts/resolve_config.py:2359`** (display-only, `_format_reasoning_summary`) →
+  becomes a dead branch → remove along with it.
+- **Existing "all→Sonnet" opt-out is preserved:** `--no-opus` / `opus_disabled`
+  (resolver ~line 609 "Opus→Sonnet ceiling", display line 2358). After the change this is
+  the clean way to force the new Opus default entirely onto Sonnet — alongside
   `--reasoning-model sonnet-economy`.
 
-### 2c. `opus-cheap` von Default zu reinem Opt-in
-`opus-cheap` in `MODEL_MATRIX` **behalten** (explizites `--reasoning-model opus-cheap`
-bleibt gültig für Nutzer, die den Mittelweg wollen), aber es ist **kein Default** mehr.
-Kommentar an `MODEL_MATRIX["opus-cheap"]` ergänzen: „explicit opt-in only; not any
-depth's default since 2026-06 — see analysis-model-placement". Kein hartes Deprecation,
-keine Entfernung (vermeidet Breaking Change für bestehende Skripte/`--reasoning-model`).
+### 2c. `opus-cheap` from default to pure opt-in
+**Keep** `opus-cheap` in `MODEL_MATRIX` (explicit `--reasoning-model opus-cheap`
+stays valid for users who want the middle ground), but it is **no longer a default**.
+Add a comment on `MODEL_MATRIX["opus-cheap"]`: "explicit opt-in only; not any
+depth's default since 2026-06 — see analysis-model-placement". No hard deprecation,
+no removal (avoids a breaking change for existing scripts/`--reasoning-model`).
 
 ---
 
-## 3. Mitlaufende Contracts (bidirektional, AGENTS.md §4)
+## 3. Accompanying contracts (bidirectional, AGENTS.md §4)
 
-### 3a. Tests (Pflicht — pinnt heutige Defaults/Labels)
-Betroffene Dateien mit **verifizierten** Treffer-Zahlen (2026-06-21, Regex
+### 3a. Tests (mandatory — pins today's defaults/labels)
+Affected files with **verified** hit counts (2026-06-21, regex
 `opus-cheap|sonnet-economy|repo_size_capped|reasoning_auto_switched|"opus"|reasoning_model`):
-- `tests/test_resolve_config.py` — **56 Treffer** (nicht ~33) — Default- und
-  Label-Assertions umstellen; B2d-Tests entfernen/anpassen. **Größter Aufwandsposten.**
-- `tests/test_reasoning_model_resolution.py` — **31** — Default-Resolution
+- `tests/test_resolve_config.py` — **56 hits** (not ~33) — change the default and
+  label assertions; remove/adapt B2d tests. **Largest effort item.**
+- `tests/test_reasoning_model_resolution.py` — **31** — default resolution
   standard/thorough (`opus-cheap` → `opus`).
-- `tests/test_haiku_routing_per_depth.py` — **24** — extended-routing bleibt unverändert
-  (Haiku-Scanner sind tier-unabhängig), aber Default-Tier-Annahmen prüfen.
-- `tests/test_estimate_duration.py` — **4** — Anker/Model-Factor (Phase 3b).
-- `tests/test_render_completion_summary.py` — **5** — Reasoning-Label-Anzeige
-  (inkl. des toten `reasoning_auto_switched`-Branches, falls dort getestet).
+- `tests/test_haiku_routing_per_depth.py` — **24** — extended routing stays unchanged
+  (Haiku scanners are tier-independent), but check the default-tier assumptions.
+- `tests/test_estimate_duration.py` — **4** — anchors/model factor (Phase 3b).
+- `tests/test_render_completion_summary.py` — **5** — reasoning-label display
+  (incl. the dead `reasoning_auto_switched` branch, if tested there).
 
-Richtung pro Cluster bewusst wählen (Test-vs-Code): Default-Flip = Code führt, Tests
-nachziehen; aber prüfen, ob ein Test eine *Invariante* schützt (dann Test führt).
+Choose the direction per cluster deliberately (test-vs-code): default flip = code leads, tests
+follow; but check whether a test protects an *invariant* (then the test leads).
 
-### 3b. Duration-/Cost-Schätzung (`scripts/estimate_duration.py`)
-- Anker-Kommentare Z. 63-64 auf neuen Default (`opus` statt `sonnet-economy`/`opus-cheap`).
-- `_MODEL_FACTOR`: `opus: 1.40` für **Dauer** vorerst belassen (Opus-Latenz real;
-  exakt nach Stufe-0-Wall-Messung rekalibrieren). Hinweis: die *Kosten*annahme hinter
-  1.40 ist widerlegt — falls estimate_duration eine Kostenkomponente daraus ableitet,
-  diese entkoppeln (Dauer ≠ Kosten).
-- Banner-Schätzung: Standard-Kosten steigen (Opus-Reasoning). Werte aktualisieren, sobald
-  Stufe-0/echter Lauf vorliegt; bis dahin konservativ + als Schätzung kennzeichnen.
+### 3b. Duration/cost estimation (`scripts/estimate_duration.py`)
+- Anchor comments line 63-64 to the new default (`opus` instead of `sonnet-economy`/`opus-cheap`).
+- `_MODEL_FACTOR`: leave `opus: 1.40` for **duration** for now (Opus latency is real;
+  recalibrate exactly after the Stage-0 wall measurement). Note: the *cost* assumption behind
+  1.40 is refuted — if estimate_duration derives a cost component from it,
+  decouple that (duration ≠ cost).
+- Banner estimate: standard costs rise (Opus reasoning). Update the values once
+  Stage-0/a real run is available; until then conservative + marked as an estimate.
 
-### 3c. Nutzerseitige Oberflächen
-- `skills/create-threat-model/SKILL.md` + `SKILL-impl.md`: Config-Summary / Depth-Labels /
-  ggf. Advisory-Hinweise auf neuen Default; Default-Erwähnungen suchen (`opus-cheap`,
-  „economy tier").
-- `docs/threat-modeler.md`: Kostentabelle (Standard ~$17.37 etc. steigt), Default-Modell-
-  Beschreibung; der bereits ergänzte Opus-Reasoning-TIP wird damit konsistent.
-- `scripts/run-headless.sh` + `HELP.txt`: `--reasoning-model`-Default-/Hilfetext.
-- `scripts/render_completion_summary.py`: Reasoning-Label-Choices/Anzeige.
+### 3c. User-facing surfaces
+- `skills/create-threat-model/SKILL.md` + `SKILL-impl.md`: config summary / depth labels /
+  possibly advisory notes on the new default; search for default mentions (`opus-cheap`,
+  "economy tier").
+- `docs/threat-modeler.md`: cost table (standard ~$17.37 etc. rises), default-model
+  description; the already-added Opus reasoning TIP becomes consistent with it.
+- `scripts/run-headless.sh` + `HELP.txt`: `--reasoning-model` default/help text.
+- `scripts/render_completion_summary.py`: reasoning-label choices/display.
 
 ### 3d. Permissions
-`data/required-permissions.yaml`: **keine Änderung** — Modell-Routing fügt keinen neuen
-Bash-Befehl / Write-Target / Sub-Agent-Dispatch hinzu. (In der Umsetzung kurz
-gegenprüfen.)
+`data/required-permissions.yaml`: **no change** — model routing adds no new
+Bash command / write target / sub-agent dispatch. (Double-check briefly during
+implementation.)
 
 ---
 
-## 4. Optional / später — size-adaptive Inversion (NICHT im Kern-Scope)
+## 4. Optional / later — size-adaptive inversion (NOT in core scope)
 
-Falls Small-Repo-Kosten zum Problem werden: B2d-Logik **invertieren** statt entfernen —
-kleine/einfache Repos → `sonnet-economy` (kein Thrash zu sparen), große/komplexe → `opus`.
-Das ist mehr Logik + mehr Tests und widerspricht dem „vereinheitlicht"-Ziel; daher
-bewusst aus dem Kern-Plan herausgehalten. Voraussetzung wäre belastbare Stufe-0-Evidenz
-zum Crossover-Punkt.
+If small-repo costs become a problem: **invert** the B2d logic instead of removing it —
+small/simple repos → `sonnet-economy` (no thrash to save), large/complex → `opus`.
+That is more logic + more tests and contradicts the "unified" goal; therefore
+deliberately kept out of the core plan. The prerequisite would be robust Stage-0 evidence
+on the crossover point.
 
 ---
 
-## 5. Rollout / Verifikation der Umsetzung
+## 5. Rollout / verification of the implementation
 
-1. (Phase 0) Stufe-0-Matrix laufen lassen → Magnitude + Wall bestätigen.
-2. Code-Änderungen 2a–2c, dann Tests 3a grün ziehen.
-3. `make lint` / `make test` (Subset nach CONTRIBUTING „Targeted tests"; Baseline-Fails
-   von neuen trennen).
-4. Ein echter `standard --full` Lauf gegen Juice-Shop **aus einer Sonnet-Session** →
-   bestätigt: STRIDE läuft auf Opus (`.agent-run.log` zeigt Opus-Dispatches,
-   `.skill-config.json` `stride_model=opus`, `reasoning_label` neu), Kosten/Dauer im
-   erwarteten Rahmen, Report-Qualität (Severity-Verteilung) wie V3.
-5. Doku-Schätzwerte (3b/3c) mit echtem Lauf finalisieren.
+1. (Phase 0) Run the Stage-0 matrix → confirm magnitude + wall.
+2. Code changes 2a–2c, then get tests 3a green.
+3. `make lint` / `make test` (subset per CONTRIBUTING "Targeted tests"; separate baseline fails
+   from new ones).
+4. A real `standard --full` run against Juice Shop **from a Sonnet session** →
+   confirms: STRIDE runs on Opus (`.agent-run.log` shows Opus dispatches,
+   `.skill-config.json` `stride_model=opus`, `reasoning_label` new), cost/duration in the
+   expected range, report quality (severity distribution) like V3.
+5. Finalize the documentation estimates (3b/3c) with a real run.
 
 ## 6. Rollback
 
-Reiner Config-/Default-Change, keine Schema-/Datenmigration. Rollback = Default in
-`resolve_reasoning_model` zurück auf `"opus-cheap"` + B2d wiederherstellen + Tests
-zurück. Nutzer-Opt-out (`--reasoning-model …`) funktioniert während der gesamten Zeit in
-beide Richtungen, daher geringes Risiko.
+Pure config/default change, no schema/data migration. Rollback = default in
+`resolve_reasoning_model` back to `"opus-cheap"` + restore B2d + revert tests.
+The user opt-out (`--reasoning-model …`) works in both directions the entire time,
+hence low risk.
 
-## 7. Risiken / offene Punkte
+## 7. Risks / open points
 
-- **Small-Repo-Mehrkosten** (bewusster Trade-off; Opt-out vorhanden). N=1 für die
-  Inversion → Phase 0 mindert das.
-- **Duration-Schätzung** ohne saubere Opus-Wall-Messung vorerst konservativ.
-- **Test-Pin-Umfang** (**56** in `test_resolve_config.py` + 31 + 24 in den anderen,
-  verifiziert 2026-06-21) ist der größte Aufwandsposten.
-- **Config-Summary/Label-Strings** ggf. an mehreren Stellen dupliziert → vor Edit
-  enumerieren (Grep auf `opus-cheap`, `sonnet-economy (auto`, `reasoning_auto_switched`).
+- **Small-repo extra cost** (deliberate trade-off; opt-out available). N=1 for the
+  inversion → Phase 0 mitigates this.
+- **Duration estimate** conservative for now, without a clean Opus wall measurement.
+- **Test-pin scope** (**56** in `test_resolve_config.py` + 31 + 24 in the others,
+  verified 2026-06-21) is the largest effort item.
+- **Config-summary/label strings** possibly duplicated in several places → enumerate before
+  editing (grep for `opus-cheap`, `sonnet-economy (auto`, `reasoning_auto_switched`).

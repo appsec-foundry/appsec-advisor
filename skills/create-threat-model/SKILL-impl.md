@@ -1026,7 +1026,7 @@ ORCH_WHY=$(echo "$RESOLVED_JSON" | python3 -c 'import json,sys;print(json.load(s
 When the guard holds, call `AskUserQuestion` with one question:
 - header: `Session model`
 - question: state the repo size + `$ORCH_WHY`, the recommended model, and the current `$SESSION_MODEL`; ask which model to scan with.
-- options (recommended first): the **recommended** model — labelled with its benefit (`deutlich bessere Wirtschaftlichkeit` for 4.6; `vermeidet Compaction auf sehr großen Repos, höhere Kosten` for 5) — then **keep current** (`$SESSION_MODEL`).
+- options (recommended first): the **recommended** model — labelled with its benefit (`significantly better cost-efficiency` for 4.6; `avoids compaction on very large repos, higher cost` for 5) — then **keep current** (`$SESSION_MODEL`).
 
 On the answer:
 - Choice resolves to the current `$SESSION_MODEL` → **proceed unchanged** (a conscious keep — e.g. 4.6 on a large repo is explicitly allowed).
