@@ -508,8 +508,8 @@ def recommend_orchestrator_model(src_count: int) -> dict:
         reason = (
             f"normal-sized repo ({src_count} source files < "
             f"{ORCHESTRATOR_SONNET5_FILE_THRESHOLD}) — Sonnet 4.6 as the session model "
-            f"is ~half the cost with no measured orchestrator quality delta, and its "
-            f"window is sufficient here"
+            f"has significantly lower cost than a Sonnet-5 or Opus session, with no "
+            f"measured orchestrator quality delta, and its window is sufficient here"
         )
     return {
         "orchestrator_recommended_model": model,

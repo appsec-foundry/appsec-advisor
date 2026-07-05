@@ -62,7 +62,7 @@ English.** One question, header `Session model`: state
 `ACTION.orchestrator_recommendation_reason` and the recommended
 (`ACTION.orchestrator_recommended_model`) vs current (`ACTION.session_model`) model;
 options (recommended first):
-1. the recommended model — benefit label: 4.6 → “Roughly half the cost, same coverage”; sonnet-5 → “Larger window for very large repos (higher cost)”.
+1. the recommended model — benefit label: 4.6 → “Significantly lower cost, same coverage”; sonnet-5 → “Larger window for very large repos (higher cost)”.
 2. keep the current session model (`ACTION.session_model`) — “Keep the current session model” (conscious override: keep Sonnet 5 / Opus, or 4.6 on a big repo).
 
 On the answer, before the run plan / Stage 1:

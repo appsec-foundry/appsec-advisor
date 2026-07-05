@@ -31,7 +31,7 @@ also offers an interactive prompt to choose the model before Stage 1 (SKILL-full
 §2a), so this early line is just a heads-up, not the full pitch. Substitute `<your
 model>` (e.g. `Sonnet 5`, `Opus 4.8`) and emit verbatim:
 
-> 💡 Session model — running on `<your model>`. A Sonnet-4.6 session is ~half the cost at the same coverage (the analysis core already runs on 4.6). Switch with `/clear` then `/model claude-sonnet-4-6`, or set `"model": "claude-sonnet-4-6"` in `.claude/settings.json`. A full scan will also prompt you to choose before it starts.
+> 💡 Session model — running on `<your model>`. A Sonnet-4.6 session has significantly lower cost at the same coverage (the analysis core already runs on 4.6). Switch with `/clear` then `/model claude-sonnet-4-6`, or set `"model": "claude-sonnet-4-6"` in `.claude/settings.json`. A full scan will also prompt you to choose before it starts.
 
 Console-only, at most once, skip on Sonnet-4.6. Headless defaults to Sonnet-4.6 via
 `run-headless.sh`.
