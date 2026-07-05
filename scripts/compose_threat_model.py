@@ -2034,7 +2034,7 @@ def _validate_known_json_fragments(ctx: RenderContext) -> None:
 def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     project = ctx.yaml_data.get("project") or {}
     meta = ctx.yaml_data.get("meta") or {}
-    remote_url = (meta.get("git") or {}).get("remote_url") or ""
+    remote_url = (meta.get("git") or {}).get("remote_url") or meta.get("repo_url") or ""
 
     # Enrich from repo-local manifest files when the yaml omitted the field.
     # `_read_project_manifest` is polyglot — it tries package.json,
@@ -2930,7 +2930,59 @@ def _derive_attack_paths_fallback(threats: list[dict], taxonomy: dict) -> dict:
     }
 
 
+def _has_client_tier(ctx: RenderContext) -> bool:
+    """True when any yaml component classifies into the client/browser tier."""
+    return any(
+        _classify_component_layer(c) == "client" for c in (ctx.yaml_data.get("components") or []) if isinstance(c, dict)
+    )
+
+
+def _drop_victim_paths_without_client_tier(ctx: RenderContext, data: dict) -> None:
+    """Root-cause guard for the whole posture section (T2/G3 + E5).
+
+    A victim-targeting attack path (CSRF/XSS — ``actor == victim-required`` or
+    ``target == victim``) delivers its payload *through a client/browser tier*.
+    On a server-only / CLI product that has no client-tier component, such a
+    path — whether LLM-authored or added by the M-11 gap-filler
+    (``_reconcile_attack_path_membership``, e.g. CSRF via CWE-942) — has no tier
+    to originate from. Rendered anyway it forces a bare undeclared ``BROWSER``
+    node in the heatmap (E5 / ``posture_unknown``) and an orphan glyph in the
+    Top Threats table with no matching diagram arrow (T2/G3).
+
+    Filtering here, at the single data-loading boundary every consumer shares
+    (heatmap arrows, actor legend, consequence arrows, Top Threats table, Top
+    Findings ``Pfad`` column), keeps all of them consistent by construction —
+    instead of a per-renderer guard that must be kept in sync at N call sites.
+    """
+    if not isinstance(data, dict) or _has_client_tier(ctx):
+        return
+    data["attack_paths"] = [
+        ap
+        for ap in (data.get("attack_paths") or [])
+        if not (
+            (ap.get("target") or "application").lower() == "victim"
+            or (ap.get("actor") or "internet-anon").lower() == "victim-required"
+        )
+    ]
+    if isinstance(data.get("actors"), list):
+        data["actors"] = [a for a in data["actors"] if a != "victim-required"]
+
+
 def _load_attack_paths_fragment(ctx: RenderContext, taxonomy: dict, threats: list[dict]) -> dict:
+    """Load the attack-paths fragment and apply the shared victim-path guard.
+
+    Delegates to :func:`_load_attack_paths_fragment_impl` for the raw load /
+    validation / reconciliation, then drops victim-targeting paths when the
+    product has no client tier (see
+    :func:`_drop_victim_paths_without_client_tier`) so every downstream
+    consumer sees the same filtered set.
+    """
+    data = _load_attack_paths_fragment_impl(ctx, taxonomy, threats)
+    _drop_victim_paths_without_client_tier(ctx, data)
+    return data
+
+
+def _load_attack_paths_fragment_impl(ctx: RenderContext, taxonomy: dict, threats: list[dict]) -> dict:
     """Load the LLM-authored fragment if present and well-formed; else
     fall back to the deterministic CWE-derived fragment.
 
@@ -5478,6 +5530,8 @@ def _build_attack_arrows(
         is_victim_targeting = target == "victim" or actor_slug == "victim-required"
 
         if is_victim_targeting:
+            # A victim path can only reach here when a client tier exists —
+            # _drop_victim_paths_without_client_tier removed them otherwise.
             client_tier = tier_node_by_key.get("client") or "BROWSER"
             victim = actor_node_by_slug.get("victim-required") or "SHOPUSER"
             # Primary attack arrow: attacker → client tier. This is INDIRECT —
@@ -5568,6 +5622,8 @@ def _build_consequence_arrows(
         actor_slug = (ap.get("actor") or "internet-anon").lower()
         is_victim_targeting = target == "victim" or actor_slug == "victim-required"
         if is_victim_targeting:
+            # Victim paths without a client tier were already dropped upstream
+            # by _drop_victim_paths_without_client_tier.
             src = tier_node_by_key.get("client") or "BROWSER"
         else:
             src = tier_node_by_key.get(target) or "SERVER"
@@ -6713,6 +6769,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         attack_paths_data=attack_paths_data,
         attack_taxonomy=attack_taxonomy,
     )
+
     actor_cards = _build_actor_cards(
         attack_paths_data,
         actor_labels,
@@ -8640,6 +8697,46 @@ def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment,
     return body
 
 
+def _enrich_affected_components(ctx: RenderContext, items: list[dict] | None) -> None:
+    """Rewrite each item's ``affected_components[]`` into ``{id, name}`` dicts,
+    resolving the display name from the SAME ``_component_lookup`` used by the
+    structural-threats / Top Threats tables. The MS callout fragments
+    (ms-anti-patterns.json, ms-ai-exposure.json) carry bare ``C-NN`` id strings;
+    without this the callout links render as a bare ``[C-02](#c-02)`` while the
+    same component reads ``[C-02](#c-02) — Python Analysis Script Engine``
+    everywhere else. Resolving through the shared lookup guarantees the names
+    are byte-identical across the whole report.
+    """
+    if not items:
+        return
+    components = _component_lookup(ctx)
+
+    def _name_for(cid: str) -> str:
+        comp = components.get(cid) or components.get(cid.upper()) or {}
+        return (comp.get("name") or "").strip()
+
+    for it in items:
+        refs = it.get("affected_components")
+        if not isinstance(refs, list):
+            continue
+        enriched: list[dict[str, str]] = []
+        for r in refs:
+            if isinstance(r, dict):
+                cid = (r.get("id") or "").strip()
+                name = (r.get("name") or "").strip() or _name_for(cid)
+            elif isinstance(r, str):
+                cid = r.strip()
+                name = _name_for(cid)
+            else:
+                continue
+            entry = {"id": cid} if cid else {}
+            if name:
+                entry["name"] = name
+            if entry:
+                enriched.append(entry)
+        it["affected_components"] = enriched
+
+
 def _render_architectural_anti_patterns(ctx: RenderContext, env: jinja2.Environment) -> str:
     """Render the optional '### Architectural Anti-Patterns' MS callout.
 
@@ -8657,6 +8754,7 @@ def _render_architectural_anti_patterns(ctx: RenderContext, env: jinja2.Environm
     _validate_fragment("architectural_anti_patterns", data, "anti-patterns.schema.json")
     if not (data.get("anti_patterns") or []):
         return ""
+    _enrich_affected_components(ctx, data.get("anti_patterns"))
     tpl = env.get_template("anti-patterns.md.j2")
     return tpl.render(data=data)
 
@@ -8681,6 +8779,7 @@ def _render_ai_exposure(ctx: RenderContext, env: jinja2.Environment) -> str:
     _validate_fragment("ai_exposure_ms", data, "ai-exposure.schema.json")
     if not (data.get("ai_risks") or []):
         return ""
+    _enrich_affected_components(ctx, data.get("ai_risks"))
     tpl = env.get_template("ai-exposure.md.j2")
     section7_present = bool(ctx.eval_context.get("render_security_architecture", True))
     body = tpl.render(data=data, section7_present=section7_present)

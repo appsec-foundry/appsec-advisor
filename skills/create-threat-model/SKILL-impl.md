@@ -1417,19 +1417,10 @@ case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
     #   • SARIF (--sarif) is a Stage-2 RENDER product, not a post-stage export;
     #     if it is requested-but-missing, re-rendering is required — tell the
     #     user to re-run with --rerender rather than silently doing nothing.
-    # Reader-facing §6 renumbering for these backstop exports too (mirrors the
-    # "Reader-facing section renumbering" step in Normal Completion): relabel a
-    # working copy to §6 before export, restore canonical §7 after, so the
-    # regenerated PDF/HTML match the §6 deliverables the original run produced
-    # while the persisted threat-model.md stays §7 for cross-run reuse.
-    _BACKSTOP_EXPORT=false
-    { [ "${WRITE_PDF:-false}"  = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.pdf"  ]; } && _BACKSTOP_EXPORT=true
-    { [ "${WRITE_HTML:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.html" ]; } && _BACKSTOP_EXPORT=true
-    if [ "$_BACKSTOP_EXPORT" = "true" ]; then
-      cp "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR/.threat-model.canonical7.md"
-      python3 "$CLAUDE_PLUGIN_ROOT/scripts/renumber_sections_display.py" \
-        "$OUTPUT_DIR/threat-model.md" 2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
-    fi
+    # The persisted threat-model.md is already §6 from the original run. These
+    # backstop exports derive directly from it, so no renumber is needed here —
+    # the §7 mirror at .appsec-cache/threat-model.canonical7.md already serves the
+    # carry-forward / snapshot machinery.
     if [ "${WRITE_PDF:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.pdf" ]; then
       printf '\n  No source changes — reusing existing threat model; requested PDF is missing, generating it now.\n' >&2
       # UNSANDBOXED: mermaid → headless Chrome needs socket() (see PDF Export §). Non-fatal.
@@ -1442,9 +1433,6 @@ case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
       python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" \
         --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.html" \
         2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
-    fi
-    if [ -f "$OUTPUT_DIR/.threat-model.canonical7.md" ]; then
-      mv -f "$OUTPUT_DIR/.threat-model.canonical7.md" "$OUTPUT_DIR/threat-model.md"
     fi
     if [ "${WRITE_SARIF:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.sarif.json" ]; then
       printf '\n  Note: --sarif requested but threat-model.sarif.json is absent. SARIF is a render product;\n  re-run with --rerender to regenerate it from the existing Stage-1 artifacts.\n' >&2
@@ -4437,20 +4425,24 @@ artifact shows contiguous **§1–§10** numbering (the retired-§6 gap is close
 Security Architecture becomes §6, Findings §7, …) and the now-inaccurate
 "numbering is non-contiguous" note is dropped.
 
-**Why the canonical file is restored afterwards.** `renumber_sections_display.py`
-relabels headings/anchors/TOC/`§N` in place. The persisted `threat-model.md` must
-stay **§7** because the next run reads it back expecting canonical `## 7.`
-headings (`snapshot_preserved_sections.py` §7 carry-forward and
-`compose_threat_model.py` quick-depth §7 preservation both grep `^## 7\. `), and
-`qa_checks.py` validates against the contract's literal §7.x titles. So the
-renumber runs on the working copy only for the export window, then the canonical
-§7 numbering is restored from the backup. The delivered copies
-(`threat-model-<slug>.md` / `.pdf` / `.html`) keep the §6 display numbering; the
-canonical `threat-model.md` on disk ends at §7. It is a **no-op** at `--quick`
-depth when §7 was never rendered (the tool's canonical-marker guard skips).
+**The persisted `threat-model.md` ends at §6; a §7 mirror serves the machinery.**
+`renumber_sections_display.py` relabels headings/anchors/TOC/`§N` in place, so the
+reader-facing `threat-model.md` (and every derived deliverable) shows contiguous
+§1–§10. But two internal consumers still key on `## 7.`: the composer's quick-depth
+§7 carry-forward (`compose_threat_model.py` → `_extract_section_verbatim`, fed by
+`snapshot_preserved_sections.py`) and the qa contract's literal §7.x titles. So
+**before** renumbering we copy the §7 document to
+`.appsec-cache/threat-model.canonical7.md` — a mirror `snapshot_preserved_sections.py`
+prefers as its `prior-report.md` source, and which `runtime_cleanup.py` never
+touches (`.appsec-cache/` is in its NEVER set). The primary `threat-model.md` is
+then renumbered to §6 and **not** restored. qa has already run against the §7
+document at this point (this step is after all gates), so the §6 relabel is safe.
+It is a **no-op** at `--quick` depth when §7 was never rendered (the tool's
+canonical-marker guard skips).
 
 ```bash
-cp "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR/.threat-model.canonical7.md"
+mkdir -p "$OUTPUT_DIR/.appsec-cache"
+cp "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR/.appsec-cache/threat-model.canonical7.md"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/renumber_sections_display.py" \
     "$OUTPUT_DIR/threat-model.md" \
     2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
@@ -4525,19 +4517,15 @@ fi
 
 `stamp_threat_model.py` is idempotent per slug (a re-run with the same slug overwrites its own stamped set, never the canonical files) and lists the created paths. `scripts/runtime_cleanup.py` treats `threat-model-*` stamped deliverables the same as the canonical ones (never touched).
 
-### Restore canonical §7 numbering
+### §7 mirror retained (no restore)
 
-Runs **last**, after all deliverables (PDF / HTML / slug copies) have been produced
-from the §6 display copy. Restores the canonical **§7** numbering to the persisted
-`threat-model.md` so the next run's §7 carry-forward, snapshot preservation, and
-`qa_checks.py` contract validation still match the literal contract titles. The
-delivered copies keep §6; only the working `threat-model.md` reverts.
-
-```bash
-if [ -f "$OUTPUT_DIR/.threat-model.canonical7.md" ]; then
-    mv -f "$OUTPUT_DIR/.threat-model.canonical7.md" "$OUTPUT_DIR/threat-model.md"
-fi
-```
+The persisted `threat-model.md` intentionally stays at §6 — that is the
+reader-facing deliverable. The §7 document is preserved at
+`.appsec-cache/threat-model.canonical7.md` (written just before the renumber
+above) purely for the next run's §7 carry-forward / snapshot preservation and for
+qa contract matching; `snapshot_preserved_sections.py` prefers it as the
+`prior-report.md` source and `runtime_cleanup.py` never deletes `.appsec-cache/`.
+No restore step runs.
 
 **Explicit success exit.** After the slug-stamping block (or after the cleanup block when both `WRITE_PDF=false` and `WRITE_HTML=false`) emit an unambiguous success exit so that no subsequent code path can accidentally run:
 

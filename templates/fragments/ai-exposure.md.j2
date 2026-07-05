@@ -16,7 +16,7 @@
    link). Findings render as indented sub-list items (``  - ↳ …``) so they
    are visually separated from the LLMXX heading and properly nested. -#}
 {% for r in data.ai_risks -%}
-- **{% if r.owasp_llm_id %}{{ r.owasp_llm_id }} {% endif %}{{ r.name }}** — {{ r.description }}{% if r.affected_components %} _({{ r.affected_components | format_weakness_components }})_{% endif %}
+- **{% if r.owasp_llm_id %}{{ r.owasp_llm_id }} {% endif %}{{ r.name }}** — {{ r.description }}{% if r.affected_components %} _({{ r.affected_components | format_weakness_components(", ") }})_{% endif %}
 {% for f in r.findings %}  - ↳ {{ f | format_one_finding }}
 {% endfor %}
 {% endfor %}

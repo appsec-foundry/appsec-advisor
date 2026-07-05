@@ -125,7 +125,13 @@ def snapshot(output_dir: Path, plugin_root: Path, repo_root: Path | None) -> int
         except OSError:
             pass
 
-    prior_md = output_dir / "threat-model.md"
+    # The primary threat-model.md is renumbered to contiguous §6 for the reader
+    # (Security Architecture = §6), but the composer's §7-carry extraction and the
+    # qa contract still key on `## 7.`. The finalize step therefore also writes a
+    # §7-numbered mirror to .appsec-cache/threat-model.canonical7.md; prefer it as
+    # the snapshot source so prior-report.md stays §7 and the carry keeps matching.
+    canonical7 = output_dir / ".appsec-cache" / "threat-model.canonical7.md"
+    prior_md = canonical7 if canonical7.is_file() else (output_dir / "threat-model.md")
     if not prior_md.is_file():
         # First run / nothing to preserve.
         return 0

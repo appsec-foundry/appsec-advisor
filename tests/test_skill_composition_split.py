@@ -216,19 +216,23 @@ def test_marker_lifecycle_section_is_single_source(skill_impl_text, heading):
     )
 
 
-def test_display_renumber_is_wired_but_canonical_is_restored(skill_impl_text):
+def test_display_renumber_is_wired_and_persists_section6(skill_impl_text):
     """The ONE sanctioned last-mile mutator is `renumber_sections_display.py`:
-    it relabels §7→§6 for the delivered MD/PDF/HTML so the reader sees contiguous
-    §1–§10, but the canonical `threat-model.md` is restored to §7 afterwards so
-    next-run §7 carry-forward + qa_checks contract validation still match.
+    it relabels §7→§6 so the persisted `threat-model.md` (and every derived
+    deliverable) shows contiguous §1–§10. The §7 document is preserved as a
+    mirror at `.appsec-cache/threat-model.canonical7.md` for the next run's §7
+    carry-forward + qa_checks contract matching — but the primary
+    `threat-model.md` is NOT restored to §7 (it stays §6, the reader-facing form).
 
     No OTHER post-QA report mutator may be wired (they would silently change the
     QA-clean report content), and the gray-ramp presentation remains owned by
     `qa_checks.py autofix`."""
-    # The display renumber IS wired, and the canonical §7 file is restored after
-    # the export window (so persistence stays reusable across runs).
+    # The display renumber IS wired, and the §7 mirror is kept under .appsec-cache/.
     assert "renumber_sections_display.py" in skill_impl_text
-    assert ".threat-model.canonical7.md" in skill_impl_text
+    assert ".appsec-cache/threat-model.canonical7.md" in skill_impl_text
+    # The persisted threat-model.md must NOT be restored back to §7 (the old
+    # design). If a restore reappears, the reader-facing file would revert to §7.
+    assert 'mv -f "$OUTPUT_DIR/.threat-model.canonical7.md" "$OUTPUT_DIR/threat-model.md"' not in skill_impl_text
     # No other content-mutating post-QA passes.
     assert "style_priority_circles.py" not in skill_impl_text
     assert "`qa_checks.py autofix` owns the final presentation-only gray ramp" in skill_impl_text
