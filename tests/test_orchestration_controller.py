@@ -1030,25 +1030,21 @@ def test_dispatch_values_uses_actor_model_env(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     "session,headless,expected",
     [
-        ("claude-sonnet-5", False, True),    # Sonnet-5 session diverges from 4.6 rec
-        ("claude-opus-4-8", False, True),    # Opus session diverges too
+        ("claude-sonnet-5", False, True),  # Sonnet-5 session diverges from 4.6 rec
+        ("claude-opus-4-8", False, True),  # Opus session diverges too
         ("claude-sonnet-4-6", False, False),  # matches rec → no prompt
-        ("", False, False),                   # undetected → no prompt (fail-safe)
-        ("claude-opus-4-8", True, False),     # headless → suppressed
+        ("", False, False),  # undetected → no prompt (fail-safe)
+        ("claude-opus-4-8", True, False),  # headless → suppressed
     ],
 )
 def test_orchestrator_prompt_needed_signal(monkeypatch, tmp_path, session, headless, expected):
     plugin_root = Path(__file__).resolve().parent.parent
-    monkeypatch.setattr(
-        controller.detect_session_model, "detect_session_model", lambda: session
-    )
+    monkeypatch.setattr(controller.detect_session_model, "detect_session_model", lambda: session)
     if headless:
         monkeypatch.setenv("APPSEC_HEADLESS", "1")
     else:
         monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
-    action = controller.prepare(
-        ["--repo", str(plugin_root), "--output", str(tmp_path / "out"), "--keep-runtime-files"]
-    )
+    action = controller.prepare(["--repo", str(plugin_root), "--output", str(tmp_path / "out"), "--keep-runtime-files"])
     assert action["action"] == "dispatch_agent"
     assert action["session_model"] == session
     assert action["orchestrator_prompt_needed"] is expected
