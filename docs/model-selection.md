@@ -99,7 +99,7 @@ from the repo's source-file count (`ORCHESTRATOR_SONNET5_FILE_THRESHOLD = 2500`)
 
 | Repo size | Recommended session model | Why |
 |---|---|---|
-| **< 2500 source files** (e.g. Juice-Shop ≈ 641) | **`claude-sonnet-4-6`** | ≈half the cost, no orchestrator quality delta, window sufficient |
+| **< 2500 source files** (e.g. Juice-Shop ≈ 641) | **`claude-sonnet-4-6`** | much cheaper, only very limited orchestrator benefit from a larger model, window sufficient |
 | **≥ 2500 source files** (very large) | **`claude-sonnet-5`** | larger window avoids mid-run compaction (higher cost, but prevents compaction-induced finalization skips) |
 
 The Pre-flight box shows the recommendation; interactively, when the detected

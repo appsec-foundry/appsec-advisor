@@ -399,7 +399,7 @@ LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
 # small-window session model (Sonnet 4.6 in the harness) risks mid-run compaction,
 # which can drop finalization steps. At/above this source-file count we RECOMMEND the
 # large-window Sonnet 5 as the SESSION model (higher cost, but compaction-safe); below
-# it we recommend Sonnet 4.6 (~half cost, no orchestrator quality delta). Advisory
+# it we recommend Sonnet 4.6 (much cheaper, only very limited orchestrator benefit). Advisory
 # only — the user always chooses (see the interactive prompt in SKILL-impl.md).
 # Calibrated ABOVE Juice-Shop (~641 source files) so a normal app recommends 4.6.
 ORCHESTRATOR_SONNET5_FILE_THRESHOLD = 2500
@@ -492,7 +492,7 @@ def recommend_orchestrator_model(src_count: int) -> dict:
     only RECOMMENDS — the skill surfaces it and the user chooses (a divergent
     choice needs a session restart because a running loop cannot change its own
     model). Recommends Sonnet 5 only for *very* large repos (window safety);
-    otherwise Sonnet 4.6 (≈half cost, no orchestrator quality delta).
+    otherwise Sonnet 4.6 (much cheaper, only very limited orchestrator benefit).
     """
     if src_count >= ORCHESTRATOR_SONNET5_FILE_THRESHOLD:
         model = "claude-sonnet-5"
@@ -508,8 +508,10 @@ def recommend_orchestrator_model(src_count: int) -> dict:
         reason = (
             f"normal-sized repo ({src_count} source files < "
             f"{ORCHESTRATOR_SONNET5_FILE_THRESHOLD}) — Sonnet 4.6 as the session model "
-            f"has significantly lower cost than a Sonnet-5 or Opus session, with no "
-            f"measured orchestrator quality delta, and its window is sufficient here"
+            f"has significantly lower cost than a Sonnet-5 or Opus session, which "
+            f"bring only very limited benefit on the orchestrator role at this repo "
+            f"size, and its window is sufficient here (Sonnet 5 is recommended once a "
+            f"repo crosses {ORCHESTRATOR_SONNET5_FILE_THRESHOLD} files)"
         )
     return {
         "orchestrator_recommended_model": model,
