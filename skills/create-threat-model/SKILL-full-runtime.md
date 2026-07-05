@@ -46,33 +46,38 @@ The controller has already:
 
 ## 2. User-visible preflight
 
-Emit `ACTION.preflight_status` once when non-empty. Then emit
-`ACTION.run_plan` verbatim as response text. Do not summarize it and do not
-print controller receipts. These are the only pre-Stage-1 lines after the
-router's `🔧 Building …` line.
+Emit `ACTION.preflight_status` once when non-empty.
 
-### 2b. Interactive orchestrator-model selection
+**Then, before emitting the run plan, run §2a (the interactive model prompt).**
+Ordering matters: the session-model choice is a cost gate for the whole run, so it
+comes **first** — the user decides the model before reading the plan, and a switch
+aborts before the box is even rendered. After §2a (or immediately, when it does not
+apply), emit `ACTION.run_plan` verbatim as response text. Do not summarize it and do
+not print controller receipts. When the prompt fires, the controller has already
+stripped the redundant session advisories from the run plan, so the box does not
+repeat the choice.
 
-This is the **one** sanctioned interactive step between the run plan and Stage 1
-(the hard "only preflight_status + run_plan" rule is about *console text*; an
-`AskUserQuestion` is an interactive tool call, not narration). Run it **only when
-`ACTION.orchestrator_prompt_needed` is `true`** — the controller has already
-verified the host session model is detected, diverges from the repo-size
-recommendation (this fires for **both** a Sonnet-5 and an Opus session), and the
-run is interactive (it is forced `false` under `APPSEC_HEADLESS=1`). When the flag
-is `false`, skip this entirely and go straight to §3.
+### 2a. Interactive orchestrator-model selection (before the run plan)
 
-When it is `true`, call `AskUserQuestion` with a single question:
+Run this **only when `ACTION.orchestrator_prompt_needed` is `true`** — the controller
+has verified the host session model is detected, diverges from the repo-size
+recommendation (fires for **both** a Sonnet-5 and an Opus session), and the run is
+interactive (forced `false` under `APPSEC_HEADLESS=1`). When `false`, skip straight
+to the run plan. The `AskUserQuestion` is an interactive tool call, not console
+narration, and is explicitly permitted here (see SKILL.md's hard-rule exception).
+
+Call `AskUserQuestion` with a single question. **All user-facing text MUST be in
+English.**
 - **header:** `Session model`
-- **question:** state the repo-size rationale (`ACTION.orchestrator_recommendation_reason`), the recommended model (`ACTION.orchestrator_recommended_model`), and the current session model (`ACTION.session_model`); ask which model to scan with.
+- **question:** state the repo-size rationale (`ACTION.orchestrator_recommendation_reason`), the recommended model (`ACTION.orchestrator_recommended_model`), and the current session model (`ACTION.session_model`); ask which model should drive the scan.
 - **options (recommended first):**
-  1. **the recommended model** — label it with its benefit: for `claude-sonnet-4-6` → “deutlich bessere Wirtschaftlichkeit (≈halbe Kosten)”; for `claude-sonnet-5` → “größeres Fenster für sehr große Repos, höhere Kosten”.
-  2. **keep the current session model** (`ACTION.session_model`) — label “aktuelles Modell beibehalten”. This is what makes a conscious override work (e.g. keep Sonnet 5 / Opus, or keep 4.6 on a large repo).
+  1. **the recommended model** (`ACTION.orchestrator_recommended_model`) — English benefit label: for `claude-sonnet-4-6` → “Roughly half the cost, same coverage”; for `claude-sonnet-5` → “Larger context window for very large repos (higher cost)”.
+  2. **keep the current session model** (`ACTION.session_model`) — English label “Keep the current session model”. This is what makes a conscious override work (keep Sonnet 5 / Opus, or keep 4.6 on a large repo).
 
-Act on the answer **before** any Stage-1 work:
-- Choice resolves to the **current** `ACTION.session_model` → proceed to §3 unchanged (the user consciously kept it).
+Act on the answer **before** emitting the run plan / any Stage-1 work:
+- Choice resolves to the **current** `ACTION.session_model` → continue: emit the run plan, then proceed to §3 (the user consciously kept it).
 - Choice resolves to a **different** model → do **NOT** continue. Release the run lock (`rm -f "$OUTPUT_DIR/.appsec-lock"`), print exactly:
-  `Restart on the chosen model:  claude --model <choice>   (or /clear then /model <choice>), then re-run the skill.` and **stop** — do not dispatch Stage 1.
+  `Restart on the chosen model:  claude --model <choice>   (or /clear then /model <choice>), then re-run the skill.` and **stop** — do not emit the run plan and do not dispatch Stage 1.
 
 The recommendation is never binding; the prompt exists so the user *chooses*.
 

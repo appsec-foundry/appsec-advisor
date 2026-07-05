@@ -824,7 +824,30 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         session_model = detect_session_model.detect_session_model()
     except Exception:
         session_model = ""
-    run_plan = resolve_config.render_run_plan(cfg, None, None, "equal", session_model)
+    # Interactive orchestrator-model selection signal (computed BEFORE the box so
+    # the box can suppress the now-redundant session advisories when the prompt
+    # will fire). Needed when the session model is detected AND diverges from the
+    # repo-size recommendation (covers BOTH a Sonnet-5 and an Opus session), and
+    # the run is interactive (forced false under APPSEC_HEADLESS=1).
+    _orch_rec = cfg.get("orchestrator_recommended_model", "")
+    _headless = os.environ.get("APPSEC_HEADLESS", "").strip().lower() in ("1", "true", "yes", "on")
+    _orch_prompt_needed = bool(
+        session_model and _orch_rec and not resolve_config._same_model(session_model, _orch_rec) and not _headless
+    )
+    # When the interactive prompt will handle the model choice, drop the passive
+    # session cost callout + orchestrator recommendation line from the box (they
+    # would just repeat the prompt). Keep them when no prompt fires (headless /
+    # matching / undetected) so that surface still carries the advisory.
+    # Positional (not keyword) so existing render_run_plan spies in the tests that
+    # take *args without **kwargs keep working.
+    run_plan = resolve_config.render_run_plan(
+        cfg,
+        None,
+        None,
+        "equal",
+        session_model,
+        _orch_prompt_needed,
+    )
     if cfg["mode"] == "rebuild":
         workspace_note = (
             f"removed {removed_preexisting} prior item(s); changelog audit archived when present"
@@ -855,19 +878,6 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             level="WARN",
         )
     estimate = _duration_estimate(cfg)
-    # Interactive orchestrator-model selection signal for the thin runtime. The
-    # prompt is needed when the host session model is detected AND diverges from
-    # the repo-size recommendation (covers BOTH a Sonnet-5 and an Opus session,
-    # since neither matches the 4.6/5 recommendation set), and the run is
-    # interactive (never headless — APPSEC_HEADLESS=1 has no user to answer).
-    _orch_rec = cfg.get("orchestrator_recommended_model", "")
-    _headless = os.environ.get("APPSEC_HEADLESS", "").strip().lower() in ("1", "true", "yes", "on")
-    _orch_prompt_needed = bool(
-        session_model
-        and _orch_rec
-        and not resolve_config._same_model(session_model, _orch_rec)
-        and not _headless
-    )
     return {
         "schema_version": 1,
         "action": "dispatch_agent",

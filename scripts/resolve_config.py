@@ -1995,6 +1995,7 @@ def render_run_plan(
     dirty_set: dict | None,
     compat_label: str | None,
     session_model: str = "",
+    suppress_session_advisories: bool = False,
 ) -> str:
     """Render the consolidated Create-Threat-Model box, post-pre-check.
 
@@ -2084,7 +2085,9 @@ def render_run_plan(
 
     # --- Section: Session-model cost callout (prominent — right under the
     # verdict so a pricey Opus/Sonnet-5 session is impossible to miss). ---
-    if verdict.get("will_run"):
+    if verdict.get("will_run") and not suppress_session_advisories:
+        # Suppressed when the interactive orchestrator-model prompt will fire —
+        # it supersedes both passive advisories (avoids saying the same thing 3×).
         cost_callout = _render_session_cost_callout(session_model)
         if cost_callout:
             lines.append("")

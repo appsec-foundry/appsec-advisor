@@ -26,18 +26,15 @@ perceive as a slow start):
 line — the earliest, most visible surface. This covers **Opus and Sonnet-5** sessions
 alike. The session model writes the report + runs the abuse-verifier + content-QA and
 drives the dominant cache-read cost, but does **not** deepen the analysis (that core
-already runs on Sonnet-4.6). Fill in your model **and** the exact re-invocation —
-the launch line is `claude --model claude-sonnet-4-6` **plus every launch flag the
-current session was started with** (e.g. `--plugin-dir <path>` if this plugin was
-loaded from a directory), and the re-run is this skill command **with its original
-arguments**. Emit verbatim:
+already runs on Sonnet-4.6). Keep this a **short, calm one-liner** — a full-scan run
+also offers an interactive prompt to choose the model before Stage 1 (SKILL-full-runtime
+§2a), so this early line is just a heads-up, not the full pitch. Substitute `<your
+model>` (e.g. `Sonnet 5`, `Opus 4.8`) and emit verbatim:
 
-> ⚠ Cost — this session runs on `<your model>`. Sonnet-4.6 costs ~half at the same coverage (the analysis core already runs on 4.6). Cheapest fix: **restart a fresh session** — `claude --model claude-sonnet-4-6 <same launch flags, e.g. --plugin-dir …>` — then re-run `/appsec-advisor:create-threat-model <your original args>`. In-session alternative: `/clear`, then `/model claude-sonnet-4-6`. Make it the default: `"model": "claude-sonnet-4-6"` in `.claude/settings.json`. Or continue as-is.
+> 💡 Session model — running on `<your model>`. A Sonnet-4.6 session is ~half the cost at the same coverage (the analysis core already runs on 4.6). Switch with `/clear` then `/model claude-sonnet-4-6`, or set `"model": "claude-sonnet-4-6"` in `.claude/settings.json`. A full scan will also prompt you to choose before it starts.
 
-Console-only, at most once, skip on Sonnet-4.6. Substitute `<your model>` (e.g.
-`Sonnet 5`, `Opus 4.8`), `<same launch flags …>` with the flags the session was
-actually started with (omit the clause if none), and `<your original args>` with
-this invocation's arguments. Headless defaults to Sonnet-4.6 via `run-headless.sh`.
+Console-only, at most once, skip on Sonnet-4.6. Headless defaults to Sonnet-4.6 via
+`run-headless.sh`.
 
 **Conversely, only if you (the orchestrator) are running on a Haiku-tier
 model**, emit this line instead (mutually exclusive with the Opus advisory —
@@ -97,15 +94,16 @@ SKILL-impl tells you to print after config resolution (e.g.
 `📋 Existing threat model found — computing the incremental delta …`), and then
 (2) the `Threat Model — Pre-flight` summary. Nothing may appear between them.
 
-**One sanctioned exception — the interactive orchestrator-model prompt.** After
-the Pre-flight summary and before Stage 1 begins, when the thin runtime's prepare
-ACTION reports `orchestrator_prompt_needed: true` (SKILL-full-runtime.md §2b), you
-MUST call `AskUserQuestion` to let the user choose the session model. This is an
-interactive tool call, not narration, and it is explicitly permitted here despite
-the rule above — do not suppress it. It fires whenever the detected session model
-diverges from the repo-size recommendation (a Sonnet-5 or an Opus session on a
-normal-sized repo), and is skipped under `APPSEC_HEADLESS=1`. The passive `⚠ Cost`
-advisory is NOT a substitute — it is emitted earlier and is not a choice.
+**One sanctioned exception — the interactive orchestrator-model prompt.** When the
+thin runtime's prepare ACTION reports `orchestrator_prompt_needed: true`
+(SKILL-full-runtime.md §2a), you MUST call `AskUserQuestion` to let the user choose
+the session model — emitted **before the Pre-flight summary** (the choice is a cost
+gate that comes first). This is an interactive tool call, not narration, and it is
+explicitly permitted here despite the rule above — do not suppress it. It fires
+whenever the detected session model diverges from the repo-size recommendation (a
+Sonnet-5 or an Opus session on a normal-sized repo), and is skipped under
+`APPSEC_HEADLESS=1`. The early `💡 Session model` heads-up is NOT a substitute — it
+is a one-line hint, not a choice.
 
 In particular do **not** announce your own actions — the following are all
 contract violations, even though they are *true*: "I've read through to the
