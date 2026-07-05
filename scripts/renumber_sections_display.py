@@ -126,14 +126,21 @@ def renumber_sections_display(text: str) -> str:
         out = out.replace(old_line, new_line)
 
     # 2. Anchor ids/hrefs — longest anchor first so e.g. "72" is swapped before
-    #    a hypothetical shorter overlapping anchor, then apply BOTH the
-    #    `id="..."` declaration form and the `(#...)` / `#...)` link-target form.
+    #    a hypothetical shorter overlapping anchor, then apply the `id="..."`
+    #    declaration form, the markdown `(#...)` / `#...)` link-target form, AND
+    #    the raw HTML `href="#..."` form. The HTML form is emitted by the
+    #    control-overview / posture tables (e.g.
+    #    `<a href="#7-security-architecture">§6</a>`): step 5 rewrites the visible
+    #    `§7`→`§6` text but the href target is a distinct token — without this the
+    #    link stays pointed at the old `#7-...` anchor while every heading/id moved
+    #    to `#6-...`, leaving a dangling in-page link.
     anchor_pairs = sorted(
         {(old_a, new_a) for _o, _n, old_a, new_a in heading_renumbers if old_a != new_a},
         key=lambda p: -len(p[0]),
     )
     for old_anchor, new_anchor in anchor_pairs:
         out = out.replace(f'id="{old_anchor}"', f'id="{new_anchor}"')
+        out = out.replace(f'href="#{old_anchor}"', f'href="#{new_anchor}"')
         out = out.replace(f"(#{old_anchor})", f"(#{new_anchor})")
         out = out.replace(f"(#{old_anchor} ", f"(#{new_anchor} ")  # defensive: trailing-space anchor forms
 

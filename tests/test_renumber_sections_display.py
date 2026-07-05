@@ -61,12 +61,19 @@ def test_anchor_ids_and_hrefs_renumbered_consistently():
         '<a id="7-security-architecture"></a>\n'
         "### 7.2 Identity and Authentication Controls\n\n"
         "See [§7.2](#72-identity-and-authentication-controls) and [§7](#7-security-architecture).\n"
+        # Raw HTML link form emitted by the control-overview / posture tables:
+        # the visible §7 text moves to §6 (step 5) but the href target is a
+        # distinct token that must move too, or the link dangles.
+        '<td>see <a href="#7-security-architecture">§7</a> control assessment.</td>\n'
     )
     out = rsd.renumber_sections_display(doc)
     assert 'id="6-security-architecture"' in out
     assert "(#6-security-architecture)" in out
     assert "(#62-identity-and-authentication-controls)" in out
     assert "72-identity" not in out
+    # HTML href target renumbered, and no stale #7 anchor left anywhere.
+    assert 'href="#6-security-architecture"' in out
+    assert "#7-security-architecture" not in out
 
 
 def test_toc_top_level_ordered_list_renumbered():
