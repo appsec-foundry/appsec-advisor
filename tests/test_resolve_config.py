@@ -1556,7 +1556,7 @@ class TestRenderEffectiveRouting:
         out = rc.render_effective_routing(cfg, "claude-opus-4-8")
         assert "host session: claude-opus-4-8" in out
         assert "claude-sonnet-4-6" in out  # pinned STRIDE + qa stages
-        assert "claude-sonnet-5" in out    # standard buy-back renderer/abuse
+        assert "claude-sonnet-5" in out  # standard buy-back renderer/abuse
         assert "Renderer" in out and "Abuse-case verifier" in out
         # header + the orchestrator row both name the session model.
         assert out.count("claude-opus-4-8") >= 2
