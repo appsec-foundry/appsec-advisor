@@ -4507,7 +4507,11 @@ Runs **last** — after the PDF / HTML exports — so the stamped copy set inclu
 **Non-fatal** — a copy failure must not fail the assessment; the canonical model is already complete.
 
 ```bash
-SLUG=$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/.skill-config.json')).get('slug') or '')" 2>/dev/null)
+# SLUG is already bound from dispatch_values (SKILL-full-runtime.md §3 alias table).
+# Do NOT re-read it from .skill-config.json here — that file is deleted by
+# runtime_cleanup.py --stage post-qa (Always-cleanup list, line 32/129) which runs
+# in "Post-summary cleanup" above, before this block. Re-reading it always yields ""
+# and silently skips the stamp (the FileNotFoundError is swallowed by 2>/dev/null).
 if [ -n "$SLUG" ]; then
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/stamp_threat_model.py" \
         --output-dir "$OUTPUT_DIR" --slug "$SLUG" \
