@@ -1027,8 +1027,8 @@ def test_yaml_md_asset_name_with_ampersand_entity(tmp_path):
         "# Title\n\n"
         '| <a id="f-002"></a>F-002 | x |\n\n'
         "## 4. Assets\n\n"
-        '<table><tr><th>Asset</th><th>Class</th><th>Linked Threats</th></tr>'
-        '<tr><td>Admin Credentials &amp; API Keys</td><td>Restricted</td>'
+        "<table><tr><th>Asset</th><th>Class</th><th>Linked Threats</th></tr>"
+        "<tr><td>Admin Credentials &amp; API Keys</td><td>Restricted</td>"
         '<td>🔴 <a href="#f-002">F-002</a> — x</td></tr></table>\n\n'
         "## 5. Next\n"
     )

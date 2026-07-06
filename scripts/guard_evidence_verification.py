@@ -201,8 +201,7 @@ def guard(output_dir: Path) -> int:
     stripped = _neutralize(threats)
     if stripped == 0:
         print(
-            "guard_evidence_verification: degenerate signal but no ambiguous "
-            "verdicts to strip — no-op",
+            "guard_evidence_verification: degenerate signal but no ambiguous verdicts to strip — no-op",
             file=sys.stderr,
         )
         return 0
