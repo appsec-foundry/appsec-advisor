@@ -170,13 +170,13 @@ The number of analyzed components follows the repository's attack surface rather
 
 ### Cost by depth
 
-These clean OWASP Juice Shop runs were measured on 2026-07-02. They compare modes but do not predict the exact bill for another repository.
+These OWASP Juice Shop runs anchor on two measured points from July 2026 — the **standard** cost ($34.14) and a full **thorough** run (about $47, 103 minutes) — both with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. The remaining figures (quick cost, and the runtimes for quick and standard) are estimated from those anchors and scale with depth: standard drops the architect review and runs the cheaper Sonnet tier, and quick additionally skips abuse-case validation and model-based QA. They compare modes but do not predict the exact bill for another repository.
 
-| Mode | Best fit | Review depth | Measured API cost (USD) and time |
+| Mode | Best fit | Review depth | API cost (USD) and time |
 |---|---|---|---|
-| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | About $18 and 43 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick.md)) |
-| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | About $37 and 102 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard.md)) |
-| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | About $50 and 94 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough.md)) |
+| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | ~$17 and ~45 minutes (est.) ([sample](../examples/threat-modeler/threat-model-juice-shop-quick.md)) |
+| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $34.14 and ~85 minutes (time est.) ([sample](../examples/threat-modeler/threat-model-juice-shop-standard.md)) |
+| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | About $47 and 103 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough.md)) |
 
 > [!NOTE]
 > Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
@@ -192,7 +192,7 @@ These clean OWASP Juice Shop runs were measured on 2026-07-02. They compare mode
 | `sonnet-economy` | Sonnet 4.6 · Sonnet 5\* · Sonnet 5\* | Default for quick and standard. Helper tasks use Haiku. **\*Standard buy-back:** at `standard`, triage + merger (and renderer + abuse-verifier) resolve to Sonnet 5; STRIDE stays Sonnet 4.6. `quick` is all-Sonnet 4.6. |
 | `sonnet` | Sonnet · Sonnet · Sonnet | Keeps helper tasks on Sonnet. |
 | `opus-cheap` | Sonnet · Sonnet · **Opus** | Uses Opus only for merging. |
-| `opus` | **Opus** · **Opus** · **Opus** | Default for thorough. In the standard benchmark it cost $40.78, compared with $30.01 for `sonnet-economy`, with similar finding counts. |
+| `opus` | **Opus** · **Opus** · **Opus** | Default for thorough. Costs noticeably more than the economy default for a similar finding count — the Opus reasoning tier is what makes a thorough run more expensive than a standard one. |
 
 `--stride-model`, `--triage-model`, and `--merger-model` override one part of the selected tier. Each accepts either a tier alias (`sonnet` / `opus`) or an explicit version id (e.g. `claude-sonnet-5`, `claude-sonnet-4-6`) to pin an exact model regardless of the session — the bare `sonnet` alias otherwise follows the host session model. Direct flags take precedence over the matching `APPSEC_*_MODEL` environment variables. `--no-opus` disables all Opus selections (alias or `claude-opus-*` id).
 
@@ -213,7 +213,7 @@ These clean OWASP Juice Shop runs were measured on 2026-07-02. They compare mode
 
 The rationale: STRIDE stays on 4.6 (Sonnet 5 measured *worse* discovery recall); triage/merge/renderer/abuse-verifier get Sonnet 5 where a benchmark showed a real gain (severity calibration, dedup, CISO framing, decisive verdicts) — at standard *and* thorough; the mechanical stages stay on cheap 4.6. Two caveats: (1) these are **explicit-id pins** that only take effect on the **headless path** — an *interactive* run's subagents inherit the session model regardless; and (2) the **merger pin stays inert at standard** (the merge is inline — see the `--merger-model` caveat above). The whole split is skipped when you opt into the explicit `sonnet` tier (`--reasoning-model sonnet`, latest Sonnet everywhere).
 
-For standard assessments, using Opus only for triage cost about $2 more than the all-Sonnet benchmark, compared with about $11 more for the full Opus tier:
+For standard assessments, using Opus only for triage costs just slightly more than the all-Sonnet baseline, while the full Opus tier costs substantially more:
 
 ```text
 /appsec-advisor:create-threat-model --reasoning-model sonnet-economy --triage-model opus --stride-cap 2
@@ -225,7 +225,7 @@ The report records the resolved model mix in *Run Statistics*.
 
 By default the pipeline keeps the token-heavy work cheap. The analysis stages — STRIDE, triage, and the merge — run on a fixed model tier that does not follow your session, and on quick and standard that tier is the lower-cost Sonnet-4.6. So the bulk of a routine scan never costs Sonnet-5 rates, whatever session you launch it from. The economy default is deliberate: you don't have to opt into it.
 
-The one part the defaults can't set for you is the **session model** — the model the main Claude Code loop itself runs on — and it turns out to be the biggest single cost driver. It pays for the dominant cache-read of a full run (one Juice-Shop scan re-read ~179M cached tokens, most of an ≈$80 bill) and for every agent that isn't pinned to something else: the orchestrator, the Stage-2 renderer, the abuse-case verifier, and content-QA. A running session can't switch its own model, so this is a Claude Code setting rather than a plugin flag — which makes it the one cost decision left in your hands.
+The one part the defaults can't set for you is the **session model** — the model the main Claude Code loop itself runs on — and it is the biggest single cost driver. It pays for the dominant cache-read of a full run and for every agent that isn't pinned to something else: the orchestrator, the Stage-2 renderer, the abuse-case verifier, and content-QA. A running session can't switch its own model, so this is a Claude Code setting rather than a plugin flag — which makes it the one cost decision left in your hands.
 
 Running the session on **Sonnet-4.6** roughly **halves** the cost of a run versus Sonnet-5 for the same report — see *Background: why Sonnet 4.6 costs less* below for the reason. Set it:
 
