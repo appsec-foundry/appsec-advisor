@@ -8,6 +8,10 @@
 # Use .venv if present, otherwise fall back to system python3
 PYTHON ?= $(if $(wildcard .venv/bin/python3),.venv/bin/python3,python3)
 
+# Absolute path to this Makefile's directory (the plugin root), stable even
+# when make is invoked from a different working directory.
+PLUGIN_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Manual E2E full-run
 #
@@ -127,6 +131,21 @@ release-check:  ## Release-boundary gate: `check` + version/tag/changelog consis
 release-all:  ## Full pre-release sequence: release-check then a live e2e-full (quick)
 	@$(MAKE) --no-print-directory release-check
 	@$(MAKE) --no-print-directory e2e-full
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Target-repo setup — write required Claude Code permissions into a target repo
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: setup-target
+setup-target:  ## Write required CC permissions into a target repo (default: cwd): make setup-target [REPO=<path>] [OUTPUT=<path>] [SCOPE=project|local|user]
+	@mkdir -p "$(or $(REPO),$(CURDIR))/.claude"
+	@$(PYTHON) $(PLUGIN_ROOT)scripts/check_permissions.py \
+		--repo-root "$(or $(REPO),$(CURDIR))" \
+		$(if $(OUTPUT),--output-dir "$(OUTPUT)",) \
+		--plugin-dir "$(PLUGIN_ROOT)" \
+		--scope "$(or $(SCOPE),project)" \
+		--update
+	@echo "Restart Claude Code (or reload the session) for the new permissions to take effect."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Diagnostic bundle — anonymised user→maintainer error report
