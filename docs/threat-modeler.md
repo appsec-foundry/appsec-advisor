@@ -170,11 +170,11 @@ The number of analyzed components follows the repository's attack surface rather
 
 ### Cost by depth
 
-These OWASP Juice Shop runs anchor on two measured points from July 2026 — the **standard** cost ($34.14) and a full **thorough** run (about $47, 103 minutes) — both with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. The remaining figures (quick cost, and the runtimes for quick and standard) are estimated from those anchors and scale with depth: standard drops the architect review and runs the cheaper Sonnet tier, and quick additionally skips abuse-case validation and model-based QA. They compare modes but do not predict the exact bill for another repository.
+These OWASP Juice Shop runs anchor on three measured points from July 2026 — **quick** ($18.03, 68 minutes), **standard** ($34.14), and a full **thorough** run (about $47, 103 minutes) — all with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. The standard runtime (~85 minutes) is estimated from the quick and thorough anchors. They compare modes but do not predict the exact bill for another repository.
 
 | Mode | Best fit | Review depth | API cost (USD) and time |
 |---|---|---|---|
-| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | ~$17 and ~45 minutes (est.) ([sample](../examples/threat-modeler/threat-model-juice-shop-quick.md)) |
+| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | $18.03 and 68 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick.md)) |
 | **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $34.14 and ~85 minutes (time est.) ([sample](../examples/threat-modeler/threat-model-juice-shop-standard.md)) |
 | **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | About $47 and 103 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough.md)) |
 
