@@ -72,6 +72,8 @@ Module map (coarse — line ranges drift; refresh by re-grepping the listed name
 
 from __future__ import annotations
 
+import base64
+import binascii
 import html
 import json
 import json as _json
@@ -9662,6 +9664,59 @@ REQUIRED_FRAGMENTS = (
 )
 
 
+def _check_posture_structure_svg(report: Report, section: str, md_path: Path, img_src: str) -> Report:
+    """Validate the Figure 2 SVG form (figure2_svg.py) + the Top Threats table.
+
+    The SVG replaces the inline ELK Mermaid heatmap because common Markdown
+    viewers lack the ELK layout engine. The Mermaid-syntax D/E/F/C invariants no
+    longer apply; the invariants that survive are:
+
+      * the referenced ``<stem>.figure2.svg`` exists (relative-file form), and
+      * T1/T2/T3 — the Top Threats table is present, its row glyphs agree 1:1
+        with the figure's attack-arrow glyphs (read from the SVG's machine-
+        readable ``data-glyphs`` attribute), and findings link into §8.
+    """
+    svg_text = ""
+    if img_src.startswith("data:image/svg"):
+        b64 = img_src.split(",", 1)[1] if "," in img_src else ""
+        try:
+            svg_text = base64.b64decode(b64).decode("utf-8", "replace")
+        except (ValueError, binascii.Error):
+            svg_text = ""
+    else:
+        svg_path = md_path.parent / img_src
+        if not svg_path.is_file():
+            report.issues.append(f"D-SVG: Figure 2 references `{img_src}` but the SVG file is missing")
+        else:
+            svg_text = svg_path.read_text(encoding="utf-8", errors="replace")
+
+    mg = re.search(r'data-glyphs="([0-9 ]*)"', svg_text)
+    svg_nums = {int(n) for n in (mg.group(1).split() if mg else [])}
+
+    # T1: table header present.
+    if "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |" not in section:
+        report.issues.append("T1: missing Top Threats table header below Figure 2")
+    # T2/G3: figure arrow glyphs (from data-glyphs) == Top Threats row glyphs.
+    # Table glyphs are circled unicode (①..); normalise both to integers.
+    table_glyphs = re.findall(
+        r'^\|\s*(?:<a id="[^"]+"></a>)?\s*([①②③④⑤⑥⑦])\s*\|',
+        section,
+        re.MULTILINE,
+    )
+    table_nums = {ord(g) - 0x2460 + 1 for g in table_glyphs}
+    if svg_nums and svg_nums != table_nums:
+        report.issues.append(
+            f"T2/G3: Figure 2 arrow glyphs {sorted(svg_nums)} ≠ Top Threats row glyphs {sorted(table_nums)}"
+        )
+    # T3: at least one finding links into §8.
+    if table_glyphs and not re.search(r"\[F-\d+\]\(#f-\d+\)", section):
+        report.issues.append("T3: Top Threats findings are not linked to §8 (`[F-NNN](#f-nnn)`)")
+
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
 def check_security_posture_structure(md_path: Path) -> Report:
     """Validate the Security Posture & Top Threats section against the
     invariants declared in
@@ -9701,6 +9756,15 @@ def check_security_posture_structure(md_path: Path) -> Report:
     section = text[sec_start:sec_end]
 
     _check_figure1_architecture_layout(report, section)
+
+    # Figure 2 PRIMARY form (figure2_svg.py): a portable SVG image instead of an
+    # inline ELK Mermaid block. The SVG carries the semantics the D/E/F/C rules
+    # used to guard (those validated Mermaid *markup* that no longer exists), so
+    # for the SVG form we validate the image + glyph↔table parity only. The
+    # inline-Mermaid path below stays as the fallback (SVG builder unavailable).
+    fig2_img = re.search(r"!\[Figure 2[^\]]*\]\((data:image/svg[^)]*|[^)]+\.svg)\)", section)
+    if fig2_img:
+        return _check_posture_structure_svg(report, section, md_path, fig2_img.group(1))
 
     # Locate the heatmap (Figure 2) mermaid block specifically — an optional
     # Figure 1 architecture diagram may precede it, so we anchor on the

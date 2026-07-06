@@ -100,61 +100,7 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 Heatmap: **actors** (left) → **architecture tiers** (middle, Client → Application → Data) → **impact** (right). Numbered red arrows ① are the threats enumerated in the Top Threats table below.
 
-```mermaid
-%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 45, "rankSpacing": 95}} }%%
-flowchart LR
-    subgraph ACTORS[" "]
-        direction TB
-        HDR_A["<b>Threat Actors</b>"]:::columnHeader
-        ANON(["fa:fa-user-secret Anonymous Internet Attacker"]):::actorAnon
-    end
-
-    subgraph TIERS[" "]
-        direction TB
-        HDR_T["<b>Architecture Tiers</b>"]:::columnHeader
-        SERVER["Application Tier<br/>C-01 REST API · C-02 Auth Service"]:::tierApp
-    end
-
-    subgraph IMPACT[" "]
-        direction TB
-        HDR_I["<b>Business Impact</b>"]:::columnHeader
-    end
-
-    %% Invisible alignment hints. Two purposes:
-    %%   (a) keep per-component alignment edges (e.g. ANON --- SERVER) so the
-    %%       forward attack arrows route horizontally without crossing tier
-    %%       boxes (the diagram is forward-only: actor → tier → impact, no
-    %%       backward relay edges into the actor column);
-    %%   (b) chain the three column headers (HDR_A, HDR_T, HDR_I) across
-    %%       subgraph boundaries so ELK pins them on the same Y line.
-    HDR_A --- HDR_T
-    HDR_T --- HDR_I
-    ANON --- SERVER
-
-    %% Attack arrows - solid ==> for DIRECT attacks, dashed -.-> for INDIRECT
-    %% (victim-required, e.g. DOM/stored XSS). Both stay in the red attack
-    %% linkStyle; the dashed syntax marks the indirect ones.
-
-    %% Consequence arrows (tier → business impact, all LR-forward)
-
-    %% Subgraph frames invisible - column headers are emitted as the
-    %% FIRST node of each subgraph (HDR_A / HDR_T / HDR_I) and pinned
-    %% on the same Y line by the cross-subgraph alignment edges above.
-    style ACTORS fill:none,stroke:none
-    style TIERS  fill:none,stroke:none
-    style IMPACT fill:none,stroke:none
-
-    classDef tierClient fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
-    classDef tierApp    fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
-    classDef tierData   fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
-    classDef actorAnon     fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px,font-size:12px
-    classDef impact        fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:12px
-
-    classDef columnHeader  fill:none,stroke:none,color:#111,font-size:14px
-
-    linkStyle 0,1,2     stroke:transparent,stroke-width:0px
-
-```
+![Figure 2 - Risk Flow: Actor to Tier to Impact](figure2.svg)
 
 **0 structural threats**, grouped by weakness class - each row is one threat, not one finding. *Threat Description* states the general architectural weakness (STRIDE in brackets); *Findings* lists the concrete instances, each linked to [§8 Findings Register](#8-findings-register) with its component; *Risk & Impact* combines severity with business consequence.
 

@@ -201,11 +201,27 @@ class TestReadEvidenceSnippet:
         assert snip == "l2\nl3\nl4"
 
     def test_caps_line_length(self, tmp_path):
+        # A pathological long line with no spaces → hard cut at the cap + " …".
         long = "x" * 500
         (tmp_path / "f.ts").write_text(f"{long}\n")
         snip = compose._read_evidence_snippet(tmp_path, "f.ts", 1, 1)
         assert snip is not None
-        assert len(snip) == 200
+        assert snip.endswith(" …")
+        assert len(snip) == compose._EVIDENCE_MAX_LINE + 1
+
+    def test_long_line_trims_at_word_boundary(self, tmp_path):
+        # An over-cap code line trims at a WORD boundary — never mid-token.
+        (tmp_path / "f.ts").write_text(("a" * 395) + " plain: true\n")
+        snip = compose._read_evidence_snippet(tmp_path, "f.ts", 1, 1)
+        assert snip is not None
+        assert snip.endswith(" …")
+        assert "plain: tr" not in snip
+
+    def test_line_under_cap_kept_whole(self, tmp_path):
+        # Lines up to the cap are kept whole (the PDF soft-wraps them).
+        (tmp_path / "f.ts").write_text(("y" * 250) + "\n")
+        snip = compose._read_evidence_snippet(tmp_path, "f.ts", 1, 1)
+        assert snip == "y" * 250
 
 
 class TestMaskSecrets:

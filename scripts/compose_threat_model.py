@@ -5789,6 +5789,59 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     return f"{intro}\n\n![Figure 1 - Architecture & Top Threats]({src})"
 
 
+def _figure2_basename(ctx: RenderContext) -> str:
+    """Figure 2 SVG basename, derived from the Figure 1 basename so both figures
+    share the md stem (`<stem>.figure1.svg` → `<stem>.figure2.svg`)."""
+    base = ctx.figure_basename or "figure1.svg"
+    if ".figure1." in base:
+        return base.replace(".figure1.", ".figure2.")
+    return "figure2.svg"
+
+
+def _render_figure2_svg(ctx: RenderContext, diagram_data: dict) -> str:
+    """Build Figure 2 (the risk-flow heatmap) as a deterministic hand-built SVG,
+    write it next to threat-model.md, and return the image-reference markdown.
+
+    Why SVG instead of the inline Mermaid heatmap: the Mermaid block declares the
+    ELK renderer (nested `direction TB` inside three invisible subgraph columns).
+    The plugin's PDF pipeline bundles ELK, but common Markdown viewers (GitHub,
+    VS Code preview, Obsidian) do NOT — they silently fall back to dagre, which
+    cannot honour the nested directions, so the 3-column layout collapses onto one
+    flat row with floating arrows. The SVG generator computes the layout itself and
+    emits plain primitives that render natively everywhere (mirrors Figure 1).
+
+    Returns "" when the builder yields nothing (missing module, no actor/tier
+    cards) — the caller then falls back to the inline Mermaid block.
+    """
+    try:
+        from figure2_svg import build_figure2_svg
+    except Exception:  # noqa: BLE001 — missing module must never break the section
+        return ""
+    try:
+        svg = build_figure2_svg(diagram_data)
+    except Exception:  # noqa: BLE001 — a builder failure falls back to Mermaid
+        return ""
+    if not (svg or "").strip():
+        return ""
+    basename = _figure2_basename(ctx)
+    (ctx.output_dir / basename).write_text(svg, encoding="utf-8")
+    # Embed logic mirrors Figure 1: inline as a base64 data URI when the skill
+    # persisted `embed_figures` (self-contained md), else a plain relative ref.
+    embed = bool(getattr(ctx, "embed_figures", False))
+    if not embed:
+        try:
+            _sc = json.loads((ctx.output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+            embed = bool(_sc.get("embed_figures"))
+        except (OSError, ValueError):
+            embed = False
+    if embed:
+        b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+        src = f"data:image/svg+xml;base64,{b64}"
+    else:
+        src = basename
+    return f"![Figure 2 - Risk Flow: Actor to Tier to Impact]({src})"
+
+
 def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
     """Deterministically build **Figure 1 — Architecture & Top Threats**
     from ``threat-model.yaml`` + the *already-reconciled*
@@ -6876,6 +6929,14 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
 
     diagram_md = env.get_template("security-posture-diagram.md.j2").render(data=diagram_data)
 
+    # Figure 2 PRIMARY renderer: a deterministic hand-built SVG (portable to
+    # non-ELK Markdown viewers). Falls back to the inline Mermaid block above
+    # (`diagram_md`) when the SVG builder yields nothing. When the SVG is used,
+    # the intro paragraph (emitted inside `diagram_md` by the template) is
+    # re-prepended so the caption text is preserved.
+    figure2_svg_md = _render_figure2_svg(ctx, diagram_data)
+    figure2_block = f"{intro_paragraph}\n\n{figure2_svg_md}" if figure2_svg_md else diagram_md
+
     # ---- Attack-paths bullet list -------------------------------------------
     # Prefix-tolerant lookup: the schema mandates F-NNN ids in the LLM-authored
     # `findings` arrays, but threats are stored with T-NNN ids in
@@ -7152,7 +7213,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     parts += [
         "**Figure 2 — Risk Flow: Actor → Tier → Impact**",
         "",
-        diagram_md.rstrip(),
+        figure2_block.rstrip(),
         "",
     ]
     legend_md = _build_security_posture_actor_legend(attack_paths_data, attack_taxonomy)
@@ -13032,10 +13093,25 @@ def _read_evidence_snippet(repo_root: Path | None, file_path: str, line: int | N
         return None
     lo = max(1, line - context)
     hi = min(len(all_lines), line + context)
-    # Strip trailing newline / cap each line to 200 chars so minified files
-    # never blow up a cell. Preserve indentation.
-    snippet_lines = [all_lines[i].rstrip("\n")[:200] for i in range(lo - 1, hi)]
+    # Strip trailing newline / trim over-long lines so minified files never blow
+    # up a cell. Trim at a WORD boundary (never mid-token) so a long source line
+    # does not render as a broken code token (e.g. `plain: true` → `plain: tr`).
+    # The cap is generous — the PDF soft-wraps long code lines. Preserve indent.
+    snippet_lines = [_trim_code_line(all_lines[i].rstrip("\n")) for i in range(lo - 1, hi)]
     return "\n".join(snippet_lines)
+
+
+_EVIDENCE_MAX_LINE = 400
+
+
+def _trim_code_line(ln: str) -> str:
+    """Trim an over-long code line at a word boundary (never mid-token)."""
+    if len(ln) <= _EVIDENCE_MAX_LINE:
+        return ln
+    cut = ln.rfind(" ", 0, _EVIDENCE_MAX_LINE - 1)
+    if cut < _EVIDENCE_MAX_LINE // 2:  # no sensible space → hard cut
+        cut = _EVIDENCE_MAX_LINE - 1
+    return ln[:cut].rstrip() + " …"
 
 
 def _html_escape_for_pre(text: str) -> str:

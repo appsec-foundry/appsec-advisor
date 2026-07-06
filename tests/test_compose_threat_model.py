@@ -2664,31 +2664,40 @@ class TestSecurityPostureV2:
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         assert out == ""
 
-    def test_v2_diagram_uses_elk_renderer(self, tmp_path):
+    def test_v2_figure2_is_portable_svg(self, tmp_path):
+        # Figure 2 is now a deterministic hand-built SVG image (figure2_svg.py),
+        # not an inline ELK Mermaid block — so it renders in Markdown viewers
+        # that lack the ELK layout engine (GitHub, VS Code preview).
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        assert "defaultRenderer" in out and '"elk"' in out
-        assert "flowchart LR" in out
+        assert re.search(r"!\[Figure 2[^\]]*\]\([^)]*figure2\.svg\)", out)
+        assert (ctx.output_dir / "figure2.svg").is_file()
 
-    def test_v2_three_subgraphs_with_empty_titles(self, tmp_path):
+    def test_v2_svg_has_column_headers(self, tmp_path):
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
-        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        assert 'subgraph ACTORS[" "]' in out
-        assert 'subgraph TIERS[" "]' in out
-        assert 'subgraph IMPACT[" "]' in out
+        compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
+        svg = (ctx.output_dir / "figure2.svg").read_text(encoding="utf-8")
+        assert "Threat Actors" in svg
+        assert "Architecture Tiers" in svg
+        assert "Business Impact" in svg
 
-    def test_v2_header_nodes_present(self, tmp_path):
+    def test_v2_svg_has_tier_and_impact_content(self, tmp_path):
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
-        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        assert 'HDR_A["<b>Threat Actors</b>"]' in out
-        assert 'HDR_T["<b>Architecture Tiers</b>"]' in out
-        assert 'HDR_I["<b>Business Impact</b>"]' in out
+        compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
+        svg = (ctx.output_dir / "figure2.svg").read_text(encoding="utf-8")
+        assert "Application Tier" in svg
+        assert "Customer Data Exfiltration" in svg
 
-    def test_v2_alignment_edges_chain_headers(self, tmp_path):
+    def test_v2_svg_glyph_parity_with_table(self, tmp_path):
+        # The figure's attack-arrow glyphs are recorded on the SVG root as a
+        # machine-readable `data-glyphs` attribute (qa_checks enforces
+        # figure↔Top-Threats-table parity against it).
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
-        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        assert "HDR_A --- HDR_T" in out
-        assert "HDR_T --- HDR_I" in out
+        compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
+        svg = (ctx.output_dir / "figure2.svg").read_text(encoding="utf-8")
+        m = re.search(r'data-glyphs="([0-9 ]+)"', svg)
+        assert m
+        assert set(m.group(1).split()) == {"1", "2", "3", "4", "5", "6", "7"}
 
     def test_v2_seven_attack_arrows_with_glyphs(self, tmp_path):
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
@@ -2699,9 +2708,10 @@ class TestSecurityPostureV2:
 
     def test_v2_consequence_arrows_present(self, tmp_path):
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
-        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        # At least one dashed consequence arrow.
-        assert "-.->" in out
+        compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
+        svg = (ctx.output_dir / "figure2.svg").read_text(encoding="utf-8")
+        # Grey dashed tier→impact consequence edges are drawn with the #6b7280 stroke.
+        assert "#6b7280" in svg
 
     def test_v2_top_threats_table_below_diagram(self, tmp_path):
         # 2026-05 — the legacy attack-path bullet list was replaced by the
@@ -2742,22 +2752,21 @@ class TestSecurityPostureV2:
             }
         )
         ctx, env = self._build_ctx(tmp_path, yaml_data, self._fragment_seven_classes())
-        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        # The tier card severity counts line must not contain a Low marker.
-        # Find the Application Tier line and check. Tier names render plain
-        # since P1 (B1) — bold is reserved for the three column headers
-        # HDR_A / HDR_T / HDR_I, not the tier-card name itself.
-        app_card_match = re.search(r'Application Tier[^"]+', out)
-        assert app_card_match, "Application Tier card not found"
-        assert "🟢" not in app_card_match.group(0)
-        assert "Low" not in app_card_match.group(0)
+        compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
+        # Figure 2 shows tier name + components only — Low-severity findings must
+        # never surface in it (no 🟢 / "Low" markers leak into the SVG).
+        svg = (ctx.output_dir / "figure2.svg").read_text(encoding="utf-8")
+        assert "Application Tier" in svg
+        assert "🟢" not in svg
+        assert "Low" not in svg
 
     def test_v2_fallback_when_fragment_missing(self, tmp_path):
         # No fragment file → renderer falls back to CWE→class derivation.
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes())
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        # Must still produce a valid diagram + the Top Threats table.
-        assert "```mermaid" in out
+        # Must still produce a Figure 2 (portable SVG, or the Mermaid fallback
+        # when the SVG builder yields nothing) + the Top Threats table.
+        assert re.search(r"!\[Figure 2[^\]]*\]\([^)]*\.svg\)", out) or "```mermaid" in out
         assert "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |" in out
 
     def test_v2_classify_finding_class(self):

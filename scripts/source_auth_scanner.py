@@ -93,6 +93,13 @@ _MAX_FILE_BYTES = 1_500_000
 # matched line.
 _EVIDENCE_CTX = 1
 
+# Max characters per evidence-snippet line. Over-long lines are trimmed at a
+# WORD boundary (never mid-token) so a long source line like a raw SQL query
+# does not render as a broken token (e.g. `plain: true` → `plain: tr`). The cap
+# is generous because the PDF soft-wraps long code lines; it only guards against
+# pathological minified lines.
+_EVIDENCE_MAX_LINE = 400
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -394,14 +401,18 @@ def _counter_match(
 
 
 def _evidence_snippet(lines: list[str], idx: int) -> str:
-    """Capture ±_EVIDENCE_CTX lines around `idx`. Trim each to ~120 chars."""
+    """Capture ±_EVIDENCE_CTX lines around `idx`, trimming each over-long line
+    at a WORD boundary (never mid-token) — see ``_EVIDENCE_MAX_LINE``."""
     lo = max(0, idx - _EVIDENCE_CTX)
     hi = min(len(lines), idx + _EVIDENCE_CTX + 1)
     out = []
     for i in range(lo, hi):
         ln = lines[i].rstrip()
-        if len(ln) > 200:
-            ln = ln[:197] + "..."
+        if len(ln) > _EVIDENCE_MAX_LINE:
+            cut = ln.rfind(" ", 0, _EVIDENCE_MAX_LINE - 1)
+            if cut < _EVIDENCE_MAX_LINE // 2:  # no sensible space → hard cut
+                cut = _EVIDENCE_MAX_LINE - 1
+            ln = ln[:cut].rstrip() + " …"
         marker = ">>" if i == idx else "  "
         out.append(f"{marker} {i + 1:5}: {ln}")
     return "\n".join(out)

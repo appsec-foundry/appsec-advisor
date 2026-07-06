@@ -462,10 +462,22 @@ def test_call_scope_without_closing_paren_returns_capped_window() -> None:
     ]
 
 
-def test_evidence_snippet_truncates_long_lines() -> None:
+def test_evidence_snippet_keeps_long_lines_under_cap() -> None:
+    # Lines up to _EVIDENCE_MAX_LINE are kept whole (the PDF soft-wraps them) —
+    # a 250-char code line is no longer truncated mid-token.
     snippet = S._evidence_snippet(["x" * 250], 0)
-    assert "..." in snippet
-    assert len(snippet.split(": ", 1)[1]) == 200
+    assert "…" not in snippet
+    assert len(snippet.split(": ", 1)[1]) == 250
+
+
+def test_evidence_snippet_trims_over_cap_at_word_boundary() -> None:
+    # Over-cap lines trim at a WORD boundary (never mid-token) and append " …".
+    line = ("a" * 395) + " plain: true"
+    snippet = S._evidence_snippet([line], 0)
+    body = snippet.split(": ", 1)[1]
+    assert body.endswith(" …")
+    # The trailing token is dropped whole, not cut mid-identifier.
+    assert "plain: tr" not in body
 
 
 def test_scan_file_skips_large_missing_and_empty_files(tmp_path: Path, monkeypatch) -> None:

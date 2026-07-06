@@ -1858,6 +1858,55 @@ class TestSecurityPostureStructureRegexes:
         assert report.issues == [], report.issues
         assert report.ok == 1
 
+    # ---- Figure 2 SVG form (figure2_svg.py) — primary since 2026-07 ----------
+    # Figure 2 is a portable hand-built SVG image, not an inline ELK Mermaid
+    # block. The D/E/F/C Mermaid-markup rules do not apply; the surviving
+    # invariants are the SVG-file existence + T1/T2/T3 (table present, glyph
+    # parity via the SVG's `data-glyphs` attribute, findings linked).
+    def _svg_posture_section(self, img_src: str = "threat-model.figure2.svg") -> str:
+        return textwrap.dedent(f"""\
+            ### Security Posture & Top Threats
+
+            **Figure 2 - Risk Flow: Actor → Tier → Impact**
+
+            Heatmap: actors → tiers → impact. Numbered red arrows ①–③.
+
+            ![Figure 2 - Risk Flow: Actor to Tier to Impact]({img_src})
+
+            | # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |
+            |---|--------------------|------------------------|---------------|-----|
+            | <a id="path-injection"></a>① | **Injection** | •&nbsp;[F-001](#f-001)&nbsp;→&nbsp;[C-01](#c-01) | 🔴 **Critical** | [M-001](#m-001) |
+            | <a id="path-auth"></a>② | **Auth Bypass** | •&nbsp;[F-002](#f-002)&nbsp;→&nbsp;[C-01](#c-01) | 🔴 **Critical** | [M-002](#m-002) |
+            | <a id="path-xss"></a>③ | **XSS** | •&nbsp;[F-003](#f-003)&nbsp;→&nbsp;[C-02](#c-02) | 🟠 **High** | [M-003](#m-003) |
+            """)
+
+    @staticmethod
+    def _write_fig2_svg(tmp_path, glyphs: str = "1 2 3", name: str = "threat-model.figure2.svg") -> None:
+        (tmp_path / name).write_text(
+            f'<svg xmlns="http://www.w3.org/2000/svg" data-glyphs="{glyphs}"><text>x</text></svg>\n',
+            encoding="utf-8",
+        )
+
+    def test_svg_posture_section_passes(self, tmp_path):
+        self._write_fig2_svg(tmp_path, "1 2 3")
+        md = _write_minimal_model(tmp_path, self._svg_posture_section())
+        report = qa.check_security_posture_structure(md)
+        assert report.issues == [], report.issues
+        assert report.ok == 1
+
+    def test_svg_glyph_mismatch_flagged(self, tmp_path):
+        # SVG advertises glyphs 1,2 but the table has rows ①,②,③ → T2/G3.
+        self._write_fig2_svg(tmp_path, "1 2")
+        md = _write_minimal_model(tmp_path, self._svg_posture_section())
+        report = qa.check_security_posture_structure(md)
+        assert any(i.startswith("T2/G3:") for i in report.issues), report.issues
+
+    def test_svg_missing_file_flagged(self, tmp_path):
+        # Image referenced but no SVG file written next to the md.
+        md = _write_minimal_model(tmp_path, self._svg_posture_section())
+        report = qa.check_security_posture_structure(md)
+        assert any(i.startswith("D-SVG:") for i in report.issues), report.issues
+
     def test_figure1_data_bottom_stack_passes(self, tmp_path):
         """Figure 1 may precede the Figure 2 heatmap. Its architecture stack
         passes when DATA is the last tier, solid attacks target app/client
