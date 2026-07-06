@@ -1122,7 +1122,7 @@ fi
 
 If `CTX_SKIP=true`, **do not dispatch the context resolver**. Print `  ↳ context cache hit — skipping resolver (ctx newer than HEAD commit)`.
 
-**In full mode (`INCREMENTAL=false`) the context resolver always runs** — `CTX_SKIP` stays `false` regardless of whether `.threat-modeling-context.md` already exists. The Write tool overwrites the file without prompting because `Write(${OUTPUT_DIR}/**)` is in the allow-list.
+**In full mode (`INCREMENTAL=false`) the context resolver always runs** — `CTX_SKIP` stays `false` regardless of whether `.threat-modeling-context.md` already exists. The Write tool overwrites the file without prompting because `Write(${OUTPUT_DIR}/.*)` is in the allow-list.
 
 **Also resolve the recon fingerprint skip** (see `phase-group-recon.md` → "Incremental fingerprint skip") to determine `RECON_SKIP`. **Also resolve `HAS_IAC_SURFACE`** (see `phase-group-recon.md` → "Pre-check — resolve HAS_IAC_SURFACE") in the same Bash batch — all three flags in one turn.
 

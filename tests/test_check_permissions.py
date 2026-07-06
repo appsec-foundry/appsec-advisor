@@ -137,10 +137,15 @@ def test_expand_entry_is_noop_without_placeholders():
         ("Bash(*)", "Bash(rm:*)", True),
         ("Read(*)", "Read(/tmp/foo)", True),
         ("Write(/tmp/**)", "Write(/tmp/foo/bar.md)", True),
-        # gitignore ** semantics: dotfiles and dot-dirs ARE covered by /**
-        ("Write(/tmp/**)", "Write(/tmp/.sidecar.json)", True),
+        # /** does NOT cover direct dotfile children (Claude Code engine behavior)
+        ("Write(/tmp/**)", "Write(/tmp/.sidecar.json)", False),
+        # /** DOES cover files inside dot-subdirectories (2+ path components below base)
         ("Write(/tmp/**)", "Write(/tmp/.dispatch-context/x.md)", True),
         ("Write(/tmp/**)", "Write(/other/x)", False),
+        # /.* covers direct dotfile children only
+        ("Write(/tmp/.*)", "Write(/tmp/.sidecar.json)", True),
+        ("Write(/tmp/.*)", "Write(/tmp/.dir/x.md)", False),
+        ("Write(/tmp/.*)", "Write(/tmp/normal.md)", False),
         ("Edit(/repo/**)", "Edit(/repo/docs/security/a)", True),
         # different tool namespace never matches
         ("Bash(grep:*)", "Read(*)", False),

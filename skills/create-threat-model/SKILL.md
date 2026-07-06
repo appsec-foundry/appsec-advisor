@@ -48,6 +48,14 @@ Before loading an implementation file, run the deterministic router with the
 raw invocation arguments passed as separate arguments:
 
 ```bash
+# Extract --plugin-dir from invocation arguments (highest priority)
+_args=(<invocation-arguments>)
+for i in "${!_args[@]}"; do
+  if [ "${_args[$i]}" = "--plugin-dir" ] && [ -n "${_args[$((i+1))]}" ]; then
+    CLAUDE_PLUGIN_ROOT="${_args[$((i+1))]}"
+    break
+  fi
+done
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
   CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
     -path "*/appsec-advisor/skills/create-threat-model/SKILL.md" \

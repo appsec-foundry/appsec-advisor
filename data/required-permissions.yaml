@@ -67,15 +67,27 @@ required:
     category: file
 
   - entry: "Read(${OUTPUT_DIR}/**)"
-    reason: "agents re-read their own artifacts and sidecars under OUTPUT_DIR (covers dotfiles via gitignore ** semantics; needed explicitly when OUTPUT_DIR is outside the repo)"
+    reason: "agents re-read non-dotfile artifacts and subdirectory sidecars under OUTPUT_DIR"
+    category: file
+
+  - entry: "Read(${OUTPUT_DIR}/.*)"
+    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.recon-summary.md, .threat-modeling-context.md, .stride-*.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"
-    reason: "compose_threat_model.py, fragment writers, annotators all write under OUTPUT_DIR"
+    reason: "compose_threat_model.py, fragment writers, annotators all write under OUTPUT_DIR (non-dotfile paths and dot-subdirectory files like .fragments/*.md)"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.*)"
+    reason: "agents write direct dotfile sidecars (.recon-summary.md, .threat-modeling-context.md, .stride-*.json, .components.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/**)"
     reason: "QA re-render loop edits threat-model.md and fragment files in place"
+    category: file
+
+  - entry: "Edit(${OUTPUT_DIR}/.*)"
+    reason: "repair loops edit direct dotfile sidecars; Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Edit(${REPO_ROOT}/.gitignore)"
@@ -96,13 +108,13 @@ required:
 
   # NOTE: The plugin writes ~30 dot-prefixed sidecar files and dot-directories
   # under OUTPUT_DIR (.recon-summary.md, .assets.json, .dispatch-context/**,
-  # .qa-status.json, etc.). These were previously enumerated one-by-one on the
-  # belief that Claude Code's ** glob skips dotfiles. That is NOT how current
-  # Claude Code behaves: Read/Write/Edit path rules follow gitignore semantics,
-  # where ** matches dot-prefixed names too. The three OUTPUT_DIR globs above
-  # (Read/Write/Edit ${OUTPUT_DIR}/**) therefore cover every dotfile sidecar.
-  # Do not re-add per-file dotfile entries for new sidecars — the globs already
-  # cover them.
+  # .qa-status.json, etc.). Claude Code's /** glob does NOT match dot-prefixed
+  # direct children of a directory (e.g. "Write(/tmp/**)" does NOT suppress the
+  # prompt for "Write(/tmp/.sidecar.json)"). The /.*  entries above cover those
+  # direct dotfile children. Dot-subdirectory files (e.g. .fragments/foo.md,
+  # .dispatch-context/<id>/x.json) ARE covered by /** because they have
+  # non-dotfile path components below the dot-dir. New direct-child dotfile
+  # sidecars do NOT need their own per-file entries — the /.*  entries cover them.
 
   # --- Shell — one entry covers all commands without per-command maintenance ---
   #

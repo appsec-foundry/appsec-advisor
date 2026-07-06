@@ -178,16 +178,30 @@ def _rule_covers(rule: str, needed: str) -> bool:
         cmd_prefix = rule_arg[:-2]  # strip ":*" to get the command name
         if need_arg == cmd_prefix or need_arg.startswith(cmd_prefix + ":") or need_arg.startswith(cmd_prefix + " "):
             return True
-    # Path globs: ".../**" covers deeper paths, INCLUDING dotfiles.
-    # Claude Code's Read/Write/Edit path rules follow gitignore semantics, where
-    # ** matches dot-prefixed names too — so a single ${DIR}/** rule subsumes any
-    # .sidecar.json or .dot-dir/** beneath it. (Earlier versions of this checker
-    # special-cased dotfiles as uncovered; that was incorrect.)
+    # Path globs: ".../**" covers deeper non-dotfile paths.
+    # Claude Code's permission engine does NOT match dot-prefixed direct children
+    # with /**. "Write(/tmp/**)" does NOT cover "Write(/tmp/.sidecar.json)".
+    # Dotfile sidecars require explicit "Write(/tmp/.*)" entries (or "Write(/tmp/.*/)**"
+    # for dot-subdirectories). See data/required-permissions.yaml for the entries.
     if rule_arg.endswith("/**"):
         base = rule_arg[:-3]
         if need_arg == base:
             return True
         if need_arg.startswith(base + "/") or need_arg.startswith(base):
+            # Exclude direct dotfile children — /** does not cover them
+            remainder = need_arg[len(base):]
+            if remainder.startswith("/."):
+                # only a dot-dir with further depth is covered (e.g. base/.dir/file)
+                depth = remainder.count("/")
+                if depth < 2:
+                    return False
+            return True
+    # Path globs: ".../.*" covers direct dotfile children of a directory.
+    # "Write(/tmp/.*)" covers "Write(/tmp/.sidecar.json)" but NOT "Write(/tmp/.dir/x)".
+    if rule_arg.endswith("/.*"):
+        base = rule_arg[:-3]  # strip "/.*"
+        # matches any direct dotfile child: base/.anything (no further slash)
+        if need_arg.startswith(base + "/.") and "/" not in need_arg[len(base) + 1 :]:
             return True
     return False
 
