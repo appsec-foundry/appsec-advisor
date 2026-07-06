@@ -367,3 +367,11 @@ Use these commands after an assessment or to recover an interrupted run.
 | `/appsec-advisor:fix-run-issues` | Apply safe auto-fixes for issues recorded by the previous run, or print manual repair guidance. |
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
 | `/appsec-advisor:check-permissions` | Check or update the Claude Code permissions needed for unattended runs. |
+
+Outside of a Claude Code session (e.g. in CI setup), use the equivalent Makefile target:
+
+```sh
+make setup-target [REPO=<path>] [SCOPE=project|local|user]
+```
+
+`REPO` defaults to the current directory. `SCOPE` controls which `settings.json` file is written (`project` = `.claude/settings.json`, default).
