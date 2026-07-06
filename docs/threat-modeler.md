@@ -209,7 +209,7 @@ These OWASP Juice Shop runs anchor on two measured points from July 2026 — the
 | Deterministic helpers | context-resolver, recon-scanner, config-scanner | Haiku | Haiku | Haiku |
 | Session | orchestrator | follows session² | follows session² | follows session² |
 
-¹ qa-routine (mechanical link/anchor fixes) runs on Haiku at quick/standard. ² the orchestrator *is* the session model — the plugin can't pin it; see *Session model* below.
+¹ qa-routine (mechanical link/anchor fixes) runs on Haiku at quick/standard. ² the orchestrator *is* the session model — the plugin can't pin it; see *Session Model* below.
 
 The rationale: STRIDE stays on 4.6 (Sonnet 5 measured *worse* discovery recall); triage/merge/renderer/abuse-verifier get Sonnet 5 where a benchmark showed a real gain (severity calibration, dedup, CISO framing, decisive verdicts) — at standard *and* thorough; the mechanical stages stay on cheap 4.6. Two caveats: (1) these are **explicit-id pins** that only take effect on the **headless path** — an *interactive* run's subagents inherit the session model regardless; and (2) the **merger pin stays inert at standard** (the merge is inline — see the `--merger-model` caveat above). The whole split is skipped when you opt into the explicit `sonnet` tier (`--reasoning-model sonnet`, latest Sonnet everywhere).
 
@@ -221,7 +221,7 @@ For standard assessments, using Opus only for triage costs just slightly more th
 
 The report records the resolved model mix in *Run Statistics*.
 
-### Session model — the cost lever
+### Session Model
 
 By default the pipeline keeps the token-heavy work cheap. The analysis stages (STRIDE, triage, and the merge) run on a fixed model tier that does not follow your session, and on quick and standard that tier is the lower-cost Sonnet-4.6. So the bulk of a routine scan never costs Sonnet-5 rates, whatever session you launch it from.
 
