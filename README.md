@@ -134,7 +134,7 @@ An assessment produces a report covering architecture observations, trust bounda
 
 Assessments consume model tokens and typically take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) compares measured costs by depth and model and documents hard cost and time limits.
 
-**Model selection.** The defaults are chosen to keep the cost low. Most of the work, which uses a large number of tokens, runs on the cheaper Sonnet-4.6; Sonnet-5 is used only for the few stages where its stronger reasoning is worth the higher cost. The larger factor is the session model — the model that Claude Code itself runs on. Sonnet-5 splits the same source into more tokens, so running a full session on Sonnet-5 roughly doubles the cost of a run, and in our tests it did not produce better threat models. For normal use we therefore recommend a Sonnet-4.6 session (`/model claude-sonnet-4-6`; `scripts/run-headless.sh` uses it by default). See [Session model — the cost lever](docs/threat-modeler.md#session-model--the-cost-lever).
+**Session model.** The largest cost factor is the model your Claude Code session runs on. Sonnet-5 costs about the same per token as Sonnet-4.6, but its tokenizer splits the same source into more tokens (roughly 30 % more in our runs), so a full Sonnet-5 session costs significantly more for the same report without producing better threat models. For normal use, run it on Sonnet-4.6 (`/model claude-sonnet-4-6`; `scripts/run-headless.sh` uses it by default). See [Session model — the cost lever](docs/threat-modeler.md#session-model--the-cost-lever) for the details and the per-stage buy-backs.
 
 ## Requirements Audit
 

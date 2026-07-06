@@ -223,16 +223,16 @@ The report records the resolved model mix in *Run Statistics*.
 
 ### Session model — the cost lever
 
-By default the pipeline keeps the token-heavy work cheap. The analysis stages — STRIDE, triage, and the merge — run on a fixed model tier that does not follow your session, and on quick and standard that tier is the lower-cost Sonnet-4.6. So the bulk of a routine scan never costs Sonnet-5 rates, whatever session you launch it from. The economy default is deliberate: you don't have to opt into it.
+By default the pipeline keeps the token-heavy work cheap. The analysis stages (STRIDE, triage, and the merge) run on a fixed model tier that does not follow your session, and on quick and standard that tier is the lower-cost Sonnet-4.6. So the bulk of a routine scan never costs Sonnet-5 rates, whatever session you launch it from.
 
-The one part the defaults can't set for you is the **session model** — the model the main Claude Code loop itself runs on — and it is the biggest single cost driver. It pays for the dominant cache-read of a full run and for every agent that isn't pinned to something else: the orchestrator, the Stage-2 renderer, the abuse-case verifier, and content-QA. A running session can't switch its own model, so this is a Claude Code setting rather than a plugin flag — which makes it the one cost decision left in your hands.
+The one part the defaults can't set for you is the **session model**, the model the main Claude Code loop itself runs on, and it is the biggest single cost driver. It pays for the dominant cache-read of a full run and for every agent that isn't pinned to something else: the orchestrator, the Stage-2 renderer, the abuse-case verifier, and content-QA. A running session can't switch its own model, so this is a Claude Code setting rather than a plugin flag.
 
-Running the session on **Sonnet-4.6** roughly **halves** the cost of a run versus Sonnet-5 for the same report — see *Background: why Sonnet 4.6 costs less* below for the reason. Set it:
+Running the session on **Sonnet-4.6** roughly **halves** the cost of a run versus Sonnet-5 for the same report (see *Background: why Sonnet 4.6 costs less* below for the reason). Set it:
 
 - **Interactive:** `/model claude-sonnet-4-6` before launching the scan, or add `"model": "claude-sonnet-4-6"` to `.claude/settings.json` (project-scoped) or `~/.claude/settings.json` (global). The scan warns at start when it detects a **non**-4.6 host (Sonnet-5 or Opus) and prints the exact restart command; the effective per-agent routing is shown in the Pre-flight box.
 - **Headless / CI:** `scripts/run-headless.sh` **defaults** the session to `claude-sonnet-4-6` (the economy default) — no flag needed. Override per run with `--model <id>`.
 
-**Golden rule: run the session on Sonnet-4.6 and pin *up* only the few stages where Sonnet-5 measurably pays — never run the session on Sonnet-5 for quality.** On a 4.6 session everything runs on Sonnet-4.6 (or Haiku for the deterministic helpers); no agent silently runs on Sonnet-5. A Sonnet-5 session is strictly more expensive for the same result, because you then pay Sonnet-5 rates for the dominant cache-read plus the orchestrator, renderer, abuse-verifier and content-QA — while STRIDE/triage/merger stay 4.6 either way.
+**As a rule of thumb: run the session on Sonnet-4.6 and pin *up* only the few stages where Sonnet-5 clearly pays off; never run the session on Sonnet-5 for quality.** On a 4.6 session everything runs on Sonnet-4.6 (or Haiku for the deterministic helpers); no agent silently runs on Sonnet-5. A Sonnet-5 session is strictly more expensive for the same result, because you then pay Sonnet-5 rates for the dominant cache-read plus the orchestrator, renderer, abuse-verifier and content-QA, while STRIDE/triage/merger stay 4.6 either way.
 
 | Stage | Pin to Sonnet-5? | Why |
 |---|---|---|
@@ -243,7 +243,7 @@ Running the session on **Sonnet-4.6** roughly **halves** the cost of a run versu
 | Merger | ❌ | runs inline on the default path (pin has no effect) |
 | Helpers / content-QA | ❌ | Haiku / no measurable Sonnet-5 gain |
 
-These buy-backs are cheap: triage, renderer and the verifier are small token slices, so the run stays close to a pure-4.6 cost while gaining Sonnet-5 quality exactly where it counts. Interactively, `--triage-model` works as a flag; the two `APPSEC_*_MODEL` pins must sit in the `.claude/settings.json` `"env"` block (an inline `VAR=… /command` does not reach the skill). Headless, all three can be passed inline before `run-headless.sh`.
+These buy-backs are cheap: triage, renderer and the verifier are small token slices, so the run stays close to a pure-4.6 cost while gaining Sonnet-5 quality where it actually helps. Interactively, `--triage-model` works as a flag; the two `APPSEC_*_MODEL` pins must sit in the `.claude/settings.json` `"env"` block (an inline `VAR=… /command` does not reach the skill). Headless, all three can be passed inline before `run-headless.sh`.
 
 #### Background: why Sonnet 4.6 costs less
 
