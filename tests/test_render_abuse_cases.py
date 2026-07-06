@@ -319,6 +319,46 @@ def test_main_no_models_removes_stale_fragment(tmp_path: Path):
     assert not (frag / "abuse-cases.md").exists()
 
 
+def test_main_preserves_fragment_when_verdicts_exist_but_all_not_applicable(tmp_path: Path):
+    # Regression: when .abuse-case-verdicts.json exists but every verdict has
+    # chain_verdict="not_applicable" (build_models → []) AND no matches have
+    # structural_verdict="not_applicable" (build_catalog_evaluation → []),
+    # main() must NOT delete an existing fragment — the sidecars prove that
+    # Stage 1c ran. Deleting would replace a §9 written by Stage 1c with an
+    # empty placeholder, silently dropping abuse-case coverage from the report.
+    frag_dir = tmp_path / ".fragments"
+    frag_dir.mkdir()
+    prior_frag = "## 9. Abuse Cases\n\n_No abuse-case chain was verified._\n"
+    (frag_dir / "abuse-cases.md").write_text(prior_frag)
+
+    # .abuse-case-verdicts.json exists (Stage 1c ran) but all chains are not_applicable
+    (tmp_path / ".abuse-case-verdicts.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "verdicts": [
+                {"abuse_case_id": "AC-T-001", "chain_verdict": "not_applicable", "step_verdicts": []},
+            ],
+        })
+    )
+    # .abuse-case-matches.json with only candidate entries (no not_applicable rows
+    # for build_catalog_evaluation to pick up)
+    (tmp_path / ".abuse-case-matches.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "matches": [
+                {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate", "step_matches": []},
+            ],
+        })
+    )
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(_THREAT_MODEL))
+
+    rc = rac.main(["--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert (frag_dir / "abuse-cases.md").exists(), (
+        "main() must not delete abuse-cases.md when .abuse-case-verdicts.json is present"
+    )
+
+
 # ─── changelog enrichment with abuse cases (added 2026-06-13) ───────────────
 # Abuse cases (AC-T-NNN / AC-NNN / ORG-AC-NNN / REPO-AC-NNN) are produced by this script AFTER build_threat_model_yaml
 # wrote the changelog, so they cannot be recorded by the builder. enrich_*

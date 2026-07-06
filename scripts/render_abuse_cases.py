@@ -651,9 +651,22 @@ def main(argv: list[str] | None = None) -> int:
     json_path = frag_dir / "abuse-cases.json"
 
     if not models and not catalog_rows:
-        # Nothing evaluated at all (Phase 10c never ran) — remove any stale
-        # fragment so compose falls back to its placeholder and the §9 heading
-        # still appears (numbering stays put).
+        # Only remove stale fragments when the evaluation sidecars are also
+        # absent — that is the true "Phase 10c never ran" case. When
+        # .abuse-case-verdicts.json or .abuse-case-matches.json exist, Stage
+        # 1c did run; build_models/build_catalog_evaluation returning [] means
+        # the verdicts resolved to nothing renderable (e.g. all chains
+        # not_applicable, or AC-IDs unknown to the current library). Deleting
+        # the fragment in that case would silently replace a §9 produced by
+        # Stage 1c with an empty placeholder — the bug this guard fixes.
+        verdicts_on_disk = (output_dir / ".abuse-case-verdicts.json").exists()
+        matches_on_disk = (output_dir / ".abuse-case-matches.json").exists()
+        if verdicts_on_disk or matches_on_disk:
+            sys.stderr.write(
+                "RENDER_ABUSE_CASES: no renderable models but evaluation sidecars present"
+                " — keeping existing fragment (if any)\n"
+            )
+            return 0
         for p in (md_path, json_path):
             if p.exists():
                 p.unlink()
