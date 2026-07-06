@@ -72,6 +72,7 @@ Module map (coarse — line ranges drift; refresh by re-grepping the listed name
 
 from __future__ import annotations
 
+import html
 import json
 import json as _json
 import os
@@ -9515,7 +9516,17 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
             _ANY_FINDING_RE = re.compile(r"\b([TF]-(\d{3,4}))\b")
 
             def _norm_name(s: str) -> str:
-                return re.sub(r"\s+", " ", _strip_md(re.sub(r"<[^>]+>", "", s))).strip().lower()
+                # Strip HTML tags first (real table structure), THEN decode HTML
+                # entities in the remaining text. The §4 Assets table is rewritten
+                # to fixed-layout <table> HTML by qa autofix, which escapes `&` in
+                # asset names to `&amp;` — so a YAML name like "Admin Credentials &
+                # API Keys" renders as "Admin Credentials &amp; API Keys" in the MD.
+                # Without unescape the two sides normalize differently and the
+                # NAME-join silently fails (md=[]), producing a false-positive
+                # linked_threats mismatch. html.unescape is a no-op on the raw-`&`
+                # YAML side, so applying it here keeps both sides symmetric.
+                no_tags = re.sub(r"<[^>]+>", "", s)
+                return re.sub(r"\s+", " ", _strip_md(html.unescape(no_tags))).strip().lower()
 
             md_asset_lt: dict[str, set[str]] = {}
             # GFM pipe rows: skip the header ("Asset …") and separator (`|---|`).

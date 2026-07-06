@@ -1010,11 +1010,41 @@ def test_yaml_md_asset_linked_threats_mismatch(tmp_path):
         "meta:\n  schema_version: 1\n"
         "threats:\n  - id: T-001\n    title: x\n"
         "mitigations: []\n"
-        "assets:\n  - id: A-001\n    linked_threats:\n      - T-001\n",
+        "assets:\n  - id: A-001\n    name: Database\n    linked_threats:\n      - T-001\n",
         encoding="utf-8",
     )
     rep = qa.check_yaml_md_consistency(f, y)
     assert any("linked_threats mismatch" in i for i in rep.issues)
+
+
+def test_yaml_md_asset_name_with_ampersand_entity(tmp_path):
+    # Regression: an asset name containing `&` renders as `&amp;` in the
+    # fixed-layout HTML §4 Assets table. The NAME-join must decode the entity so
+    # the YAML raw-`&` name and the escaped MD name normalize identically —
+    # otherwise the join fails silently and reports a false-positive
+    # `linked_threats mismatch` with md=[] (juice-shop 2026-07-05 QA false gate).
+    md = (
+        "# Title\n\n"
+        '| <a id="f-002"></a>F-002 | x |\n\n'
+        "## 4. Assets\n\n"
+        '<table><tr><th>Asset</th><th>Class</th><th>Linked Threats</th></tr>'
+        '<tr><td>Admin Credentials &amp; API Keys</td><td>Restricted</td>'
+        '<td>🔴 <a href="#f-002">F-002</a> — x</td></tr></table>\n\n'
+        "## 5. Next\n"
+    )
+    f = _md(tmp_path, md)
+    y = tmp_path / "threat-model.yaml"
+    y.write_text(
+        "meta:\n  schema_version: 1\n"
+        "threats:\n  - id: T-002\n    title: x\n"
+        "mitigations: []\n"
+        "assets:\n  - id: A-009\n    name: Admin Credentials & API Keys\n"
+        "    linked_threats:\n      - T-002\n",
+        encoding="utf-8",
+    )
+    rep = qa.check_yaml_md_consistency(f, y)
+    # The entity-decoded name matches, T-002 ↔ F-002 line up → no mismatch.
+    assert not any("linked_threats mismatch" in i for i in rep.issues), rep.issues
 
 
 def test_yaml_md_malformed_yaml(tmp_path):
