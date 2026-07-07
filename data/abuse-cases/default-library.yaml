@@ -179,11 +179,11 @@ abuse_cases:
             - "jwt\\.verify"
             - "decode\\(.*verify\\s*:\\s*false"
             - "algorithms?\\s*:\\s*\\["
-            - "CWE-(347|345)"
+            - "CWE-347"
             - "(?i)algorithm confusion"
             - "(?i)alg\\s*[:=]?\\s*none"
             - "(?i)jwt forgery"
-            - "(?i)signature (not |un)?verif"
+            - "(?i)jwt.*signature (not |un)?verif"
           control_patterns:
             - "algorithms:\\s*\\[\\s*['\"]RS256"
             - "algorithms:\\s*\\[\\s*['\"]HS256"
@@ -224,7 +224,7 @@ abuse_cases:
       prerequisite: Self-registration is open (one unauthenticated POST).
     goal: Obtain an administrator account without any existing privilege.
     scope_qualifier:
-      required_signals: [has_auth_surface]
+      required_signals: [has_auth_surface, has_registration]
     chain:
       - step: 1
         label: Registration endpoint binds an attacker-supplied privilege field

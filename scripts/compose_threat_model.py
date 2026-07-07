@@ -14526,6 +14526,13 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             continue
         deduped.append(t)
     threats = deduped
+    # Coverage-gap entries are OWASP-category placeholders injected when no
+    # STRIDE finding covers a category. They carry no code evidence and must
+    # not appear as F-numbered findings in §8; they belong in the §10
+    # coverage-gap section. Filter them out here so the §8 count and index
+    # reflect only real, evidence-backed findings.
+    _COVERAGE_GAP_SOURCES = {"coverage-gap", "architectural-anti-pattern"}
+    threats = [t for t in threats if t.get("source") not in _COVERAGE_GAP_SOURCES]
     # Tracks whether any row was carried forward from a prior deeper scan
     # without re-verification (incremental depth-downgrade). Drives a
     # depth-independent §8 footnote — unlike the quick-only banner line, this

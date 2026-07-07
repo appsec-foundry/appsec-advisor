@@ -664,6 +664,10 @@ _CWE_FAMILY: dict[str, str] = {
     "CWE-330": "crypto",
     "CWE-798": "crypto",
     "CWE-916": "crypto",
+    # Supply-chain / dependency integrity
+    "CWE-829": "supply-chain",
+    "CWE-1104": "supply-chain",
+    "CWE-1357": "supply-chain",
 }
 
 
