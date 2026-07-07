@@ -101,11 +101,17 @@ def clean_weakness(raw_title: str) -> str:
     s = re.sub(r"^[FT]-\d+\s*[—–-]\s*", "", s)
     # Drop parenthetical asides (file / param / payload).
     s = re.sub(r"\s*\([^()]*\)\s*", " ", s)
+    # Drop single-quoted literal values / payloads (e.g. 'pass****', 'none').
+    s = re.sub(r"\s*'[^']*'\s*", " ", s)
     # Drop the implementation mechanism after `via` / `using` / `through`
     # ("via eval", "via DomSanitizer.trust HTML bypass", "using notevil").
     s = re.sub(r"\s+(?:via|using|through)\s+.*$", "", s, flags=re.IGNORECASE)
     # Drop any embedded file token (`routes/fileUpload.ts:45`, `Dockerfile:5`).
     s = _FILE_TOKEN_RE.sub("", s)
+    # Drop " on:<line>" line-reference artefacts (e.g. "on:6") — placed after the
+    # file-token strip so that "— SymmetricAlgoKeys.json:6" is already gone and a
+    # bare "on:6" remainder is cleaned up here too.
+    s = re.sub(r"\s+on:\d+", "", s)
     # Drop a trailing truncation fragment the author left ("… no Depend…").
     s = re.sub(r"\s*…\S*$", "", s)
     # Drop a now-dangling trailing preposition (was "… in <file>" before strip).
