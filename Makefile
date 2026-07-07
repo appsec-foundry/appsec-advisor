@@ -137,13 +137,13 @@ release-all:  ## Full pre-release sequence: release-check then a live e2e-full (
 # ─────────────────────────────────────────────────────────────────────────────
 
 .PHONY: setup-target
-setup-target:  ## Write required CC permissions into a target repo (default: cwd): make setup-target [REPO=<path>] [OUTPUT=<path>] [SCOPE=project|local|user]
+setup-target:  ## Write required CC permissions into a target repo (default: cwd): make setup-target [REPO=<path>] [OUTPUT=<path>] [SCOPE=local|project|user]
 	@mkdir -p "$(or $(REPO),$(CURDIR))/.claude"
 	@$(PYTHON) $(PLUGIN_ROOT)scripts/check_permissions.py \
 		--repo-root "$(or $(REPO),$(CURDIR))" \
 		$(if $(OUTPUT),--output-dir "$(OUTPUT)",) \
 		--plugin-dir "$(PLUGIN_ROOT)" \
-		--scope "$(or $(SCOPE),project)" \
+		--scope "$(or $(SCOPE),local)" \
 		--update
 	@echo "Restart Claude Code (or reload the session) for the new permissions to take effect."
 

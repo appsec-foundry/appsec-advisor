@@ -33,6 +33,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import check_permissions  # noqa: E402
 import detect_session_model  # noqa: E402
 import resolve_config  # noqa: E402
 from event_log import format_line  # noqa: E402
@@ -693,6 +694,32 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     repo_root = Path(cfg["repo_root"]).resolve()
     cfg["output_dir"] = str(output_dir)
     cfg["repo_root"] = str(repo_root)
+
+    # Fail fast if required CC permissions are missing rather than letting the
+    # run stall on interactive prompts mid-flight.
+    required_raw = check_permissions.load_required()
+    required = [
+        {**r, "entry": check_permissions.expand_entry(r["entry"], repo_root, output_dir, PLUGIN_ROOT)}
+        for r in required_raw
+    ]
+    by_scope = check_permissions.effective_allow(repo_root)
+    all_granted = [rule for scope_rules in by_scope.values() for rule in scope_rules]
+    missing_perms = check_permissions.diff_required(required, all_granted)
+    if missing_perms:
+        entries = "\n".join(f"  {m['entry']}" for m in missing_perms)
+        return {
+            "schema_version": 1,
+            "action": "abort",
+            "mode": cfg.get("mode", "full"),
+            "reason": (
+                f"Missing required Claude Code permissions for this repo.\n"
+                f"Run:  make setup-target REPO={repo_root}\n"
+                f"then restart Claude Code and re-run the skill.\n\n"
+                f"Missing entries:\n{entries}"
+            ),
+            "exit_code": 2,
+        }
+
     # Stable per-run token so a Stage-1 agent's own lock acquisition can
     # re-acquire this controller-held lock re-entrantly instead of
     # false-blocking on it (mirrors the legacy-runtime fix in SKILL-impl.md
