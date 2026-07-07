@@ -1468,7 +1468,7 @@ class TestRenderConfigurationSummary:
         assert "incremental delta from previous threat-model.yaml" in out
 
     def test_full_repository_scope(self):
-        out = rc.render_configuration_summary(_base_cfg(scope=[]))
+        out = rc.render_configuration_summary(_base_cfg(incremental=False, scope=[]))
         assert "full repository" in out
 
     def test_active_options_outputs_and_extras(self):

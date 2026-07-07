@@ -571,6 +571,23 @@ def test_dispatch_values_supply_runtime_defaults(tmp_path):
     assert set(values) == set(controller._DISPATCH_KEYS) | set(controller._DISPATCH_EXTRA_KEYS)
 
 
+def test_dispatch_values_preserve_slug(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg["slug"] = "juice-shop-quick"
+    values = controller._dispatch_values(
+        cfg,
+        {
+            "estimate_total_pretty": "51 min",
+            "estimate_stage1_min": 23,
+            "estimate_stage2_min": 8,
+            "estimate_stage3_min": 7,
+            "estimate_stage4_min": 0,
+            "estimate_source": "parametric",
+        },
+    )
+    assert values["slug"] == "juice-shop-quick"
+
+
 def test_duration_estimate_forwards_resolved_profile(monkeypatch, tmp_path):
     cfg = _cfg(tmp_path, "rebuild")
     cfg.update(

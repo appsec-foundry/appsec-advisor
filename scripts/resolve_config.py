@@ -1458,7 +1458,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scan-manifest", action="store_true")
     # Optional model slug — when set, the run additionally emits a
     # postfix-stamped, copy-ready deliverable set (threat-model-<slug>.md /
-    # .yaml / .figure1.svg / …) so several models can share one directory
+    # .yaml / .figure*.svg / …) so several models can share one directory
     # without overwriting each other. Default None = canonical names only.
     p.add_argument("--slug", nargs="?", const="__auto__", default=None,
                    help="Postfix for an additional copy-ready deliverable set "
