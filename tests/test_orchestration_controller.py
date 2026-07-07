@@ -41,6 +41,12 @@ def _completed(stdout: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(["test"], 0, stdout=stdout, stderr="")
 
 
+@pytest.fixture(autouse=True)
+def _grant_required_permissions(monkeypatch):
+    """Controller unit tests should not depend on host Claude settings."""
+    monkeypatch.setattr(controller.check_permissions, "diff_required", lambda required, granted: [])
+
+
 def test_route_defaults_to_thin_for_full_or_rebuild(monkeypatch, tmp_path):
     # Default (no env): full/rebuild route to the compact runtime; incremental
     # keeps the legacy runtime.
