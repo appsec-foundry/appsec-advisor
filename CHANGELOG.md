@@ -2,6 +2,8 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
 ## 0.4.0-beta (2026-07-07)
 
 First public release. Still a beta: good for guided use, but not ready to run unattended in CI yet.
