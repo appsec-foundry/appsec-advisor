@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="309" viewBox="0 0 1018 375" font-family="Helvetica, Arial, sans-serif" data-glyphs="1 2 3 4 5 6">
+<rect x="0" y="0" width="1018" height="375" fill="#ffffff"/>
+<defs><marker id="f2attack" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c0392b"/></marker><marker id="f2conseq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"/></marker></defs>
+<text x="117.0" y="44.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2733" text-anchor="middle">Threat Actors</text>
+<text x="497.0" y="44.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2733" text-anchor="middle">Architecture Tiers</text>
+<text x="889.0" y="44.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1f2733" text-anchor="middle">Business Impact</text>
+<rect x="22.0" y="179.4" width="190.0" height="56.0" rx="28.0" fill="#f3dada" stroke="#b71c1c" stroke-width="2"/>
+<text x="117.0" y="207.4" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="bold" fill="#7f0000" text-anchor="middle">Anonymous Internet</text>
+<text x="117.0" y="221.4" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="bold" fill="#7f0000" text-anchor="middle">Attacker</text>
+<rect x="344.0" y="62.0" width="306.0" height="60.4" rx="6" fill="#f2f2f2" stroke="#424242" stroke-width="2"/>
+<text x="497.0" y="84.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#111111" text-anchor="middle">Client Tier</text>
+<text x="497.0" y="100.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#111111" text-anchor="middle">C-02 VulnerableApp-facade (Nginx + React)</text>
+<rect x="344.0" y="148.4" width="306.0" height="118.0" rx="6" fill="#f2f2f2" stroke="#424242" stroke-width="2"/>
+<text x="497.0" y="170.4" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#111111" text-anchor="middle">Application Tier</text>
+<text x="497.0" y="186.4" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#111111" text-anchor="middle">C-01 VulnerableApp Java Backend · C-03</text>
+<text x="497.0" y="200.8" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#111111" text-anchor="middle">CI/CD Pipeline · C-05 LLM Service (Ollama</text>
+<text x="497.0" y="215.2" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#111111" text-anchor="middle">+ LLMForge) · C-06 Mailpit Email Testing</text>
+<text x="497.0" y="229.6" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#111111" text-anchor="middle">Service · C-07 Authentication &amp; Session</text>
+<text x="497.0" y="244.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#111111" text-anchor="middle">Surface</text>
+<rect x="344.0" y="292.4" width="306.0" height="60.4" rx="6" fill="#f2f2f2" stroke="#424242" stroke-width="2"/>
+<text x="497.0" y="314.4" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#111111" text-anchor="middle">Data Tier</text>
+<text x="497.0" y="330.4" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#111111" text-anchor="middle">C-04 H2 In-Memory Database</text>
+<rect x="782.0" y="72.4" width="214.0" height="48.0" rx="4" fill="#0f172a" stroke="#000000" stroke-width="2.5"/>
+<circle cx="798.0" cy="96.4" r="5.0" fill="#e8943a" stroke="#e8943a" stroke-width="1"/>
+<text x="812.0" y="96.4" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#ffffff" text-anchor="start">Customer Session Hijack</text>
+<rect x="782.0" y="146.4" width="214.0" height="48.0" rx="4" fill="#0f172a" stroke="#000000" stroke-width="2.5"/>
+<circle cx="798.0" cy="170.4" r="5.0" fill="#d64545" stroke="#d64545" stroke-width="1"/>
+<text x="812.0" y="170.4" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#ffffff" text-anchor="start">Full Admin Takeover</text>
+<rect x="782.0" y="220.4" width="214.0" height="48.0" rx="4" fill="#0f172a" stroke="#000000" stroke-width="2.5"/>
+<circle cx="798.0" cy="244.4" r="5.0" fill="#d64545" stroke="#d64545" stroke-width="1"/>
+<text x="812.0" y="244.4" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#ffffff" text-anchor="start">Full Server Compromise</text>
+<rect x="782.0" y="294.4" width="214.0" height="48.0" rx="4" fill="#0f172a" stroke="#000000" stroke-width="2.5"/>
+<circle cx="798.0" cy="318.4" r="5.0" fill="#d64545" stroke="#d64545" stroke-width="1"/>
+<text x="812.0" y="318.4" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#ffffff" text-anchor="start">Customer Data Exfiltration</text>
+<line x1="650.0" y1="207.4" x2="782.0" y2="170.4" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#f2conseq)"/>
+<line x1="650.0" y1="207.4" x2="782.0" y2="318.4" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#f2conseq)"/>
+<line x1="650.0" y1="207.4" x2="782.0" y2="244.4" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#f2conseq)"/>
+<line x1="650.0" y1="92.2" x2="782.0" y2="96.4" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#f2conseq)"/>
+<line x1="212.0" y1="207.4" x2="344.0" y2="207.4" stroke="#c0392b" stroke-width="3.0" marker-end="url(#f2attack)"/>
+<circle cx="229.4" cy="207.4" r="9.0" fill="#c0392b" stroke="#ffffff" stroke-width="1.4"/>
+<text x="229.4" y="210.8" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">1</text>
+<circle cx="250.4" cy="207.4" r="9.0" fill="#c0392b" stroke="#ffffff" stroke-width="1.4"/>
+<text x="250.4" y="210.8" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="271.4" cy="207.4" r="9.0" fill="#c0392b" stroke="#ffffff" stroke-width="1.4"/>
+<text x="271.4" y="210.8" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">3</text>
+<circle cx="292.4" cy="207.4" r="9.0" fill="#c0392b" stroke="#ffffff" stroke-width="1.4"/>
+<text x="292.4" y="210.8" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">4</text>
+<circle cx="313.4" cy="207.4" r="9.0" fill="#c0392b" stroke="#ffffff" stroke-width="1.4"/>
+<text x="313.4" y="210.8" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">5</text>
+<line x1="212.0" y1="207.4" x2="344.0" y2="92.2" stroke="#c0392b" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#f2attack)"/>
+<circle cx="271.4" cy="155.6" r="9.0" fill="#c0392b" stroke="#ffffff" stroke-width="1.4"/>
+<text x="271.4" y="159.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">6</text>
+</svg>
