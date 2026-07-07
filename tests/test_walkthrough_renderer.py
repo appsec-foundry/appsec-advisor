@@ -728,28 +728,36 @@ class TestAttackTargetLabel:
         text = heading[len("### ") :]
         assert github_slug(text) == github_render_slug(text)
 
-
     def test_properties_file_falls_back_to_component_zone(self):
         # Config / properties files name no user-facing feature.
         # application-unsafe.properties → "" → fall back to component zone.
-        threat = {"component": "h2", "title": "Hardcoded H2 Admin Credentials — application-unsafe.properties:2",
-                  "evidence": [{"file": "application-unsafe.properties", "line": 2}]}
+        threat = {
+            "component": "h2",
+            "title": "Hardcoded H2 Admin Credentials — application-unsafe.properties:2",
+            "evidence": [{"file": "application-unsafe.properties", "line": 2}],
+        }
         ydata = {"components": [{"id": "h2", "name": "H2 In-Memory Database"}]}
         assert renderer._attack_target_label(threat, ydata) == "H2 In-Memory Database"
 
     def test_meta_word_only_stem_falls_back_to_component_zone(self):
         # CommandInjection.java → "Command" after meta-word filter removes "Injection";
         # but "Command" is redundant with weakness "OS command injection", so zone wins.
-        threat = {"component": "backend", "title": "OS command injection — CommandInjection.java:47",
-                  "evidence": [{"file": "CommandInjection.java", "line": 47}]}
+        threat = {
+            "component": "backend",
+            "title": "OS command injection — CommandInjection.java:47",
+            "evidence": [{"file": "CommandInjection.java", "line": 47}],
+        }
         ydata = {"components": [{"id": "backend", "name": "VulnerableApp Java Backend"}]}
         assert renderer._attack_target_label(threat, ydata) == "VulnerableApp Java Backend"
 
     def test_vulnerability_suffix_stripped_leaving_feature(self):
         # AuthenticationVulnerability.java → meta "Vulnerability" dropped, leaving
         # "Authentication" (not redundant with "SQL Injection") → feature wins.
-        threat = {"component": "backend", "title": "SQL Injection — AuthenticationVulnerability.java:68",
-                  "evidence": [{"file": "AuthenticationVulnerability.java", "line": 68}]}
+        threat = {
+            "component": "backend",
+            "title": "SQL Injection — AuthenticationVulnerability.java:68",
+            "evidence": [{"file": "AuthenticationVulnerability.java", "line": 68}],
+        }
         ydata = {"components": [{"id": "backend", "name": "VulnerableApp Java Backend"}]}
         assert renderer._attack_target_label(threat, ydata) == "Authentication"
 

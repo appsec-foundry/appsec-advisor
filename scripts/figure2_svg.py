@@ -177,7 +177,9 @@ def build_figure2_svg(diagram_data: dict) -> str:
                 c.circle(tx, y + _IMPACT_H / 2, 5, fill=dot, stroke=dot, sw=1)
                 tx += 14
             for i, ln in enumerate(_wrap(clean, _IMPACT_W - (tx - ix0) - 12, 11)[:2]):
-                c.text(tx, y + _IMPACT_H / 2 - 4 + i * 13 + 4, ln, size=11, fill=_IMPACT_INK, anchor="start", weight="bold")
+                c.text(
+                    tx, y + _IMPACT_H / 2 - 4 + i * 13 + 4, ln, size=11, fill=_IMPACT_INK, anchor="start", weight="bold"
+                )
             if nid:
                 box[nid] = (ix0, y, _IMPACT_W, _IMPACT_H)
             y += _IMPACT_H + _VGAP
@@ -205,9 +207,14 @@ def build_figure2_svg(diagram_data: dict) -> str:
         if not (p1 and p2):
             return
         c.line(
-            p1[0], p1[1], p2[0], p2[1],
-            stroke=_ATTACK, sw=(2.5 if dashed else 3.0),
-            dash="6 4" if dashed else None, marker="f2attack",
+            p1[0],
+            p1[1],
+            p2[0],
+            p2[1],
+            stroke=_ATTACK,
+            sw=(2.5 if dashed else 3.0),
+            dash="6 4" if dashed else None,
+            marker="f2attack",
         )
         digits = _glyph_digits(e.get("glyph") or "")
         if not digits:

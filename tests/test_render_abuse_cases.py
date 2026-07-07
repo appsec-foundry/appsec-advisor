@@ -333,22 +333,26 @@ def test_main_preserves_fragment_when_verdicts_exist_but_all_not_applicable(tmp_
 
     # .abuse-case-verdicts.json exists (Stage 1c ran) but all chains are not_applicable
     (tmp_path / ".abuse-case-verdicts.json").write_text(
-        json.dumps({
-            "schema_version": 1,
-            "verdicts": [
-                {"abuse_case_id": "AC-T-001", "chain_verdict": "not_applicable", "step_verdicts": []},
-            ],
-        })
+        json.dumps(
+            {
+                "schema_version": 1,
+                "verdicts": [
+                    {"abuse_case_id": "AC-T-001", "chain_verdict": "not_applicable", "step_verdicts": []},
+                ],
+            }
+        )
     )
     # .abuse-case-matches.json with only candidate entries (no not_applicable rows
     # for build_catalog_evaluation to pick up)
     (tmp_path / ".abuse-case-matches.json").write_text(
-        json.dumps({
-            "schema_version": 1,
-            "matches": [
-                {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate", "step_matches": []},
-            ],
-        })
+        json.dumps(
+            {
+                "schema_version": 1,
+                "matches": [
+                    {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate", "step_matches": []},
+                ],
+            }
+        )
     )
     (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(_THREAT_MODEL))
 

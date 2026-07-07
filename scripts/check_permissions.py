@@ -189,7 +189,7 @@ def _rule_covers(rule: str, needed: str) -> bool:
             return True
         if need_arg.startswith(base + "/") or need_arg.startswith(base):
             # Exclude direct dotfile children — /** does not cover them
-            remainder = need_arg[len(base):]
+            remainder = need_arg[len(base) :]
             if remainder.startswith("/."):
                 # only a dot-dir with further depth is covered (e.g. base/.dir/file)
                 depth = remainder.count("/")
