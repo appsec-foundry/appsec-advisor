@@ -228,7 +228,11 @@ def _weakness_class(title: str) -> str:
     class-only heading slugifies identically across GitHub, VS Code, and
     pandoc, so the anchor is renderer-stable.
     """
-    return re.split(r"\s+—\s+", (title or "").strip(), maxsplit=1)[0].strip()
+    cls = re.split(r"\s+—\s+", (title or "").strip(), maxsplit=1)[0].strip()
+    # Strip trailing " on:<line>" artefacts that leak into the weakness class when
+    # the title was authored as "… 'secret' on:6 — file:6" before normalization.
+    cls = re.sub(r"\s+on:\d+\s*$", "", cls).strip()
+    return cls
 
 
 _TARGET_LABEL_WORD_RE = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?=[A-Z]|$)")
@@ -250,6 +254,26 @@ _FEATURE_STRIP_SUFFIXES = {
     "startup",
     "config",
 }
+# Words that carry no feature meaning on their own — meta-descriptors that name
+# a security concept, not a product feature. A file stem (or CamelCase word)
+# composed entirely of these falls back to the component zone.
+# Examples: `AuthenticationVulnerability.java` → "Vulnerability" is meta-noise;
+#            `CommandInjection.java` → "Injection" repeats the weakness class;
+#            `application-unsafe.properties` → "Unsafe" signals a dev-profile,
+#            not a feature.
+_META_FEATURE_WORDS = frozenset(
+    {
+        "vulnerability",
+        "vulnerable",
+        "unsafe",
+        "insecure",
+        "attack",
+        "exploit",
+        "injection",
+        "bypass",
+    }
+)
+
 # Non-feature stems — infrastructure, security libs, and framework plumbing that
 # name no user-facing feature. These fall back to the component zone rather than
 # emitting "in Insecurity" / "in Server" / "in Register Websocket Events".
@@ -292,7 +316,11 @@ def _feature_from_file(file_hint: str) -> str:
     falls back to the component zone — for non-feature infra stems (`server`,
     `insecurity`, …) and for verbose (>2-word) stems (`registerWebsocketEvents`)
     that read better as the curated zone name than as a mangled file label."""
-    stem = Path(file_hint).stem  # login.ts → login ; oauth.component.ts → oauth.component
+    p = Path(file_hint)
+    # Config / properties files name no user-facing feature.
+    if p.suffix.lower() in {".properties", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env"}:
+        return ""
+    stem = p.stem  # login.ts → login ; oauth.component.ts → oauth.component
     parts = stem.split(".")
     while len(parts) > 1 and parts[-1].lower() in _FEATURE_STRIP_SUFFIXES:
         parts.pop()
@@ -302,7 +330,22 @@ def _feature_from_file(file_hint: str) -> str:
     words = _TARGET_LABEL_WORD_RE.findall(stem)
     if not words or len(words) > 2:  # empty or verbose → prefer the zone name
         return ""
-    return " ".join(_FEATURE_ACRONYMS.get(w.lower(), w.capitalize()) for w in words)
+    # Drop words that are security meta-descriptors, not feature names.
+    # ("AuthenticationVulnerability" → only "Authentication" survives; a stem
+    # composed *entirely* of meta-words yields an empty label → zone fallback.)
+    meaningful = [w for w in words if w.lower() not in _META_FEATURE_WORDS]
+    if not meaningful:
+        return ""
+    return " ".join(_FEATURE_ACRONYMS.get(w.lower(), w.capitalize()) for w in meaningful)
+
+
+def _feature_redundant_with_weakness(feature: str, weakness: str) -> bool:
+    """Return True if every word of *feature* already appears in *weakness*
+    (case-insensitive), making "OS command injection in Command" redundant.
+    Used to suppress file-derived features that just echo the weakness class."""
+    feature_words = {w.lower() for w in feature.split() if w}
+    weakness_lower = weakness.lower()
+    return bool(feature_words) and all(fw in weakness_lower for fw in feature_words)
 
 
 # Known acronyms rendered in their canonical casing rather than Title-cased.
@@ -371,9 +414,10 @@ def _attack_target_label(threat: dict, yaml_data: dict) -> str:
     """
     evidence = (threat.get("evidence") or [{}])[0] or {}
     file_hint = (evidence.get("file") or "").strip()
+    weakness = _weakness_class(threat.get("title") or "")
     if file_hint:
         feature = _feature_from_file(file_hint)
-        if feature:
+        if feature and not _feature_redundant_with_weakness(feature, weakness):
             return _anchor_stable_label(feature)
     comp_id = (threat.get("component") or "").strip()
     if comp_id:
