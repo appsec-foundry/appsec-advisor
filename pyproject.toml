@@ -10,7 +10,7 @@
 
 [project]
 name = "appsec-advisor"
-version = "0.4.0b0"
+version = "0.5.0.dev0"
 description = "Claude Code plugin: deterministic AppSec threat modeling for source repositories."
 requires-python = ">=3.10"
 
