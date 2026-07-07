@@ -194,6 +194,36 @@ def test_inj001_not_triggered_by_parameterized_query(tmp_path: Path) -> None:
     assert "INJ-001" not in _ids(_scan(tmp_path))
 
 
+def test_inj001_not_triggered_by_log_string_with_dml_word(tmp_path: Path) -> None:
+    """Log/error strings that merely contain the English word insert/update/
+    delete plus a ${...} interpolation are not SQL. The bare-DML-verb form of
+    the pattern flagged these (17 Critical FPs on juice-shop's data seeder);
+    requiring full clause structure (INSERT INTO / DELETE FROM / ...) fixes it.
+    """
+    (tmp_path / "datacreator.js").write_text(
+        "async function seed() {\n"
+        "  try { await Model.bulkCreate(rows) }\n"
+        "  catch (err) { logger.error(`Could not bulk insert Challenges: ${err}`) }\n"
+        "  logger.error(`Could not perform soft delete for the user ${userId}`)\n"
+        "}\n"
+    )
+    assert "INJ-001" not in _ids(_scan(tmp_path))
+
+
+def test_served_codefixes_snippets_are_excluded(tmp_path: Path) -> None:
+    """Intentionally-vulnerable coding-challenge snippets under codefixes/ are
+    stored as data and rendered as text (never executed), so the deterministic
+    source scan — which cannot judge reachability — must not mine them for
+    Critical injection findings even though they carry real interpolated SQL.
+    """
+    d = tmp_path / "data" / "static" / "codefixes"
+    d.mkdir(parents=True)
+    (d / "loginAdminChallenge_1.js").write_text(
+        "function login(req) {\n  return db.query(`SELECT * FROM Users WHERE email = '${req.body.email}'`)\n}\n"
+    )
+    assert "INJ-001" not in _ids(_scan(tmp_path))
+
+
 def test_inj002_command_injection_interpolated_exec(tmp_path: Path) -> None:
     (tmp_path / "export.js").write_text(
         "app.post('/admin/export', (req, res) => {\n  exec(`tar -czf /tmp/out.tgz ${req.body.path}`, cb)\n})\n"
@@ -432,10 +462,22 @@ def test_call_scope_without_closing_paren_returns_capped_window() -> None:
     ]
 
 
-def test_evidence_snippet_truncates_long_lines() -> None:
+def test_evidence_snippet_keeps_long_lines_under_cap() -> None:
+    # Lines up to _EVIDENCE_MAX_LINE are kept whole (the PDF soft-wraps them) —
+    # a 250-char code line is no longer truncated mid-token.
     snippet = S._evidence_snippet(["x" * 250], 0)
-    assert "..." in snippet
-    assert len(snippet.split(": ", 1)[1]) == 200
+    assert "…" not in snippet
+    assert len(snippet.split(": ", 1)[1]) == 250
+
+
+def test_evidence_snippet_trims_over_cap_at_word_boundary() -> None:
+    # Over-cap lines trim at a WORD boundary (never mid-token) and append " …".
+    line = ("a" * 395) + " plain: true"
+    snippet = S._evidence_snippet([line], 0)
+    body = snippet.split(": ", 1)[1]
+    assert body.endswith(" …")
+    # The trailing token is dropped whole, not cut mid-identifier.
+    assert "plain: tr" not in body
 
 
 def test_scan_file_skips_large_missing_and_empty_files(tmp_path: Path, monkeypatch) -> None:

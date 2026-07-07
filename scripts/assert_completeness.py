@@ -95,13 +95,32 @@ def chk_crit_high_have_mitigation_link(y: dict, md: str) -> tuple[bool, str]:
     )
 
 
-def chk_conditional_fragment_present(y: dict, md: str) -> tuple[bool, str]:
-    # Currently advisory: we can only check the signals we can see in the yaml.
-    # If the model meta declares an LLM/AI surface but no ai_risks were carried,
-    # that's worth a warning. Extend as more conditional signals become yaml-visible.
-    meta = y.get("meta") or {}
-    if meta.get("has_llm_surface") and not (y.get("ai_risks") or meta.get("ai_exposure")):
-        return False, "meta.has_llm_surface set but no AI exposure content present"
+def chk_conditional_fragment_present(
+    y: dict,
+    md: str,
+    output_dir: Path,
+) -> tuple[bool, str]:
+    """Require conditional fragments from an independent upstream signal."""
+    try:
+        from pregenerate_fragments import gen_ai_exposure
+
+        ai_expected = gen_ai_exposure(y) is not None
+    except Exception as exc:
+        return False, f"could not evaluate AI/LLM fragment precondition: {exc}"
+    ai_fragment = output_dir / ".fragments" / "ms-ai-exposure.json"
+    if ai_expected and not ai_fragment.is_file():
+        return False, "LLM/AI threats require .fragments/ms-ai-exposure.json, but it is missing"
+    if ai_expected:
+        heading = re.search(r"(?m)^### AI / LLM Exposure[ \t]*$", md)
+        if not heading:
+            return False, "LLM/AI fragment exists/required but the Management Summary subsection is missing"
+        tail = md[heading.end() :]
+        boundary = re.search(r"(?m)^#{1,3}\s+", tail)
+        body = tail[: boundary.start()] if boundary else tail
+        body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+        body = re.sub(r'<a\s+id="[^"]+"></a>', "", body)
+        if not any(line.strip() and line.strip() != "---" for line in body.splitlines()):
+            return False, "LLM/AI subsection is present but has no substantive body"
     return True, ""
 
 
@@ -146,27 +165,42 @@ def _load_contract(plugin_root: Path) -> dict:
         return {}
     try:
         return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, ValueError):
+    except (OSError, yaml.YAMLError):
         return {}
 
 
 def run(output_dir: Path, plugin_root: Path, phase: str) -> int:
     contract = _load_contract(plugin_root)
     if not contract:
-        sys.stderr.write("assert-completeness: no contract found — skipping (non-fatal)\n")
-        return 0
+        sys.stderr.write("assert-completeness: no valid completeness contract found — BLOCKING\n")
+        return 2
 
     yaml_path = output_dir / "threat-model.yaml"
-    y = {}
-    if yaml_path.is_file() and yaml is not None:
-        try:
-            y = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-        except (OSError, ValueError):
-            y = {}
+    if not yaml_path.is_file() or yaml is None:
+        sys.stderr.write("assert-completeness: threat-model.yaml missing or YAML unavailable — BLOCKING\n")
+        return 2
+    try:
+        y = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        sys.stderr.write("assert-completeness: threat-model.yaml unreadable — BLOCKING\n")
+        return 2
+    if not isinstance(y, dict):
+        sys.stderr.write("assert-completeness: threat-model.yaml root is not a mapping — BLOCKING\n")
+        return 2
     md = ""
     md_path = output_dir / "threat-model.md"
-    if phase == "render" and md_path.is_file():
-        md = md_path.read_text(encoding="utf-8")
+    if phase == "render":
+        if not md_path.is_file():
+            sys.stderr.write("assert-completeness: threat-model.md missing — BLOCKING\n")
+            return 2
+        try:
+            md = md_path.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write("assert-completeness: threat-model.md unreadable — BLOCKING\n")
+            return 2
+        if not md.strip():
+            sys.stderr.write("assert-completeness: threat-model.md empty — BLOCKING\n")
+            return 2
 
     required = contract.get("required_sections") or []
     failures: list[str] = []
@@ -185,6 +219,8 @@ def run(output_dir: Path, plugin_root: Path, phase: str) -> int:
         ran += 1
         if cid == "render_required_sections_present":
             ok, detail = fn(y, md, required)
+        elif cid == "conditional_fragment_present":
+            ok, detail = fn(y, md, output_dir)
         else:
             ok, detail = fn(y, md)
         if ok:
@@ -221,7 +257,7 @@ def main() -> int:
     args = p.parse_args()
     if not args.output_dir.is_dir():
         sys.stderr.write(f"assert-completeness: output dir not found: {args.output_dir}\n")
-        return 0  # non-fatal: nothing to assert
+        return 2
     return run(args.output_dir, args.plugin_root, args.phase)
 
 

@@ -214,3 +214,55 @@ def test_marker_lifecycle_section_is_single_source(skill_impl_text, heading):
     assert skill_impl_text.count(f"### {heading}") == 1, (
         f"'{heading}' must appear exactly once — the divergent duplicate was removed"
     )
+
+
+def test_display_renumber_is_wired_and_persists_section6(skill_impl_text):
+    """The ONE sanctioned last-mile mutator is `renumber_sections_display.py`:
+    it relabels §7→§6 so the persisted `threat-model.md` (and every derived
+    deliverable) shows contiguous §1–§10. The §7 document is preserved as a
+    mirror at `.appsec-cache/threat-model.canonical7.md` for the next run's §7
+    carry-forward + qa_checks contract matching — but the primary
+    `threat-model.md` is NOT restored to §7 (it stays §6, the reader-facing form).
+
+    No OTHER post-QA report mutator may be wired (they would silently change the
+    QA-clean report content), and the gray-ramp presentation remains owned by
+    `qa_checks.py autofix`."""
+    # The display renumber IS wired, and the §7 mirror is kept under .appsec-cache/.
+    assert "renumber_sections_display.py" in skill_impl_text
+    assert ".appsec-cache/threat-model.canonical7.md" in skill_impl_text
+    # The persisted threat-model.md must NOT be restored back to §7 (the old
+    # design). If a restore reappears, the reader-facing file would revert to §7.
+    assert 'mv -f "$OUTPUT_DIR/.threat-model.canonical7.md" "$OUTPUT_DIR/threat-model.md"' not in skill_impl_text
+    # No other content-mutating post-QA passes.
+    assert "style_priority_circles.py" not in skill_impl_text
+    assert "`qa_checks.py autofix` owns the final presentation-only gray ramp" in skill_impl_text
+
+
+def test_final_structure_gate_runs_after_last_mutation_before_exports(skill_impl_text):
+    completion_idx = skill_impl_text.find("### Normal Completion (DRY_RUN=false)")
+    patch_idx = skill_impl_text.find("--patch-placeholders \\", completion_idx)
+    no_print_idx = skill_impl_text.find("--no-print", patch_idx)
+    final_idx = skill_impl_text.find("final_structure", patch_idx)
+    completeness_idx = skill_impl_text.find("--phase render", final_idx)
+    integrity_idx = skill_impl_text.find("section_integrity.py", completeness_idx)
+    summary_idx = skill_impl_text.find(
+        'python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py"',
+        integrity_idx,
+    )
+    pdf_idx = skill_impl_text.find("export_pdf.py", integrity_idx)
+    html_idx = skill_impl_text.find("export_html.py", integrity_idx)
+
+    assert -1 not in {
+        completion_idx,
+        patch_idx,
+        no_print_idx,
+        final_idx,
+        completeness_idx,
+        integrity_idx,
+        summary_idx,
+        pdf_idx,
+        html_idx,
+    }
+    assert patch_idx < no_print_idx < final_idx < completeness_idx < integrity_idx
+    assert integrity_idx < summary_idx < pdf_idx
+    assert integrity_idx < summary_idx < html_idx

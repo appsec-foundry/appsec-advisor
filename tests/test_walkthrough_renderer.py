@@ -106,6 +106,46 @@ class TestAttackStepsPlaceholderSubstitution:
             assert "{file}" not in s and "{line}" not in s, f"placeholder leaked from padding into step: {s!r}"
 
 
+class TestAttackStepsChronologicalOrder:
+    """Regression (juice-shop 2026-07-03 user report): Attack Steps must read
+    in attacker-followable chronological order. A template padding step
+    describes an earlier stage than free-authored scenario prose (cwe-89's
+    template opens with "Identify the vulnerable input parameter…", a
+    reconnaissance step) — appending it AFTER the real scenario sentences put
+    "identify the parameter" after "submit the exploit", reversing the attack.
+    """
+
+    def test_missing_template_step_prepended_not_appended(self):
+        # scenario gives exactly 2 sentences; MIN_ATTACK_STEPS=3 needs 1 more.
+        threat = _make_threat(
+            "Submit a crafted email containing an SQL meta-character. "
+            "The server returns the first matching row regardless of the intended predicate."
+        )
+        template = {
+            "attack_steps_template": [
+                "Identify the vulnerable input parameter at `{file}:{line}`.",
+                "Send a request with an SQL meta-character payload in the parameter.",
+                "Server returns the first matching row regardless of the original predicate.",
+            ],
+        }
+        steps = renderer.render_attack_steps(threat, template=template)
+        assert len(steps) == 3
+        assert "Identify the vulnerable input parameter" in steps[0], (
+            f"recon-stage padding step must come FIRST, not last; got: {steps}"
+        )
+        assert "Submit a crafted email" in steps[1]
+        assert "returns the first matching row" in steps[2]
+
+    def test_no_padding_needed_scenario_order_untouched(self):
+        # scenario already has >= MIN_ATTACK_STEPS sentences — no template
+        # padding involved, so order must be exactly as authored.
+        threat = _make_threat("First step happens. Second step happens. Third step happens.")
+        steps = renderer.render_attack_steps(threat, template={})
+        assert "First step happens" in steps[0]
+        assert "Second step happens" in steps[1]
+        assert "Third step happens" in steps[2]
+
+
 class TestSequenceDiagramAltElseBlock:
     """QA Check 8e/8.0 — every §3 sequenceDiagram must carry an
     `alt Current state — T-NNN` / `else After M-NNN — <mitigation>` block and
@@ -163,6 +203,57 @@ class TestSequenceDiagramAltElseBlock:
         assert "**Key takeaway:**" in md
         assert "alt Current state — F-001" in md  # T-NNN normalised to visible F-NNN
         assert "else After M-005 — Use parameterized queries" in md
+
+
+class TestWalkthroughCap:
+    """§3 is capped at DEFAULT_MAX_WALKTHROUGHS so a Critical-heavy report does
+    not explode into dozens of near-identical walkthroughs (2026-07-02)."""
+
+    def _crits(self, n, *, with_anchor_last=False):
+        threats = [
+            {
+                "id": f"T-{i:03d}",
+                "title": f"SQL injection sink {i}",
+                "component": "express-backend",
+                "cwe": "CWE-89",
+                "risk": "critical",
+                "breach_distance": i,  # lower = more important
+                "evidence": [{"file": f"routes/r{i:02d}.ts", "line": i}],
+            }
+            for i in range(1, n + 1)
+        ]
+        if with_anchor_last:
+            threats[-1]["compound_chain_ids"] = ["AC-T-001"]  # anchor → must win a slot
+        return {"threats": threats, "mitigations": [], "assets": [], "attack_surface": []}
+
+    def _count_blocks(self, md):
+        import re as _re
+
+        return len(_re.findall(r"^###\s+3\.\d+\s", md, _re.MULTILINE))
+
+    def test_caps_at_default_with_honest_note(self):
+        md = renderer.render_attack_walkthroughs_md(self._crits(12))
+        assert self._count_blocks(md) == renderer.DEFAULT_MAX_WALKTHROUGHS  # 8, not 12
+        # Intro must disclose the cap and point overflow to §8.
+        assert "8 highest-priority of 12 Critical findings" in md
+        assert "§8 Findings Register" in md
+
+    def test_no_cap_note_when_under_limit(self):
+        md = renderer.render_attack_walkthroughs_md(self._crits(5))
+        assert self._count_blocks(md) == 5
+        assert "highest-priority of" not in md  # no cap disclosure when nothing is dropped
+
+    def test_anchor_wins_a_slot_over_lower_breach_distance(self):
+        # T-012 has the WORST breach_distance but is a chain anchor → it must be
+        # in the capped picks even though 11 lower-distance Criticals exist.
+        picks = renderer.select_walkthrough_picks(self._crits(12, with_anchor_last=True))
+        ids = [p["id"] for p in picks]
+        assert "T-012" in ids
+        assert picks[0]["id"] == "T-012"  # anchor sorts first
+
+    def test_cap_never_exceeds_ceiling(self):
+        picks = renderer.select_walkthrough_picks(self._crits(30), cap=99)
+        assert len(picks) == renderer.MAX_WALKTHROUGHS_CEILING  # clamped to 10
 
 
 class TestAttackStepsFallbackWhenNoScenario:
@@ -412,13 +503,13 @@ class TestDefenseInDepth:
         assert any("not yet defined" in b for b in bullets)
 
     def test_with_mitigations_and_priority(self):
-        idx = {"T-1": [{"id": "M-1", "title": "Fix it — lib/x.ts", "priority": "p1"}]}
+        idx = {"T-1": [{"id": f"M-{n}", "title": "Fix it — lib/x.ts", "priority": f"p{n}"} for n in range(1, 5)]}
         bullets, pid = renderer.render_defense_in_depth({"id": "T-1"}, idx)
         assert pid == "M-1"
-        assert "❶" in bullets[0]
-        assert "M-1" in bullets[0]
+        for n, digit in enumerate(("●", "◕", "◑", "○"), start=1):
+            assert f"{digit} [M-{n}](#m-{n})" in bullets[n - 1]
         # Short-label rule: the ` — file` tail is dropped.
-        assert "lib/x.ts" not in bullets[0]
+        assert all("lib/x.ts" not in bullet for bullet in bullets)
 
     def test_mitigation_without_title(self):
         idx = {"T-1": [{"id": "M-1"}]}
@@ -482,7 +573,11 @@ class TestGenAdapter:
             ]
         }
         out = renderer.gen_attack_walkthroughs(ydata)
-        assert "### 3.1 Insecure Direct Object Reference\n" in out
+        # Feature-scoped heading (juice-shop 2026-07-03): "<Weakness> in
+        # <Feature>" — the feature comes from the evidence file ("address.ts"
+        # -> "Address"); the "Attack against <zone>" filler form is gone. The
+        # connector is neutral "in" (IDOR is a weakness class, not an attack).
+        assert "### 3.1 Insecure Direct Object Reference in Address\n" in out
         # The em-dash tail is gone from the heading line specifically.
         heading_line = next(ln for ln in out.splitlines() if ln.startswith("### 3.1"))
         assert "—" not in heading_line
@@ -498,6 +593,173 @@ def test_weakness_class_strips_tail():
     )
     # No tail → unchanged (e.g. a consolidated systemic title).
     assert renderer._weakness_class("Insecure Direct Object Reference") == "Insecure Direct Object Reference"
+
+
+def test_weakness_class_strips_on_line_artefact():
+    # Titles like "Hardcoded JWT HMAC key 'pass**** (8 chars)' on:6 — file:6"
+    # must have the " on:6" suffix removed from the weakness class (it's a
+    # line-reference artefact that leaked before the em-dash separator).
+    assert (
+        renderer._weakness_class("Hardcoded JWT HMAC key 'pass**** (8 chars)' on:6 — SymmetricAlgoKeys.json:6")
+        == "Hardcoded JWT HMAC key 'pass**** (8 chars)'"
+    )
+
+
+class TestAttackTargetLabel:
+    """§3 headings must name the concrete FEATURE under attack (juice-shop
+    2026-07-03 user request) — "against Login", not the broad zone "against
+    Authentication & Identity" — while staying distinct across same-weakness
+    findings in different files."""
+
+    def test_prefers_feature_from_evidence_file_over_component_zone(self):
+        # File-derived feature wins over the broad component zone name.
+        threat = {"component": "auth-identity", "evidence": [{"file": "routes/login.ts", "line": 34}]}
+        ydata = {"components": [{"id": "auth-identity", "name": "Authentication & Identity"}]}
+        assert renderer._attack_target_label(threat, ydata) == "Login"
+
+    def test_camel_case_and_framework_suffix_prettified(self):
+        threat = {"component": "", "evidence": [{"file": "routes/changePassword.ts", "line": 39}]}
+        assert renderer._attack_target_label(threat, {"components": []}) == "Change Password"
+        threat2 = {"component": "", "evidence": [{"file": "frontend/src/app/oauth/oauth.component.ts", "line": 30}]}
+        assert renderer._attack_target_label(threat2, {"components": []}) == "OAuth"
+
+    def test_verbose_stem_falls_back_to_component_zone(self):
+        # `registerWebsocketEvents.ts` → 3 words → prefer the curated zone.
+        threat = {
+            "component": "backend-api",
+            "evidence": [{"file": "lib/startup/registerWebsocketEvents.ts", "line": 23}],
+        }
+        ydata = {"components": [{"id": "backend-api", "name": "Backend REST API"}]}
+        assert renderer._attack_target_label(threat, ydata) == "Backend REST API"
+
+    def test_generic_file_stem_falls_back_to_component_zone(self):
+        # `index.ts` names no feature → use the curated component zone name.
+        threat = {"component": "backend-api", "evidence": [{"file": "models/index.ts", "line": 46}]}
+        ydata = {"components": [{"id": "backend-api", "name": "Backend REST API"}]}
+        assert renderer._attack_target_label(threat, ydata) == "Backend REST API"
+
+    def test_falls_back_to_generic_label_with_no_evidence(self):
+        threat = {"component": "", "evidence": []}
+        assert renderer._attack_target_label(threat, {"components": []}) == "the Application"
+
+    def test_component_zone_fallback_is_anchor_stable(self):
+        # Regression (2026-07-03/04): a component name carrying " & " or " / "
+        # reached the §3 heading via the zone fallback, making the ToC link's
+        # github_slug (single hyphen) diverge from the rendered github_render_slug
+        # (double hyphen) — an unresolvable anchor that hard-failed the broken-link
+        # gate. The label must be sanitized so both sluggers agree.
+        from scripts._slug import github_render_slug, github_slug
+
+        for comp_name in ("Authentication & Session Surface", "Web3 / Wallet / NFT Surface"):
+            threat = {"component": "c1", "evidence": [{"file": "models/index.ts", "line": 1}]}
+            ydata = {"components": [{"id": "c1", "name": comp_name}]}
+            label = renderer._attack_target_label(threat, ydata)
+            assert "&" not in label and "/" not in label
+            heading = f"3.1 Insecure JWT Verification in {label}"
+            assert github_slug(heading) == github_render_slug(heading)
+
+    def test_two_findings_sharing_weakness_class_get_distinct_headings(self):
+        """Regression: two Critical SQL Injection findings in different
+        components previously produced identical "### 3.X SQL Injection"
+        headings — anchor-colliding and indistinguishable to the reader."""
+        ydata = {
+            "threats": [
+                {
+                    "id": "T-007",
+                    "title": "SQL Injection — routes/login.ts:34",
+                    "component": "auth-identity",
+                    "cwe": "CWE-89",
+                    "risk": "critical",
+                    "scenario": "Attacker submits an OR 1=1 payload.",
+                    "evidence": [{"file": "routes/login.ts", "line": 34}],
+                },
+                {
+                    "id": "T-009",
+                    "title": "SQL Injection — routes/search.ts:23",
+                    "component": "backend-api",
+                    "cwe": "CWE-89",
+                    "risk": "critical",
+                    "scenario": "Attacker submits a UNION SELECT payload.",
+                    "evidence": [{"file": "routes/search.ts", "line": 23}],
+                },
+            ],
+            "components": [
+                {"id": "auth-identity", "name": "Authentication & Identity"},
+                {"id": "backend-api", "name": "Backend REST API"},
+            ],
+        }
+        md = renderer.render_attack_walkthroughs_md(ydata)
+        assert "### 3.1 SQL Injection in Login" in md
+        assert "### 3.2 SQL Injection in Search" in md
+
+    def test_long_weakness_drops_zone_target_instead_of_ellipsis(self):
+        """#6 (2026-07-05): a long weakness class + a long component-zone target
+        must NOT be ellipsis-truncated ("…Server-…"). The weakness class is the
+        primary identifier, so the " in <zone>" suffix is dropped rather than the
+        weakness clipped. This also keeps the heading anchor stable (the trailing
+        "-…" made github_slug and github_render_slug diverge and orphaned the
+        §3 ToC link)."""
+        from scripts._slug import github_render_slug, github_slug
+
+        ydata = {
+            "threats": [
+                {
+                    "id": "T-012",
+                    "title": "JWT Role Claim Accepted Without Server-Side Verification — lib/insecurity.ts:157",
+                    "component": "auth-identity",
+                    "cwe": "CWE-285",
+                    "risk": "critical",
+                    "vektor": "internet-anon",
+                    "scenario": "Attacker forges a token with role=admin; the server trusts the claim.",
+                    # models/index.ts is a generic stem → target falls back to the
+                    # (long) component zone name, forcing the combined string >78.
+                    "evidence": [{"file": "models/index.ts", "line": 157}],
+                }
+            ],
+            "components": [{"id": "auth-identity", "name": "Authentication and Identity Module"}],
+        }
+        md = renderer.render_attack_walkthroughs_md(ydata)
+        heading = next(ln for ln in md.splitlines() if ln.startswith("### 3.1"))
+        # Full weakness class survives, no ellipsis, zone target dropped.
+        assert heading == "### 3.1 JWT Role Claim Accepted Without Server-Side Verification"
+        assert "…" not in heading
+        assert "Authentication and Identity Module" not in heading
+        # Anchor stability: the two sluggers must agree on the heading text.
+        text = heading[len("### ") :]
+        assert github_slug(text) == github_render_slug(text)
+
+    def test_properties_file_falls_back_to_component_zone(self):
+        # Config / properties files name no user-facing feature.
+        # application-unsafe.properties → "" → fall back to component zone.
+        threat = {
+            "component": "h2",
+            "title": "Hardcoded H2 Admin Credentials — application-unsafe.properties:2",
+            "evidence": [{"file": "application-unsafe.properties", "line": 2}],
+        }
+        ydata = {"components": [{"id": "h2", "name": "H2 In-Memory Database"}]}
+        assert renderer._attack_target_label(threat, ydata) == "H2 In-Memory Database"
+
+    def test_meta_word_only_stem_falls_back_to_component_zone(self):
+        # CommandInjection.java → "Command" after meta-word filter removes "Injection";
+        # but "Command" is redundant with weakness "OS command injection", so zone wins.
+        threat = {
+            "component": "backend",
+            "title": "OS command injection — CommandInjection.java:47",
+            "evidence": [{"file": "CommandInjection.java", "line": 47}],
+        }
+        ydata = {"components": [{"id": "backend", "name": "VulnerableApp Java Backend"}]}
+        assert renderer._attack_target_label(threat, ydata) == "VulnerableApp Java Backend"
+
+    def test_vulnerability_suffix_stripped_leaving_feature(self):
+        # AuthenticationVulnerability.java → meta "Vulnerability" dropped, leaving
+        # "Authentication" (not redundant with "SQL Injection") → feature wins.
+        threat = {
+            "component": "backend",
+            "title": "SQL Injection — AuthenticationVulnerability.java:68",
+            "evidence": [{"file": "AuthenticationVulnerability.java", "line": 68}],
+        }
+        ydata = {"components": [{"id": "backend", "name": "VulnerableApp Java Backend"}]}
+        assert renderer._attack_target_label(threat, ydata) == "Authentication"
 
 
 def test_zero_criticals_renders_honest_stub_without_diagram():

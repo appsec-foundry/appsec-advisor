@@ -125,7 +125,7 @@ def test_agent_spawn_strips_repo_root_and_model_field():
         [
             "2026-06-06T17:20:13Z  [067fff5c]  INFO   AGENT_SPAWN"
             "         appsec-advisor:appsec-threat-analyst         model=sonnet"
-            "  Threat Analysis & Triage  [REPO_ROOT=/home/mrohr/juice-shop]",
+            "  Threat Analysis & Triage  [REPO_ROOT=/workspace/juice-shop]",
         ]
     )
     assert "↳ appsec-threat-analyst (sonnet): Threat Analysis & Triage" in out

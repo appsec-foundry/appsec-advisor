@@ -59,6 +59,58 @@ def test_no_args_exits_nonzero():
     assert result.returncode != 0
 
 
+# ---------------------------------------------------------------------------
+# reference_format gate — guarantees finding links are correct on EVERY run
+# ---------------------------------------------------------------------------
+
+
+def test_reference_format_clean_doc_has_no_issues(tmp_path: Path):
+    md = _write_minimal_model(
+        tmp_path,
+        "## Findings\n\n🔴 [F-010](#f-010) — Insecure Direct Object Reference (`memory.ts:15`)\n🟠 [F-016](#f-016)\n",
+    )
+    report = qa.check_reference_format(md)
+    assert report.issues == []
+    assert report.ok == 1
+
+
+def test_reference_format_flags_unbackticked_locator(tmp_path: Path):
+    md = _write_minimal_model(
+        tmp_path,
+        "## Findings\n\n🔴 [F-010](#f-010) — Insecure Direct Object Reference (routes/memory.ts:15)\n",
+    )
+    report = qa.check_reference_format(md)
+    assert report.issues, "an un-backticked locator must be a blocking QA issue"
+    assert report.ok == 0
+
+
+def test_reference_format_flags_id_in_link_text(tmp_path: Path):
+    md = _write_minimal_model(tmp_path, "## Findings\n\n[F-010 — Insecure Direct Object Reference](#f-010)\n")
+    report = qa.check_reference_format(md)
+    assert report.issues
+
+
+def test_reference_format_cli_exit_codes(tmp_path: Path):
+    clean_dir = tmp_path / "c"
+    clean_dir.mkdir()
+    bad_dir = tmp_path / "b"
+    bad_dir.mkdir()
+    clean = _write_minimal_model(clean_dir, "## F\n\n🔴 [F-010](#f-010) — IDOR (`memory.ts:15`)\n")
+    bad = _write_minimal_model(bad_dir, "## F\n\n🔴 [F-010](#f-010) — IDOR (routes/memory.ts:15)\n")
+    assert _run(["reference_format", str(clean)]).returncode == 0
+    assert _run(["reference_format", str(bad)]).returncode == 1
+
+
+def test_reference_format_in_all_gate_summary(tmp_path: Path):
+    # The `all` aggregation must expose reference_format so a malformed link
+    # counts toward the gate's total_issues on every run.
+    import inspect
+
+    src = inspect.getsource(qa)
+    assert '"reference_format": reference_format_report.as_dict()' in src
+    assert "reference_format_report = check_reference_format(md)" in src
+
+
 def test_unknown_subcommand_exits_nonzero(tmp_path: Path):
     md = _write_minimal_model(tmp_path, "# Threat Model\n")
     result = _run(["unknown_subcommand", str(md)])
@@ -649,7 +701,7 @@ def test_auth_flow_method_accepts_diagram(monkeypatch, tmp_path: Path):
 
 def test_auth_nonflow_method_exempt_from_diagram(monkeypatch, tmp_path: Path):
     """API-key / anonymous auth has no meaningful sequence — the per-flow gate
-    must NOT demand a diagram for it (Freiräume: only flow methods are gated)."""
+    must NOT demand a diagram for it (spacing: only flow methods are gated)."""
     qa._PrePass.reset()
     md = _write_minimal_model(
         tmp_path,
@@ -1057,10 +1109,10 @@ class TestYamlMdConsistencyCheck:
             ## 4. Assets
 
             <table style="table-layout:fixed;width:100%">
-            <colgroup><col style="width:20%"><col style="width:6%"><col style="width:12%"><col style="width:29%"><col style="width:33%"></colgroup>
-            <thead><tr><th>Asset</th><th>ID</th><th>Classification</th><th>Description</th><th>Linked Threats</th></tr></thead>
+            <colgroup><col style="width:22%"><col style="width:13%"><col style="width:32%"><col style="width:33%"></colgroup>
+            <thead><tr><th>Asset</th><th>Classification</th><th>Description</th><th>Linked Threats</th></tr></thead>
             <tbody>
-            <tr><td>Creds</td><td style="white-space:nowrap">A-001</td><td>Restricted</td><td>x</td><td><a href="#f-001">F-001</a><br/><a href="#f-002">F-002</a></td></tr>
+            <tr><td>Creds</td><td>Restricted</td><td>x</td><td><a href="#f-001">F-001</a><br/><a href="#f-002">F-002</a></td></tr>
             </tbody>
             </table>
 
@@ -1075,7 +1127,7 @@ class TestYamlMdConsistencyCheck:
             threats: [{id: F-001}, {id: F-002}]
             mitigations: []
             assets:
-              - {id: A-001, linked_threats: [T-001, T-002]}
+              - {id: A-001, name: Creds, linked_threats: [T-001, T-002]}
             """
         ).strip()
         m, y = self._write_pair(tmp_path, md, yml)
@@ -1089,7 +1141,7 @@ class TestYamlMdConsistencyCheck:
             ## 4. Assets
 
             <table><tbody>
-            <tr><td>Creds</td><td style="white-space:nowrap">A-001</td><td>R</td><td>x</td><td><a href="#f-001">F-001</a></td></tr>
+            <tr><td>Creds</td><td>R</td><td>x</td><td><a href="#f-001">F-001</a></td></tr>
             </tbody></table>
 
             ## 8. Findings
@@ -1103,7 +1155,7 @@ class TestYamlMdConsistencyCheck:
             threats: [{id: F-001}, {id: F-002}]
             mitigations: []
             assets:
-              - {id: A-001, linked_threats: [T-001, T-002]}
+              - {id: A-001, name: Creds, linked_threats: [T-001, T-002]}
             """
         ).strip()
         m, y = self._write_pair(tmp_path, md, yml)
@@ -1806,6 +1858,55 @@ class TestSecurityPostureStructureRegexes:
         assert report.issues == [], report.issues
         assert report.ok == 1
 
+    # ---- Figure 2 SVG form (figure2_svg.py) — primary since 2026-07 ----------
+    # Figure 2 is a portable hand-built SVG image, not an inline ELK Mermaid
+    # block. The D/E/F/C Mermaid-markup rules do not apply; the surviving
+    # invariants are the SVG-file existence + T1/T2/T3 (table present, glyph
+    # parity via the SVG's `data-glyphs` attribute, findings linked).
+    def _svg_posture_section(self, img_src: str = "threat-model.figure2.svg") -> str:
+        return textwrap.dedent(f"""\
+            ### Security Posture & Top Threats
+
+            **Figure 2 - Risk Flow: Actor → Tier → Impact**
+
+            Heatmap: actors → tiers → impact. Numbered red arrows ①–③.
+
+            ![Figure 2 - Risk Flow: Actor to Tier to Impact]({img_src})
+
+            | # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |
+            |---|--------------------|------------------------|---------------|-----|
+            | <a id="path-injection"></a>① | **Injection** | •&nbsp;[F-001](#f-001)&nbsp;→&nbsp;[C-01](#c-01) | 🔴 **Critical** | [M-001](#m-001) |
+            | <a id="path-auth"></a>② | **Auth Bypass** | •&nbsp;[F-002](#f-002)&nbsp;→&nbsp;[C-01](#c-01) | 🔴 **Critical** | [M-002](#m-002) |
+            | <a id="path-xss"></a>③ | **XSS** | •&nbsp;[F-003](#f-003)&nbsp;→&nbsp;[C-02](#c-02) | 🟠 **High** | [M-003](#m-003) |
+            """)
+
+    @staticmethod
+    def _write_fig2_svg(tmp_path, glyphs: str = "1 2 3", name: str = "threat-model.figure2.svg") -> None:
+        (tmp_path / name).write_text(
+            f'<svg xmlns="http://www.w3.org/2000/svg" data-glyphs="{glyphs}"><text>x</text></svg>\n',
+            encoding="utf-8",
+        )
+
+    def test_svg_posture_section_passes(self, tmp_path):
+        self._write_fig2_svg(tmp_path, "1 2 3")
+        md = _write_minimal_model(tmp_path, self._svg_posture_section())
+        report = qa.check_security_posture_structure(md)
+        assert report.issues == [], report.issues
+        assert report.ok == 1
+
+    def test_svg_glyph_mismatch_flagged(self, tmp_path):
+        # SVG advertises glyphs 1,2 but the table has rows ①,②,③ → T2/G3.
+        self._write_fig2_svg(tmp_path, "1 2")
+        md = _write_minimal_model(tmp_path, self._svg_posture_section())
+        report = qa.check_security_posture_structure(md)
+        assert any(i.startswith("T2/G3:") for i in report.issues), report.issues
+
+    def test_svg_missing_file_flagged(self, tmp_path):
+        # Image referenced but no SVG file written next to the md.
+        md = _write_minimal_model(tmp_path, self._svg_posture_section())
+        report = qa.check_security_posture_structure(md)
+        assert any(i.startswith("D-SVG:") for i in report.issues), report.issues
+
     def test_figure1_data_bottom_stack_passes(self, tmp_path):
         """Figure 1 may precede the Figure 2 heatmap. Its architecture stack
         passes when DATA is the last tier, solid attacks target app/client
@@ -1956,6 +2057,31 @@ class TestRepairPlanStatusClassification:
         assert status == "fail"
         assert actionable is True
 
+    def test_blocking_without_fragment_wins_over_cosmetic(self):
+        """2026-07 regression: a blocking action with NO writable fragment
+        (e.g. a computed Top Threats table-schema drift) must route to
+        manual_review even when a cosmetic action carries a writable fragment.
+        Previously it was silently demoted to cosmetic_advisory (exit 4, treated
+        like the clean fast path), skipping a real contract defect."""
+        issues = ["Top Threats table does not match contract column schema (expected one of: ['...'])"]
+        actions = [
+            {
+                "raw_issue": issues[0],
+                "type": "table_schema_drift",
+                "severity": "blocking",
+                "fragments_to_rewrite": [],
+            },
+            {
+                "raw_issue": "walkthrough too short",
+                "type": "walkthrough_too_short",
+                "severity": "cosmetic",
+                "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
+            },
+        ]
+        status, actionable = qa._classify_plan_status(issues, actions)
+        assert status == "manual_review"
+        assert actionable is False
+
     def test_clean_md_end_to_end_returns_pass(self, tmp_path):
         """Smoke test: an MD with no contract violations returns status=pass
         through the full `build_repair_plan` pipeline."""
@@ -1969,6 +2095,53 @@ class TestRepairPlanStatusClassification:
         # and `actionable` is consistent with the action set.
         assert plan["status"] in {"pass", "fail", "manual_review"}
         assert plan["actionable"] == any(a.get("fragments_to_rewrite") for a in plan["actions"])
+
+
+class TestTableSchemaDriftClassification:
+    """Pin table-schema-drift repair classification. 2026-07 bug: the checker
+    emitted 'Top Threats' / 'Top Mitigations' in an `(expected one of: [...])`
+    form, but the label→section map hard-coded the retired 'Top Findings' /
+    'Prioritized Mitigations' labels and the parser only matched the legacy
+    `(expected: '<one>')` form — so every drift fell through to an
+    unclassified, no-fragment action that the plan-status bug then demoted."""
+
+    def test_label_map_derives_from_checks_and_uses_current_labels(self):
+        assert qa._TABLE_LABEL_TO_SECTION == {label: sid for sid, label, _ in qa._TABLE_SCHEMA_CHECKS}
+        assert set(qa._TABLE_LABEL_TO_SECTION) == {
+            "Top Threats",
+            "Operational Strengths",
+            "Top Mitigations",
+        }
+        assert "Top Findings" not in qa._TABLE_LABEL_TO_SECTION
+        assert "Prioritized Mitigations" not in qa._TABLE_LABEL_TO_SECTION
+        # retired orphan section id removed from the fragment map
+        assert "top_findings" not in qa.CONTRACT_SECTION_FRAGMENTS
+
+    def test_top_threats_header_drift_classifies_not_unclassified(self, tmp_path):
+        """End-to-end through build_repair_plan: a wrong Top Threats column
+        schema produces a `table_schema_drift` action (section_id=top_threats,
+        computed table → empty fragment target), NOT `unclassified`."""
+        md = _write_minimal_model(
+            tmp_path,
+            "## Management Summary\n\n"
+            "### Security Posture & Top Threats\n\n"
+            "| Wrong | Columns | Here |\n|---|---|---|\n| a | b | c |\n\n"
+            "## 8. Findings Register\n\n_no threats_\n",
+        )
+        (tmp_path / "threat-model.yaml").write_text(
+            "meta:\n  schema_version: 1\nthreats: []\nmitigations: []\n", encoding="utf-8"
+        )
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        drift = [a for a in plan["actions"] if a.get("type") == "table_schema_drift"]
+        assert drift, "Top Threats header drift did not classify as table_schema_drift"
+        assert drift[0]["label"] == "Top Threats"
+        assert drift[0]["section_id"] == "top_threats"
+        assert drift[0]["fragments_to_rewrite"] == []
+        assert not [
+            a
+            for a in plan["actions"]
+            if a.get("raw_issue", "").startswith("Top Threats") and a.get("type") == "unclassified"
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -3083,6 +3256,70 @@ class TestWalkthroughCoverageSourceLineMatch:
         assert any("T-001" in i for i in report.issues), report.issues
 
 
+class TestWalkthroughCoverageCapped:
+    """§3 is capped at the top-N Criticals (walkthrough_renderer). Coverage is
+    enforced against that capped selection, not every Critical (2026-07-02)."""
+
+    def _write_yaml_n_criticals(self, output_dir: Path, n: int) -> None:
+        rows = "\n".join(
+            f"  - id: T-{i:03d}\n    title: SQL injection sink {i}\n"
+            f"    risk: Critical\n    cwe: CWE-89\n    breach_distance: {i}"
+            for i in range(1, n + 1)
+        )
+        (output_dir / "threat-model.yaml").write_text(
+            "meta:\n  generated: 2026-07-02T00:00:00Z\nthreats:\n" + rows + "\n",
+            encoding="utf-8",
+        )
+
+    def _block(self, idx: int, tid: str) -> str:
+        return (
+            f"### 3.{idx} SQL injection sink\n\n"
+            f"**Source:** [{tid}](#{tid.lower()}) — `routes/r.ts:{idx}`\n\n"
+            "**Attack Steps**\n\n1. step\n\n"
+            "**Sequence Diagram**\n\n```mermaid\nsequenceDiagram\n  A->>B: x\n```\n\n"
+            "**Defense in Depth**\n\n- mitigation\n"
+        )
+
+    def _md(self, output_dir: Path, tids: list[str]) -> Path:
+        body = "\n\n".join(self._block(i + 1, t) for i, t in enumerate(tids))
+        md = output_dir / "threat-model.md"
+        md.write_text("## 3. Attack Walkthroughs\n\n" + body + "\n\n## 4. Assets\n", encoding="utf-8")
+        return md
+
+    def test_top_n_coverage_passes_overflow_not_flagged(self, output_dir):
+        qa = _load_qa_checks()
+        import walkthrough_renderer as wr
+
+        self._write_yaml_n_criticals(output_dir, 12)
+        # Walk through exactly the top-N selection; T-009..T-012 must NOT be flagged.
+        top = [f"T-{i:03d}" for i in range(1, wr.DEFAULT_MAX_WALKTHROUGHS + 1)]
+        md = self._md(output_dir, top)
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert report.issues == [], report.issues
+        assert report.ok == 1
+
+    def test_missing_top_n_critical_is_flagged(self, output_dir):
+        qa = _load_qa_checks()
+        import walkthrough_renderer as wr
+
+        self._write_yaml_n_criticals(output_dir, 12)
+        # Cover 7 of the top-8 — drop T-008 (a top-N pick) → must be flagged.
+        top = [f"T-{i:03d}" for i in range(1, wr.DEFAULT_MAX_WALKTHROUGHS)]  # T-001..T-007
+        md = self._md(output_dir, top)
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert any("T-008" in i for i in report.issues), report.issues
+        assert any("highest-priority of 12" in i for i in report.issues)
+
+    def test_explosion_over_cap_is_flagged(self, output_dir):
+        qa = _load_qa_checks()
+        self._write_yaml_n_criticals(output_dir, 12)
+        # A reverted render that walks ALL 12 Criticals → exceeds the cap.
+        allt = [f"T-{i:03d}" for i in range(1, 13)]
+        md = self._md(output_dir, allt)
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert any("exceed the cap" in i for i in report.issues), report.issues
+
+
 def test_section7_h4_status_flags_missing_badge(tmp_path: Path):
     """An H4 with no `**Status:**` badge is flagged (warning-level)."""
     md = _write_minimal_model(
@@ -3333,20 +3570,20 @@ def test_attack_surface_tables_to_html_leaves_other_tables_alone():
 
 
 _ASSET_GFM = (
-    "| Asset | ID | Classification | Description | Linked Threats |\n"
-    "|------|----|------|------|------|\n"
-    "| User Credentials | A-001 | Restricted | User email and `MD5`-hashed<br/>passwords stored in SQLite. | "
+    "| Asset | Classification | Description | Linked Threats |\n"
+    "|------|------|------|------|\n"
+    "| User Credentials | Restricted | User email and `MD5`-hashed<br/>passwords stored in SQLite. | "
     "🔴 [F-006](#f-006) — SQL Injection<br/>🟠 [F-013](#f-013) — Weak Hash |\n"
 )
 
 
-def test_asset_table_converts_with_nowrap_id_and_reflowed_description():
+def test_asset_table_converts_and_reflows_description():
     out, count = qa._attack_surface_tables_to_html(f"## 4. Assets\n\n{_ASSET_GFM}\n")
     assert count == 1
     assert '<table style="table-layout:fixed;width:100%">' in out
     assert "".join(f'<col width="{w}" style="width:{w}">' for w in qa._ASSET_COL_WIDTHS) in out
-    # A-001 ID cell is nowrap so the hyphen never breaks ("A-\n001").
-    assert '<td style="white-space:nowrap">A-001</td>' in out
+    # No ID column any more (dropped deterministically in compose).
+    assert "A-001" not in out
     # Description (prose col) has its soft-wrap <br/> stripped → reflows clean.
     desc_cell = out.split("<td>User email and", 1)[1].split("</td>", 1)[0]
     assert "<br/>" not in desc_cell and "<code>MD5</code>" in desc_cell
@@ -3420,3 +3657,44 @@ def test_autofix_is_idempotent_on_paths(tmp_path: Path):
     qa.cmd_autofix(md, tmp_path)
     assert md.read_text(encoding="utf-8") == first
     assert first.count("`lib/insecurity.ts:54`") == 1  # not double-wrapped
+
+
+def test_priority_circle_styling_handles_markdown_and_converted_html():
+    text = '❶ [M-001](#m-001)\n❷&nbsp;<a href="#m-002">M-002</a>\n```text\n❸ [M-003](#m-003)\n```\n'
+    styled, count = qa._style_priority_circles(text)
+    assert count == 2
+    assert '<span style="color:#111111">❶</span> [M-001](#m-001)' in styled
+    assert '<span style="color:#555555">❷</span>&nbsp;<a href="#m-002">M-002</a>' in styled
+    assert "```text\n❸ [M-003](#m-003)\n```" in styled
+
+
+def test_priority_circle_styling_is_idempotent_and_corrects_stale_color():
+    text = '<span style="color:#ffffff">❹</span> [M-004](#m-004)\n'
+    first, first_count = qa._style_priority_circles(text)
+    second, second_count = qa._style_priority_circles(first)
+    assert first_count == second_count == 1
+    assert first == second == '<span style="color:#bbbbbb">❹</span> [M-004](#m-004)\n'
+
+
+def test_apply_priority_circle_styling_reports_only_real_changes(tmp_path: Path):
+    md = _write_minimal_model(tmp_path, "❷ [M-002](#m-002)\n")
+    assert qa._apply_priority_circle_styling(md) == 1
+    assert qa._apply_priority_circle_styling(md) == 0
+
+
+def test_autofix_priority_circle_styling_is_idempotent(tmp_path: Path):
+    # A legacy ❶ digit is migrated to the fill-ramp glyph (● for P1) and stays
+    # colourless — the ramp encodes priority by fill, not by a colour span.
+    md = _write_minimal_model(tmp_path, "❶ [M-001](#m-001)\n")
+    (tmp_path / "threat-model.yaml").write_text(
+        "threats: []\nmitigations:\n  - id: M-001\n    priority: p1\n",
+        encoding="utf-8",
+    )
+    qa.cmd_autofix(md, tmp_path)
+    first = md.read_text(encoding="utf-8")
+    qa.cmd_autofix(md, tmp_path)
+    second = md.read_text(encoding="utf-8")
+    assert first == second
+    assert second.count("●") == 1
+    assert "❶" not in second  # legacy digit migrated away
+    assert 'style="color:' not in second  # no fragile colour span

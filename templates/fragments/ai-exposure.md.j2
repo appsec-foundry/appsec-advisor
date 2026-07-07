@@ -5,16 +5,18 @@
 {#- Schema: data.ai_risks[] = {owasp_llm_id?, name, severity?, description, affected_components[]?, findings[]} -#}
 ### AI / LLM Exposure
 
-{% if data.summary %}{{ data.summary }}
+{% if data.summary %}{{ data.summary }}{% if section7_present %} See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.{% endif %}
 
-{% endif %}This system embeds an LLM / AI-agent surface. The risks below are architectural — each follows from how untrusted input reaches an AI sink (prompt, tool call, retrieval, model supply chain).{% if section7_present %} See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.{% endif %}
+{% else %}This system embeds an LLM / AI-agent surface. The risks below are architectural — each follows from how untrusted input reaches an AI sink (prompt, tool call, retrieval, model supply chain).{% if section7_present %} See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.{% endif %}
+
+{% endif %}
 
 {# No severity glyph on the LLMxx risk header — the coloured dot belongs to
    the findings only (_prepend_finding_severity_dots decorates each [F-NNN]
    link). Findings render as indented sub-list items (``  - ↳ …``) so they
    are visually separated from the LLMXX heading and properly nested. -#}
 {% for r in data.ai_risks -%}
-- **{% if r.owasp_llm_id %}{{ r.owasp_llm_id }} {% endif %}{{ r.name }}** — {{ r.description }}{% if r.affected_components %} _({{ r.affected_components | format_weakness_components }})_{% endif %}
+- **{% if r.owasp_llm_id %}{{ r.owasp_llm_id }} {% endif %}{{ r.name }}** — {{ r.description }}{% if r.affected_components %} _({{ r.affected_components | format_weakness_components(", ") }})_{% endif %}
 {% for f in r.findings %}  - ↳ {{ f | format_one_finding }}
 {% endfor %}
 {% endfor %}

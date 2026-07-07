@@ -562,3 +562,59 @@ def test_module_entrypoint_runs(tmp_path: Path):
     )
     assert r.returncode == 0
     assert "LOCK_ACQUIRED" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# Run-id re-entrancy (2026-07-02): an agent dispatched by the same logical run
+# must be able to re-acquire a skill-held, watchdog-warmed lock instead of
+# hard-blocking on it — while a genuinely different run still blocks.
+# ---------------------------------------------------------------------------
+
+
+def test_reentrant_same_run_id_is_granted(tmp_path: Path, capsys):
+    lp = _lock_path(tmp_path)
+    # Skill pre-acquires with a run-id; watchdog keeps the heartbeat fresh.
+    acquire_lock._write_lock(lp, 999999, int(time.time()), "RUN-A")
+    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-A"])
+    assert rc == 0
+    assert "LOCK_ACQUIRED" in capsys.readouterr().out
+    # Run-id survives the re-acquire so later heartbeats keep it.
+    assert acquire_lock._read_run_id(lp) == "RUN-A"
+
+
+def test_foreign_run_id_still_blocks(tmp_path: Path, capsys):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()), "RUN-A")
+    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-B"])
+    assert rc == 1
+    assert "LOCK_BLOCKED" in capsys.readouterr().out
+
+
+def test_no_run_id_preserves_legacy_block(tmp_path: Path, capsys):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()), "RUN-A")
+    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    assert rc == 1
+    assert "LOCK_BLOCKED" in capsys.readouterr().out
+
+
+def test_run_id_from_env(tmp_path: Path, capsys, monkeypatch):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, 999999, int(time.time()), "RUN-A")
+    monkeypatch.setenv("APPSEC_RUN_ID", "RUN-A")
+    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    assert rc == 0
+    assert "LOCK_ACQUIRED" in capsys.readouterr().out
+
+
+def test_heartbeat_preserves_run_id(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()), "RUN-A")
+    acquire_lock.main(["acquire_lock.py", str(lp), "--heartbeat"])
+    assert acquire_lock._read_run_id(lp) == "RUN-A"
+
+
+def test_legacy_v2_lock_has_empty_run_id(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()))  # no run-id
+    assert acquire_lock._read_run_id(lp) == ""

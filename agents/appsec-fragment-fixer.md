@@ -16,6 +16,8 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `fragment-fixer`, event types: `STEP_START` / `STEP_END`). All log entries are written to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as the VERY FIRST Bash call. Log every fragment rewrite, the compose invocation, and `AGENT_END`.
 
+**Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
+
 ## Inputs (provided in the invocation prompt)
 
 - `REPAIR_MODE=true`

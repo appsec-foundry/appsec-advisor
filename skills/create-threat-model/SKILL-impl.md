@@ -575,11 +575,11 @@ The spawn counter only catches previous `appsec-threat-analyst` invocations. Ord
 
 **What the signal can and cannot do.** The orchestrator cannot selectively
 evict earlier turns from its interactive session; only `/clear` starts a fresh
-session. The skill can still reduce the context it adds. During the parity
-rollout, opted-in full/rebuild runs (`APPSEC_THIN_ORCHESTRATOR=1`) use
-`SKILL-full-runtime.md` plus deterministic `orchestration_controller.py`,
-avoiding the large preflight prefix. This detector remains useful for
-conversation context that predates the skill.
+session. The skill can still reduce the context it adds. Full/rebuild runs use
+`SKILL-full-runtime.md` plus deterministic `orchestration_controller.py` by
+default (opt out with `APPSEC_THIN_ORCHESTRATOR=0`), avoiding the large
+preflight prefix. This detector remains useful for conversation context that
+predates the skill.
 `--rebuild` wipes disk artifacts, not conversation history. A larger-window
 model may delay compaction when the session cannot be cleared, but it does not
 reduce cache throughput.
@@ -754,9 +754,9 @@ Parse the user's arguments for the following flags:
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
 | `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|sonnet-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `sonnet-economy` at quick & standard (standard since 2026-06-23); `opus` at thorough (see Reasoning Model Resolution) |
-| `--stride-model <sonnet\|opus>` | per-stage override of `STRIDE_MODEL` on top of the tier — inline equivalent of `APPSEC_STRIDE_MODEL` (no settings.json/restart). Highest precedence except `--no-opus`. | tier default |
-| `--triage-model <sonnet\|opus>` | per-stage override of `TRIAGE_MODEL` (e.g. `sonnet-economy` STRIDE + Opus triage for calibrated severities at low cost). Inline equivalent of `APPSEC_TRIAGE_MODEL`. | tier default |
-| `--merger-model <sonnet\|opus>` | per-stage override of `MERGER_MODEL`. Inline equivalent of `APPSEC_MERGER_MODEL`. | tier default |
+| `--stride-model <model>` | per-stage override of `STRIDE_MODEL` on top of the tier — tier alias (`sonnet`/`opus`) or explicit version id (`claude-sonnet-5`, `claude-sonnet-4-6`). Inline equivalent of `APPSEC_STRIDE_MODEL` (no settings.json/restart). Highest precedence except `--no-opus`. | tier default |
+| `--triage-model <model>` | per-stage override of `TRIAGE_MODEL` — alias or version id (e.g. `sonnet-economy` STRIDE + `--triage-model claude-sonnet-5` for calibrated severities at low cost). Inline equivalent of `APPSEC_TRIAGE_MODEL`. | tier default |
+| `--merger-model <model>` | per-stage override of `MERGER_MODEL` — alias or version id. Inline equivalent of `APPSEC_MERGER_MODEL`. | tier default |
 | `--no-opus` | Forbid Opus anywhere; downgrades every Opus selection (incl. the `opus`/`opus-cheap` tier merger and the architect default) to Sonnet. Applied **last** in `resolve_config.py`, so it overrides `--reasoning-model opus` and any `APPSEC_*_MODEL` env override. Also settable org-wide via org-profile `policy.disable_opus`, or via env `APPSEC_DISABLE_OPUS=1`. The three sources OR together — any can enable, none can disable. | off (Opus allowed) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
 | `--quick` | shortcut for `--assessment-depth quick`; also sets `SKIP_QA=true` and `SKIP_ATTACK_WALKTHROUGHS=true` (mutually exclusive with `--thorough`) | n/a |
@@ -764,7 +764,7 @@ Parse the user's arguments for the following flags:
 | `--stride-cap <N>` | opt-in per-category STRIDE threat cap (Critical-safe); emits `stride_profile.max_threats_per_category=N` (label `full (per-category cap N)`). Off by default — full STRIDE depth otherwise preserved. | unset (no cap) |
 | `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 4 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
 | `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 4 even at `--assessment-depth thorough` | n/a |
-| `--architect-model <sonnet\|opus>` | `ARCHITECT_MODEL=<model>` — model for Stage 4 (ignored when `ARCHITECT_REVIEW=false`) | `opus` when Stage 4 is enabled |
+| `--architect-model <model>` | `ARCHITECT_MODEL=<model>` — model for Stage 4 (ignored when `ARCHITECT_REVIEW=false`); tier alias or explicit version id | `opus` when Stage 4 is enabled |
 | `--no-enrich-arch` | `ENRICH_ARCH_FRAGMENTS=false` — force deterministic architecture fragments at any depth. | depth-based |
 | `--enrich-arch` | `ENRICH_ARCH_FRAGMENTS=true` — force LLM-enriched architecture fragments at any depth. | depth-based |
 | `--verbose` | `VERBOSE_REPORT=true` — also writes a per-user marker file that flips `agent_logger.py` into stderr-mirroring mode for the duration of this run (see "Verbose Mode — Marker File Lifecycle" below) | `false` |
@@ -778,7 +778,7 @@ Parse the user's arguments for the following flags:
 | `--abuse-cases` | `skip_abuse_case_verification=false` — force the Stage 1c abuse-case verifier fan-out ON at any depth (overrides the quick-depth default-off). Conflicts with `--no-abuse-cases`. | on at standard/thorough; off at quick |
 | `--no-abuse-cases` | `skip_abuse_case_verification=true` — force the Stage 1c abuse-case verifier fan-out OFF at any depth (skips matcher + verifiers + chain fold even at standard/thorough; §9 renders the not-applicable catalog and no finding is chain-elevated). Conflicts with `--abuse-cases`. | on at standard/thorough; off at quick |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
-| `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure1.svg` / `.pdf` / `.html`, figure reference rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
+| `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html`, figure references rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
@@ -937,6 +937,12 @@ QA_ROUTINE_MODEL=$(echo      "$RESOLVED_JSON" | python3 -c "import json,sys;prin
 QA_CONTENT_MODEL=$(echo      "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('qa_content_model','claude-sonnet-4-6'))")
 CONFIG_SCANNER_MODEL=$(echo  "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('config_scanner_model','claude-sonnet-4-6'))")
 ORCHESTRATOR_MODEL=$(echo    "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('orchestrator_model','claude-sonnet-4-6'))")
+# Renderer + abuse-verifier default to the `sonnet` alias → host session (so the
+# fallback here is `sonnet`, NOT a fixed 4.6). Pinnable via APPSEC_RENDERER_MODEL
+# / APPSEC_ABUSE_VERIFIER_MODEL for Sonnet-5 quality buy-back (or 4.6 for cost)
+# without moving the whole session. Passed as the Agent `model` param at dispatch.
+RENDERER_MODEL=$(echo        "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('renderer_model','sonnet'))")
+ABUSE_VERIFIER_MODEL=$(echo  "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('abuse_verifier_model','sonnet'))")
 
 # STRIDE depth profile (Quick-mode A-F reductions, only when
 # --reasoning-model sonnet-economy AND --assessment-depth quick).
@@ -971,6 +977,63 @@ Print it once, as one short line, and nothing else; then continue silently to th
 pre-check commands. It does **not** replace the Pre-flight summary that follows. If
 `PREFLIGHT_STATUS` is empty (older `.skill-config.json` without the field), emit
 nothing and proceed.
+
+### Session-model detection — feeds the Pre-flight box routing/cost advisory
+
+The `sonnet` alias in every agent's frontmatter binds at runtime to the **host
+session model** (this main loop) — so the orchestrator, renderer, abuse-case
+verifier and `qa_content` inherit whatever model the session runs on, and it also
+drives the dominant cache-read cost. `resolve_config.py` cannot see that model.
+Detect it here and **carry it into the Pre-flight box** — do NOT emit a separate
+block (the "only the `PREFLIGHT_STATUS` line + the Pre-flight summary may appear"
+hard rule forbids it). The routing + cost advisory renders **inside**
+`render_run_plan` (a `Session model` + `Cost note` row in the box).
+
+```bash
+# Fail-safe: detect_session_model.py ALWAYS exits 0 and prints '' on any miss
+# (internal CC artifact; a scan must run identically whether or not it resolves).
+SESSION_MODEL=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_session_model.py" 2>/dev/null)
+```
+
+`$SESSION_MODEL` is forwarded to the Pre-flight renderer via `--session-model`
+(see the Run Plan box section below). The box then flags any **non-Sonnet-4.6**
+session (Sonnet-5 or Opus), where a Sonnet-4.6 session roughly halves cost. On the
+default (thin-full) runtime `orchestration_controller.py` does this detection +
+injection itself, so the advisory shows there too. The full per-agent table stays
+available on demand via `resolve_config.py --effective-routing --session-model`.
+
+#### Orchestrator (session-model) recommendation — interactive prompt
+
+The Pre-flight box already surfaces the repo-size-derived recommendation (the
+`Orchestrator (session)` line rendered by `render_run_plan` from
+`cfg.orchestrator_recommended_model`). The recommendation is **advisory** — Sonnet 5
+only for *very large* repos (window safety, higher cost); Sonnet 4.6 otherwise
+(≈half cost). When running **interactively** AND the detected session model
+**diverges** from that recommendation, additionally offer the choice via
+`AskUserQuestion`. A running loop cannot switch its own model, so a divergent choice
+is honored by a **clean abort + restart command**, never an in-place switch.
+
+Apply the prompt ONLY when ALL hold:
+- `$SESSION_MODEL` is non-empty (detected), AND
+- it differs from `cfg.orchestrator_recommended_model` (compare loosely — ignore date suffixes), AND
+- the run is interactive: **skip entirely** when `APPSEC_HEADLESS=1` (run-headless.sh exports it) — a headless run has no user to answer and must proceed on the current session model.
+
+```bash
+ORCH_REC=$(echo "$RESOLVED_JSON" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("orchestrator_recommended_model",""))')
+ORCH_WHY=$(echo "$RESOLVED_JSON" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("orchestrator_recommendation_reason",""))')
+```
+
+When the guard holds, call `AskUserQuestion` with one question:
+- header: `Session model`
+- question: state the repo size + `$ORCH_WHY`, the recommended model, and the current `$SESSION_MODEL`; ask which model to scan with.
+- options (recommended first): the **recommended** model — labelled with its benefit (`significantly better cost-efficiency` for 4.6; `avoids compaction on very large repos, higher cost` for 5) — then **keep current** (`$SESSION_MODEL`).
+
+On the answer:
+- Choice resolves to the current `$SESSION_MODEL` → **proceed unchanged** (a conscious keep — e.g. 4.6 on a large repo is explicitly allowed).
+- Choice resolves to a model **different** from `$SESSION_MODEL` → do **NOT** continue. Release the lock (like other pre-Stage-1 aborts), print exactly:
+  `Restart on the chosen model:  claude --model <choice>   (or /clear then /model <choice>), then re-run the skill.` and stop.
+
+Never block a headless run on this, and never treat the recommendation as binding — its entire purpose is a suggestion the user can override.
 
 ### Verbose Mode — Marker File Lifecycle
 
@@ -1321,7 +1384,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --output "$OUTPUT_DIR" \
   --run-plan-notes \
   --pre-check-file "$PRE_CHECK_TMP" \
   --dirty-set-file "$DIRTY_SET_TMP" \
-  --compat-label "${COMPAT_LABEL:-equal}"
+  --compat-label "${COMPAT_LABEL:-equal}" \
+  --session-model "${SESSION_MODEL:-}"
 rm -f "$PRE_CHECK_TMP" "$DIRTY_SET_TMP"
 ```
 
@@ -1353,6 +1417,10 @@ case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
     #   • SARIF (--sarif) is a Stage-2 RENDER product, not a post-stage export;
     #     if it is requested-but-missing, re-rendering is required — tell the
     #     user to re-run with --rerender rather than silently doing nothing.
+    # The persisted threat-model.md is already §6 from the original run. These
+    # backstop exports derive directly from it, so no renumber is needed here —
+    # the §7 mirror at .appsec-cache/threat-model.canonical7.md already serves the
+    # carry-forward / snapshot machinery.
     if [ "${WRITE_PDF:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.pdf" ]; then
       printf '\n  No source changes — reusing existing threat model; requested PDF is missing, generating it now.\n' >&2
       # UNSANDBOXED: mermaid → headless Chrome needs socket() (see PDF Export §). Non-fatal.
@@ -1612,8 +1680,12 @@ Background-dispatched Stage 1 / Stage 2 agents do not always run the orchestrato
 The fix is to acquire the lock **at the skill level** — once, before the first Agent dispatch — so the file always exists for the duration of the run. The orchestrator's own per-phase `--heartbeat` calls then see a present lock and refresh it normally. A blocked lock is fatal for this invocation: starting the heartbeat after `LOCK_BLOCKED` refreshes a lock this run does not own and makes headless `--resume` look idle instead of failed.
 
 ```bash
+# Stable per-run token. Prefer the harness session id; fall back to a
+# time+pid token. Threaded into agent prompts so their own acquire_lock
+# call re-acquires re-entrantly instead of false-blocking on our lock.
+export APPSEC_RUN_ID="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-run-$(date +%s)-$$}}"
 set +e
-LOCK_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" 2>&1)
+LOCK_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --run-id="$APPSEC_RUN_ID" 2>&1)
 LOCK_EXIT=$?
 set -e
 printf '%s\n' "$LOCK_OUTPUT" | head -1
@@ -1626,8 +1698,10 @@ if [ "$LOCK_EXIT" != "0" ]; then
 fi
 # Initial heartbeat so the lock has a fresh ts before Stage 1 starts.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" \
-    --heartbeat --phase=skill --step=stage1-dispatch >/dev/null 2>&1 || true
+    --run-id="$APPSEC_RUN_ID" --heartbeat --phase=skill --step=stage1-dispatch >/dev/null 2>&1 || true
 ```
+
+**Run-id re-entrancy (mandatory — 2026-07-02).** Because the skill pre-acquires the lock **and** starts a background watchdog that keeps its heartbeat warm, the Stage-1 analyst's own Pre-Phase lock acquisition would otherwise see a *fresh* lock and hard-abort with `LOCK_BLOCKED` (its PID/heartbeat look like a live concurrent run). This false-positive cost a full Stage-1 re-dispatch on the 2026-07-02 juice-shop run. Fix: mint a stable `APPSEC_RUN_ID` for this invocation (above), tag the skill-held lock with it (`--run-id`), and **thread the same value into every agent dispatch prompt** (see "Passing configuration" → `APPSEC_RUN_ID`). `acquire_lock.py` grants a re-entrant `LOCK_ACQUIRED` when the caller's run-id matches the lock's; a genuinely different run still carries a different (or no) run-id and blocks, so concurrency safety is unchanged. Heartbeats preserve the run-id, so the watchdog keeps it warm across the whole run.
 
 The lock is released with an explicit `rm -f` in the Completion Summary section below — `runtime_cleanup.py --stage post-qa` does **not** include `.appsec-lock` in its whitelist (only `--stage all` and `--stage pre-qa` do).
 
@@ -2536,7 +2610,7 @@ fi
 
    **⚠ HARD CONSTRAINT — ONE MESSAGE, ALL CANDIDATES, NO EXCEPTIONS.** Issue ALL `appsec-advisor:appsec-abuse-case-verifier` `Agent` calls **in a SINGLE message turn** (multiple tool-use blocks in one response) — one per AC-ID in `$CANDIDATES`. This is NOT optional and NOT sequential: **DO NOT dispatch one verifier, wait for it to return, then dispatch the next** — that collapses the fan-out to a serial chain (wall-clock × N instead of ≈ slowest single case). Concrete check: if you are about to call `Agent` for candidate 2 AFTER candidate 1 returned, you have already violated this — stop. (Same proven model the STRIDE fan-out points back to.)
 
-   **Dispatch params** — for each AC-ID in `$CANDIDATES`, call `appsec-advisor:appsec-abuse-case-verifier` (`model: sonnet`, foreground, `run_in_background: false`) with prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=sonnet`. Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file.
+   **Dispatch params** — for each AC-ID in `$CANDIDATES`, call `appsec-advisor:appsec-abuse-case-verifier` (**`model: $ABUSE_VERIFIER_MODEL`**, foreground, `run_in_background: false`) with prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=$ABUSE_VERIFIER_MODEL`. `$ABUSE_VERIFIER_MODEL` defaults to `sonnet` → the host session (byte-unchanged when unpinned); pin to `claude-sonnet-5` (verdict decisiveness) via `APPSEC_ABUSE_VERIFIER_MODEL`. Set the Agent `model` param explicitly or the frontmatter `sonnet` default silently wins. Do **not** hard-default it to 4.6 — 4.6 reintroduces `inconclusive` verdicts. Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file.
 
    **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
 
@@ -2717,7 +2791,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    fi
    ```
 
-   **— Parallel-render variant (`PARALLEL_RENDER=true`).** Dispatch **two** `appsec-advisor:appsec-threat-renderer` Agent calls **in a single message** so they run concurrently (same proven Level-0 fan-out as the STRIDE / abuse-verifier pattern). Pass all original configuration variables verbatim to **both** (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, ENRICH_ARCH_FRAGMENTS, SKIP_ATTACK_PATHS_AUTHORING, SKIP_ATTACK_WALKTHROUGHS, VERBOSE_REPORT, INVOCATION_ARGS, etc.), adding exactly one differing key:
+   **— Parallel-render variant (`PARALLEL_RENDER=true`).** Dispatch **two** `appsec-advisor:appsec-threat-renderer` Agent calls **in a single message** so they run concurrently (same proven Level-0 fan-out as the STRIDE / abuse-verifier pattern). Pass all original configuration variables verbatim to **both** (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, ENRICH_ARCH_FRAGMENTS, SKIP_ATTACK_PATHS_AUTHORING, SKIP_ATTACK_WALKTHROUGHS, VERBOSE_REPORT, INVOCATION_ARGS, etc.). **⚠ Set each Agent call's `model` parameter to `$RENDERER_MODEL` — explicitly, on BOTH calls.** Like the STRIDE dispatch, omitting it silently falls back to the renderer's frontmatter default (`model: sonnet` in `agents/appsec-threat-renderer.md`), so an `APPSEC_RENDERER_MODEL` pin (e.g. `claude-sonnet-5`) is ignored. The default resolves to `sonnet` → the host session, so the byte-unchanged behaviour is preserved when no pin is set. Add exactly one differing key per call:
    - Agent **S** — `description: "Render: §7 Security Architecture"`, prompt adds `RENDER_ROLE=secarch`. Authors only `security-architecture.md` (+ `architecture-diagrams.md`); does NOT compose.
    - Agent **M** — `description: "Render: Management Summary"`, prompt adds `RENDER_ROLE=ms`. Authors only `ms-verdict.json` (+ `ms-critical-attack-tree.json` when ≥2 Critical, + `security-posture-attack-paths.json` unless skipped), runs the MS compactness gate; does NOT compose.
 
@@ -2765,7 +2839,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 
    On a persistent compose failure the incomplete checkpoint routes into the existing post-dispatch backstop + hard gate and the §"Post-dispatch — fragment-pipeline audit" recovery — the same path the single-dispatch flow uses when a renderer returns without producing `threat-model.md`.
 
-   **— Single full dispatch (`PARALLEL_RENDER=false`).** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"` and `RENDER_ROLE=full` (or simply omit it — `full` is the default). Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the LLM-driven JSON fragment (`ms-verdict.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json` and (when `ENRICH_ARCH_FRAGMENTS=true`) the §7 enrichment, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"` and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass.
+   **— Single full dispatch (`PARALLEL_RENDER=false`).** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`, **`model: $RENDERER_MODEL`** (explicitly — same reason as the parallel variant; default `sonnet` → host session, so byte-unchanged when unpinned), and `RENDER_ROLE=full` (or simply omit it — `full` is the default). Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the LLM-driven JSON fragment (`ms-verdict.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json` and (when `ENRICH_ARCH_FRAGMENTS=true`) the §7 enrichment, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"` and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass.
 
    **RC.B — neither path calls `render_completion_summary.py --patch-placeholders` here.** The renderer cannot observe its own duration / tokens (those are only available post-Agent-return). The skill-final `--patch-placeholders` invocation in the §Completion Summary section below — after every stage has written to `.stage-stats.jsonl` — is the only authoritative patch point.
 
@@ -2899,7 +2973,8 @@ if [ "$STAGE11_CUTOFF" = "true" ] && [ "${STAGE1B_DISPATCHED:-false}" = "false" 
   printf '  This is a fresh-budget Phase-11-only dispatch.\n\n' >&2
 
   # Dispatch via appsec-advisor:appsec-threat-renderer with description
-  # "Threat Model Renderer (Stage 2)"
+  # "Threat Model Renderer (Stage 2)" and Agent `model: $RENDERER_MODEL`
+  # (explicit — same pin the primary Stage-2 dispatch uses; default sonnet → session)
   # and a prompt that:
   #   1. Sets RESUME_FROM_PHASE=11 so the agent skips Phases 1–10b entirely.
   #   2. Scopes authoring DETERMINISTICALLY to what is not yet done. Instruct the
@@ -3085,6 +3160,7 @@ Use the `REPO_ROOT` and `OUTPUT_DIR` values resolved in the Path Resolution sect
 
 Pass the following variables to the agent prompt:
 - `CLAUDE_PLUGIN_ROOT=<absolute plugin path>` (resolved in the "Prerequisites" section above — **always pass this explicitly**; do not rely on the variable being inherited by the sub-session, because some harness/headless configurations drop it)
+- `APPSEC_RUN_ID=<stable per-run token>` (the value minted in "Skill-layer lock acquisition" above — **always pass this explicitly**; env vars do not cross into the sub-agent session, so the analyst's Pre-Phase lock acquisition can only re-acquire the skill-held lock re-entrantly if it receives the run-id through its prompt. Without it the analyst false-blocks on our own watchdog-warmed lock — the 2026-07-02 costly re-dispatch.)
 - `REPO_ROOT=<absolute repo path>`
 - `OUTPUT_DIR=<absolute output path>`
 - `WRITE_YAML=<true|false>`
@@ -3109,7 +3185,9 @@ Pass the following variables to the agent prompt:
 - `CONFIG_SCANNER_MODEL=<model>` (defaults to `claude-haiku-4-5` at all reasoning tiers. Read by Phase 2.5 dispatch in `phase-group-recon.md`. Override via `$APPSEC_CONFIG_SCANNER_MODEL`.)
 - `ACTOR_DISCOVERY_MODEL=<model>` (defaults to `claude-sonnet-4-6`. Read by Phase 2.7 dispatch. Override via `$APPSEC_ACTOR_DISCOVERY_MODEL`.)
 - `REFRESH_ACTOR_DISCOVERY=<true|false>` (when `true`, Phase 2.7 passes `--refresh-discovery` to resolve_actors.py and forces a new LLM discovery run even when the cache key is unchanged. Set by `--refresh-discovery` flag.)
-- `ORCHESTRATOR_MODEL=<model>` (sonnet-economy tier; always `claude-sonnet-4-6` per matrix — informational only.)
+- `ORCHESTRATOR_MODEL=<model>` (sonnet-economy tier; resolves to the `sonnet` alias → the **host session model**, NOT a fixed `claude-sonnet-4-6` (a running loop cannot switch its own model — the orchestrator IS this session). Shown resolved in the Session-model transparency routing table. Override via `$APPSEC_ORCHESTRATOR_MODEL`.)
+- `RENDERER_MODEL=<model>` (default `sonnet` alias → the **host session model**; Stage-2 renderer has no other knob. Passed as the Agent `model` param on the single, parallel (§7 ‖ MS), and recovery dispatches. Pin to `claude-sonnet-5` (CISO framing) via `$APPSEC_RENDERER_MODEL`.)
+- `ABUSE_VERIFIER_MODEL=<model>` (default `sonnet` alias → the **host session model**; Stage-1c abuse-case verifier fan-out. Passed as the Agent `model` param AND the `MODEL_ID` prompt field. Pin to `claude-sonnet-5` (verdict decisiveness) via `$APPSEC_ABUSE_VERIFIER_MODEL`; 4.6 reintroduces `inconclusive` verdicts so it is never the default.)
 - `STRIDE_PROFILE_JSON=<inline-json>` (depth-reduction profile; default `{"stride_profile_label":"full"}`. Read by Phase 9 dispatch in `phase-group-threats.md` and forwarded to each STRIDE analyzer in Group A. Quick + sonnet-economy contains the A-F reduction flags.)
 - `REASONING_LABEL=<resolved summary>`
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
@@ -3469,7 +3547,7 @@ Run this subsection **only when `QA_AGENT_DISPATCHED=true` is required**:
 When one of those conditions holds, set `QA_AGENT_DISPATCHED=true`, dispatch the QA agent, and **first print a blank line and the Stage 3 handoff banner**:
 
 ```
-▶ Stage 3/<total_stages> — QA Review starting  (expect ~<EST_STAGE3> min, model: sonnet-4-6)
+▶ Stage 3/<total_stages> — QA Review starting  (expect ~<EST_STAGE3> min, model: $QA_ROUTINE_MODEL)
   ⟶ Dispatching qa-reviewer — repair-plan triage and semantic review only; deterministic qa_checks.py already handled mechanical gates
 ```
 
@@ -3922,6 +4000,14 @@ if [ "${DRY_RUN:-false}" != "true" ]; then
 fi
 ```
 
+### Priority-circle gray ramp (delivered document only)
+
+The mitigation rollout-priority circles (❶ P1 … ❹ P4) are emitted monochrome by
+the renderers. `qa_checks.py autofix` owns the final presentation-only gray ramp
+(❶ `#111111` → ❷ `#555555` → ❸ `#888888` → ❹ `#bbbbbb`). Keeping this inside
+the authorized final QA mutation means no post-validation script can drift the
+delivered Markdown from the section contract.
+
 ## Completion Summary
 
 After the last enabled review stage completes (Stage 3 when QA is enabled, Stage 4 when architect review is enabled, or Stage 2 when QA is skipped), **always** print a final summary. For `DRY_RUN=true`, print the dry-run summary after Stage 2 and skip Stage 3/4. This is the last thing the skill outputs and is critical for headless mode (`claude -p`) where it becomes the entire visible output.
@@ -4071,10 +4157,61 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
     $( [ "${APPSEC_PLUGIN_DEV:-}" = "1"  ] && echo "--plugin-dev" ) \
     $( [ "$VERBOSE_REPORT"       = "true" ] && echo "--verbose" ) \
     $( [ "$QUIET"                = "true" ] && echo "--quiet" ) \
-    --patch-placeholders
+    --patch-placeholders \
+    --no-print
 ```
 
 The `--patch-placeholders` flag rewrites `_pending_` markers in the MD's `## Appendix: Run Statistics` section with the extracted durations and models. Idempotent — a second invocation is a no-op.
+
+**Final post-mutation structure gate (mandatory).** The placeholder patch above
+is the final authorized mutation of `threat-model.md`. Re-validate the persisted
+bytes now, before PDF/HTML export or cleanup. This deliberately repeats the
+earlier link check: the earlier check protects the pre-summary document, while
+this gate certifies the actual delivered Markdown after every mutator.
+
+```bash
+if ! FINAL_STRUCTURE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" \
+    final_structure "$OUTPUT_DIR/threat-model.md" 2>&1); then
+    printf '\n  ✗ FINAL REPORT STRUCTURE INVALID — refusing to export.\n' >&2
+    printf '%s\n' "$FINAL_STRUCTURE_JSON" >&2
+    exit 2
+fi
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/assert_completeness.py" "$OUTPUT_DIR" \
+    --phase render --plugin-root "$CLAUDE_PLUGIN_ROOT" || {
+  printf '\n  ✗ FINAL REPORT INCOMPLETE — refusing to export.\n' >&2
+  exit 2
+}
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/section_integrity.py" "$OUTPUT_DIR" \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" || {
+  printf '\n  ✗ FINAL SECTION INTEGRITY INVALID — refusing to export.\n' >&2
+  exit 2
+}
+```
+
+After all three read-only gates pass, invoke
+`render_completion_summary.py` once more with the same arguments but without
+`--patch-placeholders` and `--no-print`. This second invocation is read-only and
+produces the completion text that is surfaced below. A structurally invalid
+report therefore never prints an “Assessment complete” summary.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
+    --output-dir "$OUTPUT_DIR" \
+    --repo-root  "$REPO_ROOT" \
+    --mode "$MODE" \
+    --reasoning-model "$REASONING_MODEL" \
+    --assessment-depth "$ASSESSMENT_DEPTH" \
+    $( [ "$WRITE_YAML"          = "true" ] && echo "--write-yaml"          || echo "--no-write-yaml" ) \
+    $( [ "$WRITE_SARIF"         = "true" ] && echo "--write-sarif"         || echo "--no-write-sarif" ) \
+    $( [ "$WRITE_PENTEST_TASKS" = "true" ] && echo "--write-pentest-tasks" || echo "--no-write-pentest-tasks" ) \
+    $( [ "$CHECK_REQUIREMENTS"  = "true" ] && echo "--check-requirements"  || echo "--no-check-requirements" ) \
+    $( [ "$ARCHITECT_REVIEW"    = "true" ] && echo "--architect-review"    || echo "--no-architect-review" ) \
+    $( [ "${APPSEC_PLUGIN_DEV:-}" = "1"  ] && echo "--plugin-dev" ) \
+    $( [ "$VERBOSE_REPORT"        = "true" ] && echo "--verbose" ) \
+    $( [ "$QUIET"                 = "true" ] && echo "--quiet" )
+```
 
 The `--quiet` flag (passed only when `QUIET=true`) switches to a compact summary: it keeps Repository / Run / Results / Outputs plus any run-issue or security warnings, and drops the verdict, change summary, threat delta, next steps, run statistics, and log listing. **Default** (no `--quiet`) echoes the report's `### Verdict` (posture statement, risk distribution, scope, and the worst-case attack scenarios) on the console right after the `Results` block, so the user sees the assessment's bottom line without opening `threat-model.md`. The verdict block is also omitted automatically when the report has no `### Verdict` section (e.g. a partial/failed render).
 
@@ -4279,6 +4416,38 @@ rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 
 `post-qa` runs the Phase 11 whitelist plus QA-specific artifacts (`.qa-status.json`, empty `.qa-repair-plan.json`, `.fragments/`). `post-architect` additively removes architect-review status files. Exit code 1 (safety-gate block) is silenced with `|| true` — the summary has already been printed. Both `runtime_cleanup.py` invocations are skipped under `--keep-runtime-files` so the kept artifacts survive, matching the conditional `Final summary` task label (no "+ cleanup" advertised when no cleanup runs).
 
+### Reader-facing section renumbering (display-only, §7→§6)
+
+Runs **after** the three read-only gates (`final_structure`, `assert_completeness`,
+`section_integrity`) have validated the canonical **§7-numbered** document, and
+**before** the PDF / HTML / slug deliverables are produced — so every delivered
+artifact shows contiguous **§1–§10** numbering (the retired-§6 gap is closed:
+Security Architecture becomes §6, Findings §7, …) and the now-inaccurate
+"numbering is non-contiguous" note is dropped.
+
+**The persisted `threat-model.md` ends at §6; a §7 mirror serves the machinery.**
+`renumber_sections_display.py` relabels headings/anchors/TOC/`§N` in place, so the
+reader-facing `threat-model.md` (and every derived deliverable) shows contiguous
+§1–§10. But two internal consumers still key on `## 7.`: the composer's quick-depth
+§7 carry-forward (`compose_threat_model.py` → `_extract_section_verbatim`, fed by
+`snapshot_preserved_sections.py`) and the qa contract's literal §7.x titles. So
+**before** renumbering we copy the §7 document to
+`.appsec-cache/threat-model.canonical7.md` — a mirror `snapshot_preserved_sections.py`
+prefers as its `prior-report.md` source, and which `runtime_cleanup.py` never
+touches (`.appsec-cache/` is in its NEVER set). The primary `threat-model.md` is
+then renumbered to §6 and **not** restored. qa has already run against the §7
+document at this point (this step is after all gates), so the §6 relabel is safe.
+It is a **no-op** at `--quick` depth when §7 was never rendered (the tool's
+canonical-marker guard skips).
+
+```bash
+mkdir -p "$OUTPUT_DIR/.appsec-cache"
+cp "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR/.appsec-cache/threat-model.canonical7.md"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/renumber_sections_display.py" \
+    "$OUTPUT_DIR/threat-model.md" \
+    2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+```
+
 ### PDF Export (only when `WRITE_PDF=true`)
 
 The PDF export runs **after** all four stages, the Completion Summary, and `runtime_cleanup`. Placing it last is intentional: at this point `threat-model.md` is final (no more QA / architect re-render passes), so the PDF can never go stale. The export script is the same one used by `/appsec-advisor:export-threat-model --formats pdf`.
@@ -4333,12 +4502,16 @@ fi
 
 ### Slug stamping (only when `slug` is set)
 
-Runs **last** — after the PDF / HTML exports — so the stamped copy set includes every produced deliverable. When the resolved config carries a non-null `slug` (from `--slug [<value>]`), copy the canonical deliverables to a postfix-stamped, copy-ready set (`threat-model-<slug>.md` / `.yaml` / `.figure1.svg` / `.pdf` / `.html` / `.sarif.json`, whichever exist), with the Figure 1 reference inside the copied Markdown repointed at the stamped SVG. The canonical `threat-model.*` files are left untouched (the pipeline, gates, and incremental baseline depend on them). The slug was already resolved (random when bare `--slug`, explicit otherwise) by `resolve_config.py`, so the skill just reads it.
+Runs **last** — after the PDF / HTML exports — so the stamped copy set includes every produced deliverable. When the resolved config carries a non-null `slug` (from `--slug [<value>]`), copy the canonical deliverables to a postfix-stamped, copy-ready set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json`, whichever exist), with copied figure references inside the copied Markdown repointed at the stamped SVGs. The canonical `threat-model.*` files are left untouched (the pipeline, gates, and incremental baseline depend on them). The slug was already resolved (random when bare `--slug`, explicit otherwise) by `resolve_config.py`, so the skill just reads it.
 
 **Non-fatal** — a copy failure must not fail the assessment; the canonical model is already complete.
 
 ```bash
-SLUG=$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/.skill-config.json')).get('slug') or '')" 2>/dev/null)
+# SLUG is already bound from dispatch_values (SKILL-full-runtime.md §3 alias table).
+# Do NOT re-read it from .skill-config.json here — that file is deleted by
+# runtime_cleanup.py --stage post-qa (Always-cleanup list, line 32/129) which runs
+# in "Post-summary cleanup" above, before this block. Re-reading it always yields ""
+# and silently skips the stamp (the FileNotFoundError is swallowed by 2>/dev/null).
 if [ -n "$SLUG" ]; then
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/stamp_threat_model.py" \
         --output-dir "$OUTPUT_DIR" --slug "$SLUG" \
@@ -4347,6 +4520,16 @@ fi
 ```
 
 `stamp_threat_model.py` is idempotent per slug (a re-run with the same slug overwrites its own stamped set, never the canonical files) and lists the created paths. `scripts/runtime_cleanup.py` treats `threat-model-*` stamped deliverables the same as the canonical ones (never touched).
+
+### §7 mirror retained (no restore)
+
+The persisted `threat-model.md` intentionally stays at §6 — that is the
+reader-facing deliverable. The §7 document is preserved at
+`.appsec-cache/threat-model.canonical7.md` (written just before the renumber
+above) purely for the next run's §7 carry-forward / snapshot preservation and for
+qa contract matching; `snapshot_preserved_sections.py` prefers it as the
+`prior-report.md` source and `runtime_cleanup.py` never deletes `.appsec-cache/`.
+No restore step runs.
 
 **Explicit success exit.** After the slug-stamping block (or after the cleanup block when both `WRITE_PDF=false` and `WRITE_HTML=false`) emit an unambiguous success exit so that no subsequent code path can accidentally run:
 

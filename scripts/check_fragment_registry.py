@@ -185,6 +185,18 @@ def check() -> list[str]:
         if sid not in section_fragment_map and md_sections[sid]:
             errors.append(f"contract markdown section {sid!r} missing from _SECTION_FRAGMENT_MAP")
 
+    # 7. Reverse guard: every CONTRACT_SECTION_FRAGMENTS key must be a real
+    #    contract section. Checks 4/5 only compare SHARED keys, so a retired
+    #    section id left behind in the map (e.g. 'top_findings' after its
+    #    2026-05 merge into 'top_threats') stayed invisible and mis-routed
+    #    table-schema repairs. Reject any orphan key not in the contract.
+    for sid in contract_section_fragments:
+        if sid not in all_sections:
+            errors.append(
+                f"CONTRACT_SECTION_FRAGMENTS has {sid!r} but it is not a section "
+                "in sections-contract.yaml (retired/renamed section id?)"
+            )
+
     return errors
 
 

@@ -18,6 +18,21 @@ def _write_yaml(path: Path, data: dict) -> None:
     path.write_text(yaml.safe_dump(data))
 
 
+def _complete_actor(actor_id: str, label: str, access: list[str]) -> dict:
+    return {
+        "id": actor_id,
+        "label": label,
+        "access": access,
+        "capabilities": {
+            "sophistication": "medium",
+            "dwell_time": "weeks",
+            "surface_reach": ["lateral"],
+        },
+        "motivation": "financial",
+        "heatmap_slug": "repo-read",
+    }
+
+
 @pytest.fixture
 def plugin_lib(tmp_path: Path) -> Path:
     """Create a plugin-root dir with data/actors/default-library.yaml."""
@@ -29,12 +44,26 @@ def plugin_lib(tmp_path: Path) -> Path:
                 "id": "ACT-D-01",
                 "label": "anon-attacker",
                 "access": ["internet"],
+                "trust_positions": ["public-endpoint-reach"],
+                "capabilities": {
+                    "sophistication": "low",
+                    "dwell_time": "short",
+                    "surface_reach": ["internet"],
+                },
+                "motivation": "financial",
                 "activation_conditions": {"required_signals": ["has_public_routes"]},
             },
             {
                 "id": "ACT-D-02",
                 "label": "auth-user",
                 "access": ["authenticated-user-session"],
+                "trust_positions": ["authenticated-user-authority"],
+                "capabilities": {
+                    "sophistication": "low",
+                    "dwell_time": "short",
+                    "surface_reach": ["internet"],
+                },
+                "motivation": "curiosity",
                 "activation_conditions": {
                     "required_signals": ["has_auth_surface", "has_role_concept"],
                     "signal_logic": "any",
@@ -44,6 +73,13 @@ def plugin_lib(tmp_path: Path) -> Path:
                 "id": "ACT-D-03",
                 "label": "always-on",
                 "access": ["internal"],
+                "trust_positions": ["internal-system-authority"],
+                "capabilities": {
+                    "sophistication": "medium",
+                    "dwell_time": "weeks",
+                    "surface_reach": ["lateral"],
+                },
+                "motivation": "disruption",
             },
         ],
         "reach_equivalence_rules": [
@@ -213,11 +249,26 @@ def test_load_enterprise_actors_reads_glob(tmp_path: Path):
     profile = tmp_path / "profile"
     _write_yaml(
         profile / "actors" / "ent.yaml",
-        {"actors": [{"id": "ENT-1", "label": "x"}]},
+        {
+            "actors": [
+                {
+                    "id": "ACT-E-1",
+                    "label": "enterprise-actor",
+                    "access": ["internal-network"],
+                    "capabilities": {
+                        "sophistication": "medium",
+                        "dwell_time": "weeks",
+                        "surface_reach": ["lateral"],
+                    },
+                    "motivation": "financial",
+                    "heatmap_slug": "repo-read",
+                }
+            ]
+        },
     )
     org = {"actors": {"inherit_defaults": False, "add": "actors/*.yaml", "disable": ["ACT-D-01"]}}
     actors, disables, inherit, add_glob = resolve_actors.load_enterprise_actors(org, str(profile))
-    assert actors[0]["id"] == "ENT-1"
+    assert actors[0]["id"] == "ACT-E-1"
     assert actors[0]["_provenance"]["layer"] == "enterprise"
     assert inherit is False
     assert disables == [{"id": "ACT-D-01", "reason": None}]
@@ -242,7 +293,7 @@ def test_load_enterprise_actors_defaults_when_empty():
 def test_load_repo_actors_missing(tmp_path: Path):
     actors, disables, disc, inherit = resolve_actors.load_repo_actors(str(tmp_path / "nope"))
     assert actors == [] and disables == []
-    assert disc == {"enabled": True, "max_proposed": 10}
+    assert disc == {"enabled": True, "max_proposed": 5}
     assert inherit is True
 
 
@@ -251,16 +302,19 @@ def test_load_repo_actors_with_rename_alias(tmp_path: Path):
     _write_yaml(
         repo / ".appsec" / "actors.yaml",
         {
-            "actors": [{"id": "NEW-1", "renamed_from": "OLD-1"}, {"id": "NEW-2", "renamed_from": ["O2", "O3"]}],
-            "disable": [{"id": "X", "reason": "r"}],
+            "actors": [
+                {"id": "ACT-R-1", "renamed_from": "ACT-X-1"},
+                {"id": "ACT-R-2", "renamed_from": ["ACT-X-2", "ACT-X-3"]},
+            ],
+            "disable": [{"id": "ACT-D-1", "reason": "r"}],
             "discovery": {"enabled": False},
             "inherit_org": False,
         },
     )
     actors, disables, disc, inherit = resolve_actors.load_repo_actors(str(repo))
-    assert actors[0]["_provenance"]["aliases"] == ["OLD-1"]
-    assert actors[1]["_provenance"]["aliases"] == ["O2", "O3"]
-    assert disables == [{"id": "X", "reason": "r"}]
+    assert actors[0]["_provenance"]["aliases"] == ["ACT-X-1"]
+    assert actors[1]["_provenance"]["aliases"] == ["ACT-X-2", "ACT-X-3"]
+    assert disables == [{"id": "ACT-D-1", "reason": "r"}]
     assert disc == {"enabled": False}
     assert inherit is False
 
@@ -305,6 +359,41 @@ def _read(out_dir: Path, name: str) -> dict:
     return json.loads((out_dir / name).read_text())
 
 
+def _discovery_doc(*proposals: dict) -> dict:
+    return {
+        "schema_version": 1,
+        "discovery_cache_key": "a" * 64,
+        "generated_at": "2026-06-30T12:00:00Z",
+        "confirmed_relevant": [],
+        "proposed_additional": list(proposals),
+        "inputs_questioned": [],
+        "coverage_rationale": "Static actors compared by access and authority.",
+    }
+
+
+def _proposal(**overrides) -> dict:
+    proposal = {
+        "id": "ACT-X-1",
+        "label": "partner-api-credential-holder",
+        "access": ["internet"],
+        "trust_positions": ["partner-api-credential"],
+        "distinct_trust_positions": ["partner-api-credential"],
+        "distinct_trust_position_evidence": "Recon section 7.1 shows a partner-only API credential.",
+        "capabilities": {
+            "sophistication": "medium",
+            "tooling": ["off-the-shelf"],
+            "dwell_time": "weeks",
+            "surface_reach": ["internet"],
+        },
+        "motivation": "financial",
+        "rationale": "A partner credential grants authority unavailable to public or ordinary authenticated users.",
+        "confidence": "high",
+        "discovery_method": "heuristic-section-A",
+    }
+    proposal.update(overrides)
+    return proposal
+
+
 def test_resolve_basic_quick_mode(plugin_lib: Path, tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -319,9 +408,29 @@ def test_resolve_basic_quick_mode(plugin_lib: Path, tmp_path: Path):
     assert (out / ".actor-fingerprints.json").exists()
     resolved = _read(out, ".actors-resolved.json")
     assert resolved["quick_mode"] is True
+    assert resolved["discovery_enabled"] is True
+    assert resolved["discovery_skip_reason"] == "quick-mode"
+    assert _read(out, ".discovery-skipped.json")["reason"] == "quick-mode"
     # ACT-D-03 has no conditions -> always active; ACT-D-01/02 require signals -> warn-active
     ids = {a["id"] for a in resolved["resolved_actors"]}
     assert ids == {"ACT-D-01", "ACT-D-02", "ACT-D-03"}
+
+
+def test_resolve_config_disabled_records_reason_without_calling_it_quick(plugin_lib: Path, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _write_yaml(repo / ".appsec" / "actors.yaml", {"discovery": {"enabled": False}})
+    out = tmp_path / "out"
+    resolve_actors.resolve(
+        plugin_root=str(plugin_lib),
+        repo_root=str(repo),
+        output_dir=str(out),
+        quick_mode=False,
+    )
+    resolved = _read(out, ".actors-resolved.json")
+    assert resolved["quick_mode"] is False
+    assert resolved["discovery_enabled"] is False
+    assert resolved["discovery_skip_reason"] == "disabled-by-repo-config"
+    assert _read(out, ".discovery-skipped.json")["reason"] == "disabled-by-repo-config"
 
 
 def test_resolve_with_signals_activation(plugin_lib: Path, tmp_path: Path):
@@ -343,6 +452,7 @@ def test_resolve_with_signals_activation(plugin_lib: Path, tmp_path: Path):
     assert "ACT-D-01" in active_ids
     assert "ACT-D-03" in active_ids
     assert "ACT-D-02" not in active_ids
+    assert {a["id"] for a in merged["catalog_actors"]} == {"ACT-D-01", "ACT-D-02", "ACT-D-03"}
     resolved = _read(out, ".actors-resolved.json")
     skipped = [i for i in resolved["run_issues"] if i["class"] == "default_actor_skipped"]
     assert any(i["actor_id"] == "ACT-D-02" for i in skipped)
@@ -353,14 +463,20 @@ def test_resolve_enterprise_and_repo_merge_and_disable(plugin_lib: Path, tmp_pat
     _write_yaml(
         repo / ".appsec" / "actors.yaml",
         {
-            "actors": [{"id": "ACT-D-03", "label": "repo-override"}, {"id": "REPO-1", "access": ["internal"]}],
+            "actors": [
+                {"id": "ACT-D-03", "label": "repo-override"},
+                _complete_actor("ACT-R-1", "repo-actor", ["internal"]),
+            ],
             "disable": [{"id": "ACT-D-01", "reason": "not relevant"}],
             "discovery": {"enabled": False},
         },
     )
     profile = tmp_path / "profile"
     org_path = profile / ".org-profile-effective.json"
-    _write_yaml(profile / "actors" / "ent.yaml", {"actors": [{"id": "ENT-1", "access": ["dmz"]}]})
+    _write_yaml(
+        profile / "actors" / "ent.yaml",
+        {"actors": [_complete_actor("ACT-E-1", "enterprise-actor", ["dmz"])]},
+    )
     profile.mkdir(exist_ok=True)
     org_path.write_text(
         json.dumps({"actors": {"add": "actors/*.yaml", "disable": [{"id": "ACT-D-02", "reason": "ent-off"}]}})
@@ -375,7 +491,7 @@ def test_resolve_enterprise_and_repo_merge_and_disable(plugin_lib: Path, tmp_pat
     )
     resolved = _read(out, ".actors-resolved.json")
     by_id = {a["id"]: a for a in resolved["resolved_actors"]}
-    assert "ENT-1" in by_id and "REPO-1" in by_id
+    assert "ACT-E-1" in by_id and "ACT-R-1" in by_id
     # repo override merged into plugin ACT-D-03
     assert by_id["ACT-D-03"]["label"] == "repo-override"
     assert "repo" in by_id["ACT-D-03"]["_provenance"]["modified_by"]
@@ -436,7 +552,10 @@ def test_resolve_inherit_org_false_excludes_enterprise(plugin_lib: Path, tmp_pat
     profile = tmp_path / "profile"
     profile.mkdir()
     org_path = profile / ".org-profile-effective.json"
-    _write_yaml(profile / "actors" / "ent.yaml", {"actors": [{"id": "ENT-1", "access": ["dmz"]}]})
+    _write_yaml(
+        profile / "actors" / "ent.yaml",
+        {"actors": [_complete_actor("ACT-E-1", "enterprise-actor", ["dmz"])]},
+    )
     org_path.write_text(json.dumps({"actors": {"add": "actors/*.yaml"}}))
     out = tmp_path / "out"
     resolve_actors.resolve(
@@ -448,7 +567,7 @@ def test_resolve_inherit_org_false_excludes_enterprise(plugin_lib: Path, tmp_pat
     )
     resolved = _read(out, ".actors-resolved.json")
     ids = {a["id"] for a in resolved["resolved_actors"]}
-    assert "ENT-1" not in ids
+    assert "ACT-E-1" not in ids
     assert any(i["class"] == "repo_inherit_org_disabled" for i in resolved["run_issues"])
 
 
@@ -456,14 +575,61 @@ def test_resolve_discovery_layer(plugin_lib: Path, tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
     disc = tmp_path / "disc.json"
+    discovery_doc = _discovery_doc(_proposal())
+    discovery_doc["confirmed_relevant"] = [
+        {
+            "id": "ACT-D-01",
+            "label": "anon-attacker",
+            "relevance_evidence": "Recon section 2 confirms public routes.",
+            "confidence": "high",
+        }
+    ]
+    discovery_doc["inputs_questioned"] = [
+        {
+            "id": "ACT-D-02",
+            "label": "auth-user",
+            "reason": "Recon does not show an authenticated surface.",
+            "recommendation": "review_for_disable",
+        }
+    ]
+    disc.write_text(json.dumps(discovery_doc))
+    out = tmp_path / "out"
+    (out).mkdir()
+    (out / ".discovery-skipped.json").write_text('{"reason":"quick-mode"}')
+    resolve_actors.resolve(
+        plugin_root=str(plugin_lib),
+        repo_root=str(repo),
+        output_dir=str(out),
+        discovery_output_path=str(disc),
+        quick_mode=False,
+    )
+    resolved = _read(out, ".actors-resolved.json")
+    by_id = {a["id"]: a for a in resolved["resolved_actors"]}
+    assert resolved["discovery_actor_count"] == 1
+    assert by_id["ACT-X-1"]["_provenance"]["layer"] == "discovery"
+    assert by_id["ACT-X-1"]["_provenance"]["proposed"] is True
+    assert by_id["ACT-X-1"]["heatmap_slug"] == "internet-user"
+    assert resolved["rejected_discovery_actors"] == []
+    assert resolved["confirmed_relevant"] == discovery_doc["confirmed_relevant"]
+    assert resolved["inputs_questioned"] == discovery_doc["inputs_questioned"]
+    assert not (out / ".discovery-skipped.json").exists()
+
+
+def test_resolve_rejects_discovery_actor_covered_by_static_access(plugin_lib: Path, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    disc = tmp_path / "disc.json"
     disc.write_text(
         json.dumps(
-            {
-                "proposed_additional": [
-                    {"id": "DISC-1", "label": "found", "access": ["internet"]},
-                    {"id": "ACT-D-03", "label": "dup-skip"},  # already present -> skipped
-                ]
-            }
+            _discovery_doc(
+                _proposal(
+                    label="technique-specialized-user",
+                    access=["authenticated-user-session"],
+                    trust_positions=["authenticated-user-authority"],
+                    distinct_trust_positions=["authenticated-user-authority"],
+                    distinct_trust_position_evidence="Recon shows the ordinary authenticated authority already in the static catalog.",
+                )
+            )
         )
     )
     out = tmp_path / "out"
@@ -475,10 +641,282 @@ def test_resolve_discovery_layer(plugin_lib: Path, tmp_path: Path):
         quick_mode=False,
     )
     resolved = _read(out, ".actors-resolved.json")
-    by_id = {a["id"]: a for a in resolved["resolved_actors"]}
-    assert resolved["discovery_actor_count"] == 1
-    assert by_id["DISC-1"]["_provenance"]["layer"] == "discovery"
-    assert by_id["DISC-1"]["_provenance"]["proposed"] is True
+    assert resolved["discovery_actor_count"] == 0
+    assert resolved["rejected_discovery_actors"][0]["covered_by"] == "ACT-D-02"
+    assert any(i["class"] == "discovery_actor_rejected" for i in resolved["run_issues"])
+
+
+def test_discovery_gate_collapses_access_aliases():
+    proposal = _proposal(
+        access=["internet", "cloud-saas"],
+        trust_positions=["llm-provider-control"],
+        distinct_trust_positions=["llm-provider-control"],
+    )
+    static = [
+        {
+            "id": "ACT-D-07",
+            "access": ["internet", "peer-service"],
+            "trust_positions": ["trusted-service-control"],
+        }
+    ]
+    reason, covered_by = resolve_actors._discovery_rejection_reason(
+        proposal,
+        static,
+        {"cloud-saas": "peer-service", "peer-service": "peer-service"},
+        {"llm-provider-control": "trusted-service-control", "trusted-service-control": "trusted-service-control"},
+    )
+    assert "already covered" in reason
+    assert covered_by == "ACT-D-07"
+
+
+def test_discovery_gate_compares_dormant_static_catalog():
+    proposal = _proposal(
+        label="assistant-config-author",
+        access=["ci-cd-runtime"],
+        trust_positions=["ai-assistant-config-write-authority"],
+        distinct_trust_positions=["ai-assistant-config-write-authority"],
+    )
+    static = [
+        {
+            "id": "ACT-D-04",
+            "access": ["ci-cd-runtime", "local-fs"],
+            "trust_positions": ["source-repository-write-authority"],
+            "_provenance": {"active": False},
+        }
+    ]
+    reason, covered_by = resolve_actors._discovery_rejection_reason(
+        proposal,
+        static,
+        {},
+        {
+            "ai-assistant-config-write-authority": "source-repository-write-authority",
+            "source-repository-write-authority": "source-repository-write-authority",
+        },
+    )
+    assert "already covered" in reason
+    assert covered_by == "ACT-D-04"
+
+
+@pytest.mark.parametrize(
+    ("label", "access", "trust_position", "expected_actor"),
+    [
+        (
+            "prompt-injector",
+            ["authenticated-user-session"],
+            "authenticated-user-authority",
+            "ACT-D-02",
+        ),
+        (
+            "llm-provider-adversary",
+            ["internet", "cloud-saas"],
+            "llm-provider-control",
+            "ACT-D-07",
+        ),
+        (
+            "ctf-competitor-security-researcher",
+            ["authenticated-user-session"],
+            "ctf-participant-authority",
+            "ACT-D-02",
+        ),
+        (
+            "ai-assistant-config-author",
+            ["ci-cd-runtime"],
+            "ai-assistant-config-write-authority",
+            "ACT-D-04",
+        ),
+    ],
+)
+def test_incident_regression_rejects_technique_feature_and_persona_actors(
+    label,
+    access,
+    trust_position,
+    expected_actor,
+):
+    """Regression for the four bogus ACT-X classes emitted in the 2026-06-29 run."""
+    proposal = _proposal(
+        label=label,
+        access=access,
+        trust_positions=[trust_position],
+        distinct_trust_positions=[trust_position],
+    )
+    static_catalog = [
+        {
+            "id": "ACT-D-02",
+            "access": ["internet", "authenticated-user-session"],
+            "trust_positions": ["authenticated-user-authority"],
+        },
+        {
+            "id": "ACT-D-04",
+            "access": ["local-fs", "ci-cd-runtime"],
+            "trust_positions": ["source-repository-write-authority"],
+            "_provenance": {"active": False},
+        },
+        {
+            "id": "ACT-D-07",
+            "access": ["internet", "peer-service"],
+            "trust_positions": ["trusted-service-control"],
+        },
+    ]
+    trust_aliases = {
+        "authenticated-user-authority": "authenticated-user-authority",
+        "ctf-participant-authority": "authenticated-user-authority",
+        "source-repository-write-authority": "source-repository-write-authority",
+        "ai-assistant-config-write-authority": "source-repository-write-authority",
+        "trusted-service-control": "trusted-service-control",
+        "llm-provider-control": "trusted-service-control",
+    }
+    reason, covered_by = resolve_actors._discovery_rejection_reason(
+        proposal,
+        static_catalog,
+        {"cloud-saas": "peer-service", "peer-service": "peer-service"},
+        trust_aliases,
+    )
+    assert "already covered" in reason
+    assert covered_by == expected_actor
+
+
+def test_incident_regression_full_resolver_rejects_all_four_proposals(
+    plugin_lib: Path,
+    tmp_path: Path,
+):
+    """Exercise schema validation, alias loading, dormant catalog, and merge together."""
+    library_path = plugin_lib / "data" / "actors" / "default-library.yaml"
+    library = yaml.safe_load(library_path.read_text())
+    library["access_zone_aliases"] = {
+        "peer-service": ["cloud-saas"],
+    }
+    library["trust_position_aliases"] = {
+        "authenticated-user-authority": ["ctf-participant-authority"],
+        "source-repository-write-authority": ["ai-assistant-config-write-authority"],
+        "trusted-service-control": ["llm-provider-control"],
+    }
+    library["actors"].extend(
+        [
+            {
+                "id": "ACT-D-04",
+                "label": "malicious-insider-dev",
+                "access": ["local-fs", "ci-cd-runtime"],
+                "trust_positions": ["source-repository-write-authority"],
+                "capabilities": {
+                    "sophistication": "medium",
+                    "dwell_time": "weeks",
+                    "surface_reach": ["local", "persistent"],
+                },
+                "motivation": "financial",
+                "activation_conditions": {"required_signals": ["has_secrets_in_repo"]},
+            },
+            {
+                "id": "ACT-D-07",
+                "label": "compromised-third-party-service",
+                "access": ["internet", "peer-service"],
+                "trust_positions": ["trusted-service-control"],
+                "capabilities": {
+                    "sophistication": "high",
+                    "dwell_time": "months",
+                    "surface_reach": ["persistent", "internet"],
+                },
+                "motivation": "espionage",
+                "activation_conditions": {"required_signals": ["has_external_apis"]},
+            },
+        ]
+    )
+    _write_yaml(library_path, library)
+
+    proposals = [
+        _proposal(
+            id="ACT-X-1",
+            label="prompt-injector",
+            access=["authenticated-user-session"],
+            trust_positions=["authenticated-user-authority"],
+            distinct_trust_positions=["authenticated-user-authority"],
+        ),
+        _proposal(
+            id="ACT-X-2",
+            label="llm-provider-adversary",
+            access=["internet", "cloud-saas"],
+            trust_positions=["llm-provider-control"],
+            distinct_trust_positions=["llm-provider-control"],
+        ),
+        _proposal(
+            id="ACT-X-3",
+            label="ctf-competitor-security-researcher",
+            access=["authenticated-user-session"],
+            trust_positions=["ctf-participant-authority"],
+            distinct_trust_positions=["ctf-participant-authority"],
+        ),
+        _proposal(
+            id="ACT-X-4",
+            label="ai-assistant-config-author",
+            access=["ci-cd-runtime"],
+            trust_positions=["ai-assistant-config-write-authority"],
+            distinct_trust_positions=["ai-assistant-config-write-authority"],
+        ),
+    ]
+    discovery = tmp_path / "actors-discovered.json"
+    discovery.write_text(json.dumps(_discovery_doc(*proposals)))
+    signals = tmp_path / "signals.json"
+    signals.write_text(
+        json.dumps(
+            {
+                "signals": {
+                    "has_public_routes": True,
+                    "has_auth_surface": True,
+                    "has_role_concept": True,
+                    "has_secrets_in_repo": False,
+                    "has_external_apis": True,
+                }
+            }
+        )
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "out"
+
+    resolve_actors.resolve(
+        plugin_root=str(plugin_lib),
+        repo_root=str(repo),
+        output_dir=str(out),
+        discovery_output_path=str(discovery),
+        signals_path=str(signals),
+        quick_mode=False,
+    )
+
+    resolved = _read(out, ".actors-resolved.json")
+    assert resolved["discovery_actor_count"] == 0
+    assert not {a["id"] for a in resolved["resolved_actors"]} & {
+        "ACT-X-1",
+        "ACT-X-2",
+        "ACT-X-3",
+        "ACT-X-4",
+    }
+    rejected = {entry["id"]: entry.get("covered_by") for entry in resolved["rejected_discovery_actors"]}
+    assert rejected == {
+        "ACT-X-1": "ACT-D-02",
+        "ACT-X-2": "ACT-D-07",
+        "ACT-X-3": "ACT-D-02",
+        "ACT-X-4": "ACT-D-04",
+    }
+    assert sum(issue["class"] == "discovery_actor_rejected" for issue in resolved["run_issues"]) == 4
+
+
+def test_resolve_rejects_schema_invalid_discovery_output(plugin_lib: Path, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    disc = tmp_path / "disc.json"
+    disc.write_text(json.dumps({"schema_version": 1, "proposed_additional": []}))
+    out = tmp_path / "out"
+    resolve_actors.resolve(
+        plugin_root=str(plugin_lib),
+        repo_root=str(repo),
+        output_dir=str(out),
+        discovery_output_path=str(disc),
+        quick_mode=False,
+    )
+    resolved = _read(out, ".actors-resolved.json")
+    assert resolved["discovery_actor_count"] == 0
+    assert resolved["confirmed_relevant"] == []
+    assert resolved["inputs_questioned"] == []
+    assert any(i["class"] == "invalid_actor_discovery_output" for i in resolved["run_issues"])
 
 
 def test_resolve_discovery_bad_json_warns(plugin_lib: Path, tmp_path: Path, capsys):
@@ -538,3 +976,22 @@ def test_cli_main(run_plugin_script, plugin_lib: Path, tmp_path: Path):
     )
     assert res.returncode == 0
     assert (out / ".actors-resolved.json").exists()
+
+
+def test_cli_invalid_repo_actor_config_fails_without_traceback(run_plugin_script, plugin_lib: Path, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _write_yaml(repo / ".appsec" / "actors.yaml", {"discovery": {"enabled": "yes"}})
+    out = tmp_path / "out"
+    result = run_plugin_script(
+        "resolve_actors.py",
+        "--plugin-root",
+        str(plugin_lib),
+        "--repo-root",
+        str(repo),
+        "--output-dir",
+        str(out),
+        "--quick",
+    )
+    assert result.returncode == 2
+    assert "invalid .appsec/actors.yaml" in result.stderr
+    assert "Traceback" not in result.stderr

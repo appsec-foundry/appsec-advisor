@@ -41,8 +41,10 @@ def _completed(stdout: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(["test"], 0, stdout=stdout, stderr="")
 
 
-def test_route_uses_thin_runtime_only_for_full_or_rebuild(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+def test_route_defaults_to_thin_for_full_or_rebuild(monkeypatch, tmp_path):
+    # Default (no env): full/rebuild route to the compact runtime; incremental
+    # keeps the legacy runtime.
+    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
     monkeypatch.setattr(controller, "_resolve", lambda argv: _cfg(tmp_path, argv[0]))
     full = controller.route(["full"])
     rebuild = controller.route(["rebuild"])
@@ -133,6 +135,56 @@ def test_full_prepare_wipes_only_intermediates(monkeypatch, tmp_path):
     assert not (output / ".fragments").exists()
     persisted = json.loads((output / ".skill-config.json").read_text())
     assert persisted["mode"] == "full"
+
+
+def test_prepare_passes_detected_session_model_to_box(monkeypatch, tmp_path):
+    # Thin-path fix: the controller must detect the host session model and pass
+    # it to render_run_plan so the Pre-flight box can fold in the cost advisory.
+    # (The rendered content itself is unit-tested in test_resolve_config.py.)
+    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+    cfg = _cfg(tmp_path)
+    Path(cfg["output_dir"]).mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir(exist_ok=True)
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+    monkeypatch.setattr(controller.detect_session_model, "detect_session_model", lambda *a, **k: "claude-sonnet-5")
+    captured = {}
+
+    def _spy(*args):
+        captured["session_model"] = args[4] if len(args) > 4 else None
+        return "Threat Model — Pre-flight\n"
+
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", _spy)
+    controller.prepare(["--full"])
+    assert captured["session_model"] == "claude-sonnet-5"
+
+
+def test_prepare_passes_empty_when_session_undetected(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+    cfg = _cfg(tmp_path)
+    Path(cfg["output_dir"]).mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir(exist_ok=True)
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+
+    # Detection raises → controller must swallow it and pass "" (fail-safe).
+    def _boom(*a, **k):
+        raise RuntimeError("transcript unreadable")
+
+    monkeypatch.setattr(controller.detect_session_model, "detect_session_model", _boom)
+    captured = {}
+
+    def _spy(*args):
+        captured["session_model"] = args[4] if len(args) > 4 else None
+        return "Threat Model — Pre-flight\n"
+
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", _spy)
+    controller.prepare(["--full"])
+    assert captured["session_model"] == ""
 
 
 def test_rebuild_need_render_aborts_before_wipe(monkeypatch, tmp_path):
@@ -396,6 +448,64 @@ def test_next_action_rehydrates_from_filesystem(tmp_path):
     assert controller.next_action(output)["action"] == "complete"
 
 
+def test_compose_if_ready_requires_llm_fragments(tmp_path):
+    """No render fragments on disk → cannot compose, caller must dispatch Stage 2."""
+    output = tmp_path / "out"
+    (output / ".fragments").mkdir(parents=True)
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    assert controller._compose_if_ready(output, "") is False
+
+
+def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch):
+    """The deterministic backstop: yaml + render fragments present but no .md →
+    next_action composes the report itself (no Stage-2 re-dispatch), then routes
+    to QA. Closes the 2026-07-02 thin-runtime gap (fragments authored, compose
+    never ran)."""
+    output = tmp_path / "out"
+    frag = output / ".fragments"
+    frag.mkdir(parents=True)
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    # The LLM-authored fragments the renderer would have produced.
+    (frag / "ms-verdict.json").write_text("{}", encoding="utf-8")
+    (frag / "security-architecture.md").write_text("## 7. Security Architecture\n", encoding="utf-8")
+
+    md = output / "threat-model.md"
+
+    def fake_run(cmd, **kwargs):
+        # Simulate compose_threat_model.py writing the report; all steps succeed.
+        if any("compose_threat_model.py" in str(c) for c in cmd):
+            md.write_text("# Threat Model\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(controller.subprocess, "run", fake_run)
+
+    action = controller.next_action(output)
+    assert md.is_file()  # composed deterministically
+    assert action["stage"] == "stage3"  # routed to QA, NOT re-dispatched as stage2
+
+
+def test_next_action_falls_back_to_stage2_when_compose_fails(tmp_path, monkeypatch):
+    """If the deterministic compose cannot produce the .md, fall back to a
+    Stage-2 agent dispatch (no regression vs. the pre-backstop behaviour)."""
+    output = tmp_path / "out"
+    frag = output / ".fragments"
+    frag.mkdir(parents=True)
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (frag / "ms-verdict.json").write_text("{}", encoding="utf-8")
+    (frag / "security-architecture.md").write_text("## 7\n", encoding="utf-8")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, "", "boom")  # compose fails
+
+    monkeypatch.setattr(controller.subprocess, "run", fake_run)
+
+    action = controller.next_action(output)
+    assert not (output / "threat-model.md").is_file()
+    assert action["stage"] == "stage2"
+
+
 def test_action_schema_rejects_executable_command_field():
     with pytest.raises(controller.ControllerError):
         controller._validate_action(
@@ -461,6 +571,23 @@ def test_dispatch_values_supply_runtime_defaults(tmp_path):
     assert set(values) == set(controller._DISPATCH_KEYS) | set(controller._DISPATCH_EXTRA_KEYS)
 
 
+def test_dispatch_values_preserve_slug(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg["slug"] = "juice-shop-quick"
+    values = controller._dispatch_values(
+        cfg,
+        {
+            "estimate_total_pretty": "51 min",
+            "estimate_stage1_min": 23,
+            "estimate_stage2_min": 8,
+            "estimate_stage3_min": 7,
+            "estimate_stage4_min": 0,
+            "estimate_source": "parametric",
+        },
+    )
+    assert values["slug"] == "juice-shop-quick"
+
+
 def test_duration_estimate_forwards_resolved_profile(monkeypatch, tmp_path):
     cfg = _cfg(tmp_path, "rebuild")
     cfg.update(
@@ -497,10 +624,14 @@ def test_duration_estimate_forwards_resolved_profile(monkeypatch, tmp_path):
     assert captured[captured.index("--max-stride-components") + 1] == "7"
 
 
-def test_thin_runtime_is_opt_in_until_parity_runs_pass(monkeypatch, tmp_path):
+def test_thin_runtime_is_default_with_opt_out(monkeypatch, tmp_path):
+    # Post-parity flip: the compact runtime is the default for full/rebuild;
+    # APPSEC_THIN_ORCHESTRATOR=0 is the explicit opt-out back to legacy.
     cfg = _cfg(tmp_path)
-    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
+    assert controller.route([])["runtime"] == "thin-full"
+    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "0")
     assert controller.route([])["runtime"] == "legacy"
 
 
@@ -906,3 +1037,35 @@ def test_dispatch_values_uses_actor_model_env(monkeypatch, tmp_path):
         },
     )
     assert values["actor_discovery_model"] == "opus"
+
+
+# ---------------------------------------------------------------------------
+# Interactive orchestrator-model prompt signal (thin-path ACTION)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "session,headless,expected",
+    [
+        ("claude-sonnet-5", False, True),  # Sonnet-5 session diverges from 4.6 rec
+        ("claude-opus-4-8", False, True),  # Opus session diverges too
+        ("claude-sonnet-4-6", False, False),  # matches rec → no prompt
+        ("", False, False),  # undetected → no prompt (fail-safe)
+        ("claude-opus-4-8", True, False),  # headless → suppressed
+    ],
+)
+def test_orchestrator_prompt_needed_signal(monkeypatch, tmp_path, session, headless, expected):
+    plugin_root = Path(__file__).resolve().parent.parent
+    monkeypatch.setattr(controller.detect_session_model, "detect_session_model", lambda: session)
+    if headless:
+        monkeypatch.setenv("APPSEC_HEADLESS", "1")
+    else:
+        monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+    action = controller.prepare(["--repo", str(plugin_root), "--output", str(tmp_path / "out"), "--keep-runtime-files"])
+    assert action["action"] == "dispatch_agent"
+    assert action["session_model"] == session
+    assert action["orchestrator_prompt_needed"] is expected
+    if expected:
+        # a divergent, interactive run must carry the fields the SKILL prompt needs
+        assert action["orchestrator_recommended_model"]
+        assert action["orchestrator_recommendation_reason"]

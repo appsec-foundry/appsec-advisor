@@ -824,6 +824,30 @@ class TestActorCoverage:
         r = asc.check_actor_coverage(out_dir)
         assert any(f["kind"] == "actor_disabled_without_rationale" for f in r["findings"])
 
+    def test_reads_resolved_actors_and_flags_unused_proposal(self, out_dir):
+        _write_json(
+            out_dir / ".actors-resolved.json",
+            {
+                "resolved_actors": [
+                    {
+                        "id": "ACT-X-1",
+                        "_provenance": {"layer": "discovery", "proposed": True, "active": True},
+                    }
+                ]
+            },
+        )
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-001
+                actor_ids: [ACT-D-01]
+            """,
+        )
+        r = asc.check_actor_coverage(out_dir)
+        assert r["actor_count"] == 1
+        assert any(f["kind"] == "proposed_actor_no_findings" for f in r["findings"])
+
 
 # ---------------------------------------------------------------------------
 # Check 14 — sec7_quality_bar

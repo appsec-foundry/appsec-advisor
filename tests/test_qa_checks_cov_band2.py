@@ -410,7 +410,26 @@ def test_annotate_id_refs_adds_dot_and_circle(tmp_path):
     assert changed == 1
     out = p.read_text()
     assert "🔴 [F-001](#f-001)" in out
-    assert "❶ [M-001](#m-001)" in out
+    assert "● [M-001](#m-001)" in out  # p1 → ● (fill-ramp)
+
+
+def test_annotate_id_refs_maps_all_priorities_and_repairs_stale_digit(tmp_path):
+    (tmp_path / "threat-model.yaml").write_text(
+        "threats: []\n"
+        "mitigations:\n"
+        "  - {m_id: M-001, priority: p1}\n"
+        "  - {m_id: M-002, priority: p2}\n"
+        "  - {m_id: M-003, priority: p3}\n"
+        "  - {m_id: M-004, priority: p4}\n",
+        encoding="utf-8",
+    )
+    p = _md(
+        tmp_path,
+        "[M-001](#m-001), ❹ [M-002](#m-002), ❸&nbsp;[M-003](#m-003), [M-004](#m-004)\n",
+    )
+    assert qa._annotate_id_refs(p) == 1
+    assert p.read_text() == ("● [M-001](#m-001), ◕ [M-002](#m-002), ◑&nbsp;[M-003](#m-003), ○ [M-004](#m-004)\n")
+    assert qa._annotate_id_refs(p) == 0
 
 
 def test_annotate_id_refs_idempotent_and_skips_code(tmp_path):
@@ -431,7 +450,7 @@ def test_annotate_id_refs_priority_from_threat_sev(tmp_path):
     )
     p = _md(tmp_path, "[M-003](#m-003)\n")
     qa._annotate_id_refs(p)
-    assert "❸ [M-003](#m-003)" in p.read_text()  # medium → p3 → ❸
+    assert "◑ [M-003](#m-003)" in p.read_text()  # medium → p3 → ◑
 
 
 # ---------------------------------------------------------------------------
@@ -484,13 +503,13 @@ def test_attack_surface_tables_to_html_noop():
 
 
 def test_emit_as_html_table_prose_col_strips_br():
-    spec = qa._FIXED_LAYOUT_SPECS[1]  # Asset table, prose col 3
-    rows = ["| Name | A-001 | Conf | line one<br/>line two | [F-1](#f-1) |"]
+    spec = qa._FIXED_LAYOUT_SPECS[1]  # Asset table, prose col 2
+    rows = ["| Name | Conf | line one<br/>line two | [F-1](#f-1) |"]
     html = qa._emit_as_html_table(rows, spec)
     joined = "\n".join(html)
-    # Description col (3) had its <br/> collapsed to a space.
+    # Description col (2) had its <br/> collapsed to a space.
     assert "line one line two" in joined
-    assert "white-space:nowrap" in joined  # col 1 style
+    assert "overflow-wrap:anywhere" in joined  # styled narrow columns kept
 
 
 # ---------------------------------------------------------------------------

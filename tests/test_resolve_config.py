@@ -202,9 +202,11 @@ class TestResolveReasoningModel:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["reasoning_model"] == "sonnet-economy"
-        assert out["stride_model"] == "sonnet"
-        assert out["triage_model"] == "sonnet"
-        assert out["merger_model"] == "sonnet"
+        # STRIDE stays cost-pinned to Sonnet 4.6 (Sonnet 5 regressed recall).
+        # The standard buy-back (2026-07-05) upgrades triage + merger to Sonnet 5.
+        assert out["stride_model"] == "claude-sonnet-4-6"
+        assert out["triage_model"] == "claude-sonnet-5"
+        assert out["merger_model"] == "claude-sonnet-5"
 
     def test_default_thorough_still_opus(self):
         ns = rc.build_parser().parse_args([])
@@ -216,10 +218,11 @@ class TestResolveReasoningModel:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "quick")
         assert out["reasoning_model"] == "sonnet-economy"
-        # sonnet-economy keeps the Reasoning core on Sonnet
-        assert out["stride_model"] == "sonnet"
-        assert out["triage_model"] == "sonnet"
-        assert out["merger_model"] == "sonnet"
+        # sonnet-economy keeps the Reasoning core on the Sonnet tier,
+        # cost-pinned to the concrete Sonnet 4.6.
+        assert out["stride_model"] == "claude-sonnet-4-6"
+        assert out["triage_model"] == "claude-sonnet-4-6"
+        assert out["merger_model"] == "claude-sonnet-4-6"
 
     def test_explicit_opus(self):
         ns = rc.build_parser().parse_args(["--reasoning-model", "opus"])
@@ -232,11 +235,178 @@ class TestResolveReasoningModel:
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["stride_model"] == "claude-env-override"
 
+    def test_explicit_version_id_accepted(self):
+        # Group B: per-stage flags accept explicit version ids (no choices=).
+        ns = rc.build_parser().parse_args(
+            [
+                "--triage-model",
+                "claude-sonnet-5",
+                "--stride-model",
+                "claude-sonnet-4-6",
+                "--merger-model",
+                "claude-opus-4-7",
+            ]
+        )
+        out = rc.resolve_reasoning_model(ns, "standard")
+        assert out["triage_model"] == "claude-sonnet-5"
+        assert out["stride_model"] == "claude-sonnet-4-6"
+        assert out["merger_model"] == "claude-opus-4-7"
+
+    def test_version_id_flag_wins_over_tier_and_env(self, monkeypatch):
+        # CLI per-stage flag is highest precedence except --no-opus.
+        monkeypatch.setenv("APPSEC_TRIAGE_MODEL", "claude-env")
+        ns = rc.build_parser().parse_args(["--reasoning-model", "opus", "--triage-model", "claude-sonnet-5"])
+        out = rc.resolve_reasoning_model(ns, "standard")
+        assert out["triage_model"] == "claude-sonnet-5"
+
+    def test_triage_5_overrides_economy_without_mutating_tier(self, tmp_path, monkeypatch):
+        # Group D (item 10): the sanctioned economy buy-back —
+        # --triage-model claude-sonnet-5 pins triage to Sonnet-5 while STRIDE +
+        # merger stay on the 4.6-cost-pinned reasoning core and the tier NAME
+        # stays sonnet-economy (the named tier is NOT redefined). Cheap base +
+        # one-stage buy-back that pays on a 4.6 session.
+        monkeypatch.chdir(tmp_path)
+        cfg = rc.resolve(["--triage-model", "claude-sonnet-5"], REPO_ROOT)
+        assert cfg["reasoning_model"] == "sonnet-economy"  # tier unmutated
+        assert cfg["triage_model"] == "claude-sonnet-5"  # buy-back (flag agrees)
+        assert cfg["stride_model"] == "claude-sonnet-4-6"  # STRIDE stays cheap
+        # merger now takes the standard buy-back (Sonnet 5) by default too.
+        assert cfg["merger_model"] == "claude-sonnet-5"
+
 
 # (Removed 2026-06: TestResolveDefaultTierForCappedRepos — the B2d large-repo
 # reasoning-tier auto-downgrade was removed. Large repos now keep the default
 # Opus reasoning tier. repo_size_capped is purely informational. See
 # docs/analysis/plan-opus-stride-default-2026-06-21.md.)
+
+
+class TestResolveExtendedModelsRendererAbuse:
+    """Group C: renderer + abuse-verifier pin knobs. Outside the standard
+    buy-back the default is the `sonnet` alias (host session); at `standard`
+    they take the Sonnet-5 buy-back. Pinnable via env vars; opus-banned."""
+
+    def test_quick_pins_renderer_abuse_to_46(self):
+        # quick/thorough pin every Sonnet-tier subagent to concrete 4.6.
+        out = rc.resolve_extended_models("sonnet-economy", "quick")
+        assert out["renderer_model"] == "claude-sonnet-4-6"
+        assert out["abuse_verifier_model"] == "claude-sonnet-4-6"
+
+    def test_sonnet_tier_optin_keeps_alias(self):
+        # The explicit `sonnet` tier (--reasoning-model sonnet) opts into latest
+        # Sonnet → the 4.6 pin is skipped, the alias survives.
+        out = rc.resolve_extended_models("sonnet", "quick")
+        assert out["renderer_model"] == "sonnet"
+        assert out["abuse_verifier_model"] == "sonnet"
+
+    def test_standard_buyback_pins_sonnet5(self):
+        # standard buy-back (2026-07-05): renderer + abuse-verifier → Sonnet 5.
+        out = rc.resolve_extended_models("sonnet-economy", "standard")
+        assert out["renderer_model"] == "claude-sonnet-5"
+        assert out["abuse_verifier_model"] == "claude-sonnet-5"
+
+    def test_thorough_showcase_pins_sonnet5(self):
+        # thorough is a quality tier → renderer + abuse-verifier on latest Sonnet 5
+        # (NOT 4.6). thorough resolves the extended models via the opus tier.
+        out = rc.resolve_extended_models("opus", "thorough")
+        assert out["renderer_model"] == "claude-sonnet-5"
+        assert out["abuse_verifier_model"] == "claude-sonnet-5"
+        # ...while the mechanical qa stages stay on cheap 4.6.
+        assert out["qa_content_model"] == "claude-sonnet-4-6"
+        assert out["qa_routine_model"] == "claude-sonnet-4-6"
+
+    def test_defaults_on_non_economy_tier(self):
+        out = rc.resolve_extended_models("sonnet", "standard")
+        assert out["renderer_model"] == "sonnet"
+        assert out["abuse_verifier_model"] == "sonnet"
+
+    def test_env_pins(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_RENDERER_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("APPSEC_ABUSE_VERIFIER_MODEL", "claude-sonnet-5")
+        out = rc.resolve_extended_models("sonnet-economy", "standard")
+        assert out["renderer_model"] == "claude-sonnet-5"
+        assert out["abuse_verifier_model"] == "claude-sonnet-5"
+
+    def test_opus_ban_clamps_renderer_and_abuse(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("APPSEC_RENDERER_MODEL", "claude-opus-4-7")
+        monkeypatch.setenv("APPSEC_ABUSE_VERIFIER_MODEL", "claude-opus-4-7")
+        cfg = rc.resolve(["--no-opus"], REPO_ROOT)
+        assert cfg["renderer_model"] == "sonnet"
+        assert cfg["abuse_verifier_model"] == "sonnet"
+
+    def test_routing_table_shows_pin_hints(self):
+        cfg = _base_cfg()
+        out = rc.render_effective_routing(cfg, "claude-sonnet-5")
+        assert "APPSEC_RENDERER_MODEL" in out
+        assert "APPSEC_ABUSE_VERIFIER_MODEL" in out
+
+
+class TestOrchestratorRecommendation:
+    """Advisory session-model recommendation from repo size (2026-07-05).
+    Recommends Sonnet 5 only for VERY large repos (window safety), else 4.6
+    (~half cost). Never binding — the skill surfaces it, the user chooses."""
+
+    def test_normal_repo_recommends_46(self):
+        out = rc.recommend_orchestrator_model(641)  # Juice-Shop-sized
+        assert out["orchestrator_recommended_model"] == "claude-sonnet-4-6"
+        assert out["orchestrator_recommendation_repo_files"] == 641
+
+    def test_threshold_boundary_recommends_5(self):
+        out = rc.recommend_orchestrator_model(rc.ORCHESTRATOR_SONNET5_FILE_THRESHOLD)
+        assert out["orchestrator_recommended_model"] == "claude-sonnet-5"
+
+    def test_just_below_threshold_recommends_46(self):
+        out = rc.recommend_orchestrator_model(rc.ORCHESTRATOR_SONNET5_FILE_THRESHOLD - 1)
+        assert out["orchestrator_recommended_model"] == "claude-sonnet-4-6"
+
+    def test_threshold_is_above_juice_shop(self):
+        # Calibration invariant: a Juice-Shop-sized repo must land on 4.6.
+        assert rc.ORCHESTRATOR_SONNET5_FILE_THRESHOLD > 641
+
+    def test_resolve_populates_recommendation(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = rc.resolve([], REPO_ROOT)
+        assert "orchestrator_recommended_model" in cfg
+        assert cfg["orchestrator_recommendation_repo_files"] >= 0
+
+    def test_render_matches_when_session_equals_recommendation(self):
+        cfg = rc.recommend_orchestrator_model(100)
+        out = rc.render_orchestrator_recommendation(cfg, "claude-sonnet-4-6")
+        assert "matches" in out
+        assert "restart" not in out.lower()
+
+    def test_render_differs_gives_restart_command(self):
+        cfg = rc.recommend_orchestrator_model(100)  # → recommend 4.6
+        out = rc.render_orchestrator_recommendation(cfg, "claude-sonnet-5")
+        assert "differs" in out
+        assert "claude --model claude-sonnet-4-6" in out
+        assert "only a recommendation" in out
+
+    def test_render_undetected_session(self):
+        cfg = rc.recommend_orchestrator_model(100)
+        out = rc.render_orchestrator_recommendation(cfg, "")
+        assert "advisory only" in out
+
+    def test_cli_flag_renders(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        rc_path = str(REPO_ROOT / "scripts" / "resolve_config.py")
+        res = subprocess.run(
+            [
+                "python3",
+                rc_path,
+                "--orchestrator-recommendation",
+                "--session-model",
+                "claude-sonnet-4-6",
+                "--repo",
+                str(REPO_ROOT),
+                "--output",
+                str(tmp_path / "out"),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0
+        assert "Orchestrator (session model)" in res.stdout
 
 
 class TestResolveRepoSizeCap:
@@ -311,6 +481,13 @@ class TestResolveArchitectReview:
         ns = rc.build_parser().parse_args(["--architect-review", "--architect-model", "sonnet"])
         out = rc.resolve_architect_review(ns, "standard", dry_run=False)
         assert out["architect_model"] == "sonnet"
+
+    def test_model_flag_explicit_version_id(self):
+        # Group B: an explicit version id must pass through verbatim, NOT be
+        # silently upgraded to the opus default (the pre-B else-branch bug).
+        ns = rc.build_parser().parse_args(["--architect-review", "--architect-model", "claude-sonnet-5"])
+        out = rc.resolve_architect_review(ns, "standard", dry_run=False)
+        assert out["architect_model"] == "claude-sonnet-5"
 
 
 class TestResolveEnrichArchFragments:
@@ -972,10 +1149,12 @@ class TestIntegrationScenarios:
         assert cfg["mode"] == "full"
         assert cfg["mode_label"] == "full (first run)"
         # standard default is sonnet-economy since 2026-06-23 (cost; Opus opt-in).
+        # Concrete Sonnet cost-pinned to 4.6 since 2026-07-04.
         assert cfg["reasoning_model"] == "sonnet-economy"
-        assert cfg["stride_model"] == "sonnet"
-        assert cfg["triage_model"] == "sonnet"
-        assert cfg["merger_model"] == "sonnet"
+        # STRIDE cost-pinned to 4.6; standard buy-back upgrades triage + merger.
+        assert cfg["stride_model"] == "claude-sonnet-4-6"
+        assert cfg["triage_model"] == "claude-sonnet-5"
+        assert cfg["merger_model"] == "claude-sonnet-5"
         assert cfg["architect_review"] is False
         assert cfg["check_requirements"] is False
 
@@ -1031,6 +1210,20 @@ class TestOpusBan:
         assert cfg["triage_model"] == "sonnet"
         assert cfg["merger_model"] == "sonnet"
 
+    def test_no_opus_clamps_explicit_opus_version_id(self, tmp_path, monkeypatch):
+        # Group B: a per-stage flag carrying a concrete Opus version id is still
+        # caught by the substring clamp (_OPUS_TOKEN='opus' matches claude-opus-*).
+        monkeypatch.chdir(tmp_path)
+        cfg = rc.resolve(["--no-opus", "--merger-model", "claude-opus-4-7"], REPO_ROOT)
+        assert cfg["opus_disabled"] is True
+        assert cfg["merger_model"] == "sonnet"
+
+    def test_no_opus_leaves_sonnet_version_id_intact(self, tmp_path, monkeypatch):
+        # A concrete Sonnet-5 pin survives --no-opus untouched (no opus token).
+        monkeypatch.chdir(tmp_path)
+        cfg = rc.resolve(["--no-opus", "--triage-model", "claude-sonnet-5"], REPO_ROOT)
+        assert cfg["triage_model"] == "claude-sonnet-5"
+
     def test_no_opus_noop_on_sonnet_default(self, tmp_path, monkeypatch):
         """Standard now defaults to sonnet-economy (all Sonnet), so --no-opus has
         nothing to clamp in the reasoning core — it records the flag and leaves
@@ -1040,7 +1233,8 @@ class TestOpusBan:
         cfg = rc.resolve(["--no-opus"], REPO_ROOT)
         assert cfg["opus_disabled"] is True
         assert cfg["reasoning_model"] == "sonnet-economy"
-        assert cfg["merger_model"] == "sonnet"
+        # already Sonnet (merger on the 5 buy-back) → nothing for --no-opus to clamp.
+        assert cfg["merger_model"] == "claude-sonnet-5"
 
     def test_no_opus_clamps_architect_model(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -1274,7 +1468,7 @@ class TestRenderConfigurationSummary:
         assert "incremental delta from previous threat-model.yaml" in out
 
     def test_full_repository_scope(self):
-        out = rc.render_configuration_summary(_base_cfg(scope=[]))
+        out = rc.render_configuration_summary(_base_cfg(incremental=False, scope=[]))
         assert "full repository" in out
 
     def test_active_options_outputs_and_extras(self):
@@ -1305,6 +1499,79 @@ class TestRenderConfigurationSummary:
         out = rc.render_configuration_summary(_base_cfg(repo_size_capped=True, repo_size_source_files=99999))
         assert "large repository" in out
         assert "99999" in out
+
+
+class TestSessionModelAdvisoryInPreflightBox:
+    """The session-model cost advisory must render INSIDE the Pre-flight box
+    (render_run_plan, thin path) and its Notes tail (render_run_plan_notes,
+    legacy path) — the sanctioned surfaces — for every non-4.6 session."""
+
+    def _box(self, session_model):
+        # will_run=True path: a fresh full run (no pre-check) always runs.
+        return rc.render_run_plan(_base_cfg(incremental=False), None, None, None, session_model)
+
+    def test_sonnet5_session_flagged_in_box(self):
+        out = self._box("claude-sonnet-5")
+        # Prominent ⚠ callout, not a buried row.
+        assert "⚠ Session model — claude-sonnet-5" in out
+        assert "Non-4.6 session" in out and "half the cost" in out
+
+    def test_opus_session_flagged_in_box(self):
+        out = self._box("claude-opus-4-8")
+        assert "⚠ Session model — claude-opus-4-8" in out
+        assert "Opus session" in out and "Opus rates" in out
+
+    def test_46_session_confirmed_cheapest(self):
+        out = self._box("claude-sonnet-4-6")
+        # Low-key ℹ (not a ⚠ warning) — 4.6 is the cheap case.
+        assert "ℹ Session model — claude-sonnet-4-6" in out
+        assert "cheapest setting" in out
+
+    def test_callout_placed_above_configuration(self):
+        # Prominent: the cost callout must precede the Configuration section.
+        out = self._box("claude-sonnet-5")
+        assert out.index("⚠ Session model") < out.index("Configuration")
+
+    def test_undetected_session_is_silent(self):
+        # Fail-safe: empty session model → no callout at all.
+        out = self._box("")
+        assert "Session model" not in out
+
+    def test_notes_tail_carries_advisory_legacy_path(self):
+        out = rc.render_run_plan_notes(_base_cfg(incremental=False), None, None, None, "claude-sonnet-5")
+        assert "⚠ Session model — claude-sonnet-5" in out
+        assert "Non-4.6 session" in out
+
+    def test_notes_tail_silent_when_undetected(self):
+        out = rc.render_run_plan_notes(_base_cfg(incremental=False), None, None, None, "")
+        assert "Session model" not in out
+
+
+class TestRenderEffectiveRouting:
+    def test_alias_resolves_to_session_model(self):
+        # sonnet-economy standard: reasoning core + qa concretely 4.6-pinned,
+        # renderer/abuse on the Sonnet-5 buy-back. The ORCHESTRATOR is now the only
+        # alias-follower → it alone resolves to the injected session model.
+        cfg = _base_cfg(reasoning_model="sonnet-economy")
+        out = rc.render_effective_routing(cfg, "claude-opus-4-8")
+        assert "host session: claude-opus-4-8" in out
+        assert "claude-sonnet-4-6" in out  # pinned STRIDE + qa stages
+        assert "claude-sonnet-5" in out  # standard buy-back renderer/abuse
+        assert "Renderer" in out and "Abuse-case verifier" in out
+        # header + the orchestrator row both name the session model.
+        assert out.count("claude-opus-4-8") >= 2
+
+    def test_undetected_session_is_explicit(self):
+        out = rc.render_effective_routing(_base_cfg(reasoning_model="sonnet-economy"), "")
+        assert "host session: undetected" in out
+        assert "host session (undetected)" in out
+        assert "Session model undetected" in out
+
+    def test_concrete_ids_not_rewritten(self):
+        # A concrete stride pin passes through verbatim (not alias-resolved).
+        cfg = _base_cfg(stride_model="claude-sonnet-4-6", triage_model="claude-sonnet-5")
+        out = rc.render_effective_routing(cfg, "claude-opus-4-8")
+        assert "claude-sonnet-5" in out
 
 
 class TestFormatDepthSummary:
@@ -1341,14 +1608,35 @@ class TestFormatReasoningSummary:
         assert "no-opus ceiling" in s
 
     def test_sonnet_economy_special(self):
+        # standard buy-back: STRIDE stays 4.6, triage + merge on Sonnet 5.
         s = rc._format_reasoning_summary(
             _base_cfg(
                 opus_disabled=False,
                 reasoning_auto_switched=False,
                 reasoning_model="sonnet-economy",
+                stride_model="claude-sonnet-4-6",
+                triage_model="claude-sonnet-5",
+                merger_model="claude-sonnet-5",
             )
         )
         assert "cheap phases Haiku" in s
+        assert "STRIDE Sonnet 4.6" in s
+        assert "triage Sonnet 5" in s
+        assert "merge Sonnet 5" in s
+
+    def test_sonnet_economy_quick_all_46(self):
+        # quick has no buy-back → all three collapse to Sonnet 4.6.
+        s = rc._format_reasoning_summary(
+            _base_cfg(
+                opus_disabled=False,
+                reasoning_auto_switched=False,
+                reasoning_model="sonnet-economy",
+                stride_model="claude-sonnet-4-6",
+                triage_model="claude-sonnet-4-6",
+                merger_model="claude-sonnet-4-6",
+            )
+        )
+        assert "STRIDE/triage/merge Sonnet 4.6" in s
 
     def test_alias_normalised(self):
         s = rc._format_reasoning_summary(
@@ -2125,3 +2413,32 @@ class TestRunPlanCLI:
         assert r.returncode == 0
         assert (out_dir / ".skill-config.json").is_file()
         assert (out_dir / ".org-profile-effective.json").is_file()
+
+    def test_effective_routing_reads_skill_config(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        emit = self._run("--emit-file", "--output", str(out_dir))
+        assert emit.returncode == 0
+        assert (out_dir / ".skill-config.json").is_file()
+        r = self._run(
+            "--effective-routing",
+            "--session-model",
+            "claude-opus-4-8",
+            "--output",
+            str(out_dir),
+        )
+        assert r.returncode == 0
+        assert "host session: claude-opus-4-8" in r.stdout
+        assert "Renderer" in r.stdout
+        # default is sonnet-economy → reasoning core cost-pinned to 4.6
+        assert "claude-sonnet-4-6" in r.stdout
+
+    def test_effective_routing_empty_session_model(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        self._run("--emit-file", "--output", str(out_dir))
+        r = self._run("--effective-routing", "--session-model", "", "--output", str(out_dir))
+        assert r.returncode == 0
+        assert "undetected" in r.stdout

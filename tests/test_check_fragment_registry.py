@@ -99,6 +99,24 @@ def test_real_repo_check_is_clean():
     assert cfr.check() == []
 
 
+def test_reverse_guard_flags_orphan_contract_section_fragment(monkeypatch):
+    """A retired section id left in CONTRACT_SECTION_FRAGMENTS that is not a
+    real contract section must be rejected. Checks 4/5 compare only SHARED
+    keys, so the 2026-07 `top_findings` orphan (retired into `top_threats`)
+    stayed invisible and mis-routed table-schema repairs."""
+    real = cfr._extract_dict_literal
+
+    def fake(src, name):
+        d = real(src, name)
+        if name == "CONTRACT_SECTION_FRAGMENTS":
+            return {**d, "totally_retired_section": []}
+        return d
+
+    monkeypatch.setattr(cfr, "_extract_dict_literal", fake)
+    errors = cfr.check()
+    assert any("totally_retired_section" in e and "not a section" in e for e in errors)
+
+
 # ---------- CLI -----------------------------------------------------------
 
 

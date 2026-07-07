@@ -17,6 +17,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 FINALIZATION_PROMPT = REPO_ROOT / "agents" / "phases" / "phase-group-finalization.md"
+RECON_PROMPT = REPO_ROOT / "agents" / "phases" / "phase-group-recon.md"
 
 
 @pytest.fixture(scope="module")
@@ -52,3 +53,23 @@ class TestSecurityArchitectureV2Guidance:
     def test_mentions_new_gate_and_legacy_retirement(self, finalization_text):
         assert "control_subsection_coverage" in finalization_text
         assert "Do not emit legacy §7.3.N auth-flow structure" in finalization_text
+
+
+class TestActorPhaseRuntimeContract:
+    @pytest.fixture(scope="class")
+    def recon_text(self) -> str:
+        return RECON_PROMPT.read_text(encoding="utf-8")
+
+    def test_quick_skips_discovery_not_static_resolution(self, recon_text):
+        assert "**Never skip the static resolver.**" in recon_text
+        assert '$( [ "$ASSESSMENT_DEPTH" = "quick" ] && echo "--quick" )' in recon_text
+        assert "**Skip when:** `ASSESSMENT_DEPTH = quick`." not in recon_text
+
+    def test_cache_uses_deterministic_helper_without_environment_lookup(self, recon_text):
+        assert "scripts/actor_discovery_cache.py" in recon_text
+        assert 'os.environ.get("DISCOVERY_CACHE_KEY"' not in recon_text
+        assert '--expected-key "$DISCOVERY_CACHE_KEY"' in recon_text
+
+    def test_resolved_actor_output_is_hard_validated(self, recon_text):
+        assert recon_text.count('actors_resolved "$OUTPUT_DIR/.actors-resolved.json"') == 2
+        assert "discovery_enabled=false" in recon_text

@@ -23,7 +23,7 @@ When reporting, please include:
 
 ## Data sent to Anthropic API
 
-This section exists specifically for AppSec reviewers evaluating whether the plugin can run on a given codebase. Read it before approving a run on sensitive repositories.
+AppSec reviewers should read this section before approving a run on a sensitive repository.
 
 ### What leaves the machine
 
@@ -32,13 +32,13 @@ Every phase of the assessment dispatches one or more prompts to the Anthropic AP
 - **Agent system prompt** — plugin-defined instructions from `agents/*.md`. No repository content.
 - **Tool-call inputs** — file paths, glob patterns, grep patterns, `Bash` commands. The file paths reference your repository; the patterns are derived from recon heuristics.
 - **Tool-call outputs** — the raw contents Claude read back. This is where repository source code enters the conversation. STRIDE analysis requires reading the files under analysis, so source code and configuration files belonging to the scanned components **are** transmitted to the API.
-- **Prior tool results within the same session** — once a file has been read, it remains in the conversation context until the phase ends. Phase 9's parallel STRIDE analysers each have their own session, so context between components does not cross over.
+- **Prior tool results within the same session** — once a file has been read, it remains in that conversation's context. Parallel component analyses use separate sessions.
 
-The plugin does not upload the repository wholesale. It reads files on demand, scoped to what each phase needs. Typical transmission profile on OWASP Juice Shop (thorough, 8 components): a few hundred file reads, dominated by source files under the components being analysed, plus `package.json`/manifests and configuration files.
+The plugin does not upload the repository wholesale. It reads files on demand, scoped to what each phase needs. Typical transmission profile on OWASP Juice Shop (thorough, 8 components): a few hundred file reads, dominated by source files under the components being analyzed, plus `package.json`/manifests and configuration files.
 
 ### What stays local
 
-All intermediate artefacts are written to `$OUTPUT_DIR` (default: `docs/security/`):
+All intermediate artifacts are written to `$OUTPUT_DIR` (default: `docs/security/`):
 
 | File | Content | Sensitivity |
 |------|---------|-------------|
@@ -80,7 +80,7 @@ Before running the plugin on a codebase that contains production secrets, PII, o
 
 ## Known issues — untrusted repositories
 
-The current threat model assumes the scanned repository is **trusted** (your own code, your organisation's code, a vendor repo cleared for analysis). The plugin is **not hardened against actively malicious repository content**. Until a dedicated untrusted-repo mode lands, the following exposures are known and accepted:
+The current threat model assumes the scanned repository is **trusted** (your own code, your organization's code, a vendor repo cleared for analysis). The plugin is **not hardened against actively malicious repository content**. Until a dedicated untrusted-repo mode lands, the following exposures are known and accepted:
 
 | # | Issue | Vector |
 |---|-------|--------|
@@ -111,7 +111,7 @@ The current threat model assumes the scanned repository is **trusted** (your own
 What is still out of scope for the current trust-mode (file a GitHub issue if you need any of these sooner):
 
 - Mandatory worktree-into-container isolation (today the script trusts the caller to provide isolation).
-- A stricter Bash allow-list that removes `python3`, `awk`, `sed` from the prompt-free path (would require deep pipeline refactor — see `permissions.md`).
+- A stricter Bash allow-list that removes general-purpose interpreters.
 - Pre-scan size or extension caps on individual manifests beyond what `scan_excludes.py` already enforces.
 
 ## Scope

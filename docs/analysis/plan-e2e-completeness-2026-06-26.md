@@ -1,110 +1,110 @@
-# Plan: E2E-Vollständigkeit — „grün ⇒ Ergebnis korrekt"
+# Plan: E2E Completeness — "green ⇒ result correct"
 
-**Datum:** 2026-06-26
-**Ziel:** Wenn alle E2E-Tests grün sind, soll bewiesen sein, dass (a) der deterministische
-Schwanz — Generator, Contracts, Renderer, Exporte — korrekt arbeitet **und** (b) das
-LLM-erzeugte Bedrohungsmodell inhaltlich geerdet, vollständig genug und qualitativ über
-einer Schwelle ist.
+**Date:** 2026-06-26
+**Goal:** When all E2E tests are green, it should be proven that (a) the deterministic
+tail — generator, contracts, renderer, exports — works correctly **and** (b) the
+LLM-generated threat model is factually grounded, complete enough, and above a
+quality threshold.
 
 ---
 
-## 1. Die ehrliche Grenze
+## 1. The honest boundary
 
-Deterministisch zu beweisen, dass das LLM *alle* realen Bedrohungen findet, ist
-unentscheidbar (man bräuchte die Ground-Truth aller Bedrohungen — genau das Ergebnis).
-Erreichbar ist stattdessen ein geschichtetes, präzises „grün ⇒ korrekt":
+Proving deterministically that the LLM finds *all* real threats is undecidable
+(you'd need the ground truth of all threats — which is exactly the result). What is
+achievable instead is a layered, precise "green ⇒ correct":
 
-| Schicht | Garantie bei grün |
+| Layer | Guarantee when green |
 |---|---|
-| **A** | Generator/Contracts/Renderer/Exporte deterministisch korrekt |
-| **B** | LLM-Output strukturell geerdet — zitiert echten Code, keine halluzinierten Belege |
-| **C** | Bekannte, *gepflanzte* Vulnerabilities werden gefunden (Recall gegen Oracle) |
-| **D** | Semantische Qualität über Schwelle (Judge: Plausibilität, Coverage, Severity) |
+| **A** | Generator/contracts/renderer/exports deterministically correct |
+| **B** | LLM output structurally grounded — cites real code, no hallucinated evidence |
+| **C** | Known, *planted* vulnerabilities are found (recall against oracle) |
+| **D** | Semantic quality above threshold (judge: plausibility, coverage, severity) |
 
-**Vollständigkeit = alle vier Schichten dicht + Breite des Oracle-Korpus.**
-Recall-Vollständigkeit ist ein *wachsender Korpus* (Vuln-Klassen × Sprachen ×
-Architekturen), kein einzelner grüner Haken.
+**Completeness = all four layers airtight + breadth of the oracle corpus.**
+Recall completeness is a *growing corpus* (vuln classes × languages ×
+architectures), not a single green checkmark.
 
 ---
 
-## 2. Bestand: Maschinerie existiert, ist aber unverdrahtet
+## 2. Inventory: the machinery exists but is unwired
 
-| Schicht | Prüft | Existiert | Automatisch? | Lücke |
+| Layer | Checks | Exists | Automatic? | Gap |
 |---|---|---|---|---|
-| **A** | Struktur, Determinismus, Schema, Completeness-Contract | `tests/test_e2e_pipeline.py` (frozen-run), `compose_threat_model.render()` gegen `data/sections-contract.yaml`, `scripts/validate_intermediate.py`, Completeness-Contract (commit `5b8a9db`) | ✅ `make test` | Export-Kette + Byte-Golden + Fixture-Vielfalt fehlen |
-| **B** | jede `file:line` existiert, absence-grep-replay | `check_evidence_integrity` (`scripts/qa_checks.py:2929–3051`) | ✅ im manuellen `e2e-full` über `qa_checks.py all` | Sprach-/Architekturbreite bleibt auf die externe Fixture-Suite begrenzt |
-| **C** | „diese N Vulns MÜSSEN erscheinen" | `scripts/e2e_fixture.sh` + `<oracle>/verify_threat_model.py` + `expected-signals.json` | ✅ in-tree für `e2e-full`; externe Suite weiter manuell | Nightly-Matrix über alle Sprach-Fixtures fehlt |
-| **D** | Plausibilität/Coverage/Severity/Actionability/missed-surface | `skills/eval-threat-model/`, `scripts/eval_threat_model.py`, `agents/appsec-eval-judge.md` (5 Dim., refute-by-default, exit 0/1) | ❌ rein manuell/dev | kein Gate — exit-1 könnte shippen |
+| **A** | Structure, determinism, schema, completeness contract | `tests/test_e2e_pipeline.py` (frozen-run), `compose_threat_model.render()` against `data/sections-contract.yaml`, `scripts/validate_intermediate.py`, completeness contract (commit `5b8a9db`) | ✅ `make test` | Export chain + byte-golden + fixture diversity missing |
+| **B** | every `file:line` exists, absence-grep-replay | `check_evidence_integrity` (`scripts/qa_checks.py:2929–3051`) | ✅ in the manual `e2e-full` via `qa_checks.py all` | Language/architecture breadth stays limited to the external fixture suite |
+| **C** | "these N vulns MUST appear" | `scripts/e2e_fixture.sh` + `<oracle>/verify_threat_model.py` + `expected-signals.json` | ✅ in-tree for `e2e-full`; external suite still manual | Nightly matrix across all language fixtures missing |
+| **D** | Plausibility/coverage/severity/actionability/missed-surface | `skills/eval-threat-model/`, `scripts/eval_threat_model.py`, `agents/appsec-eval-judge.md` (5 dims, refute-by-default, exit 0/1) | ❌ purely manual/dev | No gate — exit-1 could ship |
 
-**Kernbefund:** Für C und D ist alles gebaut (Oracle-Muster, Judge-Loop, Exit-Codes) —
-es läuft nur in keinem automatischen Lauf. B ist gebaut **und bewusst deaktiviert**, weil
-das winzige `synthetic-repo` Rausch-Zitate erzeugt.
+**Key finding:** For C and D everything is built (oracle patterns, judge loop, exit codes) —
+it just runs in no automatic run. B is built **and deliberately disabled**, because
+the tiny `synthetic-repo` produces noise citations.
 
-### Heute verifizierte deterministische „grün aber kaputt"-Löcher (Schicht A)
+### Deterministic "green but broken" holes verified today (layer A)
 
-1. **Export-Kette in keinem CI-E2E.** `test_e2e_pipeline.py` fährt compose → annotate →
-   pentest, aber **nicht** `export_sarif.py` / `export_pdf.py` / `export_html.py` /
-   `render_review_report.py`. Diese haben nur isolierte Unit-Tests mit **eigenen**
-   handgebauten YAML-Fixtures (`tests/test_export_sarif.py` etc.) — entkoppelt vom echten
-   Generator-Output. SARIF wird sonst nur im manuellen LLM-`make e2e-full` strukturell
-   geprüft. ⇒ Schema-Bruch im Generator → Export-Contract bricht → `make test` grün.
-2. **Kein Content-/Byte-Golden in CI.** `test_e2e_pipeline.py` prüft nur Struktur-Invarianten
-   (MS-Heading, zero-warning, idempotent), nicht Golden-Gleichheit. Der Byte-Golden-Diff
-   existiert (`scripts/threat_fixture.py replay`, Scrubbing inklusive), **skippt aber in CI**
-   (`tests/test_threat_fixture.py:184` — braucht git-ignored `_last-run` oder externes Repo).
-3. **Fixture-Monokultur.** Die In-Tree-Form bleibt eine Node-App, enthält nun aber
-   echte Codepfade für Injection/SSRF/AuthZ, LLM, Multi-Tenancy/B2B, Secrets und CI.
-   Sprach-/Framework-Breite bleibt Aufgabe der externen Fixture-Suite.
-
----
-
-## 3. Maßnahmen — zwei Tiers
-
-LLM-Schichten kosten Budget, daher nicht per-PR.
-
-### Tier 1 — per-PR, deterministisch, CI (kein LLM)
-
-- **M1 — Export-Chain-Test auf frozen-run. ✅ ERLEDIGT 2026-06-26.** Umgesetzt in
-  `tests/test_e2e_pipeline.py` (nicht neue Datei — die hat schon `rendered_run`/`_run_script`
-  und repliziert denselben frozen-run; Docstring „every script a real assessment would
-  invoke"). `export_sarif` (rein Python, läuft immer; validiert via `validate_sarif`, ein
-  Result pro Threat → kein Silent-Drop), `export_html`/`export_pdf` konditional über ihren
-  eigenen `--check-only`-Preflight. `render_review_report` bewusst NICHT in der Kette —
-  konsumiert `.requirements-verification.json`, nicht `threat-model.yaml`. Schließt Loch A.1.
-- **M2 — In-Tree-Golden-Master + Vollständigkeits-/Integritäts-Assertions. ✅ ERLEDIGT
-  2026-06-26.** Statt `threat_fixture replay` direkt: committetes Golden
-  `tests/fixtures/e2e/golden/{threat-model.md,threat-model.sarif.json}` + Byte-Diff-Tests
-  (Regen über `APPSEC_UPDATE_GOLDEN=1`). Zusätzlich (Nutzer-Anforderung „alle Elemente da +
-  fehlerfrei"): `report_integrity_ok`/100%/0-degraded/0-empty aus `.render-integrity.json`,
-  kuratierte CORE_SECTIONS (inkl. Mitigation Register) + literale CORE_HEADINGS, Mitigation-
-  Register-nicht-leer, Placeholder-Leak-Check. Schließt Loch A.2 + den Vollständigkeits-Gap.
-- **M3 — evidence_integrity im E2E reaktivieren. ✅ ERLEDIGT 2026-06-27.**
-  `synthetic-repo` enthält echte Quelldateien; `test_full_run_e2e.py` führt die
-  vollständige `qa_checks.py all`-Batterie gegen die beibehaltene `_last-repo/`
-  aus und verlangt Idempotenz.
-
-### Tier 2 — Nightly / Release-Gate, mit LLM-Budget
-
-- **M4 — In-Tree-Oracle fürs synthetic-repo. ✅ ERLEDIGT 2026-06-27.**
-  Gepflanzte Vulns + externes `expected-signals.json` + Recall-, Secret- und
-  Prompt-Injection-Assertions sind in `make e2e-full` verdrahtet.
-- **M5 — `e2e_fixture.sh`-Suite als Nightly. 🟡 DRIVER ERLEDIGT 2026-06-27.**
-  `make e2e-fixture-suite` fährt alle 6 Sprach-Fixtures (Spring, Python, Rust,
-  Go, Node/TypeScript, Python/LangChain) mit ihren externen Recall-Oracles.
-  Die zeitgesteuerte Ausführung benötigt weiterhin CI-Credentials und den
-  separaten Fixture-Checkout.
-- **M6 — `eval_threat_model.py` als Release-Soft-Gate. ✅ ERLEDIGT 2026-06-27.**
-  `make e2e-full-eval` fährt nach einem frischen Quick-E2E den fünfteiligen
-  Judge/Verify-Loop und schlägt bei bestätigten High/Critical Modell-Defekten fehl.
+1. **Export chain in no CI E2E.** `test_e2e_pipeline.py` runs compose → annotate →
+   pentest, but **not** `export_sarif.py` / `export_pdf.py` / `export_html.py` /
+   `render_review_report.py`. These have only isolated unit tests with **their own**
+   hand-built YAML fixtures (`tests/test_export_sarif.py` etc.) — decoupled from the real
+   generator output. Otherwise SARIF is only checked structurally in the manual LLM
+   `make e2e-full`. ⇒ Schema break in the generator → export contract breaks → `make test` green.
+2. **No content/byte golden in CI.** `test_e2e_pipeline.py` only checks structural invariants
+   (MS heading, zero-warning, idempotent), not golden equality. The byte-golden diff
+   exists (`scripts/threat_fixture.py replay`, scrubbing included), **but skips in CI**
+   (`tests/test_threat_fixture.py:184` — needs git-ignored `_last-run` or an external repo).
+3. **Fixture monoculture.** The in-tree form stays a Node app, but now contains
+   real code paths for injection/SSRF/AuthZ, LLM, multi-tenancy/B2B, secrets and CI.
+   Language/framework breadth remains the job of the external fixture suite.
 
 ---
 
-## 4. Coverage-Matrix (Schicht C — wächst über Zeit)
+## 3. Measures — two tiers
 
-Recall-Vollständigkeit = gefüllte Zellen. Jede Zelle = mind. ein Oracle-Signal, das in
-mind. einem Fixture erscheinen muss.
+LLM layers cost budget, therefore not per-PR.
 
-| STRIDE / Klasse | node-ts | spring-boot | python | go | rust | langchain-llm |
+### Tier 1 — per-PR, deterministic, CI (no LLM)
+
+- **M1 — Export-chain test on frozen-run. ✅ DONE 2026-06-26.** Implemented in
+  `tests/test_e2e_pipeline.py` (not a new file — it already has `rendered_run`/`_run_script`
+  and replicates the same frozen-run; docstring "every script a real assessment would
+  invoke"). `export_sarif` (pure Python, always runs; validated via `validate_sarif`, one
+  result per threat → no silent drop), `export_html`/`export_pdf` conditionally via their
+  own `--check-only` preflight. `render_review_report` deliberately NOT in the chain —
+  it consumes `.requirements-verification.json`, not `threat-model.yaml`. Closes hole A.1.
+- **M2 — In-tree golden master + completeness/integrity assertions. ✅ DONE
+  2026-06-26.** Instead of `threat_fixture replay` directly: committed golden
+  `tests/fixtures/e2e/golden/{threat-model.md,threat-model.sarif.json}` + byte-diff tests
+  (regen via `APPSEC_UPDATE_GOLDEN=1`). Additionally (user requirement "all elements present +
+  error-free"): `report_integrity_ok`/100%/0-degraded/0-empty from `.render-integrity.json`,
+  curated CORE_SECTIONS (incl. Mitigation Register) + literal CORE_HEADINGS, Mitigation-
+  Register-not-empty, placeholder-leak check. Closes hole A.2 + the completeness gap.
+- **M3 — reactivate evidence_integrity in E2E. ✅ DONE 2026-06-27.**
+  `synthetic-repo` contains real source files; `test_full_run_e2e.py` runs the
+  full `qa_checks.py all` battery against the retained `_last-repo/`
+  and requires idempotency.
+
+### Tier 2 — Nightly / release gate, with LLM budget
+
+- **M4 — In-tree oracle for the synthetic-repo. ✅ DONE 2026-06-27.**
+  Planted vulns + external `expected-signals.json` + recall, secret and
+  prompt-injection assertions are wired into `make e2e-full`.
+- **M5 — `e2e_fixture.sh` suite as nightly. 🟡 DRIVER DONE 2026-06-27.**
+  `make e2e-fixture-suite` runs all 6 language fixtures (Spring, Python, Rust,
+  Go, Node/TypeScript, Python/LangChain) with their external recall oracles.
+  The scheduled execution still needs CI credentials and the
+  separate fixture checkout.
+- **M6 — `eval_threat_model.py` as release soft-gate. ✅ DONE 2026-06-27.**
+  `make e2e-full-eval` runs the five-part judge/verify loop after a fresh
+  quick E2E and fails on confirmed High/Critical model defects.
+
+---
+
+## 4. Coverage matrix (layer C — grows over time)
+
+Recall completeness = filled cells. Each cell = at least one oracle signal that must
+appear in at least one fixture.
+
+| STRIDE / class | node-ts | spring-boot | python | go | rust | langchain-llm |
 |---|---|---|---|---|---|---|
 | Spoofing / AuthN | | | | | | |
 | Tampering | | | | | | |
@@ -117,31 +117,31 @@ mind. einem Fixture erscheinen muss.
 | Secret-Exposure | | | | | | |
 | LLM (LLM01/07/10) | n/a | n/a | n/a | n/a | n/a | |
 
-> Zellen füllen = `expected-signals.json` je Fixture erweitern. Die Matrix ist die
-> messbare Definition von „vollständig" für Recall.
+> Filling cells = extend `expected-signals.json` per fixture. The matrix is the
+> measurable definition of "complete" for recall.
 
 ---
 
-## 5. Endzustand
+## 5. End state
 
-Wenn Tier 1 + Tier 2 stehen, bedeutet „grün":
+Once Tier 1 + Tier 2 are in place, "green" means:
 
-> Generator/Contracts/Exporte deterministisch korrekt **und** das LLM zitiert echten Code
-> **und** findet die bekannten (gepflanzten) Vulns **und** besteht den Qualitäts-Judge.
+> Generator/contracts/exports deterministically correct **and** the LLM cites real code
+> **and** finds the known (planted) vulns **and** passes the quality judge.
 
-Das ist die vollständige Definition von Korrektheit, soweit sie bei einer LLM-Pipeline
-überhaupt erreichbar ist.
+That is the complete definition of correctness, as far as it is achievable at all for an
+LLM pipeline.
 
 ---
 
-## 6. Reihenfolge / Risiko
+## 6. Order / risk
 
-1. **M1, M2** zuerst — gratis, CI, schließt deterministisches „grün aber kaputt" sofort.
-2. **M3, M4** — erledigt: erste echte LLM-Korrektheits-Scheibe.
-3. **M5** — der Suite-Driver steht; nur die credential-gebundene Nightly-Planung bleibt extern offen.
+1. **M1, M2** first — free, CI, closes deterministic "green but broken" immediately.
+2. **M3, M4** — done: first real LLM-correctness slice.
+3. **M5** — the suite driver is in place; only the credential-bound nightly scheduling remains open externally.
 
-## 7. Housekeeping (nebenbei)
+## 7. Housekeeping (on the side)
 
-- Verirrtes Verzeichnis `tests/fixtures/e2e/_last-run-req\`` (Backtick-Artefakt) entfernen.
-- Ungenutzte Fixture-Verzeichnisse (`b2b-api/`, `multi-tenancy/`, `ci-pipeline/`) entweder
-  in M4/M5 als Oracle-Fixtures aktivieren oder löschen.
+- Remove the stray directory `tests/fixtures/e2e/_last-run-req\`` (backtick artifact).
+- Either activate the unused fixture directories (`b2b-api/`, `multi-tenancy/`, `ci-pipeline/`)
+  as oracle fixtures in M4/M5, or delete them.

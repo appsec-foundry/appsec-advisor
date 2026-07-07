@@ -201,11 +201,27 @@ class TestReadEvidenceSnippet:
         assert snip == "l2\nl3\nl4"
 
     def test_caps_line_length(self, tmp_path):
+        # A pathological long line with no spaces → hard cut at the cap + " …".
         long = "x" * 500
         (tmp_path / "f.ts").write_text(f"{long}\n")
         snip = compose._read_evidence_snippet(tmp_path, "f.ts", 1, 1)
         assert snip is not None
-        assert len(snip) == 200
+        assert snip.endswith(" …")
+        assert len(snip) == compose._EVIDENCE_MAX_LINE + 1
+
+    def test_long_line_trims_at_word_boundary(self, tmp_path):
+        # An over-cap code line trims at a WORD boundary — never mid-token.
+        (tmp_path / "f.ts").write_text(("a" * 395) + " plain: true\n")
+        snip = compose._read_evidence_snippet(tmp_path, "f.ts", 1, 1)
+        assert snip is not None
+        assert snip.endswith(" …")
+        assert "plain: tr" not in snip
+
+    def test_line_under_cap_kept_whole(self, tmp_path):
+        # Lines up to the cap are kept whole (the PDF soft-wraps them).
+        (tmp_path / "f.ts").write_text(("y" * 250) + "\n")
+        snip = compose._read_evidence_snippet(tmp_path, "f.ts", 1, 1)
+        assert snip == "y" * 250
 
 
 class TestMaskSecrets:
@@ -370,6 +386,34 @@ class TestRenderAbuseCases:
         ctx = self._ctx(tmp_path, frag_text="## 9. Abuse Cases\n\nBody text.\n")
         out = compose._render_abuse_cases(ctx, None, {"heading": "## 9. Abuse Cases"})
         assert "Body text." in out
+
+    def test_absent_fragment_self_heals_from_verdicts(self, tmp_path):
+        # Regression: the render step was skipped (no fragment) but the verified
+        # verdicts are on disk. compose must regenerate §9 from them, NOT emit
+        # the "no abuse cases" placeholder. AC-T-001 resolves from the plugin's
+        # standard abuse-case library. RC-2026-06-29.
+        (tmp_path / ".abuse-case-verdicts.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "verdicts": [
+                        {
+                            "abuse_case_id": "AC-T-001",
+                            "chain_verdict": "fully_viable",
+                            "step_verdicts": [{"step": 1, "verdict": "confirmed", "matched_finding_id": "T-001"}],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        ctx = self._ctx(tmp_path)  # no fragment on disk
+        out = compose._render_abuse_cases(ctx, None, {"heading": "## 9. Abuse Cases"})
+        assert "No abuse cases" not in out
+        assert out.lstrip().startswith("## 9. Abuse Cases")
+        # self-heal persists the fragment + JSON sidecar for downstream consumers
+        assert (tmp_path / ".fragments" / "abuse-cases.md").is_file()
+        assert (tmp_path / ".fragments" / "abuse-cases.json").is_file()
 
     def test_heading_mismatch_raises(self, tmp_path):
         ctx = self._ctx(tmp_path, frag_text="## Wrong Heading\n\nbody\n")
@@ -1128,48 +1172,26 @@ class TestDeriveAttackPathsFallback:
 
 
 class TestRenderIdentifiedActorsExtra:
-    def _ctx(self, tmp_path):
-        return compose.RenderContext(
+    def test_vektor_taxonomy_ignores_actor_ids(self, tmp_path):
+        # The section is driven by `vektor` (the MS posture taxonomy), not the
+        # removed ACT-* actor_ids library (2026-07-05).
+        ctx = compose.RenderContext(
             output_dir=tmp_path,
             contract={},
-            yaml_data={"threats": [{"component": "C-01", "actor_ids": ["ACT-1"]}]},
+            yaml_data={
+                "meta": {"public_source_repo": True},
+                "threats": [
+                    {"component": "C-01", "vektor": "internet-anon", "actor_ids": ["ACT-1"]},
+                    {"component": "C-02", "vektor": "internet-user"},
+                ],
+            },
             triage={},
             fragments_dir=tmp_path / ".fragments",
         )
-
-    def test_inputs_questioned_and_stale(self, tmp_path):
-        (tmp_path / ".actors-resolved.json").write_text(
-            json.dumps(
-                {
-                    "resolved_actors": [
-                        {
-                            "id": "ACT-1",
-                            "label": "Anon",
-                            "_provenance": {"active": True, "layer": "client", "stale": True},
-                        }
-                    ]
-                }
-            )
-        )
-        (tmp_path / ".actors-discovered.json").write_text(
-            json.dumps(
-                {"inputs_questioned": [{"id": "ACT-9", "reason": "no plausible reach", "recommendation": "disable"}]}
-            )
-        )
-        ctx = self._ctx(tmp_path)
         out = compose._render_identified_actors(ctx, None, {})
-        assert "Actors flagged for review" in out
-        assert "ACT-9" in out
-        assert "(stale)" in out
-
-    def test_discovered_json_malformed_tolerated(self, tmp_path):
-        (tmp_path / ".actors-resolved.json").write_text(
-            json.dumps({"resolved_actors": [{"id": "A", "label": "L", "_provenance": {"active": True}}]})
-        )
-        (tmp_path / ".actors-discovered.json").write_text("{bad json")
-        ctx = self._ctx(tmp_path)
-        out = compose._render_identified_actors(ctx, None, {})
-        assert "Identified Actors" in out
+        assert "Anonymous Internet Attacker" in out
+        assert "Authenticated Internet Attacker" in out
+        assert "ACT-" not in out
 
 
 class TestSubsectionDriftHint:
@@ -1311,14 +1333,19 @@ class TestRenderRunStatisticsViaPipeline:
 
 
 class TestRenderAbuseChainAndBoundaries:
-    def test_verified_chain_ids_ms_note(self, tmp_path):
+    def test_generic_attack_chain_note_removed_from_verdict(self, tmp_path):
+        # 2026-07-05: the generic "Attack-chain analysis" note (with F-NNN ids)
+        # was removed from the verdict — it duplicated the abuse-case
+        # integration and violated verdict brevity. The abuse cases are now
+        # surfaced only via the "Verified attack chains …" line (AC-T-NNN) in
+        # the Security Posture section (see test_abuse_cases_json_verdict_link).
         out = _prepare_output_dir(tmp_path)
         data = _load_fixture_yaml(out)
         data["threats"][0]["verified_chain_ids"] = ["AC-001"]
         data["threats"][0]["effective_severity"] = "Critical"
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
-        assert "Attack-chain analysis" in rendered
+        assert "Attack-chain analysis" not in rendered
 
     def test_abuse_cases_json_verdict_link(self, tmp_path):
         out = _prepare_output_dir(tmp_path)

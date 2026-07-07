@@ -1,6 +1,6 @@
 # Threat Modeler
 
-`/appsec-advisor:create-threat-model` analyzes a repository, derives a security-relevant architecture model from the implementation, and applies STRIDE to produce structured review input for AppSec and engineering teams.
+`/appsec-advisor:create-threat-model` derives an architecture model from a repository and applies STRIDE. The result is a security review for engineering and AppSec teams.
 
 → [Back to README](../README.md)
 
@@ -20,7 +20,7 @@
 
 An assessment produces a security architecture and threat model report grounded in the repository. The report covers architecture observations, trust boundaries, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams.
 
-Findings are rendered from structured artifacts and checked before release, so the Markdown report and machine-readable export stay consistent.
+The Markdown and YAML outputs are generated from the same validated data.
 
 **Default outputs**
 
@@ -31,12 +31,12 @@ Findings are rendered from structured artifacts and checked before release, so t
 
 | File | Enable with | Description |
 |---|---|---|
-| `threat-model.pdf` | `--pdf` | Print-ready PDF report: automatic cover page, page-numbered table of contents, rendered diagrams, content-aware tables. Requires `pandoc` + `weasyprint`; diagrams additionally need `mmdc` and a Chrome/Chromium for Puppeteer. Missing deps abort with a clear message; pass `--no-mermaid` to export without diagrams. |
-| `threat-model.html` | `--html` (or `export-threat-model --formats html`) | Self-contained HTML5 (pandoc-only, no weasyprint) with a centered, readable screen layout and rendered diagrams — for browser viewing, wiki attachments, or as a styling-pipeline input. Diagrams need `mmdc` + Chrome (same as PDF); without them they stay as code. |
+| `threat-model.pdf` | `--pdf` | PDF with a cover page, table of contents, and rendered diagrams. Requires `pandoc` and `weasyprint`. |
+| `threat-model.html` | `--html` | Self-contained HTML for browsers and wiki attachments. Requires `pandoc`. |
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
-| `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for AI pentesters such as Strix, including finding verification plus architecture-driven probes. |
+| `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for supported pentest tooling. |
 
-All optional deliverables can also be generated after an assessment. This is useful when CI runs the analysis in one job and publishes exports in another, or when you re-export after approved, schema-valid updates to `threat-model.yaml`:
+Optional formats can also be generated from an existing assessment:
 
 ```text
 # Generate every export format from an existing threat-model.yaml / .md
@@ -48,17 +48,17 @@ All optional deliverables can also be generated after an assessment. This is use
 /appsec-advisor:export-threat-model --formats pentest --pentest-target https://staging.example.com
 ```
 
-SARIF and pentest-tasks are produced deterministically from `threat-model.yaml` — no LLM tokens spent. PDF and HTML are converted from `threat-model.md`: HTML needs only `pandoc`, PDF additionally needs `weasyprint`. Mermaid diagrams are rendered to vector graphics by `mmdc` (`@mermaid-js/mermaid-cli`), which drives a headless **Chrome/Chromium via Puppeteer** — install one (`npx puppeteer browsers install chrome`, or `apt install chromium` and set `PUPPETEER_EXECUTABLE_PATH`). The PDF exporter's preflight aborts with a clear message if any required tool is missing or non-functional; run `/appsec-advisor:export-threat-model --check-only` to verify the toolchain, or pass `--no-mermaid` to export without diagrams.
+SARIF and pentest tasks are generated from `threat-model.yaml` without model calls. PDF and HTML are converted from `threat-model.md`. Diagram rendering also requires `mmdc` and Chrome or Chromium. Check the export dependencies with:
 
-**Optional: grammar-level Mermaid QA.** The QA gate validates every Mermaid block. By default it runs a permissive regex pre-pass; for the authoritative grammar check (which catches breakages the regex pass misses) it needs the real Mermaid parser. Install the optional Mermaid-QA dependencies once with `npm install --prefix "$CLAUDE_PLUGIN_ROOT/scripts"`. When they are absent the validator falls back to regex-only checks and logs a skip warning at run-start — the pipeline still completes, just with a degraded diagram QA gate.
+```text
+/appsec-advisor:export-threat-model --check-only
+```
+
+Use `--no-mermaid` to export PDF or HTML without rendered diagrams. To enable strict Mermaid validation during assessments, install the optional parser with `npm install --prefix "$CLAUDE_PLUGIN_ROOT/scripts"`.
 
 ## Example report: OWASP Juice Shop
 
-The following example shows the output of a thorough-mode assessment against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/).
-
-**Full example:** [OWASP Juice Shop threat model report](../examples/threat-modeler/threat-model-juice-shop-thorough.md)
-
-The report presents those findings in the format developers review after a run, including evidence links, abuse-case scenarios, and an attack-path discussion.
+The [OWASP Juice Shop example](../examples/threat-modeler/threat-model-juice-shop-thorough.md) shows a complete thorough assessment with evidence links, abuse cases, and attack paths.
 
 Example security posture diagram from the report:
 
@@ -78,11 +78,11 @@ Before running STRIDE, `appsec-advisor` performs a reconnaissance pass that coll
 | **Operations & Configuration** | CORS configuration, security headers, exposed management/debug endpoints, verbose errors, and stack-trace leakage. |
 | **Supply Chain** | Dependency and lockfile signals, unpinned GitHub Actions, container image pinning, and build/deployment configuration. |
 | **GenAI / LLM Security** | Prompt-injection surfaces, tool or agent boundaries, vector-store access patterns, LLM API usage, and OWASP LLM Top 10 related risks. |
-| **Threat Actors** | Actor-driven threat classes: insider threats (privileged dev/ops), supply-chain actors (build-time compromise), B2B-partner abuse, and adjacent-tenant attacks in multi-tenancy architectures. Each finding is attributed to a threat actor class; the report includes an actor table and actor-adjusted likelihood scores. |
-| **Abuse Cases** | Scenario-level attack chains verified against the codebase — end-to-end paths from entry point through exploitation to impact, with per-step verdicts and deterministic chain verdicts (fully viable / partially blocked / mitigated). |
+| **Threat Actors** | Insider, supply-chain, partner, and adjacent-tenant threats where they apply. |
+| **Abuse Cases** | Attack chains from entry point to impact, with each step checked against the repository. |
 
 > [!NOTE]
-> The reconnaissance checks provide the starting context for the STRIDE analysis. They are not intended to replace a dedicated SAST, SCA, secrets, or IaC scanner. Instead, the findings are used as entry points for deeper reasoning across related files, flows, and trust boundaries.
+> These checks provide context for STRIDE. They do not replace dedicated SAST, SCA, secrets, or IaC scanners.
 
 ## Usage examples
 
@@ -92,19 +92,19 @@ Run these commands directly within the Claude Code interface.
 # Show help text
 /appsec-advisor:create-threat-model --help
 
-# High-fidelity audit
+# Deeper assessment
 /appsec-advisor:create-threat-model --assessment-depth thorough
 
-# Rebuild: force a fresh scan by wiping all caches and intermediate model data
+# Force a fresh scan and discard cached run state
 /appsec-advisor:create-threat-model --full --rebuild
 
-# Dry run: preview the execution plan and agent routing without writing files
+# Preview the run without writing files
 /appsec-advisor:create-threat-model --dry-run
 ```
 
 ### Focused analysis
 
-Target specific components to reduce noise and optimize token usage. This is the recommended approach for large mono-repos or rapid iterations.
+Target specific components to reduce cost and review time on large monorepos or during iteration.
 
 ```text
 # Focus on a logical service by name
@@ -116,7 +116,7 @@ Target specific components to reduce noise and optimize token usage. This is the
 
 ### With requirements catalog
 
-Ground the threat model in your organization's security requirements catalog. The plugin fetches a structured YAML from a URL, grades the codebase against each requirement, and incorporates compliance findings into the report. See [`docs/harvester.md`](harvester.md) for how to produce that YAML from existing Confluence, Antora, or wiki pages.
+Use `--requirements` to include your organization's security requirements. See the [harvester guide](harvester.md) for creating the catalog YAML from Confluence, Antora, or other HTML pages.
 
 ```text
 # Run threat model with requirements fetched from a URL
@@ -145,11 +145,11 @@ For cross-repo context, declare related services in `docs/related-repos.yaml`; s
 
 ## Assessment depth & cost control
 
-Assessment depth controls how much of the repository is reviewed and how much validation the report gets before it is handed back. Choose by review intent first; the model mix is selected automatically.
+Assessment depth controls coverage, review depth, runtime, and cost.
 
 ### Analysis modes
 
-The plugin supports three assessment depths. Pick the lightest mode that still matches the risk of the change.
+Choose the lightest mode that fits the decision the report will support.
 
 Within a run, *which* components get a full STRIDE pass is criteria-driven, not a fixed per-depth count. Each depth includes everything from the lighter one:
 
@@ -164,36 +164,24 @@ Within a run, *which* components get a full STRIDE pass is criteria-driven, not 
 | Real-time channels | | ✓ | ✓ |
 | Proven-internal (reachable but not exposed) | | | ✓ |
 
-Thorough also applies deeper per-component analysis to every selected component, not just a wider net.
+Thorough increases both component coverage and per-component analysis depth.
 
-The analyzed count follows the repo's attack surface, not a hard cap. (Component counts in the benchmarks below predate this selection.)
+The number of analyzed components follows the repository's attack surface rather than a per-depth target.
 
-**Cost levers within a depth.** Two knobs trim a standard run without changing depth:
+### Cost by depth
 
-- `--stride-cap N` *(opt-in, off by default)* — keep at most **N** threats per STRIDE category per component. The dominant lever on threat volume, and on the merge/mitigation/QA tokens those threats drive. Criticals are never dropped; it trims only the High/Medium/Low tail, and full depth (CVSS, evidence, verification greps) is otherwise preserved. The cap is disclosed in the report's *Run Statistics* appendix so a capped report is never mistaken for a full one. Standard/thorough keep full STRIDE depth unless you set this.
-- **Single-pass QA repair at quick/standard** *(automatic)* — the post-render QA repair runs at most **one** repair attempt at quick/standard (thorough keeps up to 3). If the contract still fails after one pass the run fails closed rather than burning extra repair rounds — it never ships an invalid report.
+These OWASP Juice Shop runs anchor on three measured points from July 2026 — **quick** ($18.03, 68 minutes), **standard** ($34.14), and a full **thorough** run (about $47, 103 minutes) — all with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. The standard runtime (~85 minutes) is estimated from the quick and thorough anchors. They compare modes but do not predict the exact bill for another repository.
 
-**Measured cost impact** (Juice Shop, standard depth, clean runs, identical flags except the reasoning tier, 2026-06-23):
-
-| Standard config | Cost | Threats | Note |
+| Mode | Best fit | Review depth | API cost (USD) and time |
 |---|---|---|---|
-| `--reasoning-model opus --stride-cap 2` | $40.78 | 53 | best severity calibration |
-| `--reasoning-model sonnet-economy --stride-cap 2` | **$30.01** | 52 | **−$10.77**; but 81 % Crit/High (2 Low) — more severity inflation; no Web3/NFT surface |
-
-The **reasoning tier is the dominant cost lever** (~$10.77 / −26 % here), not the per-category cap: the cap alone trims threat *volume* (89 → ~52) but only ~$4, because the largest cost is the always-Sonnet orchestrator's cache-read, not threat count. Going to `sonnet-economy` is a **cost-vs-quality** trade. It also moves *triage* to Sonnet, which calibrates severities and surfaces less (e.g. the Web3/NFT component the Opus run found). Earlier internal notes claimed Opus STRIDE was *cheaper*; a clean A/B did not confirm this. Opus reasoning is **more** expensive; you pay it for calibration/coverage, not savings.
-
-| Mode | Best fit | What changes | Juice Shop benchmark |
-|---|---|---|---|
-| **Quick** `--assessment-depth quick` | Fast feedback, pre-commit checks, early design iterations. | Reduced-depth pass; **skips** attack-chain (abuse-case) validation and the final QA review. Early signal — rerun at standard before release decisions. | **Cost** ~ $18<br>**Time** ~ 50 min net compute (~43 min net wall)<br>**Findings** 35 findings / 7 components (5 analyzed)<br>Critical 9, High 20, Medium 6, Low 0<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-quick.md) |
-| **Standard** *(default)* | Normal threat models and security reviews. | Full-depth analysis with attack-chain validation and a full QA review. The engineering-review default. | **Cost** ~ $31<br>**Time** ~ 132 min net compute (~88 min wall)<br>**Findings** 84 findings / 9 components<br>Critical 15, High 55, Medium 14, Low 0<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-standard.md) |
-| **Thorough** `--assessment-depth thorough` | Pre-release reviews, high-risk services, major architecture changes. | Everything in standard, plus deeper per-component analysis and an extra architecture-review pass. Best when missed architecture risk is expensive. | **Cost** ~ $50<br>**Time** ~ 39 min net compute (~94 min wall)<br>**Findings** 77 findings / 10 components<br>Critical 11, High 46, Medium 20, Low 0<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-thorough.md) |
+| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | $18.03 and 68 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick.md)) |
+| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $34.14 and ~85 minutes (time est.) ([sample](../examples/threat-modeler/threat-model-juice-shop-standard.md)) |
+| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | About $47 and 103 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough.md)) |
 
 > [!NOTE]
-> Benchmark numbers come from a single Node.js/Express reference app (OWASP Juice Shop) and vary substantially with repository size, language/framework mix, model routing, and cache effects. Treat the figures as ballpark orientation, not as predictions for your repo. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
->
-> The **finding counts above are the committed Juice Shop sample reports** linked in each row. Since 2026-06-23 **quick and standard default to `sonnet-economy`** (Sonnet reasoning core; ~$31 at standard on Juice Shop) and **thorough defaults to Opus**. A clean A/B found Opus reasoning ~$10.77 (+36 %) over sonnet-economy with no measurable quality gain, so standard favours cost; opt into Opus with `--reasoning-model opus` (or just the severity stage with `--triage-model opus`). The `~` cost/time figures are approximate and benchmark-dependent. (See **Reasoning model** below.)
->
-> The figures above also include the **orchestration layer**, which runs in your interactive session's model. The standard Juice Shop run above is ~$36 from a Sonnet session; the same run driven from an Opus session is ~$51 — the ~$15 difference is purely orchestration running on Opus instead of Sonnet, since the analysis sub-agents are routed the same way either way. The thorough Juice Shop run is ~$50 from a Sonnet session (Opus analysis agents, Sonnet orchestration at ~$20). It does not deepen the analysis; for how this scales with run length and repo size, see the session-model tip below.
+> Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
+
+`--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the same standard benchmark, a cap of 2 reduced the finding count from 83 to about 52 and saved roughly $4. The selected cap is recorded in the report.
 
 ### Reasoning model
 
@@ -201,39 +189,71 @@ The **reasoning tier is the dominant cost lever** (~$10.77 / −26 % here), not 
 
 | Tier | STRIDE · triage · merge | When to use |
 |---|---|---|
-| `sonnet-economy` | Sonnet · Sonnet · Sonnet | Cheapest — same core as `sonnet`, but helper agents drop to Haiku. **Default at quick and standard** (since 2026-06-23); opt-in at thorough. |
-| `sonnet` | Sonnet · Sonnet · Sonnet | Like `sonnet-economy`, but helper agents stay on Sonnet. |
-| `opus-cheap` | Sonnet · Sonnet · **Opus** | Opus only on the cheap merge step — a middle ground (opt-in). |
-| `opus` | **Opus** · **Opus** · **Opus** | **Default at thorough** (the premium tier); opt-in at standard. A clean A/B (2026-06-23) found Opus reasoning ~$10.77 (+36 %) more than `sonnet-economy` with **no measurable quality/coverage gain** on Juice Shop, which did not bear out the earlier "Opus cheaper/better for STRIDE" claim. Use it when you specifically want maximum reasoning depth and accept the cost. |
+| `sonnet-economy` | Sonnet 4.6 · Sonnet 5\* · Sonnet 5\* | Default for quick and standard. Helper tasks use Haiku. **\*Standard buy-back:** at `standard`, triage + merger (and renderer + abuse-verifier) resolve to Sonnet 5; STRIDE stays Sonnet 4.6. `quick` is all-Sonnet 4.6. |
+| `sonnet` | Sonnet · Sonnet · Sonnet | Keeps helper tasks on Sonnet. |
+| `opus-cheap` | Sonnet · Sonnet · **Opus** | Uses Opus only for merging. |
+| `opus` | **Opus** · **Opus** · **Opus** | Default for thorough. Costs noticeably more than the economy default for a similar finding count — the Opus reasoning tier is what makes a thorough run more expensive than a standard one. |
 
-**Per-stage overrides.** `--stride-model`, `--triage-model`, `--merger-model` (`sonnet`|`opus`) override a single stage on top of the tier — the inline equivalent of the `APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL` env vars, but settable right in the command (no `settings.json` + restart). They win over the tier and the env vars; `--no-opus` still clamps last.
+`--stride-model`, `--triage-model`, and `--merger-model` override one part of the selected tier. Each accepts either a tier alias (`sonnet` / `opus`) or an explicit version id (e.g. `claude-sonnet-5`, `claude-sonnet-4-6`) to pin an exact model regardless of the session — the bare `sonnet` alias otherwise follows the host session model. Direct flags take precedence over the matching `APPSEC_*_MODEL` environment variables. `--no-opus` disables all Opus selections (alias or `claude-opus-*` id).
 
-The useful one is **`--triage-model opus` on a `sonnet-economy` run**: STRIDE stays on Sonnet (the cost driver), while triage (the severity-assignment stage) runs on Opus. A clean A/B showed this recovers the severity calibration of a full-Opus run (real Med/Low tail, not 81 % Crit/High) at roughly the all-Sonnet price (~$2 over, vs ~$11 for full Opus) — a good cost/quality balance for `standard`:
+> **`--merger-model` caveat.** STRIDE and triage run as separate model-pinned sub-agents, so their pins always take effect. The merge, however, runs **inline/deterministic** (`merge_threats.py` + inline judgment) on the everyday `sonnet-economy` path — a separate `appsec-threat-merger` sub-agent is only dispatched on the opt-in *hybrid* path, which activates when `--merger-model` (or `APPSEC_MERGER_MODEL`) resolves to an **Opus** id, or at `--assessment-depth thorough`. Setting `--merger-model claude-sonnet-5` at standard therefore has **no effect** — there is no merger sub-agent to pin. The effective-routing table shown at scan start marks the merger row `inline unless hybrid/Opus` accordingly.
+
+**Per-role model routing (2026-07-05).** The pipeline no longer leaves any subagent on the bare `sonnet` alias (which silently follows your session). Each role gets a concrete model per depth:
+
+| Role | Agents | quick | standard | thorough |
+|---|---|---|---|---|
+| Reasoning — discovery | STRIDE | Sonnet 4.6 | Sonnet 4.6 | Opus |
+| Reasoning — judgment | triage, merge | Sonnet 4.6 | **Sonnet 5** | Opus |
+| Quality showcase | renderer, abuse-verifier | Sonnet 4.6 | **Sonnet 5** | **Sonnet 5** |
+| Mechanical / contract | qa-content, qa-routine | Sonnet 4.6¹ | Sonnet 4.6¹ | Sonnet 4.6 |
+| Deterministic helpers | context-resolver, recon-scanner, config-scanner | Haiku | Haiku | Haiku |
+| Session | orchestrator | follows session² | follows session² | follows session² |
+
+¹ qa-routine (mechanical link/anchor fixes) runs on Haiku at quick/standard. ² the orchestrator *is* the session model — the plugin can't pin it; see *Session Model* below.
+
+The rationale: STRIDE stays on 4.6 (Sonnet 5 measured *worse* discovery recall); triage/merge/renderer/abuse-verifier get Sonnet 5 where a benchmark showed a real gain (severity calibration, dedup, CISO framing, decisive verdicts) — at standard *and* thorough; the mechanical stages stay on cheap 4.6. Two caveats: (1) these are **explicit-id pins** that only take effect on the **headless path** — an *interactive* run's subagents inherit the session model regardless; and (2) the **merger pin stays inert at standard** (the merge is inline — see the `--merger-model` caveat above). The whole split is skipped when you opt into the explicit `sonnet` tier (`--reasoning-model sonnet`, latest Sonnet everywhere).
+
+For standard assessments, using Opus only for triage costs just slightly more than the all-Sonnet baseline, while the full Opus tier costs substantially more:
 
 ```text
 /appsec-advisor:create-threat-model --reasoning-model sonnet-economy --triage-model opus --stride-cap 2
 ```
 
-The resolved per-stage mix is shown in the pre-flight box and recorded in the report's *Run Statistics* (`Reasoning models` row), so a mixed-tier run is disclosed, not hidden behind the tier name.
+The report records the resolved model mix in *Run Statistics*.
 
-`--no-opus` forbids Opus everywhere (downgrades `opus`/`opus-cheap` and any per-stage `--*-model opus` to Sonnet; overrides all other sources, including the org profile and `APPSEC_DISABLE_OPUS=1`).
+### Session Model
 
-Which model each role runs on:
+By default the pipeline keeps the token-heavy work cheap. The analysis stages (STRIDE, triage, and the merge) run on a fixed model tier that does not follow your session, and on quick and standard that tier is the lower-cost Sonnet-4.6. So the bulk of a routine scan never costs Sonnet-5 rates, whatever session you launch it from.
 
-| Role | Model |
-|---|---|
-| Reasoning core (STRIDE · triage · merge) | per tier above |
-| Recon, context, config scanners | Haiku |
-| QA reviewer | Sonnet |
-| Orchestrator | Sonnet |
-| Session driver | your interactive session model |
+The one part the defaults can't set for you is the **session model**, the model the main Claude Code loop itself runs on, and it is the biggest single cost driver. It pays for the dominant cache-read of a full run and for every agent that isn't pinned to something else: the orchestrator, the Stage-2 renderer, the abuse-case verifier, and content-QA. A running session can't switch its own model, so this is a Claude Code setting rather than a plugin flag.
 
-> [!TIP]
-> The reasoning model and the session model are separate, separately-billed knobs: `--reasoning-model` sets the analysis core; the session model drives orchestration (see the session-model tips below).
+Running the session on **Sonnet-4.6** roughly **halves** the cost of a run versus Sonnet-5 for the same report (see *Background: why Sonnet 4.6 costs less* below for the reason). Set it:
+
+- **Interactive:** `/model claude-sonnet-4-6` before launching the scan, or add `"model": "claude-sonnet-4-6"` to `.claude/settings.json` (project-scoped) or `~/.claude/settings.json` (global). The scan warns at start when it detects a **non**-4.6 host (Sonnet-5 or Opus) and prints the exact restart command; the effective per-agent routing is shown in the Pre-flight box.
+- **Headless / CI:** `scripts/run-headless.sh` **defaults** the session to `claude-sonnet-4-6` (the economy default) — no flag needed. Override per run with `--model <id>`.
+
+**As a rule of thumb: run the session on Sonnet-4.6 and pin *up* only the few stages where Sonnet-5 clearly pays off; never run the session on Sonnet-5 for quality.** On a 4.6 session everything runs on Sonnet-4.6 (or Haiku for the deterministic helpers); no agent silently runs on Sonnet-5. A Sonnet-5 session is strictly more expensive for the same result, because you then pay Sonnet-5 rates for the dominant cache-read plus the orchestrator, renderer, abuse-verifier and content-QA, while STRIDE/triage/merger stay 4.6 either way.
+
+| Stage | Pin to Sonnet-5? | Why |
+|---|---|---|
+| Triage (severity) | ✅ `--triage-model claude-sonnet-5` | better severity calibration |
+| Renderer (§7 + MS) | ✅ `APPSEC_RENDERER_MODEL=claude-sonnet-5` | sharper CISO framing |
+| Abuse-case verifier | ✅ `APPSEC_ABUSE_VERIFIER_MODEL=claude-sonnet-5` | decisive verdicts (no "inconclusive") |
+| STRIDE | ❌ keep 4.6 | 4.6 has **better** recall *and* is cheaper |
+| Merger | ❌ | runs inline on the default path (pin has no effect) |
+| Helpers / content-QA | ❌ | Haiku / no measurable Sonnet-5 gain |
+
+These buy-backs are cheap: triage, renderer and the verifier are small token slices, so the run stays close to a pure-4.6 cost while gaining Sonnet-5 quality where it actually helps. Interactively, `--triage-model` works as a flag; the two `APPSEC_*_MODEL` pins must sit in the `.claude/settings.json` `"env"` block (an inline `VAR=… /command` does not reach the skill). Headless, all three can be passed inline before `run-headless.sh`.
+
+#### Background: why Sonnet 4.6 costs less
+
+A threat-model scan is token-heavy and largely mechanical: it reads an entire repository into context and emits structured fragments, so the bill is dominated by the number of tokens processed (mostly cached input re-read across the run), not by hard reasoning. Sonnet 5 and Sonnet 4.6 are billed at comparable per-token rates, but Sonnet 5 uses an updated tokenizer that represents the same source text with **more** tokens — in this project's A/B runs, roughly 30 % more for the same repository and report. Because the work is token-bound rather than reasoning-bound, that difference flows straight through to cost: the same assessment simply costs more on Sonnet 5 for equivalent output.
+
+Sonnet 5's edge is reasoning *quality* — sharper severity calibration, outcome-first framing, and more decisive verdicts — not token efficiency. So the economical setup keeps the token-heavy, mechanical majority (the reasoning core, the orchestrator, the deterministic helpers) on Sonnet 4.6 and spends Sonnet 5 only on the few stages where its reasoning measurably improves the result. This is also why STRIDE stays on 4.6: threat *discovery* depends on recall, where 4.6 matched or beat Sonnet 5 in the measurements while costing less.
 
 ### Budget guardrails
 
-You can set hard limits to avoid unexpected runtime or API usage. When a limit is reached, the process stops gracefully with `SIGTERM`.
+Set hard limits for runtime and API cost:
 
 | Interactive plugin | Headless / CI | Meaning |
 |---|---|---|
@@ -250,18 +270,16 @@ Example:
 > [!NOTE]
 > Cost limits only apply when using an `ANTHROPIC_API_KEY`. When running on a standard Claude subscription, there is no per-token API billing, so cost limits are ignored. Time limits remain active in both modes.
 
-For very large repositories, the advisor automatically switches to an optimized scanning strategy to avoid context window overflows.
-
 > [!TIP]
-> **The session model only changes the orchestration layer.** The analysis sub-agents are auto-routed by depth/repo size either way. Sonnet is enough to drive the pipeline (it is a deterministic playbook), so for routine and incremental runs start from a Sonnet session (`/model sonnet`, `/clear` first). Opus orchestration costs ~5× more *per token on that layer*, which works out to roughly **+25–55% on the total run** (a proportional share that scales with run length and repo size, not a fixed amount). It only buys higher reliability on long, branchy runs (first runs, large repos, recovery paths): insurance against a mis-orchestrated run, not better analysis.
+> The interactive session model is billed separately from `--reasoning-model`. Running the session itself on Opus added about 25–55% to measured total cost without changing the analysis model. Use a Sonnet session for routine runs.
 
 ## Repo-local context
 
-Two optional files let the owning team feed the threat model directly. Commit them to the scanned repository; the scan reads both at the start of every run. Neither is required, and both are read as the team's input — useful as context, but never enough on their own to suppress a finding the code evidence supports.
+Two optional files add team-owned context. Neither file can suppress a finding supported by repository evidence.
 
 ### Business context — `docs/business-context.md`
 
-Free-form Markdown, read verbatim (up to 200 lines). Use it to state what the code can't show: which flows are revenue-critical, what regulatory drivers apply, where the crown-jewel data lives, and which failure scenarios would hurt most. The analysis uses it to weight severity and priority — the same SQL injection reads differently on a marketing page than on a payment path.
+Use this Markdown file for facts the code cannot show: critical flows, regulatory scope, sensitive data, and high-impact failure scenarios. The first 200 lines are read.
 
 ### Known threats — `docs/known-threats.yaml`
 
@@ -315,7 +333,7 @@ On the next scan, `appsec-advisor` uses that upstream threat model as context fo
 
 The `interface:` value is matched against the upstream model's `attack_surface[].entry_point`. When it matches, the scan can use upstream details such as protocol, authentication requirement, handling component, and documented controls.
 
-Imported data is treated as the upstream team's claim, not as verified evidence. It can raise new hypotheses, but it must not suppress local findings.
+Imported data is context, not verified evidence. It can suggest findings but cannot suppress local evidence.
 
 ### Declare assumptions about the upstream service
 
@@ -332,30 +350,28 @@ These fields are optional. Without them, the scan still uses the upstream model 
 
 ## Architecture
 
-`appsec-advisor` runs as a staged pipeline rather than one large prompt. Each stage has a narrow task, and the final report is generated from validated, structured data.
-
-- **Repository-driven input:** The pipeline starts from the code repository and extracts application context, components, routes, controls, IaC config, and trust actors.
-
-- **Multi-agent threat analysis:** Specialized agents analyze threats per component using STRIDE and a shared threat library.
-
-- **Evidence-backed output:** Findings are merged, deduplicated, and verified against code evidence before being reported.
-
-- **Prioritized threat model:** Valid threats are triaged into priority levels and rendered into `threat-model.md` and `.yaml`.
-
-- **Quality gates:** Deterministic QA checks run by default; optional architect review adds deeper technical validation.
+The pipeline extracts architecture and security signals, runs STRIDE by component, verifies evidence, and renders the validated results. The final report does not come from a single free-form model response.
 
 ![Threat Model Pipeline](images/threat-model-pipeline.png)
 
 ## Workflow commands
 
-Helpers for the threat model lifecycle — run after `create-threat-model` completes or to recover from interrupted runs.
+Use these commands after an assessment or to recover an interrupted run.
 
 | Command | Purpose |
 |---|---|
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |
-| `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, HTML, SARIF, and/or pentest-tasks. Deterministic — no LLM tokens spent. |
+| `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, HTML, SARIF, or pentest tasks without model calls. |
 | `/appsec-advisor:threat-model-health` | Check whether the current threat model is fresh, stale, missing, or blocked by run debris. |
 | `/appsec-advisor:clean-run-state` | Remove stale run-state after an interrupted or crashed assessment. |
 | `/appsec-advisor:fix-run-issues` | Apply safe auto-fixes for issues recorded by the previous run, or print manual repair guidance. |
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
 | `/appsec-advisor:check-permissions` | Check or update the Claude Code permissions needed for unattended runs. |
+
+Outside of a Claude Code session (e.g. in CI setup), use the equivalent Makefile target:
+
+```sh
+make setup-target [REPO=<path>] [SCOPE=project|local|user]
+```
+
+`REPO` defaults to the current directory. `SCOPE` controls which `settings.json` file is written (`project` = `.claude/settings.json`, default).

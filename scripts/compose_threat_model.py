@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import base64
 import functools
+import importlib.util
 import json
 import re
 import sys
@@ -134,7 +135,7 @@ class FragmentError(Exception):
 
 # Single source of truth: section id → fragment path that drives it. Mirrors
 # CONTRACT_SECTION_FRAGMENTS in scripts/qa_checks.py (kept in sync by
-# tests/test_qa_fragment_map.py). Used by the pre-render repair-plan writer
+# scripts/check_fragment_registry.py). Used by the pre-render repair-plan writer
 # to point the orchestrator at the exact file to edit when compose aborts
 # with a FragmentError — eliminates the fix-loop where the agent re-writes
 # the wrong fragment (e.g. architecture-diagrams.md instead of the offending
@@ -257,6 +258,12 @@ class RenderContext:
     # measures analogue of the finding severity dot, but colourless (a text
     # tag, no colour circle) per the 2026-06-03 Variant-A decision.
     _priority_index: Optional[dict[str, str]] = None
+    # Built lazily on first `location_for_ref` call. Maps every finding ref
+    # (T-/F-NNN) and mitigation ref (M-NNN) → its full `file:line` locator
+    # string. Backs the trailing `(`file:line`)` locator that the canonical
+    # reference form appends — basename:line inline, full path in the Findings
+    # index (the `full_path` flag). RC-2026-06-29.
+    _location_index: Optional[dict[str, str]] = None
 
     def severity_emoji(self, key: str) -> str:
         k = (key or "").strip().lower()
@@ -301,7 +308,9 @@ class RenderContext:
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()
             if not tid:
                 continue
-            label = _strip_embedded_evidence_file((t.get("title") or t.get("scenario_short") or "").strip(), t)
+            label = _strip_trailing_locator(
+                _strip_embedded_evidence_file((t.get("title") or t.get("scenario_short") or "").strip(), t)
+            )
             if not label:
                 sc = (t.get("scenario") or t.get("description") or "").strip()
                 if sc:
@@ -318,7 +327,9 @@ class RenderContext:
             mid = (m.get("m_id") or m.get("id") or "").strip().upper()
             if not mid:
                 continue
-            label = (m.get("title") or m.get("mitigation_title") or m.get("name") or "").strip()
+            label = _strip_trailing_locator(
+                (m.get("title") or m.get("mitigation_title") or m.get("name") or "").strip()
+            )
             idx.setdefault(mid, label)
 
         for c in data.get("components", []) or []:
@@ -422,6 +433,55 @@ class RenderContext:
             self._priority_index = self._build_priority_index()
         return self._priority_index.get(ref.strip().upper(), "")
 
+    def _build_location_index(self) -> dict[str, str]:
+        """Map every finding ref (T-/F-NNN) and mitigation ref (M-NNN) → its full
+        ``file:line`` locator string.
+
+        Findings source their locator from ``evidence.file[:line]``; mitigations
+        from their own ``file``/``location`` field, falling back to the first
+        finding they address. The locator is stored at FULL path; callers choose
+        basename-vs-full at lookup time (``location_for_ref(full_path=…)``).
+        """
+        threats = (self.yaml_data or {}).get("threats", []) or []
+        idx: dict[str, str] = {}
+        for t in threats:
+            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+            if not tid:
+                continue
+            loc = _evidence_locator(t)
+            if not loc:
+                continue
+            idx.setdefault(tid, loc)
+            if tid.startswith("T-"):
+                idx.setdefault("F-" + tid[2:], loc)
+            elif tid.startswith("F-"):
+                idx.setdefault("T-" + tid[2:], loc)
+        t_by_id = {(t.get("t_id") or t.get("id") or "").strip().upper(): t for t in threats}
+        for m in (self.yaml_data or {}).get("mitigations", []) or []:
+            mid = (m.get("m_id") or m.get("id") or "").strip().upper()
+            if not mid:
+                continue
+            loc = _mitigation_locator(m, t_by_id)
+            if loc:
+                idx.setdefault(mid, loc)
+        return idx
+
+    def location_for_ref(self, ref: str, full_path: bool = False) -> str:
+        """Locator for a finding/mitigation ref, or "" when unknown.
+
+        Default returns ``basename:line`` (inline references stay short);
+        ``full_path=True`` returns the full ``path/file:line`` (used only by the
+        Findings index, which has the horizontal room).
+        """
+        if not ref:
+            return ""
+        if self._location_index is None:
+            self._location_index = self._build_location_index()
+        loc = self._location_index.get(ref.strip().upper(), "")
+        if not loc:
+            return ""
+        return loc if full_path else _basename_locator(loc)
+
     @staticmethod
     def _synthesise_label_noop() -> None:
         """Placeholder — kept so downstream imports do not break if they
@@ -475,9 +535,27 @@ class RenderContext:
             return f"[{r}](#{anchor}) ({short})"
         return f"[{r}](#{anchor})"
 
-    def linkify_with_label(self, ref: str, label_override: str | None = None) -> str:
-        """Emit `[ID](#id-lower) — label`. If label is empty or unknown,
-        emit just `[ID](#id-lower)` (never a bare unlinked ID).
+    def linkify_with_label(
+        self,
+        ref: str,
+        label_override: str | None = None,
+        compact: bool = False,
+        full_path: bool = False,
+    ) -> str:
+        """Emit the canonical reference form for a finding/threat/mitigation.
+
+        Two shapes, and ONLY these two (enforced by the §reference-format linter
+        test):
+
+          * **Full (default):** ``<glyph> [ID](#id) — <label> (`file:line`)`` —
+            ID linked once, class label, basename:line locator backticked in
+            parens (full path when ``full_path=True``, used by the Findings
+            index). The locator is appended ONLY when the label was resolved
+            here (``label_override is None``); an explicit override is trusted
+            verbatim so a caller can still pass a fully-formed label.
+          * **Short (`compact=True`):** ``<glyph> [ID](#id)`` — ID only, still
+            linked. For the deliberately narrow contexts (Verdict "Dominant
+            Attack Paths", measure chips, narrow Addresses columns).
 
         Visible label normalisation (P4): when ``ref`` is T-NNN we expose
         F-NNN as the user-visible label and link to the F-anchor. Both
@@ -500,12 +578,13 @@ class RenderContext:
         if m:
             r = f"F-{m.group(1)}"
         anchor = r.lower()
-        label = (label_override or self.lookup_label(r) or "").strip()
-        # Leading criticality dot for finding refs only (F-/T-NNN). Mitigations
-        # (M-NNN), components (C-NN), and threat categories (TH-NN) carry no
-        # dot. The dot sits OUTSIDE the markdown link so `_enrich_linked_id_cells`
-        # (which extracts `[ID](#anchor)` and re-linkifies) regenerates exactly
-        # one dot — never doubles it. Empty/unknown severity → no dot.
+        label = "" if compact else (label_override or self.lookup_label(r) or "").strip()
+        # Leading criticality glyph: findings carry a coloured severity dot,
+        # mitigations a monochrome circled rollout-priority digit. Components
+        # (C-NN) and threat categories (TH-NN) carry no glyph. The glyph sits
+        # OUTSIDE the markdown link so `_enrich_linked_id_cells` (which extracts
+        # `[ID](#anchor)` and re-linkifies) regenerates exactly one glyph — never
+        # doubles it. Empty/unknown severity or priority → no glyph.
         dot = ""
         if re.match(r"^F-\d+$", r):
             emoji = self.severity_emoji(self.severity_for_ref(r))
@@ -513,20 +592,33 @@ class RenderContext:
                 dot = f"{emoji} "
         elif re.match(r"^M-\d+$", r):
             # Measures analogue of the finding severity dot: a single colourless
-            # circled digit whose number IS the rollout priority (❶ P1 … ❹ P4),
+            # fill-ramp circle whose fill IS the rollout priority (● P1 … ○ P4),
             # Variant B (2026-06-04). It sits OUTSIDE the markdown link for the
             # same reason the severity dot does: `_enrich_linked_id_cells`
             # extracts `[ID](#…)` and re-linkifies, so the prefix is regenerated
             # exactly once. Mirrors the finding form `🔴 [F-NNN] — title`.
-            digit = _PRIO_DIGIT_TBL.get(self.priority_for_ref(r), "")
+            digit = _PRIO_RAMP_TBL.get(self.priority_for_ref(r), "")
             if digit:
                 dot = f"{digit} "
+        if compact:
+            return f"{dot}[{r}](#{anchor})"
+        # Any locator embedded in the label (raw YAML titles / fragment labels
+        # sometimes carry `(file)` or `— file:line`) is STRIPPED, then the
+        # canonical `(`file:line`)` is appended from the location index — so the
+        # locator is always present exactly once and always backticked, no
+        # matter how the caller sourced the label.
+        if label:
+            label = _strip_trailing_locator(label)
+        loc = ""
+        loc_raw = self.location_for_ref(r, full_path=full_path)
+        if loc_raw:
+            loc = f" (`{loc_raw}`)"
         if label:
             # Escape unescaped `$` (see linkify_with_short_label) so a `$where`-
             # style token cannot open a KaTeX math span in math-enabled viewers.
             label = re.sub(r"(?<!\\)\$", r"\\$", label)
-            return f"{dot}[{r}](#{anchor}) — {label}"
-        return f"{dot}[{r}](#{anchor})"
+            return f"{dot}[{r}](#{anchor}) — {label}{loc}"
+        return f"{dot}[{r}](#{anchor}){loc}"
 
 
 # ---------------------------------------------------------------------------
@@ -693,7 +785,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             }.get(kind, "")
             if mid:
                 # Variant B (2026-06-04): lead with the monochrome priority
-                # prefix (`● P1 · `) — same as every other linked measure —
+                # prefix (`● ` for P1) — same as every other linked measure —
                 # then the action-kind glyph (orthogonal signal). Supersedes the
                 # old trailing `(P1)` token.
                 line = f"{_measure_prio_prefix(ctx, mid)}{glyph}[{mid}](#{mid.lower()})"
@@ -717,16 +809,10 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             return "—"
         rendered = []
         for it in items:
-            ref = it["ref"]
-            # P4 — normalise T-NNN visible label to F-NNN for consistency.
-            m_t = re.match(r"^T-(\d+)$", ref or "")
-            if m_t:
-                ref = f"F-{m_t.group(1)}"
-            label = it.get("label", "").strip()
-            line = f"[{ref}](#{ref.lower()})"
-            if label:
-                line += f" — {label}"
-            rendered.append(line)
+            # Canonical reference form (ID — label (`file:line`)); the curated
+            # fragment label, if any, overrides the indexed title but the locator
+            # is still normalised by linkify_with_label.
+            rendered.append(ctx.linkify_with_label(it["ref"], label_override=(it.get("label") or "").strip() or None))
         return sep.join(rendered)
 
     def format_one_finding(item: dict[str, Any]) -> str:
@@ -737,15 +823,9 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
         rather than inline via ``<br/>↳`` within the parent bullet.
         Applies the same T-NNN → F-NNN normalisation as format_weakness_findings.
         """
-        ref = (item.get("ref") or "").strip()
-        m_t = re.match(r"^T-(\d+)$", ref)
-        if m_t:
-            ref = f"F-{m_t.group(1)}"
-        label = (item.get("label") or "").strip()
-        line = f"[{ref}](#{ref.lower()})"
-        if label:
-            line += f" — {label}"
-        return line
+        return ctx.linkify_with_label(
+            (item.get("ref") or "").strip(), label_override=(item.get("label") or "").strip() or None
+        )
 
     # Back-compat alias: callers in older templates still use the legacy
     # `format_defect_findings` name. New code uses `format_weakness_findings`.
@@ -808,14 +888,15 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
     def format_mitigation_addresses(items: list[dict[str, Any]]) -> str:
         if not items:
             return "—"
-        parts = []
-        for it in items:
-            ref = _normalize_finding_label(it.get("ref") or it.get("id", ""))
-            label = it.get("label", "").strip()
-            line = f"[{ref}](#{ref.lower()})"
-            if label:
-                line += f" — {label}"
-            parts.append(line)
+        # Canonical full form (ID — label (`file:line`)), consistent with every
+        # other Addresses/Findings column; linkify_with_label normalises the
+        # locator from the curated fragment label.
+        parts = [
+            ctx.linkify_with_label(
+                it.get("ref") or it.get("id", ""), label_override=(it.get("label") or "").strip() or None
+            )
+            for it in items
+        ]
         return "<br/>".join(parts)
 
     def format_strengths_mitigates(items: list[dict[str, Any]] | list[str]) -> str:
@@ -844,11 +925,9 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
                 # readable — full titles live in §8.
                 if label and len(label) > 60:
                     label = label[:57].rstrip(" ,;") + "…"
-                if label:
-                    parts.append(f"[{ref}](#{ref.lower()}) — {label}")
-                else:
-                    # Fall back to context lookup so we never emit a bare link.
-                    parts.append(ctx.linkify_with_label(ref))
+                # Route through linkify_with_label so the locator is normalised
+                # (stripped from the curated label, re-appended backticked).
+                parts.append(ctx.linkify_with_label(ref, label_override=label or None))
             else:
                 parts.append(ctx.linkify_with_label(str(it)))
         return "<br/>".join(parts)
@@ -1606,6 +1685,79 @@ _CWE_CLASS_NAMES = {
 }
 
 
+def _evidence_locator(t: dict) -> str:
+    """Full ``file[:line]`` locator from a finding's evidence, or "" when none.
+
+    Accepts evidence as a dict or a list-of-dicts (first entry wins), mirroring
+    the two shapes ``_canonical_finding_title`` already handles."""
+    ev = t.get("evidence") or {}
+    if isinstance(ev, list):
+        ev = ev[0] if ev and isinstance(ev[0], dict) else {}
+    if not isinstance(ev, dict):
+        return ""
+    f = (ev.get("file") or "").strip()
+    if not f:
+        return ""
+    ln = ev.get("line")
+    return f"{f}:{ln}" if ln is not None else f
+
+
+def _mitigation_locator(m: dict, threats_by_id: dict[str, dict]) -> str:
+    """Full ``file[:line]`` locator for a mitigation. Prefers its own
+    ``file``/``location`` field; falls back to the first finding it addresses so
+    a measure still carries a code anchor when its yaml omits one."""
+    raw = (m.get("file") or m.get("location") or "").strip()
+    if raw:
+        mm = re.search(r"([\w./\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?)", raw)
+        if mm:
+            return mm.group(1)
+    for a in m.get("threat_ids") or m.get("addresses") or []:
+        t = threats_by_id.get(str(a).strip().upper())
+        if t:
+            loc = _evidence_locator(t)
+            if loc:
+                return loc
+    return ""
+
+
+def _basename_locator(loc: str) -> str:
+    """``path/to/file.ts:76`` → ``file.ts:76`` (basename, line kept)."""
+    if not loc:
+        return ""
+    path, sep, line = loc.partition(":")
+    base = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return f"{base}:{line}" if sep else base
+
+
+# A trailing file locator token: `path/file.ext[:line[-line]]`, optionally
+# backticked. Requires a real extension or a `:line` so prose words / acronyms
+# like "(IDOR)" are never mistaken for a locator. The `(?:-\d+)?` range branch
+# lets a `file.ts:20-25` tail be recognised (and stripped) as one unit.
+_TRAILING_LOC_TOKEN = r"`?[\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?`?"
+
+
+def _strip_trailing_locator(label: str) -> str:
+    """Remove a trailing file locator from a label in ANY form it ships:
+    ``… (`a/b.ts:12`)``, ``… (a/b.ts:12)``, ``… — a/b.ts:12``, or ``… a/b.ts:12``.
+
+    The canonical reference form (``linkify_with_label``) appends its own
+    ``(`file:line`)`` from the location index, so the label itself must carry no
+    locator or it would double. Leaves prose and non-locator parentheticals
+    (``(IDOR)``) untouched. Idempotent."""
+    if not label:
+        return label
+    s = label.rstrip()
+    for pat in (
+        rf"\s*\(\s*{_TRAILING_LOC_TOKEN}\s*\)\s*$",  # (file) / (`file`)
+        rf"\s*—\s*{_TRAILING_LOC_TOKEN}\s*$",  # — file:line
+        rf"\s+{_TRAILING_LOC_TOKEN}\s*$",  # bare-space-glued file:line
+    ):
+        s2 = re.sub(pat, "", s)
+        if s2 != s and s2.strip():
+            return s2.rstrip()
+    return s
+
+
 def _canonical_finding_title(t: dict) -> str:
     """Return the canonical short title for a finding in `<weakness class>
     — <file:line>` form.
@@ -1622,9 +1774,31 @@ def _canonical_finding_title(t: dict) -> str:
     Returns the empty string when no input yields a non-trivial label
     (caller decides on a placeholder).
     """
-    cwe_raw = (t.get("cwe") or "").strip()
-    cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
-    class_label = _CWE_CLASS_NAMES.get(cwe_norm.upper(), "")
+    # Prefer the curated register title's weakness-class label so §8's Findings
+    # index + cards stay consistent with §2/§5 and the register summary, which
+    # render ``t['title']`` verbatim. Deriving a *separate* label from the CWE
+    # class name here made §8 diverge (e.g. "Improper Verification of
+    # Cryptographic Signature" vs the register's "Insecure JWT Verification")
+    # — 2026-07-02 user report. The upstream emit_clean_finding_titles enforces
+    # the short title contract; strip any trailing "— file:line" the title may
+    # carry (the yaml threat has it, the merged threat does not) so the evidence
+    # suffix is re-appended uniformly below and BOTH call sites agree. Falls
+    # back to the CWE-class derivation only when no usable short title exists.
+    curated_class = re.sub(r"\s+—\s+.*$", "", (t.get("title") or "").strip()).strip()
+    # A curated title with a leaked code constant (FOO_BAR / DEFAULT_FULL_SCHEMA)
+    # is not a clean class label — fall through to the CWE/token derivation,
+    # which additionally strips package names and over-long token runs. Legit
+    # security acronyms (IDOR, MD5, XXE, SSRF) have no underscore, so they are
+    # preserved and stay consistent with the register.
+    _noisy = re.search(r"[A-Za-z0-9]+_[A-Za-z0-9]", curated_class)
+    class_label = curated_class if (0 < len(curated_class) <= 80 and not _noisy) else ""
+
+    if not class_label:
+        cwe_raw = (t.get("cwe") or "").strip()
+        cwe_norm = (
+            cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
+        )
+        class_label = _CWE_CLASS_NAMES.get(cwe_norm.upper(), "")
     if not class_label:
         # Fallback — derive a short noun phrase from the existing title
         # by stripping the file-suffix and keeping ≤5 non-stopword tokens.
@@ -1860,7 +2034,7 @@ def _validate_known_json_fragments(ctx: RenderContext) -> None:
 def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     project = ctx.yaml_data.get("project") or {}
     meta = ctx.yaml_data.get("meta") or {}
-    remote_url = (meta.get("git") or {}).get("remote_url") or ""
+    remote_url = (meta.get("git") or {}).get("remote_url") or meta.get("repo_url") or ""
 
     # Enrich from repo-local manifest files when the yaml omitted the field.
     # `_read_project_manifest` is polyglot — it tries package.json,
@@ -2148,12 +2322,20 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
         display_title = _strip_label_code(display_title)
         anchor = sec.get("anchor") or _anchor_from_heading(heading)
         children = _toc_children_for_section(ctx, sid, sec)
+        # Identified Actors renders as an unnumbered `### Identified Actors`
+        # subsection of §1 System Overview (peer of "### Scope"). Nest it under
+        # the preceding system_overview ToC entry instead of emitting a
+        # top-level bullet with a half-step "1.5" number that reads as a gap.
+        if sid == "identified_actors" and entries and entries[-1].get("_sid") == "system_overview":
+            entries[-1]["children"].append({"title": display_title, "anchor": anchor})
+            continue
         entries.append(
             {
                 "number": section_number,
                 "title": display_title,
                 "anchor": anchor,
                 "children": children,
+                "_sid": sid,
             }
         )
     return entries
@@ -2319,6 +2501,7 @@ def _toc_children_for_section(ctx: RenderContext, sid: str, sec: dict[str, Any])
     return children
 
 
+from _slug import github_render_slug as _slug_github_render_slug  # noqa: E402  (link targets → GitHub-rendered anchor)
 from _slug import github_slug as _slug_github_slug  # noqa: E402  (R8 — single source of truth)
 
 
@@ -2426,8 +2609,21 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
             f"The other {n_exc} (lower-priority / internal) were not individually assessed at this depth "
             f"(see [§1 Scope](#scope))."
         )
+    # Badge worst-case bullets whose findings anchor a code-verified
+    # (fully_viable) abuse chain. Data-level (per bullet.refs) — no fuzzy
+    # markdown parsing. Empty suffix when no viable chain / abuse skipped.
+    fmap = _verified_chain_map(ctx)
+    verified_suffixes = [_verdict_bullet_badge(b.get("refs") or [], fmap) for b in (data.get("bullets") or [])]
     tpl = env.get_template(section["template"])
-    return tpl.render(data=data, risk_distribution=risk_distribution, scope_coverage=scope_coverage).rstrip() + "\n"
+    return (
+        tpl.render(
+            data=data,
+            risk_distribution=risk_distribution,
+            scope_coverage=scope_coverage,
+            verified_suffixes=verified_suffixes,
+        ).rstrip()
+        + "\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2734,7 +2930,59 @@ def _derive_attack_paths_fallback(threats: list[dict], taxonomy: dict) -> dict:
     }
 
 
+def _has_client_tier(ctx: RenderContext) -> bool:
+    """True when any yaml component classifies into the client/browser tier."""
+    return any(
+        _classify_component_layer(c) == "client" for c in (ctx.yaml_data.get("components") or []) if isinstance(c, dict)
+    )
+
+
+def _drop_victim_paths_without_client_tier(ctx: RenderContext, data: dict) -> None:
+    """Root-cause guard for the whole posture section (T2/G3 + E5).
+
+    A victim-targeting attack path (CSRF/XSS — ``actor == victim-required`` or
+    ``target == victim``) delivers its payload *through a client/browser tier*.
+    On a server-only / CLI product that has no client-tier component, such a
+    path — whether LLM-authored or added by the M-11 gap-filler
+    (``_reconcile_attack_path_membership``, e.g. CSRF via CWE-942) — has no tier
+    to originate from. Rendered anyway it forces a bare undeclared ``BROWSER``
+    node in the heatmap (E5 / ``posture_unknown``) and an orphan glyph in the
+    Top Threats table with no matching diagram arrow (T2/G3).
+
+    Filtering here, at the single data-loading boundary every consumer shares
+    (heatmap arrows, actor legend, consequence arrows, Top Threats table, Top
+    Findings ``Pfad`` column), keeps all of them consistent by construction —
+    instead of a per-renderer guard that must be kept in sync at N call sites.
+    """
+    if not isinstance(data, dict) or _has_client_tier(ctx):
+        return
+    data["attack_paths"] = [
+        ap
+        for ap in (data.get("attack_paths") or [])
+        if not (
+            (ap.get("target") or "application").lower() == "victim"
+            or (ap.get("actor") or "internet-anon").lower() == "victim-required"
+        )
+    ]
+    if isinstance(data.get("actors"), list):
+        data["actors"] = [a for a in data["actors"] if a != "victim-required"]
+
+
 def _load_attack_paths_fragment(ctx: RenderContext, taxonomy: dict, threats: list[dict]) -> dict:
+    """Load the attack-paths fragment and apply the shared victim-path guard.
+
+    Delegates to :func:`_load_attack_paths_fragment_impl` for the raw load /
+    validation / reconciliation, then drops victim-targeting paths when the
+    product has no client tier (see
+    :func:`_drop_victim_paths_without_client_tier`) so every downstream
+    consumer sees the same filtered set.
+    """
+    data = _load_attack_paths_fragment_impl(ctx, taxonomy, threats)
+    _drop_victim_paths_without_client_tier(ctx, data)
+    return data
+
+
+def _load_attack_paths_fragment_impl(ctx: RenderContext, taxonomy: dict, threats: list[dict]) -> dict:
     """Load the LLM-authored fragment if present and well-formed; else
     fall back to the deterministic CWE-derived fragment.
 
@@ -3153,7 +3401,12 @@ def _build_finding_to_chain_map(ctx: RenderContext) -> dict[str, tuple[str, str]
         block_start = m.end()
         block_end = sec_matches[i + 1].start() if i + 1 < len(sec_matches) else len(text)
         block = text[block_start:block_end]
-        src_match = re.search(r"\*\*Source:\*\*\s*\[[FT]-(\d+)\]", block)
+        # `[^\[\n]*` tolerates the severity dot the walkthrough renderer emits
+        # between the label and the ref (`**Source:** 🔴 [F-003]`, see
+        # walkthrough_renderer._source_line) — a plain `\s*` did NOT match the
+        # emoji, so the owner never resolved and the §8 back-link silently never
+        # rendered in production (masked by dotless test fixtures).
+        src_match = re.search(r"\*\*Source:\*\*[^\[\n]*\[[FT]-(\d+)\]", block)
         owner = src_match or re.search(r"\b[FT]-(\d+)\b", title)
         if not owner:
             continue
@@ -4559,20 +4812,19 @@ def _build_strength_clusters(
         addressed_high = sorted(addressed_high, key=_example_sort_key)
 
         # ---- Compact implementations list -------------------------------
+        # The cell lists the control NAMES that make up the cluster — concise
+        # and scannable. The free-text implementation detail (library@version,
+        # flag soup) is deliberately NOT inlined here: it was unreadable in the
+        # cell (multi-clause, mid-token "…" truncation, un-code-formatted tokens
+        # — juice-shop 2026-06-29 screenshot). The full per-control
+        # implementation lives in §7 control assessment, which the Gap column
+        # already points readers to. Names are de-duplicated, order preserved.
         impls: list[str] = []
         for m in non_missing:
             name = m.get("architectural_control") or m.get("canonical_name") or m.get("name") or m.get("control") or "?"
-            impl = m.get("implementation")
-            if isinstance(impl, dict):
-                impl = impl.get("description") or ""
-            impl = (impl or "").strip()
-            # Trim long impl strings to 70 chars max for the cell.
-            if len(impl) > 70:
-                impl = impl[:67].rstrip(" ,;") + "…"
-            if impl and impl.lower() != "none":
-                impls.append(f"{name} — {impl}")
-            else:
-                impls.append(str(name))
+            name = str(name).strip()
+            if name and name not in impls:
+                impls.append(name)
 
         # ---- Mitigates: addressed threats - bypassed ones ---------------
         # Pre-2026-05 this used the (often-empty) `mitigates_findings[]`
@@ -4671,14 +4923,16 @@ _SEV_ICON_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "�
 # P4 = backlog) so the jump-list reflects remediation urgency, not finding
 # severity (2026-05-31 user request).
 _PRIO_ICON_TBL = {"p1": "🔴", "p2": "🟠", "p3": "🟡", "p4": "🟢"}
-# Variant B (2026-06-04 user decision): measures are annotated with a single
-# MONOCHROME circled digit — the colourless parallel to the finding severity
-# dot, where the digit IS the rollout priority (❶ P1, ship now … ❹ P4, backlog).
-# Self-explanatory, so no `P1` text tag is needed alongside it (the earlier
-# fill-ramp `●◕◑○` + text form is superseded). Verified DejaVu-safe (U+2776–2779)
-# so it renders in the WeasyPrint PDF without tofu. The filled glyphs ❶❷❸❹
-# distinguish priority from the OUTLINE ①②③④ used for attack-path classes.
-_PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
+# Fill-ramp (2026-07-04 user request, restored): measures are annotated with a
+# monochrome circle whose FILL encodes rollout priority as a dark→light gray tone
+# (● P1 ship-now, full … ○ P4 backlog, empty). The tonal ramp reads as priority
+# at a glance and needs no `P1` text tag. Chosen over the ❶❷❸❹ digit form (Variant
+# B, 2026-06-04) which the user reverted. Medium-agnostic: the tone lives in the
+# glyph fill, so it survives raw-markdown/GitHub (which strips colour spans) and
+# the WeasyPrint PDF alike. All four glyphs are DejaVu-safe (U+25CF/25D5/25D1/25CB,
+# verified). The mitigation §9 index (M-NNN) stays distinct from the §8 finding
+# dots (🔴🟠🟡🟢) by section + ID prefix.
+_PRIO_RAMP_TBL = {"p1": "●", "p2": "◕", "p3": "◑", "p4": "○"}
 
 # §8 / §9 register jump-list helpers. The index lines used to be bare
 # `[F-NNN](#f-nnn)` chips with no title or criticality, which is unreadable
@@ -4782,7 +5036,7 @@ def _build_register_index(
     ``show_icon=False`` suppresses the leading colour circle and renders the
     text tag only — used by the §10 Mitigations index where the priority is
     the sole signal and the circle was visual noise (2026-06-02 user request:
-    "nur die Prio anzeigen, nicht den farblichen Kreis").
+    show only the priority, not the coloured circle).
     """
     icon_tbl = icon_tbl if icon_tbl is not None else _SEV_ICON_TBL
     chips = []
@@ -4805,7 +5059,7 @@ def _build_register_index(
 
 
 def _measure_prio_prefix(ctx: RenderContext, mid: str) -> str:
-    """Variant-B priority prefix (`❶ `) for a BARE measure chip `[M-NNN]`.
+    """Fill-ramp priority prefix (`● ` for P1) for a BARE measure chip `[M-NNN]`.
 
     The full-label form (`[M-NNN](#m-nnn) — title`) gets this prefix from
     `linkify_with_label`; this helper is for the compact bare-chip cells
@@ -4813,7 +5067,7 @@ def _measure_prio_prefix(ctx: RenderContext, mid: str) -> str:
     that deliberately omit the title but must still carry the same annotation.
     Returns "" when the priority is unknown (no prefix rather than a bare digit).
     """
-    digit = _PRIO_DIGIT_TBL.get(ctx.priority_for_ref(mid), "")
+    digit = _PRIO_RAMP_TBL.get(ctx.priority_for_ref(mid), "")
     return f"{digit} " if digit else ""
 
 
@@ -5276,6 +5530,8 @@ def _build_attack_arrows(
         is_victim_targeting = target == "victim" or actor_slug == "victim-required"
 
         if is_victim_targeting:
+            # A victim path can only reach here when a client tier exists —
+            # _drop_victim_paths_without_client_tier removed them otherwise.
             client_tier = tier_node_by_key.get("client") or "BROWSER"
             victim = actor_node_by_slug.get("victim-required") or "SHOPUSER"
             # Primary attack arrow: attacker → client tier. This is INDIRECT —
@@ -5366,6 +5622,8 @@ def _build_consequence_arrows(
         actor_slug = (ap.get("actor") or "internet-anon").lower()
         is_victim_targeting = target == "victim" or actor_slug == "victim-required"
         if is_victim_targeting:
+            # Victim paths without a client tier were already dropped upstream
+            # by _drop_victim_paths_without_client_tier.
             src = tier_node_by_key.get("client") or "BROWSER"
         else:
             src = tier_node_by_key.get(target) or "SERVER"
@@ -5434,7 +5692,7 @@ _FIG1_TIER_LABEL = {
 # wide strip.
 _FIG1_MAX_TIER_DRAW = 6
 # Uniform component-box footprint so every C-NN box is the SAME size regardless
-# of label length (user: "alle gleich groß"). Fixed width + height + flex
+# of label length (user request: all the same size). Fixed width + height + flex
 # centering. The height fits the worst case (2-line wrapped name + badge) — the
 # box no longer carries a glyph chip, so a compact height never clips.
 _FIG1_COMP_BOX_W = "182px"
@@ -5529,6 +5787,59 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     else:
         src = ctx.figure_basename
     return f"{intro}\n\n![Figure 1 - Architecture & Top Threats]({src})"
+
+
+def _figure2_basename(ctx: RenderContext) -> str:
+    """Figure 2 SVG basename, derived from the Figure 1 basename so both figures
+    share the md stem (`<stem>.figure1.svg` → `<stem>.figure2.svg`)."""
+    base = ctx.figure_basename or "figure1.svg"
+    if ".figure1." in base:
+        return base.replace(".figure1.", ".figure2.")
+    return "figure2.svg"
+
+
+def _render_figure2_svg(ctx: RenderContext, diagram_data: dict) -> str:
+    """Build Figure 2 (the risk-flow heatmap) as a deterministic hand-built SVG,
+    write it next to threat-model.md, and return the image-reference markdown.
+
+    Why SVG instead of the inline Mermaid heatmap: the Mermaid block declares the
+    ELK renderer (nested `direction TB` inside three invisible subgraph columns).
+    The plugin's PDF pipeline bundles ELK, but common Markdown viewers (GitHub,
+    VS Code preview, Obsidian) do NOT — they silently fall back to dagre, which
+    cannot honour the nested directions, so the 3-column layout collapses onto one
+    flat row with floating arrows. The SVG generator computes the layout itself and
+    emits plain primitives that render natively everywhere (mirrors Figure 1).
+
+    Returns "" when the builder yields nothing (missing module, no actor/tier
+    cards) — the caller then falls back to the inline Mermaid block.
+    """
+    try:
+        from figure2_svg import build_figure2_svg
+    except Exception:  # noqa: BLE001 — missing module must never break the section
+        return ""
+    try:
+        svg = build_figure2_svg(diagram_data)
+    except Exception:  # noqa: BLE001 — a builder failure falls back to Mermaid
+        return ""
+    if not (svg or "").strip():
+        return ""
+    basename = _figure2_basename(ctx)
+    (ctx.output_dir / basename).write_text(svg, encoding="utf-8")
+    # Embed logic mirrors Figure 1: inline as a base64 data URI when the skill
+    # persisted `embed_figures` (self-contained md), else a plain relative ref.
+    embed = bool(getattr(ctx, "embed_figures", False))
+    if not embed:
+        try:
+            _sc = json.loads((ctx.output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+            embed = bool(_sc.get("embed_figures"))
+        except (OSError, ValueError):
+            embed = False
+    if embed:
+        b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+        src = f"data:image/svg+xml;base64,{b64}"
+    else:
+        src = basename
+    return f"![Figure 2 - Risk Flow: Actor to Tier to Impact]({src})"
 
 
 def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
@@ -5813,8 +6124,8 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     prop_glyphs: dict[tuple[str, str], list[str]] = {}
     victim_present = False
     victim_props: list[tuple[str, str]] = []  # (client node, glyph) → dotted ··> Shop User
-    # Per-actor colour-coding (user: "die angriffe müssen klar einem akteur
-    # zuordbar sein"). Each malicious actor gets a colour used by its attack
+    # Per-actor colour-coding (user request: attacks must clearly map to an
+    # actor). Each malicious actor gets a colour used by its attack
     # arrows + its legend entry, so any attack traces to its actor by colour.
     # One attacker → one colour (juice-shop); more → distinct colours.
     actor_order: list[str] = []  # malicious actor slugs in first-seen order
@@ -5902,7 +6213,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     # Attack classes are now NAMED directly on their (solid) actor⇒component
     # edges (e.g. "① Injection"), so the diagram is self-explanatory without a
     # decoder legend and the boxes no longer carry a glyph chip (2026-06-14 user
-    # request — "selbsterklärend, ohne eine Tabelle zu öffnen"). The box stays a
+    # request — self-explanatory, without opening a table). The box stays a
     # plain name + 🔴/🟠 finding-count badge.
 
     # Grey legitimate-flow backbone (tier-ordered; corroborated by
@@ -5958,8 +6269,8 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     # ---- Emit the Mermaid block -------------------------------------------
     # Use the ELK layered renderer (same as Figure 2): its crossing-minimisation
     # routes the actor→tier and propagation edges with far fewer edge/box
-    # crossings than the default dagre renderer (2026-05-30 request — "Pfeile
-    # sollen nach Möglichkeit keine anderen Boxen/Pfeile schneiden"). ELK also
+    # crossings than the default dagre renderer (2026-05-30 request — arrows
+    # should, where possible, not cross other boxes/arrows). ELK also
     # aligns same-rank nodes (the actor row, each tier's components) on one line.
     # NB Mermaid flowchart has no fixed node-width — box widths stay content-
     # driven; ELK only equalises their row placement, not their pixel size.
@@ -6033,8 +6344,8 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
 
         def _box_line(cid: str) -> str:
             # Uniform-footprint box: fixed width + height + flex centering so all
-            # C-NN boxes share one size regardless of label length (user: "alle
-            # gleich groß"). The height fits the worst case (2-line wrapped name +
+            # C-NN boxes share one size regardless of label length (user request:
+            # all the same size). The height fits the worst case (2-line wrapped name +
             # badge); content always fits and flex-centres, so nothing overflows
             # the border now that the box no longer carries a glyph chip.
             _sev = comp_sev_count.get(cid) or {}
@@ -6147,11 +6458,11 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             _tb_name.setdefault((_tt, _ft), _nm)
 
     # In-figure legend — a single light reference card. NOT wrapped in a
-    # subgraph (that added an empty title bar + a second border — the "unnötiger
-    # Rand oben" the user flagged). Because the attack classes are NAMED on the
+    # subgraph (that added an empty title bar + a second border — the "unnecessary
+    # top border" the user flagged). Because the attack classes are NAMED on the
     # arrows, the legend only has to explain the line/colour key; it never makes
-    # the reader decode numbers (2026-06-14 user request — "Legende klar
-    # verständlich, nicht überladen; selbsterklärend").
+    # the reader decode numbers (2026-06-14 user request — legend clearly
+    # understandable, not overloaded; self-explanatory).
     def _actor_name(slug: str) -> str:
         return _fig1_label(_FIG1_ACTOR_LABEL.get(slug) or (actor_labels.get(slug) or {}).get("label") or slug)
 
@@ -6228,8 +6539,8 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             prop_idx.append(edge_idx)
             edge_idx += 1
     lines.append("")
-    # Tier bands — all NEUTRAL slate (2026-06-14 user request: "rot nur für
-    # Angriffe und Angreifer verwenden"). The application tier kept a red band
+    # Tier bands — all NEUTRAL slate (2026-06-14 user request: use red only for
+    # attacks and attackers). The application tier kept a red band
     # before, which collided with red = attack; now every tier reads as the same
     # calm horizontal zone and the only red in the figure is the attacker node +
     # its attack arrows. The app tier keeps a marginally thicker stroke for a
@@ -6376,6 +6687,67 @@ def _build_ms_abuse_chain_line(ctx: RenderContext) -> str:
     )
 
 
+def _verified_chain_map(ctx: RenderContext) -> dict[str, list[str]]:
+    """Map each finding id (canonical F-NNN) → the fully-viable abuse-case
+    chain(s) it participates in, read from `.fragments/abuse-cases.json`.
+
+    Only ``fully_viable`` chains qualify — the code-verified, end-to-end
+    exploitable paths (``partially_blocked`` / ``inconclusive`` are excluded,
+    matching ``triage_compute_ranking._detect_verified_abuse_chains``). Used to
+    badge the worst-case bullets in the MS Verdict blockquote with the chain
+    that proves the path end-to-end. Returns {} when the sidecar is missing
+    (quick depth / ``--no-abuse-cases``) or holds no viable chain.
+    """
+    path = ctx.fragments_dir / "abuse-cases.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    fmap: dict[str, list[str]] = {}
+    for c in doc.get("abuse_cases") or []:
+        if c.get("chain_verdict") != "fully_viable":
+            continue
+        cid = str(c.get("id") or "").strip()
+        if not cid:
+            continue
+        for raw in c.get("matched_finding_ids") or []:
+            fid = str(raw).strip().upper()
+            m = re.match(r"^T-(\d+)$", fid)
+            if m:
+                fid = f"F-{m.group(1)}"
+            if not re.match(r"^F-\d+$", fid):
+                continue
+            fmap.setdefault(fid, [])
+            if cid not in fmap[fid]:
+                fmap[fid].append(cid)
+    return fmap
+
+
+def _verdict_bullet_badge(refs: list[str], fmap: dict[str, list[str]]) -> str:
+    """Return the ` — ✓ **end-to-end verified** (AC-…)` suffix for a Verdict
+    bullet whose refs anchor one or more fully-viable abuse chains, else ''.
+
+    The badge makes the code-proven worst-case bullets stand out inside the red
+    blockquote without adding a separate line (see ms-template.md Verdict spec).
+    T-NNN refs are normalised to F-NNN to match ``matched_finding_ids``.
+    """
+    if not fmap or not refs:
+        return ""
+    chains: list[str] = []
+    for r in refs:
+        fid = str(r).strip().upper()
+        m = re.match(r"^T-(\d+)$", fid)
+        if m:
+            fid = f"F-{m.group(1)}"
+        for cid in fmap.get(fid, []):
+            if cid not in chains:
+                chains.append(cid)
+    if not chains:
+        return ""
+    links = ", ".join(f"[{c}](#{c.lower()})" for c in chains)
+    return f" — ✓ **end-to-end verified** ({links})"
+
+
 def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Emit the `### Security Posture at a Glance` section per contract v2.
 
@@ -6450,6 +6822,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         attack_paths_data=attack_paths_data,
         attack_taxonomy=attack_taxonomy,
     )
+
     actor_cards = _build_actor_cards(
         attack_paths_data,
         actor_labels,
@@ -6555,6 +6928,14 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     }
 
     diagram_md = env.get_template("security-posture-diagram.md.j2").render(data=diagram_data)
+
+    # Figure 2 PRIMARY renderer: a deterministic hand-built SVG (portable to
+    # non-ELK Markdown viewers). Falls back to the inline Mermaid block above
+    # (`diagram_md`) when the SVG builder yields nothing. When the SVG is used,
+    # the intro paragraph (emitted inside `diagram_md` by the template) is
+    # re-prepended so the caption text is preserved.
+    figure2_svg_md = _render_figure2_svg(ctx, diagram_data)
+    figure2_block = f"{intro_paragraph}\n\n{figure2_svg_md}" if figure2_svg_md else diagram_md
 
     # ---- Attack-paths bullet list -------------------------------------------
     # Prefix-tolerant lookup: the schema mandates F-NNN ids in the LLM-authored
@@ -6832,7 +7213,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     parts += [
         "**Figure 2 — Risk Flow: Actor → Tier → Impact**",
         "",
-        diagram_md.rstrip(),
+        figure2_block.rstrip(),
         "",
     ]
     legend_md = _build_security_posture_actor_legend(attack_paths_data, attack_taxonomy)
@@ -8377,6 +8758,46 @@ def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment,
     return body
 
 
+def _enrich_affected_components(ctx: RenderContext, items: list[dict] | None) -> None:
+    """Rewrite each item's ``affected_components[]`` into ``{id, name}`` dicts,
+    resolving the display name from the SAME ``_component_lookup`` used by the
+    structural-threats / Top Threats tables. The MS callout fragments
+    (ms-anti-patterns.json, ms-ai-exposure.json) carry bare ``C-NN`` id strings;
+    without this the callout links render as a bare ``[C-02](#c-02)`` while the
+    same component reads ``[C-02](#c-02) — Python Analysis Script Engine``
+    everywhere else. Resolving through the shared lookup guarantees the names
+    are byte-identical across the whole report.
+    """
+    if not items:
+        return
+    components = _component_lookup(ctx)
+
+    def _name_for(cid: str) -> str:
+        comp = components.get(cid) or components.get(cid.upper()) or {}
+        return (comp.get("name") or "").strip()
+
+    for it in items:
+        refs = it.get("affected_components")
+        if not isinstance(refs, list):
+            continue
+        enriched: list[dict[str, str]] = []
+        for r in refs:
+            if isinstance(r, dict):
+                cid = (r.get("id") or "").strip()
+                name = (r.get("name") or "").strip() or _name_for(cid)
+            elif isinstance(r, str):
+                cid = r.strip()
+                name = _name_for(cid)
+            else:
+                continue
+            entry = {"id": cid} if cid else {}
+            if name:
+                entry["name"] = name
+            if entry:
+                enriched.append(entry)
+        it["affected_components"] = enriched
+
+
 def _render_architectural_anti_patterns(ctx: RenderContext, env: jinja2.Environment) -> str:
     """Render the optional '### Architectural Anti-Patterns' MS callout.
 
@@ -8394,6 +8815,7 @@ def _render_architectural_anti_patterns(ctx: RenderContext, env: jinja2.Environm
     _validate_fragment("architectural_anti_patterns", data, "anti-patterns.schema.json")
     if not (data.get("anti_patterns") or []):
         return ""
+    _enrich_affected_components(ctx, data.get("anti_patterns"))
     tpl = env.get_template("anti-patterns.md.j2")
     return tpl.render(data=data)
 
@@ -8418,6 +8840,7 @@ def _render_ai_exposure(ctx: RenderContext, env: jinja2.Environment) -> str:
     _validate_fragment("ai_exposure_ms", data, "ai-exposure.schema.json")
     if not (data.get("ai_risks") or []):
         return ""
+    _enrich_affected_components(ctx, data.get("ai_risks"))
     tpl = env.get_template("ai-exposure.md.j2")
     section7_present = bool(ctx.eval_context.get("render_security_architecture", True))
     body = tpl.render(data=data, section7_present=section7_present)
@@ -8630,9 +9053,18 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
                 continue
             seen_fids.add(visible)
             member_threats.append(t)
-            short = _strip_finding_location(
-                t.get("title") or t.get("scenario_short") or _canonical_finding_title(t) or visible
+            # Canonical label (class title, locator-free) + the backticked
+            # basename:line locator, mirroring linkify_with_label's full form —
+            # the cell keeps its severity span and `→ component` link, so it
+            # composes the pieces by hand but uses the SAME label + location
+            # sources so the format stays uniform (locator always backticked).
+            short = ctx.lookup_label(visible) or _strip_trailing_locator(
+                _strip_finding_location(
+                    t.get("title") or t.get("scenario_short") or _canonical_finding_title(t) or visible
+                )
             )
+            _loc = ctx.location_for_ref(visible)
+            _loc_suffix = f" (`{_loc}`)" if _loc else ""
             c_anchor, _c_name = resolve_component(t.get("component") or t.get("component_id"))
             # Keep the atomic units non-breaking — the bullet+finding id and the
             # `→ component` link — but let the title wrap on normal spaces so a
@@ -8654,10 +9086,14 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             # (user request 2026-06). Keep the id+dot and the `→ component`
             # link non-breaking so an F-NNN / C-NN id never wraps mid-token;
             # the title between them still wraps on normal spaces.
+            # Component link carries its NAME (not a bare ID) — consistent with
+            # Top Mitigations / §2.3. The `→ [C-NN]` stays non-breaking; the name
+            # sits OUTSIDE the span so it wraps with the rest of the cell.
+            _c_suffix = f"&nbsp;{_c_name}" if _c_name and _c_name != c_anchor else ""
             finding_cells.append(
                 f'<span style="white-space:nowrap">{f_prefix}[{visible}](#{visible.lower()})</span>'
-                f" — {short} "
-                f'<span style="white-space:nowrap">→&nbsp;[{c_anchor}](#{c_anchor.lower()})</span>'
+                f" — {short}{_loc_suffix} "
+                f'<span style="white-space:nowrap">→&nbsp;[{c_anchor}](#{c_anchor.lower()})</span>{_c_suffix}'
             )
 
         # Risk = max severity across member findings.
@@ -8837,13 +9273,12 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             body = _render_by_id(ctx, env, sid, sec)
         else:
             raise ContractError(f"unsupported fragment_type for MS subsection {sid}: {ftype}")
-        if sid == "verdict":
-            # Append the deterministic abuse-chain provenance note INSIDE the
-            # verdict block (not as a new subsection) so the MS structure
-            # contract is unaffected. No-ops when no verified chain exists.
-            chain_note = _abuse_chain_ms_note(ctx)
-            if chain_note:
-                body = (body.rstrip() + "\n\n" + chain_note) if body.strip() else chain_note
+        # The generic "Attack-chain analysis" note (findings anchoring chains,
+        # with F-NNN ids) was removed from the verdict block 2026-07-05: it
+        # duplicated the abuse-case integration and violated verdict brevity
+        # (no F-/T-NNN in the verdict). The abuse cases are now surfaced ONCE,
+        # properly, by _build_ms_abuse_chain_line ("Verified attack chains …",
+        # AC-T-NNN) in the Security Posture section below.
         if body.strip():
             parts.append(body.rstrip())
     return "\n\n".join(parts) + "\n"
@@ -9285,6 +9720,14 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # these markdown-fragment tables match the computed-section convention.
     md = _enrich_linked_id_cells(ctx, md)
 
+    # Normalise the trailing locator on every finding/mitigation reference,
+    # fragment-agnostic: an un-backticked `(path/file:line)` directly after an
+    # `[ID](#id) — label` is backticked and basenamed in place. Already-
+    # backticked locators (incl. the Findings index's deliberate full path) are
+    # skipped. This is the catch-all for LLM-fragment-authored cross-references
+    # (e.g. the §7 control tables) that never went through linkify_with_label.
+    md = _normalize_reference_locators(md)
+
     # §5 Attack Surface + §7 Security Architecture author their finding
     # cross-references WITHOUT the severity dot (the §5 entry-point tables and
     # the §7 control tables / DiD bullets). Prefix each with its criticality
@@ -9475,13 +9918,11 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         include_titles = len(th_ids) <= 15
 
         def _format_threat_link(tid: str) -> str:
-            th = threats_by_id.get(tid) if isinstance(threats_by_id, dict) else None
-            title = (th or {}).get("title") if isinstance(th, dict) else None
-            if not title:
-                title = ctx.lookup_label(tid)  # synthesise from scenario when title: ""
-            if include_titles and title:
-                return f"[{tid}](#{tid.lower()}) — {title}"
-            return f"[{tid}](#{tid.lower()})"
+            # Canonical reference form: full (ID — label (`file:line`)) by
+            # default, compact (ID only) for pathological 15+ -threat cells.
+            # Routing through linkify_with_label keeps the locator backticked
+            # and the label locator-free (no raw-title `(file)` leakage).
+            return ctx.linkify_with_label(tid, compact=not include_titles)
 
         th_links = [_format_threat_link(t) for t in th_ids]
         # Stack threat links with <br/> so each sits on its own line in
@@ -9788,6 +10229,53 @@ def _section7_inline_findings_id_only(ctx: RenderContext, md: str) -> str:
     return "\n".join(lines)
 
 
+def _section7_title_relevant_findings(ctx: RenderContext, md: str) -> str:
+    """§7 consistency (2026-07-02 user request): give every finding link inside
+    a §7 bullet the same short register title used in §5/§8, so §7 references are
+    never a bare ID or a rationale-sentence-only label.
+
+    ``_section7_inline_findings_id_only`` deliberately SKIPS bullet lines
+    ("keep the title") — but the LLM authors the ``**Relevant findings**``
+    bullets as ``- 🔴 [F-NNN](#f-nnn) — <relevance rationale>`` with no title, so
+    nothing actually titles them. This pass rewrites each bare-ID finding link in
+    a §7 bullet to ``[F-NNN — <class title>](#f-nnn)`` and LEAVES the trailing
+    rationale intact. Only bare-ID links match, so it is idempotent and never
+    touches an already-titled link. Scoped strictly to the §7 chapter."""
+    lines = md.split("\n")
+    start, end = _section7_region_bounds(lines)
+    if start < 0:
+        return md
+    region = "\n".join(lines[start:end])
+    label_map: dict[str, str] = {}
+    for ref in set(re.findall(r"\[(F-\d{3,4})\]\(#f-\d+\)", region)):
+        label = (ctx.lookup_label(ref) or "").strip()
+        short = label.split(" — ", 1)[0].strip()
+        short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()
+        if short:
+            label_map[ref] = short
+    if not label_map:
+        return md
+
+    _bullet_re = re.compile(r"^\s*-\s")
+    _bare_link_re = re.compile(r"\[(F-\d{3,4})\]\(#f-\d+\)")
+
+    def _title_link(m: re.Match[str]) -> str:
+        ref = m.group(1)
+        short = label_map.get(ref)
+        return f"[{ref} — {short}](#{ref.lower()})" if short else m.group(0)
+
+    in_fence = False
+    for i in range(start, end):
+        line = lines[i]
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or not _bullet_re.match(line):
+            continue
+        lines[i] = _bare_link_re.sub(_title_link, line)
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Enrich markdown-fragment tables whose columns link Threat / Mitigation /
 # Finding IDs. Prior LLM-authored fragments emitted bare `[T-003](#t-003)`
@@ -10019,7 +10507,7 @@ def _wrap_segment_words(seg: str, width: int) -> str:
 _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
     {
         ("Method", "Route", "Risk", "Notes"),
-        ("Asset", "ID", "Classification", "Description", "Linked Threats"),
+        ("Asset", "Classification", "Description", "Linked Threats"),
         ("Strength", "What's in Place", "Effectiveness", "Gap", "Mitigates"),
     }
 )
@@ -10113,6 +10601,28 @@ def _normalize_table_column_widths(md: str) -> str:
             new_cells.append((":" if left else "") + ("-" * w) + (":" if right else ""))
         lines[sep_idx] = "|" + "|".join(new_cells) + "|"
     return "\n".join(lines)
+
+
+_REF_TRAILING_LOC_RE = re.compile(
+    r"(\[[FTM]-\d+\]\(#[ftm]-\d+\)[^\n|\[<]*?)"  # a finding/mitigation link + its (locator-free) label
+    r"\((?!`)([\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?)\)"  # an un-backticked (path/file[:line[-line]]) right after
+)
+
+
+def _normalize_reference_locators(md: str) -> str:
+    """Backtick + basename an un-backticked locator that trails a finding/
+    mitigation reference. Fragment-agnostic catch-all for cross-references that
+    bypassed ``linkify_with_label`` (LLM-authored §7 control tables etc.).
+
+    Already-backticked locators are skipped by the ``(?!`)`` guard, so the
+    Findings index's deliberate full path is preserved. The gap between the link
+    and the locator forbids ``[`` / ``<`` / ``|`` so a locator is never attached
+    across a sibling reference, an HTML tag, or a table-cell boundary."""
+
+    def _repl(m: re.Match[str]) -> str:
+        return f"{m.group(1)}(`{_basename_locator(m.group(2))}`)"
+
+    return _REF_TRAILING_LOC_RE.sub(_repl, md)
 
 
 def _enrich_linked_id_cells(ctx: RenderContext, md: str) -> str:
@@ -10289,9 +10799,17 @@ def _linkify_section_refs(md: str) -> str:
     heading_re = re.compile(r"^(#{2,4})\s+(\d+(?:\.\d+(?:\.\d+)?)?)[\.\s]+(.+?)\s*$", re.MULTILINE)
     for m in heading_re.finditer(md):
         hashes, num, title = m.group(1), m.group(2), m.group(3)
-        # Slug uses the FULL heading text (number + title) per
-        # _anchor_from_heading semantics — the GFM convention.
-        slug = _anchor_from_heading(f"{hashes} {num} {title}")
+        # Slug uses the FULL heading text (number + title). Build the LINK
+        # TARGET with github_render_slug — the anchor GitHub/pandoc ACTUALLY
+        # render — NOT github_slug (the collapsed generator form). The two
+        # diverge for any heading carrying ` / `, ` & `, ` — ` (e.g.
+        # `7.9.2 Secret / Key Management` → GitHub `#792-secret--key-management`
+        # but github_slug `#792-secret-key-management`), so a github_slug target
+        # dangled on every §N.M prose ref into such a subsection. toc_closure
+        # already verifies with render_slug, so this makes generator and checker
+        # agree. Non-divergent headings are byte-identical under both functions,
+        # so no working link changes (juice-shop 2026-07-02).
+        slug = _slug_github_render_slug(f"{hashes} {num} {title}")
         slug_map.setdefault(num, slug)
 
     if not slug_map:
@@ -10370,6 +10888,22 @@ def _linkify_section_refs(md: str) -> str:
             i = close + 1
         return "".join(out_parts)
 
+    # Repair ALREADY-linked section refs whose anchor is stale/wrong. An
+    # LLM-authored fragment sometimes hand-writes `[§7.9.2](#792-secret-key-management)`
+    # with its own (collapsed, or mis-numbered) anchor guess; the outside-link
+    # substitution above deliberately skips inside-link spans, so such a link
+    # would ship broken. This pass recomputes the anchor from the §-number in
+    # the VISIBLE label (authoritative) against the same slug_map, but ONLY when
+    # the label is exactly `§N(.M(.K)?)` — so it can never nest a link or touch a
+    # titled link like `[§7.2 Identity …](#…)`. No-op when the anchor already
+    # matches (juice-shop 2026-07-02).
+    _PRELINKED_REF_RE = re.compile(r"\[§(\d+(?:\.\d+){0,2})\]\(#[^)]+\)")
+
+    def _fix_prelinked(m: re.Match[str]) -> str:
+        num = m.group(1)
+        slug = slug_map.get(num)
+        return f"[§{num}](#{slug})" if slug else m.group(0)
+
     out_lines: list[str] = []
     in_fence = False
     for chunk in re.split(r"(```[^\n]*\n.*?\n```|<!--.*?-->)", md, flags=re.DOTALL):
@@ -10381,7 +10915,8 @@ def _linkify_section_refs(md: str) -> str:
             if re.match(r"^\s{0,3}#{1,6}\s", line):
                 # Heading line — never linkify §-refs in headings
                 continue
-            lines[i] = _sub_outside_link_labels(line)
+            line = _sub_outside_link_labels(line)
+            lines[i] = _PRELINKED_REF_RE.sub(_fix_prelinked, line)
         out_lines.append("\n".join(lines))
     return "".join(out_lines)
 
@@ -10408,6 +10943,105 @@ def _linkify_bare_cwes(md: str) -> str:
         else:
             out_chunks.append(_CWE_BARE.sub(_linkify, chunk))
     return "".join(out_chunks)
+
+
+_CWE_TAXONOMY_CACHE: dict[str, Any] | None = None
+
+
+def _load_cwe_taxonomy() -> dict[str, Any]:
+    """Lazy-load and cache the ``cwes`` map from ``data/cwe-taxonomy.yaml``
+    (``{"CWE-798": {"title": …, "url": …}, …}``). Empty on absence/parse error
+    — callers fall back to a title-less MITRE URL derived from the CWE number."""
+    global _CWE_TAXONOMY_CACHE
+    if _CWE_TAXONOMY_CACHE is not None:
+        return _CWE_TAXONOMY_CACHE
+    candidate = PLUGIN_ROOT / "data" / "cwe-taxonomy.yaml"
+    try:
+        data = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
+        _CWE_TAXONOMY_CACHE = data.get("cwes") or {}
+    except Exception:
+        _CWE_TAXONOMY_CACHE = {}
+    return _CWE_TAXONOMY_CACHE
+
+
+def _cwe_reference_link(num: str) -> str:
+    """``798`` → ``[CWE-798: Use of Hard-coded Credentials](https://cwe.mitre.org/…)``.
+    Falls back to a title-less ``[CWE-798](url)`` when the CWE is not in the
+    taxonomy (URL is always derivable from the number)."""
+    entry = _load_cwe_taxonomy().get(f"CWE-{num}") or {}
+    title = (entry.get("title") or "").strip()
+    url = (entry.get("url") or "").strip() or f"https://cwe.mitre.org/data/definitions/{num}.html"
+    label = f"CWE-{num}: {title}" if title else f"CWE-{num}"
+    return f"[{label}]({url})"
+
+
+# Short human-readable source tag per reference host, prefixed onto the derived
+# link title so a bare URL renders as a titled, self-describing link.
+_REFERENCE_HOST_SOURCE = {
+    "cheatsheetseries.owasp.org": "OWASP Cheat Sheet",
+    "genai.owasp.org": "OWASP GenAI",
+    "owasp.org": "OWASP",
+    "docs.github.com": "GitHub Docs",
+    "docs.sigstore.dev": "Sigstore Docs",
+}
+
+
+def _humanize_url_slug(seg: str) -> str:
+    """``SQL_Injection_Prevention_Cheat_Sheet`` → ``SQL Injection Prevention
+    Cheat Sheet``; ``llm06-excessive-agency`` → ``LLM06 Excessive Agency``."""
+    seg = re.sub(r"\.html?$", "", seg)
+    seg = seg.replace("_", " ").replace("-", " ").strip()
+    words: list[str] = []
+    for w in seg.split():
+        if re.fullmatch(r"llm\d+", w, re.IGNORECASE):
+            words.append(w.upper())
+        elif re.fullmatch(r"[A-Z0-9]{2,}", w):  # already an acronym (SQL, XSS, CI)
+            words.append(w)
+        else:
+            words.append(w.capitalize())
+    return " ".join(words)
+
+
+def _reference_link_title(url: str) -> str:
+    """Derive a human-readable link title from a bare reference URL. Uses the
+    last meaningful path segment (fragment/query stripped), prefixed with a
+    per-host source tag. Never empty — falls back to the host."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    source = _REFERENCE_HOST_SOURCE.get(host, host)
+    segs = [s for s in parsed.path.split("/") if s]
+    # Skip a trailing generic segment ("overview", "index") in favour of a more
+    # descriptive parent (…/cosign/signing/overview/ → "Signing").
+    label = ""
+    for seg in reversed(segs):
+        cand = _humanize_url_slug(seg)
+        if cand and cand.lower() not in {"overview", "index", "en", "latest", "main"}:
+            label = cand
+            break
+    if not label:
+        return source
+    # Avoid stutter when the slug already leads with the source words.
+    if label.lower().startswith(source.lower()):
+        return label
+    return f"{source}: {label}"
+
+
+def _normalize_reference(ref: str) -> str:
+    """Render a mitigation ``reference`` value as a consistent, titled Markdown
+    link. Handles the two shapes the analyst ships raw: a bare ``CWE-NNN`` and a
+    bare URL. Idempotent for values already containing a Markdown link; passes
+    free-text through (linkifying any embedded bare CWEs)."""
+    ref = (ref or "").strip()
+    if not ref or "](" in ref:  # empty, or already a Markdown link
+        return ref
+    m = re.fullmatch(r"CWE-(\d+)", ref, re.IGNORECASE)
+    if m:
+        return _cwe_reference_link(m.group(1))
+    if re.fullmatch(r"https?://\S+", ref):
+        return f"[{_reference_link_title(ref)}]({ref})"
+    return _linkify_bare_cwes(ref)
 
 
 # ---------------------------------------------------------------------------
@@ -10894,11 +11528,22 @@ def _escape_dot_tld_identifiers(md: str) -> str:
         return f"`{full}`"
 
     for chunk in re.split(
-        r"(```[^\n]*\n.*?\n```|`[^`\n]+`|<!--.*?-->|\[[^\]]+\]\([^)]+\))",
+        r"(```[^\n]*\n.*?\n```|`[^`\n]+`|<!--.*?-->|\[[^\]]+\]\([^)]+\)|https?://[^\s<>()\]]+)",
         md,
         flags=re.DOTALL,
     ):
-        if chunk.startswith("```") or chunk.startswith("`") or chunk.startswith("<!--") or chunk.startswith("["):
+        if (
+            chunk.startswith("```")
+            or chunk.startswith("`")
+            or chunk.startswith("<!--")
+            or chunk.startswith("[")
+            or chunk.startswith("http://")
+            or chunk.startswith("https://")
+        ):
+            # Bare URLs (not just markdown-link syntax) are protected too —
+            # a domain segment inside a plain `https://owasp-juice.shop` would
+            # otherwise be treated as a standalone ccTLD-shaped token and
+            # backtick-wrapped mid-URL, corrupting the link (juice-shop 2026-07-02).
             out_chunks.append(chunk)
         else:
             out_chunks.append(_DOT_IDENT_TLD_RE.sub(_wrap_if_unknown, chunk))
@@ -10988,6 +11633,111 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
                 make_sub(line, _strip.startswith("|")),
                 line,
             )
+        out_chunks.append("\n".join(lines))
+    return "".join(out_chunks)
+
+
+# A plain-text finding id (`F-012`) and a component-scoped analyst id
+# (`auth-001`, `b2b-api-002`, `express-backend-016`) as they appear in
+# LLM-authored prose. The component-scoped form requires a trailing `-NNN`.
+_BARE_FNNN_RE = re.compile(r"(?<![\w/#-])(F-\d{2,4})(?![\w-])")
+_BARE_LOCAL_ID_RE = re.compile(r"(?<![\w/#-])([a-z][a-z0-9]*(?:-[a-z0-9]+)*-\d{3})(?![\w-])")
+# Opaque spans we must NOT rewrite inside: backtick code, full markdown links,
+# link TEXT brackets, HTML tags/anchors.
+_PROSE_MASK_RE = re.compile(r"`[^`]+`|\[[^\]]*\]\([^)]*\)|<[^>]+>")
+
+
+def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
+    """Linkify finding references that LLM prose wrote as plain text:
+
+      * a bare canonical id ``F-012`` → ``[F-012](#f-012)`` (the §3
+        key-takeaway "F-012 is exploitable at …" lines), and
+      * a bare component-scoped analyst id ``auth-001`` / ``chatbot-003`` /
+        ``express-backend-016`` (the merge-time ``local_id`` of a finding) →
+        the canonical ``[F-NNN](#f-nnn)`` it became, so "(see auth-001)" style
+        cross-references resolve.
+
+    No label is appended — these are mid-sentence citations; the severity-dot
+    retrofit later prefixes the glyph. Skips code fences, headings, and any
+    text already inside a backtick span / markdown link / HTML tag, so existing
+    links and code are never touched. Runs once, globally, after the
+    per-section label enrichment."""
+    threats = (ctx.yaml_data or {}).get("threats") or []
+    f_exists: set[str] = set()
+    local_to_f: dict[str, str] = {}
+    for t in threats:
+        tid = (t.get("id") or t.get("t_id") or "").strip().upper()
+        m = re.match(r"^[TF]-(\d+)$", tid)
+        if not m:
+            continue
+        fid = f"F-{m.group(1)}"
+        f_exists.add(fid)
+        lv = (t.get("local_id") or "").strip().lower()
+        if lv:
+            local_to_f.setdefault(lv, fid)
+        for cr in t.get("consolidated_refs") or []:
+            if isinstance(cr, str) and cr.strip():
+                local_to_f.setdefault(cr.strip().lower(), fid)
+    if not f_exists:
+        return md
+
+    def _link(fid: str) -> str:
+        return f"[{fid}](#{fid.lower()})"
+
+    def _rewrite_run(run: str) -> str:
+        run = _BARE_FNNN_RE.sub(lambda m: _link(m.group(1)) if m.group(1) in f_exists else m.group(0), run)
+        run = _BARE_LOCAL_ID_RE.sub(
+            lambda m: _link(local_to_f[m.group(1).lower()]) if m.group(1).lower() in local_to_f else m.group(0),
+            run,
+        )
+        return run
+
+    def _process_line(line: str) -> str:
+        out: list[str] = []
+        pos = 0
+        for mm in _PROSE_MASK_RE.finditer(line):
+            if mm.start() > pos:
+                out.append(_rewrite_run(line[pos : mm.start()]))
+            out.append(mm.group(0))  # opaque span — passthrough
+            pos = mm.end()
+        if pos < len(line):
+            out.append(_rewrite_run(line[pos:]))
+        return "".join(out)
+
+    out_chunks: list[str] = []
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL):
+        if chunk.startswith("```"):
+            out_chunks.append(chunk)
+            continue
+        lines = chunk.split("\n")
+        for i, line in enumerate(lines):
+            if re.match(r"^\s{0,3}#{1,6}\s", line) or '<a id="' in line:
+                continue  # headings + anchor-declaration rows untouched
+            lines[i] = _process_line(line)
+        out_chunks.append("\n".join(lines))
+    return "".join(out_chunks)
+
+
+def _codify_inline_code_in_prose(md: str) -> str:
+    """Backtick un-marked inline code (member access, calls, dotted refs, file
+    paths, UPPER_SNAKE env/secret names) across ALL prose — the §3 walkthrough
+    steps and §8/§10 Issue/Evidence/Fix/How cards are LLM-authored and backtick
+    code only inconsistently (juice-shop 2026-06-29 screenshots). Reuses the
+    span-masking ``_codify_inline_identifiers`` so existing backtick spans,
+    markdown links, and HTML tags are never touched; only adds the missing
+    monospacing. Skips fenced code blocks and heading lines. Idempotent."""
+    if not md:
+        return md
+    out_chunks: list[str] = []
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL):
+        if chunk.startswith("```"):
+            out_chunks.append(chunk)
+            continue
+        lines = chunk.split("\n")
+        for i, line in enumerate(lines):
+            if re.match(r"^\s{0,3}#{1,6}\s", line):
+                continue  # heading
+            lines[i] = _codify_inline_identifiers(line)
         out_chunks.append("\n".join(lines))
     return "".join(out_chunks)
 
@@ -11104,31 +11854,39 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
 
 
 _MITIGATION_CIRCLE_REF_RE = re.compile(
-    # Same `&nbsp;` / bullet tolerance as _FINDING_DOT_REF_RE so an
-    # already-circled `❶&nbsp;[M-001]` / `→ ❶ [M-002]` ref is skipped.
-    r"(?P<circ>[❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))"
+    # Same `&nbsp;` / bullet tolerance as _FINDING_DOT_REF_RE so an existing
+    # `●&nbsp;[M-001]` / `→ ● [M-002]` prefix can be retained or normalized
+    # without changing its separator. The class keeps the superseded ❶❷❸❹ digits
+    # so a stale glyph from an older render is stripped and re-mapped to the ramp.
+    r"(?P<circ>[●◕◑○❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))"
 )
 
 
 def _prepend_mitigation_prio_circles(ctx: RenderContext, md: str) -> str:
     """Prefix every mitigation cross-reference ``[M-NNN](#m-nnn)`` with its
-    rollout-priority circle (❶ P1 … ❹ P4) — the colourless parallel to the
-    finding severity dot. Brings §3 Attack Walkthroughs and §9 Abuse Cases in
-    line with §1/§2/§8/§10, where the computed renderers already emit the circle
-    inline via ``linkify_with_label`` / ``_measure_prio_prefix``.
+    rollout-priority circle (● for P1 … ○ for P4) — the colourless parallel to
+    the finding severity dot. Brings §3 Attack Walkthroughs and §9 Abuse Cases
+    in line with §1/§2/§8/§10, where the computed renderers already emit the
+    circle inline via ``linkify_with_label`` / ``_measure_prio_prefix``.
 
-    Idempotent — a ref already preceded by a circle glyph is left untouched.
-    Skips fenced code blocks and inline code spans (same masking as the
-    finding-dot pass).
+    Idempotent — a ref already preceded by the correct circle is unchanged.
+    A stale or incorrectly authored circle is replaced with the priority derived
+    from the structured model. Skips fenced code blocks and inline code spans
+    (same masking as the finding-dot pass).
     """
     if not md:
         return md
 
     def _sub(m: re.Match[str]) -> str:
-        if m.group("circ"):
-            return m.group(0)  # already circled
-        digit = _PRIO_DIGIT_TBL.get(ctx.priority_for_ref(f"M-{m.group('num')}"), "")
-        return f"{digit} {m.group('link')}" if digit else m.group("link")
+        digit = _PRIO_RAMP_TBL.get(ctx.priority_for_ref(f"M-{m.group('num')}"), "")
+        if not digit:
+            return m.group(0)
+        circ = m.group("circ") or ""
+        if circ:
+            # Preserve the original separator (` ` / `&nbsp;` / `•`) while
+            # replacing a stale priority digit. `circ[0]` is one Unicode glyph.
+            return f"{digit}{circ[1:]}{m.group('link')}"
+        return f"{digit} {m.group('link')}"
 
     out_chunks: list[str] = []
     for chunk in re.split(r"(```[^\n]*\n.*?\n```|`[^`\n]+`)", md, flags=re.DOTALL):
@@ -12335,10 +13093,25 @@ def _read_evidence_snippet(repo_root: Path | None, file_path: str, line: int | N
         return None
     lo = max(1, line - context)
     hi = min(len(all_lines), line + context)
-    # Strip trailing newline / cap each line to 200 chars so minified files
-    # never blow up a cell. Preserve indentation.
-    snippet_lines = [all_lines[i].rstrip("\n")[:200] for i in range(lo - 1, hi)]
+    # Strip trailing newline / trim over-long lines so minified files never blow
+    # up a cell. Trim at a WORD boundary (never mid-token) so a long source line
+    # does not render as a broken code token (e.g. `plain: true` → `plain: tr`).
+    # The cap is generous — the PDF soft-wraps long code lines. Preserve indent.
+    snippet_lines = [_trim_code_line(all_lines[i].rstrip("\n")) for i in range(lo - 1, hi)]
     return "\n".join(snippet_lines)
+
+
+_EVIDENCE_MAX_LINE = 400
+
+
+def _trim_code_line(ln: str) -> str:
+    """Trim an over-long code line at a word boundary (never mid-token)."""
+    if len(ln) <= _EVIDENCE_MAX_LINE:
+        return ln
+    cut = ln.rfind(" ", 0, _EVIDENCE_MAX_LINE - 1)
+    if cut < _EVIDENCE_MAX_LINE // 2:  # no sensible space → hard cut
+        cut = _EVIDENCE_MAX_LINE - 1
+    return ln[:cut].rstrip() + " …"
 
 
 def _html_escape_for_pre(text: str) -> str:
@@ -12624,7 +13397,13 @@ def _fix_action_lead(cwe_norm: str) -> str:
 # and never doubles existing backticks.
 _CODE_FILE_RE = re.compile(
     r"(?<![`/\w])"  # not already in backticks or inside a path
-    r"([A-Za-z_][A-Za-z0-9_./\\-]*\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|"
+    # `(?<!\\)` immediately before the extension-dot: a backslash there means
+    # `_escape_dot_tld_identifiers` already deliberately escaped this token as
+    # a known brand name (`Node\.js`) — do not re-match it as a fake ".js file"
+    # and re-wrap it in backticks, which leaks the backslash in the rendered
+    # code span (juice-shop 2026-07-02). Genuine paths (`bar.ts`) are unaffected
+    # since the char right before their extension-dot is never a backslash.
+    r"([A-Za-z_][A-Za-z0-9_./\\-]*(?<!\\)\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|"
     r"yml|yaml|json|xml|toml|ini|env|sh|sql|html|css|scss|md|conf)"
     r"(?::\d+(?:-\d+)?)?)"  # optional :line[-end]
     r"(?![`\w.])"
@@ -12643,9 +13422,22 @@ _CODE_BARE_CALL_RE = re.compile(
 _CODE_DOTTED_RE = re.compile(
     r"(?<![`\w/])"
     r"([a-z][a-zA-Z0-9_]*"
-    r"(?:\.[a-z][a-zA-Z0-9_]*){1,3})"  # req.body / sequelize.query
-    r"(?![`\w(.])"
+    # Inner segments may start uppercase so member chains ending in a
+    # class/constant resolve fully: req.body.UserId, secrets.GITHUB_TOKEN,
+    # process.env.LLM_API_KEY. They must start with a LETTER (not `_`) so a
+    # markdown italic close — `… stay valid._` → `valid` + `._` — is never
+    # mistaken for a dotted member. First segment stays lowercase-anchored so
+    # prose like "U.S." is never wrapped.
+    r"(?:\.[A-Za-z][a-zA-Z0-9_]*){1,3})"
+    # Reject a continuation (`.word`, `(`, word char, backtick) but ALLOW a
+    # trailing sentence period (`.` + space/end) so `… req.user.id.` matches.
+    r"(?![`\w(]|\.\w)"
 )
+# UPPER_SNAKE environment / secret identifiers — GITHUB_TOKEN, NODE_ENV,
+# ORG_ADMIN_TOKEN, LLM_API_KEY. Requires ≥1 underscore so prose acronyms
+# (XSS, CSRF, SQL) are never wrapped. A leading `secrets.`/`process.env.`
+# member is handled by _CODE_DOTTED_RE; this catches the bare token.
+_CODE_ENV_RE = re.compile(r"(?<![`\w.])([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?![`\w])")
 
 
 _CODE_SPAN_MASK_RE = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
@@ -12790,7 +13582,7 @@ def _codify_inline_identifiers(text: str) -> str:
         # The outer span mask only knows about backticks present before this
         # run; spans created here must be protected too.
         run = p
-        for _rx in (_CODE_FILE_RE, _CODE_CALL_RE, _CODE_BARE_CALL_RE, _CODE_DOTTED_RE):
+        for _rx in (_CODE_FILE_RE, _CODE_CALL_RE, _CODE_BARE_CALL_RE, _CODE_DOTTED_RE, _CODE_ENV_RE):
             run = _sub_outside_spans(_rx, run)
         out_parts.append(run)
     # Final pass: absorb un-backticked code that FLANKS an inline span the
@@ -13570,140 +14362,121 @@ def _build_threat_card(
     return f"{anchors}\n{heading}\n\n" + "\n\n".join(fields)
 
 
-def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """§1.5 Identified Actors — table of resolved ACT-* actors with layer, status,
-    finding counts, and per-component relevance (actors.md §14). Conditional on
-    `has_resolved_actors`; gracefully renders empty on legacy / pre-Phase-2.7 runs.
+# Signals live in the recon signal-set; the self-registration state, however, is
+# resolved into `meta` (detect_open_registration.py), not emitted as a signal.
+# The Identified Actors table folds on meta, so alias the rule's condition_signal
+# to its meta key here. Keep in sync with the reach_equivalence_rules note in
+# data/actors/default-library.yaml.
+_ACTOR_FOLD_SIGNAL_TO_META = {"has_open_self_registration": "open_user_registration"}
+
+
+def _actor_fold_map(active_ids: set[str], meta: dict) -> tuple[dict[str, str], dict[str, str]]:
+    """Map non-primary active actors → their primary per default-library
+    reach_equivalence_rules, so the Identified Actors table lists each trust
+    position once and stays consistent with the collapsed Figure.
+
+    A rule folds when `always: true` or when the meta flag aliased from its
+    `condition_signal` is truthy. Both the primary and the child must be active
+    for the fold to apply (a disabled/inactive actor is never a fold target).
+
+    Returns (folded_into, fold_reason): child_id → primary_id and child_id → reason.
     """
-    resolved_path = ctx.output_dir / ".actors-resolved.json"
-    if not resolved_path.is_file():
-        return ""
+    lib_path = PLUGIN_ROOT / "data" / "actors" / "default-library.yaml"
     try:
-        resolved = json.loads(resolved_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
+        rules = (yaml.safe_load(lib_path.read_text(encoding="utf-8")) or {}).get("reach_equivalence_rules") or []
+    except (OSError, yaml.YAMLError):
+        return {}, {}
+    folded: dict[str, str] = {}
+    reason: dict[str, str] = {}
+    for rule in rules:
+        fires = bool(rule.get("always"))
+        if not fires:
+            meta_key = _ACTOR_FOLD_SIGNAL_TO_META.get(rule.get("condition_signal"), rule.get("condition_signal"))
+            fires = bool(meta.get(meta_key))
+        if not fires:
+            continue
+        ids = rule.get("actor_ids") or []
+        primary = rule.get("primary_actor") or (ids[0] if ids else None)
+        if not primary or primary not in active_ids:
+            continue
+        for aid in ids:
+            if aid == primary or aid not in active_ids:
+                continue
+            # Resolve to the root primary in case rules chain (A→B, B→C).
+            root, guard = primary, set()
+            while root in folded and root not in guard:
+                guard.add(root)
+                root = folded[root]
+            folded[aid] = root
+            reason[aid] = rule.get("collapse_reason") or ""
+    return folded, reason
 
-    actors = resolved.get("resolved_actors", []) or []
+
+def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """Threat Actors — §1 table over the SAME consolidated actor taxonomy the
+    Management Summary uses (the posture actors that drive the numbered attack
+    paths), NOT the raw ACT-* discovery library.
+
+    The set is derived from each finding's ``vektor`` — identical to the MS
+    "Threat actors" legend by construction — and the public-repo collapse
+    (``repo-read`` → ``internet-anon``, mirroring ``_collapse_public_repo_actors``)
+    is applied the same way, so §1 and the Management Summary never disagree on
+    who the actors are. Per-actor finding counts and components add the detail
+    the MS legend omits.
+
+    The earlier ACT-* library table (2026-07-05 user request) is gone: it
+    introduced actors absent from the MS (insider-dev / supply-chain /
+    physical-device) and carried process-only sub-subsections (Consolidated /
+    Disabled / proposed / flagged) that were noise in a delivered report.
+    Renders nothing when no finding carries a vektor (legacy runs).
+    """
     threats = ctx.yaml_data.get("threats") or []
+    public_repo = bool((ctx.yaml_data.get("meta") or {}).get("public_source_repo"))
 
-    # Tabulate per-actor finding counts and components.
     counts: dict[str, int] = {}
     components: dict[str, set[str]] = {}
     for t in threats:
-        comp = t.get("component", "")
-        for aid in t.get("actor_ids") or []:
-            counts[aid] = counts.get(aid, 0) + 1
-            if comp:
-                components.setdefault(aid, set()).add(comp)
+        if not isinstance(t, dict):
+            continue
+        vek = (t.get("vektor") or "").strip()
+        if not vek:
+            continue
+        # A committed secret in a PUBLIC repo is readable by any anonymous
+        # attacker, so the repo-reader folds into internet-anon — the same
+        # collapse the MS figures apply (_collapse_public_repo_actors).
+        if public_repo and vek == "repo-read":
+            vek = "internet-anon"
+        counts[vek] = counts.get(vek, 0) + 1
+        comp = (t.get("component") or "").strip()
+        if comp:
+            components.setdefault(vek, set()).add(comp)
 
-    # Load discovery output for inputs_questioned (optional).
-    inputs_questioned: list[dict] = []
-    discovery_path = ctx.output_dir / ".actors-discovered.json"
-    if discovery_path.is_file():
-        try:
-            disc = json.loads(discovery_path.read_text(encoding="utf-8"))
-            inputs_questioned = disc.get("inputs_questioned", []) or []
-        except (OSError, json.JSONDecodeError):
-            pass
+    if not counts:
+        return ""
 
-    lines: list[str] = ['<a id="identified-actors"></a>', "## 1.5 Identified Actors", ""]
+    labels = _load_posture_actor_labels() or {}
+    actor_meta = labels.get("actors") or {}
+    order = labels.get("order") or []
+    present = [a for a in order if a in counts] + sorted(a for a in counts if a not in order)
 
-    # Quick-mode transparency notice (actors.md §12).
-    if (ctx.output_dir / ".discovery-skipped.json").is_file():
-        lines.append(
-            "> _Note: This run used the static actor library only. "
-            "Re-run with `--standard` or `--thorough` to enable LLM-based actor discovery "
-            "for repo-specific actor identification._"
-        )
-        lines.append("")
-
-    active = [a for a in actors if (a.get("_provenance") or {}).get("active")]
-    if active:
-        lines.append("| ID | Label | Layer | Status | Findings | Relevant for |")
-        lines.append("|---|---|---|---|---|---|")
-        for a in sorted(active, key=lambda x: x.get("id", "")):
-            aid = a.get("id", "?")
-            label = a.get("label", "")
-            prov = a.get("_provenance") or {}
-            layer = prov.get("layer", "?")
-            proposed = bool(prov.get("proposed"))
-            status = "proposed" if proposed else "active"
-            if prov.get("stale"):
-                status += " (stale)"
-            display_layer = f"{layer} (proposed)" if proposed else layer
-            comps = sorted(components.get(aid, set()))
-            comps_str = ", ".join(comps) if comps else "_(no findings)_"
-            lines.append(f"| `{aid}` | {label} | {display_layer} | {status} | {counts.get(aid, 0)} | {comps_str} |")
-        lines.append("")
-    else:
-        lines.append("_No actors resolved for this run._")
-        lines.append("")
-
-    proposed_actors = [a for a in active if (a.get("_provenance") or {}).get("proposed")]
-    if proposed_actors:
-        lines.append("### Newly identified actors — please confirm")
-        lines.append("")
-        lines.append(
-            "The following actors were proposed by LLM discovery (Phase 2.7) and are "
-            "active in this run. Promote them to `.appsec/actors.yaml` to stabilize "
-            "them across re-runs (actors.md §8)."
-        )
-        lines.append("")
-        for a in proposed_actors:
-            aid = a.get("id", "?")
-            label = a.get("label", "")
-            rationale = a.get("rationale") or a.get("description", "")
-            suffix = f" — {rationale}" if rationale else ""
-            lines.append(f"- **`{aid}` ({label})**{suffix}")
-        lines.append("")
-
-    if inputs_questioned:
-        lines.append("### Actors flagged for review")
-        lines.append("")
-        lines.append(
-            "Discovery flagged these actors as questionable — recon shows no plausible "
-            "reach for them in this repo. Consider disabling in your next run."
-        )
-        lines.append("")
-        for q in inputs_questioned:
-            qid = q.get("id", "?")
-            reason = q.get("reason", "")
-            rec = q.get("recommendation", "")
-            tail = f" _(recommendation: {rec})_" if rec else ""
-            lines.append(f"- **`{qid}`** — {reason}{tail}")
-        lines.append("")
-
-    disabled = [a for a in actors if (a.get("_provenance") or {}).get("disabled_by")]
-    if disabled:
-        lines.append("### Disabled actors")
-        lines.append("")
-        lines.append("| ID | Label | Disabled by | Reason |")
-        lines.append("|---|---|---|---|")
-        for a in sorted(disabled, key=lambda x: x.get("id", "")):
-            aid = a.get("id", "?")
-            label = a.get("label", "")
-            prov = a.get("_provenance") or {}
-            by = prov.get("disabled_by", "")
-            reason = prov.get("disable_reason") or "_(no reason given)_"
-            lines.append(f"| `{aid}` | {label} | {by} | {reason} |")
-        lines.append("")
-
-    dormant_threats = [t for t in threats if t.get("_status") == "dormant"]
-    if dormant_threats:
-        lines.append("### Dormant findings")
-        lines.append("")
-        lines.append(
-            "Findings preserved across re-runs whose structurally-required actor was "
-            "disabled (actors.md §10 Stable-ID Garantie Fall 3). Re-enable the actor "
-            "in your next run to surface them as live findings again."
-        )
-        lines.append("")
-        for t in dormant_threats:
-            tid = t.get("id", "?")
-            title = t.get("title", "")
-            ca = (t.get("_provenance") or {}).get("created_by_actor", "?")
-            lines.append(f"- **{tid}** — {title} _(was tagged: `{ca}`)_")
-        lines.append("")
+    lines: list[str] = ['<a id="identified-actors"></a>', "### Identified Actors", ""]
+    lines.append(
+        "The consolidated threat actors that drive this model — the same set named "
+        "in the Management Summary. Each row aggregates the findings reachable from "
+        "that actor's position; the **Shop User** appears as the *victim* of "
+        "client-side attacks, not an attacker."
+    )
+    lines.append("")
+    lines.append("| Actor | Role | Reach | Findings | Components |")
+    lines.append("|---|---|---|---|---|")
+    for a in present:
+        m = actor_meta.get(a) or {}
+        name = m.get("label") or _FIG1_ACTOR_LABEL.get(a) or a
+        role = "victim" if (m.get("role") == "victim" or a == "victim-required") else "attacker"
+        reach = m.get("default_subtitle") or "—"
+        comps = ", ".join(sorted(components.get(a, set()))) or "—"
+        lines.append(f"| {name} | {role} | {reach} | {counts.get(a, 0)} | {comps} |")
+    lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -13753,13 +14526,13 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             continue
         deduped.append(t)
     threats = deduped
-    # Tracks whether any finding row carries the `(raw Critical)`
-    # annotation — set inside the per-row loop. When True we emit a
-    # one-line footnote at the end of §8 explaining the convention.
-    has_raw_downgrade = False
-    # M3: tracks whether any row carries an evidence_check marker
-    # (refuted or ambiguous). Drives the §8 evidence-check footnote.
-    has_evidence_drift = False
+    # Coverage-gap entries are OWASP-category placeholders injected when no
+    # STRIDE finding covers a category. They carry no code evidence and must
+    # not appear as F-numbered findings in §8; they belong in the §10
+    # coverage-gap section. Filter them out here so the §8 count and index
+    # reflect only real, evidence-backed findings.
+    _COVERAGE_GAP_SOURCES = {"coverage-gap", "architectural-anti-pattern"}
+    threats = [t for t in threats if t.get("source") not in _COVERAGE_GAP_SOURCES]
     # Tracks whether any row was carried forward from a prior deeper scan
     # without re-verification (incremental depth-downgrade). Drives a
     # depth-independent §8 footnote — unlike the quick-only banner line, this
@@ -13952,14 +14725,10 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         ),
     )
 
-    # Footnote conditions (raw-Critical caps, evidence drift) — detected up
-    # front so the footnotes below render once.
+    # Carried-forward footnote condition — detected up front so the footnote
+    # below renders once. (The raw-Critical and evidence-drift footnotes were
+    # removed 2026-07-05; their detection flags went with them.)
     for t in all_threats_sorted:
-        sev_t = (t.get("risk") or t.get("severity") or "").lower()
-        if (t.get("impact") or "").strip().lower() == "critical" and sev_t != "critical":
-            has_raw_downgrade = True
-        if (t.get("evidence_check") or "").strip().lower() in {"refuted", "ambiguous"}:
-            has_evidence_drift = True
         if (t.get("evidence_check") or "").strip().lower() == "carried-unverified-shallower-depth":
             has_carried_unverified = True
 
@@ -13998,35 +14767,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             )
             lines.append("")
 
-    # ---- §8 footnote: raw-severity convention ----------------------------
-    if has_raw_downgrade:
-        lines.append("---")
-        lines.append("")
-        lines.append(
-            "_**Severity annotation:** rows tagged `*(raw Critical)*` had a "
-            "Critical-class impact that was capped to a lower effective severity "
-            "by the triage stage (likelihood downgrade or `data/severity-caps.yaml` "
-            "rule). The rendered severity is the **effective** severity used for "
-            "ranking and prioritisation; the raw severity is preserved here so "
-            "reviewers can re-evaluate the cap decision._"
-        )
-        lines.append("")
-
-    # ---- §8 footnote: evidence-check convention (M3) ---------------------
-    if has_evidence_drift:
-        lines.append("---")
-        lines.append("")
-        lines.append(
-            "_**Evidence verification:** rows tagged `⚠ (evidence refuted)` "
-            "were re-checked by the Phase 10a evidence-verifier (see "
-            "`.evidence-verification.json`) and the cited `file:line` did "
-            "**not** show the claimed weakness. Their raw severity is preserved, "
-            "but chain-elevation has been suppressed by the triage stage. "
-            "Rows tagged `◌ (evidence ambiguous)` could not be confirmed or "
-            "refuted from the cited snippet alone — a human reviewer should "
-            "decide whether to keep, downgrade, or remove these findings._"
-        )
-        lines.append("")
+    # §8 footnotes for the `(raw Critical)` severity-cap convention and the
+    # `⚠/◌` evidence-check convention were removed per user request
+    # (2026-07-05): the inline markers stay on the rows but the long
+    # explanatory paragraphs are dropped. The carried-forward footnote below
+    # is retained (it flags un-reverified incremental content, not a marker
+    # legend).
 
     # ---- §8 footnote: carried-forward (incremental depth-downgrade) ------
     # Depth-independent so a standard re-scan that downgraded from thorough
@@ -14084,9 +14830,11 @@ _INLINE_CODE_PATTERNS: list[str] = [
     r"|node [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*)",
     # HTTP method + path: `POST /rest/user/login`, `GET /api/Users`.
     r"\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /[A-Za-z0-9_/\-{}.:?=&]+",
-    # File path with extension, optionally followed by :line:
-    # `lib/insecurity.ts:23`, `frontend/src/app.module.ts`, `routes/login.js`.
-    r"\b[A-Za-z_][A-Za-z0-9_./\-]*\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|toml|md|html|css|scss)(?::\d+)?\b",
+    # File path with extension, optionally followed by :line or :line-line:
+    # `lib/insecurity.ts:23`, `frontend/src/app.module.ts`, `routes/x.ts:20-25`.
+    # The range branch `(?:-\d+)?` keeps `file.ts:20-25` a single wrapped token —
+    # without it the `\b` after `:20` splits the span, leaving `-25` un-backticked.
+    r"\b[A-Za-z_][A-Za-z0-9_./\-]*\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|toml|md|html|css|scss)(?::\d+(?:-\d+)?)?\b",
     # JS/TS expressions:
     #   `bcrypt.hash(password, 12)`, `crypto.createHash('md5')`,
     #   `process.env.JWT_PRIVATE_KEY`,
@@ -14168,16 +14916,87 @@ def _wrap_inline_code(text: str) -> str:
     return "".join(out)
 
 
+def _load_sibling_module(name: str):
+    """Import a sibling ``scripts/<name>.py`` module by path.
+
+    Used so compose can reuse another script's pure functions in-process
+    (e.g. the §9 self-heal below) without spawning a subprocess. Raises on a
+    missing/unloadable module — callers that want best-effort behaviour wrap
+    the call in try/except.
+    """
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / f"{name}.py")
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load sibling module {name!r}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _heal_abuse_cases_fragment(ctx: RenderContext) -> str:
+    """Regenerate the §9 fragment in-process from on-disk verdicts.
+
+    The orchestrator normally runs ``scripts/render_abuse_cases.py`` to write
+    ``.fragments/abuse-cases.md`` BEFORE compose. An interrupted or skipped
+    Stage-1c run can leave ``.abuse-case-verdicts.json`` (and the matcher's
+    ``.abuse-case-matches.json``) on disk with viable chains but no fragment —
+    in which case the bare placeholder below would falsely claim "no abuse
+    cases" even though the verified evidence is sitting right there. compose
+    has the exact inputs the standalone renderer uses, so it rebuilds the
+    fragment rather than silently dropping the data. RC-2026-06-29.
+
+    Returns the fragment markdown (also persisted to ``.fragments/`` so the MS
+    abuse-chain line and JSON sidecar stay consistent), or "" when there is
+    genuinely no abuse-case evaluation on disk to recover.
+    """
+    verdicts = ctx.output_dir / ".abuse-case-verdicts.json"
+    matches = ctx.output_dir / ".abuse-case-matches.json"
+    if not verdicts.exists() and not matches.exists():
+        return ""
+    try:
+        rac = _load_sibling_module("render_abuse_cases")
+    except Exception:
+        return ""
+    skill_cfg = _read_skill_config(ctx.output_dir)
+    repo_root = (ctx.yaml_data.get("meta") or {}).get("repository_root") or skill_cfg.get("repo_root") or None
+    op = skill_cfg.get("org_profile") if isinstance(skill_cfg.get("org_profile"), dict) else {}
+    org_profile = op.get("path") if op.get("active") else None
+    try:
+        models = rac.build_models(ctx.output_dir, org_profile, repo_root)
+        catalog_rows = rac.build_catalog_evaluation(ctx.output_dir)
+    except Exception:
+        return ""
+    if not models and not catalog_rows:
+        return ""
+    md = rac.render_fragment(models, catalog_rows)
+    try:
+        ctx.fragments_dir.mkdir(parents=True, exist_ok=True)
+        (ctx.fragments_dir / "abuse-cases.md").write_text(md, encoding="utf-8")
+        (ctx.fragments_dir / "abuse-cases.json").write_text(
+            json.dumps(
+                {"schema_version": 1, "abuse_cases": models, "catalog_evaluated": catalog_rows},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+    return md.strip()
+
+
 def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render §9 Abuse Cases.
 
     The section body is produced deterministically by
     ``scripts/render_abuse_cases.py`` (from ``.abuse-case-verdicts.json`` +
     ``threat-model.yaml``) and dropped at ``.fragments/abuse-cases.md``. This
-    handler inlines that fragment verbatim when present; when it is absent —
-    no org-profile abuse case applied and none was discovered — it emits a
-    single italic placeholder so the §8 → §10 numbering stays contiguous (the
-    contract hard-numbers §10 Mitigation Register / §11 Out of Scope).
+    handler inlines that fragment verbatim when present. When it is absent the
+    handler first attempts an in-process self-heal from on-disk verdicts (see
+    ``_heal_abuse_cases_fragment`` — covers the orchestration gap where the
+    render step was skipped); only when there is genuinely no abuse-case
+    evaluation to recover does it emit a single italic placeholder so the §8 →
+    §10 numbering stays contiguous (the contract hard-numbers §10 Mitigation
+    Register / §11 Out of Scope).
 
     Like every markdown fragment, the first non-blank line must equal the
     contract heading, so a renderer/contract drift is caught here rather than
@@ -14189,6 +15008,8 @@ def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: di
         md = frag.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         md = ""
+    if not md:
+        md = _heal_abuse_cases_fragment(ctx)
     if not md:
         return f"{heading}\n\n_No abuse cases were identified or mandated for this assessment._\n"
     first = next((ln.strip() for ln in md.splitlines() if ln.strip()), "")
@@ -14271,7 +15092,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
     if _m_nums:
         # Each chip carries the mitigation title plus a PRIORITY circle
         # (P1🔴 P2🟠 P3🟡 P4🟢) = the mitigation's own remediation urgency
-        # (2026-05-31 user request: "statt Kritikalität die Priorität").
+        # (2026-05-31 user request: priority instead of criticality).
         # When a mitigation has no explicit priority, fall back to the
         # highest severity among the findings it addresses, mapped onto the
         # P-scale (Critical→P1 … Low→P4) so every chip still carries a circle.
@@ -14304,7 +15125,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         lines.append(
             _build_register_index(
                 # Variant B (2026-06-04): a single MONOCHROME circled digit
-                # (❶❷❸❹) whose number is the priority — the colourless parallel
+                # (●◕◑○) whose fill is the priority — the colourless parallel
                 # to the §8 Findings-index severity dots, self-explanatory so no
                 # P-tag is needed (supersedes the fill-ramp+text form).
                 "Mitigations index",
@@ -14312,7 +15133,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 _m_nums_by_prio,
                 _m_title,
                 _m_prio,
-                icon_tbl=_PRIO_DIGIT_TBL,
+                icon_tbl=_PRIO_RAMP_TBL,
                 key_label_tbl=None,
                 show_icon=True,
             )
@@ -14711,7 +15532,22 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                         _step_n += 1
                         lines.append(f"{_step_n}. {_wrap_inline_code(s)}")
                 lines.append("")
+            # Caption the code block so the reader knows it is an illustrative
+            # sketch (not necessarily a drop-in complete fix), which file it
+            # applies to, and that the numbered steps / How prose are the
+            # authoritative recommendation (juice-shop 2026-07-03 user report: a
+            # bare fence left readers unsure whether the snippet was the full fix
+            # or where it belonged).
+            _has_guidance = bool(how) or bool(isinstance(steps, list) and steps)
+            _cap_loc = f" in `{file_line_inline}`" if file_line_inline else ""
+            _code_caption = (
+                f"_Illustrative change{_cap_loc} — the steps above are the full recommendation:_"
+                if _has_guidance
+                else f"_Illustrative change{_cap_loc}:_"
+            )
             if how_code:
+                lines.append(_code_caption)
+                lines.append("")
                 lines.append(f"```{how_lang}")
                 lines.append(how_code.rstrip())
                 lines.append("```")
@@ -14724,6 +15560,8 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 #   2. Bare code without fences — wrap with how_code_lang.
                 ce = code_example.strip() if isinstance(code_example, str) else ""
                 if ce:
+                    lines.append(_code_caption)
+                    lines.append("")
                     if ce.startswith("```") and ce.rstrip().endswith("```"):
                         lines.append(ce)
                     else:
@@ -14767,7 +15605,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # Use the harvested fallback reference when the mitigation
             # entry itself has none (mitigation_reference was set by the
             # threats[].remediation fallback above).
-            ref = (m.get("reference") or mitigation_reference or "").strip()
+            ref = _normalize_reference(m.get("reference") or mitigation_reference or "")
             if ref:
                 lines.append(f"**Reference:** {ref}")
                 lines.append("")
@@ -14789,6 +15627,43 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
 # ---------------------------------------------------------------------------
 
 
+def _drop_asset_id_column(md: str) -> str:
+    """Remove the ``ID`` column from the §4 Assets table.
+
+    The asset ids (``A-NNN``) are an internal yaml key: the rendered document
+    carries no ``#a-NNN`` anchor and nothing links to them, so the column is
+    display-only noise. The agent prompt already specifies the 4-column layout
+    ``| Asset | Classification | Description | Linked Threats |`` — but the LLM
+    routinely re-adds an ``ID`` column, so we drop it deterministically here
+    (prefer deterministic Python over trusting the fragment). Matched by header
+    set (a table carrying both ``Asset`` and ``ID``) and dropped by header name,
+    so it is order-independent and a no-op once the column is already absent.
+    """
+    lines = md.split("\n")
+    for header_idx, block in _iter_md_table_blocks(md):
+        header_cells = _split_table_row(block[0])
+        norm = [h.strip().lower() for h in header_cells]
+        if "asset" not in norm or "id" not in norm:
+            continue
+        drop_i = norm.index("id")
+        for off in range(len(block)):
+            row_idx = header_idx + off
+            if row_idx >= len(lines):
+                break
+            cells = _split_table_row(lines[row_idx])
+            if len(cells) != len(header_cells):
+                continue  # ragged row — leave for the QA gate to flag
+            del cells[drop_i]
+            lines[row_idx] = "| " + " | ".join(cells) + " |"
+    return "\n".join(lines)
+
+
+def _render_assets(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """§4 Assets — LLM-authored fragment passthrough with the stray ``ID``
+    column stripped deterministically (see :func:`_drop_asset_id_column`)."""
+    return _drop_asset_id_column(_render_markdown_fragment(ctx, "assets", section))
+
+
 def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, section: dict) -> str:
     dispatcher: dict[str, Any] = {
         "infobox": _render_infobox,
@@ -14802,6 +15677,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "critical_attack_tree": _render_critical_attack_tree,
         "verdict": _render_verdict,
         "identified_actors": _render_identified_actors,
+        "assets": _render_assets,
         "security_posture_at_a_glance": _render_security_posture_at_a_glance,
         "skipped_sections_placeholder": _render_skipped_sections_placeholder,
         "top_findings": _render_top_findings,
@@ -15137,10 +16013,16 @@ def render(
             # perf anomalies / recovery events). Drives the §Run Issues
             # appendix include/skip decision.
             "run_warned": _run_warned_signal(output_dir),
-            # §1.5 Identified Actors gate (actors.md §14). True iff Phase 2.7
-            # produced .actors-resolved.json — legacy runs and pre-Phase-2.7
-            # caches gracefully skip the section instead of failing the contract.
-            "has_resolved_actors": (output_dir / ".actors-resolved.json").is_file(),
+            # §1 Identified Actors gate. The section now renders the consolidated
+            # posture-actor taxonomy derived from finding `vektor` values (the
+            # same set the Management Summary uses), so it is in scope exactly
+            # when at least one finding carries a vektor. Legacy runs without
+            # vektor data gracefully skip the section instead of failing the
+            # contract. (Was file-based on .actors-resolved.json before the
+            # 2026-07-05 taxonomy switch.)
+            "has_resolved_actors": any(
+                (t.get("vektor") or "").strip() for t in (yaml_data.get("threats") or []) if isinstance(t, dict)
+            ),
             # Quick-mode §7 gate. False suppresses §7 in both TOC and body
             # (resolver returned `""` — current depth is quick and no rich
             # prior content was found). True keeps §7 — either via the
@@ -15370,13 +16252,6 @@ def render(
     # sections go through their own Jinja templates and bypass it.
     rendered = _escape_dollar_operators(rendered)
 
-    # Section cross-reference linkifier — convert bare `§N` / `§N.M` /
-    # `§N.M.K` tokens in prose into anchor-linked form so cross-references
-    # to other sections are clickable. The linkifier scans the rendered
-    # document for `##` / `###` / `####` headings, builds a number → slug
-    # map, and rewrites `§N(.M(.K)?)?` in non-heading prose.
-    rendered = _linkify_section_refs(rendered)
-
     # Wrap unescaped `<script>` / `<img onerror=…>` attacker-payload tags
     # in inline backticks so the rendered HTML/PDF report does not interpret
     # them as live HTML elements (the report would otherwise become its own
@@ -15413,6 +16288,22 @@ def render(
     #    titled enumeration stays in each control's `Relevant findings` block).
     rendered = _section7_number_and_bulletize(rendered)
     rendered = _section7_inline_findings_id_only(ctx, rendered)
+    # Title the finding links inside §7 bullets (Relevant findings) so they
+    # carry the same short register title as §5/§8 — must run AFTER the
+    # id-only pass, which deliberately skips bullets expecting them titled.
+    rendered = _section7_title_relevant_findings(ctx, rendered)
+
+    # Section cross-reference linkifier — convert bare `§N` / `§N.M` / `§N.M.K`
+    # tokens in prose into anchor-linked form so cross-references are clickable.
+    # MUST run AFTER _section7_number_and_bulletize: that pass RENUMBERS the §7
+    # H4 sub-controls (an un-numbered opener like "Threat Hypotheses Requiring
+    # Validation" shifts the LLM-authored 7.2.1…7.2.N by one). Running the
+    # linkifier earlier built its number→slug map from the stale pre-renumber
+    # headings, so a prose `(§7.2.2)` linked to the fragment's 7.2.2 (OAuth)
+    # while the final document renumbered 7.2.2 to Password-Based — a dangling,
+    # mislabeled anchor (juice-shop 2026-07-02). Building the map here, after
+    # renumbering, resolves both the number and the anchor correctly.
+    rendered = _linkify_section_refs(rendered)
 
     # General table compaction — proportional column widths on every table so
     # description columns stop crowding out finding/link columns and short IDs
@@ -15443,10 +16334,22 @@ def render(
     # dot retrofit, so the dots key off the final F-NNN link form and no
     # reader-facing T-NNN survives (link text, mermaid labels, or prose).
     rendered = _normalize_visible_threat_ids(rendered)
+    # Linkify finding refs that LLM prose left as plain text (bare `F-012`,
+    # component-scoped `auth-001`) BEFORE the dot retrofit so the new links get
+    # their severity glyph too.
+    rendered = _apply_outside_changelog(rendered, lambda s: _linkify_bare_finding_refs(ctx, s))
     rendered = _apply_outside_changelog(
         rendered,
         lambda s: _prepend_mitigation_prio_circles(ctx, _prepend_finding_severity_dots(ctx, s)),
     )
+    # Backtick inline code the LLM left un-marked across all prose (after the
+    # ref/dot passes so it never wraps a freshly-built link's anchor).
+    rendered = _apply_outside_changelog(rendered, _codify_inline_code_in_prose)
+    # Final, authoritative locator normalisation — runs AFTER every section
+    # render, fragment injection, and T→F bridge, so any reference-trailing
+    # `(path/file:line)` (incl. §3/§9 and MS leaderboard cells produced past the
+    # per-section pass) ends up backticked + basenamed exactly once.
+    rendered = _apply_outside_changelog(rendered, _normalize_reference_locators)
 
     # Report-integrity manifest: certify which sections rendered and which
     # fragments were wired, surfaced on the console and consumed by the QA
@@ -15792,7 +16695,7 @@ def _render_title(ctx: RenderContext, *, title_template_override: str | None = N
 
     Emits a one-line italic subtitle directly under the H1 naming the
     plugin version that produced the report (e.g. `_Generated by
-    appsec-advisor v0.4.0-beta (analysis v2)_`). The same value also
+    appsec-advisor v0.4.0-beta (analysis v3)_`). The same value also
     appears in the §Appendix Run Statistics row, but readers shouldn't
     have to scroll to the bottom to learn which tool version emitted
     the artefact. Falls back to title-only when plugin.json is
@@ -16144,7 +17047,44 @@ def _section_substance_ok(ctx: RenderContext, sid: str, body: str) -> bool:
         if not threats:
             return True
         return bool(re.search(r"F-\d{2,}", body)) or '<a id="f-' in body.lower()
+    if sid == "abuse_cases":
+        # §9 renders a deterministic placeholder when no abuse-case evaluation
+        # is on disk — legitimately empty for many repos, so no signal there.
+        # But when the verifier DID leave viable verdicts on disk and §9 still
+        # shows only the placeholder, the render step was skipped/failed and the
+        # verified chains were silently dropped (juice-shop 2026-06-29). That is
+        # a real content gap that previously still scored 100% integrity. Flag it
+        # so `report_integrity_ok` flips and the QA repair loop fires. The
+        # self-heal in `_render_abuse_cases` normally prevents this from ever
+        # rendering as a placeholder; this is the independent detection backstop.
+        if not _has_viable_abuse_verdicts(ctx.output_dir):
+            return True
+        return bool(re.search(r'(?i)id="ac-|\bAC-[A-Z]*-?\d', body))
     return True
+
+
+def _has_viable_abuse_verdicts(output_dir: Path) -> bool:
+    """True when ``.abuse-case-verdicts.json`` holds ≥1 chain that should render
+    in §9 — i.e. a verdict whose ``chain_verdict`` is anything other than
+    ``not_applicable`` (matching ``render_abuse_cases.build_models``, which only
+    drops ``not_applicable`` chains). A verdict with no ``chain_verdict`` yet is
+    treated as viable (the renderer self-heals the fold from its step verdicts).
+    Best-effort: any read/parse error returns False so this never spuriously
+    fails a clean render. RC-2026-06-29.
+    """
+    path = output_dir / ".abuse-case-verdicts.json"
+    if not path.is_file():
+        return False
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    for v in doc.get("verdicts") or []:
+        if not isinstance(v, dict):
+            continue
+        if v.get("chain_verdict", "viable") != "not_applicable":
+            return True
+    return False
 
 
 def _section_fragment_status(ctx: RenderContext, sid: str) -> tuple[list[str], list[str], bool]:

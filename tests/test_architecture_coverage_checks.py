@@ -431,7 +431,7 @@ def test_sqli_parameterized_no_hypothesis(tmp_path: Path) -> None:
 
 
 def test_authz_hypothesis_not_applicable_without_authenticated_routes(tmp_path: Path) -> None:
-    """arch.md: keine zentrale AuthZ-Bibliothek ist nicht automatisch BAC.
+    """arch.md: no central AuthZ library does not automatically mean BAC.
     Without ANY authenticated route, the hypothesis precondition is not met."""
     out_dir = tmp_path / "out"
     (tmp_path / "app.ts").write_text("const app = express();\napp.get('/public', h);\napp.delete('/items/:id', h);\n")

@@ -1,33 +1,17 @@
 # Contributing
 
-Development conventions for the appsec-advisor repository. The plugin is the repo — there is no build system, and agent and skill definitions are plain Markdown files you edit directly.
+Agent and skill definitions are Markdown files. Python handles validation, rendering, exports, and runtime checks.
 
-Agent runtime behaviour — phases, output format, reliability features — is documented in [`CLAUDE.md`](CLAUDE.md), which Claude Code loads into the agent context at runtime.
+Read [`AGENTS.md`](AGENTS.md) before changing runtime behavior, schemas, prompts, or report output. It maps each type of change to the contracts and tests that must stay aligned.
 
 ## Submitting changes
 
-Contributions are welcome! A quick heads-up first: this is a small project with
-a tightly coupled producer/schema/consumer/test contract (see `AGENTS.md`), so
-**where possible, please open an issue to discuss your idea before sending a
-pull request.** A short conversation up front saves you wasted effort and helps
-us land your change smoothly — it's a friendly request, not a hard gate.
+Open an issue before substantial changes so the approach can be agreed before implementation. Typos and small fixes can go directly to a pull request.
 
-<!-- TODO: not active yet — enable once feature-branch workflow is adopted
-**Branching:** never commit directly to `main`. Do all work on **feature
-branches** (`feat/<topic>` or `fix/<topic>`), then open a PR against `main`.
-`main` holds releases and is tagged (`v*`) to publish; CI runs on pushes and PRs
-to `main` (and `dev`).
--->
-
-A good flow looks like:
-
-1. **Open an issue** (bug report or feature/change proposal) describing what you
-   want to change and why. For anything beyond a typo or obvious fix, it's worth
-   agreeing on the approach first.
-2. **Then open a PR** and link it to the issue. Keep the change surgical and
-   scoped to what you described.
-3. Run the targeted tests and `ruff` (below) before pushing, and fill in the PR
-   template.
+1. Describe the problem and proposed behavior in an issue.
+2. Open a focused pull request and link the issue.
+3. Run the relevant tests and lint checks.
+4. Complete the pull request template.
 
 Maintainers are listed in [`.github/CODEOWNERS`](.github/CODEOWNERS) and review
 all changes to `main`. Security issues follow a separate path — see
@@ -35,23 +19,21 @@ all changes to `main`. Security issues follow a separate path — see
 
 ## Dev environment setup
 
-On Debian/Ubuntu the system Python is externally managed — install tools into isolated environments rather than system-wide.
+Use isolated environments instead of installing development tools into the system Python.
 
 **ruff** (linter/formatter):
 ```bash
 pipx install 'ruff>=0.11.13,<0.13'   # needs: sudo apt install pipx
 ```
-The version is pinned so the lint gate behaves identically across machines —
-unpinned ruff drifts rules on and off between versions (e.g. UP038 is enforced
-in <0.12 but deprecated in >=0.12).
+Use the pinned range so local results match CI.
 
-**Test dependencies** — create a project venv once, then `make` picks it up automatically:
+**Test dependencies:**
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r tests/requirements-test.txt
 ```
 
-The `Makefile` detects `.venv/bin/python3` and uses it automatically, so plain `make test` / `make release-check` work without any extra prefix after this.
+The `Makefile` uses `.venv/bin/python3` automatically.
 
 ## Commands
 
@@ -69,10 +51,10 @@ Test dependencies: `tests/requirements-test.txt` (pytest, pytest-cov, pyyaml, js
 
 #### Manual full-run (end-to-end) test
 
-After a non-trivial refactor (renderer changes, schema bumps, phase-group edits, prompt restructures, hook changes), run the bundled end-to-end check. It exercises the full pipeline against a clean copy of a code-bearing synthetic fixture and validates structural, grounding, export, orchestration, and planted-signal invariants.
+Run the manual end-to-end check after changes to renderers, schemas, phase prompts, hooks, or pipeline control flow.
 
 > [!IMPORTANT]
-> This check is **manual-only**. It is deliberately not wired into PR triggers, push hooks, or cron — it consumes real LLM budget (~30–50% of a Pro 5h subscription window, or ~$0.30–1.00 with API-key billing on `quick` depth). The standard `pytest tests/` suite (~50 deterministic tests) remains your per-PR safety net.
+> This check calls Claude Code and consumes model budget. The synthetic quick fixture typically costs about $0.30–1.00 with API billing or 30–50% of a Pro five-hour usage window. It is not part of the normal CI suite.
 
 ```bash
 make e2e-full
@@ -84,48 +66,22 @@ or, from inside a Claude Code session in this repository:
 /e2e-full
 ```
 
-Both routes drive `tests/e2e/run-full.sh`, which:
+The driver runs the full pipeline against a clean synthetic repository and checks output schemas, evidence, exports, security boundaries, and expected findings.
 
-1. Pre-flights the `claude` CLI (uses subscription auth via `~/.claude/` or `ANTHROPIC_API_KEY` if set).
-2. Copies `tests/fixtures/e2e/synthetic-repo/` to the clean, git-ignored `_last-repo/`, strips stale `docs/security/`, and initializes it as a standalone Git worktree so parent-repo discovery cannot contaminate recon.
-3. Invokes `pytest tests/test_full_run_e2e.py`, which is skipped unless the driver sets `APPSEC_E2E_FULL=1`.
+Additional targets cover specific paths:
 
-**What's asserted:**
-
-| Group | Checks |
+| Target | Purpose |
 |---|---|
-| Existence | Canonical outputs, audit logs, resolved config, dispatch manifest, render-integrity certificate, run issues, checkpoint, and incremental baseline are present. |
-| Schemas | Final YAML, pentest tasks, merged/triage/config/source-auth artifacts, every dispatched STRIDE result, and every structured fragment validate. |
-| Renderer | `compose_threat_model.render()` has zero warnings and is byte-idempotent; `.render-integrity.json` reports 100%, no degraded or empty sections. |
-| Hard Gate | `check_inline_shortcut.py` confirms Stage 2 routed through the deterministic renderer (no LLM bypass). |
-| QA and completeness | The full `qa_checks.py all` battery is clean and idempotent; build/render completeness contracts pass. |
-| Grounding and recall | Evidence resolves against real fixture code and the out-of-repo oracle meets its planted-vulnerability recall floor. |
-| Security | Raw fixture secret canaries do not leak, and malicious repository text cannot create its requested sentinel file. |
-| Exports | SARIF is v2.1-valid with exact result parity; pentest tasks are schema-valid, linked, unique, and read-only; attempted HTML/PDF exports must succeed. |
-| Audit trail | Expected agents and all manifest-selected STRIDE analyzers ran on the resolved model; checkpoint and run-issue state are clean. |
+| `make e2e-full-standard` | Include the full QA stage. |
+| `make e2e-full-thorough` | Include QA and architecture review. |
+| `make e2e-full-repair` | Verify report repair after a deliberate corruption. |
+| `make e2e-full-eval` | Add the semantic-quality evaluation. |
 
-**Exit codes:**
+`make e2e-fixture-suite` checks all external language and architecture fixtures. It requires the sibling `appsec-advisor-fixtures` checkout.
 
-| Code | Meaning |
-|---|---|
-| 0 | Pipeline + assertions passed |
-| 1 | Pipeline failed (`run-headless.sh` non-zero) |
-| 2 | Pipeline succeeded but assertions failed |
-| 3 | Pre-flight failed (missing `claude` CLI or fixture) |
+Use `make e2e-full-keep` to rerun assertions against the previous E2E output without another model call.
 
-`make e2e-full-standard` enables the real Stage-3 QA path. `make e2e-full-thorough` additionally requires the Stage-4 architect review. `make e2e-full-repair` first creates a clean standard seed, corrupts §7, and verifies that the live fragment-fixer loop converges. `make e2e-full-eval` adds the five-dimension judge/verify semantic-quality gate and fails on confirmed High/Critical model defects.
-
-`make e2e-fixture-suite` runs all six external language/architecture fixtures through their out-of-repo recall oracles. It is the nightly/manual breadth gate and requires the sibling `appsec-advisor-fixtures` checkout.
-
-**Re-checking without a fresh run:** `make e2e-full-keep` replays the assertions against the previous `_last-run/` artifacts and retained `_last-repo/`. Driver metadata preserves the original depth and converter expectations.
-
-**Additional manual fixture:** Cross-repo context has its own opt-in driver,
-`scripts/e2e_cross_repo_fixture.sh`, backed by the external
-`../appsec-advisor-fixtures/repos/cross-repo-threat-fixture/` suite. It is not
-part of the standard test run; `tests/test_e2e_cross_repo_fixture_script.py`
-only checks the driver contract. See
-[`docs/internal/runbooks/e2e-cross-repo-fixture.md`](docs/internal/runbooks/e2e-cross-repo-fixture.md) for the
-manual run command.
+Cross-repository behavior has a separate driver. See the [cross-repository fixture runbook](docs/internal/runbooks/e2e-cross-repo-fixture.md).
 
 #### Targeted tests before finishing a non-trivial change
 
@@ -150,19 +106,15 @@ pytest tests/test_sarif_validation.py
 
 #### Deterministic end-to-end (no LLM)
 
-`tests/test_e2e_pipeline.py` runs in `make test`. It renders the frozen fixture
-(`tests/fixtures/e2e/frozen-run/`) and checks the result against a golden copy
-in `tests/fixtures/e2e/golden/` — every section present, no broken output, and
-`threat-model.md` / `threat-model.sarif.json` byte-for-byte as expected.
+`tests/test_e2e_pipeline.py` renders a frozen run and compares the Markdown and SARIF output with committed golden files.
 
-If you change a renderer, contract, or exporter on purpose, the golden tests
-will fail. Check the diff is what you intended, then regenerate the goldens:
+After an intentional renderer, contract, or exporter change, inspect the diff and regenerate the goldens:
 
 ```bash
 APPSEC_UPDATE_GOLDEN=1 python3 -m pytest tests/test_e2e_pipeline.py -k golden
 ```
 
-Don't edit a golden by hand to make the test pass — fix the producer.
+Do not edit golden output by hand to hide a producer defect.
 
 If the repo already has failing tests, capture the baseline and clearly distinguish pre-existing failures from new failures caused by the current change. Do not normalize or hide new failures. When targeted tests fail outside touched files, report failing test names and error heads instead of stale global counts.
 
@@ -185,26 +137,16 @@ python3 scripts/diagnostic_bundle.py collect --run /out --into . --repo-root /pa
 python3 scripts/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz          # maintainer triage
 ```
 
-`threat_fixture.py` snapshots a completed run into a golden-master fixture and
-replays the deterministic tail (build-yaml → compose → SARIF + scanners) to
-detect the effect of code changes across repos without re-scanning. See
-[`docs/internal/runbooks/threat-fixture.md`](docs/internal/runbooks/threat-fixture.md).
+`threat_fixture.py` captures and replays completed runs without another scan. See the [threat fixture runbook](docs/internal/runbooks/threat-fixture.md).
 
-`diagnostic_bundle.py` builds an **anonymised** `.tgz` a user can send the
-maintainer to triage a pipeline error. It contains only tool/plugin versions,
-run shape (phases reached, stage timings, aggregate count histograms), a
-metadata-only file inventory (name/size/sha — never contents), and the run logs
-with paths/quoted-strings/secrets scrubbed. It never includes the threat-model
-results, finding evidence, component names, or any source. (Contrast
-`threat_fixture.py`, which captures a full replayable fixture for your own or
-consented repos.) `make diagnostic-bundle RUN=/out` / `make inspect-bundle BUNDLE=…`.
+`diagnostic_bundle.py` creates a scrubbed bundle for maintainer triage. Inspect every bundle before sharing it.
 
 ## Repository layout
 
 | Path | What it is |
 |------|-----------|
-| `.claude-plugin/plugin.json` | Plugin manifest — required by Claude Code |
-| `.claude/settings.json` | Contributor-convenience permission allow-list for working on this repo in Claude Code. Mirrors `data/required-permissions.yaml` (the single source of truth). End-users install permissions via `/appsec-advisor:check-permissions --update`; the committed file is **not** what ships to end-users. Drift between the two is caught by `tests/test_check_permissions.py`. |
+| `.claude-plugin/plugin.json` | Claude Code plugin manifest |
+| `.claude/settings.json` | Contributor permission settings; `data/required-permissions.yaml` remains authoritative |
 | `agents/` | Agent definitions (Markdown with YAML frontmatter) |
 | `agents/phases/` | Phase-group reference files (authoritative phase instructions) |
 | `agents/shared/` | Shared standards (logging format, validation routines) |
@@ -212,13 +154,11 @@ consented repos.) `make diagnostic-bundle RUN=/out` / `make inspect-bundle BUNDL
 | `hooks/` | Hook definitions + configurable steering keywords |
 | `schemas/` | YAML/JSON schemas for intermediate files and output |
 | `templates/` | Report templates (management summary, sections) |
-| `data/` | Reference data — requirements baseline, CWE eligibility lists, heuristics |
+| `data/` | Requirements, policy, and rule data |
 | `scripts/` | Python helpers used by agents/hooks plus user-facing CLI wrappers (`run-headless.sh`, `harvest_requirements.py`, `mock-server.py`) |
 | `tests/` | Pytest suite — agent definitions, integration, steering, SARIF, schemas |
 | `examples/` | Reference threat model outputs (e.g. OWASP Juice Shop) |
-| `docs/` | Cross-cutting reference documentation (handwritten, durable) |
-| `docs/analysis/` | Agent-authored analyses and plans (`analysis-*`, `plan-*`, `proposal-*`) — design/investigation write-ups, kept separate from the durable reference docs above |
-| `docs/internal/analysis/` | Earlier agent-authored analyses and proposals — same nature as `docs/analysis/`, older write-ups |
+| `docs/` | User and maintainer documentation |
 | `config.json` | Plugin config (external context, pricing, logging) |
 
 ## Agent definition format
@@ -234,11 +174,11 @@ ruff check scripts/ tests/ hooks/
 ruff format --check scripts/ tests/ hooks/
 ```
 
-Run both locally before opening a PR; `ruff check --fix` and `ruff format` auto-apply most fixes. Disabled rules are listed in `pyproject.toml` with a short rationale per family — re-enable case-by-case when adding fresh code, don't bulk-modernise the 47k-LOC backlog. `scripts/resolve_config.py` is excluded from `ruff format` because its column-aligned dicts are asserted by `tests/test_incremental_mode.py` as a doc-invariant.
+Run both locally before opening a pull request. `ruff check --fix` and `ruff format` can apply most fixes. Keep rule exceptions scoped and documented in `pyproject.toml`.
 
 ## Type hints
 
-New public functions take type hints. The existing surface is partly typed; we don't backfill aggressively. `mypy` is not yet enforced — checking is by reading and by ruff `F`/`UP` rules where they apply.
+Add type hints to new public functions. `mypy` is not currently enforced.
 
 ## Adding components
 

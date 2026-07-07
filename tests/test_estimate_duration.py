@@ -1,7 +1,7 @@
 """Tests for scripts/estimate_duration.py — the wall-clock estimator.
 
-Calibration anchors (RECALIBRATED 2026-06-13): fresh juice-shop runs in
-/home/mrohr/scans measured ~76 min wall for `standard --full` and ~81 min
+Calibration anchors (RECALIBRATED 2026-06-13): fresh juice-shop runs in the
+local scan archive measured ~76 min wall for `standard --full` and ~81 min
 for `thorough --full --architect-review`. The 2026-04 anchor (44 min) is
 obsolete — the pipeline grew (abuse-case fan-out, more STRIDE components,
 heavier composition) and API-tier idle now adds ~25-30 % of wall. The

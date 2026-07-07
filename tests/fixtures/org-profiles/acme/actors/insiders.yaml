@@ -9,6 +9,8 @@ actors:
       - internal-network
       - ci-cd-secrets
       - staging-env
+    trust_positions:
+      - contractor-internal-authority
     capabilities:
       sophistication: medium
       tooling:

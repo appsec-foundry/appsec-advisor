@@ -114,6 +114,24 @@ def test_path_wrapping_skips_code_fences_and_markdown_urls():
 # ---------------------------------------------------------------------------
 
 
+def test_line_range_ref_is_wrapped_as_one_unit():
+    # Regression (juice-shop 2026-07-03): `(?::\d+)?` closed the backtick after
+    # `:20`, leaving `-25` bare (`request.interceptor.ts:20`-25). The range
+    # branch keeps the whole `file:line-line` inside one code span.
+    md = "Remove it in routes/fileUpload.ts:62-68 and login.ts:20-25 now.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "`routes/fileUpload.ts:62-68`" in fixed
+    assert "`login.ts:20-25`" in fixed
+    assert "`:62`-68" not in fixed and "`:20`-25" not in fixed
+
+
+def test_single_line_ref_unchanged_after_range_widening():
+    md = "See insecurity.ts:55 and routes/login.ts:34.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "`insecurity.ts:55`" in fixed
+    assert "`routes/login.ts:34`" in fixed
+
+
 def test_url_path_token_is_wrapped():
     md = "Visit /rest/user/login to authenticate.\n"
     fixed, n = prose.apply_fixes(md)
@@ -485,3 +503,25 @@ def test_apply_code_formatting_is_formatting_only():
     md2 = "#### M-001 — Sanitize next() in b2bOrder.ts\n"
     out2, _ = prose.apply_code_formatting(md2)
     assert out2 == md2  # heading untouched
+
+
+def test_humanize_actor_ids_replaces_dangling_library_ids():
+    # ACT-* library ids left in scenario prose become human labels (the §1
+    # actor table now uses the MS posture taxonomy, not ACT-* codes).
+    md = "Recovered via ACT-D-04, who has local-fs access. Also (ACT-D-01 reads it)."
+    out, n = prose._humanize_actor_ids(md)
+    assert "ACT-D-04" not in out and "ACT-D-01" not in out
+    assert "a malicious insider developer" in out
+    assert "an anonymous internet attacker" in out
+    assert n == 2
+    # Sentence-start article is capitalised.
+    md2 = "ACT-D-04 acts."
+    assert prose._humanize_actor_ids(md2)[0].startswith("A malicious insider developer")
+    # Idempotent — the rendered phrase no longer matches the id pattern.
+    assert prose._humanize_actor_ids(out)[1] == 0
+
+
+def test_humanize_actor_ids_skips_fenced_code():
+    md = "```\nACT-D-04 stays as an id in code\n```\n"
+    out, n = prose._humanize_actor_ids(md)
+    assert "ACT-D-04" in out and n == 0

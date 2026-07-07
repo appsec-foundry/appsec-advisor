@@ -35,6 +35,7 @@ from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
 
 # RC.C — central source-enum module. Keep this validator's existing
 # permissive union semantics; the module just removes hard-coded drift.
@@ -59,6 +60,10 @@ _SCHEMA_FILES = {
     "pentest_tasks": "pentest-tasks.schema.yaml",
     "config_scan_findings": "config-scan-findings.schema.yaml",
     "source_auth_findings": "source-auth-findings.schema.yaml",
+    "actors_discovered": "actors-discovered.schema.yaml",
+    "actors_resolved": "actors-resolved.schema.yaml",
+    "actors_repo": "actors-repo.schema.yaml",
+    "actor": "actors.schema.yaml",
 }
 
 
@@ -72,7 +77,22 @@ def _load_schema(kind: str) -> dict:
 def _validator(kind: str) -> Draft202012Validator:
     # Build a fresh validator per call so tests that patch the schema don't
     # hit stale state; the schema dict itself is LRU-cached.
-    return Draft202012Validator(_load_schema(kind))
+    return Draft202012Validator(_load_schema(kind), registry=_schema_registry())
+
+
+@cache
+def _schema_registry() -> Registry:
+    """Registry for the actor schemas that reference one another by ``$id``."""
+    registry = Registry()
+    for filename in (
+        "actors.schema.yaml",
+        "actors-discovered.schema.yaml",
+        "actors-resolved.schema.yaml",
+        "actors-repo.schema.yaml",
+    ):
+        contents = yaml.safe_load((_SCHEMAS_DIR / filename).read_text(encoding="utf-8"))
+        registry = registry.with_resource(contents["$id"], Resource.from_contents(contents))
+    return registry
 
 
 def _format_error_path(err) -> str:
@@ -1114,6 +1134,38 @@ def validate_source_auth_findings(data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
+def validate_actors_discovered(data: Any) -> tuple[bool, list[str]]:
+    """Validate the Phase-2.7 LLM actor-discovery sidecar."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actors_discovered", data)
+    return len(errors) == 0, errors
+
+
+def validate_actors_resolved(data: Any) -> tuple[bool, list[str]]:
+    """Validate the authoritative resolver output consumed downstream."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actors_resolved", data)
+    return len(errors) == 0, errors
+
+
+def validate_actors_repo(data: Any) -> tuple[bool, list[str]]:
+    """Validate ``<repo>/.appsec/actors.yaml`` before applying overrides."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actors_repo", data)
+    return len(errors) == 0, errors
+
+
+def validate_actor(data: Any) -> tuple[bool, list[str]]:
+    """Validate one fully merged static or discovery actor record."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actor", data)
+    return len(errors) == 0, errors
+
+
 _VALIDATORS = {
     "stride": validate_stride,
     "threats_merged": validate_threats_merged,
@@ -1123,6 +1175,10 @@ _VALIDATORS = {
     "pentest_tasks": validate_pentest_tasks,
     "config_scan_findings": validate_config_scan_findings,
     "source_auth_findings": validate_source_auth_findings,
+    "actors_discovered": validate_actors_discovered,
+    "actors_resolved": validate_actors_resolved,
+    "actors_repo": validate_actors_repo,
+    "actor": validate_actor,
 }
 
 

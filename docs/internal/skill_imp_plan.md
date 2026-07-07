@@ -1,102 +1,102 @@
-# Umsetzungsplan — SKILL-impl.md für Sonnet-Orchestrierung aufräumen
+# Implementation Plan — clean up SKILL-impl.md for Sonnet orchestration
 
-**Datei:** `appsec-advisor/skills/create-threat-model/SKILL-impl.md`
-**Branch:** `feature/skill-impl-sonnet-cleanup` · **Stand:** 2026-06-20
+**File:** `appsec-advisor/skills/create-threat-model/SKILL-impl.md`
+**Branch:** `feature/skill-impl-sonnet-cleanup` · **As of:** 2026-06-20
 
-## Ziel
+## Goal
 
-Der Skill soll **zuverlässig von Sonnet** (statt nur Opus) als Orchestrierer laufen.
-Primärziel = **Followability für ein schwächeres Modell**; Token-/Kostenersparnis ist
-willkommener Nebeneffekt, nicht der Treiber. Der dominante Kostenhebel (~5× durch
-Sonnet-Session) ist **bereits eingefahren und live validiert** — was offen ist, jagt nur
-noch einen Rest (~$1/Lauf Prompt-Kürzung) bzw. Innen-Sauberkeit.
+The skill should run **reliably on Sonnet** (rather than only Opus) as the orchestrator.
+Primary goal = **followability for a weaker model**; token/cost savings are a
+welcome side effect, not the driver. The dominant cost lever (~5× via
+Sonnet session) is **already banked and live-validated** — what's open only chases
+a remainder (~$1/run prompt trimming) or internal cleanliness.
 
-Kernhypothese: Sonnet scheitert nicht an der Größe, sondern an **verstreuten/vergrabenen
-Verträgen** und **Prosa-statt-Tabellen-Verzweigungen**.
+Core hypothesis: Sonnet doesn't fail on size, but on **scattered/buried
+contracts** and **prose-instead-of-table branching**.
 
-## Status — was umgesetzt + validiert ist
+## Status — what's implemented + validated
 
-Primärziel **erreicht und mehrfach live belegt** (Orchestrator = Sonnet):
-- Standardlauf (`455206c32`, ~66 min): alle drei Fan-outs parallel, QA-Gate `pass`, **0 errors**.
-- **Re-Validierung 2026-06-20** (`--verbose --quick --abuse-cases`, `/tmp/tm-phase-d-quick`) nach dem
-  ganzen Bündel: **STRIDE 5/38 s + Abuse 6/17 s parallel**, Verbose-Marker nach P4-Dedup ok (Appendix da,
-  **0** format_line/LOG_ERR), sauberer Abschluss (0 errors). De-Akkretierung hat Followability nicht gebrochen.
+Primary goal **achieved and proven live multiple times** (orchestrator = Sonnet):
+- Standard run (`455206c32`, ~66 min): all three fan-outs parallel, QA gate `pass`, **0 errors**.
+- **Re-validation 2026-06-20** (`--verbose --quick --abuse-cases`, `/tmp/tm-phase-d-quick`) after the
+  whole bundle: **STRIDE 5/38 s + abuse 6/17 s parallel**, verbose marker ok after P4 dedup (appendix present,
+  **0** format_line/LOG_ERR), clean finish (0 errors). De-accretion did not break followability.
 
-Volle Suite grün, je Workstream eigener Commit.
+Full suite green, each workstream its own commit.
 
 | Workstream | Status |
 |---|---|
-| **P1** Abuse-Verifier-MUST-Block | **DONE** `cf7c13a` — vergrabener „ONE message"-Vertrag in lokalen HARD-CONSTRAINT-Block; STRIDE-Block war schon ideal (kein Churn) |
-| **P5** Mode-Routing-Tabelle | **DONE** `6bcf2bd` — additive Navigations-Tabelle, per-Sektion-Bedingungen bleiben autoritativ |
-| **format_line-Bug** (vom Live-Lauf aufgedeckt) | **DONE** `007f4be` — Step-Logging auf `log_event.py` mandatet, inline-`format_line` verboten; Guard-Test |
-| **P8** Lazy-Load (Pattern) | **TEILWEISE** `d3a1d4f` — Re-Render-Branch → `modes/rerender.md`, JIT-Load; Guard-Test |
-| **P3** Shell→`.sh` (größter Block) | **TEILWEISE** `df36584` — Auto-Emitter (139 Z.) → `scripts/auto_emitter_pass.sh`, Charakterisierungstests |
-| **P4** Marker-Lifecycle-Dedup | **DONE** `e8fd2c1` — divergente frühe `$VERBOSE_REPORT`-Dublette (Verbose+Tracing) raus, autoritative `RESOLVED_JSON`-Sektion + EXIT-Trap bleibt; Guard-Test; live re-validiert |
+| **P1** Abuse-Verifier-MUST block | **DONE** `cf7c13a` — buried "ONE message" contract into a local HARD-CONSTRAINT block; the STRIDE block was already ideal (no churn) |
+| **P5** Mode-routing table | **DONE** `6bcf2bd` — additive navigation table, per-section conditions stay authoritative |
+| **format_line bug** (surfaced by the live run) | **DONE** `007f4be` — step logging mandated onto `log_event.py`, inline `format_line` forbidden; guard test |
+| **P8** Lazy-load (pattern) | **PARTIAL** `d3a1d4f` — re-render branch → `modes/rerender.md`, JIT load; guard test |
+| **P3** Shell→`.sh` (largest block) | **PARTIAL** `df36584` — auto-emitter (139 lines) → `scripts/auto_emitter_pass.sh`, characterization tests |
+| **P4** Marker-lifecycle dedup | **DONE** `e8fd2c1` — divergent early `$VERBOSE_REPORT` duplicate (verbose+tracing) removed, authoritative `RESOLVED_JSON` section + EXIT trap stays; guard test; live re-validated |
 
-## Abgeschlossen (Strang Variante b: Review-Scan → Fix → Re-Validierung)
+## Completed (strand variant b: review-scan → fix → re-validation)
 
-- **Phase B (DONE):** P4-Marker-Dedup (`e8fd2c1`, oben). **Recon-Inline = KEIN Fix** — der
-  `--verbose`-Lauf hatte `.route-inventory.json` (50 KB), kein Fallback → war transiente API-Latenz im
-  Standardlauf, kein Struktur-Bug.
-- **Phase D (GRÜN):** Re-Validierungslauf bestätigt das ganze Bündel (siehe Status oben).
+- **Phase B (DONE):** P4 marker dedup (`e8fd2c1`, above). **Recon-inline = NO fix** — the
+  `--verbose` run had `.route-inventory.json` (50 KB), no fallback → it was transient API latency in the
+  standard run, not a structural bug.
+- **Phase D (GREEN):** the re-validation run confirms the whole bundle (see status above).
 
-## Offen — bewusst zurückgestellt
+## Open — deliberately deferred
 
-**Phase C — P6 (132 Marker) + Meta-Narration-Konsolidierung: NICHT gemacht, empfohlen wegzulassen.**
-Genaue Sichtung zeigte: die „echten" Redundanzen/Widersprüche (Dubletten-Sektionen, format_line) sind
-in B/format_line bereits behoben. Was bei P6/Meta-Narration bliebe, ist **diffuses historisches Rauschen**
-— die meisten der 28 `narrat/suppress`-Treffer sind unverwandt (`--no-yaml`, `SUPPRESS_INCOMPLETE_BANNER`,
-`NARRATIVE_PLACEHOLDER`), echte „nicht narrieren"-Wiederholung ≈ nur der Top-Block. Kosmetisch, höchstes
-Followability-Risiko (R2), geringster Korrektheitswert → Aufwand/Risiko nicht gerechtfertigt für
-„sauber + performant unter Sonnet" (= bereits erreicht).
+**Phase C — P6 (132 markers) + meta-narration consolidation: NOT done, recommended to drop.**
+Close inspection showed: the "real" redundancies/contradictions (duplicate sections, format_line) are
+already fixed in B/format_line. What would remain in P6/meta-narration is **diffuse historical noise**
+— most of the 28 `narrat/suppress` hits are unrelated (`--no-yaml`, `SUPPRESS_INCOMPLETE_BANNER`,
+`NARRATIVE_PLACEHOLDER`), real "do not narrate" repetition ≈ only the top block. Cosmetic, highest
+followability risk (R2), lowest correctness value → effort/risk not justified for
+"clean + performant under Sonnet" (= already achieved).
 
-### Gated / niedrig priorisiert (eigener Live-Run nötig oder geringer Wert)
+### Gated / low priority (own live run needed or low value)
 
-- **P8-Rest** (Incremental-Cluster 298+119 Z., Resume 79 Z., Dry-Run 12 Z.): größter Rest-Token-Gewinn,
-  aber **entangled** — Resume enthält das Always-Run **Requirements-fail-closed-Gate** (blind extrahieren
-  = Bug), Incremental ist kontrollfluss-+test-verflochten, Dry-Run rein deskriptiv. Braucht
-  per-Modus-Golden-Run (`--incremental`). Endzustand = SKILL-impl.md als dünnes Rückgrat + JIT-Lade-Tabelle;
-  die Datei verschwindet **nicht** (Always-Run-Kern: Config-Resolution, Stages, Gates).
-- **P3-Rest** (Deadline-Watchdog/Wipes/Completion-Persistenz …): voll verifizierbar (Charakterisierungstests),
-  niedriges Risiko, aber sinkender Grenznutzen je Block. Nur wenn Dateigröße eigenständiges Ziel ist.
-- **P2** (Verzweigungen → Tabellen): der Live-Lauf hat **alle** Branches korrekt navigiert — adressiert
-  ein nicht-manifestierendes Problem. Niedrigste Priorität.
+- **P8 remainder** (incremental cluster 298+119 lines, resume 79 lines, dry-run 12 lines): largest remaining token gain,
+  but **entangled** — resume contains the always-run **requirements fail-closed gate** (extracting it blindly
+  = bug), incremental is control-flow- and test-entangled, dry-run purely descriptive. Needs a
+  per-mode golden run (`--incremental`). End state = SKILL-impl.md as a thin backbone + JIT-load table;
+  the file does **not** disappear (always-run core: config resolution, stages, gates).
+- **P3 remainder** (deadline watchdog/wipes/completion persistence …): fully verifiable (characterization tests),
+  low risk, but diminishing marginal benefit per block. Only if file size is a goal in its own right.
+- **P2** (branching → tables): the live run navigated **all** branches correctly — addresses
+  a non-manifesting problem. Lowest priority.
 
-### Bewusst NICHT umgesetzt (mit Begründung)
+### Deliberately NOT implemented (with rationale)
 
-- **P7** (Verbatim-Subjects-Copy-Block): Subjects stehen schon in gebacktickter „source of truth"-Tabelle;
-  ein Copy-Block schüfe konkurrierende Zweitquelle (verletzt Leitplanke 3).
-- **P4-pregenerate-Dedup**: keine echte Duplikation — 3 Ausführungs-Sites, 2. Aufruf divergent
-  (`+_chain-skeleton.md`); Dedup zu kanonischer Referenz verletzt R3.
+- **P7** (verbatim-subjects copy block): subjects already live in a backticked "source of truth" table;
+  a copy block would create a competing second source (violates guardrail 3).
+- **P4 pregenerate dedup**: no real duplication — 3 execution sites, 2nd call divergent
+  (`+_chain-skeleton.md`); dedup to a canonical reference violates R3.
 
-## Leitplanken (gelten für jede offene Änderung)
+## Guardrails (apply to every open change)
 
-1. **Byte-identisches Laufzeitverhalten.** Diff zeigt nur Umformung, keinen geänderten Befehl/Exit-Code.
-2. **Deterministisches Substrat ist das Pro-Phase-Gate.** Die `SKILL-impl`-pinnenden Tests
-   (`test_skill_composition_split`, `test_incremental_mode`, `test_skill_auto_retry`, …) + die Gates
+1. **Byte-identical runtime behavior.** The diff shows only reformatting, no changed command/exit code.
+2. **The deterministic substrate is the per-phase gate.** Update the `SKILL-impl`-pinning tests
+   (`test_skill_composition_split`, `test_incremental_mode`, `test_skill_auto_retry`, …) + the gates
    (`check_stride_dispatch`, `validate_dispatch_manifest`, `check_inline_shortcut`, `requirements_gate`)
-   im Gleichschritt aktualisieren. Golden-Run nur als finaler Smoke, nicht pro Phase.
-3. **Lokale statt globale Verstärkung.** Verträge EINMAL am Ausführungspunkt als „MUST"-Block.
-4. **Chesterton's Fence.** Schützende Rationale ko-lokalisieren (Skript-Docstring) oder knapp inline,
-   nie pauschal löschen.
-5. **Inkrementell, kein Big-Bang.** Pro Workstream ein reviewbarer Commit + Test.
-6. **Cache-stable prefix respektieren.** Einfügungen nahe Dateianfang invalidieren den Prefix
-   (AGENTS.md:186). Statische Edits re-stabilisieren nach einmaligem Re-Cache.
+   in lockstep. Golden run only as the final smoke, not per phase.
+3. **Local rather than global reinforcement.** Contracts ONCE at the execution point as a "MUST" block.
+4. **Chesterton's Fence.** Co-locate protective rationale (script docstring) or keep it briefly inline,
+   never delete wholesale.
+5. **Incremental, no big-bang.** One reviewable commit + test per workstream.
+6. **Respect the cache-stable prefix.** Insertions near the start of the file invalidate the prefix
+   (AGENTS.md:186). Static edits re-stabilize after a one-time re-cache.
 
-## Risiken & Gegenmaßnahmen
+## Risks & countermeasures
 
-| Risiko | Gegenmaßnahme |
+| Risk | Countermeasure |
 |---|---|
-| **R2** Redundanzabbau (P6/Meta-Narration) schwächt LLM-Adhärenz | Lokale Verstärkung statt globaler Wiederholung; **Phase-D-Re-Run als Beweis** |
-| **R3** Cross-File-Refs unter Kontextdruck nicht geladen | Nur für **Dispatch-Punkt-Verträge** (INLINE). Mode-Bodies/Rationale auslagerbar (phase-group beweist es) |
-| **R4** Chesterton — verlorene Schutz-Rationale | Pointer am Ort; Rationale in Skript-Docstring |
-| **R5** Extraktions-Drift (Exit-Codes/Quoting) | Verbatim Bash→`.sh`, kein Python-Rewrite; Charakterisierungstest alt==neu |
-| **R7** Divergente Duplikate falsch gemerged | Vor Dedup Autorität per Lauf-Evidenz klären (P4-Marker) |
+| **R2** Redundancy reduction (P6/meta-narration) weakens LLM adherence | Local reinforcement instead of global repetition; **Phase-D re-run as proof** |
+| **R3** Cross-file refs not loaded under context pressure | Only for **dispatch-point contracts** (INLINE). Mode bodies/rationale extractable (phase group proves it) |
+| **R4** Chesterton — lost protective rationale | Pointer in place; rationale in the script docstring |
+| **R5** Extraction drift (exit codes/quoting) | Verbatim Bash→`.sh`, no Python rewrite; characterization test old==new |
+| **R7** Divergent duplicates merged incorrectly | Establish authority via run evidence before dedup (P4 markers) |
 
-## Nicht-Ziele
+## Non-goals
 
-- Keine funktionale Änderung an Pipeline, Gates oder Output-Schema.
-- Kein Entfernen von Sicherheits-Gates oder Recovery-Pfaden.
-- Kein Big-Bang-Rewrite; keine Aufteilung **operativer Dispatch-Punkt-Verträge** über Dateigrenzen
-  (P8 lagert nur mode-conditional Bodies aus — siehe R3).
-- Keine Modell-Routing-Änderung der Analyse-Sub-Agenten (bereits auto-geroutet).
+- No functional change to the pipeline, gates, or output schema.
+- No removal of security gates or recovery paths.
+- No big-bang rewrite; no splitting of **operational dispatch-point contracts** across file boundaries
+  (P8 only extracts mode-conditional bodies — see R3).
+- No model-routing change for the analysis sub-agents (already auto-routed).

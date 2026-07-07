@@ -879,17 +879,22 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
 
 
 def _remediation_how_text(t: dict) -> str:
-    """Build a 'how' string from a threat's remediation block (steps joined).
+    """Build a 'how' string from a threat's remediation block — prose only.
 
     Mirrors emit_finding_fix_mitigations._remediation_how so the in-builder
-    fallback produces the same shape as the auto-emitter pass.
+    fallback produces the same shape as the auto-emitter pass. When
+    `remediation.steps` is a structured list, returns "" instead of joining
+    them into prose: compose's render-time fallback already harvests
+    `remediation.steps` and renders it as an ordered list, so joining it here
+    too would duplicate the same content twice under one mitigation card
+    (juice-shop 2026-07-02 / M-038).
     """
     rem = t.get("remediation")
     if not isinstance(rem, dict):
         return ""
     steps = rem.get("steps")
-    if isinstance(steps, list) and steps:
-        return " ".join(str(s).strip() for s in steps if str(s).strip())
+    if isinstance(steps, list) and steps and any(str(s).strip() for s in steps):
+        return ""
     return str(rem.get("how") or "").strip()
 
 
@@ -951,8 +956,13 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
             continue
         title = (t.get("mitigation_title") or "").strip()
         how = _remediation_how_text(t)
-        if not title and not how:
-            continue  # no content to synthesise from
+        rem = t.get("remediation")
+        has_steps = isinstance(rem, dict) and any(str(s).strip() for s in (rem.get("steps") or []))
+        if not title and not how and not has_steps:
+            # No remediation content at all — nothing to synthesise. (`how`
+            # is deliberately "" when `remediation.steps` exists — see
+            # _remediation_how_text — so `has_steps` covers that case here.)
+            continue
         if not title:
             title = f"Remediate {t.get('title', t.get('id', ''))}"
         key = re.sub(r"\s+", " ", title.lower()).strip()

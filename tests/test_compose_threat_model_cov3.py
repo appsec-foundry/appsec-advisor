@@ -201,57 +201,60 @@ class TestRenderTitleMetaFallback:
 
 
 class TestRenderIdentifiedActorsExtra:
-    def test_inputs_questioned_section(self, tmp_path):
+    def test_empty_when_no_vektor_findings(self, tmp_path):
+        # No finding carries a vektor → nothing to consolidate → empty section.
+        ctx = _mk_ctx(tmp_path, yaml_data={"threats": [{"component": "API"}]})
+        assert compose._render_identified_actors(ctx, None, {}) == ""
+
+    def test_victim_row_marked_and_ordered_first(self, tmp_path):
         ctx = _mk_ctx(
             tmp_path,
-            yaml_data={"threats": [{"component": "API", "actor_ids": ["ACT-01"]}]},
-        )
-        (ctx.output_dir / ".actors-resolved.json").write_text(
-            _json.dumps(
-                {
-                    "resolved_actors": [
-                        {
-                            "id": "ACT-01",
-                            "label": "User",
-                            "_provenance": {"active": True, "layer": "client"},
-                        }
-                    ]
-                }
-            ),
-            encoding="utf-8",
-        )
-        (ctx.output_dir / ".actors-discovered.json").write_text(
-            _json.dumps(
-                {
-                    "inputs_questioned": [
-                        {
-                            "id": "ACT-QQ",
-                            "reason": "no plausible reach",
-                            "recommendation": "disable",
-                        },
-                        {"id": "ACT-RR", "reason": "unused"},
-                    ]
-                }
-            ),
-            encoding="utf-8",
+            yaml_data={
+                "meta": {"public_source_repo": True},
+                "threats": [
+                    {"component": "API", "vektor": "internet-anon"},
+                    {"component": "SPA", "vektor": "victim-required"},
+                ],
+            },
         )
         out = compose._render_identified_actors(ctx, None, {})
-        assert "Actors flagged for review" in out
-        assert "ACT-QQ" in out
-        assert "(recommendation: disable)" in out
-        assert "ACT-RR" in out
+        rows = [ln for ln in out.splitlines() if ln.startswith("| ") and "Role" not in ln and "---" not in ln]
+        assert "Shop User" in rows[0] and "victim" in rows[0]  # order puts victim first
 
-    def test_discovery_file_malformed_swallowed(self, tmp_path):
-        ctx = _mk_ctx(tmp_path, yaml_data={"threats": []})
-        (ctx.output_dir / ".actors-resolved.json").write_text(
-            _json.dumps({"resolved_actors": [{"id": "ACT-01", "label": "U", "_provenance": {"active": True}}]}),
-            encoding="utf-8",
-        )
-        (ctx.output_dir / ".actors-discovered.json").write_text("{bad", encoding="utf-8")
-        out = compose._render_identified_actors(ctx, None, {})
-        # Malformed discovery file -> no "flagged for review" section but render OK.
-        assert "Actors flagged for review" not in out
-        assert "ACT-01" in out
+
+# ---------------------------------------------------------------------------
+# _render_identified_actors — reach-equivalence consolidation (fold map)
+# ---------------------------------------------------------------------------
+
+
+class TestIdentifiedActorsConsolidation:
+    def test_fold_map_open_self_registration_and_always_insider(self):
+        # low-priv folds into anon only when open_user_registration; insider-ops
+        # folds into insider-dev unconditionally (always rule).
+        active = {"ACT-D-01", "ACT-D-02", "ACT-D-04", "ACT-D-05"}
+        folded, reason = compose._actor_fold_map(active, {"open_user_registration": True})
+        assert folded["ACT-D-02"] == "ACT-D-01"
+        assert folded["ACT-D-05"] == "ACT-D-04"
+        assert "ACT-D-01" not in folded and "ACT-D-04" not in folded
+        assert reason["ACT-D-02"] == "open-self-registration"
+        assert reason["ACT-D-05"] == "no-distinct-production-environment"
+
+    def test_fold_map_no_open_reg_keeps_lowpriv_but_still_folds_insider(self):
+        active = {"ACT-D-01", "ACT-D-02", "ACT-D-04", "ACT-D-05"}
+        folded, _ = compose._actor_fold_map(active, {})
+        assert "ACT-D-02" not in folded  # open-reg gate not met
+        assert folded["ACT-D-05"] == "ACT-D-04"  # always rule fires regardless
+
+    def test_fold_skipped_when_primary_inactive(self):
+        # ACT-D-01 disabled → not active → its class members are NOT folded away.
+        folded, _ = compose._actor_fold_map({"ACT-D-02"}, {"open_user_registration": True})
+        assert folded == {}
+
+    # NOTE: the old `_render_identified_actors` table-fold test was removed
+    # 2026-07-05 — the §1 table no longer sources from the ACT-* library or
+    # `_actor_fold_map`; it derives from the MS posture-actor `vektor` taxonomy
+    # (see TestRenderIdentifiedActors in test_compose_threat_model_cov.py). The
+    # `_actor_fold_map` unit tests above are retained since the helper survives.
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +393,20 @@ class TestEscapeDotTldIdentifiers:
         # Inside fence / existing inline code → untouched (idempotent).
         assert "```\nNode.js\n```" in out
         assert "`req.bo`" in out
+
+    def test_bare_url_domain_segment_not_wrapped(self):
+        """A ccTLD-shaped word inside a bare `https://` URL (not markdown-link
+        syntax) must not be backtick-wrapped mid-URL — that corrupts the link
+        (juice-shop 2026-07-02: `https://owasp-juice.shop` rendered with a
+        stray code span around `juice.shop`)."""
+        out = compose._escape_dot_tld_identifiers("Homepage: https://owasp-juice.shop and more text")
+        assert "https://owasp-juice.shop" in out
+        assert "`juice.shop`" not in out
+
+    def test_bare_url_with_git_suffix_not_wrapped(self):
+        out = compose._escape_dot_tld_identifiers("Repo: https://github.com/juice-shop/juice-shop.git done")
+        assert "https://github.com/juice-shop/juice-shop.git" in out
+        assert "`shop.git`" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -551,6 +568,17 @@ class TestWrapInlineCode:
         out = compose._wrap_inline_code(src)
         assert "```\nPOST /x\n```" in out
         assert "`safeEval`" in out
+
+    def test_line_range_ref_wrapped_as_one_unit(self):
+        # Regression (juice-shop 2026-07-03 §9): the `\b` after `:20` split the
+        # span, shipping `` `request.interceptor.ts:20`-25 ``. Range branch fixes it.
+        out = compose._wrap_inline_code("Remove header at request.interceptor.ts:20-25 now")
+        assert "`request.interceptor.ts:20-25`" in out
+        assert "`request.interceptor.ts:20`-25" not in out
+
+    def test_single_line_ref_unchanged_after_range_widening(self):
+        out = compose._wrap_inline_code("See lib/insecurity.ts:55 here")
+        assert "`lib/insecurity.ts:55`" in out
 
 
 # ---------------------------------------------------------------------------

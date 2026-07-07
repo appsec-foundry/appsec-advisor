@@ -50,10 +50,39 @@ TOP_LEVEL_EXCLUDES = {
     "pyproject.toml",
     "tests",
 }
-ANY_LEVEL_EXCLUDES = {"__pycache__"}
+ANY_LEVEL_EXCLUDES = {
+    ".appsec-cache",
+    ".cache",
+    ".coverage-data",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    ".venv-tests",
+    "__pycache__",
+    "build",
+    "dist",
+    "htmlcov",
+    "node_modules",
+}
+ANY_LEVEL_FILE_EXCLUDES = {
+    ".agent-run.log",
+    ".appsec-checkpoint",
+    ".appsec-lock",
+    ".appsec-progress.json",
+    ".hook-events.log",
+    ".render-integrity.json",
+    ".run-issues.json",
+    ".scan-start-epoch",
+    ".scan-wall-seconds",
+    ".section-integrity.json",
+    ".skill-config.json",
+}
 PATH_EXCLUDES = {
+    ("data", "appsec-requirements-fallback.yaml"),
     ("docs", "security"),
     ("scripts", "docs"),
+    ("skills", "create-threat-model", "docs"),
     ("tests", "fixtures", "e2e", "_last-run"),
 }
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -117,6 +146,8 @@ def _copy_ignore(source_root: Path):
             elif rel_child in PATH_EXCLUDES:
                 ignored.add(name)
             elif child.is_dir() and name in ANY_LEVEL_EXCLUDES:
+                ignored.add(name)
+            elif child.is_file() and name in ANY_LEVEL_FILE_EXCLUDES:
                 ignored.add(name)
         return ignored
 

@@ -1894,6 +1894,30 @@ def test_build_mitigations_bumps_severity_to_max():
     assert sorted(mits[0]["threat_ids"]) == ["T-001", "T-002"]
 
 
+def test_build_mitigations_fallback_synthesis_omits_how_when_steps_present():
+    """A threat with no mitigation_ids but structured remediation.steps gets a
+    synthesised M-card via the fallback path. The card must NOT carry a `how`
+    paragraph duplicating those same steps — compose's render-time fallback
+    renders `remediation.steps` as an ordered list from the source threat
+    (juice-shop 2026-07-02 / M-038: identical content rendered twice)."""
+    threats = [
+        {
+            "id": "T-001",
+            "risk": "Critical",
+            "mitigation_title": "Add JWT-verifying middleware",
+            "remediation": {
+                "effort": "Medium",
+                "steps": ["Add middleware.", "Attach the verified user.", "Update the client."],
+            },
+        },
+    ]
+    mits = b.build_mitigations(threats)
+    assert len(mits) == 1
+    assert mits[0]["title"] == "Add JWT-verifying middleware"
+    assert "how" not in mits[0]
+    assert threats[0]["mitigation_ids"] == [mits[0]["id"]]
+
+
 # --- apply_mitigation_overrides branches -------------------------------------
 
 

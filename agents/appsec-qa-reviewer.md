@@ -32,6 +32,8 @@ Every print uses the prefix `[qa-reviewer]`. Print each line immediately before 
 
 Follow `shared/logging-standard.md` (agent: `qa-reviewer`, event types: `CHECK_START` / `CHECK_END`). The helper writes structured entries to `$OUTPUT_DIR/.agent-run.log` — do NOT inline `date -u` echo templates. Combine each check's `CHECK_END` with the next `CHECK_START` into a single Bash call to avoid wasting turns.
 
+Follow the completion contract in `shared/completion-contract.md` — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
+
 **Print on startup:**
 ```
 [qa-reviewer] ▶ Starting QA review  (model: <MODEL_ID>)

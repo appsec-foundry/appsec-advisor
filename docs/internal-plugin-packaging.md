@@ -6,7 +6,7 @@ Build a company-branded Claude Code plugin so developers run your namespace with
 /acme-appsec:create-threat-model
 ```
 
-The packaged plugin still runs the upstream `appsec-advisor` analysis pipeline. Packaging adds your plugin name, your bundled `org-profile/`, your default preset, and optionally a build-time package surface policy that removes skills or hooks from the internal artifact. Use [org-profiles.md](org-profiles.md) for the full profile reference.
+The package uses the upstream analysis code with your plugin name, org profile, default preset, and optional restrictions on included skills and hooks. See the [org profile reference](org-profiles.md) for profile fields.
 
 ## Quick start
 
@@ -64,7 +64,7 @@ $ claude --plugin-dir build/my-appsec
 /my-appsec:create-threat-model
 ```
 
-That is enough for a local branded plugin. The steps below extend it into a team-ready package.
+Continue with the steps below to build and publish the package for a team.
 
 ## Step 1 - Create the packaging repo
 
@@ -133,7 +133,7 @@ The example repos already use Option 1:
 
 - [GitHub Actions example](../examples/internal-packaging-github)
 - [GitLab CI example](../examples/internal-packaging-gitlab)
-- [Complete example packaging repo](https://github.com/matthiasrohr/appsec-advisor-org-packaging-example) — a ready-to-fork repo with org-profile, CI pipelines, and build scripts
+- [Complete example packaging repo](https://github.com/matthiasrohr/appsec-advisor-org-packaging-example) with an org profile, CI pipelines, and build scripts
 
 ## Step 2 - Write the org profile
 
@@ -226,7 +226,7 @@ actors:
 
 Use `org-profile/package-policy.yaml` when the internal plugin must not expose every upstream skill or hook. The packager auto-detects this file. You can also pass `--package-policy <path>` explicitly.
 
-This is build-time pruning: removed skills are not present under `skills/`, and removed hooks are not registered in `hooks/hooks.json`. It is stronger than org-profile `skill_toggles`, which only soft-disable skills at runtime.
+Package policy removes skills and hooks from the built artifact. Org-profile `skill_toggles` only block skills at runtime.
 
 Prefer allowlists for enterprise packages so newly added upstream skills do not appear until your team reviews them:
 
@@ -295,7 +295,7 @@ $ python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
   --version "$INTERNAL_VERSION"
 ```
 
-The packager copies upstream into `build/acme-appsec/`, overlays `org-profile/`, applies `org-profile/package-policy.yaml` when present, rewrites `appsec-advisor:` command references to `acme-appsec:`, enables the bundled profile in `config.json`, validates the result, and writes `dist/acme-appsec-${INTERNAL_VERSION}.tgz` plus its `.sha256`.
+The build writes the plugin to `build/acme-appsec/` and creates `dist/acme-appsec-${INTERNAL_VERSION}.tgz` with a `.sha256` checksum. It also validates the profile, package policy, and renamed command namespace.
 
 Every build writes `.claude-plugin/package-surface.json` into the packaged tree. It records the included and removed skills/hooks so CI and reviewers can verify the artifact surface without reverse-engineering the copied files.
 
@@ -304,6 +304,11 @@ Run the smoke test after every build. It checks the plugin identity, org-profile
 ```console
 $ python3 upstream/appsec-advisor/scripts/smoke_test_package.py build/acme-appsec --name acme-appsec
 ```
+
+The packager excludes dependency trees, caches, run logs, generated report
+state, and other ignored local artifacts at any directory depth. The smoke test
+independently rejects those paths and personal home-directory paths, so package
+from a clean checkout and treat either finding as a build failure.
 
 Use `--skip-archive` while editing locally:
 
@@ -471,7 +476,7 @@ Runnable copy: [examples/internal-packaging-gitlab/.gitlab-ci.yml](../examples/i
 
 ## Step 5 - Publish and install
 
-Publish `dist/*.tgz` through your normal internal channel: CI artifact, release asset, package registry, Artifactory, Nexus, S3, developer portal, devcontainer image, or workstation bootstrap.
+Publish `dist/*.tgz` through your normal internal artifact or software-distribution channel.
 
 Developers install the approved artifact:
 

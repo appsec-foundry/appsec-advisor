@@ -79,6 +79,130 @@ def test_unknown_kind_exits_2(tmp_path: Path):
     assert result.returncode == 2
 
 
+def test_actor_discovery_contract_accepts_distinct_high_confidence_actor():
+    data = {
+        "schema_version": 1,
+        "discovery_cache_key": "a" * 64,
+        "generated_at": "2026-06-30T12:00:00Z",
+        "confirmed_relevant": [],
+        "proposed_additional": [
+            {
+                "id": "ACT-X-1",
+                "label": "partner-api-credential-holder",
+                "access": ["internet"],
+                "trust_positions": ["partner-api-credential"],
+                "distinct_trust_positions": ["partner-api-credential"],
+                "distinct_trust_position_evidence": "Recon section 7.1 identifies a partner-only API credential.",
+                "capabilities": {
+                    "sophistication": "medium",
+                    "tooling": ["off-the-shelf"],
+                    "dwell_time": "weeks",
+                    "surface_reach": ["internet"],
+                },
+                "motivation": "financial",
+                "rationale": "The credential grants authority unavailable to ordinary application users.",
+                "confidence": "high",
+                "discovery_method": "heuristic-section-A",
+            }
+        ],
+        "inputs_questioned": [],
+        "coverage_rationale": "Static and discovered access positions compared.",
+    }
+    ok, errors = vi.validate_actors_discovered(data)
+    assert ok, errors
+
+
+def test_actor_discovery_contract_rejects_unqualified_proposal():
+    data = {
+        "schema_version": 1,
+        "discovery_cache_key": "a",
+        "generated_at": "now",
+        "confirmed_relevant": [],
+        "proposed_additional": [
+            {
+                "id": "ACT-X-1",
+                "label": "prompt-injector",
+                "access": ["internet"],
+                "capabilities": {
+                    "sophistication": "low",
+                    "tooling": [],
+                    "dwell_time": "short",
+                    "surface_reach": ["internet"],
+                },
+                "motivation": "curiosity",
+                "rationale": "This is only an attack technique rather than a distinct access position.",
+                "confidence": "high",
+                "discovery_method": "heuristic-section-A",
+            }
+        ],
+        "inputs_questioned": [],
+        "coverage_rationale": "",
+    }
+    ok, errors = vi.validate_actors_discovered(data)
+    assert not ok
+    assert any("distinct_trust_positions" in error for error in errors)
+
+
+def _valid_resolved_actors() -> dict:
+    return {
+        "schema_version": 1,
+        "quick_mode": True,
+        "discovery_enabled": True,
+        "discovery_skip_reason": "quick-mode",
+        "actors_inputs_fingerprint": "a" * 64,
+        "alias_map": {},
+        "resolved_actors": [
+            {
+                "id": "ACT-D-1",
+                "label": "anonymous-attacker",
+                "access": ["internet"],
+                "capabilities": {
+                    "sophistication": "low",
+                    "dwell_time": "short",
+                    "surface_reach": ["internet"],
+                },
+                "motivation": "financial",
+                "_provenance": {
+                    "layer": "plugin",
+                    "active": True,
+                    "activation_reason": "always-active (no conditions defined)",
+                    "signal_status": "normal",
+                },
+            }
+        ],
+        "confirmed_relevant": [],
+        "inputs_questioned": [],
+        "run_issues": [],
+        "discovery_actor_count": 0,
+        "rejected_discovery_actors": [],
+    }
+
+
+def test_actor_resolved_contract_accepts_runtime_fields():
+    ok, errors = vi.validate_actors_resolved(_valid_resolved_actors())
+    assert ok, errors
+
+
+def test_actor_resolved_contract_rejects_unknown_runtime_field():
+    data = _valid_resolved_actors()
+    data["resolved_actors"][0]["_provenance"]["invented"] = True
+    ok, errors = vi.validate_actors_resolved(data)
+    assert not ok
+    assert any("invented" in error for error in errors)
+
+
+def test_actor_repo_contract_rejects_invalid_discovery_config():
+    ok, errors = vi.validate_actors_repo({"discovery": {"enabled": "yes", "max_proposed": 99}})
+    assert not ok
+    assert any("enabled" in error or "max_proposed" in error for error in errors)
+
+
+def test_actor_contract_rejects_incomplete_new_actor():
+    ok, errors = vi.validate_actor({"id": "ACT-R-1", "label": "repo-actor"})
+    assert not ok
+    assert any("access" in error or "capabilities" in error for error in errors)
+
+
 # ---------------------------------------------------------------------------
 # stride validation
 # ---------------------------------------------------------------------------

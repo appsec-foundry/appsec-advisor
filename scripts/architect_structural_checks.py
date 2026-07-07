@@ -965,7 +965,7 @@ def check_actor_coverage(output_dir: Path) -> dict[str, Any]:
     if not resolved:
         return {"check": "actor-coverage", "skipped": True, "reason": "no .actors-resolved.json", "findings": []}
 
-    actors = resolved.get("actors") if isinstance(resolved, dict) else resolved
+    actors = resolved.get("resolved_actors", resolved.get("actors")) if isinstance(resolved, dict) else resolved
     actors = [a for a in (actors or []) if isinstance(a, dict)]
     tm = _load_yaml(output_dir / "threat-model.yaml") or {}
     threats = [t for t in (tm.get("threats") or tm.get("findings") or []) if isinstance(t, dict)]
@@ -1019,15 +1019,21 @@ def check_actor_coverage(output_dir: Path) -> dict[str, Any]:
                     f"with no disable_reason recorded.",
                 }
             )
-        # 15.1 — activated (non-discovery) but unused.
-        elif str(prov.get("layer") or "") != "discovery" and aid and aid not in used_actor_ids:
+        # 15.1 / 15.4 — activated actor but unused. Discovery proposals use a
+        # distinct issue class so the report can ask for confirmation/removal.
+        elif prov.get("active", True) and aid and aid not in used_actor_ids:
+            is_discovery = str(prov.get("layer") or "") == "discovery" or bool(prov.get("proposed"))
             findings.append(
                 {
                     "check": "actor-coverage",
                     "severity": "info",
-                    "kind": "actor_activated_no_findings",
+                    "kind": "proposed_actor_no_findings" if is_discovery else "actor_activated_no_findings",
                     "actor_id": aid,
-                    "message": f"Actor {aid} is activated but no finding references it.",
+                    "message": (
+                        f"Proposed discovery actor {aid} is active but no finding references it."
+                        if is_discovery
+                        else f"Actor {aid} is activated but no finding references it."
+                    ),
                 }
             )
 

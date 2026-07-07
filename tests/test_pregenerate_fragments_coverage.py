@@ -412,8 +412,9 @@ class TestGeneratorsRich:
     def test_assets_with_linked_threats_column(self, rich_yaml_data):
         md = pf.gen_assets(rich_yaml_data)
         assert "Linked Threats" in md
-        # auto-id fallback for the asset without an id
-        assert "A-002" in md
+        # 4-column layout — the A-NNN id is internal and no longer a column.
+        assert "| Asset | Classification | Description | Linked Threats |" in md
+        assert "| ID |" not in md
 
     def test_attack_surface_rich(self, rich_yaml_data):
         md = pf.gen_attack_surface(rich_yaml_data)

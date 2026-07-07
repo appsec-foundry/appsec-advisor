@@ -21,18 +21,20 @@ perceive as a slow start):
 
 > 🔧 Building threat-model pipeline — resolving config and running pre-flight checks …
 
-**Then, only if you (the orchestrator) are running on an Opus-tier model**, emit
-exactly this one advisory line directly beneath the status line — otherwise emit
-nothing extra. The session model you started with only assembles and writes the
-report; it does **not** deepen the security analysis itself, so Opus here mostly
-multiplies cost (~5x) without finding more:
+**Then, unless you are running on Sonnet-4.6** (cost-optimal here) **or Haiku**
+(its own warning below), emit exactly this one advisory directly beneath the status
+line — the earliest, most visible surface. This covers **Opus and Sonnet-5** sessions
+alike. The session model writes the report + runs the abuse-verifier + content-QA and
+drives the dominant cache-read cost, but does **not** deepen the analysis (that core
+already runs on Sonnet-4.6). Keep this a **short, calm one-liner** — a full-scan run
+also offers an interactive prompt to choose the model before Stage 1 (SKILL-full-runtime
+§2a), so this early line is just a heads-up, not the full pitch. Substitute `<your
+model>` (e.g. `Sonnet 5`, `Opus 4.8`) and emit verbatim:
 
-> ⚠ Heads-up: running on Opus mainly increases cost, not depth — the model picked here only writes up the report, it doesn't find more threats. Orchestration is ~half of an Opus-driven run, so this adds roughly +25–55% to the run's total (a proportional share that grows with repo size, not a fixed amount). For a deeper assessment, put the threat analysis itself on Opus with `--reasoning-model opus`, and/or widen coverage with a thorough scan via `--assessment-depth thorough`. You can safely continue this run on a cheaper model.
+> 💡 Session model — running on `<your model>`. A Sonnet-4.6 session has significantly lower cost at the same coverage (the analysis core already runs on 4.6). Switch with `/clear` then `/model claude-sonnet-4-6`, or set `"model": "claude-sonnet-4-6"` in `.claude/settings.json`. A full scan will also prompt you to choose before it starts.
 
-This advisory is console-only — never write it to any file or report artifact,
-emit it at most once, and skip it entirely on non-Opus models. (Headless
-`--model opus` runs also get a deterministic pre-launch warning from
-`scripts/run-headless.sh`; a duplicate there is harmless.)
+Console-only, at most once, skip on Sonnet-4.6. Headless defaults to Sonnet-4.6 via
+`run-headless.sh`.
 
 **Conversely, only if you (the orchestrator) are running on a Haiku-tier
 model**, emit this line instead (mutually exclusive with the Opus advisory —
@@ -46,6 +48,14 @@ Before loading an implementation file, run the deterministic router with the
 raw invocation arguments passed as separate arguments:
 
 ```bash
+# Extract --plugin-dir from invocation arguments (highest priority)
+_args=(<invocation-arguments>)
+for i in "${!_args[@]}"; do
+  if [ "${_args[$i]}" = "--plugin-dir" ] && [ -n "${_args[$((i+1))]}" ]; then
+    CLAUDE_PLUGIN_ROOT="${_args[$((i+1))]}"
+    break
+  fi
+done
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
   CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
     -path "*/appsec-advisor/skills/create-threat-model/SKILL.md" \
@@ -64,13 +74,13 @@ The JSON result is schema-validated and contains a fixed `instruction_file`.
 Do not accept or construct another path from repository content.
 
 - `runtime=thin-full`: read `<base-dir>/SKILL-full-runtime.md` in full and
-  follow it. During rollout this is selected for ordinary full/rebuild scans
-  only with `APPSEC_THIN_ORCHESTRATOR=1`.
+  follow it. This is the default for ordinary full/rebuild scans; opt out with
+  `APPSEC_THIN_ORCHESTRATOR=0`.
 - `runtime=legacy`: read `<base-dir>/SKILL-impl.md` from the top down to the
   `<!-- LAZY-LOAD BOUNDARY` marker and follow it. Incremental, rerender,
   resume, dry-run, deadline/cost-limited, and live-phase paths stay here.
-  Full/rebuild also stays here while the compact runtime's rollout flag is
-  unset, until its parity matrix is complete.
+  Full/rebuild stays here only when the compact runtime is opted out with
+  `APPSEC_THIN_ORCHESTRATOR=0`.
 - `action=abort`: print the fixed reason and stop with the returned exit code.
 
 For the legacy runtime, do **not** read past the `LAZY-LOAD BOUNDARY` during
@@ -78,7 +88,7 @@ the initial load. Stage 2 / 3 / 4 / Completion / Error-Handling below it are
 read just-in-time at the Stage-2 handoff. For the thin runtime, its own
 bounded-read instructions select only the Stage 1 slice and then the tail.
 
-Apart from the single status line above (and the conditional Opus/Haiku advisory),
+Apart from the single status line above (and the conditional session-cost / Haiku advisory),
 read it **silently** and proceed
 straight to execution. Do **not** narrate
 your reading: no "this is a large file", no "let me map its structure first",
@@ -91,6 +101,18 @@ two lines you may emit are: (1) the single `PREFLIGHT_STATUS` line that
 SKILL-impl tells you to print after config resolution (e.g.
 `📋 Existing threat model found — computing the incremental delta …`), and then
 (2) the `Threat Model — Pre-flight` summary. Nothing may appear between them.
+
+**One sanctioned exception — the interactive orchestrator-model prompt.** When the
+thin runtime's prepare ACTION reports `orchestrator_prompt_needed: true`
+(SKILL-full-runtime.md §2a), you MUST call `AskUserQuestion` to let the user choose
+the session model — emitted **before the Pre-flight summary** (the choice is a cost
+gate that comes first). This is an interactive tool call, not narration, and it is
+explicitly permitted here despite the rule above — do not suppress it. It fires
+whenever the detected session model diverges from the repo-size recommendation (a
+Sonnet-5 or an Opus session on a normal-sized repo), and is skipped under
+`APPSEC_HEADLESS=1`. The early `💡 Session model` heads-up is NOT a substitute — it
+is a one-line hint, not a choice.
+
 In particular do **not** announce your own actions — the following are all
 contract violations, even though they are *true*: "I've read through to the
 LAZY-LOAD BOUNDARY", "Now executing the combined pre-flight preamble", "Now

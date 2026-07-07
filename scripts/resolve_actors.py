@@ -28,10 +28,17 @@ import glob as glob_module
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 import yaml
+from jsonschema import Draft202012Validator
+from validate_intermediate import validate_actor, validate_actors_repo, validate_actors_resolved
+
+_DISCOVERY_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "actors-discovered.schema.yaml"
+_ACT_X_RE = re.compile(r"^ACT-X-[0-9]{1,4}$")
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -125,6 +132,139 @@ def _parse_disables(raw: list) -> list[dict]:
     return out
 
 
+def _validate_discovery_output(data: object) -> list[str]:
+    """Return schema errors for an LLM-authored actor-discovery document."""
+    try:
+        schema = yaml.safe_load(_DISCOVERY_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as e:
+        return [f"could not load discovery schema: {e}"]
+    errors = sorted(Draft202012Validator(schema).iter_errors(data), key=lambda e: list(e.absolute_path))
+    rendered: list[str] = []
+    for error in errors:
+        path = ".".join(str(part) for part in error.absolute_path) or "root"
+        rendered.append(f"{path}: {error.message}")
+    return rendered
+
+
+def _access_alias_map(plugin_root: str) -> dict[str, str]:
+    """Load alias → canonical access-zone mappings from the actor library."""
+    path = os.path.join(plugin_root, "data", "actors", "default-library.yaml")
+    if not os.path.exists(path):
+        return {}
+    data = _load_yaml(path)
+    aliases: dict[str, str] = {}
+    for canonical, values in (data.get("access_zone_aliases") or {}).items():
+        canonical_key = str(canonical).strip().lower()
+        if not canonical_key:
+            continue
+        aliases[canonical_key] = canonical_key
+        for value in values or []:
+            alias = str(value).strip().lower()
+            if alias:
+                aliases[alias] = canonical_key
+    return aliases
+
+
+def _trust_position_alias_map(plugin_root: str) -> dict[str, str]:
+    """Load trust-position alias → canonical mappings from the actor library."""
+    path = os.path.join(plugin_root, "data", "actors", "default-library.yaml")
+    if not os.path.exists(path):
+        return {}
+    data = _load_yaml(path)
+    aliases: dict[str, str] = {}
+    for canonical, values in (data.get("trust_position_aliases") or {}).items():
+        canonical_key = str(canonical).strip().lower()
+        if not canonical_key:
+            continue
+        aliases[canonical_key] = canonical_key
+        for value in values or []:
+            alias = str(value).strip().lower()
+            if alias:
+                aliases[alias] = canonical_key
+    return aliases
+
+
+def _normalise_access(values: object, aliases: dict[str, str]) -> set[str]:
+    if not isinstance(values, list):
+        return set()
+    normalised: set[str] = set()
+    for value in values:
+        token = str(value).strip().lower()
+        if token:
+            normalised.add(aliases.get(token, token))
+    return normalised
+
+
+def _normalise_trust_positions(
+    values: object,
+    aliases: dict[str, str] | None = None,
+) -> set[str]:
+    if not isinstance(values, list):
+        return set()
+    alias_map = aliases or {}
+    return {
+        alias_map.get(str(value).strip().lower(), str(value).strip().lower()) for value in values if str(value).strip()
+    }
+
+
+def _discovery_rejection_reason(
+    proposed: dict,
+    static_catalog: list[dict],
+    aliases: dict[str, str],
+    trust_aliases: dict[str, str] | None = None,
+) -> tuple[str | None, str | None]:
+    """Reject discovery actors that do not add a distinct trust position.
+
+    Returns ``(reason, covered_by)``. ``reason is None`` means the proposal
+    passes the deterministic admission gate.
+    """
+    aid = str(proposed.get("id") or "")
+    if not _ACT_X_RE.fullmatch(aid):
+        return "id must use the ACT-X-N discovery namespace", None
+    if proposed.get("confidence") != "high":
+        return "confidence must be high before a discovery actor can affect attribution", None
+
+    access = _normalise_access(proposed.get("access"), aliases)
+    trust_positions = _normalise_trust_positions(proposed.get("trust_positions"), trust_aliases)
+    distinct = _normalise_trust_positions(proposed.get("distinct_trust_positions"), trust_aliases)
+    if not distinct:
+        return "distinct_trust_positions must identify a new trust position", None
+    if not distinct.issubset(trust_positions):
+        return "distinct_trust_positions must be a subset of trust_positions", None
+
+    static_positions_union: set[str] = set()
+    for actor in static_catalog:
+        known = _normalise_access(actor.get("access"), aliases)
+        known_positions = _normalise_trust_positions(actor.get("trust_positions"), trust_aliases)
+        static_positions_union.update(known_positions)
+        if trust_positions and trust_positions.issubset(known_positions) and (not access or access.issubset(known)):
+            return "trust position is already covered by a static actor", str(actor.get("id") or "")
+
+    if not (distinct - static_positions_union):
+        return "distinct_trust_positions contains only positions already present in static actors", None
+
+    return None, None
+
+
+def _default_heatmap_slug(actor: dict) -> str:
+    """Choose a stable display class for an admitted discovery actor."""
+    access = {str(value).strip().lower() for value in actor.get("access", [])}
+    trust_positions = _normalise_trust_positions(actor.get("trust_positions"))
+    if access & {"build-pipeline", "ci-cd-runtime", "ci-cd-secrets", "deployment-pipeline"}:
+        return "build-time"
+    if access & {"local-fs", "internal-network", "staging-env", "prod-env"}:
+        return "repo-read"
+    if access & {"client-device", "mobile-device"}:
+        return "victim-required"
+    if any("privileged" in value or "admin" in value for value in trust_positions):
+        return "internet-priv-user"
+    if any(value.endswith(("credential", "authority", "membership")) for value in trust_positions):
+        return "internet-user"
+    if access == {"internet"}:
+        return "internet-anon"
+    return "internet-user"
+
+
 def _compute_actors_inputs_fingerprint(plugin_root: str, profile_dir: str, add_glob: str, repo_root: str) -> str:
     """SHA256 over all actor input files for incremental cache invalidation (actors.md §13)."""
     parts: list[str] = []
@@ -178,6 +318,9 @@ def load_enterprise_actors(org_profile_effective: dict, profile_dir: str) -> tup
         for fpath in sorted(glob_module.glob(full_glob)):
             try:
                 data = _load_yaml(fpath)
+                valid, errors = validate_actors_repo(data)
+                if not valid:
+                    raise ValueError(f"invalid actor file: {'; '.join(errors[:3])}")
                 file_actors = data.get("actors", [])
                 for a in file_actors:
                     a.setdefault("_provenance", {})
@@ -198,13 +341,16 @@ def load_repo_actors(
     disables is a list of {id, reason} dicts (actors.md §7).
     inherit_org defaults to True per actors.md §7 example.
     Actors with `renamed_from` get `_provenance.aliases` populated for downstream re-tagging
-    (actors.md §3 Promotion-ID-Stabilität).
+    (actors.md §3 Promotion-ID stability).
     """
     path = os.path.join(repo_root, ".appsec", "actors.yaml")
     if not os.path.exists(path):
-        return [], [], {"enabled": True, "max_proposed": 10}, True
+        return [], [], {"enabled": True, "max_proposed": 5}, True
 
     data = _load_yaml(path)
+    valid, errors = validate_actors_repo(data)
+    if not valid:
+        raise ValueError(f"invalid .appsec/actors.yaml: {'; '.join(errors[:3])}")
     actors = data.get("actors", [])
     for a in actors:
         a.setdefault("_provenance", {})
@@ -216,7 +362,7 @@ def load_repo_actors(
             a["_provenance"]["aliases"] = aliases
 
     disables = _parse_disables(data.get("disable", []))
-    discovery_config = data.get("discovery", {"enabled": True, "max_proposed": 10})
+    discovery_config = data.get("discovery", {"enabled": True, "max_proposed": 5})
     inherit_org = data.get("inherit_org", True)
     return actors, disables, discovery_config, inherit_org
 
@@ -429,6 +575,14 @@ def resolve(
     # --- Reach-equivalence ---
     resolved_map = apply_reach_equivalence(resolved_map, signals, plugin_root)
 
+    # Validate the fully merged static records before publishing any actor
+    # artifact. Layer files may contain partial overrides, but their merged
+    # result must satisfy the complete actor contract.
+    for actor_id, actor in resolved_map.items():
+        valid, errors = validate_actor(actor)
+        if not valid:
+            raise ValueError(f"resolved actor {actor_id} is invalid: {'; '.join(errors[:3])}")
+
     # --- Compute actors_inputs_fingerprint (actors.md §13) ---
     actors_inputs_fingerprint = _compute_actors_inputs_fingerprint(plugin_root, profile_dir, ent_add_glob, repo_root)
     with open(os.path.join(output_dir, ".actor-fingerprints.json"), "w") as f:
@@ -445,6 +599,7 @@ def resolve(
     merged_static = {
         "schema_version": 1,
         "actors_inputs_fingerprint": actors_inputs_fingerprint,
+        "catalog_actors": list(resolved_map.values()),
         "resolved_actors": [a for a in resolved_map.values() if a["_provenance"].get("active")],
         "disabled_actors": [
             {
@@ -463,44 +618,117 @@ def resolve(
         f"[resolve_actors] .actors-merged-static.json written ({len(merged_static['resolved_actors'])} active actors)"
     )
 
-    # --- Quick-mode: skip discovery, write sentinel ---
-    if quick_mode or not discovery_config.get("enabled", True):
-        sentinel = {"reason": "quick-mode", "discovery_skipped": True}
+    discovery_enabled = bool(discovery_config.get("enabled", True))
+    discovery_skip_reason = "quick-mode" if quick_mode else "disabled-by-repo-config" if not discovery_enabled else None
+    accepted_confirmed_relevant: list[dict] = []
+    accepted_inputs_questioned: list[dict] = []
+    rejected_discovery_actors: list[dict] = []
+
+    # --- Quick/config mode: skip discovery, write an accurate sentinel ---
+    if quick_mode or not discovery_enabled:
+        sentinel = {
+            "reason": discovery_skip_reason,
+            "discovery_skipped": True,
+        }
         with open(os.path.join(output_dir, ".discovery-skipped.json"), "w") as f:
             json.dump(sentinel, f, indent=2)
-        print("[resolve_actors] Quick-mode: discovery skipped — .discovery-skipped.json written")
+        print(f"[resolve_actors] Actor discovery skipped ({discovery_skip_reason}) — .discovery-skipped.json written")
         discovery_actors: list[dict] = []
     else:
+        skipped_path = os.path.join(output_dir, ".discovery-skipped.json")
+        if os.path.exists(skipped_path):
+            os.unlink(skipped_path)
         # --- Layer 4: LLM-Discovery ---
         discovery_actors = []
         if discovery_output_path and os.path.exists(discovery_output_path):
             try:
                 disc = _load_json(discovery_output_path)
-                max_proposed = discovery_config.get("max_proposed", 10)
-                for proposed in disc.get("proposed_additional", [])[:max_proposed]:
-                    aid = proposed["id"]
-                    if aid in resolved_map:
-                        continue  # already in static layers
-                    proposed = copy.deepcopy(proposed)
-                    proposed.setdefault("_provenance", {})
-                    proposed["_provenance"]["layer"] = "discovery"
-                    proposed["_provenance"]["proposed"] = True
-                    proposed["_provenance"]["active"] = True
-                    resolved_map[aid] = proposed
-                    discovery_actors.append(proposed)
+                validation_errors = _validate_discovery_output(disc)
+                if validation_errors:
+                    message = "; ".join(validation_errors[:3])
+                    rejected_discovery_actors.append({"id": None, "reason": f"invalid discovery output: {message}"})
+                    run_issues.append(
+                        {
+                            "class": "invalid_actor_discovery_output",
+                            "severity": "defect",
+                            "message": f"Actor discovery output rejected by schema: {message}",
+                        }
+                    )
+                else:
+                    accepted_confirmed_relevant = copy.deepcopy(disc.get("confirmed_relevant", []))
+                    accepted_inputs_questioned = copy.deepcopy(disc.get("inputs_questioned", []))
+                    max_proposed = min(int(discovery_config.get("max_proposed", 5)), 5)
+                    static_catalog = list(resolved_map.values())
+                    aliases = _access_alias_map(plugin_root)
+                    trust_aliases = _trust_position_alias_map(plugin_root)
+                    for proposed in disc.get("proposed_additional", [])[:max_proposed]:
+                        aid = proposed["id"]
+                        if aid in resolved_map:
+                            rejected_discovery_actors.append(
+                                {"id": aid, "reason": "actor ID already exists in a static layer", "covered_by": aid}
+                            )
+                            continue
+                        reason, covered_by = _discovery_rejection_reason(
+                            proposed,
+                            static_catalog,
+                            aliases,
+                            trust_aliases,
+                        )
+                        if reason:
+                            rejected = {"id": aid, "reason": reason}
+                            if covered_by:
+                                rejected["covered_by"] = covered_by
+                            rejected_discovery_actors.append(rejected)
+                            run_issues.append(
+                                {
+                                    "class": "discovery_actor_rejected",
+                                    "actor_id": aid,
+                                    "severity": "info",
+                                    "covered_by": covered_by,
+                                    "message": f"Discovery actor {aid} rejected — {reason}",
+                                }
+                            )
+                            continue
+                        proposed = copy.deepcopy(proposed)
+                        proposed.setdefault("heatmap_slug", _default_heatmap_slug(proposed))
+                        proposed.setdefault("_provenance", {})
+                        proposed["_provenance"]["layer"] = "discovery"
+                        proposed["_provenance"]["proposed"] = True
+                        proposed["_provenance"]["active"] = True
+                        resolved_map[aid] = proposed
+                        discovery_actors.append(proposed)
             except Exception as e:
                 print(f"[resolve_actors] WARNING: could not load discovery output: {e}", file=sys.stderr)
+                rejected_discovery_actors.append({"id": None, "reason": f"could not load discovery output: {e}"})
+                run_issues.append(
+                    {
+                        "class": "invalid_actor_discovery_output",
+                        "severity": "defect",
+                        "message": f"Actor discovery output could not be loaded: {e}",
+                    }
+                )
+
+    if quick_mode or not discovery_enabled:
+        rejected_discovery_actors = []
 
     # --- Write .actors-resolved.json ---
     resolved_out = {
         "schema_version": 1,
         "quick_mode": quick_mode,
+        "discovery_enabled": discovery_enabled,
+        "discovery_skip_reason": discovery_skip_reason,
         "actors_inputs_fingerprint": actors_inputs_fingerprint,
         "alias_map": alias_map,
         "resolved_actors": list(resolved_map.values()),
+        "confirmed_relevant": accepted_confirmed_relevant,
+        "inputs_questioned": accepted_inputs_questioned,
         "run_issues": run_issues,
         "discovery_actor_count": len(discovery_actors),
+        "rejected_discovery_actors": rejected_discovery_actors,
     }
+    valid, errors = validate_actors_resolved(resolved_out)
+    if not valid:
+        raise RuntimeError(f"resolver produced invalid .actors-resolved.json: {'; '.join(errors[:5])}")
     resolved_path = os.path.join(output_dir, ".actors-resolved.json")
     with open(resolved_path, "w") as f:
         json.dump(resolved_out, f, indent=2)
@@ -514,7 +742,7 @@ def resolve(
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Resolve Actor Layer (4-layer merge)")
     parser.add_argument("--plugin-root", required=True)
     parser.add_argument("--repo-root", required=True)
@@ -525,16 +753,21 @@ def main() -> None:
     parser.add_argument("--quick", action="store_true")
     args = parser.parse_args()
 
-    resolve(
-        plugin_root=args.plugin_root,
-        repo_root=args.repo_root,
-        output_dir=args.output_dir,
-        org_profile_effective_path=args.org_profile_effective,
-        discovery_output_path=args.discovery_output,
-        signals_path=args.signals,
-        quick_mode=args.quick,
-    )
+    try:
+        resolve(
+            plugin_root=args.plugin_root,
+            repo_root=args.repo_root,
+            output_dir=args.output_dir,
+            org_profile_effective_path=args.org_profile_effective,
+            discovery_output_path=args.discovery_output,
+            signals_path=args.signals,
+            quick_mode=args.quick,
+        )
+    except (OSError, ValueError, RuntimeError, yaml.YAMLError, json.JSONDecodeError) as error:
+        print(f"[resolve_actors] ERROR: {error}", file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -111,6 +111,16 @@ def test_expand_entry_substitutes_placeholders():
     assert out3 == "Read(/tmp/plugin/**)"
 
 
+def test_expand_entry_substitutes_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    out = cp.expand_entry(
+        "Read(${HOME}/.claude/projects/**)",
+        Path("/tmp/repo"),
+        Path("/tmp/out"),
+    )
+    assert out == f"Read({tmp_path}/.claude/projects/**)"
+
+
 def test_expand_entry_is_noop_without_placeholders():
     assert cp.expand_entry("Bash(grep:*)", Path("/x"), Path("/y")) == "Bash(grep:*)"
 
@@ -127,10 +137,15 @@ def test_expand_entry_is_noop_without_placeholders():
         ("Bash(*)", "Bash(rm:*)", True),
         ("Read(*)", "Read(/tmp/foo)", True),
         ("Write(/tmp/**)", "Write(/tmp/foo/bar.md)", True),
-        # gitignore ** semantics: dotfiles and dot-dirs ARE covered by /**
-        ("Write(/tmp/**)", "Write(/tmp/.sidecar.json)", True),
+        # /** does NOT cover direct dotfile children (Claude Code engine behavior)
+        ("Write(/tmp/**)", "Write(/tmp/.sidecar.json)", False),
+        # /** DOES cover files inside dot-subdirectories (2+ path components below base)
         ("Write(/tmp/**)", "Write(/tmp/.dispatch-context/x.md)", True),
         ("Write(/tmp/**)", "Write(/other/x)", False),
+        # /.* covers direct dotfile children only
+        ("Write(/tmp/.*)", "Write(/tmp/.sidecar.json)", True),
+        ("Write(/tmp/.*)", "Write(/tmp/.dir/x.md)", False),
+        ("Write(/tmp/.*)", "Write(/tmp/normal.md)", False),
         ("Edit(/repo/**)", "Edit(/repo/docs/security/a)", True),
         # different tool namespace never matches
         ("Bash(grep:*)", "Read(*)", False),

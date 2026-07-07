@@ -15,21 +15,20 @@ def _write(path: Path, entries: list[dict]) -> Path:
     return path
 
 
-def _turn(resident: tuple[int, int, int], text: str, model: str = "sonnet") -> dict:
+def _turn(resident: tuple[int, int, int], text: str, model: str = "sonnet", msg_id: str | None = None) -> dict:
     fresh, cache_read, cache_write = resident
-    return {
-        "type": "assistant",
-        "version": "2.1.0",
-        "message": {
-            "model": model,
-            "content": [{"type": "text", "text": text}],
-            "usage": {
-                "input_tokens": fresh,
-                "cache_read_input_tokens": cache_read,
-                "cache_creation_input_tokens": cache_write,
-            },
+    message = {
+        "model": model,
+        "content": [{"type": "text", "text": text}],
+        "usage": {
+            "input_tokens": fresh,
+            "cache_read_input_tokens": cache_read,
+            "cache_creation_input_tokens": cache_write,
         },
     }
+    if msg_id is not None:
+        message["id"] = msg_id
+    return {"type": "assistant", "version": "2.1.0", "message": message}
 
 
 def test_resident_metric_and_real_compaction_boundary(tmp_path):
@@ -53,6 +52,26 @@ def test_resident_metric_and_real_compaction_boundary(tmp_path):
     assert len(result["compact_boundaries"]) == 1
     assert result["compact_boundaries"][0]["resident_before"] == 106
     assert result["compact_boundaries"][0]["stage_before"] == "Phase 9"
+
+
+def test_multiple_content_blocks_per_message_are_not_double_counted(tmp_path):
+    # Claude Code logs one JSONL record per content block (thinking/text/tool_use)
+    # for a single API turn; all of them carry the SAME message.usage snapshot.
+    # Summing cache_read/turns per JSONL record (instead of per unique message id)
+    # inflates cache_read_throughput by however many blocks the turn had.
+    path = _write(
+        tmp_path / "main.jsonl",
+        [
+            _turn((0, 100, 10), "thinking chunk", msg_id="msg_1"),
+            _turn((0, 100, 10), "text chunk", msg_id="msg_1"),
+            _turn((0, 100, 10), "tool_use chunk", msg_id="msg_1"),
+            _turn((0, 50, 5), "second turn", msg_id="msg_2"),
+        ],
+    )
+    result = report.analyze_session(path)
+    assert result["assistant_turns_with_usage"] == 2
+    assert result["cache_read_throughput"] == 150
+    assert result["peak_resident_context"] == 110
 
 
 def test_main_and_subagent_are_grouped_separately(tmp_path):

@@ -52,6 +52,15 @@ DRY_RUN="${4:-false}"
 if [ "$DRY_RUN" = "false" ]; then
   {
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations + config-scan-mitigations + yaml-hygiene + vektors + open-registration + asset-links + control-taxonomy"
+    # G1 (2026-07-05) — degenerate-evidence-verification guard. MUST run BEFORE
+    # emit_review_mitigations: a too-weak verifier model can stamp every sampled
+    # finding "ambiguous" (0 verified / 0 refuted), which otherwise cascades into
+    # an all-review, no-P1 Mitigation Register (see the script docstring). When
+    # the distribution is degenerate this strips evidence_check so the run is
+    # treated as unverified-neutral; emit_review then emits no review cards,
+    # emit_finding_fix produces real P1 fixes, and validate_evidence_lines (step
+    # 4 below) re-derives per-line verdicts deterministically for §8.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/guard_evidence_verification.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_meta_findings.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_review_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     # M-RCA-2026-05 — `kind: fix` mitigations for config-scan threats.

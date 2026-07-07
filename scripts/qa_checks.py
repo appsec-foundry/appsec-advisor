@@ -17,6 +17,7 @@ Usage:
     qa_checks.py summary_bullets <threat-model.md>
     qa_checks.py fragments     <output-dir>
     qa_checks.py contract      <threat-model.md> [<sections-contract.yaml>]
+    qa_checks.py final_structure <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py repair_plan   <threat-model.md> <output-dir> [<sections-contract.yaml>]
     qa_checks.py evidence_integrity <output-dir> <repo-root>
     qa_checks.py unmasked_secrets <threat-model.md> [<output-dir>]
@@ -71,6 +72,9 @@ Module map (coarse — line ranges drift; refresh by re-grepping the listed name
 
 from __future__ import annotations
 
+import base64
+import binascii
+import html
 import json
 import json as _json
 import os
@@ -83,6 +87,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import _safe_cond
+from _atomic_io import atomic_write_text
+from check_reference_format import lint_text as _reference_format_lint
 from perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_PATTERNS
 from secret_scan import scan_file as _scan_file_for_secrets
 
@@ -382,6 +388,30 @@ def check_links(md_path: Path, repo_root: Path) -> tuple[Report, str]:
         else:
             report.issues.append(f"missing: {raw_path}")
     return report, new_text
+
+
+def check_reference_format(md_path: Path) -> Report:
+    """Per-run gate for the canonical finding/mitigation reference format.
+
+    Every `[F/T/M-NNN](#…)` reference must be the full form
+    (`<glyph> [ID](#id) — <label> (`file:line`)`) or the short form
+    (`<glyph> [ID](#id)`); an un-backticked locator, an ID baked into the link
+    text, or an em-dash locator is a defect (see scripts/check_reference_format.py
+    for the grammar). compose auto-normalises most of these via
+    `_normalize_reference_locators`; a surviving violation is something the
+    renderer could not fix, so it is surfaced as a blocking QA issue rather than
+    shipping a malformed link. Reference-adjacent — prose file mentions and URLs
+    are never flagged."""
+    report = Report("reference_format")
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"reference_format: cannot read {md_path}: {e}")
+        return report
+    for violation in _reference_format_lint(text):
+        report.issues.append(f"reference-format: {violation}")
+    report.ok = 1 if not report.issues else 0
+    return report
 
 
 def check_xrefs(md_path: Path) -> Report:
@@ -1459,26 +1489,48 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
             continue
         expected_headings.append(heading)
 
-    # Strip inline `<a id="…"></a>` anchors before comparing so headings like
+    # Strip fenced source snippets before heading discovery so a literal
+    # ``## 8. Findings Register`` inside evidence cannot satisfy the document
+    # contract. Inline anchors are removed so headings like
     # `## <a id="appendix-a-vektor-taxonomy"></a>Appendix A — Vektor Taxonomy`
     # match the contract's `## Appendix A — Vektor Taxonomy`.
-    stripped_text = re.sub(r'<a id="[^"]*"></a>', "", text)
+    stripped_text = re.sub(r'<a id="[^"]*"></a>', "", _strip_code_fences(text))
+
+    def has_substance(body: str) -> bool:
+        substance = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+        substance = re.sub(r'<a\s+id="[^"]+"></a>', "", substance)
+        return any(
+            line.strip() and line.strip() != "---" and not re.match(r"^\s*#{1,6}\s+", line)
+            for line in substance.splitlines()
+        )
 
     last_idx = -1
     for heading in expected_headings:
-        match = re.search(
-            rf"(?m)^{re.escape(heading)}[ \t]*$",
-            stripped_text,
-        )
+        heading_re = re.compile(rf"(?m)^{re.escape(heading)}[ \t]*$")
+        matches = list(heading_re.finditer(stripped_text))
+        match = matches[0] if matches else None
         idx = match.start() if match else -1
         if idx < 0:
             report.issues.append(f"expected section missing: {heading!r}")
             continue
+        if len(matches) > 1:
+            report.issues.append(f"duplicate section heading: {heading!r} appears {len(matches)} times")
         if idx < last_idx:
             report.issues.append(
                 f"section order violation — {heading!r} appears before a section that should come later"
             )
         last_idx = idx
+
+        # A heading by itself is not a rendered section. Validate the final
+        # Markdown rather than trusting the composer's earlier integrity
+        # sidecar: authorized post-compose mutations run after that sidecar was
+        # written and must not be able to leave a heading-only chapter behind.
+        if heading.startswith("## "):
+            tail = stripped_text[match.end() :]
+            next_h2 = re.search(r"(?m)^##\s+", tail)
+            body = tail[: next_h2.start()] if next_h2 else tail
+            if not has_substance(body):
+                report.issues.append(f"section has no substantive body: {heading!r}")
 
     # 1b. Required sub-section presence + order within each top-level
     # section. Historically the §7 contract listed required_subsections but
@@ -1505,39 +1557,80 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
         )
         last_sub_idx = -1
         for sub in required_subs:
+            if isinstance(sub, str):
+                referenced = (contract.get("sections") or {}).get(sub) or {}
+                referenced_heading = (referenced.get("heading") or "").strip()
+                heading_match = re.fullmatch(r"(#{1,6})\s+(.+)", referenced_heading)
+                if not heading_match:
+                    report.issues.append(f"invalid required subsection reference under {parent_heading!r}: {sub!r}")
+                    continue
+                sub = {
+                    "level": len(heading_match.group(1)),
+                    "title": heading_match.group(2),
+                }
             if not isinstance(sub, dict):
+                report.issues.append(f"invalid required subsection declaration under {parent_heading!r}: {sub!r}")
                 continue
             sub_cond = sub.get("condition")
             if sub_cond and not _safe_eval_cond(sub_cond, env):
                 continue
             level = int(sub.get("level") or 3)
             title = (sub.get("title") or "").strip()
-            pattern = (sub.get("pattern") or "").strip()
+            pattern = (sub.get("pattern") or sub.get("title_pattern") or "").strip()
             if not title and not pattern:
+                report.issues.append(f"invalid required subsection declaration under {parent_heading!r}: {sub!r}")
                 continue
             hashes = "#" * level
             if title:
                 sub_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+{re.escape(title)}[ \t]*$")
                 display = f"{hashes} {title}"
+                sub_matches = list(sub_re.finditer(parent_body))
             else:
                 try:
-                    sub_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+{pattern}[ \t]*$")
+                    title_re = re.compile(pattern)
                 except re.error as err:
                     report.issues.append(
                         f"invalid required_subsection pattern under {parent_heading!r}: /{pattern}/ ({err})"
                     )
                     continue
+                heading_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+(?P<title>[^\n]+?)[ \t]*$")
+                # Prefix match, NOT fullmatch: required_subsection patterns are
+                # authored as ^-anchored prefixes (e.g. `^5\.1 Unauthenticated
+                # Entry Points`), so a heading that carries a trailing decoration
+                # the generator legitimately appends — e.g. the route-count
+                # suffix `5.1 Unauthenticated Entry Points (54)` from
+                # pregenerate_fragments — must still satisfy the requirement.
+                # `fullmatch` rejected the suffix and produced a false-positive
+                # "required subsection missing", forcing a needless fragment-fixer
+                # repair pass (juice-shop 2026-07-02).
+                sub_matches = [
+                    candidate
+                    for candidate in heading_re.finditer(parent_body)
+                    if title_re.match(candidate.group("title").strip())
+                ]
                 display = f"{hashes} /{pattern}/"
-            sub_match = sub_re.search(parent_body)
+            sub_match = sub_matches[0] if sub_matches else None
             if not sub_match:
                 report.issues.append(f"required subsection missing under {parent_heading!r}: {display!r}")
                 continue
+            if len(sub_matches) > 1:
+                report.issues.append(
+                    f"duplicate required subsection under {parent_heading!r}: "
+                    f"{display!r} appears {len(sub_matches)} times"
+                )
             if sub_match.start() < last_sub_idx:
                 report.issues.append(
                     f"required subsection order violation under {parent_heading!r}: "
                     f"{display!r} appears before a subsection that should come earlier"
                 )
             last_sub_idx = sub_match.start()
+            sub_tail = parent_body[sub_match.end() :]
+            next_peer_or_parent = re.search(rf"(?m)^#{{1,{level}}}\s+", sub_tail)
+            sub_body = sub_tail[: next_peer_or_parent.start()] if next_peer_or_parent else sub_tail
+            if not has_substance(sub_body):
+                report.issues.append(
+                    f"required subsection has no substantive body under {parent_heading!r}: {display!r}"
+                )
 
     # 2. Forbidden MS subsection patterns.
     ms_info = _slice_management_summary(text)
@@ -1555,62 +1648,8 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
                 if compiled.match(title):
                     report.issues.append(f"forbidden MS heading matches /{pat}/: {title!r}")
 
-    # 3. Required table column schemas.
-    # Each entry may carry one or MORE accepted header signatures (any-match
-    # is OK). The Operational Strengths and Top Mitigations tables both
-    # switched layouts in M3.10; the legacy form is intentionally NOT in
-    # the accept-list so reports rendered by old code are flagged.
-    table_checks = [
-        # 2026-05 — Top Threats merged Top Findings into one section. One row per attack class.
-        (
-            "top_threats",
-            "Top Threats",
-            [
-                "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |",
-            ],
-        ),
-        (
-            "operational_strengths",
-            "Operational Strengths",
-            [
-                # M3.10 — categorical-cluster layout
-                "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
-                # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
-                "| Strength | What's in Place | Effectiveness |",
-                # Post-2026-05 empty-state — every cluster demoted to Weak, no
-                # table rendered, only an italic explanatory banner. Accept the
-                # banner's stable opener as evidence the section was authored.
-                "No defensive cluster currently rates above Weak",
-            ],
-        ),
-        (
-            "mitigations",
-            "Top Mitigations",
-            [
-                # 2026-06-03 — Priority column dropped: the rollout priority now
-                # rides on the linked mitigation as a leading prefix (2026-06-04
-                # Variant B: a monochrome circled digit, `❶`…`❹`), so the
-                # dedicated column is redundant.
-                "| # | Component | Mitigation | Addresses | Effort |",
-                # Post-2026-05-29 — numbered table with a dedicated Component
-                # column (label printed once per group, blank on continuation
-                # rows). Replaces the in-table divider-row form, which rendered
-                # the component label displaced in the `#`/ID column.
-                "| # | Priority | Component | Mitigation | Addresses | Effort |",
-                # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
-                # added so each data row carries an at-a-glance position; divider
-                # rows continue to carry the component label in the first cell.
-                "| # | Priority | Mitigation | Addresses | Effort |",
-                # Post-2026-05 iteration 1 — single central table, sub-grouped by
-                # component via divider rows; Component column dropped.
-                "| Priority | Mitigation | Addresses | Effort |",
-                # M3.10 legacy — kept as accepted form so legacy reports are not
-                # falsely flagged.
-                "| Priority | Mitigation | Component | Addresses | Effort |",
-            ],
-        ),
-    ]
-    for _sid, label, accepted_headers in table_checks:
+    # 3. Required table column schemas — see module-level _TABLE_SCHEMA_CHECKS.
+    for _sid, label, accepted_headers in _TABLE_SCHEMA_CHECKS:
         if label not in text:
             continue
         # Also accept the fixed-layout HTML form: qa autofix rewrites some tables
@@ -1668,7 +1707,6 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
     "verdict": [".fragments/ms-verdict.json"],
     "architectural_anti_patterns": [".fragments/ms-anti-patterns.json"],
     "ai_exposure_ms": [".fragments/ms-ai-exposure.json"],  # optional — only when LLM/AI surface
-    "top_findings": [],  # computed
     "mitigations": [],  # computed
     "operational_strengths": [".fragments/operational-strengths-overrides.json"],
     "system_overview": [".fragments/system-overview.md"],
@@ -1688,14 +1726,74 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
 }
 
 
-# Label → contract section id mapping for table-schema-drift issues
-# (Top Findings / Operational Strengths / Prioritized Mitigations).
-# Used to point the orchestrator at the correct fragment when a column schema does not match.
-_TABLE_LABEL_TO_SECTION: dict[str, str] = {
-    "Top Findings": "top_findings",
-    "Operational Strengths": "operational_strengths",
-    "Prioritized Mitigations": "mitigations",
-}
+# Required table column schemas, checked by check_contract(). Each entry is
+# (section_id, label, [accepted header signatures]); any-match is OK. The
+# Operational Strengths and Top Mitigations tables switched layouts in M3.10;
+# the legacy form is intentionally NOT in the accept-list so reports rendered by
+# old code are flagged. Single source for BOTH the column-schema check and the
+# label → section-id repair mapping below, so they can never drift apart.
+_TABLE_SCHEMA_CHECKS: list[tuple[str, str, list[str]]] = [
+    # 2026-05 — Top Threats merged Top Findings into one section. One row per attack class.
+    (
+        "top_threats",
+        "Top Threats",
+        [
+            "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |",
+        ],
+    ),
+    (
+        "operational_strengths",
+        "Operational Strengths",
+        [
+            # M3.10 — categorical-cluster layout
+            "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
+            # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
+            "| Strength | What's in Place | Effectiveness |",
+            # Post-2026-05 empty-state — every cluster demoted to Weak, no
+            # table rendered, only an italic explanatory banner. Accept the
+            # banner's stable opener as evidence the section was authored.
+            "No defensive cluster currently rates above Weak",
+        ],
+    ),
+    (
+        "mitigations",
+        "Top Mitigations",
+        [
+            # 2026-06-03 — Priority column dropped: the rollout priority now
+            # rides on the linked mitigation as a leading prefix (2026-06-04
+            # Variant B: a monochrome circled digit, `❶`…`❹`), so the
+            # dedicated column is redundant.
+            "| # | Component | Mitigation | Addresses | Effort |",
+            # Post-2026-05-29 — numbered table with a dedicated Component
+            # column (label printed once per group, blank on continuation
+            # rows). Replaces the in-table divider-row form, which rendered
+            # the component label displaced in the `#`/ID column.
+            "| # | Priority | Component | Mitigation | Addresses | Effort |",
+            # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
+            # added so each data row carries an at-a-glance position; divider
+            # rows continue to carry the component label in the first cell.
+            "| # | Priority | Mitigation | Addresses | Effort |",
+            # Post-2026-05 iteration 1 — single central table, sub-grouped by
+            # component via divider rows; Component column dropped.
+            "| Priority | Mitigation | Addresses | Effort |",
+            # M3.10 legacy — kept as accepted form so legacy reports are not
+            # falsely flagged.
+            "| Priority | Mitigation | Component | Addresses | Effort |",
+        ],
+    ),
+]
+
+
+# Label → contract section id for table-schema-drift repair routing, derived
+# from _TABLE_SCHEMA_CHECKS so it can NEVER drift from the checker's own labels.
+# The 2026-07 bug: this map hard-coded the retired 'Top Findings' /
+# 'Prioritized Mitigations' labels, which no longer matched the emitted
+# 'Top Threats' / 'Top Mitigations' labels, so every table-schema drift fell
+# through to an unclassified, no-fragment repair action. `top_threats` and
+# `mitigations` are computed tables (no fragment → `.get(sid, [])` yields []),
+# so their drift routes to manual_review; operational_strengths carries a
+# rewritable override fragment.
+_TABLE_LABEL_TO_SECTION: dict[str, str] = {label: sid for sid, label, _ in _TABLE_SCHEMA_CHECKS}
 
 
 def _heading_to_section_id(heading: str, contract: dict) -> str | None:
@@ -1816,6 +1914,7 @@ def build_repair_plan(
     # fires for them as well, and each check type has its own action branch
     # below with targeted remediation instructions.
     mermaid_report = check_mermaid_syntax(md_path)
+    toc_contract_report = check_toc_contract(md_path, contract_path)
     toc_nested_report = check_toc_nested_links(md_path)
     infobox_report = check_infobox_completeness(md_path)
     auth_report = check_auth_method_decomposition(md_path, contract_path)
@@ -1839,6 +1938,7 @@ def build_repair_plan(
     placeholder_report = check_placeholders(md_path)
     yaml_md_report = check_yaml_md_consistency(md_path, output_dir / "threat-model.yaml")
     mermaid_issues = list(mermaid_report.issues)
+    toc_contract_issues = list(toc_contract_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     infobox_issues = list(infobox_report.issues)
     auth_issues = list(auth_report.issues)
@@ -1856,6 +1956,7 @@ def build_repair_plan(
     placeholder_issues = list(placeholder_report.issues)
     yaml_md_issues = list(yaml_md_report.issues)
     report.issues.extend(mermaid_issues)
+    report.issues.extend(toc_contract_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(infobox_issues)
     report.issues.extend(auth_issues)
@@ -1883,6 +1984,22 @@ def build_repair_plan(
     report.issues.extend(yaml_md_issues)
 
     actions: list[dict] = []
+    if toc_contract_issues:
+        actions.append(
+            {
+                "raw_issue": "; ".join(toc_contract_issues),
+                "type": "toc_contract",
+                "section_id": "toc",
+                "fragments_to_rewrite": [],
+                "remediation": (
+                    "The deterministic TOC no longer matches the final chapter "
+                    "set one-to-one. Re-run compose_threat_model.py and the final "
+                    "QA tail. If the mismatch persists, fix `_compute_toc_entries` "
+                    "or the post-compose mutator that changed headings; do not "
+                    "hand-edit the generated TOC."
+                ),
+            }
+        )
     # One action per mermaid-syntax finding. The offending fragment is almost
     # always `.fragments/attack-walkthroughs.md` (sequence diagrams) or
     # `.fragments/architecture-diagrams.md` (flowchart/graph). Pointing at
@@ -2231,6 +2348,7 @@ def build_repair_plan(
         # action for the same violation.
         if (
             raw in mermaid_issues
+            or raw in toc_contract_issues
             or raw in toc_nested_issues
             or raw in infobox_issues
             or raw in auth_issues
@@ -2358,10 +2476,15 @@ def build_repair_plan(
             )
             actions.append(action)
             continue
-        # <label> table does not match contract column schema (expected: '<header>')
+        # <label> table does not match contract column schema
+        #   (expected: '<header>')   — legacy single-signature form
+        #   (expected one of: [...]) — current multi-signature form (any-match)
+        # check_contract emits the multi form; the parser must capture the
+        # label for BOTH or the drift falls through to an unclassified action
+        # (2026-07 QA bug: parser only matched the single form).
         m = re.match(
             r"(.+?) table does not match contract column schema "
-            r"\(expected: ['\"](.+?)['\"]\)$",
+            r"\(expected(?: one of)?: (.+)\)$",
             raw,
         )
         if m:
@@ -2519,13 +2642,22 @@ def _classify_plan_status(
     run's all-``posture_renderer_bug`` repair plan would have burnt 3 ×
     ~10 min loop iterations on a problem only a code change can fix.
     """
-    blocking = any(a.get("fragments_to_rewrite") and a.get("severity") != "cosmetic" for a in actions)
+    # A blocking action is ANY non-cosmetic action, whether or not it has a
+    # writable fragment. `actionable` stays gated on a fragment (the re-render
+    # loop can only fix a fragment-backed defect); a blocking action with no
+    # fragment is real but needs manual review, not re-rendering. Blocking must
+    # always win over co-occurring cosmetic advisories — the 2026-07 QA bug was
+    # that a genuine contract defect with no fragment target (e.g. a computed
+    # Top Threats table-schema drift) was silently demoted to
+    # `cosmetic_advisory` (exit 4, treated like pass) whenever any cosmetic
+    # action happened to carry a writable fragment.
+    blocking = any(a.get("severity") != "cosmetic" for a in actions)
+    actionable = any(a.get("fragments_to_rewrite") and a.get("severity") != "cosmetic" for a in actions)
     cosmetic = any(a.get("fragments_to_rewrite") and a.get("severity") == "cosmetic" for a in actions)
-    actionable = blocking
     if not issues:
         return "pass", actionable
     if blocking:
-        return "fail", actionable
+        return ("fail" if actionable else "manual_review"), actionable
     if cosmetic:
         return "cosmetic_advisory", actionable
     return "manual_review", actionable
@@ -2561,7 +2693,7 @@ def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int
             pass
         print(json.dumps(plan, indent=2))
         return 0
-    plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(plan_path, json.dumps(plan, indent=2) + "\n")
     print(json.dumps(plan, indent=2))
     if plan["status"] == "manual_review":
         return 3
@@ -3662,9 +3794,32 @@ def check_section7_finding_reference_semantic(md_path: Path) -> Report:
 
 
 _SEV_DOT_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
-_PRIO_DOT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
+# Fill-ramp priority glyphs (● P1 … ○ P4), matching compose_threat_model.py.
+# 2026-07-04: reverted from the ❶❷❸❹ digit form; the ramp encodes priority as a
+# dark→light fill so it needs no fragile colour span to convey the gray tone.
+_PRIO_RAMP_TBL = {"p1": "●", "p2": "◕", "p3": "◑", "p4": "○"}
 _F_REF_RE = re.compile(r"(?P<dot>[🔴🟠🟡🟢⚪](?:\s|&nbsp;|•)*)?(?P<link>\[F-(?P<num>\d+)\]\(#f-\d+\))")
-_M_REF_RE = re.compile(r"(?P<circ>[❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))")
+_M_REF_RE = re.compile(
+    # Recognise the ramp glyphs (idempotent re-annotation) and the superseded
+    # ❶❷❸❹ digits (migrate a stale glyph from an older render to the ramp).
+    r"(?:(?P<circ>"
+    r'(?:<span style="color:#[0-9a-fA-F]{3,6}">)?'
+    r"[●◕◑○❶❷❸❹❺❻❼❽❾]"
+    r"(?:</span>)?"
+    r")(?P<sep>(?:\s|&nbsp;|•)*))?"
+    r"(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))"
+)
+_PRIO_CIRCLE_COLOR = {"❶": "#111111", "❷": "#555555", "❸": "#888888", "❹": "#bbbbbb"}
+_PRIO_CIRCLE_STYLE_RE = re.compile(
+    r'(?:<span style="color:#[0-9a-fA-F]{3,6}">)?'
+    r"(?P<glyph>[❶❷❸❹])"
+    r"(?:</span>)?"
+    r"(?P<sep>(?:\s|&nbsp;|•)*)"
+    r"(?P<link>"
+    r"\[M-\d+\]\(#m-\d+\)"
+    r'|<a href="#m-\d+">M-\d+</a>'
+    r")"
+)
 
 
 def _annotate_id_refs(md_path: Path) -> int:
@@ -3676,9 +3831,10 @@ def _annotate_id_refs(md_path: Path) -> int:
     the composer's in-render annotation pass has already run — leaving the new
     link un-annotated (e.g. a §3 key-takeaway ref, or a self-reference inside a
     mitigation's own How steps). This retrofit reads the sibling
-    threat-model.yaml for severity/priority and annotates any still-bare ref.
-    Idempotent (the regex tolerates an existing dot/circle + `&nbsp;` separator)
-    and best-effort (any error leaves the document untouched).
+    threat-model.yaml for severity/priority, annotates bare refs, and normalizes
+    stale mitigation digits to the structured priority. Idempotent (the regex
+    tolerates an existing dot/circle + `&nbsp;` separator) and best-effort (any
+    error leaves the document untouched).
     """
     try:
         import yaml as _yaml
@@ -3702,7 +3858,7 @@ def _annotate_id_refs(md_path: Path) -> int:
             continue
         raw = str(mit.get("priority") or "").strip().lower().replace("p", "p")
         key = ""
-        if raw in _PRIO_DOT_TBL:
+        if raw in _PRIO_RAMP_TBL:
             key = raw
         elif raw in sev_to_prio:
             key = sev_to_prio[raw]
@@ -3724,10 +3880,15 @@ def _annotate_id_refs(md_path: Path) -> int:
         return f"{dot} {m.group('link')}" if dot else m.group("link")
 
     def _m_sub(m: re.Match) -> str:
-        if m.group("circ"):
+        expected = _PRIO_RAMP_TBL.get(prio_by_num.get(m.group("num").zfill(3), ""), "")
+        if not expected:
             return m.group(0)
-        circ = _PRIO_DOT_TBL.get(prio_by_num.get(m.group("num").zfill(3), ""), "")
-        return f"{circ} {m.group('link')}" if circ else m.group("link")
+        circ = m.group("circ") or ""
+        if circ:
+            # Normalize styled/bare stale digits back to the canonical bare
+            # form; the final presentation pass below reapplies the color.
+            return f"{expected}{m.group('sep') or ''}{m.group('link')}"
+        return f"{expected} {m.group('link')}"
 
     text = md_path.read_text(encoding="utf-8")
     out: list[str] = []
@@ -3738,9 +3899,45 @@ def _annotate_id_refs(md_path: Path) -> int:
             out.append(_M_REF_RE.sub(_m_sub, _F_REF_RE.sub(_f_sub, chunk)))
     new = "".join(out)
     if new != text:
-        md_path.write_text(new, encoding="utf-8")
+        atomic_write_text(md_path, new)
         return 1
     return 0
+
+
+def _style_priority_circles(md: str) -> tuple[str, int]:
+    """Apply the presentation-only priority ramp after all structural passes.
+
+    The circled digit remains the semantic priority marker. The inline colour
+    is deliberately owned by ``qa_checks.py autofix`` so no standalone
+    post-QA script mutates the validated report. Both Markdown links and links
+    already converted to HTML by the fixed-layout table pass are supported.
+    """
+
+    def _sub(match: re.Match[str]) -> str:
+        glyph = match.group("glyph")
+        color = _PRIO_CIRCLE_COLOR[glyph]
+        return f'<span style="color:{color}">{glyph}</span>{match.group("sep")}{match.group("link")}'
+
+    chunks: list[str] = []
+    count = 0
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```|`[^`\n]+`)", md, flags=re.DOTALL):
+        if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
+            chunks.append(chunk)
+            continue
+        styled, replacements = _PRIO_CIRCLE_STYLE_RE.subn(_sub, chunk)
+        chunks.append(styled)
+        count += replacements
+    return "".join(chunks), count
+
+
+def _apply_priority_circle_styling(md_path: Path) -> int:
+    """Style priority circles in place and return the number actually changed."""
+    before = md_path.read_text(encoding="utf-8")
+    styled, matched = _style_priority_circles(before)
+    if not matched or styled == before:
+        return 0
+    atomic_write_text(md_path, styled)
+    return matched
 
 
 # ---------------------------------------------------------------------------
@@ -3761,14 +3958,14 @@ _AS_TABLE_HEADERS = ("Method", "Route", "Risk", "Notes")
 # Shared column widths (must sum to 100). Route is deliberately kept modest so
 # long routes wrap to several short lines rather than one wide column.
 _AS_COL_WIDTHS = ("9%", "30%", "14%", "47%")
-_ASSET_TABLE_HEADERS = ("Asset", "ID", "Classification", "Description", "Linked Threats")
-_ASSET_COL_WIDTHS = ("20%", "6%", "12%", "29%", "33%")
+_ASSET_TABLE_HEADERS = ("Asset", "Classification", "Description", "Linked Threats")
+_ASSET_COL_WIDTHS = ("22%", "13%", "32%", "33%")
 _STRENGTH_TABLE_HEADERS = ("Strength", "What's in Place", "Effectiveness", "Gap", "Mitigates")
 _STRENGTH_COL_WIDTHS = ("18%", "28%", "13%", "30%", "11%")
 # Each spec: (headers, widths, {col_idx: inline-style}, prose_col_indices).
-# - inline-style per column: `white-space:nowrap` pins short IDs (A-004 must
-#   never break at its hyphen); `overflow-wrap:anywhere` lets a long route /
-#   asset name wrap inside its fixed column.
+# - inline-style per column: `overflow-wrap:anywhere` lets a long route / asset
+#   name wrap inside its fixed column; `white-space:nowrap` pins short tokens so
+#   they never break at a hyphen.
 # - prose_col_indices: columns whose soft-wrap `<br/>` (inserted by compose's
 #   `_softwrap_prose_table_cells` for narrow GFM rendering) is stripped so the
 #   prose reflows cleanly to the fixed column width instead of breaking at the
@@ -3779,8 +3976,8 @@ _FIXED_LAYOUT_SPECS = (
     (
         _ASSET_TABLE_HEADERS,
         _ASSET_COL_WIDTHS,
-        {0: "overflow-wrap:anywhere", 1: "white-space:nowrap", 4: "overflow-wrap:anywhere"},
-        frozenset({3}),  # Description reflows; Linked Threats keeps its <br/> stack
+        {0: "overflow-wrap:anywhere", 3: "overflow-wrap:anywhere"},
+        frozenset({2}),  # Description (col 2) reflows; Linked Threats keeps its <br/> stack
     ),
     (
         _STRENGTH_TABLE_HEADERS,
@@ -3930,19 +4127,19 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
     _PrePass.reset()
     link_report, text_after_links = check_links(md, repo_root)
     if text_after_links != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_links, encoding="utf-8")
+        atomic_write_text(md, text_after_links)
         _PrePass.reset()
     anchor_report, text_after_anchors = linkify_anchors(md)
     if text_after_anchors != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_anchors, encoding="utf-8")
+        atomic_write_text(md, text_after_anchors)
         _PrePass.reset()
     ms_report, text_after_ms = check_ms_structure(md)
     if text_after_ms != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_ms, encoding="utf-8")
+        atomic_write_text(md, text_after_ms)
         _PrePass.reset()
     cell_report, text_after_cell = check_cell_format(md)
     if text_after_cell != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_cell, encoding="utf-8")
+        atomic_write_text(md, text_after_cell)
         _PrePass.reset()
     attr_strip_report, _ = strip_heading_attribute_artifacts(md)
     if attr_strip_report.fixes:
@@ -3964,18 +4161,24 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
 
         _apf_text, apf_fixes = _apf.apply_code_formatting(md.read_text(encoding="utf-8"))
         if apf_fixes and _apf_text != md.read_text(encoding="utf-8"):
-            md.write_text(_apf_text, encoding="utf-8")
+            atomic_write_text(md, _apf_text)
             _PrePass.reset()
     except Exception:
         apf_fixes = 0
-    # §5 entry-point tables → fixed-layout HTML. MUST be the last mutating pass:
-    # markdown-it does not parse markdown inside a raw <table>, so the cells are
-    # pre-rendered to HTML here, after every link/dot/title/backtick enrichment
-    # above has run on the GFM form. Idempotent.
+    # §5 entry-point tables → fixed-layout HTML. This is the last structural
+    # pass: markdown-it does not parse markdown inside a raw <table>, so cells
+    # are pre-rendered after every link/dot/title/backtick enrichment above.
     as_converted = 0
     as_text, as_converted = _attack_surface_tables_to_html(md.read_text(encoding="utf-8"))
     if as_converted and as_text != md.read_text(encoding="utf-8"):
-        md.write_text(as_text, encoding="utf-8")
+        atomic_write_text(md, as_text)
+        _PrePass.reset()
+    # Presentation-only final pass. It runs after fixed-layout conversion so it
+    # can style both remaining Markdown links and the HTML anchors emitted for
+    # converted tables. This remains inside the contract-authorized final
+    # ``qa_checks.py autofix`` mutation boundary.
+    priority_circle_fixes = _apply_priority_circle_styling(md)
+    if priority_circle_fixes:
         _PrePass.reset()
     fixes = (
         len(link_report.fixes)
@@ -3985,6 +4188,7 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
         + len(attr_strip_report.fixes)
         + apf_fixes
         + as_converted
+        + priority_circle_fixes
     )
     print(json.dumps({"autofix": {"fix_count": fixes}}, indent=2))
     return 0
@@ -4001,26 +4205,27 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # the pre-pass cache so the next check re-reads fresh content.
     link_report, text_after_links = check_links(md, repo_root)
     if text_after_links != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_links, encoding="utf-8")
+        atomic_write_text(md, text_after_links)
         _PrePass.reset()
     # Check 10 — anchors (apply in place against the already-linkified text).
     anchor_report, text_after_anchors = linkify_anchors(md)
     if text_after_anchors != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_anchors, encoding="utf-8")
+        atomic_write_text(md, text_after_anchors)
         _PrePass.reset()
     # Check MS structure (apply safe rewrites in place).
     ms_report, text_after_ms = check_ms_structure(md)
     if text_after_ms != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_ms, encoding="utf-8")
+        atomic_write_text(md, text_after_ms)
         _PrePass.reset()
     # Cell format — stack multi-link ID cells with <br/>.  Auto-fix in
     # place so downstream presentation checks see the corrected text.
     cell_report, text_after_cell = check_cell_format(md)
     if text_after_cell != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_cell, encoding="utf-8")
+        atomic_write_text(md, text_after_cell)
         _PrePass.reset()
     contract_report = check_contract(md)
     xref_report = check_xrefs(md)
+    reference_format_report = check_reference_format(md)
     inv_report = check_invariants(md)
     # Check 7c-ext — requirement-sourced threats must carry Violated annotation.
     _check_requirements_violated_coverage(md, md.parent, inv_report)
@@ -4032,6 +4237,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         _PrePass.reset()
     heading_report = check_heading_hygiene(md)
     toc_report = check_toc_closure(md)
+    toc_contract_report = check_toc_contract(md)
     # New structural / rendering checks introduced to catch LLM-authored
     # defects that the contract gate alone does not notice (nested TOC
     # links, broken mermaid, thin metadata).
@@ -4128,9 +4334,11 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "cell_format": cell_report.as_dict(),
         "contract": contract_report.as_dict(),
         "xrefs": xref_report.as_dict(),
+        "reference_format": reference_format_report.as_dict(),
         "invariants": inv_report.as_dict(),
         "heading_hygiene": heading_report.as_dict(),
         "toc_closure": toc_report.as_dict(),
+        "toc_contract": toc_contract_report.as_dict(),
         "mermaid_syntax": mermaid_report.as_dict(),
         "toc_nested_links": toc_nested_report.as_dict(),
         "infobox_completeness": infobox_report.as_dict(),
@@ -4159,9 +4367,28 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "section7_h4_status": section7_h4_status_report.as_dict(),
         "html_nested_finding_link": html_nested_link_report.as_dict(),
     }
+    # ``all`` is the final QA path when Stage 3 is intentionally skipped
+    # (quick/no-QA/PR mode). Apply the same presentation-only final pass as
+    # ``autofix`` so depth does not change the delivered priority styling.
+    if _apply_priority_circle_styling(md):
+        _PrePass.reset()
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
     return 0 if total_issues == 0 else 1
+
+
+def cmd_final_structure(
+    md_path: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> int:
+    """Read-only final gate for the persisted Markdown after every mutator."""
+    reports = {
+        "contract": check_contract(md_path, contract_path).as_dict(),
+        "toc_contract": check_toc_contract(md_path, contract_path).as_dict(),
+        "toc_closure": check_toc_closure(md_path).as_dict(),
+    }
+    print(json.dumps(reports, indent=2))
+    return 0 if sum(r["issue_count"] for r in reports.values()) == 0 else 1
 
 
 # ---------------------------------------------------------------------------
@@ -4213,7 +4440,7 @@ def strip_heading_attribute_artifacts(md_path: Path) -> tuple[Report, str]:
     if stripped:
         report.fixes.append(f"stripped attribute trailer from {stripped} headings")
         text = "".join(out_lines)
-        md_path.write_text(text, encoding="utf-8")
+        atomic_write_text(md_path, text)
     return report, text
 
 
@@ -4283,6 +4510,7 @@ def check_heading_hygiene(md_path: Path) -> Report:
 
 
 from _slug import github_render_slug as _github_render_slug  # noqa: E402  (R8 — single source of truth)
+from _slug import github_slug as _github_slug  # noqa: E402
 
 
 def check_toc_closure(md_path: Path) -> Report:
@@ -4326,6 +4554,99 @@ def check_toc_closure(md_path: Path) -> Report:
             report.issues.append(f"unresolved TOC/link anchor: #{slug}")
     if broken > 25:
         report.issues.append(f"…and {broken - 25} more unresolved anchors (truncated)")
+    return report
+
+
+_TOC_TOP_ENTRY_RE = re.compile(
+    r"^(?:\d+[a-z]?\.|-)\s+\[(?P<label>[^\]]+)\]\(#(?P<target>[^)]+)\)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def check_toc_contract(
+    md_path: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> Report:
+    """Require a one-to-one, ordered mapping between rendered chapters and TOC.
+
+    ``check_toc_closure`` proves only that links which already exist resolve.
+    It cannot detect an omitted entry or a label redirected to another valid
+    anchor. This check derives the expected top-level TOC from the canonical
+    contract and the chapters actually present in the final Markdown, then
+    compares label, target, order, and multiplicity exactly.
+    """
+    report = Report(check="toc_contract")
+    contract = _read_contract(contract_path)
+    if not isinstance(contract, dict) or not contract:
+        report.issues.append(f"contract is not a mapping or empty: {contract_path}")
+        return report
+
+    raw = md_path.read_text(encoding="utf-8")
+    text = _strip_code_fences(raw)
+    toc_start = re.search(r"(?m)^## Table of Contents[ \t]*$", text)
+    if not toc_start:
+        report.issues.append("TOC contract: `## Table of Contents` heading missing")
+        return report
+    tail = text[toc_start.end() :]
+    toc_end = re.search(r"(?m)^(?:---|##\s+)", tail)
+    toc_body = tail[: toc_end.start()] if toc_end else tail
+    actual = [(m.group("label").strip(), m.group("target").strip()) for m in _TOC_TOP_ENTRY_RE.finditer(toc_body)]
+
+    # Strip explicit anchors before exact heading matching. Top-level entries
+    # are contract sections with H2 headings; H3-only entries such as
+    # Identified Actors are children and intentionally excluded here.
+    body_no_anchors = re.sub(r'<a\s+id="[^"]+"></a>', "", text)
+    expected: list[tuple[str, str]] = []
+    for item in contract.get("document", {}).get("order", []):
+        sid = item if isinstance(item, str) else item.get("id")
+        if sid in {
+            "infobox",
+            "changelog",
+            "quick_mode_notice",
+            "toc",
+            "skipped_sections_placeholder",
+        }:
+            continue
+        section = (contract.get("sections") or {}).get(sid) or {}
+        heading = (section.get("heading") or "").strip()
+        if not heading.startswith("## "):
+            continue
+        matches = list(re.finditer(rf"(?m)^{re.escape(heading)}[ \t]*$", body_no_anchors))
+        if not matches:
+            # Section presence/conditions are owned by check_contract. A
+            # condition-false section contributes no TOC entry.
+            continue
+        clean = heading[3:].strip()
+        title = re.sub(r"^\d+[a-z]?(?:\.\d+)?\.\s+", "", clean, flags=re.IGNORECASE)
+        # Mirror the composer's TOC label generation plus its final
+        # _normalize_emdashes pass (headings retain the em dash; TOC list
+        # labels are mid-line prose and therefore use a spaced ASCII hyphen).
+        title = title.replace("`", "").replace(" — ", " - ")
+        target = (section.get("anchor") or _github_slug(heading)).strip()
+        expected.append((title, target))
+
+    if actual != expected:
+        limit = max(len(actual), len(expected))
+        for idx in range(limit):
+            got = actual[idx] if idx < len(actual) else None
+            want = expected[idx] if idx < len(expected) else None
+            if got != want:
+                report.issues.append(f"TOC contract mismatch at position {idx + 1}: expected {want!r}, got {got!r}")
+                if len(report.issues) >= 25:
+                    break
+
+    # Explicit anchors are declarations and therefore must be globally unique.
+    # Converting to a set, as closure checks do, hides duplicate IDs.
+    anchor_counts: dict[str, int] = {}
+    for anchor in re.findall(r'<a\s+id="([^"]+)"', text):
+        key = anchor.lower()
+        anchor_counts[key] = anchor_counts.get(key, 0) + 1
+    for anchor, count in sorted(anchor_counts.items()):
+        if count > 1:
+            report.issues.append(f"duplicate explicit anchor id: #{anchor} appears {count} times")
+
+    if not report.issues:
+        report.ok = len(expected)
     return report
 
 
@@ -4389,7 +4710,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
     # are idempotent — a second pass on patched text is a no-op.
     new_raw, autofix_descriptions = _apply_mermaid_autofixes(raw)
     if new_raw != raw:
-        md_path.write_text(new_raw, encoding="utf-8")
+        atomic_write_text(md_path, new_raw)
         raw = new_raw
         report.fixes.extend(autofix_descriptions)
 
@@ -5704,7 +6025,7 @@ def _run_auth_v2_structural_checks(
     # flow `sequenceDiagram` — the auth flow is the architecture view §7.2 is
     # built around. Scoped to flow-token headings so it never fires on static
     # primitives, API keys, anonymous access, or methods the agent adds that
-    # have no meaningful sequence (Freiräume preserved). The grouped
+    # have no meaningful sequence (spacing preserved). The grouped
     # "Password-Based Authentication" lifecycle block matches via the
     # `password-based` token and gets its login-flow diagram from the scaffold.
     if flow_methods_require_diagram and (flow_method_tokens or []):
@@ -6642,6 +6963,30 @@ def check_walkthrough_coverage(
         report.ok = 1
         return report
 
+    # §3 is capped at the top-N highest-priority Criticals (see
+    # walkthrough_renderer.DEFAULT_MAX_WALKTHROUGHS) so a report with many
+    # Criticals does not explode into dozens of near-identical walkthroughs.
+    # Coverage is therefore enforced against that CAPPED selection, not against
+    # every Critical — the overflow Criticals are covered by their §8 rows. We
+    # reuse the renderer's own selection so the contract and the fragment can
+    # never disagree on which findings must be walked through.
+    expected = crits
+    walkthrough_cap = len(crits)
+    try:
+        import walkthrough_renderer as _wr  # sibling script
+
+        # select_walkthrough_picks only walks Criticals (Highs get a 0 budget),
+        # so the Critical list alone fully determines the picks.
+        _picks = _wr.select_walkthrough_picks({"threats": crits})
+        if _picks:
+            expected = [t for t in _picks if (t.get("risk") or t.get("severity") or "").strip().lower() == "critical"]
+            walkthrough_cap = len(_picks)
+    except Exception:
+        # Import/selection failure → fall back to full-coverage enforcement
+        # (never weaker than before this cap existed).
+        expected = crits
+        walkthrough_cap = len(crits)
+
     try:
         text = md_path.read_text(encoding="utf-8")
     except OSError as e:
@@ -6685,18 +7030,21 @@ def check_walkthrough_coverage(
     # sits between `**Source:**` and the `[F/T-NNN]` link.
     source_re = re.compile(r"\*\*Source:\*\*\s*(?:[🔴🟠🟡🟢⚪](?:\s|&nbsp;)*)?\[[TF]-(\d{3,4})\]")
     seen_t_ids: set[str] = set()
+    walked_block_count = 0  # blocks that ARE a walkthrough (carry a T-NNN), not the overview
     for block in subsection_blocks:
         ms = source_re.search(block)
         if ms:
             seen_t_ids.add(f"T-{ms.group(1).zfill(3)}")
+            walked_block_count += 1
             continue
         head_line = block.splitlines()[0] if block else ""
         mh = _T_ID_RE_LOCAL.search(head_line)
         if mh:
             seen_t_ids.add(f"T-{mh.group(1).zfill(3)}")
+            walked_block_count += 1
 
     missing: list[dict] = []
-    for t in crits:
+    for t in expected:
         tid = (t.get("id") or t.get("t_id") or "").strip().upper()
         if not tid:
             continue
@@ -6708,18 +7056,44 @@ def check_walkthrough_coverage(
             missing.append({"id": tid, "title": (t.get("title") or "").strip()})
 
     if missing:
-        n_covered = len(crits) - len(missing)
-        report.issues.append(
-            f"§3 Attack Walkthroughs: {n_covered}/{len(crits)} Critical findings "
-            f"have a walkthrough — missing "
-            f"{', '.join(m['id'] for m in missing)}. Contract requires one "
-            f"`### 3.x` sub-section per Critical threat, each declaring its "
-            f"T-NNN on a `**Source:** [T-NNN]` line and carrying its own "
-            f"`sequenceDiagram`."
-        )
+        n_covered = len(expected) - len(missing)
+        if len(expected) < len(crits):
+            # §3 is capped: coverage is enforced against the top-N selection,
+            # not every Critical (overflow Criticals live in §8).
+            report.issues.append(
+                f"§3 Attack Walkthroughs: {n_covered}/{len(expected)} of the "
+                f"{len(expected)} highest-priority of {len(crits)} Critical findings "
+                f"have a walkthrough — missing "
+                f"{', '.join(m['id'] for m in missing)}. Contract requires one "
+                f"`### 3.x` sub-section per walked-through finding, each declaring "
+                f"its T-NNN on a `**Source:** [T-NNN]` line and carrying its own "
+                f"`sequenceDiagram`."
+            )
+        else:
+            # Uncapped (n_crit ≤ cap): every Critical must be walked through.
+            report.issues.append(
+                f"§3 Attack Walkthroughs: {n_covered}/{len(crits)} Critical findings "
+                f"have a walkthrough — missing "
+                f"{', '.join(m['id'] for m in missing)}. Contract requires one "
+                f"`### 3.x` sub-section per Critical threat, each declaring its "
+                f"T-NNN on a `**Source:** [T-NNN]` line and carrying its own "
+                f"`sequenceDiagram`."
+            )
         # Per-missing entries for repair-plan granularity.
         for m in missing:
             report.issues.append(f"§3 missing walkthrough for {m['id']} — {m['title'][:120]}")
+
+    # Explosion guard: the number of ACTUAL walkthroughs (blocks carrying a
+    # T-NNN — the retired §3.1 overview stub carries none) must not exceed the
+    # cap (walkthrough_renderer caps at DEFAULT_MAX_WALKTHROUGHS). A hand-edit /
+    # LLM re-render that reverted to one-per-Critical would trip this and drive
+    # a re-render from the deterministic fragment.
+    if walked_block_count > walkthrough_cap:
+        report.issues.append(
+            f"§3 Attack Walkthroughs: {walked_block_count} walkthroughs exceed "
+            f"the cap of {walkthrough_cap} — §3 must stay focused on the highest-"
+            f"priority findings; the rest are covered by their §8 rows."
+        )
 
     if not report.issues:
         report.ok = 1
@@ -9133,36 +9507,50 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
         if sec4_body is None:
             report.warnings.append("Section 4 (Assets) not found in MD; asset linked_threats check skipped")
         else:
-            # Build a per-asset-ID → set-of-T-NNN map from the MD table cells.
-            # Each row that contains an asset ID (A-NNN) is parsed; the last
-            # cell is expected to be the Linked Threats column. Both the GFM
-            # pipe-table form AND the fixed-layout HTML form (qa autofix rewrites
-            # the §4 Assets table to <table> for stable column widths) are parsed
-            # so the cross-reference check survives the conversion.
-            _ASSET_ROW_RE = re.compile(
-                r"\|\s*[^|]+\|\s*(A-\d{3,4})\s*\|[^|]*\|[^|]*\|([^|\n]*)",
-                re.MULTILINE,
-            )
+            # Build a per-asset-NAME → set-of-T-NNN map from the MD table cells.
+            # The §4 Assets table carries no ID column (dropped deterministically
+            # in compose — the A-NNN ids have no in-document cross-reference), so
+            # the row is joined to the YAML asset by its NAME (first column); the
+            # last cell is the Linked Threats column. Both the GFM pipe-table form
+            # AND the fixed-layout HTML form (qa autofix rewrites the §4 Assets
+            # table to <table> for stable column widths) are parsed so the
+            # cross-reference check survives the conversion.
             _ANY_FINDING_RE = re.compile(r"\b([TF]-(\d{3,4}))\b")
+
+            def _norm_name(s: str) -> str:
+                # Strip HTML tags first (real table structure), THEN decode HTML
+                # entities in the remaining text. The §4 Assets table is rewritten
+                # to fixed-layout <table> HTML by qa autofix, which escapes `&` in
+                # asset names to `&amp;` — so a YAML name like "Admin Credentials &
+                # API Keys" renders as "Admin Credentials &amp; API Keys" in the MD.
+                # Without unescape the two sides normalize differently and the
+                # NAME-join silently fails (md=[]), producing a false-positive
+                # linked_threats mismatch. html.unescape is a no-op on the raw-`&`
+                # YAML side, so applying it here keeps both sides symmetric.
+                no_tags = re.sub(r"<[^>]+>", "", s)
+                return re.sub(r"\s+", " ", _strip_md(html.unescape(no_tags))).strip().lower()
+
             md_asset_lt: dict[str, set[str]] = {}
-            for m in _ASSET_ROW_RE.finditer(sec4_body):
-                aid = m.group(1).strip()
-                cell = m.group(2)
-                tids = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(cell)}
-                md_asset_lt[aid] = tids
-            # HTML `<tr>` rows (fixed-layout conversion): the ID column is the
-            # <td> whose text is exactly A-NNN; the Linked Threats column is the
-            # last <td>.
+            # GFM pipe rows: skip the header ("Asset …") and separator (`|---|`).
+            for line in sec4_body.splitlines():
+                if not line.lstrip().startswith("|"):
+                    continue
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                if len(cells) < 2:
+                    continue
+                name = _norm_name(cells[0])
+                if not name or name == "asset" or set(cells[0]) <= set("-: "):
+                    continue
+                md_asset_lt[name] = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(cells[-1])}
+            # HTML `<tr>` rows (fixed-layout conversion): first <td> is the asset
+            # name; the Linked Threats column is the last <td>.
             for tr in re.finditer(r"<tr>(.*?)</tr>", sec4_body, re.DOTALL):
                 tds = re.findall(r"<td[^>]*>(.*?)</td>", tr.group(1), re.DOTALL)
-                aid = None
-                for cell in tds:
-                    am = re.match(r"^\s*(A-\d{3,4})\s*$", re.sub(r"<[^>]+>", "", cell))
-                    if am:
-                        aid = am.group(1)
-                        break
-                if aid and tds:
-                    md_asset_lt[aid] = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(tds[-1])}
+                if len(tds) < 2:
+                    continue
+                name = _norm_name(tds[0])
+                if name and name != "asset":
+                    md_asset_lt[name] = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(tds[-1])}
 
             def _normalize_id(s: str) -> str:
                 # Normalize T-NNN ↔ F-NNN: compose renders threat IDs with the
@@ -9173,14 +9561,15 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
                 return f"T-{m.group(1)}" if m else s.upper()
 
             for asset in assets:
-                aid = str(asset.get("id") or "")
-                if not aid:
+                name = _norm_name(str(asset.get("name") or ""))
+                if not name:
                     continue
                 yaml_lt = {_normalize_id(str(t)) for t in (asset.get("linked_threats") or [])}
-                md_lt = {_normalize_id(t) for t in md_asset_lt.get(aid, set())}
+                md_lt = {_normalize_id(t) for t in md_asset_lt.get(name, set())}
                 if yaml_lt != md_lt:
                     report.issues.append(
-                        f"asset {aid} linked_threats mismatch: yaml={sorted(yaml_lt)} md={sorted(md_lt)}"
+                        f"asset {asset.get('id') or name} linked_threats mismatch: "
+                        f"yaml={sorted(yaml_lt)} md={sorted(md_lt)}"
                     )
 
     report.ok = 1 if not report.issues else 0
@@ -9275,6 +9664,59 @@ REQUIRED_FRAGMENTS = (
 )
 
 
+def _check_posture_structure_svg(report: Report, section: str, md_path: Path, img_src: str) -> Report:
+    """Validate the Figure 2 SVG form (figure2_svg.py) + the Top Threats table.
+
+    The SVG replaces the inline ELK Mermaid heatmap because common Markdown
+    viewers lack the ELK layout engine. The Mermaid-syntax D/E/F/C invariants no
+    longer apply; the invariants that survive are:
+
+      * the referenced ``<stem>.figure2.svg`` exists (relative-file form), and
+      * T1/T2/T3 — the Top Threats table is present, its row glyphs agree 1:1
+        with the figure's attack-arrow glyphs (read from the SVG's machine-
+        readable ``data-glyphs`` attribute), and findings link into §8.
+    """
+    svg_text = ""
+    if img_src.startswith("data:image/svg"):
+        b64 = img_src.split(",", 1)[1] if "," in img_src else ""
+        try:
+            svg_text = base64.b64decode(b64).decode("utf-8", "replace")
+        except (ValueError, binascii.Error):
+            svg_text = ""
+    else:
+        svg_path = md_path.parent / img_src
+        if not svg_path.is_file():
+            report.issues.append(f"D-SVG: Figure 2 references `{img_src}` but the SVG file is missing")
+        else:
+            svg_text = svg_path.read_text(encoding="utf-8", errors="replace")
+
+    mg = re.search(r'data-glyphs="([0-9 ]*)"', svg_text)
+    svg_nums = {int(n) for n in (mg.group(1).split() if mg else [])}
+
+    # T1: table header present.
+    if "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |" not in section:
+        report.issues.append("T1: missing Top Threats table header below Figure 2")
+    # T2/G3: figure arrow glyphs (from data-glyphs) == Top Threats row glyphs.
+    # Table glyphs are circled unicode (①..); normalise both to integers.
+    table_glyphs = re.findall(
+        r'^\|\s*(?:<a id="[^"]+"></a>)?\s*([①②③④⑤⑥⑦])\s*\|',
+        section,
+        re.MULTILINE,
+    )
+    table_nums = {ord(g) - 0x2460 + 1 for g in table_glyphs}
+    if svg_nums and svg_nums != table_nums:
+        report.issues.append(
+            f"T2/G3: Figure 2 arrow glyphs {sorted(svg_nums)} ≠ Top Threats row glyphs {sorted(table_nums)}"
+        )
+    # T3: at least one finding links into §8.
+    if table_glyphs and not re.search(r"\[F-\d+\]\(#f-\d+\)", section):
+        report.issues.append("T3: Top Threats findings are not linked to §8 (`[F-NNN](#f-nnn)`)")
+
+    if not report.issues:
+        report.ok = 1
+    return report
+
+
 def check_security_posture_structure(md_path: Path) -> Report:
     """Validate the Security Posture & Top Threats section against the
     invariants declared in
@@ -9314,6 +9756,15 @@ def check_security_posture_structure(md_path: Path) -> Report:
     section = text[sec_start:sec_end]
 
     _check_figure1_architecture_layout(report, section)
+
+    # Figure 2 PRIMARY form (figure2_svg.py): a portable SVG image instead of an
+    # inline ELK Mermaid block. The SVG carries the semantics the D/E/F/C rules
+    # used to guard (those validated Mermaid *markup* that no longer exists), so
+    # for the SVG form we validate the image + glyph↔table parity only. The
+    # inline-Mermaid path below stays as the fallback (SVG builder unavailable).
+    fig2_img = re.search(r"!\[Figure 2[^\]]*\]\((data:image/svg[^)]*|[^)]+\.svg)\)", section)
+    if fig2_img:
+        return _check_posture_structure_svg(report, section, md_path, fig2_img.group(1))
 
     # Locate the heatmap (Figure 2) mermaid block specifically — an optional
     # Figure 1 architecture diagram may precede it, so we anchor on the
@@ -9964,16 +10415,20 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py links <md> <repo-root>", file=sys.stderr)
             return 2
         report, new_text = check_links(Path(argv[2]), Path(argv[3]))
-        Path(argv[2]).write_text(new_text, encoding="utf-8")
+        atomic_write_text(Path(argv[2]), new_text)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "xrefs":
         report = check_xrefs(Path(argv[2]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
+    if sub == "reference_format":
+        report = check_reference_format(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
     if sub == "anchors":
         report, new_text = linkify_anchors(Path(argv[2]))
-        Path(argv[2]).write_text(new_text, encoding="utf-8")
+        atomic_write_text(Path(argv[2]), new_text)
         print(json.dumps(report.as_dict(), indent=2))
         return 0
     if sub == "invariants":
@@ -9985,7 +10440,7 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py ms_structure <md>", file=sys.stderr)
             return 2
         report, new_text = check_ms_structure(Path(argv[2]))
-        Path(argv[2]).write_text(new_text, encoding="utf-8")
+        atomic_write_text(Path(argv[2]), new_text)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "contract":
@@ -9996,6 +10451,15 @@ def main(argv: list[str]) -> int:
         report = check_contract(Path(argv[2]), contract)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
+    if sub == "final_structure":
+        if len(argv) not in (3, 4):
+            print(
+                "usage: qa_checks.py final_structure <md> [<contract.yaml>]",
+                file=sys.stderr,
+            )
+            return 2
+        contract = Path(argv[3]) if len(argv) == 4 else DEFAULT_CONTRACT_PATH
+        return cmd_final_structure(Path(argv[2]), contract)
     if sub == "repair_plan":
         if len(argv) not in (4, 5):
             print(
@@ -10027,6 +10491,14 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py toc_closure <md>", file=sys.stderr)
             return 2
         report = check_toc_closure(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "toc_contract":
+        if len(argv) not in (3, 4):
+            print("usage: qa_checks.py toc_contract <md> [<contract.yaml>]", file=sys.stderr)
+            return 2
+        contract = Path(argv[3]) if len(argv) == 4 else DEFAULT_CONTRACT_PATH
+        report = check_toc_contract(Path(argv[2]), contract)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "section7_h4_status":
@@ -10208,7 +10680,7 @@ def main(argv: list[str]) -> int:
             return 2
         report, new_text = check_cell_format(Path(argv[2]))
         if new_text != Path(argv[2]).read_text(encoding="utf-8"):
-            Path(argv[2]).write_text(new_text, encoding="utf-8")
+            atomic_write_text(Path(argv[2]), new_text)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "summary_bullets":

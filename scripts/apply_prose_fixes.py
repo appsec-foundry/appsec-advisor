@@ -71,12 +71,17 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 import re
 import sys
 from pathlib import Path
 
-from _slug import github_slug
+import yaml
+from _atomic_io import atomic_write_text
+from _slug import github_render_slug
 from perimeter_patterns import strip_perimeter_absence_sentences
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 _EXTENSIONS = (
     "ts",
@@ -125,7 +130,9 @@ _EXTENSIONS = (
 _PATH_RE = re.compile(
     r"(?P<path>[A-Za-z][\w.-]*/[\w./-]+\.(?:"
     + "|".join(_EXTENSIONS)
-    + r")(?::\d+)?)"
+    # `(?:-\d+)?` keeps a `:line-line` range inside the wrapped span; without it
+    # the boundary below closes the backtick after `:20`, leaving `-25` bare.
+    + r")(?::\d+(?:-\d+)?)?)"
     # Trailing boundary (mirrors _BARE_FILENAME_RE): without it the extension
     # alternation stops at a PREFIX extension — `.h` is tried before `.html`
     # and matches `administration.component.h`, leaving a bare `tml`. The
@@ -179,7 +186,7 @@ _BARE_FILENAME_RE = re.compile(
     # ``(?:\.[A-Za-z0-9-]+)*`` allows zero or more middle dot-segments
     # before the final recognised extension (was ``?`` which capped at
     # one middle segment).
-    r"(?P<file>[A-Za-z][\w-]+(?:\.[A-Za-z0-9-]+)*\.(?:" + "|".join(_EXTENSIONS) + r")(?::\d+)?)"
+    r"(?P<file>[A-Za-z][\w-]+(?:\.[A-Za-z0-9-]+)*\.(?:" + "|".join(_EXTENSIONS) + r")(?::\d+(?:-\d+)?)?)"
     # Trailing punctuation (period, comma, semicolon, `)`) is allowed —
     # the trailing-punct stripper handles them.
     r"(?![\w/`])"
@@ -640,7 +647,16 @@ def _rewrite_controls_covered_anchors(text: str) -> tuple[str, int]:
         m4 = sub_header_re.match(ln)
         if m4:
             h = m4.group(1)
-            sections[current_sec].append((h, github_slug(h)))
+            # Link TARGET must be github_render_slug — the anchor GitHub/pandoc
+            # actually render — NOT github_slug (the collapsed form). They
+            # diverge for any subsection heading carrying ` / `, ` & `, ` — `
+            # (e.g. `7.2.3 OAuth / Google Social Login` → GitHub
+            # `#723-oauth--google-social-login`, github_slug
+            # `#723-oauth-google-social-login`), so the Controls-covered bullet
+            # dangled for every such control. toc_closure verifies with
+            # render_slug, so this makes them agree; non-divergent headings are
+            # byte-identical under both functions (juice-shop 2026-07-02).
+            sections[current_sec].append((h, github_render_slug(h)))
 
     n_fixes = 0
     current_sec = None
@@ -803,7 +819,7 @@ def _collapse_consecutive_anchors(text: str) -> tuple[str, int]:
     """Join runs of consecutive anchor-only lines (``<a id="x"></a>``) into ONE
     line. Stacked empty-anchor blocks render with inconsistent vertical gaps
     before headings (a heading with 2 alias anchors gets more whitespace than
-    one with 1 — the 2026-05-30 "uneinheitliche Freiräume vor 7.8.1" report).
+    one with 1 — the 2026-05-30 "inconsistent spacing before 7.8.1" report).
     Collapsing every run to a single line makes the pre-heading spacing uniform.
     Skips fenced code blocks."""
     lines = text.split("\n")
@@ -857,6 +873,67 @@ def _escape_bare_dollars(text: str) -> tuple[str, int]:
                 sub.append(new)
         out_parts.append("".join(sub))
     return "".join(out_parts), fixes
+
+
+_ACTOR_ID_RE = re.compile(r"\bACT-[A-Z]-\d+\b")
+_ACTOR_LABEL_EXPAND = {"dev": "developer", "ops": "operator"}
+
+
+@functools.lru_cache(maxsize=1)
+def _actor_id_labels() -> dict:
+    """id → human noun phrase from the actor library (e.g. ACT-D-04 →
+    'malicious insider developer')."""
+    path = PLUGIN_ROOT / "data" / "actors" / "default-library.yaml"
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    out: dict[str, str] = {}
+    for a in data.get("actors") or []:
+        aid = a.get("id")
+        label = a.get("label") or ""
+        if not aid or not label:
+            continue
+        out[aid] = " ".join(_ACTOR_LABEL_EXPAND.get(w, w) for w in label.split("-"))
+    return out
+
+
+def _humanize_actor_ids(text: str) -> tuple[str, int]:
+    """Replace bare ``ACT-<layer>-NN`` library ids in prose with the actor's
+    human label (``ACT-D-04`` → ``a malicious insider developer``).
+
+    The §1 actor table now uses the consolidated Management-Summary taxonomy
+    (posture ``vektor`` values), so raw ACT-* ids left in LLM-authored scenario
+    prose are dangling references. Humanising them keeps the document
+    self-consistent without reintroducing the discovery-library codes. Skips
+    fenced code, is article-aware (a/an), capitalises at sentence start, and is
+    idempotent (the rendered phrase no longer matches the id pattern)."""
+    labels = _actor_id_labels()
+    if not labels:
+        return text, 0
+    count = 0
+
+    def _sub(m: re.Match) -> str:
+        nonlocal count
+        phrase = labels.get(m.group(0))
+        if not phrase:
+            return m.group(0)
+        count += 1
+        article = "an" if phrase[:1].lower() in "aeiou" else "a"
+        prefix = m.string[: m.start()].rstrip()
+        if (not prefix) or prefix.endswith((".", "!", "?", ":")):
+            article = article.capitalize()
+        return f"{article} {phrase}"
+
+    out_lines: list[str] = []
+    in_fence = False
+    for raw in text.splitlines(keepends=True):
+        if raw.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out_lines.append(raw)
+            continue
+        out_lines.append(raw if in_fence else _ACTOR_ID_RE.sub(_sub, raw))
+    return "".join(out_lines), count
 
 
 def apply_fixes(text: str) -> tuple[str, int]:
@@ -929,6 +1006,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
     body, title_fixes = _normalize_title_path_tail(body)
     body, bullet_fixes = _bulletize_relevant_findings(body)
     body, anchor_collapse_fixes = _collapse_consecutive_anchors(body)
+    body, actor_id_fixes = _humanize_actor_ids(body)
     body, dollar_fixes = _escape_bare_dollars(body)  # run LAST
     body, section8_fixes = _canonicalize_section8_name(body)
     total = (
@@ -940,6 +1018,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
         + title_fixes
         + bullet_fixes
         + anchor_collapse_fixes
+        + actor_id_fixes
         + dollar_fixes
         + section8_fixes
     )
@@ -1020,7 +1099,7 @@ def main(argv: list[str]) -> int:
     text = md_path.read_text(encoding="utf-8")
     new_text, n_fixes = apply_fixes(text)
     if n_fixes:
-        md_path.write_text(new_text, encoding="utf-8")
+        atomic_write_text(md_path, new_text)
         print(
             # Note: `rhetorical-severity` here only rewrites the one phrase
             # `trivially crackable` → `recoverable by GPU dictionary attack

@@ -135,8 +135,8 @@ class TestForceOnlyOverwritesDriftedFragment:
         assert rc == 0
         text = (frag / "assets.md").read_text()
         assert "drift content" not in text  # drift overwritten
-        assert "| Asset | ID | Classification" in text  # ID column restored
-        assert "A-001" in text  # canonical IDs present
+        assert "| Asset | Classification | Description" in text  # canonical 4-col layout
+        assert "| ID |" not in text  # no ID column (dropped per the assets contract)
 
     def test_force_only_does_not_touch_other_fragments(self, tmp_path: Path):
         """`--force --only assets.md` must NOT regenerate other fragments

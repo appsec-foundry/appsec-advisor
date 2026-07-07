@@ -11,7 +11,46 @@
 #   _provenance.signal_status: activate-with-warning  (reported in run-issues.json)
 
 schema_version: 1
-library_version: "1.0.0"
+library_version: "1.2.0"
+
+# Canonical access-zone aliases shared by actor discovery and per-component
+# slicing. Aliases describe the same trust position; they never justify a new
+# actor class by themselves.
+access_zone_aliases:
+  internet:
+    - internet-facing
+    - internet-exposed
+    - public-internet
+    - public
+    - public-facing
+    - publicly-accessible
+    - externally-reachable
+    - external
+    - edge
+  client-device:
+    - browser
+    - web-browser
+  peer-service:
+    - cloud-saas
+    - external-service
+    - saas
+
+# Trust-position synonyms collapse semantic subtypes back to the stable actor
+# class. These are identity/authority aliases, not attack-technique matches.
+trust_position_aliases:
+  authenticated-user-authority:
+    - ctf-participant-authority
+    - researcher-authority
+    - tester-authority
+  source-repository-write-authority:
+    - repository-write-authority
+    - source-code-write-authority
+    - configuration-write-authority
+    - ai-assistant-config-write-authority
+  trusted-service-control:
+    - external-service-control
+    - llm-provider-control
+    - saas-provider-control
 
 actors:
   - id: ACT-D-01
@@ -19,6 +58,8 @@ actors:
     access:
       - internet
       - dmz
+    trust_positions:
+      - public-endpoint-reach
     capabilities:
       sophistication: medium
       tooling:
@@ -51,6 +92,8 @@ actors:
     access:
       - internet
       - authenticated-user-session
+    trust_positions:
+      - authenticated-user-authority
     capabilities:
       sophistication: low
       tooling:
@@ -86,6 +129,8 @@ actors:
       - internet
       - authenticated-user-session
       - authenticated-admin-session
+    trust_positions:
+      - privileged-user-authority
     capabilities:
       sophistication: medium
       tooling:
@@ -123,6 +168,8 @@ actors:
       - ci-cd-runtime
       - internal-network
       - staging-env
+    trust_positions:
+      - source-repository-write-authority
     capabilities:
       sophistication: high
       tooling:
@@ -162,6 +209,8 @@ actors:
       - prod-write-db
       - deployment-pipeline
       - internal-network
+    trust_positions:
+      - production-operator-authority
     capabilities:
       sophistication: high
       tooling:
@@ -196,6 +245,8 @@ actors:
       - build-pipeline
       - ci-cd-runtime
       - internet
+    trust_positions:
+      - software-supply-chain-control
     capabilities:
       sophistication: high
       tooling:
@@ -229,6 +280,8 @@ actors:
     access:
       - internet
       - peer-service
+    trust_positions:
+      - trusted-service-control
     capabilities:
       sophistication: high
       tooling:
@@ -264,6 +317,8 @@ actors:
       - client-device
       - mobile-device
       - local-fs
+    trust_positions:
+      - client-device-possession
     capabilities:
       sophistication: low
       tooling:
@@ -297,6 +352,8 @@ actors:
     access:
       - authenticated-user-session
       - adjacent-tenant
+    trust_positions:
+      - tenant-membership
     capabilities:
       sophistication: medium
       tooling:
@@ -328,7 +385,18 @@ actors:
       layer: plugin
       source_file: data/actors/default-library.yaml
 
-# Reach-equivalence rules (evaluated by resolve_actors.py)
+# Reach-equivalence rules.
+#   - resolve_actors.py annotates severity (max() over the class) when the
+#     rule's condition_signal is emitted by recon.
+#   - the Identified Actors table (compose_threat_model._build_identified_actors)
+#     FOLDS non-primary members into `primary_actor` so the inventory stays
+#     consistent with the collapsed Figure and lists each actor class once.
+#     Table folding gates on `always: true` or on the meta flag aliased from
+#     condition_signal (has_open_self_registration → meta.open_user_registration),
+#     because the self-registration state lives in meta, not in the signal set.
+# Consolidate as far as reach allows; only distinguish when a trust position is
+# genuinely distinct. Folded actors never disappear silently — they are listed
+# under "Consolidated actors" with the collapse_reason.
 reach_equivalence_rules:
   - condition_signal: has_open_self_registration
     actor_ids:
@@ -340,6 +408,18 @@ reach_equivalence_rules:
       When self-registration is open, any internet visitor becomes a
       low-priv authenticated user in seconds — auth wall is not a real
       reach barrier. Severity modulation uses max() over the equivalence class.
+  - actor_ids:
+      - ACT-D-04
+      - ACT-D-05
+    collapse_reason: no-distinct-production-environment
+    primary_actor: ACT-D-04   # concrete repository-access insider
+    always: true
+    note: >
+      malicious-insider-ops activates on the same has_secrets_in_repo proxy as
+      malicious-insider-dev and carries no independent production-environment
+      signal, so the two insiders are not distinguishable from recon alone. Fold
+      ops into the concrete repository-access insider; a real prod estate would
+      re-split them once a distinct deploy/prod signal exists.
 
 # COMPONENT_ALWAYS_RELEVANT lookup table (additive per layer)
 component_always_relevant:

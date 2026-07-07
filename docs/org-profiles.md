@@ -1,10 +1,10 @@
 # Org Profiles
 
-Org profiles let AppSec teams ship organisation-specific defaults (presets, requirements source, optional markdown context, skill toggles) alongside the plugin **without forking the core**. Profiles are validated and resolved deterministically before Stage 1 of any scan. What they can and cannot change is listed below.
+Org profiles package organization-specific presets, requirements, context, actors, and skill settings without changing the core plugin.
 
-The current profile contract is `api_version: appsec-advisor.org-profile/v2`, which adds the `actors:` block. A v1 profile (no `actors:` block) loads as if it declared `actors: {inherit_defaults: true}`, so no migration is required.
+The current format is `api_version: appsec-advisor.org-profile/v2`. Version 1 profiles continue to work and inherit the default actors.
 
-This page is the **reference** for the profile format. To build and ship a company-branded plugin that bundles a profile, follow the build runbook: [internal-plugin-packaging.md](internal-plugin-packaging.md).
+See the [packaging runbook](internal-plugin-packaging.md) to bundle a profile in a company-branded plugin.
 
 ## What an org profile can and cannot do
 
@@ -12,7 +12,7 @@ This page is the **reference** for the profile format. To build and ship a compa
 
 - set default `assessment_depth`, output toggles (SARIF / PDF / pentest tasks / SCA), guardrails (wall time, cost cap, tracing), quality knobs (QA review, architect review, walkthroughs, enrichment) per preset
 - declare a single requirements source URL, the default active state for create-threat-model, and a separate standalone-audit toggle
-- attach 1–3 short markdown files as untrusted reference data for the context resolver (organisation background, SSO, platform, etc.)
+- attach 1–3 short Markdown files with organization, identity, or platform context
 - enable a default-on Security Coach with a `max_requirements_per_topic` cap
 - soft-disable optional user-facing skills with a human-readable reason
 
@@ -26,7 +26,7 @@ This page is the **reference** for the profile format. To build and ship a compa
 
 ## Packaging
 
-For the recommended automated build — which produces a self-contained plugin and wires the profile in for you — use the packaging runbook: [internal-plugin-packaging.md](internal-plugin-packaging.md). The layouts below are the hand-built alternative, and (unlike the packaged tree) use a `../org-profile/` sibling path.
+The [packaging runbook](internal-plugin-packaging.md) creates a self-contained plugin. The layouts below are for a manual setup.
 
 Two layouts are supported:
 
@@ -73,7 +73,7 @@ The plugin's `config.json` carries the pointer:
 
 ## CLI and environment
 
-`create-threat-model` accepts three new flags:
+`create-threat-model` accepts these profile flags:
 
 | Flag | Meaning |
 |------|---------|
@@ -108,7 +108,7 @@ Precedence (highest wins):
 6. direct CLI flags (--sarif, --no-requirements, --max-cost, …)
 ```
 
-Steps 2–4 only choose which profile and preset are active. Step 5 layers preset values as structured defaults; step 6 direct flags always win.
+Profile and preset selection happen before preset values are applied. Direct command-line flags always win.
 
 ## Schema overview
 
@@ -152,7 +152,7 @@ presets:
     guardrails: { max_wall_time: 1h, max_cost_usd: 20, tracing: true }
 ```
 
-The following semantic rules also apply, on top of JSON Schema:
+These rules apply in addition to the schema:
 
 - `default_preset` must exist in `presets`.
 - `compatibility.core` must accept the current plugin version.
@@ -165,7 +165,7 @@ The following semantic rules also apply, on top of JSON Schema:
 
 ## Actors
 
-Org profiles can extend or restrict the plugin's default actor classes (ACT-D-01 through ACT-D-09) via the `actors:` block (v2+ profiles):
+Use the `actors:` block to add actors or disable default actor classes:
 
 ```yaml
 actors:
@@ -182,6 +182,7 @@ actors:
   - id: ACT-E-01
     label: acme-privileged-contractor
     access: [internal-network, ci-cd-secrets, staging-env]
+    trust_positions: [contractor-internal-authority]
     capabilities:
       sophistication: medium
       tooling: [off-the-shelf]
@@ -192,45 +193,42 @@ actors:
     description: "External contractor with temporary elevated access."
 ```
 
-**Override semantics:**
+Rules:
 
-- Enterprise actors additively merge with plugin defaults (field-level deep merge on ID match).
-- Enterprise-disable is **terminal** — the repo layer cannot re-enable a disabled enterprise actor.
-- When disabling, `disable_reason` is required for audit.
+- Custom actors are merged with plugin defaults. Matching IDs update the default actor.
+- `access[]` describes reachable deployment zones; `trust_positions[]`
+  describes the actor's stable credential, authority, control, possession, or
+  membership position. Declare both so discovery can reject semantic
+  duplicates.
+- A repository cannot re-enable an actor disabled by the organization profile.
+- A disabled actor requires `disable_reason`.
 
-**`inherit_defaults: false`** (regulated environments): the tool reports which of the 9 default actor classes are covered by your enterprise actors. Use `replaces: ACT-D-NN` on custom actors to mark a class as covered.
-
-**v2 profile fingerprint:** includes all actor definition files, so editing an actor file re-runs only the affected per-component slices, not a full scan.
-
-**v1 → v2 migration:** a v1 profile (no `actors:` block) is treated as `actors: {inherit_defaults: true}`. No manual migration step is required.
+With `inherit_defaults: false`, use `replaces: ACT-D-NN` to identify the default actor class covered by each custom actor.
 
 ## Markdown context
 
-`llm_context.documents` is the loader's input. Each document is:
+Each `llm_context.documents` file:
 
-- read from the profile directory only (no remote sources in MVP)
-- size-checked against `max_bytes` (default 50_000, hard cap 200_000)
-- secret-scanned for AKIA / GitHub / Slack tokens, PEM keys, and password/secret-like assignments
-- hashed with SHA-256 for cache invalidation
-- wrapped with an explicit *untrusted reference data* preamble before it reaches any agent context
-
-The loader emits the wrapped markdown plus a manifest recording which documents were loaded or skipped and why.
+- must be inside the profile directory
+- must fit `max_bytes` (default 50,000; maximum 200,000)
+- is scanned for common secret formats
+- is treated as untrusted reference data
 
 ## Skill toggles
 
-User-facing skills can be soft-disabled with a reason. The plan distinguishes three categories:
+User-facing skills can be disabled with a reason:
 
 - **User skills** (e.g. `export-threat-model`, `publish-threat-model`): blocked with the reason printed. Exit code 30.
 - **Help-only**: `--help` still renders even when the skill is disabled. Exit code 10.
 - **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `threat-model-health`): the org profile can warn but never hard-blocks them. Exit code 20.
 
-Each skill checks whether it is enabled before running. With no active org profile every skill is treated as enabled, so existing invocations behave exactly as before.
+Without an active org profile, all skills remain enabled.
 
-These toggles are a runtime governance layer, not a packaging boundary. To make a skill or hook unavailable in an internal artifact, use the packaging runbook's `org-profile/package-policy.yaml`; the packager removes those directories or hook registrations before validation and archive creation.
+Skill toggles block commands at runtime. To remove a skill or hook from the package, use `org-profile/package-policy.yaml` as described in the packaging runbook.
 
 ## Security Coach
 
-`security_coach.enabled_by_default: true` in the profile activates the coach without requiring `APPSEC_COACH=1`. Precedence stays strict — the environment variable still wins, including as a kill switch (`APPSEC_COACH=0`).
+`security_coach.enabled_by_default: true` activates the coach for the team. `APPSEC_COACH=0` still disables it for one session.
 
 `security_coach.max_requirements_per_topic` overrides the static default (3) for per-prompt requirement injection.
 
@@ -251,11 +249,7 @@ Org Profile
   Disabled skills publish-threat-model
 ```
 
-When the resolver has not yet emitted `.org-profile-effective.json`, the status view falls back to the static pointer in `config.json` and shows "configured (not yet resolved)".
-
-## Compatibility note
-
-The packaged plugin has `organization_profile.enabled: false` by default. Until a team explicitly flips it on or passes `--org-profile`, the resolver behaves exactly as before — every existing CLI flag, preset-free invocation, and downstream artefact stays bit-identical.
+Before the first run resolves the profile, the status is `configured (not yet resolved)`.
 
 ## Examples
 
@@ -292,8 +286,7 @@ Override requirements for one run:
 
 ## Abuse cases
 
-Abuse cases (the end-to-end attack chains rendered in §9 of the threat model)
-resolve from three layers, in load order:
+Abuse cases are loaded in this order:
 
 1. **Plugin standard library** — `data/abuse-cases/default-library.yaml` (the
    `AC-T-NNN` mandatory set), unless an org profile sets
@@ -301,13 +294,10 @@ resolve from three layers, in load order:
 2. **Org profile** — `abuse_cases.add` is a glob (relative to the org-profile
    directory) of extra case files; `abuse_cases.disable` removes ids; ids use
    the `ORG-AC-NNN` prefix. Validated against `schemas/abuse-cases.schema.yaml`.
-3. **Repo-local (zero-config)** — any `*.yaml` under
+3. **Repository** — any `*.yaml` under
    `<repo>/.appsec/abuse-cases/` in the target repository is loaded
-   automatically, **no org profile required**. Use the `REPO-AC-NNN` id prefix.
-   This mirrors a checked-in "known-threats" convention: a single repository can
-   ship its own scenarios in version control. The org profile's `disable` list
-   still applies to repo-local ids, and a duplicate id across layers is reported
-   as an authoring error.
+   automatically. Use the `REPO-AC-NNN` ID prefix. The org profile's `disable`
+   list still applies, and IDs must be unique across all layers.
 
 Example repo-local case (`<repo>/.appsec/abuse-cases/payments.yaml`):
 
@@ -329,7 +319,4 @@ abuse_cases:
           sink_patterns: ["idempotenc(y|e)[-_ ]?key"]
 ```
 
-Each chain step's `probe.sink_patterns` is matched (regex) against the merged
-findings, so a repo-local case is bound to the concrete findings it chains —
-the same deterministic matcher used for the standard library. The per-candidate
-`appsec-abuse-case-verifier` agent then verifies each step against the code.
+`probe.sink_patterns` matches chain steps to findings. The assessment then checks each step against the code.

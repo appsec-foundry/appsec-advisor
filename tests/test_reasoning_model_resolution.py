@@ -141,7 +141,7 @@ class TestHaikuEconomyAlias:
         ns = rc.build_parser().parse_args(["--reasoning-model", "haiku-economy"])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["reasoning_model"] == "sonnet-economy"
-        assert out["stride_model"] == "sonnet"
+        assert out["stride_model"] == "claude-sonnet-4-6"
 
     def test_extended_models_alias_matches_canonical(self):
         rc = _load_resolver()
@@ -166,14 +166,15 @@ class TestDefaultCoupling:
     def test_quick_defaults_to_haiku_economy(self):
         """Quick depth promises 'fast + cheap' — the default tier routes
         deterministic-leaning agents to Haiku 4.5. STRIDE/triage/merger
-        still stay on Sonnet via the sonnet-economy MODEL_MATRIX entry."""
+        still stay on the Sonnet tier via the sonnet-economy MODEL_MATRIX
+        entry, cost-pinned to the concrete Sonnet 4.6."""
         rc = _load_resolver()
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "quick")
         assert out["reasoning_model"] == "sonnet-economy"
-        assert out["stride_model"] == "sonnet"
-        assert out["triage_model"] == "sonnet"
-        assert out["merger_model"] == "sonnet"
+        assert out["stride_model"] == "claude-sonnet-4-6"
+        assert out["triage_model"] == "claude-sonnet-4-6"
+        assert out["merger_model"] == "claude-sonnet-4-6"
 
     def test_quick_explicit_sonnet_override(self):
         """Users who want pre-2026-05 behaviour pass --reasoning-model sonnet."""
@@ -191,9 +192,12 @@ class TestDefaultCoupling:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["reasoning_model"] == "sonnet-economy"
-        # STRIDE/triage/merger all on Sonnet at the standard default.
-        assert out["stride_model"] == "sonnet"
-        assert out["triage_model"] == "sonnet"
+        # STRIDE stays cost-pinned to Sonnet 4.6 (Sonnet 5 REGRESSED discovery
+        # recall). The `standard` quality buy-back (2026-07-05) upgrades the
+        # aggregation/judgment stages triage + merger to Sonnet 5.
+        assert out["stride_model"] == "claude-sonnet-4-6"
+        assert out["triage_model"] == "claude-sonnet-5"
+        assert out["merger_model"] == "claude-sonnet-5"
 
     def test_standard_opus_still_opt_in(self):
         rc = _load_resolver()
@@ -247,9 +251,12 @@ class TestPerStageModelFlags:
         rc = _load_resolver()
         ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet-economy", "--triage-model", "opus"])
         out = rc.resolve_reasoning_model(ns, "standard")
-        assert out["stride_model"] == "sonnet"
+        # stride stays cost-pinned to Sonnet 4.6; merger takes the standard
+        # buy-back (Sonnet 5); only triage is overridden to Opus by the
+        # per-stage flag (the flag wins over the buy-back).
+        assert out["stride_model"] == "claude-sonnet-4-6"
         assert out["triage_model"] == "opus"
-        assert out["merger_model"] == "sonnet"
+        assert out["merger_model"] == "claude-sonnet-5"
 
     def test_all_three_flags_independent(self):
         rc = _load_resolver()
@@ -275,7 +282,8 @@ class TestPerStageModelFlags:
         rc = _load_resolver()
         ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet-economy"])
         out = rc.resolve_reasoning_model(ns, "standard")
-        assert out["triage_model"] == "sonnet"
+        # standard buy-back: triage upgraded to Sonnet 5 (STRIDE stays 4.6).
+        assert out["triage_model"] == "claude-sonnet-5"
 
     def test_triage_flag_label_reflects_override(self):
         rc = _load_resolver()

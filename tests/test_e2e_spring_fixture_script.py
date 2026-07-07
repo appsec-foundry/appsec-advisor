@@ -18,7 +18,7 @@ def test_e2e_spring_fixture_script_exists_and_documents_defaults():
     assert "--depth <level>" in text
     assert "--clean-output" in text
     assert "verify_threat_model.py" in text
-    assert "/home/mrohr/appsec-advisor-tests" not in text
+    assert "Working directory: /home/" not in text
 
 
 def test_e2e_spring_fixture_runs_oracle_after_pipeline_only():
@@ -47,4 +47,4 @@ def test_e2e_spring_fixture_doc_records_oracle_separation():
     assert "--fixture-root ../appsec-advisor-fixtures" in text
     assert "../appsec-advisor-tests" in text
     assert "APPSEC_SPRING_E2E_ROOT" in text
-    assert "/home/mrohr/appsec-advisor-tests" not in text
+    assert "Working directory: /home/" not in text

@@ -42,6 +42,20 @@ import yaml
 # Register row.
 MAX_HIGH_WALKTHROUGHS = 0
 
+# Hard ceiling on the number of §3 walkthroughs (2026-07-02). A report with
+# many Criticals otherwise renders one deep-dive narrative per Critical, which
+# explodes §3 into dozens of near-identical blocks and buries the worst risks.
+# §3 is the editorial "here are the attacks that matter most" section; the
+# EXHAUSTIVE per-finding record (evidence, fix, classification) lives in §8,
+# which carries every finding regardless of this cap. So capping §3 loses no
+# information — only the narrative walkthrough for lower-priority Criticals,
+# which are selected out by _walkthrough_priority (chain anchors + smallest
+# breach-distance win). Kept intentionally small (reader feedback: 5–8 is
+# digestible, >10 is a wall). Override via .skill-config.json `max_walkthroughs`
+# (clamped to [1, MAX_WALKTHROUGHS_CEILING]).
+DEFAULT_MAX_WALKTHROUGHS = 8
+MAX_WALKTHROUGHS_CEILING = 10
+
 # Minimums for the bullet lists feeding the walkthrough body. Set low —
 # the renderer no longer pads with generic boilerplate to hit a body-line
 # floor; the contract floor is 5 lines and the labelled-form sections plus
@@ -170,10 +184,11 @@ def _to_fid(ref: str) -> str:
     return re.sub(r"^T-(\d+)$", r"F-\1", (ref or "").strip())
 
 
-# Monochrome circled-digit priority glyphs (❶ P1 … ❹ P4). Mirrors
-# compose_threat_model.py:_PRIO_DIGIT_TBL — kept in sync so a linked measure
-# in §3 carries the same annotation as the composer-rendered M-NNN links.
-_PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
+# Monochrome fill-ramp priority glyphs (● P1 full … ○ P4 empty). Mirrors
+# compose_threat_model.py:_PRIO_RAMP_TBL — kept in sync so a linked measure
+# in §3 carries the same dark→light priority ramp as the composer-rendered
+# M-NNN links (2026-07-04 user request, restored over the ❶❷❸❹ digit form).
+_PRIO_RAMP_TBL = {"p1": "●", "p2": "◕", "p3": "◑", "p4": "○"}
 
 
 def _short_title(title: str, limit: int = 70) -> str:
@@ -213,7 +228,205 @@ def _weakness_class(title: str) -> str:
     class-only heading slugifies identically across GitHub, VS Code, and
     pandoc, so the anchor is renderer-stable.
     """
-    return re.split(r"\s+—\s+", (title or "").strip(), maxsplit=1)[0].strip()
+    cls = re.split(r"\s+—\s+", (title or "").strip(), maxsplit=1)[0].strip()
+    # Strip trailing " on:<line>" artefacts that leak into the weakness class when
+    # the title was authored as "… 'secret' on:6 — file:6" before normalization.
+    cls = re.sub(r"\s+on:\d+\s*$", "", cls).strip()
+    return cls
+
+
+_TARGET_LABEL_WORD_RE = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?=[A-Z]|$)")
+
+# Framework dot-suffixes stripped from a stem so `oauth.component.ts` → "Oauth"
+# and `auth.guard.ts` → "Auth" read as the FEATURE, not the file's role.
+_FEATURE_STRIP_SUFFIXES = {
+    "component",
+    "service",
+    "module",
+    "guard",
+    "interceptor",
+    "controller",
+    "middleware",
+    "model",
+    "models",
+    "route",
+    "routes",
+    "startup",
+    "config",
+}
+# Words that carry no feature meaning on their own — meta-descriptors that name
+# a security concept, not a product feature. A file stem (or CamelCase word)
+# composed entirely of these falls back to the component zone.
+# Examples: `AuthenticationVulnerability.java` → "Vulnerability" is meta-noise;
+#            `CommandInjection.java` → "Injection" repeats the weakness class;
+#            `application-unsafe.properties` → "Unsafe" signals a dev-profile,
+#            not a feature.
+_META_FEATURE_WORDS = frozenset(
+    {
+        "vulnerability",
+        "vulnerable",
+        "unsafe",
+        "insecure",
+        "attack",
+        "exploit",
+        "injection",
+        "bypass",
+    }
+)
+
+# Non-feature stems — infrastructure, security libs, and framework plumbing that
+# name no user-facing feature. These fall back to the component zone rather than
+# emitting "in Insecurity" / "in Server" / "in Register Websocket Events".
+_GENERIC_FILE_STEMS = {
+    "index",
+    "server",
+    "app",
+    "main",
+    "constants",
+    "utils",
+    "util",
+    "helpers",
+    "helper",
+    "types",
+    "common",
+    "core",
+    "setup",
+    "insecurity",
+    "security",
+    "verify",
+    "startup",
+    "middleware",
+    "models",
+    "model",
+    "database",
+    "db",
+    "handler",
+    "handlers",
+    "routes",
+    "route",
+    "api",
+    "config",
+    "bootstrap",
+}
+
+
+def _feature_from_file(file_hint: str) -> str:
+    """Prettified FEATURE label from an evidence file: `routes/login.ts` →
+    "Login", `changePassword.ts` → "Change Password". Returns "" — so the caller
+    falls back to the component zone — for non-feature infra stems (`server`,
+    `insecurity`, …) and for verbose (>2-word) stems (`registerWebsocketEvents`)
+    that read better as the curated zone name than as a mangled file label."""
+    p = Path(file_hint)
+    # Config / properties files name no user-facing feature.
+    if p.suffix.lower() in {".properties", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env"}:
+        return ""
+    stem = p.stem  # login.ts → login ; oauth.component.ts → oauth.component
+    parts = stem.split(".")
+    while len(parts) > 1 and parts[-1].lower() in _FEATURE_STRIP_SUFFIXES:
+        parts.pop()
+    stem = ".".join(parts)
+    if stem.lower() in _GENERIC_FILE_STEMS:
+        return ""
+    words = _TARGET_LABEL_WORD_RE.findall(stem)
+    if not words or len(words) > 2:  # empty or verbose → prefer the zone name
+        return ""
+    # Drop words that are security meta-descriptors, not feature names.
+    # ("AuthenticationVulnerability" → only "Authentication" survives; a stem
+    # composed *entirely* of meta-words yields an empty label → zone fallback.)
+    meaningful = [w for w in words if w.lower() not in _META_FEATURE_WORDS]
+    if not meaningful:
+        return ""
+    return " ".join(_FEATURE_ACRONYMS.get(w.lower(), w.capitalize()) for w in meaningful)
+
+
+def _feature_redundant_with_weakness(feature: str, weakness: str) -> bool:
+    """Return True if every word of *feature* already appears in *weakness*
+    (case-insensitive), making "OS command injection in Command" redundant.
+    Used to suppress file-derived features that just echo the weakness class."""
+    feature_words = {w.lower() for w in feature.split() if w}
+    weakness_lower = weakness.lower()
+    return bool(feature_words) and all(fw in weakness_lower for fw in feature_words)
+
+
+# Known acronyms rendered in their canonical casing rather than Title-cased.
+_FEATURE_ACRONYMS = {
+    "oauth": "OAuth",
+    "jwt": "JWT",
+    "sql": "SQL",
+    "xss": "XSS",
+    "csrf": "CSRF",
+    "ssrf": "SSRF",
+    "url": "URL",
+    "id": "ID",
+    "api": "API",
+    "sso": "SSO",
+    "totp": "TOTP",
+    "otp": "OTP",
+    "2fa": "2FA",
+    "mfa": "MFA",
+}
+
+
+def _anchor_stable_label(label: str) -> str:
+    """Normalise a §3-heading target so its GitHub anchor is renderer-stable.
+
+    The heading's slug must be identical whether produced by ``github_slug``
+    (the link-target generator, which collapses whitespace to a single hyphen)
+    or ``github_render_slug`` (what GitHub/pandoc actually render, which maps
+    each space to a hyphen with no collapse). The two DIVERGE exactly when the
+    text carries punctuation-surrounded-by-whitespace — ``" & "``, ``" / "``,
+    ``" — "`` — because stripping the punctuation leaves two adjacent spaces
+    that ``github_render_slug`` turns into ``--`` but ``github_slug`` turns into
+    ``-`` (the 2026-07-03 §3 ToC breakage: a component-name fallback of
+    "Authentication & Session Surface" produced an unresolvable ToC anchor).
+
+    This is the same anchor-stability guarantee ``_weakness_class`` already
+    enforces by dropping the ``— file:line`` tail; here we neutralise the
+    remaining separators in the feature/component fallback: ``&`` → "and",
+    other stray punctuation → space, then collapse to single spaces.
+    """
+    label = (label or "").strip()
+    label = re.sub(r"\s*&\s*", " and ", label)
+    # Any residual non-word / non-space / non-hyphen char (e.g. "/", "—") would
+    # slugify unstably when surrounded by whitespace; drop it and let the
+    # whitespace collapse below close the gap.
+    label = re.sub(r"[^\w\s-]", " ", label)
+    label = re.sub(r"\s+", " ", label).strip()
+    return label
+
+
+def _attack_target_label(threat: dict, yaml_data: dict) -> str:
+    """Human-readable attack TARGET for the §3 heading (juice-shop 2026-07-03
+    user request): headings must name the concrete FEATURE under attack —
+    "SQL Injection against Login" — not the broad component zone
+    ("… against Authentication & Identity"), which the user flagged as bulky
+    and unclear.
+
+    Prefers the FEATURE derived from the evidence file (``routes/login.ts`` →
+    "Login"), which is both specific and reader-legible, and stays distinct
+    across same-weakness findings that live in different files. Falls back to
+    the component's curated zone name only when the file yields no feature
+    (generic infra stem), then a generic label.
+
+    Every return path is routed through ``_anchor_stable_label`` so the
+    resulting §3 heading anchor resolves identically on GitHub, VS Code, and
+    pandoc regardless of ``&`` / ``/`` in a component name.
+    """
+    evidence = (threat.get("evidence") or [{}])[0] or {}
+    file_hint = (evidence.get("file") or "").strip()
+    weakness = _weakness_class(threat.get("title") or "")
+    if file_hint:
+        feature = _feature_from_file(file_hint)
+        if feature and not _feature_redundant_with_weakness(feature, weakness):
+            return _anchor_stable_label(feature)
+    comp_id = (threat.get("component") or "").strip()
+    if comp_id:
+        for c in yaml_data.get("components") or []:
+            if isinstance(c, dict) and c.get("id") == comp_id:
+                name = (c.get("name") or "").strip()
+                if name:
+                    return _anchor_stable_label(name)
+    return "the Application"
 
 
 def _mermaid_safe(label: str) -> str:
@@ -457,13 +670,43 @@ def _sort_key(t: dict) -> tuple[int, str]:
     return _RISK_RANK.get(_risk_of(t), 9), str(t.get("id") or "")
 
 
-def select_walkthrough_picks(yaml_data: dict) -> list[dict]:
-    """All Criticals (deterministic order) + a small budget of Highs."""
+def _walkthrough_priority(t: dict) -> tuple:
+    """Most-important-first ordering for the capped §3 selection. Lower sorts
+    earlier. Compound-chain anchors come first (they are the entry point of a
+    code-verified abuse chain), then findings closest to a breach
+    (smaller ``breach_distance``), then stable ``id`` order for determinism."""
+    is_anchor = bool(t.get("compound_chain_ids")) or (
+        (t.get("chain_role") or "").strip().lower() in {"anchor", "entry_point", "initial_access", "entry"}
+    )
+    bd = t.get("breach_distance")
+    bd = bd if isinstance(bd, (int, float)) else 999
+    return (0 if is_anchor else 1, bd, str(t.get("id") or ""))
 
+
+def resolve_walkthrough_cap(yaml_data: dict | None = None, config: dict | None = None) -> int:
+    """Resolve the §3 walkthrough cap: ``max_walkthroughs`` from skill-config
+    when present (clamped to [1, MAX_WALKTHROUGHS_CEILING]), else the default."""
+    cap = DEFAULT_MAX_WALKTHROUGHS
+    if isinstance(config, dict):
+        raw = config.get("max_walkthroughs")
+        if isinstance(raw, int) and raw > 0:
+            cap = raw
+    return max(1, min(cap, MAX_WALKTHROUGHS_CEILING))
+
+
+def select_walkthrough_picks(yaml_data: dict, cap: int | None = None) -> list[dict]:
+    """The ``cap`` highest-priority Criticals (chain anchors + smallest
+    breach-distance first) + a small budget of Highs. Capping keeps §3 from
+    exploding when a report has many Criticals; every finding — walked through
+    or not — still has its full §8 Findings Register row."""
+
+    if cap is None:
+        cap = DEFAULT_MAX_WALKTHROUGHS
+    cap = max(1, min(int(cap), MAX_WALKTHROUGHS_CEILING))
     threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)]
-    crit = sorted([t for t in threats if _risk_of(t) == "critical"], key=_sort_key)
+    crit = sorted([t for t in threats if _risk_of(t) == "critical"], key=_walkthrough_priority)
     high = sorted([t for t in threats if _risk_of(t) == "high"], key=_sort_key)
-    return crit + high[:MAX_HIGH_WALKTHROUGHS]
+    return (crit + high[:MAX_HIGH_WALKTHROUGHS])[:cap]
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +764,7 @@ def render_prerequisites(
 # evidence refs, quoted injection payloads (`param="…"`), and UPPERCASE SQL
 # statements. SQL keywords are matched case-SENSITIVELY so English words
 # ("the attacker can update …", "users select …") are never mistaken for SQL.
-_STEP_FILELINE_RE = re.compile(r"(?<![`\w])([\w][\w./-]*\.[A-Za-z]{1,6}:\d+)(?![`\w:])")
+_STEP_FILELINE_RE = re.compile(r"(?<![`\w])([\w][\w./-]*\.[A-Za-z]{1,6}:\d+(?:-\d+)?)(?![`\w:])")
 _STEP_PAYLOAD_ASSIGN_RE = re.compile(r'(?<![`\w])([A-Za-z_]\w*="[^"]{0,100}")(?![`])')
 _STEP_SQL_RE = re.compile(
     r"(?<![`\w])((?:UNION\s+)?(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b[^…`;,.]*?)"
@@ -656,9 +899,12 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
     template_steps = list(
         template.get("attack_steps_template")
         or [
-            "Send the crafted payload to the endpoint backed by `{file}:{line}`.",
-            "The vulnerable code path accepts the payload without enforcing the missing control.",
-            "The response confirms the bypass.",
+            # Attacker-action voice (juice-shop 2026-07-03): the attacker is the
+            # subject of each step, not the code. Generic fallback used only when
+            # a CWE template has no `attack_steps_template` and the scenario is short.
+            "The attacker crafts a request targeting the weak spot at `{file}:{line}`.",
+            "The attacker sends it; the missing control never rejects the crafted input.",
+            "The attacker reads the response and confirms the bypass succeeded.",
         ]
     )
 
@@ -677,13 +923,21 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
     body.extend(sentences[:MIN_ATTACK_STEPS])
     if not body:
         body.extend(template_steps)
-    # Pad up to MIN_ATTACK_STEPS with template_steps (template-specific, with
-    # `{file}` / `{line}` already substituted) — no generic boilerplate.
-    for cand in template_steps:
-        if len(body) >= MIN_ATTACK_STEPS:
-            break
-        if cand not in body:
-            body.append(cand)
+    else:
+        # Pad up to MIN_ATTACK_STEPS with template_steps (template-specific,
+        # with `{file}` / `{line}` already substituted) — no generic
+        # boilerplate. PREPEND the missing steps rather than appending them:
+        # a template step describes a stage the free-authored `scenario`
+        # prose typically already assumes happened (e.g. cwe-89's template
+        # opens with "Identify the vulnerable input parameter…", a
+        # reconnaissance step) — appending it after real scenario sentences
+        # put "identify the parameter" AFTER "submit the exploit payload",
+        # reversing attack chronology (juice-shop 2026-07-03 user report:
+        # Attack Steps must read in a clear, attacker-followable order).
+        missing = [s for s in template_steps if s not in body]
+        needed = MIN_ATTACK_STEPS - len(body)
+        if needed > 0:
+            body = missing[:needed] + body
     return [f"{i + 1}. {_format_step_code(s.rstrip('.'))}." for i, s in enumerate(body[:MIN_ATTACK_STEPS])]
 
 
@@ -750,10 +1004,10 @@ def _ensure_alt_else_block(diagram: str, tid: str, mid: str, mit_title: str) -> 
     attacker, target = _diagram_actors(diagram)
     block_lines = [
         f"    {alt_label}",
-        f"        {attacker}->>{target}: Crafted request exploiting {tid or 'the weakness'} succeeds",
-        f"        {target}-->>{attacker}: Exploitation confirmed",
+        f"        {attacker}->>{target}: The attacker sends the exploit for {tid or 'the weakness'}",
+        f"        {target}-->>{attacker}: Exploit succeeds",
         f"    {else_label}",
-        f"        {attacker}->>{target}: Same request after the fix is applied",
+        f"        {attacker}->>{target}: The attacker retries the same request after the fix",
         f"        {target}-->>{attacker}: Request rejected",
         "    end",
     ]
@@ -884,11 +1138,11 @@ def render_defense_in_depth(threat: dict, mitigations_by_threat: dict[str, list[
         # Short-label rule mirrors RenderContext.linkify_with_short_label:
         # drop the ` — <file>` Stage-1-LLM tail.
         short_title = title.split(" — ", 1)[0].strip()[:160]
-        # Leading monochrome priority digit (❶ P1 … ❹ P4) so a linked measure
-        # in §3 carries the same rollout-priority annotation as every other
-        # M-NNN link (MS Top-Mitigations, §8 Fix cells). Variant B, 2026-06-04.
+        # Leading monochrome priority circle (● P1 … ○ P4) so a linked measure
+        # in §3 carries the same dark→light rollout-priority ramp as every other
+        # M-NNN link (MS Top-Mitigations, §8 Fix cells). Fill-ramp, 2026-07-04.
         prio = str(m.get("priority") or "").strip().lower()
-        digit = _PRIO_DIGIT_TBL.get(prio, "")
+        digit = _PRIO_RAMP_TBL.get(prio, "")
         prefix = f"{digit} " if digit else ""
         bullets.append(f"{label}: {prefix}[{mid}](#{_anchor(mid)}) ({short_title})")
     # No padding bullet — bullets list is intentionally short when only one
@@ -968,15 +1222,53 @@ def _render_walkthrough_block(
     diagram = render_sequence_diagram(threat, template, primary_mit_id, primary_mit_title)
 
     # Heading HARD RULE (per agents/phases/phase-group-finalization.md §3
-    # heading-format contract): 2-6 words, ≤60 chars, NO T-NNN prefix.
-    # The T-NNN appears once in the **Source:** line below — wrapping it
-    # into the heading inflates the line to 70+ chars and trips
-    # qa_checks.py:check_heading_hygiene. The previous behaviour
-    # (`### 3.X {tid} — {title}` with `_short_title(title, 90)`) violated
-    # both rules. The `— file:line` tail is dropped too (see _weakness_class):
+    # heading-format contract): NO T-NNN prefix, ≤80 chars (check_heading_hygiene
+    # warns >80, errors >100). The T-NNN appears once in the **Source:** line
+    # below — wrapping it into the heading inflates the line and trips the gate.
+    # Format is "<Weakness> in <Feature>" (juice-shop 2026-07-03 user request):
+    # concise, feature-scoped, reader-legible, and consistent with §7 finding
+    # titles ("SQL Injection in Login"). The earlier "<Weakness> Attack against
+    # <broad component zone>" form was flagged as sperrig/unklar; the connector
+    # is neutral "in" rather than "against" because the left side is a WEAKNESS
+    # class (a noun phrase by contract, e.g. "Insecure Direct Object Reference"),
+    # not an attack — "against" would over-claim it as one. The target names the
+    # concrete FEATURE (login, search), not the zone, and keeps same-weakness
+    # findings in different files distinct. The `— file:line`
+    # tail from the finding title stays OUT of the heading (see _weakness_class):
     # it carries no info the **Source:** line lacks and its em-dash made the
     # GitHub heading anchor diverge from the composer's link target.
-    heading = f"### 3.{walkthrough_index} {_short_title(_weakness_class(title), 60)}"
+    # Truncate the WEAKNESS class, not the combined string — some weakness
+    # classes are long verb-phrases ("Mass assignment privileged field
+    # accepted from request") that would otherwise eat the budget and leave
+    # "… Attack against Back…" (target cut mid-word). The target is always
+    # short (a curated component name or a 1-4 word file label) and is the
+    # part that actually differentiates same-weakness headings, so it must
+    # survive intact; the weakness class tolerates abbreviation.
+    # Heading composition (2026-07-05 user request): NEVER ellipsis-truncate the
+    # weakness class. The earlier form gave the weakness only `78 - len(" in " +
+    # target)` chars, so a long weakness class + a long component-zone target
+    # (e.g. "JWT Role Claim Accepted Without Server-Side Verification" in
+    # "Authentication and Identity Module") produced "…Server-…", which is both
+    # ugly AND anchor-breaking: the trailing "-…" makes github_slug ("server-")
+    # and github_render_slug ("server--") diverge, orphaning the §3 ToC link.
+    # New rule, in preference order — pick the first that fits HEADING_BUDGET:
+    #   1. "<weakness> in <target>"  (feature-scoped, e.g. "SQL Injection in Login")
+    #   2. "<weakness>"              (drop the target rather than clip the weakness;
+    #                                the "3.N" prefix keeps the anchor unique and
+    #                                the **Source:** line already names the file)
+    #   3. clipped weakness          (last resort — a weakness class >78 chars,
+    #                                which the finding-title contract makes rare)
+    _HEADING_BUDGET = 78
+    _target = _attack_target_label(threat, yaml_data)
+    _weakness = _weakness_class(title)
+    _combined = f"{_weakness} in {_target}"
+    if len(_combined) <= _HEADING_BUDGET:
+        _heading_text = _combined
+    elif len(_weakness) <= _HEADING_BUDGET:
+        _heading_text = _weakness
+    else:
+        _heading_text = _short_title(_weakness, _HEADING_BUDGET)
+    heading = f"### 3.{walkthrough_index} {_heading_text}"
 
     lines: list[str] = []
     lines.append(heading)
@@ -1046,6 +1338,10 @@ def render_attack_walkthroughs_md(
 
     templates = load_templates(template_dir or DEFAULT_TEMPLATE_DIR)
     picks = select_walkthrough_picks(yaml_data)
+    _all_threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)]
+    _n_critical_total = sum(1 for t in _all_threats if _risk_of(t) == "critical")
+    _n_walked = sum(1 for t in picks if _risk_of(t) == "critical")
+    _capped = _n_critical_total > _n_walked
 
     indexes = {
         "mitigations": _mitigations_by_threat(yaml_data),
@@ -1076,12 +1372,26 @@ def render_attack_walkthroughs_md(
         out.append("<!-- generated:walkthrough_renderer -->")
         return "\n".join(out).rstrip() + "\n"
 
+    if _capped:
+        intro = (
+            f"This section walks through how the highest-risk findings are "
+            f"exploited. To keep the section focused, it covers the "
+            f"**{_n_walked} highest-priority of {_n_critical_total} Critical "
+            f"findings** (chain entry points and the findings closest to a "
+            f"breach); every remaining Critical still has a full "
+            f"[§8 Findings Register](#8-findings-register) row with the same "
+            f"evidence, impact, and fix. Each walkthrough has attack steps, a "
+            f"focused sequence diagram, and the primary mitigation."
+        )
+    else:
+        intro = (
+            "This section walks through how the highest-risk findings are "
+            "exploited — one short walkthrough per Critical, each with attack "
+            "steps, a focused sequence diagram, and the primary mitigation."
+        )
     out.append(
-        "This section walks through how the highest-risk findings are "
-        "exploited — one short walkthrough per Critical, each with attack "
-        "steps, a focused sequence diagram, and the primary mitigation. The "
-        "cross-finding view (which weaknesses combine toward the worst-case "
-        "goal, and where one fix severs several paths) is in the "
+        intro + " The cross-finding view (which weaknesses combine toward the "
+        "worst-case goal, and where one fix severs several paths) is in the "
         "[Critical Attack Tree](#critical-attack-tree). Full per-finding "
         "context — severity rationale, assets, detection signals — is in the "
         "[§8 Findings Register](#8-findings-register) row for each finding."

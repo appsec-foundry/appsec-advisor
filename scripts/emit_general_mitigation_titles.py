@@ -86,6 +86,7 @@ _GENERAL_TITLE_BY_CWE: dict[str, str] = {
     "CWE-540": "Remove secrets from source code",
     "CWE-922": "Store session tokens in HttpOnly, Secure cookies",
     "CWE-345": "Verify token signatures before trusting claims",
+    "CWE-306": "Require authentication on every exposed endpoint",
     "CWE-287": "Harden the authentication flow",
     "CWE-384": "Rotate the session identifier on authentication",
     "CWE-639": "Enforce object-level (ownership) authorization",

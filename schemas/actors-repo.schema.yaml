@@ -1,0 +1,53 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://appsec-advisor/schemas/actors-repo.schema.yaml"
+title: Repository Actor Configuration
+description: "Contract for <repo>/.appsec/actors.yaml."
+
+type: object
+additionalProperties: false
+properties:
+  actors:
+    type: array
+    items:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+      additionalProperties: true
+    description: |
+      Layer entries may be partial overrides of an existing actor. The resolver
+      validates the fully merged records against actors.schema.yaml before
+      writing .actors-resolved.json.
+  disable:
+    type: array
+    items:
+      oneOf:
+        - type: string
+          pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+        - type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id:
+              type: string
+              pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+            reason:
+              type: [string, "null"]
+              maxLength: 400
+  discovery:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled:
+        type: boolean
+        default: true
+      max_proposed:
+        type: integer
+        minimum: 0
+        maximum: 5
+        default: 5
+  inherit_org:
+    type: boolean
+    default: true

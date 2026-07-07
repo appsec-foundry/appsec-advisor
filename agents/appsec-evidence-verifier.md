@@ -23,11 +23,11 @@ untrusted-content guard in `appsec-threat-analyst.md`.
 
 The STRIDE analyzers produce findings on a "best-effort honor system" — they are required to read a file:line before recording a threat, but no downstream step verifies that the cited line actually shows the claimed weakness. The merger explicitly refuses to read source (`appsec-threat-merger.md:143`). The triage validator works on metadata. The QA reviewer checks that paths exist (Check 1) and now also that lines are not pure-comment (Check 1b, deterministic). None of those layers can answer the semantic question **"is the claim at this line actually true?"**
 
-This agent is the closest the pipeline gets to an independent re-check. It is intentionally cheap (Haiku, narrow read window, sampled at quick/standard depths) and intentionally narrow: one yes/no/maybe verdict per finding with a one-sentence reason. It is **not** a re-analyzer — when in doubt, it returns `ambiguous`, not a refined severity rating.
+This agent is the closest the pipeline gets to an independent re-check. It is intentionally cheap (Haiku, narrow read window, sampled at quick/standard depths) and intentionally narrow: one yes/no/maybe verdict per finding with a one-sentence reason. It is **not** a re-analyzer: a genuinely unjudgeable snippet returns `ambiguous` rather than a refined severity rating — but `ambiguous` is the exception for the truly inconclusive line, not a default (see the Calibration note under "Verification procedure"). Most sampled findings should resolve to `verified`.
 
 ## Model identification
 
-Use the `MODEL_ID` passed in the invocation prompt. The orchestrator overrides the frontmatter `model: sonnet` default and dispatches with `haiku` for operational runs — the task is low-reasoning-depth and the cost amortizes only if it stays in cache (see Caching discipline below). Opus is never appropriate here. The frontmatter setting exists only because the repo-wide agent-contract gate (`tests/test_agent_definitions.py`) pins every agent file to `model: sonnet`; the per-dispatch override in `phase-group-threats.md` is authoritative.
+Use the `MODEL_ID` passed in the invocation prompt. The orchestrator dispatches with `claude-sonnet-4-6` (the default since 2026-07-05). **Do not use Haiku here:** the verified/refuted/ambiguous discrimination requires reading code semantics at the cited line, and Haiku regressed to stamping *every* sampled finding `ambiguous` (0 verified / 0 refuted) — a degenerate output that `guard_evidence_verification.py` now detects and neutralises, but the correct fix is to run a capable model. Opus is never appropriate here (over-spec). The frontmatter `model: sonnet` exists only because the repo-wide agent-contract gate (`tests/test_agent_definitions.py`) pins every agent file to `model: sonnet`; the per-dispatch `MODEL_ID` in `agents/appsec-threat-analyst.md` (Phase 10a) is authoritative.
 
 ## Progress format
 
@@ -36,6 +36,8 @@ Every print uses the prefix `[evidence-verifier]`. Print each line immediately b
 ## Mandatory logging — CRITICAL
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `evidence-verifier`, model: `<MODEL_ID>`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, every Read, every file write, and agent completion.
+
+**Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
 
 **Print on startup:**
 ```
@@ -51,7 +53,7 @@ Every print uses the prefix `[evidence-verifier]`. Print each line immediately b
 - `REPO_ROOT` — absolute path to the repository being analyzed
 - `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
 - `ASSESSMENT_DEPTH` — `quick`, `standard`, or `thorough` (drives sampling strategy)
-- `MODEL_ID` — model identifier for logging (default `haiku`)
+- `MODEL_ID` — model identifier for logging (default `claude-sonnet-4-6`)
 - `EVIDENCE_VERIFIER_MAX_FINDINGS` — *(optional)* hard cap on the number of findings to verify, regardless of sampling tier. Defaults to 100. Prevents pathological thorough-mode runs on huge repos from exploding.
 
 ## Sampling strategy
@@ -103,9 +105,11 @@ For each finding in the sample set:
 
 1. **Read the cited file** with `Read(file_path=evidence.file, offset=max(1, evidence.line - 5), limit=11)` to get 11 lines centered on the cited line. When `evidence.line` is `null`, fall back to reading the first 25 lines of the file.
 2. **Decide one of three verdicts** based on the snippet:
-   - `verified` — the cited line clearly exhibits the claimed weakness (e.g. raw SQL string interpolation, hardcoded credential, missing auth decorator on a route handler, plaintext password write). The judgement is "yes, a developer looking at this snippet would agree with the finding's title and scenario."
+   - `verified` — the cited line exhibits the claimed weakness (e.g. raw SQL string interpolation, hardcoded credential, missing auth decorator on a route handler, plaintext password write). **This is the EXPECTED outcome for most sampled findings** — the analyzer already located the exact `file:line`, so the ±5-line window normally contains the sink. The judgement is "a developer looking at this snippet would agree with the finding's title and scenario."
    - `refuted` — the cited line clearly does NOT show the claimed weakness. Common refutation patterns: the line is part of a fix that has already landed; the line is in a test file marked as expected-failure; the line is inside a `// SAFE: …` block with an explanation; the line is a string literal that happens to contain the searched pattern but is not the vulnerable sink (e.g. a doc comment quoting `eval()` rather than calling it).
-   - `ambiguous` — the snippet is consistent with the finding but cannot be confirmed without reading more context, or the snippet contradicts the finding partially (e.g. there IS a SQL query at this line but parameter binding is used). Always prefer `ambiguous` over guessing.
+   - `ambiguous` — reserved for the GENUINELY inconclusive line: the sink truly cannot be judged from the ±5-line window alone (the vulnerable call is elsewhere, or the snippet partially contradicts the finding — e.g. there IS a SQL query here but parameter binding is used). **`ambiguous` is NOT a safe default and NOT a way to avoid reading the code.** Make a decision whenever the snippet supports one; if you are unsure, widen the window (read a few more lines with a second `Read`) and resolve to `verified`/`refuted` — fall back to `ambiguous` only when even the widened context cannot decide.
+
+   **Calibration (anti-degenerate).** On a real codebase the sample skews heavily toward `verified` — the analyzer cited lines it had already read. A pass that returns *mostly* or *all* `ambiguous` with zero `verified`/`refuted` means the verifier did not actually read the snippets, not that the codebase is uncertain. That degenerate output carries no signal: it is detected and **discarded** by `guard_evidence_verification.py` (the whole pass is wasted). Read the code and commit to verdicts; a rising ambiguous rate is a signal to look more carefully, not to keep punting.
 3. **Write a one-sentence reason** (max 200 characters). Quote the relevant line excerpt verbatim — at most 80 characters. Do not paraphrase.
 4. **Update the finding in-memory:**
    - Set `evidence_check` to the verdict.

@@ -362,7 +362,9 @@ architecture-coverage delivery is enrichment, not blocking.
 
 ## Phase 2.7: Actor Layer Resolution & Discovery
 
-**Skip when:** `ASSESSMENT_DEPTH = quick`.
+**Never skip the static resolver.** At `ASSESSMENT_DEPTH=quick`, skip only the
+LLM-discovery Steps 2–4; Step 1 still writes `.actors-resolved.json` from the
+static layers so STRIDE retains actor attribution.
 
 After Phase 2.6 completes, run the Actor Layer. This phase is fully
 deterministic for the static layers and conditionally LLM-driven for
@@ -378,7 +380,11 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_actors.py" \
     --repo-root "$REPO_ROOT" \
     --output-dir "$OUTPUT_DIR" \
     ${ORG_PROFILE_EFFECTIVE:+--org-profile-effective "$ORG_PROFILE_EFFECTIVE"} \
-    --signals "$OUTPUT_DIR/.recon-signals.json"
+    --signals "$OUTPUT_DIR/.recon-signals.json" \
+    $( [ "$ASSESSMENT_DEPTH" = "quick" ] && echo "--quick" )
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+    actors_resolved "$OUTPUT_DIR/.actors-resolved.json"
 
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    STEP_END   Actor static resolution → .actors-merged-static.json" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
@@ -387,6 +393,14 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    STEP_
 profile is active; skip the flag when no profile is configured.
 
 Outputs: `$OUTPUT_DIR/.actors-merged-static.json` (input for discovery).
+
+When `ASSESSMENT_DEPTH=quick`, Step 1 is the final Phase-2.7 producer: skip
+Steps 2–4 and continue at Phase 3.
+
+When `.actors-resolved.json.discovery_enabled=false`, repository configuration
+explicitly disabled discovery. Step 1 is likewise final: skip Steps 2–4 without
+dispatching the discovery agent. The resolver records
+`discovery_skip_reason=disabled-by-repo-config` for the report.
 
 ### Step 2 — Compute discovery cache key
 
@@ -399,44 +413,8 @@ Five-input composition per actors.md §8 — any change invalidates the discover
 5. `discovery_prompt_version` — explicit semver from the `DISCOVERY_PROMPT_VERSION` HTML-comment marker in the discoverer agent file (bump by hand on any semantic prompt change)
 
 ```bash
-DISCOVERY_CACHE_KEY=$(python3 - <<'EOF'
-import hashlib, os, json, re
-
-output_dir = os.environ.get("OUTPUT_DIR", "")
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-
-def sha_file(path):
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
-    return ""
-
-def read_actors_fingerprint():
-    p = os.path.join(output_dir, ".actor-fingerprints.json")
-    if not os.path.exists(p):
-        return ""
-    try:
-        return json.load(open(p)).get("actors_inputs_fingerprint", "")
-    except Exception:
-        return ""
-
-def read_discovery_prompt_version():
-    p = os.path.join(plugin_root, "agents", "appsec-actor-discoverer.md")
-    if not os.path.exists(p):
-        return ""
-    m = re.search(r"DISCOVERY_PROMPT_VERSION:\s*([0-9]+\.[0-9]+\.[0-9]+)", open(p).read())
-    return m.group(1) if m else ""
-
-parts = [
-    sha_file(os.path.join(output_dir, ".recon-summary.md")),
-    sha_file(os.path.join(output_dir, ".config-scan-findings.json")),
-    read_actors_fingerprint(),
-    sha_file(os.path.join(plugin_root, "agents", "appsec-actor-discoverer.md")),
-    read_discovery_prompt_version(),
-]
-print(hashlib.sha256("||".join(parts).encode()).hexdigest())
-EOF
-)
+DISCOVERY_CACHE_KEY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/actor_discovery_cache.py" \
+    compute --output-dir "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT")
 ```
 
 ### Step 3 — LLM Actor Discovery (when not cached and not quick)
@@ -444,17 +422,9 @@ EOF
 Check if discovery output is current:
 
 ```bash
-DISCOVERY_CACHED=$(python3 - <<'EOF'
-import json, os
-p = os.path.join(os.environ.get("OUTPUT_DIR",""), ".actors-discovered.json")
-if not os.path.exists(p):
-    print("miss")
-    raise SystemExit(0)
-with open(p) as f:
-    d = json.load(f)
-print("hit" if d.get("discovery_cache_key") == os.environ.get("DISCOVERY_CACHE_KEY","") else "miss")
-EOF
-)
+DISCOVERY_CACHED=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/actor_discovery_cache.py" \
+    check --discovery-output "$OUTPUT_DIR/.actors-discovered.json" \
+    --expected-key "$DISCOVERY_CACHE_KEY")
 ```
 
 When `DISCOVERY_CACHED=hit` AND `REFRESH_ACTOR_DISCOVERY != true`: skip Step 3 (cache valid).
@@ -475,9 +445,22 @@ MODEL_ID=$ACTOR_DISCOVERY_MODEL
 )
 ```
 
-After the agent returns, verify `.actors-discovered.json` exists and is valid JSON.
-On failure: log `AGENT_WARN`, write an empty discovery sentinel, continue without
-blocking the assessment.
+After the agent returns, validate the full discovery contract:
+
+```bash
+if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+    actors_discovered "$OUTPUT_DIR/.actors-discovered.json"; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/actor_discovery_cache.py" write-empty \
+      --output "$OUTPUT_DIR/.actors-discovered.json" \
+      --cache-key "$DISCOVERY_CACHE_KEY" \
+      --rationale "Actor discovery returned an invalid contract; static actor layers remain authoritative."
+fi
+```
+
+On failure the deterministic helper replaces the invalid sidecar with a
+schema-valid empty discovery result. Continue without blocking the assessment.
+`resolve_actors.py` validates the same contract again before any proposal or
+review flag can enter `.actors-resolved.json`.
 
 ### Step 4 — Finalize resolved actor set (with discovery)
 
@@ -490,6 +473,9 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_actors.py" \
     --signals "$OUTPUT_DIR/.recon-signals.json" \
     --discovery-output "$OUTPUT_DIR/.actors-discovered.json"
 
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+    actors_resolved "$OUTPUT_DIR/.actors-resolved.json"
+
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    PHASE_END   [Phase 2.7/N] Actor Layer complete → .actors-resolved.json" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
@@ -497,9 +483,9 @@ Outputs: `$OUTPUT_DIR/.actors-resolved.json` (consumed by per-component slicing)
 
 ### Quick-mode handling
 
-When `ASSESSMENT_DEPTH=quick`: call `resolve_actors.py --quick` which runs only
-the static layers and writes `.discovery-skipped.json`. Skip Steps 2–3 entirely.
-The resolved set still drives actor-tagging in the STRIDE analyzers.
+Step 1 passes `--quick` when `ASSESSMENT_DEPTH=quick`; the resolver writes the
+static set plus `.discovery-skipped.json`. Skip Steps 2–4 entirely. The resolved
+set still drives actor-tagging in the STRIDE analyzers.
 
 ### Failure handling
 

@@ -4,23 +4,32 @@ Pins the per-depth × per-agent model assignment so future edits to
 ``scripts/resolve_config.py → EXTENDED_MODEL_MATRIX`` cannot silently
 drift away from the documented routing policy.
 
-Routing policy (verified against agent specs):
+Routing policy (verified against agent specs). At quick / thorough every
+Sonnet-tier SUBAGENT is pinned to the concrete Sonnet 4.6 (deterministic,
+cheapest) instead of the bare `sonnet` alias (which follows the host session);
+the ORCHESTRATOR stays the alias because it IS the session model. Standard keeps
+its buy-back (renderer + abuse-verifier on Sonnet 5).
 
-| Agent              | Quick  | Standard | Thorough |
-|--------------------|--------|----------|----------|
-| context-resolver   | Haiku  | Haiku    | Haiku    |
-| recon-scanner      | Haiku  | Haiku    | Haiku    |
-| qa-routine         | Haiku  | Haiku    | Sonnet   |
-| qa-content         | Sonnet | Sonnet   | Sonnet   |
-| config-scanner     | Haiku  | Haiku    | Haiku    |
-| orchestrator       | Sonnet | Sonnet   | Sonnet   |
-| stride/triage/merger | Sonnet | Sonnet | Sonnet   | (via MODEL_MATRIX)
+renderer + abuse-verifier are quality-showcase stages → latest Sonnet (5) at
+standard AND thorough, cheapest 4.6 only at quick. qa_content + qa_routine are
+mechanical/contract stages → concrete 4.6 everywhere.
+
+| Agent              | Quick     | Standard      | Thorough  |
+|--------------------|-----------|---------------|-----------|
+| context-resolver   | Haiku     | Haiku         | Haiku     |
+| recon-scanner      | Haiku     | Haiku         | Haiku     |
+| qa-routine         | Haiku     | Haiku         | Sonnet 4.6|
+| qa-content         | Sonnet 4.6| Sonnet 4.6    | Sonnet 4.6|
+| config-scanner     | Haiku     | Haiku         | Haiku     |
+| orchestrator       | alias     | alias         | alias     | (= host session)
+| renderer           | Sonnet 4.6| Sonnet 5      | Sonnet 5  |
+| abuse-verifier     | Sonnet 4.6| Sonnet 5      | Sonnet 5  |
 
 Default tier (sonnet / opus-cheap / opus) routes the three pure-extraction
-agents (context-resolver, recon-scanner, config-scanner) to Haiku as well —
-their workload is deterministic regardless of which reasoning tier the user
-picked for STRIDE / triage / merger. Override per-agent via env var:
-APPSEC_<AGENT>_MODEL.
+agents (context-resolver, recon-scanner, config-scanner) to Haiku as well.
+The quick/thorough 4.6 pin is skipped for the explicit `sonnet` tier
+(`--reasoning-model sonnet`), which keeps the alias so the user gets latest
+Sonnet. Override per-agent via env var: APPSEC_<AGENT>_MODEL.
 """
 
 from __future__ import annotations
@@ -46,6 +55,7 @@ def _load_resolver():
 # a pinned version, so a model bump never breaks the routing drift-guard.
 HAIKU = "haiku"
 SONNET = "sonnet"
+SONNET46 = "claude-sonnet-4-6"
 
 
 # ---------------------------------------------------------------------------
@@ -56,28 +66,28 @@ SONNET = "sonnet"
 @pytest.mark.parametrize(
     "depth,agent,expected",
     [
-        # Quick — pure-extraction agents on Haiku, qa_content + orchestrator on Sonnet.
+        # Quick — pure-extraction agents on Haiku; qa_content pinned to 4.6;
+        # orchestrator stays the alias (= host session).
         ("quick", "context_resolver", HAIKU),
         ("quick", "recon_scanner", HAIKU),
         ("quick", "qa_routine", HAIKU),
-        ("quick", "qa_content", SONNET),
+        ("quick", "qa_content", SONNET46),
         ("quick", "config_scanner", HAIKU),
         ("quick", "orchestrator", SONNET),
-        # Standard — same as quick. Recon stays on Haiku because the agent's
-        # workload (28 grep categories + lookup-table verdicts) is structured
-        # enough for Haiku regardless of repo size.
+        # Standard — qa_content pinned to 4.6 (mechanical/contract stage);
+        # renderer/abuse take the Sonnet-5 buy-back (asserted elsewhere).
         ("standard", "context_resolver", HAIKU),
         ("standard", "recon_scanner", HAIKU),
         ("standard", "qa_routine", HAIKU),
-        ("standard", "qa_content", SONNET),
+        ("standard", "qa_content", SONNET46),
         ("standard", "config_scanner", HAIKU),
         ("standard", "orchestrator", SONNET),
-        # Thorough — qa_routine moves to Sonnet (denser cross-refs in bigger
-        # documents); the three pure-extraction agents stay on Haiku.
+        # Thorough — qa_routine + qa_content pinned to 4.6; extraction trio Haiku;
+        # orchestrator stays the alias.
         ("thorough", "context_resolver", HAIKU),
         ("thorough", "recon_scanner", HAIKU),
-        ("thorough", "qa_routine", SONNET),
-        ("thorough", "qa_content", SONNET),
+        ("thorough", "qa_routine", SONNET46),
+        ("thorough", "qa_content", SONNET46),
         ("thorough", "config_scanner", HAIKU),
         ("thorough", "orchestrator", SONNET),
     ],
@@ -108,9 +118,12 @@ def test_default_tier_extraction_agents_on_haiku(tier, depth):
     assert out["context_resolver_model"] == HAIKU
     assert out["recon_scanner_model"] == HAIKU
     assert out["config_scanner_model"] == HAIKU
-    # Reasoning-bearing → Sonnet at default tier (quality floor)
-    assert out["qa_routine_model"] == SONNET
-    assert out["qa_content_model"] == SONNET
+    # qa_routine / qa_content are mechanical/contract stages → concrete 4.6 at every
+    # depth, except the explicit `sonnet` tier which keeps the alias (latest Sonnet).
+    expected_qa = SONNET if tier == "sonnet" else SONNET46
+    assert out["qa_routine_model"] == expected_qa
+    assert out["qa_content_model"] == expected_qa
+    # Orchestrator always stays the alias (= host session; plugin can't pin it).
     assert out["orchestrator_model"] == SONNET
 
 
@@ -120,12 +133,14 @@ def test_default_tier_extraction_agents_on_haiku(tier, depth):
 
 
 def test_qa_content_never_haiku():
-    """QA content fixes (invariants/ms_structure/contract) must always
-    use Sonnet — the split-mode design protects content reasoning."""
+    """QA content fixes (invariants/ms_structure/contract) must always use a
+    Sonnet-tier model — never Haiku — the split-mode design protects content
+    reasoning. (Concrete 4.6 at quick/thorough, the `sonnet` alias at standard.)"""
     rc = _load_resolver()
     for depth in ("quick", "standard", "thorough"):
         out = rc.resolve_extended_models("sonnet-economy", depth)
-        assert out["qa_content_model"] == SONNET
+        assert out["qa_content_model"] != HAIKU
+        assert "sonnet" in out["qa_content_model"]
 
 
 def test_orchestrator_never_haiku():

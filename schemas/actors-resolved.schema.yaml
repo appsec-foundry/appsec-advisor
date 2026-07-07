@@ -1,0 +1,88 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://appsec-advisor/schemas/actors-resolved.schema.yaml"
+title: Resolved Actor Set
+description: "Authoritative actor artifact consumed by slicing, rendering, and review."
+
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - quick_mode
+  - discovery_enabled
+  - discovery_skip_reason
+  - actors_inputs_fingerprint
+  - alias_map
+  - resolved_actors
+  - confirmed_relevant
+  - inputs_questioned
+  - run_issues
+  - discovery_actor_count
+  - rejected_discovery_actors
+
+properties:
+  schema_version:
+    const: 1
+  quick_mode:
+    type: boolean
+  discovery_enabled:
+    type: boolean
+  discovery_skip_reason:
+    type: ["null", string]
+    enum: [null, quick-mode, disabled-by-repo-config]
+  actors_inputs_fingerprint:
+    type: string
+    pattern: "^[0-9a-f]{64}$"
+  alias_map:
+    type: object
+    additionalProperties:
+      type: string
+      pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+  resolved_actors:
+    type: array
+    items:
+      $ref: "https://appsec-advisor/schemas/actors.schema.yaml"
+  confirmed_relevant:
+    type: array
+    items:
+      $ref: "https://appsec-advisor/schemas/actors-discovered.schema.yaml#/properties/confirmed_relevant/items"
+  inputs_questioned:
+    type: array
+    items:
+      $ref: "https://appsec-advisor/schemas/actors-discovered.schema.yaml#/properties/inputs_questioned/items"
+  run_issues:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [class, severity, message]
+      properties:
+        class:
+          type: string
+          minLength: 1
+        severity:
+          type: string
+          enum: [info, advisory, defect]
+        message:
+          type: string
+          minLength: 1
+        actor_id:
+          type: string
+        covered_by:
+          type: [string, "null"]
+  discovery_actor_count:
+    type: integer
+    minimum: 0
+  rejected_discovery_actors:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [id, reason]
+      properties:
+        id:
+          type: [string, "null"]
+        reason:
+          type: string
+          minLength: 1
+        covered_by:
+          type: string

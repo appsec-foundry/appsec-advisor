@@ -40,7 +40,7 @@
 #   --clean-cache           Delete cache & transient files (keeps the model); exits
 #   --clean-all             Delete everything in <output-dir> (with confirmation); exits
 #   --force                 Skip confirmation for --clean-all (auto in CI)
-#   --model <model>         Override the Claude model (default: sonnet)
+#   --model <model>         Override the session model (default: claude-sonnet-4-6, economy)
 #   --reasoning-model <t>   Reasoning tier for STRIDE/triage/merger: opus,
 #                           opus-cheap, sonnet, sonnet-economy
 #   --assessment-depth <l>  Assessment depth: quick, standard (default), thorough
@@ -109,7 +109,7 @@ Options:
   --clean-all                Delete everything in \$OUTPUT_DIR (interactive confirm
                              unless --force / CI=true). Exits without running.
   --force                    Skip the interactive confirmation for --clean-all
-  --model <model>            Override the Claude model (default: sonnet)
+  --model <model>            Override the session model (default: claude-sonnet-4-6, economy)
   --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
                              opus, opus-cheap, sonnet, sonnet-economy
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
@@ -337,14 +337,22 @@ if [ "$BILLING_MODE" = "subscription" ]; then
     fi
 fi
 
+# ── Economy default: session model (both billing modes) ─────────────
+# The host session model drives the dominant cache-read cost AND every
+# alias-following agent (renderer, abuse-verifier, orchestrator, qa-content).
+# Default it to the cost-optimal Sonnet-4.6 (same price/token as Sonnet-5 but
+# ~30% fewer tokens; the reasoning core is already 4.6-cost-pinned) — the single
+# biggest saving on an unattended run. Opt out with --model <id>. In API billing
+# mode a model MUST be explicit anyway (billed per-token), so this also satisfies
+# that requirement. Quality buy-back per stage: --triage-model claude-sonnet-5,
+# APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL (see docs/threat-modeler.md).
+if [ -z "$MODEL" ]; then
+    MODEL="claude-sonnet-4-6"
+    info "Economy default: session model '$MODEL' (use --model to override)"
+fi
+
 # ── API billing mode adjustments ────────────────────────────────────
 if [ "$BILLING_MODE" = "api" ]; then
-    # In API billing mode a model must be explicit (billed per-token).
-    # Default to sonnet when the caller didn't specify one.
-    if [ -z "$MODEL" ]; then
-        MODEL="claude-sonnet-4-5"
-        info "API billing mode: defaulting to model '$MODEL' (use --model to override)"
-    fi
     # Warn if spending is uncapped — easy to run up unexpected charges.
     if [ -z "$MAX_BUDGET" ]; then
         warn "API billing mode active with no budget cap — consider --max-budget <usd>"
@@ -559,6 +567,11 @@ if [ -n "$MAX_DURATION" ]; then
 fi
 
 # Export env-vars the skill/orchestrator can pick up
+# Headless marker: this run has no interactive user, so the skill must SKIP the
+# interactive orchestrator-model prompt (AskUserQuestion would block/error) and
+# proceed on the current session model. See SKILL-impl.md "Orchestrator
+# (session-model) recommendation — interactive prompt".
+export APPSEC_HEADLESS=1
 [ "$NO_QA" = "1" ]         && export APPSEC_SKIP_QA=1
 [ "$PR_MODE" = "1" ]       && export APPSEC_PR_MODE=1
 [ -n "$BASE_REF" ]         && export APPSEC_BASE_REF="$BASE_REF"
@@ -631,11 +644,19 @@ cleanup_tails() {
 
 # Tail both logs in the background and pipe them through render_progress.py,
 # which turns the raw event stream into a stateful, human-readable progress view
-# (current phase, sub-agent invokes, sub-steps, wall-clock elapsed). Runs as a
-# single pipeline so the trap can reap it by pid.
+# (current phase, sub-agent invokes, sub-steps, wall-clock elapsed).
+#
+# A background shell pipeline's `$!` identifies only its final process on some
+# `/bin/sh` implementations; killing that PID can leave `tail -F` alive with the
+# caller's stdout/stderr pipe open. That makes a completed headless invocation
+# (and any subprocess test capturing its output) wait forever for EOF. Run the
+# whole monitor through run-interruptible.sh, which owns and reaps a dedicated
+# process group. PROGRESS_PID is then the wrapper PID, and cleanup_tails can
+# terminate one process while the wrapper reliably tears down the entire tree.
 start_progress_monitor() {
-    tail -F "$LOG_FILE" "$RUN_LOG_FILE" 2>/dev/null \
-        | python3 "$SCRIPT_DIR/render_progress.py" >&2 &
+    "$SCRIPT_DIR/run-interruptible.sh" /dev/null \
+        sh -c 'tail -F "$1" "$2" 2>/dev/null | python3 "$3"' \
+        appsec-progress-monitor "$LOG_FILE" "$RUN_LOG_FILE" "$SCRIPT_DIR/render_progress.py" >&2 &
     PROGRESS_PID=$!
 }
 
@@ -773,18 +794,42 @@ if [ -f "$LOG_FILE" ]; then
     ASSESSMENT_DURATION=$(grep "ASSESSMENT_SUMMARY" "$LOG_FILE" | tail -1 | sed -n 's/.*duration=\([^ ]*\).*/\1/p')
 fi
 
-# Artifact gate: `claude -p` can exit 0 after a *graceful* stop that produced no
-# report — e.g. a broken-Bash environment aborts every script, so the agent
-# diagnoses and stops cleanly. Without this check we'd print "completed
-# successfully" and downstream consumers (the e2e driver) would run assertions
-# against an empty output dir. A create-threat-model run that yields neither
-# threat-model.md nor threat-model.yaml is a failure, not a success.
+# ── Deterministic compose backstop (headless completion) ───────────
+# The in-controller _compose_if_ready backstop (orchestration_controller.py
+# `next`) only fires from an LLM finalize turn (SKILL-full-runtime.md §6). A
+# hard process-kill removes that turn — e.g. CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS
+# terminating `claude -p` while the parallel-render agents' fragments are on
+# disk but threat-model.md was never composed — so nothing invokes it and the
+# run leaves threat-model.yaml + a full .fragments/ set with no report. Invoke
+# `next` here from the shell so the compose is guaranteed however the process
+# ended. Self-gating: it only composes when the render fragments are present,
+# and is a no-op when threat-model.md already exists. Runs regardless of
+# EXIT_CODE so a killed-but-complete run is still salvaged.
+if [ "$SKILL" = "create-threat-model" ] \
+   && ! printf '%s' "$SKILL_FLAGS" | grep -q -- '--dry-run' \
+   && [ -s "$RESULT_DIR/threat-model.yaml" ] \
+   && [ ! -s "$RESULT_DIR/threat-model.md" ]; then
+    info "threat-model.md missing but yaml present — running deterministic compose backstop"
+    python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
+        next --output-dir "$RESULT_DIR" >/dev/null 2>&1 || true
+    [ -s "$RESULT_DIR/threat-model.md" ] && ok "compose backstop produced threat-model.md"
+fi
+
+# Artifact gate (fail-closed): a non-dry create-threat-model run MUST leave a
+# composed threat-model.md. `claude -p` can exit 0 after a *graceful* stop that
+# produced no report (a broken-Bash environment aborts every script, so the
+# agent diagnoses and stops cleanly), and a bg-ceiling process-kill can leave
+# threat-model.yaml + fragments but no composed report. The compose backstop
+# above salvages the latter when the fragments are complete; this gate fails
+# closed when threat-model.md is still absent — a run must never report success
+# with no deliverable report. Checking md alone (not md-OR-yaml) closes the old
+# fail-open path where yaml-without-md was reported as "completed successfully".
 # (--dry-run previews scope without writing a report, so it is exempt.)
-if [ "$EXIT_CODE" -eq 0 ] && [ "$SKILL" = "create-threat-model" ] \
+if [ "$SKILL" = "create-threat-model" ] \
    && ! printf '%s' "$SKILL_FLAGS" | grep -q -- '--dry-run'; then
-    if [ ! -s "$RESULT_DIR/threat-model.md" ] && [ ! -s "$RESULT_DIR/threat-model.yaml" ]; then
-        err "Pipeline exited 0 but produced no threat-model.md/.yaml in $RESULT_DIR — treating as failure."
-        EXIT_CODE=1
+    if [ ! -s "$RESULT_DIR/threat-model.md" ]; then
+        err "No threat-model.md in $RESULT_DIR — treating as failure (fail-closed)."
+        [ "$EXIT_CODE" -eq 0 ] && EXIT_CODE=1
     fi
 fi
 

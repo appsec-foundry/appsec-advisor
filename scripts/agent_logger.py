@@ -884,6 +884,14 @@ def _write_assessment_summary(sid: str) -> None:
     total_cw = 0
     total_cr = 0
     total_cost = 0.0
+    # SESSION_STOP lines are CUMULATIVE per-session snapshots that each session
+    # re-emits on every stop/heartbeat. Bucket by session id and keep only the
+    # largest (latest) cumulative snapshot per session; the post-loop rollup then
+    # sums across distinct sessions. Summing every line instead multiplies the
+    # true figure by the number of re-emissions (the 2026-07-02 juice-shop run
+    # reported $2636 / 2.79B tokens for a run whose real per-session cumulative
+    # maxed at ~$38).
+    session_usage: dict[str, dict] = {}  # session key → max-cost cumulative record
     agent_models: dict[str, str] = {}  # short_name → model
     threat_model_path = ""
     written_files: list[str] = []  # all FILE_WRITE paths (deduplicated later)
@@ -925,23 +933,33 @@ def _write_assessment_summary(sid: str) -> None:
                     first_ts = ts_m.group(1)
                 last_ts = ts_m.group(1)
 
-            # Sum SESSION_STOP token/cost data
+            # Collect the CUMULATIVE SESSION_STOP snapshot per session — deduped
+            # to the max-cost record so re-emitted running totals are not summed
+            # repeatedly (see session_usage note above). Rolled up after the loop.
             if "SESSION_STOP" in line:
-                m = re.search(r"in=([\d,]+)", line)
-                if m:
-                    total_in += int(m.group(1).replace(",", ""))
-                m = re.search(r"out=([\d,]+)", line)
-                if m:
-                    total_out += int(m.group(1).replace(",", ""))
-                m = re.search(r"cache_write=([\d,]+)", line)
-                if m:
-                    total_cw += int(m.group(1).replace(",", ""))
-                m = re.search(r"cache_read=([\d,]+)", line)
-                if m:
-                    total_cr += int(m.group(1).replace(",", ""))
-                m = re.search(r"cost=\$([\d.]+)", line)
-                if m:
-                    total_cost += float(m.group(1))
+                sid_m = re.search(r"\[([0-9a-fA-F-]{8})\]", line)
+                # Un-attributable lines ([--------] or none) cannot be deduped by
+                # session, so give each its own key to preserve prior summing.
+                if sid_m and sid_m.group(1) != "--------":
+                    sess_key = sid_m.group(1)
+                else:
+                    sess_key = f"_anon{len(session_usage)}"
+
+                def _num(pat: str) -> int:
+                    mm = re.search(pat, line)
+                    return int(mm.group(1).replace(",", "")) if mm else 0
+
+                cost_m = re.search(r"cost=\$([\d.]+)", line)
+                rec = {
+                    "in": _num(r"in=([\d,]+)"),
+                    "out": _num(r"out=([\d,]+)"),
+                    "cw": _num(r"cache_write=([\d,]+)"),
+                    "cr": _num(r"cache_read=([\d,]+)"),
+                    "cost": float(cost_m.group(1)) if cost_m else 0.0,
+                }
+                prev = session_usage.get(sess_key)
+                if prev is None or rec["cost"] >= prev["cost"]:
+                    session_usage[sess_key] = rec
 
             # Collect agent → model from AGENT_SPAWN
             # AGENT_SPAWN lines look like:
@@ -970,6 +988,14 @@ def _write_assessment_summary(sid: str) -> None:
                     m2 = re.search(r"FILE_WRITE\s+(\S+threat-model\.md)", line)
                     if m2:
                         threat_model_path = m2.group(1)
+
+        # Roll up the per-session cumulative maxima into the run totals.
+        for rec in session_usage.values():
+            total_in += rec["in"]
+            total_out += rec["out"]
+            total_cw += rec["cw"]
+            total_cr += rec["cr"]
+            total_cost += rec["cost"]
     except Exception:
         pass
 

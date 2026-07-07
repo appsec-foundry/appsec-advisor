@@ -20,6 +20,8 @@ Every print uses the prefix `[threat-merger]`. Print each line immediately befor
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `threat-merger`, event types: `STEP_START` / `STEP_END`). All log entries are written to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as the VERY FIRST Bash call. Log every step start/end, file write, error, and agent completion.
 
+**Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
+
 ## Inputs (provided in the invocation prompt)
 
 - `REPO_ROOT` — absolute path to repository root

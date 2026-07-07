@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 import _yaml_io
+import plugin_meta
 import yaml  # noqa: F401  (kept for downstream callers writing yaml)
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -955,8 +956,9 @@ def _bootstrap_yaml_from_merged(output_dir: Path) -> bool:
             }
         )
 
+    analysis_version = plugin_meta.load_meta()["analysis_version"]
     stub: dict = {
-        "meta": {"analysis_version": 2, "_bootstrap": True},
+        "meta": {"analysis_version": analysis_version, "_bootstrap": True},
         "threat_categories": [],
         "threats": threats_stub,
         "mitigations": [],

@@ -65,6 +65,21 @@ PRICING_MODELS: dict[str, dict[str, float]] = {
         "cache_write": 1.00,
         "cache_read": 0.08,
     },
+    # Standard (post-intro) rates. Sonnet 5 has an intro rate of $2.00/$10.00
+    # input/output through 2026-08-31 not modeled here — this table is meant
+    # to stay valid past that date, so it uses the standard $3.00/$15.00.
+    "sonnet-5": {
+        "input": 3.00,
+        "output": 15.00,
+        "cache_write": 3.75,
+        "cache_read": 0.30,
+    },
+    "opus-4-8": {
+        "input": 5.00,
+        "output": 25.00,
+        "cache_write": 6.25,
+        "cache_read": 0.50,
+    },
 }
 
 # Field name in SESSION_STOP log → TokenSnapshot attribute name

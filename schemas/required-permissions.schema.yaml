@@ -32,8 +32,8 @@ properties:
           description: |
             Verbatim Claude Code permission rule, e.g.
             "Read(${REPO_ROOT}/**)" or "Bash(git:*)". Placeholders
-            (${REPO_ROOT}, ${PLUGIN_ROOT}, ${OUTPUT_DIR}) are resolved
-            at check-time by check_permissions.py.
+            (${REPO_ROOT}, ${PLUGIN_ROOT}, ${OUTPUT_DIR}, ${HOME}) are
+            resolved at check-time by check_permissions.py.
         reason:
           type: string
           minLength: 10

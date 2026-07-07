@@ -271,7 +271,7 @@ _GRAPHQL_SENSITIVE_RE = re.compile(
 _AUTHN_PATTERNS = re.compile(
     r"(?i)\b("
     r"authenticate|requireAuth|requireUser|isAuthenticated|ensureAuthenticated|"
-    r"passport\.authenticate|verifyToken|jwt(?:Auth|Verify|Middleware)|"
+    r"passport\.authenticate|verifyToken|"
     r"@?login_required|IsAuthenticated|AuthenticationFilter|"
     r"\[Authorize\]|@Secured|@PreAuthorize|requires_auth|"
     r"middleware\(['\"]auth['\"]\)|auth_required|"
@@ -280,6 +280,10 @@ _AUTHN_PATTERNS = re.compile(
     # rejects). Including these fixes the "every route auth=unknown" miss.
     r"isAuthorized|isLoggedIn|ensureLoggedIn|requireLogin|restrictToLoggedIn|denyAll"
     r")\b"
+    # jwt{Auth,Verify,Middleware} only when invoked as a function call or
+    # passed as a middleware argument — not when it appears as a TypeScript
+    # parameter declaration (e.g. `jwtMiddleware: ExpressMiddleware`).
+    r"|\bjwt(?:Auth|Verify|Middleware)\s*\("
 )
 
 # Path-prefix middleware mounting that carries an auth guard, e.g.

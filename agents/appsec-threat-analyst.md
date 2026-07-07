@@ -520,10 +520,10 @@ Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finali
 
 Pass these context fields in the verifier prompt:
 - `REPO_ROOT`, `OUTPUT_DIR`, `ASSESSMENT_DEPTH` (verbatim from this run)
-- `MODEL_ID=haiku` (the verifier's default; do NOT override unless the run explicitly opted into Sonnet via `--evidence-verifier-model`)
+- `MODEL_ID=claude-sonnet-4-6` (the verifier's default since 2026-07-05 — Haiku regressed to stamping **every** sampled finding `ambiguous` (0 verified / 0 refuted, ~57 ms batch with no real per-finding reads), which cascaded into an all-review, zero-P1 Mitigation Register. `guard_evidence_verification.py` is the deterministic safety net if any cheap model repeats this. Override only when the run explicitly opted into another model via `--evidence-verifier-model`)
 - `EVIDENCE_VERIFIER_MAX_FINDINGS=100` (cap; only override when the operator passed `--evidence-verifier-cap N`)
 
-The verifier is intentionally low-budget (≤30 turns, Haiku). It MUST NOT modify `risk`, `likelihood`, `impact`, or any field other than `evidence_check` and `evidence_flags`. Phase 10b then reads `evidence_check == refuted` and suppresses chain-elevation for those findings when computing `effective_severity`.
+The verifier is intentionally low-budget (≤40 turns, Sonnet-4.6 — Haiku proved too weak for the verified/refuted discrimination and defaulted everything to `ambiguous`). It MUST NOT modify `risk`, `likelihood`, `impact`, or any field other than `evidence_check` and `evidence_flags`. Phase 10b then reads `evidence_check == refuted` and suppresses chain-elevation for those findings when computing `effective_severity`.
 
 **Phase 10b — Triage Validation:** After Phase 10a completes (its STEP_END logged and `.evidence-verification.json` written), dispatch `appsec-triage-validator` as a **blocking** sub-agent. It reads `.threats-merged.json` (now carrying `evidence_check` on sampled threats), validates cross-component rating consistency, severity plausibility, priority alignment, and rating completeness. It writes `.triage-flags.json` and annotates `.threats-merged.json` with `triage_flags` arrays. Phase 11 reads these flags when composing the report.
 
@@ -950,14 +950,14 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
 **Pre-Phase checklist — run in this exact order before anything else:**
 
 1. **Resolve paths** — `REPO_ROOT` and `OUTPUT_DIR` are provided by the skill in the prompt. If `REPO_ROOT` is not provided, fall back to `git rev-parse --show-toplevel`. If `OUTPUT_DIR` is not provided, default to `$REPO_ROOT/docs/security`. Store both values.
-2. **Acquire assessment lock** — prevents two concurrent assessments from colliding:
+2. **Acquire assessment lock** — prevents two concurrent assessments from colliding. **Pass `--run-id="$APPSEC_RUN_ID"`** when the skill provided `APPSEC_RUN_ID` in the prompt: the skill pre-acquires this lock and a background watchdog keeps its heartbeat warm, so without the run-id your acquire would see a *fresh* lock and false-abort as if a concurrent run were active (the 2026-07-02 costly Stage-1 re-dispatch). With the matching run-id, `acquire_lock.py` grants a re-entrant `LOCK_ACQUIRED`; a genuinely different run carries a different run-id and still blocks. If `APPSEC_RUN_ID` was **not** provided (direct/legacy invocation), omit the flag — behaviour is unchanged.
    ```bash
    LOCK_FILE="$OUTPUT_DIR/.appsec-lock"
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$LOCK_FILE"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$LOCK_FILE" ${APPSEC_RUN_ID:+--run-id="$APPSEC_RUN_ID"}
    ```
    Check the output of this command:
    - If output contains `LOCK_BLOCKED` or the exit code is non-zero → **you MUST stop the entire assessment immediately.** Print `⚠ Assessment aborted — concurrent lock detected. Remove the lock file manually if the other assessment has ended.` and then run `rm -f "$OUTPUT_DIR/.appsec-lock"` cleanup is NOT your responsibility — the other running assessment owns the lock. **Do not proceed to any further step or phase.**
-   - If output contains `LOCK_ACQUIRED` → continue normally. If the lock file existed but was older than 1 hour, it was stale and has been overwritten.
+   - If output contains `LOCK_ACQUIRED` → continue normally. If the lock file existed but was older than 1 hour, it was stale and has been overwritten. A re-entrant grant (same `--run-id` as the skill-held lock) also prints `LOCK_ACQUIRED` — that is expected, not a takeover.
    Store `LOCK_FILE` path for cleanup at the end.
 3. `date +%s` → store as `START_EPOCH`
 3b. **Capture git state — MANDATORY on every run, regardless of mode.** The Phase 11 yaml writer needs `CURRENT_SHA` for `meta.git.commit_sha`. Without this, future incremental runs cannot resolve a baseline.
@@ -1122,7 +1122,7 @@ fi
 
 If `CTX_SKIP=true`, **do not dispatch the context resolver**. Print `  ↳ context cache hit — skipping resolver (ctx newer than HEAD commit)`.
 
-**In full mode (`INCREMENTAL=false`) the context resolver always runs** — `CTX_SKIP` stays `false` regardless of whether `.threat-modeling-context.md` already exists. The Write tool overwrites the file without prompting because `Write(${OUTPUT_DIR}/**)` is in the allow-list.
+**In full mode (`INCREMENTAL=false`) the context resolver always runs** — `CTX_SKIP` stays `false` regardless of whether `.threat-modeling-context.md` already exists. The Write tool overwrites the file without prompting because `Write(${OUTPUT_DIR}/.*)` is in the allow-list.
 
 **Also resolve the recon fingerprint skip** (see `phase-group-recon.md` → "Incremental fingerprint skip") to determine `RECON_SKIP`. **Also resolve `HAS_IAC_SURFACE`** (see `phase-group-recon.md` → "Pre-check — resolve HAS_IAC_SURFACE") in the same Bash batch — all three flags in one turn.
 

@@ -153,6 +153,25 @@ def test_detail_not_duplicated_when_threat_has_steps():
     assert "how" not in d["mitigations"][0] or not d["mitigations"][0].get("how")
 
 
+def test_cwe306_maps_to_general_title_no_truncation():
+    """CWE-306 (missing authentication) previously had no curated map entry,
+    so a long Stage-1 instruction title fell through to `_generalize_fallback`
+    (a no-op here — no parenthetical/URL/locality clause to strip) and then
+    got hard-clamped at 90 chars, truncating mid-phrase (juice-shop 2026-07-02:
+    "...scope notification broadcast to" — the object "the authenticated user"
+    was silently dropped)."""
+    long_title = (
+        "Add JWT-verifying Socket.IO connection middleware and scope notification broadcast to the authenticated user"
+    )
+    d = _data(
+        {"id": "M-038", "title": long_title, "threat_ids": ["T-006"]},
+        threats=[{"id": "T-006", "cwe": "CWE-306"}],
+    )
+    egm.apply(d)
+    assert d["mitigations"][0]["title"] == "Require authentication on every exposed endpoint"
+    assert not d["mitigations"][0]["title"].endswith(" to")
+
+
 def test_idempotent():
     d = _data(
         {"id": "M-007", "title": "Pin base image to @sha256:<digest>", "threat_ids": ["T-005"]},

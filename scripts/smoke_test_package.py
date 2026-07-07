@@ -15,15 +15,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
+from package_internal_plugin import (
+    ANY_LEVEL_EXCLUDES,
+    ANY_LEVEL_FILE_EXCLUDES,
+    PATH_EXCLUDES,
+)
+
 UPSTREAM_NAMESPACE = "appsec-advisor"
 TEXT_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml"}
+HYGIENE_TEXT_SUFFIXES = TEXT_SUFFIXES | {".j2", ".py", ".sh", ".toml"}
 HOOK_SCRIPT_IDS = {
     "agent_logger.py": "agent-logger",
     "security_steering.py": "security-coach",
 }
+PERSONAL_PATH_PATTERNS = (
+    re.compile(r"(?<![A-Za-z0-9])/(?:home|Users)/(?P<user>[A-Za-z0-9._<>$-]+)/"),
+    re.compile(r"(?i)\b[A-Z]:\\\\Users\\\\(?P<user>[A-Za-z0-9._<>$-]+)\\\\"),
+)
+GENERIC_PATH_USERS = {"<user>", "example", "user", "you"}
 
 
 def _die(message: str) -> None:
@@ -139,6 +152,26 @@ def check_surface_manifest(root: Path) -> None:
             _die("package surface removed security-coach but steering_keywords.json is still present")
 
 
+def check_artifact_hygiene(root: Path) -> None:
+    """Reject local runtime state, dependency trees, and personal paths."""
+    for path in root.rglob("*"):
+        rel = path.relative_to(root)
+        if path.is_dir() and path.name in ANY_LEVEL_EXCLUDES:
+            _die(f"forbidden generated directory in package: {rel}")
+        if path.is_file() and path.name in ANY_LEVEL_FILE_EXCLUDES:
+            _die(f"forbidden runtime artifact in package: {rel}")
+        if tuple(rel.parts) in PATH_EXCLUDES:
+            _die(f"forbidden generated path in package: {rel}")
+        if path.is_file() and path.suffix.lower() in HYGIENE_TEXT_SUFFIXES:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if any(
+                match.group("user").lower() not in GENERIC_PATH_USERS
+                for pattern in PERSONAL_PATH_PATTERNS
+                for match in pattern.finditer(text)
+            ):
+                _die(f"personal absolute path found in package text: {rel}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("plugin_dir", help="packaged plugin root (e.g. build/acme-appsec)")
@@ -149,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     if not root.is_dir():
         _die(f"{root} is not a directory")
 
+    check_artifact_hygiene(root)
     check_plugin_identity(root, args.name)
     check_org_profile_wired(root)
     check_namespace_rewritten(root, args.name)

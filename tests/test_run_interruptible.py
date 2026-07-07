@@ -6,6 +6,7 @@ SIGINT to the wrapper must promptly tear down the backgrounded command group
 """
 
 import os
+import pty
 import signal
 import subprocess
 import time
@@ -41,6 +42,41 @@ def test_exit_code_passthrough(tmp_path):
 def test_usage_error_when_missing_command(tmp_path):
     proc = _run(tmp_path / "out.log")  # only the logfile arg, no command
     assert proc.wait(timeout=10) == 2
+
+
+def test_nested_job_control_does_not_stop_under_tty(tmp_path):
+    """A nested ``set -m`` must not SIGTTOU-stop the command session."""
+    log = tmp_path / "out.log"
+    pid, master_fd = pty.fork()
+    if pid == 0:  # pragma: no cover - child replaces the test interpreter
+        os.execv(
+            "/bin/bash",
+            [
+                "bash",
+                str(SCRIPT),
+                str(log),
+                "bash",
+                "-c",
+                "set -m; true & wait",
+            ],
+        )
+
+    status = None
+    deadline = time.monotonic() + 5
+    try:
+        while time.monotonic() < deadline:
+            waited_pid, status = os.waitpid(pid, os.WNOHANG)
+            if waited_pid == pid:
+                break
+            time.sleep(0.05)
+    finally:
+        os.close(master_fd)
+        if status is None:
+            os.killpg(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+
+    assert status is not None, "wrapper hung after a nested script enabled job control"
+    assert os.waitstatus_to_exitcode(status) == 0
 
 
 def test_sigint_aborts_long_command_promptly(tmp_path):

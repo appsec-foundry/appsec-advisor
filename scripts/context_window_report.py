@@ -62,6 +62,11 @@ def _resident_tokens(entry: dict[str, Any]) -> int | None:
     return sum(values)
 
 
+def _message_id(entry: dict[str, Any]) -> str | None:
+    value = _message(entry).get("id")
+    return value if isinstance(value, str) else None
+
+
 def _walk_text(value: Any) -> Iterable[str]:
     if isinstance(value, str):
         yield value
@@ -128,6 +133,7 @@ def analyze_session(path: Path) -> dict[str, Any]:
     source_chars: Counter[str] = Counter()
     stage: str | None = None
     last_resident: int | None = None
+    seen_message_ids: set[str] = set()
 
     for index, entry in enumerate(_iter_jsonl(path), 1):
         _source_chars(entry, source_chars)
@@ -149,12 +155,17 @@ def analyze_session(path: Path) -> dict[str, Any]:
 
         resident = _resident_tokens(entry)
         if resident is not None:
-            turns += 1
-            peak = max(peak, resident)
-            last_resident = resident
-            cache_read = _usage(entry).get("cache_read_input_tokens", 0)
-            if isinstance(cache_read, int) and cache_read > 0:
-                cache_read_throughput += cache_read
+            msg_id = _message_id(entry)
+            is_duplicate = msg_id is not None and msg_id in seen_message_ids
+            if msg_id is not None:
+                seen_message_ids.add(msg_id)
+            if not is_duplicate:
+                turns += 1
+                peak = max(peak, resident)
+                last_resident = resident
+                cache_read = _usage(entry).get("cache_read_input_tokens", 0)
+                if isinstance(cache_read, int) and cache_read > 0:
+                    cache_read_throughput += cache_read
 
         if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
             boundaries.append(

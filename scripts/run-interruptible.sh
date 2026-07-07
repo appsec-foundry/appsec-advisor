@@ -7,11 +7,15 @@
 #   scripts/run-interruptible.sh <logfile> <command> [args...]
 #
 # Behaviour:
-#   * Runs the command in its OWN process group and `wait`s on it, instead of
+#   * Runs the command in its OWN session/process group and `wait`s on it, instead of
 #     as a blocking foreground child. As a foreground child, bash defers its
 #     INT trap until the child returns, so Ctrl-C can feel uninterruptible
 #     during a long in-flight step (e.g. the pytest suite). Backgrounding +
 #     `wait` lets the trap fire immediately.
+#   * The command session has no controlling terminal. This matters when a
+#     nested script enables job control (`set -m`): a background process group
+#     that shares our terminal is otherwise stopped by SIGTTOU, which made
+#     `make release-check` freeze inside run-headless.sh tests.
 #   * The trap forwards signals to the WHOLE command group with escalation:
 #     1st Ctrl-C → SIGINT (graceful), 2nd → SIGTERM, 3rd → SIGKILL. This also
 #     reaches grandchildren that put themselves in their own process group and
@@ -25,6 +29,15 @@
 # ──────────────────────────────────────────────────────────────────────
 set -u
 
+if [ "${1:-}" = "--command-session" ]; then
+    shift
+    LOG="$1"
+    shift
+    set -o pipefail
+    "$@" 2>&1 | tee "$LOG"
+    exit $?
+fi
+
 if [ "$#" -lt 2 ]; then
     echo "usage: $0 <logfile> <command> [args...]" >&2
     exit 2
@@ -33,19 +46,25 @@ fi
 LOG="$1"
 shift
 
-# Background a single subshell that runs the work and tees its output. Because
-# it is one job under `set -m`, the subshell is the process-group leader
-# (PGID == $!), so we can signal the entire tree with `kill -<sig> -$GRP`.
-# (Backgrounding a *pipeline* directly would make $! the last element — tee —
-# not the group leader, so we wrap the pipeline in a subshell.)
+# Start a detached command session so nested job-control users cannot contend
+# with this wrapper for the terminal's foreground process group. The short
+# Python launcher is used instead of `setsid(1)` because Python is already a
+# project prerequisite and exposes the same primitive on both Linux and macOS.
+# It resets signals that Bash marks ignored for asynchronous children before
+# replacing itself with this script's internal tee worker. PID, SID, and PGID
+# therefore all remain `$GRP`, so one negative-PID signal reaches the full tree.
 set +e
-set -m
-(
-    set -o pipefail
-    "$@" 2>&1 | tee "$LOG"
-) < /dev/null &
+python3 -c '
+import os
+import signal
+import sys
+
+for name in ("SIGINT", "SIGQUIT", "SIGTERM", "SIGHUP"):
+    signal.signal(getattr(signal, name), signal.SIG_DFL)
+os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])
+' "$0" --command-session "$LOG" "$@" < /dev/null &
 GRP=$!
-set +m
 
 SIGINT_COUNT=0
 on_interrupt() {

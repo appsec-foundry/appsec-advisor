@@ -12,7 +12,7 @@
 #   Goal: Run the real Spring Boot fixture E2E for appsec-advisor without editing
 #   repository files.
 #
-#   Working directory: /home/mrohr/appsec-advisor
+#   Working directory: <checkout>/appsec-advisor
 #
 #   Run:
 #   ./scripts/e2e_spring_fixture.sh --depth quick --clean-output

@@ -202,6 +202,49 @@ def test_builder_roundtrip_validates(tmp_path):
     assert {c["component_id"] for c in manifest["components"]} == {"backend-api", "frontend-spa"}
 
 
+def test_builder_rebuilds_actor_slices_from_canonical_components(tmp_path):
+    (tmp_path / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {
+                        "id": "public-api",
+                        "name": "Public API",
+                        "description": "Internet-facing API.",
+                        "paths": ["api/**"],
+                        "tier": "application",
+                        "complexity": "moderate",
+                        "deployment_zones": ["internet-facing"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".actors-resolved.json").write_text(
+        json.dumps(
+            {
+                "resolved_actors": [
+                    {
+                        "id": "ACT-D-01",
+                        "label": "anonymous-internet-attacker",
+                        "access": ["internet"],
+                        "_provenance": {"active": True},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    component = manifest["components"][0]
+    assert component["index_paths"]["relevant_actors"].endswith(".actors-for-public-api.json")
+    actor_slice = json.loads((tmp_path / ".actors-for-public-api.json").read_text())
+    assert actor_slice["component_type"] == "public-api"
+    assert [actor["id"] for actor in actor_slice["relevant_actors"]] == ["ACT-D-01"]
+
+
 def test_builder_stamps_stride_model(tmp_path):
     """The dispatched STRIDE reasoning model is recorded in the manifest
     (top-level + per-component) so config→execution is auditable from the

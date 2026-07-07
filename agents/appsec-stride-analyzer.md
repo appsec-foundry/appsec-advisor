@@ -52,6 +52,8 @@ You emit three operational signals during the run. Treat them as one concern:
 
 **2. Log** — follow `shared/logging-standard.md` (agent: `stride-analyzer`, model: `sonnet`, event types: `STEP_START` / `STEP_END`). Write to `$OUTPUT_DIR/.agent-run.log`, prefix the `<message>` with `[<COMPONENT_ID>]`. Execute the startup logging command as your VERY FIRST Bash call, before any file reads. Log each STRIDE category start, file writes, errors, and agent completion. **Use the canonical emitter `scripts/log_event.py` (`step-start` / `step-end`), NEVER hand-roll a log line and NEVER call `event_log.format_line` via `python3 -c` — its `level`/`component`/`sid` are keyword-only and a positional or `event_type=` call raises `TypeError`, leaving `LOG_ERR` noise in `.agent-run.log`:**
 
+**3. Follow the completion contract** in `shared/completion-contract.md` — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only. You are dispatched once per component (N-way fan-out) — a prose findings recap here multiplies by fan-out width and is the single biggest contributor to orchestrator context growth. Findings detail lives in `.stride-<component-id>.json`, not in your final message.
+
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "[<COMPONENT_ID>] <message>" --agent stride-analyzer
 ```
@@ -159,7 +161,7 @@ Threats not derived from a prior-finding re-read default to `evidence_check: "un
 
 **Actor context loading (when `RELEVANT_ACTORS_INDEX_PATH != none`):**
 
-Read `RELEVANT_ACTORS_INDEX_PATH` once. Cache the `relevant_actors[]` array in working memory under the key `COMPONENT_ACTORS`. For each actor, note: `id`, `label`, `access`, `capabilities.sophistication`, `severity_modulation` map, and whether `proposed: true`.
+Read `RELEVANT_ACTORS_INDEX_PATH` once. Cache the `relevant_actors[]` array in working memory under the key `COMPONENT_ACTORS`. For each actor, note: `id`, `label`, deployment-zone `access`, `trust_positions`, `capabilities.sophistication`, `severity_modulation` map, and whether `proposed: true`.
 
 Print: `[stride | <COMPONENT_NAME>]   ↳ Actors: <n> relevant (<list of IDs>)`
 
@@ -294,7 +296,7 @@ All 6 STRIDE categories, the LLM / Supply-chain / SPA conditional sub-blocks, an
 
 Before iterating STRIDE categories, iterate over the relevant actor list. For each actor in `COMPONENT_ACTORS`:
 
-> Can **this actor** (`<label>`, access: `<access[]>`, sophistication: `<capabilities.sophistication>`) realise a threat against **this component** using the code evidence gathered in Step 2?
+> Can **this actor** (`<label>`, access: `<access[]>`, trust position: `<trust_positions[]>`, sophistication: `<capabilities.sophistication>`) realise a threat against **this component** using the code evidence gathered in Step 2?
 
 This iteration is **additive** — it identifies actor-specific threat angles that a generic STRIDE sweep may miss (especially Insider, Supply-Chain-as-Actor, B2B-Partner, Adjacent-Tenant paths). Record each identified threat opportunity as a note in working memory: `actor_id → threat_hint → which STRIDE category to check`.
 

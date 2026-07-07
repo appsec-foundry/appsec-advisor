@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -494,12 +495,67 @@ class TestRunHeadlessScript:
                 str(outdir),
                 "--incremental",
                 "--no-qa",
+                "--quiet",
             ],
             capture_output=True,
             text=True,
+            timeout=15,
         )
         assert result.returncode == 42, result.stdout + result.stderr
         assert "CLAUDE_STUB_INVOKED" in result.stdout
+
+    def test_run_headless_reaps_default_progress_monitor(self, tmp_path, monkeypatch):
+        """The default live monitor must not leave ``tail -F`` holding the
+        captured output pipe open after Claude exits."""
+        repo = tmp_path / "repo"
+        outdir = tmp_path / "out"
+        repo.mkdir()
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        claude = bin_dir / "claude"
+        claude.write_text("#!/bin/sh\nsleep 1\nprintf 'CLAUDE_STUB_INVOKED\\n'\nexit 42\n")
+        claude.chmod(0o755)
+
+        tail_started = tmp_path / "tail-started"
+        tail_stopped = tmp_path / "tail-stopped"
+        fake_tail = bin_dir / "tail"
+        fake_tail.write_text(
+            "#!/bin/sh\n"
+            'if [ "${1:-}" = "-F" ]; then\n'
+            '  printf "%s\\n" "$$" > "$TAIL_STARTED"\n'
+            "  trap 'printf stopped > \"$TAIL_STOPPED\"; exit 0' TERM INT HUP\n"
+            "  while :; do sleep 1; done\n"
+            "fi\n"
+            'exec "$REAL_TAIL" "$@"\n'
+        )
+        fake_tail.chmod(0o755)
+
+        real_tail = shutil.which("tail")
+        assert real_tail is not None
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.setenv("REAL_TAIL", real_tail)
+        monkeypatch.setenv("TAIL_STARTED", str(tail_started))
+        monkeypatch.setenv("TAIL_STOPPED", str(tail_stopped))
+
+        result = subprocess.run(
+            [
+                str(ROOT / "scripts" / "run-headless.sh"),
+                "--repo",
+                str(repo),
+                "--output",
+                str(outdir),
+                "--no-qa",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        assert result.returncode == 42, result.stdout + result.stderr
+        assert tail_started.exists(), "default progress monitor never started"
+        assert tail_stopped.read_text() == "stopped"
 
     def test_run_headless_resume_refuses_active_lock_before_claude(self, tmp_path, monkeypatch):
         repo = tmp_path / "repo"

@@ -7,7 +7,7 @@ Used by `appsec-architect-reviewer` after the 13 checks run. Classifies each war
 | Check 1 `invented component` / `missing service in model` | yes | rewrite `.fragments/architecture-diagrams.md` and/or `.fragments/system-overview.md` |
 | Check 1 `label mismatch` | no — advisory | — |
 | Check 2 `missing boundary` when §7.11 lacks it | yes | rewrite `.fragments/security-architecture.md` |
-| Check 3 `summary verdict mismatch` | yes | rewrite `.fragments/ms-verdict.json` (+ `.fragments/ms-architecture-assessment.json` when defects changed) |
+| Check 3 `summary verdict mismatch` | yes | rewrite `.fragments/ms-verdict.json` |
 | Check 4 `threat coverage gap` | no — the threat-analyst should add the missing threat in the next full run | — |
 | Check 5 `mitigation realism` | no — mitigation content is threat-analyst authoring | — |
 | Check 7 `cluster missing` | no — narrative | — |

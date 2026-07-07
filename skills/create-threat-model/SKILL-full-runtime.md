@@ -46,10 +46,30 @@ The controller has already:
 
 ## 2. User-visible preflight
 
-Emit `ACTION.preflight_status` once when non-empty. Then emit
-`ACTION.run_plan` verbatim as response text. Do not summarize it and do not
-print controller receipts. These are the only pre-Stage-1 lines after the
-router's `🔧 Building …` line.
+Emit `ACTION.preflight_status` once when non-empty. Then, **if
+`ACTION.orchestrator_prompt_needed` is `true`, run §2a before the run plan** (the
+model choice is a cost gate → first). Otherwise emit `ACTION.run_plan` verbatim as
+response text — no summary, no controller receipts. When the prompt fires the
+controller has already stripped the redundant session advisories from the run plan.
+
+### 2a. Interactive orchestrator-model selection (before the run plan)
+
+Fires only when `ACTION.orchestrator_prompt_needed` is `true` (session model
+detected, diverges from the repo-size recommendation — a Sonnet-5 or Opus session;
+never under `APPSEC_HEADLESS=1`). The `AskUserQuestion` is a tool call, not console
+narration, and is permitted here (SKILL.md hard-rule exception). **All text in
+English.** One question, header `Session model`: state
+`ACTION.orchestrator_recommendation_reason` and the recommended
+(`ACTION.orchestrator_recommended_model`) vs current (`ACTION.session_model`) model;
+options (recommended first):
+1. the recommended model — benefit label: 4.6 → “Significantly lower cost, same coverage”; sonnet-5 → “Larger window for very large repos (higher cost)”.
+2. keep the current session model (`ACTION.session_model`) — “Keep the current session model” (conscious override: keep Sonnet 5 / Opus, or 4.6 on a big repo).
+
+On the answer, before the run plan / Stage 1:
+- resolves to the current `ACTION.session_model` → emit the run plan, go to §3.
+- resolves to a **different** model → do NOT continue: `rm -f "$OUTPUT_DIR/.appsec-lock"`, then print the switch instructions and stop. Prefer the in-session path (no relaunch flags needed): `run /clear then /model <choice>, then re-run the skill`. For a fresh terminal, add: `claude --model <choice>` **plus the launch flags this session started with** (e.g. `--plugin-dir <dir>`) — fill those in from how the session was launched; a bare `claude --model <choice>` would drop the plugin.
+
+Never binding — the prompt exists so the user chooses.
 
 ## 3. Bind compact state
 
@@ -58,6 +78,7 @@ from `ACTION.dispatch_values`; boolean values retain JSON truth semantics.
 
 ```text
 CLAUDE_PLUGIN_ROOT = plugin_root
+APPSEC_RUN_ID = run_id
 REPO_ROOT = repo_root
 OUTPUT_DIR = output_dir
 WRITE_YAML = write_yaml
@@ -233,13 +254,30 @@ At the Stage-2 handoff, read `SKILL-impl.md` from the
 QA, repair, architect review, completion, cleanup, and error handling on the
 existing contract.
 
-After each major agent return, the filesystem is authoritative. If context was
-compacted or a return is ambiguous, run:
+**Mandatory finalize gate (deterministic — do NOT skip).** After the Stage-2
+renderer agent(s) return, and again before you emit any completion summary, you
+MUST run:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
   next --output-dir "$OUTPUT_DIR"
 ```
 
-Use the returned action only to re-establish the current stage. Never infer a
-completed stage solely from conversation memory.
+This call now **composes `threat-model.md` deterministically** from the on-disk
+render fragments whenever they are present but the report was never composed —
+the 2026-07-02 gap where the parallel-render agents authored the fragments and
+the orchestrator then ended (turn budget / skipped step) before invoking
+`compose_threat_model.py`, leaving `threat-model.yaml` + a full `.fragments/`
+set but no report. Honor the returned `action`/`stage`:
+
+- `stage=stage2` → the report still does not exist **and** the render fragments
+  are missing; (re-)dispatch Stage 2. **Never emit a completion summary in this
+  state.**
+- `stage=stage3` / `stage=stage4` → proceed with that stage.
+- `action=complete` → the report exists; proceed to the completion summary.
+
+**Hard invariant:** never emit an "Assessment complete" summary while
+`$OUTPUT_DIR/threat-model.md` is absent. After each major agent return the
+filesystem is authoritative — if context was compacted or a return is
+ambiguous, run the same `next` call and use its action to re-establish the
+current stage. Never infer a completed stage solely from conversation memory.

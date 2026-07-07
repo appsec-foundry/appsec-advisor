@@ -27,6 +27,8 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
 
 Follow `shared/logging-standard.md` (agent: `config-scanner`, model: `MODEL_ID`). All log entries are written to `$OUTPUT_DIR/.agent-run.log`. Prefix all lines with `[config-scanner]`.
 
+Follow the completion contract in `shared/completion-contract.md` — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
+
 **Startup print:**
 ```
 [config-scanner] ▶ Scanning configuration and IaC artifacts  (model: <MODEL_ID>)

@@ -483,13 +483,16 @@ sections:
     # an entry here changes the QA gate semantics.
     # Categories (must match the checks implemented in
     # `qa_checks.py check_security_posture_structure`):
-    #   A = Figure 1 architecture stack (Data bottom / sink-band rules)
-    #   D = Diagram structure (Figure 2 heatmap Mermaid block)
-    #   E = Edge structure (attack arrows + consequence arrows + alignment)
-    #   C = Card / node label structure
-    #   F = Column population
-    #   G = Glyph consistency on the heatmap attack arrows
-    #   T = Top Threats table below the diagram
+    #   A     = Figure 1 architecture stack (Data bottom / sink-band rules)
+    #   D-SVG = Figure 2 PRIMARY form: a portable hand-built SVG image
+    #           (`figure2_svg.py`) — file exists + glyph parity via `data-glyphs`
+    #   T     = Top Threats table below Figure 2 (glyph parity, links)
+    #   D/E/C/F/G = Figure 2 FALLBACK form only (inline ELK Mermaid heatmap,
+    #           used when the SVG builder yields nothing). 2026-07: Figure 2
+    #           moved from inline ELK Mermaid to a portable SVG because common
+    #           Markdown viewers (GitHub, VS Code preview) lack the ELK layout
+    #           engine and collapse the 3-column heatmap. These Mermaid-markup
+    #           invariants now guard the fallback path, not the shipped output.
     # 2026-05: the legacy per-attack-class BULLET list (former N/B/L invariants)
     # is no longer rendered — it was replaced by the Top Threats table (T-rules).
     # The `**Threat actors.**` intro + actor legend above the table is
@@ -503,7 +506,11 @@ sections:
       - { id: A3, rule: "Figure 1 has no solid red attack edge (`==>`) targeting a DATA node; attacks reach data only through propagation" }
       - { id: A4, rule: "Figure 1 has no visible actor→DATA edge; DATA reachability is downstream from Client/Application only" }
       - { id: A5, rule: "When Figure 1 has APP and DATA nodes, APP nodes connect to DATA by visible App→Data edges or `~~~` balancing edges so DATA stays centered below the app row" }
-      # D/E/C/F/G/T — Figure 2 heatmap + Top Threats table.
+      # D-SVG — Figure 2 PRIMARY form (portable SVG image). When the section
+      # references `![Figure 2 …](<stem>.figure2.svg)`, only D-SVG + T apply;
+      # the Mermaid D/E/C/F/G rules below guard the fallback path only.
+      - { id: D-SVG, rule: "when Figure 2 is an SVG image, the referenced `<stem>.figure2.svg` file exists next to the md, and its `data-glyphs` attribute matches the Top Threats table row glyphs (emitted as `T2/G3`)" }
+      # D/E/C/F/G/T — Figure 2 FALLBACK heatmap (inline ELK Mermaid) + table.
       - { id: D1, rule: "mermaid block declares ELK renderer via `%%{init: {\"flowchart\": {\"defaultRenderer\": \"elk\"}} }%%` directive" }
       - { id: D2, rule: "mermaid block opens with `flowchart LR`" }
       - { id: D3, rule: "exactly 3 top-level subgraphs in order: ACTORS, TIERS, IMPACT" }
@@ -545,7 +552,7 @@ sections:
   # data. Every cell except the one-line class description is derived.
 
   mitigations:
-    heading: "### Mitigations"
+    heading: "### Top Mitigations"
     heading_numbered: false
     fragment_type: computed                         # derived from threat-model.yaml mitigations[]
     sub_tables:
@@ -632,8 +639,8 @@ sections:
   # `.actors-resolved.json` (pre-Phase 2.7 caches) so the section gracefully
   # disappears instead of failing the contract.
   identified_actors:
-    heading: "## 1.5 Identified Actors"
-    heading_numbered: false   # half-step numbering — not part of §1→§2 sequence
+    heading: "### Identified Actors"
+    heading_numbered: false   # unnumbered ### subsection of §1 System Overview (like "### Scope")
     fragment_type: computed
     # No fragment file. No required_subsections — sub-headings are renderer-emitted
     # and depend on whether proposed / disabled / dormant actors exist this run.
@@ -826,7 +833,15 @@ sections:
     required_patterns:
       - "sequenceDiagram"                           # per-Critical walkthrough
     required_patterns_condition: "has_authored_walkthroughs"
-    per_critical_subsection: true                   # §3.2+ = one per Critical finding
+    # §3 is CAPPED at the top-N highest-priority Criticals (chain anchors +
+    # smallest breach-distance) — see walkthrough_renderer.DEFAULT_MAX_WALKTHROUGHS
+    # (currently 8, ceiling 10). This stops §3 from exploding into dozens of
+    # near-identical walkthroughs on Critical-heavy reports; overflow Criticals
+    # keep their full §8 row. check_walkthrough_coverage enforces coverage of
+    # the CAPPED selection (reusing walkthrough_renderer.select_walkthrough_picks
+    # so the contract and fragment can never disagree) and flags any §3 that
+    # exceeds the cap.
+    per_critical_subsection: true                   # §3.2+ = one per walked-through Critical
     per_critical_subsection_condition: "has_authored_walkthroughs"
 
     # ---------------------------------------------------------------------
@@ -1084,7 +1099,7 @@ sections:
             # `sequenceDiagram`. This is the architecture view the section is
             # built around: one flow picture per real authentication path.
             #
-            # SCOPE / FREIRÄUME: the gate fires ONLY on flow-token headings.
+            # SCOPE / LEEWAY: the gate fires ONLY on flow-token headings.
             # Non-flow mechanisms (API key, bearer token, anonymous access) and
             # static primitives are exempt — they have no meaningful sequence.
             # The grouped "Password-Based Authentication" lifecycle block DOES

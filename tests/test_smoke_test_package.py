@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SMOKE = REPO_ROOT / "scripts" / "smoke_test_package.py"
 
@@ -88,6 +90,70 @@ def test_fails_when_entry_command_missing(tmp_path: Path) -> None:
     result = _run(tmp_path)
     assert result.returncode == 1
     assert "entry command" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "relative,is_dir",
+    [
+        ("scripts/node_modules/pkg", True),
+        ("nested/.coverage-data", True),
+        (".agent-run.log", False),
+        ("nested/.appsec-progress.json", False),
+        ("skills/create-threat-model/docs", True),
+        ("data/appsec-requirements-fallback.yaml", False),
+    ],
+)
+def test_fails_on_generated_or_runtime_artifact(
+    tmp_path: Path,
+    relative: str,
+    is_dir: bool,
+) -> None:
+    _make_valid(tmp_path)
+    path = tmp_path / relative
+    if is_dir:
+        path.mkdir(parents=True)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("runtime\n")
+    result = _run(tmp_path)
+    assert result.returncode == 1
+    assert "forbidden" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "personal_path",
+    [
+        "/home/alice/projects/appsec-advisor",
+        "/Users/alice/projects/appsec-advisor",
+        r"C:\\Users\\alice\\projects\\appsec-advisor",
+    ],
+)
+def test_fails_on_personal_absolute_path(tmp_path: Path, personal_path: str) -> None:
+    _make_valid(tmp_path)
+    note = tmp_path / "skills" / "local-note.md"
+    note.write_text(f"Local checkout: {personal_path}\n")
+    result = _run(tmp_path)
+    assert result.returncode == 1
+    assert "personal absolute path" in result.stderr
+
+
+def test_allows_documented_generic_home_path(tmp_path: Path) -> None:
+    _make_valid(tmp_path)
+    note = tmp_path / "skills" / "local-note.md"
+    note.write_text("Example checkout: /home/user/projects/appsec-advisor\n")
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_personal_path_after_generic_placeholder_still_fails(tmp_path: Path) -> None:
+    _make_valid(tmp_path)
+    note = tmp_path / "skills" / "local-note.md"
+    note.write_text(
+        "Example: /home/user/projects/appsec-advisor\nAccidental local path: /home/alice/projects/appsec-advisor\n"
+    )
+    result = _run(tmp_path)
+    assert result.returncode == 1
+    assert "personal absolute path" in result.stderr
 
 
 def test_passes_with_matching_surface_manifest(tmp_path: Path) -> None:
@@ -197,7 +263,6 @@ def test_fails_when_removed_hook_is_registered(tmp_path: Path) -> None:
 # fine-grained _die error branches are exercised directly.
 # ---------------------------------------------------------------------------
 
-import pytest  # noqa: E402
 import smoke_test_package as smk  # noqa: E402
 
 
@@ -211,6 +276,18 @@ def test_main_not_a_directory(tmp_path):
     with pytest.raises(SystemExit) as exc:
         smk.main([str(tmp_path / "ghost"), "--name", NAME])
     assert exc.value.code == 1
+
+
+def test_check_artifact_hygiene_clean_tree(tmp_path):
+    _make_valid(tmp_path)
+    smk.check_artifact_hygiene(tmp_path)
+
+
+def test_check_artifact_hygiene_personal_path(tmp_path):
+    note = tmp_path / "note.md"
+    note.write_text("/home/alice/repo\n")
+    with pytest.raises(SystemExit):
+        smk.check_artifact_hygiene(tmp_path)
 
 
 # --- _hook_id --------------------------------------------------------------

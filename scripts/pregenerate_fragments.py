@@ -2348,23 +2348,28 @@ def gen_assets(yaml_data: dict) -> str:
 
     # Check whether any asset has linked_threats to decide if the column is needed
     any_linked = any(a.get("linked_threats") for a in assets)
+    # No ID column: the A-NNN ids are an internal yaml key with no in-document
+    # cross-reference (nothing links to `#a-NNN`), so they are omitted from the
+    # rendered table per the agent-prompt layout. compose's _drop_asset_id_column
+    # also strips a stray ID column from LLM-authored fragments, so the table
+    # shape is 4-col (or 3-col without Linked Threats) everywhere.
     if any_linked:
-        lines.append("| Asset | ID | Classification | Description | Linked Threats |")
+        lines.append("| Asset | Classification | Description | Linked Threats |")
         # Linked Threats ships `·`-joined BARE `[F-NNN](#f-nnn)` chips here;
         # compose's `_enrich_linked_id_cells` rewrites them to the canonical
         # `[F-NNN](#f-nnn) — title` stacked form (2026-06-02 user request —
         # supersedes the earlier bare-chip-only preference). Emitting bare IDs
         # keeps the short-title as a single source of truth in compose.
-        lines.append(_proportional_separator(20, 6, 12, 40, 22))
+        lines.append(_proportional_separator(22, 13, 43, 22))
     else:
-        lines.append("| Asset | ID | Classification | Description |")
-        lines.append(_proportional_separator(18, 6, 14, 40))
+        lines.append("| Asset | Classification | Description |")
+        lines.append(_proportional_separator(20, 20, 60))
     for idx, a in enumerate(assets, start=1):
         # Auto-assign A-NNN deterministically when the yaml-writer omitted
         # the id field (LLM schema-drift: some orchestrator runs produce
-        # assets with name/classification/description but no id). Renderers
-        # downstream depend on the ID column being non-"?" — fall back to
-        # positional A-NNN so the column is usable.
+        # assets with name/classification/description but no id) so the name
+        # fallback below is always usable, even though the id is no longer a
+        # rendered column.
         aid = a.get("id") or f"A-{idx:03d}"
         name = a.get("name", aid)
         clazz = a.get("classification", "_n/a_")
@@ -2374,9 +2379,9 @@ def gen_assets(yaml_data: dict) -> str:
             # `·`-joined bare chips; compose's `_enrich_linked_id_cells` adds
             # the `— title` labels (2026-06-02 user request).
             lt_cell = " · ".join(f"[{t}](#{t.lower()})" for t in lt) if lt else "—"
-            lines.append(f"| {name} | {aid} | {clazz} | {desc} | {lt_cell} |")
+            lines.append(f"| {name} | {clazz} | {desc} | {lt_cell} |")
         else:
-            lines.append(f"| {name} | {aid} | {clazz} | {desc} |")
+            lines.append(f"| {name} | {clazz} | {desc} |")
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -3641,7 +3646,13 @@ def _render_threat_hypotheses_table(yaml_data: dict) -> list[str]:
     if not unpromoted:
         return []
 
+    # Emit the explicit name-slug anchor the §7.2 "Controls covered" bullet
+    # links to. Real controls get this <a id> from _emit_v2_grouped_control;
+    # this pseudo-control heading previously had none, so its Controls-covered
+    # bullet `[Threat Hypotheses Requiring Validation](#threat-hypotheses-requiring-validation)`
+    # dangled (juice-shop 2026-07-02).
     lines: list[str] = [
+        f'<a id="{_v2_slug("Threat Hypotheses Requiring Validation")}"></a>',
         "#### Threat Hypotheses Requiring Validation",
         "",
         "**Status:** 🟡 Partial — architecture-derived control gaps not yet source-to-sink proven; treat as leads requiring a validate-or-refute pentest probe before promotion to a finding.",
@@ -4261,7 +4272,7 @@ def _emit_v2_subcontrol_block(
         anchors = {_v2_slug(original_title), _v2_slug(title)}
         # All anchors on ONE line: stacked empty <a id> lines render with
         # inconsistent vertical gaps before a heading (1 vs 2 anchors → uneven
-        # whitespace, 2026-05-30 user "Freiräume" fix).
+        # whitespace, 2026-05-30 user "spacing" fix).
         lines.append("".join(f'<a id="{s}"></a>' for s in sorted(anchors)))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
@@ -4450,7 +4461,7 @@ def _emit_v2_subcontrol_legacy(
         anchors = {_v2_slug(name), _v2_slug(title)}
         # All anchors on ONE line: stacked empty <a id> lines render with
         # inconsistent vertical gaps before a heading (1 vs 2 anchors → uneven
-        # whitespace, 2026-05-30 user "Freiräume" fix).
+        # whitespace, 2026-05-30 user "spacing" fix).
         lines.append("".join(f'<a id="{s}"></a>' for s in sorted(anchors)))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
@@ -4539,7 +4550,7 @@ def _emit_v2_subcontrol_legacy(
 # schema_v2 catalogues controls by domain — identity/login → §7.2,
 # session/token (JWT) → §7.3, password hashing → §7.9 — so the §7.2 section
 # only ever decomposes the control(s) Stage-1 filed under the identity domain
-# (usually just "Password Login"). That made §7.2 read "ausgedünnt": OAuth /
+# (usually just "Password Login"). That made §7.2 read "thinned out": OAuth /
 # JWT / MFA were either elsewhere or absent. This inventory is a DETERMINISTIC
 # table emitted at the top of §7.2 that reconstructs the COMPLETE authentication
 # surface from the yaml (controls + threats + meta) — status, where it is
@@ -5112,7 +5123,26 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             inv = _build_auth_mechanism_inventory(yaml_data)
             if inv:
                 lines.extend(inv)
-            lines.extend(_render_threat_hypotheses_table(yaml_data))
+            # "Threat Hypotheses Requiring Validation" table disabled (juice-shop
+            # 2026-07-03 user request): every row read Evidence/Validation from
+            # `h.get("evidence")` / `h.get("validation_objective")`, but the
+            # actual threat_hypotheses[] entries carry that content under
+            # `positive_signals[]` — a field-name mismatch that made every row
+            # render "_?_" / "_pending validation objective_" regardless of how
+            # much real evidence the hypothesis actually had.
+            #
+            # The fix is bigger than renaming the field, though — the user's
+            # bar is: unpromoted hypotheses must not appear in the report as a
+            # disconnected "maybe" list at all. Each one needs a real Finding
+            # derived from it and linked in before this table is report-ready
+            # again. See docs/internal/analysis/proposal-threat-hypotheses-
+            # promotion.md for the resume-work record (what "done" means, which
+            # existing promotion machinery in arch_coverage_to_threats.py to
+            # build on, open design questions). _render_threat_hypotheses_table
+            # is left defined, just uncalled, until that's done. The "Controls
+            # covered" bullet list below is mechanically derived from the H4 headings
+            # actually emitted, so removing this call also removes it from
+            # there automatically — no dangling link.
 
         if quick_depth and not control_names:
             continue
@@ -5345,7 +5375,24 @@ _LLM_TOP10_RULES = [
     (
         "LLM01",
         "Prompt Injection",
-        ["prompt injection", "prompt-injection", "jailbreak"],
+        [
+            "prompt injection",
+            "prompt-injection",
+            "jailbreak",
+            # Role-confusion is a prompt-injection VARIANT — a client-supplied
+            # "system"/"assistant" role message overrides the server's own
+            # system prompt without ever touching the literal phrase "prompt
+            # injection" (juice-shop 2026-07-02: "Client-Supplied Message
+            # Array Accepted Without Role" fell through every rule).
+            "without role",
+            "message array",
+            "role field",
+            "role spoofing",
+            "role confusion",
+            "role injection",
+            "fabricate system",
+            "override system",
+        ],
         "Untrusted user input reaches the LLM prompt/context without sufficient "
         "trust separation, letting an attacker override system instructions, "
         "redirect tool calls, or coerce unintended model behaviour.",
@@ -5425,7 +5472,21 @@ _LLM_TOP10_RULES = [
     (
         "LLM10",
         "Unbounded Consumption",
-        ["unbounded", "resource exhaustion", "model denial", "rate limit", "provider cost"],
+        [
+            "unbounded",
+            "resource exhaustion",
+            "model denial",
+            "rate limit",
+            # Hyphenated / negated spellings the space-separated "rate limit"
+            # keyword missed — e.g. "Unrate-Limited LLM Chat Proxy" (T-037,
+            # juice-shop 2026-07-02) dropped out of the AI-exposure map entirely.
+            "rate-limit",
+            "rate limiting",
+            "unrate-limited",
+            "no rate limit",
+            "unlimited",
+            "provider cost",
+        ],
         "The LLM endpoint imposes no authentication, rate, or quota boundary, so "
         "any client can drive unbounded model invocations — uncontrolled "
         "provider cost and denial of service for legitimate users.",
@@ -5493,20 +5554,37 @@ def gen_ai_exposure(yaml_data: dict):
     llm_component_ids = {c.get("id") for c in components if _is_llm_component(c)}
     llm_component_names = [c.get("name") for c in components if _is_llm_component(c) and c.get("name")]
 
-    def _llm_context(threat: dict, title_lc: str) -> bool:
+    def _llm_context(threat: dict, blob_lc: str) -> bool:
         if threat.get("component") in llm_component_ids:
             return True
-        return any(h in title_lc for h in ("llm", "chatbot", "prompt", "model api"))
+        return any(h in blob_lc for h in ("llm", "chatbot", "prompt", "model api"))
 
     # First-match-wins categorization of each threat into an LLM Top-10 bucket.
+    # Categorization itself stays TITLE-scoped: many threats' impact/evidence
+    # prose mentions "prompt injection" as the underlying ATTACK TECHNIQUE even
+    # when the finding is really about a more specific risk (T-045's title is
+    # "LLM Tool-Calling Guardrail Bypass" — Excessive Agency — but its impact
+    # sentence says "A successful prompt injection can mint discount coupons",
+    # which would wrongly steal it into the generic LLM01 bucket if the keyword
+    # scan read impact text too; regression caught in review, juice-shop
+    # 2026-07-03). Only the WEAK-rule `_llm_context` gate — which just vetoes
+    # an already-title-matched weak keyword, never decides categorization —
+    # reads the wider title+evidence+impact blob, so a title like
+    # "Unauthenticated Rate-Unlimited Chat Endpoint" (no "llm"/"chatbot") can
+    # still pass the gate via its impact prose ("...a metered external LLM
+    # API...") once its OWN title already matched a keyword (juice-shop
+    # 2026-07-02: T-040 lived on the generic "backend-api" component).
     buckets: dict[str, dict] = {}
     for th in threats:
         title = th.get("title", "") or ""
         title_lc = title.lower()
+        context_blob_lc = " ".join(
+            str(th.get(f, "") or "") for f in ("title", "evidence_summary", "impact_description")
+        ).lower()
         for llm_id, name, keywords, description, strong in _LLM_TOP10_RULES:
             if not any(kw in title_lc for kw in keywords):
                 continue
-            if not strong and not _llm_context(th, title_lc):
+            if not strong and not _llm_context(th, context_blob_lc):
                 continue
             b = buckets.setdefault(
                 llm_id,

@@ -22,6 +22,8 @@ Every print statement uses the prefix `[triage]`. Print each line immediately be
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `triage-validator`, model: `<MODEL_ID>`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file writes, errors, and agent completion.
 
+**Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
+
 **Print on startup:**
 ```
 [triage] ▶ Starting triage ranking  (model: <MODEL_ID>)

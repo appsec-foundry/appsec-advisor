@@ -61,6 +61,21 @@ def test_does_not_mistake_code_identifier_for_file():
     assert ecf.clean_weakness("ZIP Slip Path Traversal routes/fileUpload.ts:45") == "ZIP Slip Path Traversal"
 
 
+def test_strips_quoted_value_and_on_line_artefact():
+    # "Hardcoded JWT HMAC key 'pass**** (8 chars)' on:6 — file:6" — the single-quoted
+    # value and the on:<line> artefact must be stripped; weakness class is clean.
+    t = _t(
+        "Hardcoded JWT HMAC key 'pass**** (8 chars)' on:6 — SymmetricAlgoKeys.json:6",
+        file="SymmetricAlgoKeys.json",
+        line=6,
+    )
+    result = ecf.build_clean_title(t["title"], t)
+    assert result == "Hardcoded JWT HMAC key — SymmetricAlgoKeys.json:6"  # lowercase 'key' preserved from source
+    assert "pass" not in result
+    # "on:6" as a standalone artefact is gone; it still appears as part of ".json:6" which is correct
+    assert result.startswith("Hardcoded JWT HMAC key")
+
+
 def test_acronym_casing_fix():
     t = _t("Vm sandbox escape via notevil routes/b2bOrder.ts:23", file="routes/b2bOrder.ts", line=23)
     assert ecf.build_clean_title(t["title"], t) == "VM sandbox escape — routes/b2bOrder.ts:23"

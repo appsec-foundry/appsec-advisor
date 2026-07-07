@@ -878,7 +878,9 @@ def test_cli_bootstrap_yaml_from_merged(tmp_path: Path):
     assert res.returncode == 0, res.stderr
     assert "bootstrapped threat-model.yaml" in res.stdout
     yaml_data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    plugin_manifest = json.loads((Path(__file__).resolve().parents[1] / ".claude-plugin" / "plugin.json").read_text())
     assert yaml_data["meta"]["_bootstrap"] is True
+    assert yaml_data["meta"]["analysis_version"] == plugin_manifest["analysis_version"]
     assert yaml_data["threats"][0]["t_id"] == "T-1"
 
 

@@ -63,6 +63,8 @@ You emit two operational signals during the run. Treat them as one concern:
 
 **2. Log** — follow `shared/logging-standard.md` (agent: `architect-reviewer`, model: `<MODEL_ID>`, event types: `STEP_START` / `STEP_END`). Write to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash call, before any file reads. Log every check start/end (batched with the next check's start per the standard's batching rule), the file writes, errors, and agent completion.
 
+**3. Follow the completion contract** in `shared/completion-contract.md` — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only, no narrative findings recap.
+
 **Print on startup:**
 ```
 [architect] ▶ Starting architect review  (model: <MODEL_ID>)
@@ -446,12 +448,13 @@ Reference (the deterministic rules, already applied by the helper): `shared/sec7
 
 **Detection for the count-based sub-checks is deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.actor_coverage.findings`** (15.1 activated-no-findings, 15.2 disabled-without-rationale, 15.3b whole-model attribution gap). `skipped:true` ⇒ no actor layer; skip the whole check. **Do not re-derive these counts.** The residue that stays LLM is **15.6** (recon-derived TH-10 / BFF mandate enforcement — requires reading recon prose against the finding set) when `ASSESSMENT_DEPTH=thorough`; run only that sub-check here.
 
-**Skip when:** `.actors-resolved.json` does not exist in `$OUTPUT_DIR` (Quick-mode or actor-layer not yet enabled).
+**Skip when:** `.actors-resolved.json` does not exist in `$OUTPUT_DIR` (actor-layer resolution failed).
 
 **Inputs to read (once each):**
 
 - `$OUTPUT_DIR/.actors-resolved.json` — resolved actor set with provenance
-- `$OUTPUT_DIR/.actors-discovered.json` — discovery output (optional; skip sub-checks 15.4/15.5 when absent)
+- `$OUTPUT_DIR/.actors-resolved.json.inputs_questioned[]` — resolver-approved
+  discovery review flags (skip sub-check 15.5 when empty)
 - `threat-model.yaml` — findings with `actor_ids` and `primary_actor` fields
 - Per-component slice files `$OUTPUT_DIR/.actors-for-*.json` (glob, read all)
 
@@ -488,15 +491,20 @@ Count findings in `threat-model.yaml` `findings[]` with `actor_ids != []` vs. to
   `pervasive_actor_attribution_gap`, severity `advisory`. Most findings
   lack attribution; the Actor column is misleading.
 
-**Sub-Check 15.4 — Discovery proposals without findings (when `.actors-discovered.json` exists):**
+**Sub-Check 15.4 — Discovery proposals without findings (when resolved proposals exist):**
 
-For each entry in `.actors-discovered.json` `proposed_additional[]`:
+For each active actor in `.actors-resolved.json` where
+`_provenance.proposed=true`:
 - Does at least one finding carry this actor's `id` in `actor_ids[]`?
 - If NO → emit issue `proposed_actor_no_findings`, severity `info` (no escalation)
 
-**Sub-Check 15.5 — Inputs-questioned actors not reviewed (when `.actors-discovered.json` exists):**
+Do not re-review entries listed in
+`.actors-resolved.json.rejected_discovery_actors[]`; the deterministic resolver
+already prevented them from entering attribution and recorded the reason.
 
-For each actor in `.actors-discovered.json` `inputs_questioned[]`:
+**Sub-Check 15.5 — Inputs-questioned actors not reviewed (when resolver-approved flags exist):**
+
+For each entry in `.actors-resolved.json.inputs_questioned[]`:
 - Does the actor still appear in `.actors-resolved.json` active set?
 - If YES and this is not the first run → emit `questioned_actor_not_reviewed`, severity `advisory`
 - Escalate to `defect` when `_provenance.questioned_run_count >= 3`

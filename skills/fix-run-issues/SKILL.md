@@ -10,15 +10,21 @@ present each issue with its structured `fix_recommendation`, apply
 auto-eligible fixes after confirmation, and write an audit trail.
 
 This skill is **non-invasive by default**. It only modifies plugin files
-when:
+when ALL of:
 
+0. **Plugin-developer mode is on** — `APPSEC_PLUGIN_DEV=1` is set in the
+   environment. This is the master switch: self-modification of the plugin
+   is a development-only behavior. In a shipped/end-user install the flag is
+   unset, so the skill runs **read-only** — it prints every fix's guidance
+   but writes to no plugin file. AND
 1. The issue's `fix_recommendation.auto_applicable == true` AND
 2. The user confirmed the action (or `--yes` was passed) AND
 3. The action's `type` is in the safe list (`edit_file` with explicit
    find/replace strings).
 
-For every non-auto-applicable issue (or any auto-fix the user declines),
-the skill prints the manual remediation guide and moves on.
+For every non-auto-applicable issue (or any auto-fix the user declines, or
+any invocation without `APPSEC_PLUGIN_DEV=1`), the skill prints the manual
+remediation guide and moves on without writing.
 
 ## `--help` — inline help (early exit)
 
@@ -46,7 +52,12 @@ FLAGS
                      are still printed.
   --json             Emit the result as machine-readable JSON.
 
-WHAT IS APPLIED AUTOMATICALLY
+PLUGIN-DEVELOPER MODE (required for any write)
+  Fixes are applied ONLY when APPSEC_PLUGIN_DEV=1 is set. Unset (the
+  default for shipped/end-user installs) => read-only: guidance is
+  printed, no plugin file is modified.
+
+WHAT IS APPLIED AUTOMATICALLY (when APPSEC_PLUGIN_DEV=1)
   Categories with auto_applicable=true AND confidence=high:
     agent_def    Bump <agent>.md maxTurns + matching test ceiling
 
@@ -92,6 +103,23 @@ if [ ! -f "$ISSUES_FILE" ]; then
 fi
 ```
 
+### Step 2b — Resolve plugin-developer mode (write gate)
+
+```bash
+if [ "${APPSEC_PLUGIN_DEV:-}" = "1" ]; then WRITE_ALLOWED=1; else WRITE_ALLOWED=0; fi
+```
+
+`WRITE_ALLOWED=0` (the default in a shipped install) puts the skill in
+**read-only mode**: every step below runs exactly as written EXCEPT that no
+`edit_file` action is ever applied and `.run-issues-fixes.json` records those
+issues as `manual` (reason `plugin_dev_off`). When `WRITE_ALLOWED=0`, print
+this line once, right after the summary header:
+
+```
+  Mode          : read-only (APPSEC_PLUGIN_DEV unset — self-fixes disabled;
+                  set APPSEC_PLUGIN_DEV=1 to enable plugin self-modification)
+```
+
 ### Step 3 — Print summary
 
 Read `.run-issues.json` and print a header showing the issue counts and
@@ -124,7 +152,7 @@ For each issue in `.run-issues.json`:
 
 2. Print the fix's `summary` and `rationale`.
 
-3. **If auto-applicable AND confidence=high AND not `--dry-run`:**
+3. **If `WRITE_ALLOWED=1` AND auto-applicable AND confidence=high AND not `--dry-run`:**
    - Print "Actions to apply:" and list each action with find/replace
      content.
    - If `--yes` was not passed: ask `Apply this fix? [y/n/skip]`
@@ -142,9 +170,12 @@ For each issue in `.run-issues.json`:
    - After all actions: run the `verification` commands. If any fails,
      mark the fix as `applied_with_verification_failure`.
 
-4. **Otherwise (manual review, or auto-fix declined):**
+4. **Otherwise (write gate off, manual review, or auto-fix declined):**
    - Print "Manual review required:" + the actions list as guidance.
-   - Record decision (`manual` or `declined`) in audit trail.
+     When `WRITE_ALLOWED=0`, note that the fix was auto-eligible but not
+     applied because plugin-developer mode is off.
+   - Record decision (`manual`, `declined`, or `plugin_dev_off`) in audit
+     trail.
 
 ### Step 5 — Write audit trail
 
@@ -186,6 +217,9 @@ the user can roll back if needed.
 
 ## Safety rules
 
+- **NEVER** apply any fix (write any plugin file) unless `APPSEC_PLUGIN_DEV=1`.
+  Self-modification is development-only; a shipped install leaves it unset and
+  the skill is read-only. This overrides `--yes`, `--only`, and every other flag.
 - **NEVER** apply a fix where `auto_applicable=false` (regardless of `--yes`).
 - **NEVER** apply a fix where `confidence != "high"` (regardless of `--yes`).
 - **NEVER** modify `threat-model.md`, `threat-model.yaml`, or any file

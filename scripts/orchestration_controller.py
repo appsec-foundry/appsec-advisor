@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import check_permissions  # noqa: E402
+import detect_session_model  # noqa: E402
 import resolve_config  # noqa: E402
 from event_log import format_line  # noqa: E402
 
@@ -128,6 +131,7 @@ _DISPATCH_KEYS = (
     "requirements_url_override",
     "incremental",
     "reuse_recon_eligible",
+    "run_id",
     "rebuild",
     "keep_runtime_files",
     "scan_manifest",
@@ -233,7 +237,7 @@ def _resolve(argv: list[str]) -> dict[str, Any]:
 
 def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
     thin = (
-        os.environ.get("APPSEC_THIN_ORCHESTRATOR") == "1"
+        os.environ.get("APPSEC_THIN_ORCHESTRATOR") != "0"
         and cfg.get("mode") in {"full", "rebuild"}
         and not cfg.get("dry_run")
         and not cfg.get("resume")
@@ -249,15 +253,15 @@ def route(argv: list[str]) -> dict[str, Any]:
     cfg = _resolve(argv)
     runtime, instruction = _runtime_for(cfg)
     if runtime == "thin-full":
-        reason = "opt-in full/rebuild compact runtime selected"
+        reason = "default full/rebuild compact runtime selected (opt out with APPSEC_THIN_ORCHESTRATOR=0)"
     elif (
         cfg.get("mode") in {"full", "rebuild"}
         and not cfg.get("dry_run")
         and not cfg.get("resume")
         and not cfg.get("rerender")
-        and os.environ.get("APPSEC_THIN_ORCHESTRATOR") != "1"
+        and os.environ.get("APPSEC_THIN_ORCHESTRATOR") == "0"
     ):
-        reason = "compact runtime is rollout-gated; set APPSEC_THIN_ORCHESTRATOR=1 for parity benchmarks"
+        reason = "compact runtime opted out via APPSEC_THIN_ORCHESTRATOR=0; using legacy parity runtime"
     else:
         reason = "special mode retains the parity runtime"
     return {
@@ -690,6 +694,41 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     repo_root = Path(cfg["repo_root"]).resolve()
     cfg["output_dir"] = str(output_dir)
     cfg["repo_root"] = str(repo_root)
+
+    # Fail fast if required CC permissions are missing rather than letting the
+    # run stall on interactive prompts mid-flight.
+    required_raw = check_permissions.load_required()
+    required = [
+        {**r, "entry": check_permissions.expand_entry(r["entry"], repo_root, output_dir, PLUGIN_ROOT)}
+        for r in required_raw
+    ]
+    by_scope = check_permissions.effective_allow(repo_root)
+    all_granted = [rule for scope_rules in by_scope.values() for rule in scope_rules]
+    missing_perms = check_permissions.diff_required(required, all_granted)
+    if missing_perms:
+        entries = "\n".join(f"  {m['entry']}" for m in missing_perms)
+        return {
+            "schema_version": 1,
+            "action": "abort",
+            "mode": cfg.get("mode", "full"),
+            "reason": (
+                f"Missing required Claude Code permissions for this repo.\n"
+                f"Run:  make setup-target REPO={repo_root}\n"
+                f"then restart Claude Code and re-run the skill.\n\n"
+                f"Missing entries:\n{entries}"
+            ),
+            "exit_code": 2,
+        }
+
+    # Stable per-run token so a Stage-1 agent's own lock acquisition can
+    # re-acquire this controller-held lock re-entrantly instead of
+    # false-blocking on it (mirrors the legacy-runtime fix in SKILL-impl.md
+    # "Skill-layer lock acquisition" — the 2026-07-02 costly re-dispatch).
+    cfg["run_id"] = (
+        os.environ.get("CLAUDE_CODE_SESSION_ID")
+        or os.environ.get("CLAUDE_SESSION_ID")
+        or f"run-{int(time.time())}-{os.getpid()}"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     existing_names = {path.name for path in output_dir.iterdir()}
     if cfg["mode"] == "rebuild":
@@ -731,7 +770,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     )
     lock = _run_script(
         "acquire_lock.py",
-        [str(output_dir / ".appsec-lock")],
+        [str(output_dir / ".appsec-lock"), f"--run-id={cfg['run_id']}"],
         acceptable=(0,),
     )
     first_lock_line = (lock.stdout or "").strip().splitlines()
@@ -782,6 +821,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             "acquire_lock.py",
             [
                 str(output_dir / ".appsec-lock"),
+                f"--run-id={cfg['run_id']}",
                 "--heartbeat",
                 "--phase=skill",
                 "--step=stage1-dispatch",
@@ -804,7 +844,37 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "ORCHESTRATION_READY",
         f"mode={cfg['mode']} depth={cfg['assessment_depth']} runtime=thin-full",
     )
-    run_plan = resolve_config.render_run_plan(cfg, None, None, "equal")
+    # Detect the host session model (fail-safe: '' on any miss) so the Pre-flight
+    # box can fold in the effective routing + cost advisory. resolve_config is
+    # otherwise blind to the session; this is the thin-path injection point.
+    try:
+        session_model = detect_session_model.detect_session_model()
+    except Exception:
+        session_model = ""
+    # Interactive orchestrator-model selection signal (computed BEFORE the box so
+    # the box can suppress the now-redundant session advisories when the prompt
+    # will fire). Needed when the session model is detected AND diverges from the
+    # repo-size recommendation (covers BOTH a Sonnet-5 and an Opus session), and
+    # the run is interactive (forced false under APPSEC_HEADLESS=1).
+    _orch_rec = cfg.get("orchestrator_recommended_model", "")
+    _headless = os.environ.get("APPSEC_HEADLESS", "").strip().lower() in ("1", "true", "yes", "on")
+    _orch_prompt_needed = bool(
+        session_model and _orch_rec and not resolve_config._same_model(session_model, _orch_rec) and not _headless
+    )
+    # When the interactive prompt will handle the model choice, drop the passive
+    # session cost callout + orchestrator recommendation line from the box (they
+    # would just repeat the prompt). Keep them when no prompt fires (headless /
+    # matching / undetected) so that surface still carries the advisory.
+    # Positional (not keyword) so existing render_run_plan spies in the tests that
+    # take *args without **kwargs keep working.
+    run_plan = resolve_config.render_run_plan(
+        cfg,
+        None,
+        None,
+        "equal",
+        session_model,
+        _orch_prompt_needed,
+    )
     if cfg["mode"] == "rebuild":
         workspace_note = (
             f"removed {removed_preexisting} prior item(s); changelog audit archived when present"
@@ -845,8 +915,79 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "run_plan": run_plan,
         "config_path": str(config_path),
         "dispatch_values": _dispatch_values(cfg, estimate),
+        "session_model": session_model,
+        "orchestrator_recommended_model": _orch_rec,
+        "orchestrator_recommendation_reason": cfg.get("orchestrator_recommendation_reason", ""),
+        "orchestrator_prompt_needed": _orch_prompt_needed,
         "receipts": receipts,
     }
+
+
+# LLM-authored render fragments a Stage-2 renderer must produce before the
+# report can be composed. Their presence means the expensive rendering already
+# happened and only the deterministic compose remains.
+_REQUIRED_RENDER_FRAGMENTS = ("ms-verdict.json", "security-architecture.md")
+
+
+def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
+    """Deterministically compose ``threat-model.md`` from on-disk fragments.
+
+    Closes the thin-runtime gap where the orchestrator authored the render
+    fragments but ended — turn budget, or a skipped skill-level step — before
+    issuing ``compose_threat_model.py``, leaving ``threat-model.yaml`` plus a
+    full ``.fragments/`` set but no report (2026-07-02 juice-shop thin run).
+
+    Only fires when the LLM-authored fragments are already present, so no agent
+    work is needed; otherwise returns False and the caller falls back to a
+    Stage-2 agent dispatch. Runs the canonical finalization tail
+    (compose --strict → apply_prose_fixes → qa_checks autofix). Fail-safe: any
+    error returns False and never raises into ``next``'s JSON output.
+    """
+    frag_dir = output_dir / ".fragments"
+    if not all((frag_dir / name).is_file() for name in _REQUIRED_RENDER_FRAGMENTS):
+        return False
+    md = output_dir / "threat-model.md"
+
+    def _run(*cmd: str) -> bool:
+        try:
+            proc = subprocess.run(
+                [sys.executable, *cmd],
+                cwd=str(SCRIPT_DIR),
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            return proc.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    # Mechanical structural fragments (idempotent backstop), then the strict
+    # compose, then the prose-fix + autofix tail (AGENTS.md "Critical ordering").
+    _run(
+        str(SCRIPT_DIR / "pregenerate_fragments.py"),
+        str(output_dir),
+        "--force",
+        "--only",
+        "system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md",
+    )
+    # Conditional MS fragments (idempotent, self-gating — a renderer-authored
+    # copy already on disk is preserved). ms-ai-exposure.json is the recurring
+    # gap: the thin renderer often skips it, so the "AI / LLM Exposure" MS
+    # callout silently vanishes even though the yaml carries an LLM surface
+    # (2026-07-02). Deriving it here from the yaml guarantees the section.
+    _run(
+        str(SCRIPT_DIR / "pregenerate_fragments.py"),
+        str(output_dir),
+        "--only",
+        "ms-ai-exposure.json,ms-critical-attack-tree.json",
+    )
+    if not _run(str(SCRIPT_DIR / "compose_threat_model.py"), "--output-dir", str(output_dir), "--strict"):
+        return False
+    if not md.is_file():
+        return False
+    _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
+    _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
+    return md.is_file()
 
 
 def next_action(output_dir: Path) -> dict[str, Any]:
@@ -871,12 +1012,17 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             "instruction_file": str(LEGACY_RUNTIME),
         }
     if not (output_dir / "threat-model.md").is_file():
-        return {
-            **common,
-            "action": "dispatch_agent",
-            "stage": "stage2",
-            "instruction_file": str(LEGACY_RUNTIME),
-        }
+        # Deterministic compose backstop: when the render fragments are already
+        # on disk the remaining work is a pure compose, so finish it here rather
+        # than re-dispatching the (expensive) renderer. Only falls through to a
+        # Stage-2 agent when the fragments are genuinely missing.
+        if not _compose_if_ready(output_dir, str(cfg.get("repo_root") or "")):
+            return {
+                **common,
+                "action": "dispatch_agent",
+                "stage": "stage2",
+                "instruction_file": str(LEGACY_RUNTIME),
+            }
     if not cfg.get("skip_qa") and not (output_dir / ".qa-status.json").is_file():
         return {
             **common,
