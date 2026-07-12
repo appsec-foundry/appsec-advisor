@@ -1105,3 +1105,40 @@ def test_posture_structure_full_heatmap(tmp_path):
     # Exercises all D/E/F/G/T rule bodies end-to-end. The renderer/subgraph/
     # alignment/glyph/table D-rules all pass on this well-formed heatmap.
     assert not any(i.startswith(("D1", "D2", "D3", "T1", "T2")) for i in rep.issues), rep.issues
+
+
+# --- weakness-class evidence-model invariants (I1, I4) in check_invariants ---
+
+
+def test_check_invariants_i1_flags_hypothesis_heading(tmp_path: Path) -> None:
+    md = tmp_path / "threat-model.md"
+    md.write_text("# Report\n\n## Threat Hypotheses Requiring Validation\n\nrow\n", encoding="utf-8")
+    rep = qa.check_invariants(md)
+    assert any("I1 violation" in i for i in rep.issues)
+
+
+def test_check_invariants_i1_allows_hypothesis_in_prose(tmp_path: Path) -> None:
+    md = tmp_path / "threat-model.md"
+    md.write_text("# Report\n\nThe attacker's working hypothesis is X.\n", encoding="utf-8")
+    rep = qa.check_invariants(md)
+    assert not any("I1 violation" in i for i in rep.issues)
+
+
+def test_check_invariants_i4_flags_inconsistent_breakdown(tmp_path: Path) -> None:
+    md = tmp_path / "threat-model.md"
+    md.write_text(
+        "x<br/>**Findings:** 9 — 5 confirmed-exploitable · 2 implementation · 1 design\n",
+        encoding="utf-8",
+    )
+    rep = qa.check_invariants(md)
+    assert any("I4 violation" in i for i in rep.issues)
+
+
+def test_check_invariants_i4_accepts_consistent_breakdown(tmp_path: Path) -> None:
+    md = tmp_path / "threat-model.md"
+    md.write_text(
+        "x<br/>**Findings:** 8 — 5 confirmed-exploitable · 2 implementation · 1 design\n",
+        encoding="utf-8",
+    )
+    rep = qa.check_invariants(md)
+    assert not any("I4 violation" in i for i in rep.issues)

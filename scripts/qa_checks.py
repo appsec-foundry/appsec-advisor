@@ -1109,6 +1109,40 @@ def check_invariants(md_path: Path) -> Report:
                     f"makes silent-death diagnosis impossible)."
                 )
 
+    # Weakness-class evidence-model invariants (I1, I4) — see
+    # docs/internal/analysis/proposal-weakness-class-evidence-model.md §0/§9.
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    if text:
+        # I1 — the retired "Threat Hypotheses Requiring Validation" §7.2 table
+        # must never render: architecture-derived gaps surface as design-weakness
+        # headings, never as a user-facing "hypothesis" section/category. The
+        # word may still appear in prose; only HEADINGS are policed.
+        for m in re.finditer(r"(?m)^#{1,6}\s+(.*)$", text):
+            head = m.group(1)
+            if re.search(r"(?i)threat\s+hypothes|hypotheses\s+requiring\s+validation", head):
+                report.issues.append(
+                    f"I1 violation: user-facing hypothesis heading rendered "
+                    f"({head.strip()!r}); design gaps must render as design-weakness "
+                    f"headings, not a hypotheses section."
+                )
+        # I4 — the headline findings breakdown must be internally consistent:
+        # total == confirmed-exploitable + implementation + design.
+        mb = re.search(
+            r"\*\*Findings:\*\*\s*(\d+)\s*[—-]\s*(\d+)\s+confirmed-exploitable\s*·\s*"
+            r"(\d+)\s+implementation\s*·\s*(\d+)\s+design",
+            text,
+        )
+        if mb:
+            total, conf, impl, design = (int(mb.group(i)) for i in range(1, 5))
+            if total != conf + impl + design:
+                report.issues.append(
+                    f"I4 violation: findings breakdown {conf}+{impl}+{design} "
+                    f"!= stated total {total} (post-consolidation count must sum)."
+                )
+
     if not report.issues:
         report.ok = 1
     return report
