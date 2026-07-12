@@ -1614,6 +1614,31 @@ def _emit_activity(tool: str, inp: dict, sid: str) -> None:
         pass
 
 
+# Matches a clean, single python3 invocation of one of the plugin's own
+# background watchdog scripts (heartbeat / deadline) and nothing else. Used by
+# the PreToolUse auto-approve guard below.
+_WATCHDOG_CMD_RE = re.compile(
+    r'^python3?\s+["\']?\S*scripts/(?:skill_watchdog|budget_watchdog)\.py\b'
+)
+
+
+def _is_sanctioned_background_watchdog(cmd: str) -> bool:
+    """True iff `cmd` is a bare invocation of a known plugin watchdog script.
+
+    Deliberately strict: the sanctioned watchdog dispatch is a single clean
+    `python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" ...` command with
+    NO shell chaining, redirection, or command substitution. Any such
+    metacharacter disqualifies the command, so an "allow" decision can never
+    blanket-approve a compound that smuggles another command past the prompt.
+    """
+    if not cmd or not _WATCHDOG_CMD_RE.match(cmd):
+        return False
+    # `;` `` ` `` `|` `<` `>` `&` newline and `$(` all enable chaining/redirection.
+    if re.search(r"[;`|<>&\n]|\$\(", cmd):
+        return False
+    return True
+
+
 def handle_pre_tool_use(data: dict, sid: str) -> None:
     """Log AGENT_SPAWN for Agent tool calls, and emit verbose activity
     indicators for all other tool calls from sub-agent sessions.
@@ -1651,6 +1676,45 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # tool_use_id; PostToolUse removes it. Sub-agent calls without a
     # propagating Post are aged out by the status reader.
     _record_tool_start(data, sid)
+
+    # --- Auto-approve the plugin's own background watchdogs (2026-07-12) ---
+    #
+    # The skill dispatches scripts/skill_watchdog.py (and, when a wall-time /
+    # cost deadline is set, scripts/budget_watchdog.py) via the Bash tool with
+    # run_in_background=true (see SKILL-impl "Skill-layer heartbeat watchdog").
+    # Claude Code shows an interactive "& background operator" safety
+    # confirmation for every backgrounded Bash call, which forces the user to
+    # answer a Yes/No prompt one or more times per run. These commands are
+    # plugin-internal, side-effect-free heartbeat/deadline loops, so pre-approve
+    # them here — but ONLY when the command is a clean single invocation of the
+    # known script (see _is_sanctioned_background_watchdog for the strict
+    # matcher; anything with shell chaining/redirection falls through to the
+    # normal prompt). NOTE: whether this "allow" decision actually suppresses
+    # the background-operator confirmation is Claude-Code-version dependent and
+    # must be verified in a live run — if it is a hardcoded circuit-breaker the
+    # decision is ignored and the prompt still fires (harmless, just no-op).
+    if tool == "Bash" and (data.get("tool_input", {}) or {}).get("run_in_background"):
+        cmd = ((data.get("tool_input", {}) or {}).get("command") or "").strip()
+        if _is_sanctioned_background_watchdog(cmd):
+            try:
+                sys.stdout.write(
+                    json.dumps(
+                        {
+                            "hookSpecificOutput": {
+                                "hookEventName": "PreToolUse",
+                                "permissionDecision": "allow",
+                                "permissionDecisionReason": (
+                                    "appsec-advisor internal background watchdog "
+                                    "(heartbeat/deadline) — pre-approved by plugin hook."
+                                ),
+                            }
+                        }
+                    )
+                )
+                sys.stdout.flush()
+            except Exception:
+                pass
+            return
 
     # --- Direct-write guard for threat-model.md (added 2026-04-25) ---
     #
