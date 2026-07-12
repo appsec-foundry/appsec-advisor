@@ -206,6 +206,61 @@ def test_abuse_cases_absent_skips_resolution(acme_profile):
 
 
 # ---------------------------------------------------------------------------
+# mcp block (org MCP endpoints emitted into the packaged plugin's .mcp.json)
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_http_server_passes(acme_profile):
+    acme_profile["mcp"] = {
+        "servers": {
+            "acme-sast": {
+                "type": "http",
+                "url": "${ACME_SAST_MCP_URL}",
+                "headers": {"Authorization": "Bearer ${ACME_SAST_TOKEN}"},
+            }
+        }
+    }
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_mcp_stdio_server_passes(acme_profile):
+    acme_profile["mcp"] = {
+        "servers": {"acme-sca": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/sca", "args": ["--json"]}}
+    }
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_mcp_server_without_url_or_command_fails(acme_profile):
+    acme_profile["mcp"] = {"servers": {"empty": {"type": "http"}}}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("url" in e and "command" in e for e in errors), errors
+
+
+def test_mcp_url_with_credentials_rejected(acme_profile):
+    acme_profile["mcp"] = {"servers": {"acme-sast": {"url": "https://user:secret@sast.acme.test/mcp"}}}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("credentials" in e for e in errors), errors
+
+
+def test_mcp_unknown_server_key_rejected(acme_profile):
+    acme_profile["mcp"] = {"servers": {"acme-sast": {"url": "https://sast.acme.test/mcp", "mystery": 1}}}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("mystery" in e for e in errors), errors
+
+
+def test_mcp_invalid_server_name_rejected(acme_profile):
+    acme_profile["mcp"] = {"servers": {"Bad Name": {"url": "https://sast.acme.test/mcp"}}}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("mcp" in e.lower() or "servers" in e for e in errors), errors
+
+
+def test_mcp_absent_skips_check(acme_profile):
+    assert vop._check_mcp(acme_profile) == []
+
+
+# ---------------------------------------------------------------------------
 # Coverage: unit-level branches for the semantic helpers + CLI paths
 # ---------------------------------------------------------------------------
 

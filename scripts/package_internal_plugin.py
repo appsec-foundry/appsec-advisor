@@ -87,6 +87,7 @@ PATH_EXCLUDES = {
 }
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 SURFACE_MANIFEST = ".claude-plugin/package-surface.json"
+MCP_CONFIG = ".mcp.json"
 HOOK_SCRIPT_IDS = {
     "agent_logger.py": "agent-logger",
     "security_steering.py": "security-coach",
@@ -235,7 +236,7 @@ def _policy_surface(policy: dict) -> dict:
     surface = policy.get("plugin_surface", policy)
     if not isinstance(surface, dict):
         _die("package policy 'plugin_surface' must be a mapping/object")
-    unknown = set(surface) - {"skills", "hooks"}
+    unknown = set(surface) - {"skills", "hooks", "mcp_servers"}
     if unknown:
         _die(f"package policy has unknown plugin_surface keys: {sorted(unknown)}")
     return surface
@@ -409,12 +410,47 @@ def apply_hook_policy(build: Path, surface: dict) -> dict:
     }
 
 
+def _org_profile_mcp_servers(build: Path) -> dict:
+    """MCP server definitions declared in the packaged org profile (mcp.servers).
+
+    Returns a {name: server_config} mapping, or {} when the profile has no mcp
+    block. The org profile has already been overlaid into build/org-profile at
+    this point.
+    """
+    profile_path = build / "org-profile" / "org-profile.yaml"
+    if not profile_path.is_file():
+        return {}
+    data = _load_yaml_or_json(profile_path)
+    servers = (data.get("mcp") or {}).get("servers")
+    return servers if isinstance(servers, dict) else {}
+
+
+def apply_mcp_policy(build: Path, surface: dict) -> dict:
+    """Emit build/.mcp.json from the org profile's mcp.servers, gated by the
+    package-policy allowlist (plugin_surface.mcp_servers). Declared servers are
+    included by default; an include/exclude list narrows them. Writes no file
+    when nothing is kept."""
+    servers = _org_profile_mcp_servers(build)
+    available = set(servers)
+    keep = _resolve_keep_set(surface.get("mcp_servers"), available, "mcp_servers")
+    removed = sorted(available - keep)
+
+    mcp_path = build / MCP_CONFIG
+    if keep:
+        payload = {"mcpServers": {name: servers[name] for name in sorted(keep)}}
+        mcp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    elif mcp_path.exists():
+        mcp_path.unlink()
+    return {"included": sorted(keep), "removed": removed}
+
+
 def write_surface_manifest(
     build: Path,
     policy_path: Path | None,
     skills: dict,
     hooks: dict,
     upstream_url: str | None = None,
+    mcp_servers: dict | None = None,
 ) -> None:
     if policy_path is None:
         policy_ref = None
@@ -431,6 +467,8 @@ def write_surface_manifest(
         "skills": skills,
         "hooks": hooks,
     }
+    if mcp_servers is not None:
+        manifest["mcp_servers"] = mcp_servers
     if upstream_url:
         manifest["upstream_url"] = upstream_url
         manifest["based_on"] = upstream_url.removesuffix(".git")
@@ -445,7 +483,8 @@ def apply_package_surface_policy(
     surface = _policy_surface(policy)
     skills = apply_skill_policy(build, surface)
     hooks = apply_hook_policy(build, surface)
-    write_surface_manifest(build, policy_path, skills, hooks, upstream_url)
+    mcp_servers = apply_mcp_policy(build, surface)
+    write_surface_manifest(build, policy_path, skills, hooks, upstream_url, mcp_servers)
 
 
 def _text_files(root: Path):

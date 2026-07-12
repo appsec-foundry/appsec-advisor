@@ -578,6 +578,82 @@ def test_apply_package_surface_policy(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# mcp policy (org MCP endpoints -> .mcp.json)
+# ---------------------------------------------------------------------------
+
+
+def _build_with_mcp(tmp_path, servers_yaml: str) -> "object":
+    build = tmp_path / "build"
+    profile = build / "org-profile" / "org-profile.yaml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text(f"organization:\n  id: acme\n{servers_yaml}", encoding="utf-8")
+    return build
+
+
+def test_org_profile_mcp_servers_absent(tmp_path):
+    build = _build_with_mcp(tmp_path, "")
+    assert pkg._org_profile_mcp_servers(build) == {}
+
+
+def test_org_profile_mcp_servers_no_profile_file(tmp_path):
+    assert pkg._org_profile_mcp_servers(tmp_path / "nope") == {}
+
+
+def test_apply_mcp_policy_emits_all_declared(tmp_path):
+    build = _build_with_mcp(
+        tmp_path,
+        "mcp:\n  servers:\n    acme-sast:\n      url: ${SAST_URL}\n    acme-sca:\n      command: /bin/sca\n",
+    )
+    result = pkg.apply_mcp_policy(build, {})
+    assert result == {"included": ["acme-sast", "acme-sca"], "removed": []}
+    data = json.loads((build / pkg.MCP_CONFIG).read_text())
+    assert set(data["mcpServers"]) == {"acme-sast", "acme-sca"}
+    assert data["mcpServers"]["acme-sast"]["url"] == "${SAST_URL}"
+
+
+def test_apply_mcp_policy_allowlist_narrows(tmp_path):
+    build = _build_with_mcp(
+        tmp_path,
+        "mcp:\n  servers:\n    acme-sast:\n      url: ${SAST_URL}\n    acme-sca:\n      command: /bin/sca\n",
+    )
+    result = pkg.apply_mcp_policy(build, {"mcp_servers": {"include": ["acme-sast"]}})
+    assert result == {"included": ["acme-sast"], "removed": ["acme-sca"]}
+    data = json.loads((build / pkg.MCP_CONFIG).read_text())
+    assert set(data["mcpServers"]) == {"acme-sast"}
+
+
+def test_apply_mcp_policy_no_servers_writes_no_file(tmp_path):
+    build = _build_with_mcp(tmp_path, "")
+    result = pkg.apply_mcp_policy(build, {})
+    assert result == {"included": [], "removed": []}
+    assert not (build / pkg.MCP_CONFIG).exists()
+
+
+def test_apply_mcp_policy_exclude_all_removes_stale_file(tmp_path):
+    build = _build_with_mcp(
+        tmp_path, "mcp:\n  servers:\n    acme-sast:\n      url: ${SAST_URL}\n"
+    )
+    (build / pkg.MCP_CONFIG).write_text('{"mcpServers": {"stale": {}}}', encoding="utf-8")
+    result = pkg.apply_mcp_policy(build, {"mcp_servers": {"exclude": ["acme-sast"]}})
+    assert result == {"included": [], "removed": ["acme-sast"]}
+    assert not (build / pkg.MCP_CONFIG).exists()
+
+
+def test_policy_surface_accepts_mcp_servers():
+    assert pkg._policy_surface({"plugin_surface": {"mcp_servers": {"include": ["x"]}}}) == {
+        "mcp_servers": {"include": ["x"]}
+    }
+
+
+def test_write_surface_manifest_includes_mcp_servers(tmp_path):
+    build = tmp_path / "b"
+    build.mkdir()
+    pkg.write_surface_manifest(build, None, {}, {}, mcp_servers={"included": ["acme-sast"], "removed": []})
+    data = json.loads((build / pkg.SURFACE_MANIFEST).read_text())
+    assert data["mcp_servers"] == {"included": ["acme-sast"], "removed": []}
+
+
+# ---------------------------------------------------------------------------
 # rewrite_namespace / check_namespace_leaks
 # ---------------------------------------------------------------------------
 

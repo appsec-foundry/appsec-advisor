@@ -12,6 +12,8 @@ and then enforces semantic rules that JSON Schema alone cannot express:
   * target.output_dir tokens are whitelisted and must not resolve into
     PLUGIN_ROOT or .git/
   * requirements_yaml_url must not embed credentials (user:pass@host)
+  * mcp.servers entries must set url or command, and a server url must not
+    embed credentials (secrets belong in ${ENV_VAR} headers)
   * skill_toggles keys must be known plugin skills
   * compatibility.core range must accept the current plugin version
 
@@ -228,6 +230,30 @@ def _check_requirements_url(profile: dict) -> list[str]:
     return errors
 
 
+def _check_mcp(profile: dict) -> list[str]:
+    """Structural checks for the mcp.servers block that JSON Schema cannot express:
+    each server must be reachable (url or command), and a server url must not
+    embed credentials — tokens belong in ${ENV_VAR} headers, not the URL."""
+    errors: list[str] = []
+    servers = ((profile.get("mcp") or {}).get("servers")) or {}
+    for name, cfg in servers.items():
+        if not isinstance(cfg, dict):
+            continue
+        url = cfg.get("url")
+        command = cfg.get("command")
+        has_url = isinstance(url, str) and url
+        has_command = isinstance(command, str) and command
+        if not has_url and not has_command:
+            errors.append(f"mcp: server '{name}' must set either 'url' or 'command'")
+        if has_url:
+            parsed = urlparse(url)
+            if parsed.username or parsed.password or "@" in (parsed.netloc or ""):
+                errors.append(
+                    f"mcp: server '{name}' url must not embed credentials; use a ${{ENV_VAR}} header instead"
+                )
+    return errors
+
+
 def _check_skill_toggles(profile: dict) -> list[str]:
     errors: list[str] = []
     toggles = profile.get("skill_toggles") or {}
@@ -329,6 +355,7 @@ def validate(profile: Any, profile_dir: Path, plugin_version: str | None = None)
     errors += _check_preset_context_refs(profile)
     errors += _check_target_rules(profile)
     errors += _check_requirements_url(profile)
+    errors += _check_mcp(profile)
     errors += _check_skill_toggles(profile)
     errors += _check_compatibility(profile, plugin_version or _read_plugin_version())
     errors += _check_abuse_cases(profile, profile_dir)

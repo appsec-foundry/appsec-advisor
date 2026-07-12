@@ -267,6 +267,17 @@ Supported hook IDs today:
 
 `create-threat-model` is required and cannot be removed by package policy. Unknown names fail the build so typos do not silently produce the wrong internal artifact.
 
+If the org profile declares an [`mcp` block](org-profiles.md#mcp-servers), a third surface, `mcp_servers`, narrows which of those servers are emitted into the packaged `.mcp.json`. Every declared server is included by default; use an allowlist to restrict them:
+
+```yaml
+plugin_surface:
+  mcp_servers:
+    include:
+      - acme-sast
+```
+
+The included/removed servers are recorded in `package-surface.json` alongside skills and hooks, and the smoke test verifies them against the packaged `.mcp.json`.
+
 ## Step 3 - Build and validate
 
 Make sure `upstream/appsec-advisor/` exists. With Option 1 from Step 1, clone it locally:
@@ -297,7 +308,7 @@ $ python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
 
 The build writes the plugin to `build/acme-appsec/` and creates `dist/acme-appsec-${INTERNAL_VERSION}.tgz` with a `.sha256` checksum. It also validates the profile, package policy, and renamed command namespace.
 
-Every build writes `.claude-plugin/package-surface.json` into the packaged tree. It records the included and removed skills/hooks so CI and reviewers can verify the artifact surface without reverse-engineering the copied files.
+Every build writes `.claude-plugin/package-surface.json` into the packaged tree. It records the included and removed skills, hooks, and MCP servers so CI and reviewers can verify the artifact surface without reverse-engineering the copied files.
 
 Run the smoke test after every build. It checks the plugin identity, org-profile wiring, namespace rewrite, and the package-surface manifest when present:
 

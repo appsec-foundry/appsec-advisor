@@ -151,6 +151,18 @@ def check_surface_manifest(root: Path) -> None:
         if (root / "hooks" / "steering_keywords.json").exists():
             _die("package surface removed security-coach but steering_keywords.json is still present")
 
+    mcp = data.get("mcp_servers") or {}
+    mcp_path = root / ".mcp.json"
+    declared: set[str] = set()
+    if mcp_path.is_file():
+        declared = set((json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {}))
+    for server in mcp.get("included") or []:
+        if server not in declared:
+            _die(f"package surface says MCP server {server!r} is included, but it is not in .mcp.json")
+    for server in mcp.get("removed") or []:
+        if server in declared:
+            _die(f"package surface says MCP server {server!r} is removed, but it is present in .mcp.json")
+
 
 def check_artifact_hygiene(root: Path) -> None:
     """Reject local runtime state, dependency trees, and personal paths."""

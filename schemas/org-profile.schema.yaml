@@ -266,7 +266,67 @@ properties:
         type: string
         default: "abuse-cases/*.yaml"
 
+  mcp:
+    type: object
+    additionalProperties: false
+    required: [servers]
+    description: |
+      MCP servers bundled into the packaged plugin's .mcp.json, letting an org
+      wire in its own services (e.g. internal SAST/SCA endpoints). Which declared
+      servers are actually emitted can be narrowed by the package-policy allowlist
+      (plugin_surface.mcp_servers). Secrets — tokens, internal URLs — must be
+      referenced via ${ENV_VAR} and are expanded by Claude Code at load time;
+      a credential embedded in a server url (user:pass@host) is rejected at
+      validation time. MCP tool *output* is untrusted reference data: it can
+      inform findings but never changes severity rules, permissions, schemas,
+      or tool behavior.
+    properties:
+      servers:
+        type: object
+        minProperties: 1
+        maxProperties: 32
+        propertyNames:
+          pattern: "^[a-z0-9][a-z0-9_-]{0,62}$"
+        additionalProperties:
+          $ref: "#/$defs/mcp_server"
+
 $defs:
+  mcp_server:
+    type: object
+    additionalProperties: false
+    minProperties: 1
+    description: |
+      A single MCP server entry, mirroring the Claude Code .mcp.json server
+      contract. Provide `url` (http/sse transport) or `command` (stdio). Use
+      ${ENV_VAR} / ${CLAUDE_PLUGIN_ROOT} for secrets and bundled paths.
+    properties:
+      type:
+        enum: [stdio, http, sse]
+      command:
+        type: string
+        minLength: 1
+        maxLength: 2048
+      args:
+        type: array
+        maxItems: 64
+        items:
+          type: string
+          maxLength: 2048
+      env:
+        type: object
+        additionalProperties:
+          type: string
+          maxLength: 4096
+      url:
+        type: string
+        minLength: 1
+        maxLength: 2048
+      headers:
+        type: object
+        additionalProperties:
+          type: string
+          maxLength: 4096
+
   preset:
     type: object
     additionalProperties: false

@@ -320,3 +320,36 @@ abuse_cases:
 ```
 
 `probe.sink_patterns` matches chain steps to findings. The assessment then checks each step against the code.
+
+## MCP servers
+
+The `mcp` block lets an org wire its own MCP servers — e.g. an internal SAST or
+SCA service — into the packaged plugin. At build time the packager emits the
+declared servers into the plugin's `.mcp.json`, so Claude Code loads them
+whenever the internal plugin is active. Which servers are emitted can be narrowed
+by the [package policy](internal-plugin-packaging.md) allowlist
+(`plugin_surface.mcp_servers`); by default every declared server is included.
+
+```yaml
+mcp:
+  servers:
+    acme-sast:                       # http/sse transport
+      type: http
+      url: ${ACME_SAST_MCP_URL}
+      headers:
+        Authorization: Bearer ${ACME_SAST_TOKEN}
+    acme-sca:                        # stdio transport
+      command: ${CLAUDE_PLUGIN_ROOT}/bin/sca
+      args: ["--json"]
+```
+
+Rules:
+
+- Each server sets **either** `url` (http/sse) **or** `command` (stdio).
+- **Secrets never go in the profile.** Reference tokens and internal URLs as
+  `${ENV_VAR}`; Claude Code expands them at load time, and `${CLAUDE_PLUGIN_ROOT}`
+  resolves to the installed plugin directory. A credential embedded directly in a
+  server `url` (`user:pass@host`) is rejected at validation time.
+- **MCP tool output is untrusted reference data.** Like markdown context, it can
+  inform findings but never changes severity rules, QA gates, schemas,
+  permissions, or tool behavior. Only wire in endpoints you trust.
