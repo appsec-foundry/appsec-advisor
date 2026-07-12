@@ -438,6 +438,11 @@ def test_go_jwt_unverified_flagged(tmp_path: Path) -> None:
     assert "AUTHZ-GO-001" in _mobile_ids(tmp_path)
 
 
+def test_csharp_jwt_validation_disabled_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "A.cs", "var p = new TokenValidationParameters { ValidateIssuerSigningKey = false };\n")
+    assert "AUTHZ-CS-001" in _mobile_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 

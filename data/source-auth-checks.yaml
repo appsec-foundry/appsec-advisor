@@ -1436,3 +1436,20 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "Skipping signature verification lets an attacker forge a token and impersonate any user."
     remediation: "Use jwt.Parse with a keyfunc that pins the expected signing method; reject `none`."
+
+  - id: AUTHZ-CS-001
+    name: "JWT signature validation disabled — C#"
+    description: >
+      TokenValidationParameters with `ValidateIssuerSigningKey = false` or
+      `RequireSignedTokens = false` accepts a forged/unsigned token.
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/*Tests.cs", "**/*.Tests/**", "**/obj/**", "**/bin/**"]
+    pattern: 'ValidateIssuerSigningKey\s*=\s*false|RequireSignedTokens\s*=\s*false'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-347
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "Disabling signing-key validation lets an attacker forge a token and impersonate any user."
+    remediation: "Set ValidateIssuerSigningKey = true and RequireSignedTokens = true with a pinned key/algorithm."
