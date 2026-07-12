@@ -71,7 +71,7 @@ clusters:
   - id: missing_authz
     label: Missing Authorization
     plural_label: Authorization Gaps
-    cwes: [CWE-285, CWE-639, CWE-269, CWE-352, CWE-862, CWE-863, CWE-732]
+    cwes: [CWE-285, CWE-639, CWE-269, CWE-352, CWE-862, CWE-863, CWE-732, CWE-915]
     variants_by_cwe:
       CWE-285: missing authz
       CWE-639: IDOR
@@ -80,6 +80,7 @@ clusters:
       CWE-862: missing
       CWE-863: incorrect
       CWE-732: permission
+      CWE-915: mass assignment
     preferred_tier: application
     stride: [Elevation of Privilege, Tampering]
 
