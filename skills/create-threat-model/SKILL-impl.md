@@ -2902,6 +2902,8 @@ This is where the existing `pregenerate_fragments.py || true` + `check_inline_sh
 
 ### Handling turn-budget cut-offs
 
+**A stream-watchdog stall counts as a cut-off (any `Agent` dispatch).** A killed call returning a stall/stream error (`no progress … did not recover`) is API latency, not a plugin defect. First emit the shared calm banner — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stall_notice.py" "$OUTPUT_DIR" --stage "<label>"` (never hand-type "stalled … re-dispatching") — then run the detection below; never free-hand a fresh dispatch (it bypasses the `MAX_STAGE1_RESUMES` cap).
+
 Thorough-depth runs whose criteria selection yields the full inventory (commonly ~8 STRIDE analyzers; bounded by the `MAX_STRIDE_COMPONENTS` operational ceiling) routinely touch the Claude Code agent turn budget (observed at ~90 tool calls per agent session in `claude -p` headless mode). When the budget is hit, the Agent call returns control to the skill *before* Phase 11 finalization runs, typically mid-Phase-9 or mid-Phase-10. Two concrete symptoms:
 
 1. The agent's final text ends with something like `"All 8 STRIDE files ready. Proceeding to merge."` without a closing `ASSESSMENT_END` log entry.

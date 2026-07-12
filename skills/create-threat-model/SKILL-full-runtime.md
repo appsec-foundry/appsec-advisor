@@ -228,6 +228,11 @@ Read `SKILL-impl.md` starting exactly at
 `<!-- LAZY-LOAD BOUNDARY` marker. Do not read any earlier part of that file.
 Follow the Stage 1 and Stage 1c instructions with the aliases above.
 
+If a Stage-1 dispatch returns as a stall/stream-watchdog failure instead of
+completing, it is still a return: emit `stall_notice.py "$OUTPUT_DIR" --stage
+"Stage 1"` for the shared banner, then follow the past-boundary "Handling
+turn-budget cut-offs" recovery — do not re-dispatch on your own.
+
 When those instructions say to start the heartbeat watchdog, use this exact
 fixed command with `run_in_background: true` and retain its task id:
 
