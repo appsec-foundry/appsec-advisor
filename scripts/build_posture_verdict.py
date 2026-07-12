@@ -143,13 +143,17 @@ def build_posture_verdict(yaml_data: dict, rubric: dict | None = None) -> list[d
     rows: list[dict] = []
     for theme, b in agg.items():
         confirmed = b["confirmed_instances"] > 0
+        # A bucket only exists when a weakness or a confirmed instance mapped to
+        # this theme, so it is never signal-free: the base verdict is VIOLATED
+        # (confirmed / pervasive home-grown) or otherwise WEAK. ADEQUATE is NOT
+        # asserted from absence of signal — we do not judge a principle we have
+        # no evidence for — it arises ONLY when an exculpatory vetted control
+        # covers a would-be-WEAK gap with no confirmed instance (rubric:
+        # "control adequate, no confirmed instances, standard-vetted").
         if confirmed or b["pervasive_homegrown"]:
             verdict = "VIOLATED"
-        elif b["weakness_ids"] or b["confirmed_instances"]:
-            verdict = "WEAK"
         else:
-            verdict = "ADEQUATE"
-        # An exculpatory vetted control with no confirmed instance softens WEAK.
+            verdict = "WEAK"
         if verdict == "WEAK" and exculpatory in b["strategies"] and not confirmed:
             verdict = "ADEQUATE"
 

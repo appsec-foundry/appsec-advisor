@@ -2785,3 +2785,38 @@ class TestTopFindingsDesignRiskRow:
         assert w[0]["component_name"] == "api"  # first affected component (raw fallback)
         # confirmed threat still renders as a normal F-row
         assert any(r["finding_id"] == "F-001" for r in rows)
+
+
+class TestRiskDistributionCounts:
+    """Verdict Risk-distribution tally: design-risk weaknesses visible, no double-count."""
+
+    def test_design_risk_weakness_counted(self):
+        yd = {
+            "threats": [{"risk": "High", "evidence_tier": "confirmed-exploitable"}],
+            "weaknesses": [{"id": "W-001", "kind": "design", "severity": "Critical",
+                            "severity_basis": "design-risk"}],
+        }
+        c = compose._risk_distribution_counts(yd)
+        assert c["critical"] == 1  # the design-risk weakness — now visible
+        assert c["high"] == 1  # the confirmed threat
+
+    def test_confirmed_weakness_not_double_counted(self):
+        # A confirmed weakness is represented by its instance in threats[]; the
+        # heading must NOT be re-added.
+        yd = {
+            "threats": [{"risk": "Critical", "evidence_tier": "confirmed-exploitable"}],
+            "weaknesses": [{"id": "W-001", "kind": "design", "severity": "Critical",
+                            "severity_basis": "confirmed"}],
+        }
+        assert compose._risk_distribution_counts(yd)["critical"] == 1
+
+    def test_folded_practice_excluded_weakness_counted_once(self):
+        yd = {
+            "threats": [{"risk": "High", "evidence_tier": "insecure-practice"}],
+            "weaknesses": [{"id": "W-001", "kind": "implementation", "severity": "High",
+                            "severity_basis": "design-risk"}],
+        }
+        assert compose._risk_distribution_counts(yd)["high"] == 1
+
+    def test_no_weaknesses_counts_threats_plainly(self):
+        assert compose._risk_distribution_counts({"threats": [{"risk": "High"}]})["high"] == 1

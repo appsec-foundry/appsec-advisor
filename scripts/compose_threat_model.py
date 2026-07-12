@@ -2612,6 +2612,36 @@ def _weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | No
     return (confirmed + implementation + design, confirmed, implementation, design)
 
 
+def _risk_distribution_counts(yaml_data: dict) -> dict[str, int]:
+    """Severity tally for the verdict's Risk-distribution line.
+
+    Folded insecure-practice sites are excluded (they live under a weakness's
+    practice_evidence, not as standalone findings). A `design-risk` weakness is
+    added once at its heading severity: it has NO confirmed instance in
+    threats[], so a design-risk Critical (which may rank #1 per §9.3) would
+    otherwise be invisible here. `confirmed` weaknesses are already represented
+    by their instances in threats[] and are NOT re-added (no double-count).
+    """
+    fold_practice = _weakness_basis_breakdown(yaml_data) is not None
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for t in yaml_data.get("threats") or []:
+        if fold_practice and (t.get("evidence_tier") == "insecure-practice"):
+            continue
+        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+        if sev in counts:
+            counts[sev] += 1
+        elif sev in ("informational", "information"):
+            counts["info"] += 1
+    if fold_practice:
+        for w in yaml_data.get("weaknesses") or []:
+            if (w.get("severity_basis") or "") != "design-risk":
+                continue
+            sev = (w.get("severity") or "").strip().lower()
+            if sev in counts:
+                counts[sev] += 1
+    return counts
+
+
 def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     data = _load_fragment(ctx, "verdict", section["fragment"])
     _validate_fragment("verdict", data, section["schema"])
@@ -2623,16 +2653,7 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     # sites live under their weakness (practice_evidence) and are NOT standalone
     # findings, so exclude them from the severity tally to keep Total honest.
     _breakdown = _weakness_basis_breakdown(ctx.yaml_data)
-    _fold_practice = _breakdown is not None
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-    for t in ctx.yaml_data.get("threats") or []:
-        if _fold_practice and (t.get("evidence_tier") == "insecure-practice"):
-            continue
-        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
-        if sev in counts:
-            counts[sev] += 1
-        elif sev in ("informational", "information"):
-            counts["info"] += 1
+    counts = _risk_distribution_counts(ctx.yaml_data)
     total = sum(counts.values())
     rd_parts = [
         f"🔴 Critical: {counts['critical']}",
