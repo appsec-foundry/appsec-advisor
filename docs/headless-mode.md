@@ -501,7 +501,7 @@ The headless script bypasses interactive permission prompts and uses a fixed too
 
 **Concurrency.** `.appsec-lock` prevents overlapping runs against the same output directory.
 
-**Claude Code permissions.** Headless runs require the tool allow-list to be written into the target repository before the first run. Use `make setup-target REPO=<path>` (or `/appsec-advisor:check-permissions` inside a CC session) to write `.claude/settings.json` into the target repo.
+**Claude Code permissions.** Headless runs require the tool allow-list to be written into the target repository before the first run. Use `make setup-target REPO=<path>` (or `/appsec-advisor:check-permissions` inside a CC session) to write `.claude/settings.local.json` into the target repo (pass `SCOPE=project` to write `.claude/settings.json` instead).
 
 <a id="exit-codes"></a>
 

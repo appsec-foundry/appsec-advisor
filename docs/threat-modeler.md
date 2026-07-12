@@ -371,7 +371,7 @@ Use these commands after an assessment or to recover an interrupted run.
 Outside of a Claude Code session (e.g. in CI setup), use the equivalent Makefile target:
 
 ```sh
-make setup-target [REPO=<path>] [SCOPE=project|local|user]
+make setup-target [REPO=<path>] [SCOPE=local|project|user]
 ```
 
-`REPO` defaults to the current directory. `SCOPE` controls which `settings.json` file is written (`project` = `.claude/settings.json`, default).
+`REPO` defaults to the current directory. `SCOPE` controls which settings file is written (`local` = `.claude/settings.local.json`, default; `project` = `.claude/settings.json`; `user` = `~/.claude/settings.json`).
