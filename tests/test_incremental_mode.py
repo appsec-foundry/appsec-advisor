@@ -2352,13 +2352,17 @@ class TestThreatModelHealth:
 
     def test_plugin_drift_is_stale(self, repo_with_baseline):
         repo, outdir = repo_with_baseline
-        # Rewind the baseline plugin_version so the current-vs-baseline
-        # tier becomes minor.
+        # Rewind the baseline plugin_version to a version that is unambiguously a
+        # MINOR bump behind the current plugin version, so the drift is stale
+        # regardless of a `-dev` pre-release suffix on the current version.
+        # (Rewinding to the same minor, e.g. '0.5.0' while current is
+        # '0.5.0-dev', is only a *patch*-tier change → fresh, not what this test
+        # asserts. Use a lower minor so `_classify_plugin_version` -> "minor".)
         yaml_path = outdir / "threat-model.yaml"
         text = yaml_path.read_text()
         import re as _re
 
-        text = _re.sub(r"plugin_version: '[^']+'", "plugin_version: '0.5.0'", text)
+        text = _re.sub(r"plugin_version: '[^']+'", "plugin_version: '0.4.0'", text)
         yaml_path.write_text(text)
         _run_baseline(
             [
