@@ -179,6 +179,12 @@ finding_types:
     cwe_any: [CWE-327]
     title_hints: ["ECB", "cipher mode"]
 
+  - id: FT-175
+    name: "Insecure WebView JS Bridge"
+    parent_category: TH-03
+    cwe_any: [CWE-749]
+    title_hints: ["addJavascriptInterface", "WebView", "JS bridge"]
+
   # ---------- File Handling ----------
   - id: FT-060
     name: "Path Traversal / ZIP Slip"

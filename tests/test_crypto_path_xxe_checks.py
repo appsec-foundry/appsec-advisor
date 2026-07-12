@@ -328,6 +328,47 @@ def test_ruby_path_traversal_flagged(tmp_path: Path) -> None:
     assert "INJ-RB-004" in _inj_ids(tmp_path)
 
 
+# --- multi-stack: Android (Phase C, mobile) ---------------------------------
+
+
+def _mobile_ids(tmp_path: Path) -> set[str]:
+    findings = S.scan_repo(tmp_path, S.load_checks(SOURCE_AUTH))
+    return {f.check_id for f in findings}
+
+
+def test_kotlin_md5_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "H.kt", 'val md = MessageDigest.getInstance("MD5")\n')
+    assert "CRYPTO-KT-001" in _crypto_ids(tmp_path)
+
+
+def test_kotlin_random_token_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "T.kt", 'val token = Random().nextInt(9999).toString()\n')
+    assert "CRYPTO-KT-002" in _crypto_ids(tmp_path)
+
+
+def test_android_sqlite_injection_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "D.kt", 'db.rawQuery("SELECT * FROM u WHERE n=\'" + name + "\'", null)\n')
+    assert "MOBILE-AND-001" in _mobile_ids(tmp_path)
+
+
+def test_android_insecure_storage_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "S.kt", 'prefs.edit().putString("auth_token", token).apply()\n')
+    assert "MOBILE-AND-002" in _mobile_ids(tmp_path)
+
+
+def test_android_encrypted_prefs_suppressed(tmp_path: Path) -> None:
+    # Counter is forward/same-line only (scanner window semantics), so the
+    # fluent-chained EncryptedSharedPreferences form is what gets suppressed.
+    _write(tmp_path, "S.kt",
+           'EncryptedSharedPreferences.create(ctx, ...).edit().putString("auth_token", token).apply()\n')
+    assert "MOBILE-AND-002" not in _mobile_ids(tmp_path)
+
+
+def test_android_webview_bridge_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "W.kt", 'webView.addJavascriptInterface(JsBridge(), "Android")\n')
+    assert "MOBILE-AND-003" in _mobile_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 
