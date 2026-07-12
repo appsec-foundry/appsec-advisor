@@ -229,6 +229,39 @@ def test_go_path_traversal_flagged(tmp_path: Path) -> None:
     assert "INJ-GO-004" in _inj_ids(tmp_path)
 
 
+# --- multi-stack: C#/.NET (Phase B) -----------------------------------------
+
+
+def test_csharp_md5_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "H.cs", "using (var md5 = MD5.Create()) { }\n")
+    assert "CRYPTO-CS-001" in _crypto_ids(tmp_path)
+
+
+def test_csharp_random_token_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "T.cs", "var token = new Random().Next().ToString();\n")
+    assert "CRYPTO-CS-002" in _crypto_ids(tmp_path)
+
+
+def test_csharp_sqli_interpolated_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "R.cs", 'ctx.Users.FromSqlRaw($"SELECT * FROM Users WHERE Name = \'{name}\'");\n')
+    assert "INJ-CS-001" in _inj_ids(tmp_path)
+
+
+def test_csharp_command_injection_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "C.cs", 'Process.Start("ping " + host);\n')
+    assert "INJ-CS-002" in _inj_ids(tmp_path)
+
+
+def test_csharp_ssrf_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "S.cs", 'var r = await client.GetStringAsync($"http://{host}/api");\n')
+    assert "INJ-CS-003" in _inj_ids(tmp_path)
+
+
+def test_csharp_path_traversal_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "P.cs", 'var txt = File.ReadAllText("/data/" + name);\n')
+    assert "INJ-CS-004" in _inj_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 
