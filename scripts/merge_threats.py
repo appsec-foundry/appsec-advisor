@@ -460,9 +460,7 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
     }
 
 
-def _load_source_auth_findings(
-    output_dir: Path, filename: str = ".source-auth-findings.json"
-) -> list[dict]:
+def _load_source_auth_findings(output_dir: Path, filename: str = ".source-auth-findings.json") -> list[dict]:
     """Load a source-auth-findings-shaped sidecar and convert each finding into
     a merged-threats threat record. Default file is
     `.source-auth-findings.json` (scripts/source_auth_scanner.py); the same
@@ -1650,9 +1648,7 @@ def _first_evidence(t: dict) -> dict:
 # exploitability (actual cracking / forgery) is not statically established — so
 # it is insecure-practice, never confirmed-exploitable, and folds under a
 # weak_crypto weakness rather than standing as a proven vuln (proposal §3/§4a).
-_PRACTICE_TIER_CWES = frozenset(
-    {"CWE-327", "CWE-328", "CWE-329", "CWE-330", "CWE-916", "CWE-326"}
-)
+_PRACTICE_TIER_CWES = frozenset({"CWE-327", "CWE-328", "CWE-329", "CWE-330", "CWE-916", "CWE-326"})
 
 
 def _instance_evidence_tier(t: dict) -> str:
@@ -1786,9 +1782,7 @@ def build_weakness_register(
         # schema validation. Fall back to CWE-derived classification.
         _raw_wc = (ds.get("weakness_class") or "").strip()
         _valid_wc = {c.get("id") for c in (vocab.get("clusters") or [])}
-        wcid = _raw_wc if _raw_wc in _valid_wc else classify_cwe(
-            ds.get("cwe") or "", vocab, warn=False
-        )
+        wcid = _raw_wc if _raw_wc in _valid_wc else classify_cwe(ds.get("cwe") or "", vocab, warn=False)
         b = _bucket(wcid)
         for a in ds.get("absent_control_signal") or ds.get("controls_absent_evidence") or []:
             b["absent"].append(a)
@@ -1862,9 +1856,10 @@ def build_weakness_register(
         if resolved_strategy == "standard-vetted" and severity_basis != "confirmed":
             severity = _lower_severity(severity)
 
-        statement = b["statements"][0] if b["statements"] else (
-            f"Recurring {wcid.replace('_', ' ')} handling across "
-            f"{spread} component(s) with no central control."
+        statement = (
+            b["statements"][0]
+            if b["statements"]
+            else (f"Recurring {wcid.replace('_', ' ')} handling across {spread} component(s) with no central control.")
         )
 
         observable_backing: dict = {}
@@ -1963,9 +1958,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     # per class. Runs AFTER _assign_t_ids so instances[] reference real T-ids.
     # Additive: `threats[]` is untouched. `weaknesses` omitted when empty so
     # legacy consumers and golden diffs are unaffected until a signal exists.
-    weaknesses = build_weakness_register(
-        threats, _load_design_signals(out_dir), _load_impl_strategy(out_dir)
-    )
+    weaknesses = build_weakness_register(threats, _load_design_signals(out_dir), _load_impl_strategy(out_dir))
 
     payload = {
         "version": 1,

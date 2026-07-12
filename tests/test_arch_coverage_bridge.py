@@ -736,9 +736,14 @@ def test_build_design_signals_drops_speculation_without_backing():
     # I2 / §0: no observable absent-control signal → dropped, never shown.
     coverage = {
         "threat_hypotheses": [
-            {"hypothesis_id": "ARCH-HYP-XSS-009", "rule_id": "ARCH-XSS-001",
-             "cwe": "CWE-79", "proof_state": "control-derived", "confidence": "low",
-             "positive_signals": []}
+            {
+                "hypothesis_id": "ARCH-HYP-XSS-009",
+                "rule_id": "ARCH-XSS-001",
+                "cwe": "CWE-79",
+                "proof_state": "control-derived",
+                "confidence": "low",
+                "positive_signals": [],
+            }
         ]
     }
     signals, dropped = bridge.build_design_signals(coverage)
@@ -750,9 +755,14 @@ def test_build_design_signals_skips_confirmed_high():
     # Confirmed+high promotes to threats[] via select_and_build — not a signal.
     coverage = {
         "threat_hypotheses": [
-            {"hypothesis_id": "ARCH-HYP-1", "rule_id": "ARCH-SQLI-001", "cwe": "CWE-89",
-             "proof_state": "confirmed", "confidence": "high",
-             "positive_signals": [{"file": "a.ts", "line": 1, "signal": "x"}]}
+            {
+                "hypothesis_id": "ARCH-HYP-1",
+                "rule_id": "ARCH-SQLI-001",
+                "cwe": "CWE-89",
+                "proof_state": "confirmed",
+                "confidence": "high",
+                "positive_signals": [{"file": "a.ts", "line": 1, "signal": "x"}],
+            }
         ]
     }
     signals, _ = bridge.build_design_signals(coverage)
@@ -761,15 +771,27 @@ def test_build_design_signals_skips_confirmed_high():
 
 def test_emit_design_signals_cli(tmp_path):
     cov = tmp_path / ".architecture-coverage.json"
-    cov.write_text(json.dumps({"threat_hypotheses": [
-        {"hypothesis_id": "H1", "rule_id": "ARCH-SQLI-001", "cwe": "CWE-89",
-         "proof_state": "control-derived", "confidence": "low",
-         "positive_signals": [{"file": "a.ts", "line": 1, "signal": "x"}]}
-    ]}), encoding="utf-8")
+    cov.write_text(
+        json.dumps(
+            {
+                "threat_hypotheses": [
+                    {
+                        "hypothesis_id": "H1",
+                        "rule_id": "ARCH-SQLI-001",
+                        "cwe": "CWE-89",
+                        "proof_state": "control-derived",
+                        "confidence": "low",
+                        "positive_signals": [{"file": "a.ts", "line": 1, "signal": "x"}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     rc = subprocess.run(
-        [sys.executable, str(BRIDGE), "emit-design-signals",
-         "--input", str(cov), "--output-dir", str(tmp_path)],
-        capture_output=True, text=True,
+        [sys.executable, str(BRIDGE), "emit-design-signals", "--input", str(cov), "--output-dir", str(tmp_path)],
+        capture_output=True,
+        text=True,
     )
     assert rc.returncode == 0, rc.stderr
     out = json.loads((tmp_path / ".arch-design-signals.json").read_text())

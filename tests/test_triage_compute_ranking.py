@@ -938,17 +938,34 @@ def test_design_risk_weakness_enters_findings_ranked(tmp_path: Path) -> None:
     into findings_ranked as a W-NNN entry so it can top the ranking."""
     import triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
-    data = _minimal_yaml([
-        {"t_id": "T-001", "component": "api", "stride": "Tampering", "title": "SQL Injection (a.ts:1)",
-         "scenario": "x" * 12, "likelihood": "High", "impact": "High", "risk": "High",
-         "cwe": "CWE-89", "evidence": [{"file": "a.ts", "line": 1}]},
-    ])
-    data["weaknesses"] = [{
-        "id": "W-001", "weakness_class": "injection", "kind": "design", "severity": "Critical",
-        "severity_basis": "design-risk", "statement": "no central validation",
-        "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
-        "affected_components": ["api", "search", "admin"],
-    }]
+    data = _minimal_yaml(
+        [
+            {
+                "t_id": "T-001",
+                "component": "api",
+                "stride": "Tampering",
+                "title": "SQL Injection (a.ts:1)",
+                "scenario": "x" * 12,
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-89",
+                "evidence": [{"file": "a.ts", "line": 1}],
+            },
+        ]
+    )
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "severity": "Critical",
+            "severity_basis": "design-risk",
+            "statement": "no central validation",
+            "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
+            "affected_components": ["api", "search", "admin"],
+        }
+    ]
     _write_yaml(tmp_path / "threat-model.yaml", data)
     ranking = tcr.compute_ranking(tmp_path, PLUGIN_ROOT)
     ranked = ranking["views"]["top_findings"]["findings_ranked"]
@@ -965,17 +982,34 @@ def test_confirmed_weakness_not_double_ranked(tmp_path: Path) -> None:
     it must NOT be added as a separate W-NNN ranked entry."""
     import triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
-    data = _minimal_yaml([
-        {"t_id": "T-001", "component": "api", "stride": "Tampering", "title": "SQL Injection (a.ts:1)",
-         "scenario": "x" * 12, "likelihood": "High", "impact": "High", "risk": "High",
-         "cwe": "CWE-89", "evidence": [{"file": "a.ts", "line": 1}]},
-    ])
-    data["weaknesses"] = [{
-        "id": "W-001", "weakness_class": "injection", "kind": "design", "severity": "High",
-        "severity_basis": "confirmed", "statement": "folded",
-        "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
-        "instances": [{"id": "T-001", "basis": "confirmed-exploitable"}],
-    }]
+    data = _minimal_yaml(
+        [
+            {
+                "t_id": "T-001",
+                "component": "api",
+                "stride": "Tampering",
+                "title": "SQL Injection (a.ts:1)",
+                "scenario": "x" * 12,
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-89",
+                "evidence": [{"file": "a.ts", "line": 1}],
+            },
+        ]
+    )
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "severity": "High",
+            "severity_basis": "confirmed",
+            "statement": "folded",
+            "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
+            "instances": [{"id": "T-001", "basis": "confirmed-exploitable"}],
+        }
+    ]
     _write_yaml(tmp_path / "threat-model.yaml", data)
     ranking = tcr.compute_ranking(tmp_path, PLUGIN_ROOT)
     ranked = ranking["views"]["top_findings"]["findings_ranked"]

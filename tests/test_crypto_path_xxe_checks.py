@@ -87,7 +87,7 @@ def test_java_random_token_flagged(tmp_path: Path) -> None:
 
 
 def test_java_securerandom_token_suppressed(tmp_path: Path) -> None:
-    _write(tmp_path, "T.java", 'byte[] token = new byte[32]; new SecureRandom().nextBytes(token);\n')
+    _write(tmp_path, "T.java", "byte[] token = new byte[32]; new SecureRandom().nextBytes(token);\n")
     assert "CRYPTO-JAVA-002" not in _crypto_ids(tmp_path)
 
 
@@ -125,10 +125,22 @@ def test_java_python_crypto_fold_into_one_weakness(tmp_path: Path) -> None:
     import merge_threats as mt  # noqa: E402
 
     threats = [
-        {"t_id": "T-001", "source": "source-scan", "cwe": "CWE-328", "component_id": "svc",
-         "risk": "Medium", "evidence": {"file": "H.java", "line": 3}},
-        {"t_id": "T-002", "source": "source-scan", "cwe": "CWE-330", "component_id": "svc",
-         "risk": "High", "evidence": {"file": "t.py", "line": 5}},
+        {
+            "t_id": "T-001",
+            "source": "source-scan",
+            "cwe": "CWE-328",
+            "component_id": "svc",
+            "risk": "Medium",
+            "evidence": {"file": "H.java", "line": 3},
+        },
+        {
+            "t_id": "T-002",
+            "source": "source-scan",
+            "cwe": "CWE-330",
+            "component_id": "svc",
+            "risk": "High",
+            "evidence": {"file": "t.py", "line": 5},
+        },
     ]
     w = mt.build_weakness_register(threats, [], {})
     assert len(w) == 1
@@ -140,14 +152,16 @@ def test_java_python_crypto_fold_into_one_weakness(tmp_path: Path) -> None:
 
 
 def test_java_sqli_concat_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "R.java",
-           'Query q = em.createQuery("SELECT u FROM User u WHERE u.name=\'" + name + "\'");\n')
+    _write(tmp_path, "R.java", 'Query q = em.createQuery("SELECT u FROM User u WHERE u.name=\'" + name + "\'");\n')
     assert "INJ-JAVA-001" in _inj_ids(tmp_path)
 
 
 def test_java_sqli_parameterized_suppressed(tmp_path: Path) -> None:
-    _write(tmp_path, "R.java",
-           'Query q = em.createQuery("SELECT u FROM User u WHERE u.name=:n").setParameter("n", name);\n')
+    _write(
+        tmp_path,
+        "R.java",
+        'Query q = em.createQuery("SELECT u FROM User u WHERE u.name=:n").setParameter("n", name);\n',
+    )
     assert "INJ-JAVA-001" not in _inj_ids(tmp_path)
 
 
@@ -157,7 +171,7 @@ def test_java_command_injection_flagged(tmp_path: Path) -> None:
 
 
 def test_python_sqli_fstring_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "r.py", 'cursor.execute(f"SELECT * FROM users WHERE name = \'{name}\'")\n')
+    _write(tmp_path, "r.py", "cursor.execute(f\"SELECT * FROM users WHERE name = '{name}'\")\n")
     assert "INJ-PY-001" in _inj_ids(tmp_path)
 
 
@@ -210,7 +224,7 @@ def test_go_math_rand_token_flagged(tmp_path: Path) -> None:
 
 
 def test_go_sqli_sprintf_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "r.go", 'rows, _ := db.Query(fmt.Sprintf("SELECT * FROM u WHERE n=\'%s\'", name))\n')
+    _write(tmp_path, "r.go", "rows, _ := db.Query(fmt.Sprintf(\"SELECT * FROM u WHERE n='%s'\", name))\n")
     assert "INJ-GO-001" in _inj_ids(tmp_path)
 
 
@@ -243,7 +257,7 @@ def test_csharp_random_token_flagged(tmp_path: Path) -> None:
 
 
 def test_csharp_sqli_interpolated_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "R.cs", 'ctx.Users.FromSqlRaw($"SELECT * FROM Users WHERE Name = \'{name}\'");\n')
+    _write(tmp_path, "R.cs", "ctx.Users.FromSqlRaw($\"SELECT * FROM Users WHERE Name = '{name}'\");\n")
     assert "INJ-CS-001" in _inj_ids(tmp_path)
 
 
@@ -309,7 +323,7 @@ def test_ruby_rand_token_flagged(tmp_path: Path) -> None:
 
 
 def test_ruby_sqli_interpolation_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "r.rb", 'User.where("name = \'#{params[:name]}\'")\n')
+    _write(tmp_path, "r.rb", "User.where(\"name = '#{params[:name]}'\")\n")
     assert "INJ-RB-001" in _inj_ids(tmp_path)
 
 
@@ -342,7 +356,7 @@ def test_kotlin_md5_flagged(tmp_path: Path) -> None:
 
 
 def test_kotlin_random_token_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "T.kt", 'val token = Random().nextInt(9999).toString()\n')
+    _write(tmp_path, "T.kt", "val token = Random().nextInt(9999).toString()\n")
     assert "CRYPTO-KT-002" in _crypto_ids(tmp_path)
 
 
@@ -359,8 +373,9 @@ def test_android_insecure_storage_flagged(tmp_path: Path) -> None:
 def test_android_encrypted_prefs_suppressed(tmp_path: Path) -> None:
     # Counter is forward/same-line only (scanner window semantics), so the
     # fluent-chained EncryptedSharedPreferences form is what gets suppressed.
-    _write(tmp_path, "S.kt",
-           'EncryptedSharedPreferences.create(ctx, ...).edit().putString("auth_token", token).apply()\n')
+    _write(
+        tmp_path, "S.kt", 'EncryptedSharedPreferences.create(ctx, ...).edit().putString("auth_token", token).apply()\n'
+    )
     assert "MOBILE-AND-002" not in _mobile_ids(tmp_path)
 
 
@@ -416,7 +431,7 @@ def test_dart_random_secure_suppressed(tmp_path: Path) -> None:
 
 
 def test_dart_sqlite_injection_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "d.dart", 'db.rawQuery("SELECT * FROM u WHERE n = \'$name\'");\n')
+    _write(tmp_path, "d.dart", "db.rawQuery(\"SELECT * FROM u WHERE n = '$name'\");\n")
     assert "MOBILE-DART-001" in _mobile_ids(tmp_path)
 
 
@@ -504,10 +519,22 @@ def test_crypto_findings_fold_under_weak_crypto_weakness() -> None:
     import merge_threats as mt
 
     threats = [
-        {"t_id": "T-001", "source": "source-scan", "cwe": "CWE-328", "component_id": "auth",
-         "risk": "Medium", "evidence": {"file": "auth.js", "line": 1}},
-        {"t_id": "T-002", "source": "source-scan", "cwe": "CWE-916", "component_id": "auth",
-         "risk": "Medium", "evidence": {"file": "auth.js", "line": 3}},
+        {
+            "t_id": "T-001",
+            "source": "source-scan",
+            "cwe": "CWE-328",
+            "component_id": "auth",
+            "risk": "Medium",
+            "evidence": {"file": "auth.js", "line": 1},
+        },
+        {
+            "t_id": "T-002",
+            "source": "source-scan",
+            "cwe": "CWE-916",
+            "component_id": "auth",
+            "risk": "Medium",
+            "evidence": {"file": "auth.js", "line": 3},
+        },
     ]
     w = mt.build_weakness_register(threats, None)
     assert len(w) == 1

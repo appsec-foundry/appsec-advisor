@@ -65,14 +65,24 @@ def _inv(routes: list[dict]) -> dict:
 
 def test_idor_confirmed_when_no_ownership(tmp_path: Path) -> None:
     _write(
-        tmp_path, "Ctrl.java",
+        tmp_path,
+        "Ctrl.java",
         '@GetMapping("/orders/{id}")\n'
         "public Order get(@PathVariable Long id) {\n"
         "    return orderRepo.findById(id).orElseThrow();\n"
         "}\n",
     )
-    inv = _inv([{"method": "GET", "path": "/orders/{id}", "handler_file": "Ctrl.java",
-                 "handler_line": 1, "missing_authz_suspect": True}])
+    inv = _inv(
+        [
+            {
+                "method": "GET",
+                "path": "/orders/{id}",
+                "handler_file": "Ctrl.java",
+                "handler_line": 1,
+                "missing_authz_suspect": True,
+            }
+        ]
+    )
     findings = ac.confirm_instances(tmp_path, inv)
     assert len(findings) == 1
     assert findings[0]["check_id"] == "AUTHZ-301"
@@ -81,7 +91,8 @@ def test_idor_confirmed_when_no_ownership(tmp_path: Path) -> None:
 
 def test_idor_suppressed_when_ownership_present(tmp_path: Path) -> None:
     _write(
-        tmp_path, "Ctrl.java",
+        tmp_path,
+        "Ctrl.java",
         '@GetMapping("/orders/{id}")\n'
         "public Order get(@PathVariable Long id, Principal principal) {\n"
         "    Order o = orderRepo.findById(id).orElseThrow();\n"
@@ -89,21 +100,40 @@ def test_idor_suppressed_when_ownership_present(tmp_path: Path) -> None:
         "    return o;\n"
         "}\n",
     )
-    inv = _inv([{"method": "GET", "path": "/orders/{id}", "handler_file": "Ctrl.java",
-                 "handler_line": 1, "missing_authz_suspect": True}])
+    inv = _inv(
+        [
+            {
+                "method": "GET",
+                "path": "/orders/{id}",
+                "handler_file": "Ctrl.java",
+                "handler_line": 1,
+                "missing_authz_suspect": True,
+            }
+        ]
+    )
     assert ac.confirm_instances(tmp_path, inv) == []
 
 
 def test_missing_route_auth_confirmed(tmp_path: Path) -> None:
     _write(
-        tmp_path, "admin.go",
+        tmp_path,
+        "admin.go",
         "func DeleteUser(w http.ResponseWriter, r *http.Request) {\n"
-        "    id := mux.Vars(r)[\"id\"]\n"
-        "    db.Exec(\"DELETE FROM users WHERE id = $1\", id)\n"
+        '    id := mux.Vars(r)["id"]\n'
+        '    db.Exec("DELETE FROM users WHERE id = $1", id)\n'
         "}\n",
     )
-    inv = _inv([{"method": "DELETE", "path": "/admin/users/{id}", "handler_file": "admin.go",
-                 "handler_line": 1, "missing_auth_suspect": True}])
+    inv = _inv(
+        [
+            {
+                "method": "DELETE",
+                "path": "/admin/users/{id}",
+                "handler_file": "admin.go",
+                "handler_line": 1,
+                "missing_auth_suspect": True,
+            }
+        ]
+    )
     findings = ac.confirm_instances(tmp_path, inv)
     assert len(findings) == 1
     assert findings[0]["check_id"] == "AUTHZ-302"
@@ -112,27 +142,45 @@ def test_missing_route_auth_confirmed(tmp_path: Path) -> None:
 
 def test_missing_route_auth_suppressed_when_auth_present(tmp_path: Path) -> None:
     _write(
-        tmp_path, "admin.go",
+        tmp_path,
+        "admin.go",
         "func DeleteUser(w http.ResponseWriter, r *http.Request) {\n"
-        "    if !authenticate(r) { http.Error(w, \"unauthorized\", 401); return }\n"
-        "    db.Exec(\"DELETE FROM users WHERE id = $1\", id)\n"
+        '    if !authenticate(r) { http.Error(w, "unauthorized", 401); return }\n'
+        '    db.Exec("DELETE FROM users WHERE id = $1", id)\n'
         "}\n",
     )
-    inv = _inv([{"method": "DELETE", "path": "/admin/users/{id}", "handler_file": "admin.go",
-                 "handler_line": 1, "missing_auth_suspect": True}])
+    inv = _inv(
+        [
+            {
+                "method": "DELETE",
+                "path": "/admin/users/{id}",
+                "handler_file": "admin.go",
+                "handler_line": 1,
+                "missing_auth_suspect": True,
+            }
+        ]
+    )
     assert ac.confirm_instances(tmp_path, inv) == []
 
 
 def test_missing_handler_file_skipped(tmp_path: Path) -> None:
-    inv = _inv([{"method": "GET", "path": "/x/{id}", "handler_file": "nope.java",
-                 "handler_line": 1, "missing_authz_suspect": True}])
+    inv = _inv(
+        [
+            {
+                "method": "GET",
+                "path": "/x/{id}",
+                "handler_file": "nope.java",
+                "handler_line": 1,
+                "missing_authz_suspect": True,
+            }
+        ]
+    )
     assert ac.confirm_instances(tmp_path, inv) == []
 
 
 def test_no_suspect_flags_no_findings(tmp_path: Path) -> None:
     _write(tmp_path, "Ctrl.java", "public Order get(Long id) { return repo.findById(id); }\n")
-    inv = _inv([{"method": "GET", "path": "/orders/{id}", "handler_file": "Ctrl.java",
-                 "handler_line": 1}])
+    inv = _inv([{"method": "GET", "path": "/orders/{id}", "handler_file": "Ctrl.java", "handler_line": 1}])
     assert ac.confirm_instances(tmp_path, inv) == []
 
 
@@ -141,14 +189,24 @@ def test_no_suspect_flags_no_findings(tmp_path: Path) -> None:
 
 def test_output_document_is_schema_valid(tmp_path: Path) -> None:
     _write(
-        tmp_path, "Ctrl.java",
+        tmp_path,
+        "Ctrl.java",
         '@GetMapping("/orders/{id}")\n'
         "public Order get(@PathVariable Long id) {\n"
         "    return orderRepo.findById(id).orElseThrow();\n"
         "}\n",
     )
-    inv = _inv([{"method": "GET", "path": "/orders/{id}", "handler_file": "Ctrl.java",
-                 "handler_line": 1, "missing_authz_suspect": True}])
+    inv = _inv(
+        [
+            {
+                "method": "GET",
+                "path": "/orders/{id}",
+                "handler_file": "Ctrl.java",
+                "handler_line": 1,
+                "missing_authz_suspect": True,
+            }
+        ]
+    )
     doc = ac.build_document(tmp_path, inv)
     ok, errs = vi.validate_source_auth_findings(doc)
     assert ok, errs
@@ -161,14 +219,24 @@ def test_merge_ingests_and_folds_into_missing_authz(tmp_path: Path) -> None:
     import merge_threats as mt
 
     doc = {
-        "version": 1, "generated_at": "2026-07-12T00:00:00Z", "checks_run": 2,
+        "version": 1,
+        "generated_at": "2026-07-12T00:00:00Z",
+        "checks_run": 2,
         "violations": 1,
-        "findings": [{
-            "local_id": "SAF-001", "check_id": "AUTHZ-301", "source_type": "java_source",
-            "file": "Ctrl.java", "line": 3, "title": "IDOR — GET /orders/{id}",
-            "severity": "High", "cwe": ["CWE-639"], "finding_type_id": "FT-040",
-            "breach_vector": "Internet Anon",
-        }],
+        "findings": [
+            {
+                "local_id": "SAF-001",
+                "check_id": "AUTHZ-301",
+                "source_type": "java_source",
+                "file": "Ctrl.java",
+                "line": 3,
+                "title": "IDOR — GET /orders/{id}",
+                "severity": "High",
+                "cwe": ["CWE-639"],
+                "finding_type_id": "FT-040",
+                "breach_vector": "Internet Anon",
+            }
+        ],
     }
     (tmp_path / ".authz-confirm-findings.json").write_text(json.dumps(doc), encoding="utf-8")
     threats = mt._load_source_auth_findings(tmp_path, ".authz-confirm-findings.json")

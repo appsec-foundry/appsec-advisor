@@ -2707,16 +2707,23 @@ class TestWeaknessClassesRender:
         assert compose._render_weakness_classes(self._Ctx({"threats": []})) == ""
 
     def test_renders_heading_instances_and_practice(self):
-        ctx = self._Ctx({
-            "weaknesses": [{
-                "id": "W-001", "weakness_class": "injection", "kind": "design",
-                "severity": "Critical", "severity_basis": "confirmed",
-                "statement": "no parametrized layer",
-                "instances": [{"id": "T-001"}, {"id": "T-002"}],
-                "observable_backing": {"practice_evidence": [{"file": "a"}, {"file": "b"}]},
-                "affected_components": ["api"],
-            }]
-        })
+        ctx = self._Ctx(
+            {
+                "weaknesses": [
+                    {
+                        "id": "W-001",
+                        "weakness_class": "injection",
+                        "kind": "design",
+                        "severity": "Critical",
+                        "severity_basis": "confirmed",
+                        "statement": "no parametrized layer",
+                        "instances": [{"id": "T-001"}, {"id": "T-002"}],
+                        "observable_backing": {"practice_evidence": [{"file": "a"}, {"file": "b"}]},
+                        "affected_components": ["api"],
+                    }
+                ]
+            }
+        )
         block = compose._render_weakness_classes(ctx)
         assert "**Weakness Classes**" in block
         assert "**Injection**" in block
@@ -2726,14 +2733,30 @@ class TestWeaknessClassesRender:
         assert "Affected: api" in block
 
     def test_sorted_by_severity_then_basis(self):
-        ctx = self._Ctx({"weaknesses": [
-            {"id": "W-001", "weakness_class": "dos", "kind": "implementation",
-             "severity": "Low", "severity_basis": "confirmed", "statement": "x",
-             "observable_backing": {"practice_evidence": [{"file": "a"}]}},
-            {"id": "W-002", "weakness_class": "injection", "kind": "design",
-             "severity": "Critical", "severity_basis": "design-risk", "statement": "y",
-             "observable_backing": {"absent_control_signal": [{"hit_count": 0}]}},
-        ]})
+        ctx = self._Ctx(
+            {
+                "weaknesses": [
+                    {
+                        "id": "W-001",
+                        "weakness_class": "dos",
+                        "kind": "implementation",
+                        "severity": "Low",
+                        "severity_basis": "confirmed",
+                        "statement": "x",
+                        "observable_backing": {"practice_evidence": [{"file": "a"}]},
+                    },
+                    {
+                        "id": "W-002",
+                        "weakness_class": "injection",
+                        "kind": "design",
+                        "severity": "Critical",
+                        "severity_basis": "design-risk",
+                        "statement": "y",
+                        "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
+                    },
+                ]
+            }
+        )
         block = compose._render_weakness_classes(ctx)
         # Critical injection must render before Low dos.
         assert block.index("Injection") < block.index("Denial of Service")
@@ -2752,28 +2775,53 @@ class TestTopFindingsDesignRiskRow:
             contract=contract,
             yaml_data={
                 "components": [{"id": "C-01", "name": "API", "component_id": "api"}],
-                "threats": [{
-                    "t_id": "T-001", "id": "T-001", "component_id": "api", "risk": "High",
-                    "title": "SQL Injection (a.ts:1)", "cwe": "CWE-89",
-                    "evidence": [{"file": "a.ts", "line": 1}],
-                }],
+                "threats": [
+                    {
+                        "t_id": "T-001",
+                        "id": "T-001",
+                        "component_id": "api",
+                        "risk": "High",
+                        "title": "SQL Injection (a.ts:1)",
+                        "cwe": "CWE-89",
+                        "evidence": [{"file": "a.ts", "line": 1}],
+                    }
+                ],
                 "mitigations": [],
-                "weaknesses": [{
-                    "id": "W-001", "weakness_class": "injection", "kind": "design",
-                    "severity": "Critical", "severity_basis": "design-risk",
-                    "statement": "no central validation", "affected_components": ["api"],
-                    "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
-                }],
+                "weaknesses": [
+                    {
+                        "id": "W-001",
+                        "weakness_class": "injection",
+                        "kind": "design",
+                        "severity": "Critical",
+                        "severity_basis": "design-risk",
+                        "statement": "no central validation",
+                        "affected_components": ["api"],
+                        "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
+                    }
+                ],
             },
-            triage={"ranking": {"views": {"top_findings": {"findings_ranked": [
-                {"id": "W-001", "effective_severity": "Critical", "rank": 1},
-                {"id": "T-001", "effective_severity": "High", "rank": 2},
-            ]}}}},
+            triage={
+                "ranking": {
+                    "views": {
+                        "top_findings": {
+                            "findings_ranked": [
+                                {"id": "W-001", "effective_severity": "Critical", "rank": 1},
+                                {"id": "T-001", "effective_severity": "High", "rank": 2},
+                            ]
+                        }
+                    }
+                }
+            },
             fragments_dir=tmp_path,
-            severity_taxonomy={"critical": {"emoji": "🔴", "label": "Critical"},
-                               "high": {"emoji": "🟠", "label": "High"}},
-            effectiveness_taxonomy={}, category_taxonomy={}, eval_context={},
-            warnings=[], structured_warnings=[],
+            severity_taxonomy={
+                "critical": {"emoji": "🔴", "label": "Critical"},
+                "high": {"emoji": "🟠", "label": "High"},
+            },
+            effectiveness_taxonomy={},
+            category_taxonomy={},
+            eval_context={},
+            warnings=[],
+            structured_warnings=[],
         )
 
     def test_design_risk_weakness_row(self, tmp_path):
@@ -2793,8 +2841,7 @@ class TestRiskDistributionCounts:
     def test_design_risk_weakness_counted(self):
         yd = {
             "threats": [{"risk": "High", "evidence_tier": "confirmed-exploitable"}],
-            "weaknesses": [{"id": "W-001", "kind": "design", "severity": "Critical",
-                            "severity_basis": "design-risk"}],
+            "weaknesses": [{"id": "W-001", "kind": "design", "severity": "Critical", "severity_basis": "design-risk"}],
         }
         c = compose._risk_distribution_counts(yd)
         assert c["critical"] == 1  # the design-risk weakness — now visible
@@ -2805,16 +2852,16 @@ class TestRiskDistributionCounts:
         # heading must NOT be re-added.
         yd = {
             "threats": [{"risk": "Critical", "evidence_tier": "confirmed-exploitable"}],
-            "weaknesses": [{"id": "W-001", "kind": "design", "severity": "Critical",
-                            "severity_basis": "confirmed"}],
+            "weaknesses": [{"id": "W-001", "kind": "design", "severity": "Critical", "severity_basis": "confirmed"}],
         }
         assert compose._risk_distribution_counts(yd)["critical"] == 1
 
     def test_folded_practice_excluded_weakness_counted_once(self):
         yd = {
             "threats": [{"risk": "High", "evidence_tier": "insecure-practice"}],
-            "weaknesses": [{"id": "W-001", "kind": "implementation", "severity": "High",
-                            "severity_basis": "design-risk"}],
+            "weaknesses": [
+                {"id": "W-001", "kind": "implementation", "severity": "High", "severity_basis": "design-risk"}
+            ],
         }
         assert compose._risk_distribution_counts(yd)["high"] == 1
 

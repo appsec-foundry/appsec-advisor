@@ -56,8 +56,7 @@ def _valid_weakness() -> dict:
             "practice_evidence": [{"file": "routes/search.ts", "line": 23}],
         },
         "affected_components": ["api"],
-        "instances": [{"id": "T-001", "file": "routes/login.ts", "line": 34,
-                       "basis": "confirmed-exploitable"}],
+        "instances": [{"id": "T-001", "file": "routes/login.ts", "line": 34, "basis": "confirmed-exploitable"}],
     }
 
 
@@ -164,9 +163,7 @@ _NEGATIVE_CASES: list[tuple[str, Callable[[dict], None], list | tuple]] = [
     ),
     (
         "weakness-requires-observable-backing",
-        lambda d: d.update(
-            {"weaknesses": [{k: v for k, v in _valid_weakness().items() if k != "observable_backing"}]}
-        ),
+        lambda d: d.update({"weaknesses": [{k: v for k, v in _valid_weakness().items() if k != "observable_backing"}]}),
         ["observable_backing"],
     ),
 ]
@@ -224,11 +221,17 @@ def test_validator_does_not_mutate_input() -> None:
 
 def test_weakness_empty_backing_rejected() -> None:
     data = _load()
-    data["weaknesses"] = [{
-        "id": "W-001", "weakness_class": "injection", "kind": "design",
-        "statement": "x", "severity": "High", "severity_basis": "design-risk",
-        "observable_backing": {},  # I2 violation: no backing
-    }]
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "statement": "x",
+            "severity": "High",
+            "severity_basis": "design-risk",
+            "observable_backing": {},  # I2 violation: no backing
+        }
+    ]
     ok, errors = validate_threats_merged(data)
     assert not ok
     assert any("observable_backing" in e for e in errors)
@@ -237,8 +240,12 @@ def test_weakness_empty_backing_rejected() -> None:
 def test_weakness_duplicate_id_rejected() -> None:
     data = _load()
     w = {
-        "id": "W-001", "weakness_class": "injection", "kind": "design",
-        "statement": "x", "severity": "High", "severity_basis": "design-risk",
+        "id": "W-001",
+        "weakness_class": "injection",
+        "kind": "design",
+        "statement": "x",
+        "severity": "High",
+        "severity_basis": "design-risk",
         "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
     }
     data["weaknesses"] = [w, dict(w)]
@@ -249,10 +256,16 @@ def test_weakness_duplicate_id_rejected() -> None:
 
 def test_weakness_with_backing_accepted() -> None:
     data = _load()
-    data["weaknesses"] = [{
-        "id": "W-001", "weakness_class": "injection", "kind": "design",
-        "statement": "x", "severity": "High", "severity_basis": "design-risk",
-        "observable_backing": {"practice_evidence": [{"file": "a.ts", "line": 1}]},
-    }]
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "statement": "x",
+            "severity": "High",
+            "severity_basis": "design-risk",
+            "observable_backing": {"practice_evidence": [{"file": "a.ts", "line": 1}]},
+        }
+    ]
     ok, errors = validate_threats_merged(data)
     assert ok, f"valid weakness rejected: {errors}"

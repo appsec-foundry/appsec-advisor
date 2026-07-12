@@ -50,8 +50,20 @@ from source_auth_scanner import _source_type_for  # noqa: E402  (reuse ext→enu
 # --- handler-body extraction ------------------------------------------------
 
 _C_FAMILY = (
-    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".java", ".kt",
-    ".go", ".cs", ".php", ".swift", ".dart", ".scala",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".java",
+    ".kt",
+    ".go",
+    ".cs",
+    ".php",
+    ".swift",
+    ".dart",
+    ".scala",
 )
 _MAX_BODY_LINES = 80
 
@@ -163,7 +175,7 @@ _SNIPPET_MAX = 160
 
 def _snippet(body: str) -> str:
     first = (body or "").strip().splitlines()
-    return (first[0][:_SNIPPET_MAX] if first else "")
+    return first[0][:_SNIPPET_MAX] if first else ""
 
 
 def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
@@ -275,9 +287,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     out = args.output_dir / ".authz-confirm-findings.json"
     out.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-    sys.stderr.write(
-        f"authz_confirm: wrote {doc['violations']} confirmed authz instance(s) to {out}\n"
-    )
+    sys.stderr.write(f"authz_confirm: wrote {doc['violations']} confirmed authz instance(s) to {out}\n")
     return 0
 
 

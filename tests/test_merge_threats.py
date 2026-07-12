@@ -1815,8 +1815,11 @@ class TestWeaknessRegister:
 
     def _confirmed(self, tid, cwe, comp, risk, file):
         return {
-            "t_id": tid, "source": "source-scan", "cwe": cwe,
-            "component_id": comp, "risk": risk,
+            "t_id": tid,
+            "source": "source-scan",
+            "cwe": cwe,
+            "component_id": comp,
+            "risk": risk,
             "evidence": {"file": file, "line": 10},
         }
 
@@ -1826,11 +1829,13 @@ class TestWeaknessRegister:
             self._confirmed("T-001", "CWE-89", "login", "Critical", "routes/login.ts"),
             self._confirmed("T-002", "CWE-89", "search", "High", "routes/search.ts"),
         ]
-        design = [{
-            "weakness_class": "injection",
-            "statement": "SQL built by concatenation; no parametrized layer.",
-            "absent_control_signal": [{"pattern": "sequelize", "search_paths": ["routes"], "hit_count": 0}],
-        }]
+        design = [
+            {
+                "weakness_class": "injection",
+                "statement": "SQL built by concatenation; no parametrized layer.",
+                "absent_control_signal": [{"pattern": "sequelize", "search_paths": ["routes"], "hit_count": 0}],
+            }
+        ]
         w = mt.build_weakness_register(threats, design)
         assert len(w) == 1
         wk = w[0]
@@ -1853,13 +1858,29 @@ class TestWeaknessRegister:
         # §4e: pervasive (≥2 components) + home-grown + no central control →
         # design-risk Critical even with zero confirmed instances.
         practice = [
-            {"source": "stride", "cwe": "CWE-327", "component_id": "a",
-             "evidence": {"file": "a.ts", "line": 1}, "evidence_tier": "insecure-practice"},
-            {"source": "stride", "cwe": "CWE-327", "component_id": "b",
-             "evidence": {"file": "b.ts", "line": 2}, "evidence_tier": "insecure-practice"},
+            {
+                "source": "stride",
+                "cwe": "CWE-327",
+                "component_id": "a",
+                "evidence": {"file": "a.ts", "line": 1},
+                "evidence_tier": "insecure-practice",
+            },
+            {
+                "source": "stride",
+                "cwe": "CWE-327",
+                "component_id": "b",
+                "evidence": {"file": "b.ts", "line": 2},
+                "evidence_tier": "insecure-practice",
+            },
         ]
-        design = [{"weakness_class": "weak_crypto", "implementation_strategy": "home-grown",
-                   "severity": "Medium", "absent_control_signal": [{"pattern": "argon2", "hit_count": 0}]}]
+        design = [
+            {
+                "weakness_class": "weak_crypto",
+                "implementation_strategy": "home-grown",
+                "severity": "Medium",
+                "absent_control_signal": [{"pattern": "argon2", "hit_count": 0}],
+            }
+        ]
         w = mt.build_weakness_register(practice, design)
         assert len(w) == 1
         assert w[0]["severity_basis"] == "design-risk"
@@ -1870,8 +1891,13 @@ class TestWeaknessRegister:
         # Single component, no absent-control signal → isolated implementation
         # weakness folding the practice sites (§4d-bis anti-explosion).
         practice = [
-            {"source": "stride", "cwe": "CWE-89", "component_id": "seeder",
-             "evidence": {"file": "seed.ts", "line": i}, "evidence_tier": "insecure-practice"}
+            {
+                "source": "stride",
+                "cwe": "CWE-89",
+                "component_id": "seeder",
+                "evidence": {"file": "seed.ts", "line": i},
+                "evidence_tier": "insecure-practice",
+            }
             for i in range(5)
         ]
         w = mt.build_weakness_register(practice, None)

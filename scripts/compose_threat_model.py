@@ -2598,8 +2598,12 @@ def _weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | No
     # a tier (legacy / added post-register) still counts as a confirmed finding.
     # Keep in sync with _shared_sources.DESIGN_LEVEL_SOURCES.
     _design_src = {
-        "requirements-compliance", "known-threats", "architecture-coverage",
-        "threat-hypothesis", "architectural-anti-pattern", "coverage-gap",
+        "requirements-compliance",
+        "known-threats",
+        "architecture-coverage",
+        "threat-hypothesis",
+        "architectural-anti-pattern",
+        "coverage-gap",
     }
     confirmed = sum(
         1
@@ -2667,8 +2671,7 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     if _breakdown is not None:
         n, confirmed, impl, design = _breakdown
         risk_distribution += (
-            f"<br/>**Findings:** {n} — {confirmed} confirmed-exploitable · "
-            f"{impl} implementation · {design} design"
+            f"<br/>**Findings:** {n} — {confirmed} confirmed-exploitable · {impl} implementation · {design} design"
         )
     # Deterministic scope-coverage line — PL-facing. States how many components
     # were analyzed in depth vs. modeled, computed from meta.component_selection
@@ -7344,14 +7347,8 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
     # They have no threats[] row, so resolve them from the weakness register and
     # render a distinct design-risk row that links to the §8 Weakness Classes
     # anchor. Empty register → no W-NNN ids → this map is unused.
-    _wk_by_id = {
-        (w.get("id") or "").strip().upper(): w for w in (ctx.yaml_data.get("weaknesses") or []) if w.get("id")
-    }
-    _wk_labels = {
-        c.get("id"): c.get("label")
-        for c in (_load_weakness_classes().get("clusters") or [])
-        if c.get("id")
-    }
+    _wk_by_id = {(w.get("id") or "").strip().upper(): w for w in (ctx.yaml_data.get("weaknesses") or []) if w.get("id")}
+    _wk_labels = {c.get("id"): c.get("label") for c in (_load_weakness_classes().get("clusters") or []) if c.get("id")}
     rendered: list[dict[str, Any]] = []
     for idx, tid in enumerate(qualifying_ids[:max_rows], start=1):
         wk = _wk_by_id.get((tid or "").strip().upper())

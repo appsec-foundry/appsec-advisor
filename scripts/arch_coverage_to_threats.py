@@ -261,11 +261,7 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
             "weakness_class": classify_cwe(cwe, warn=False) if cwe else "_unmapped",
             "cwe": cwe or None,
             "component": hyp.get("component_id"),
-            "statement": (
-                hyp.get("generic_threat_title")
-                or hyp.get("title")
-                or "Central control observably absent"
-            ),
+            "statement": (hyp.get("generic_threat_title") or hyp.get("title") or "Central control observably absent"),
             "absent_control_signal": list(backing),
             # Populated by the P2 misuse/strategy layer; None until then.
             "implementation_strategy": hyp.get("implementation_strategy"),

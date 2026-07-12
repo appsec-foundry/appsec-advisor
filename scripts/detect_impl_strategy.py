@@ -44,8 +44,19 @@ _CATALOG = _HERE.parent / "data" / "security-libraries.yaml"
 # the catalogs are written; extend as the catalog grows).
 _SRC_EXTS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte"}
 _EXCLUDE_DIRS = {
-    "node_modules", ".git", "dist", "build", "out", "coverage", ".next",
-    ".nuxt", "vendor", "__pycache__", ".venv", "venv", "codefixes",
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "out",
+    "coverage",
+    ".next",
+    ".nuxt",
+    "vendor",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "codefixes",
 }
 _MAX_FILE_BYTES = 2_000_000
 

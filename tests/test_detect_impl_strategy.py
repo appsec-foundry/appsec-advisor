@@ -23,8 +23,11 @@ def _repo(tmp_path: Path, deps: dict, files: dict) -> Path:
 
 
 def test_vetted_lib_no_bespoke_is_standard_vetted(tmp_path: Path) -> None:
-    repo = _repo(tmp_path, {"argon2": "^0.30", "@prisma/client": "^5"},
-                {"app.ts": "import argon2 from 'argon2'\nprisma.user.findUnique()\n"})
+    repo = _repo(
+        tmp_path,
+        {"argon2": "^0.30", "@prisma/client": "^5"},
+        {"app.ts": "import argon2 from 'argon2'\nprisma.user.findUnique()\n"},
+    )
     m = dis.build_strategy_map(repo)
     assert m["weak_crypto"]["strategy"] == "standard-vetted"
     assert m["injection"]["strategy"] == "standard-vetted"
@@ -61,8 +64,7 @@ def test_cli_writes_sidecar(tmp_path: Path) -> None:
 
 
 def _design_signal(wclass="injection", component=None):
-    ds = {"weakness_class": wclass, "absent_control_signal": [{"hit_count": 0}],
-          "statement": "no central control"}
+    ds = {"weakness_class": wclass, "absent_control_signal": [{"hit_count": 0}], "statement": "no central control"}
     if component:
         ds["component"] = component
     return ds
@@ -78,8 +80,16 @@ def test_standard_vetted_does_not_lower_confirmed_severity() -> None:
     # R1: a weakness never hides an instance's severity. A standard-vetted
     # control may soften a design-risk gap, but NOT a `confirmed` weakness —
     # a proven High sink stays High regardless of a vetted baseline elsewhere.
-    threats = [{"t_id": "T-001", "source": "stride", "cwe": "CWE-89", "component_id": "a",
-                "risk": "High", "evidence": {"file": "a.ts", "line": 1}}]
+    threats = [
+        {
+            "t_id": "T-001",
+            "source": "stride",
+            "cwe": "CWE-89",
+            "component_id": "a",
+            "risk": "High",
+            "evidence": {"file": "a.ts", "line": 1},
+        }
+    ]
     w = mt.build_weakness_register(threats, [_design_signal()], {"injection": "standard-vetted"})
     assert len(w) == 1
     assert w[0]["severity_basis"] == "confirmed"

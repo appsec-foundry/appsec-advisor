@@ -590,7 +590,9 @@ def main(argv: list[str] | None = None) -> int:
         # Peer catalogs (P3 crypto pack) — run through the same engine; skip if absent.
         catalog_paths += [plugin_root / rel for rel in DEFAULT_EXTRA_CHECKS_REL]
     if not catalog_paths or not catalog_paths[0].is_file():
-        print(f"source_auth_scanner: checks file {catalog_paths[0] if catalog_paths else '?'} not found", file=sys.stderr)
+        print(
+            f"source_auth_scanner: checks file {catalog_paths[0] if catalog_paths else '?'} not found", file=sys.stderr
+        )
         return 2
 
     try:

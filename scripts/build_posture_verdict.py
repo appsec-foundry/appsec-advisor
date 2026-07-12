@@ -100,11 +100,7 @@ def build_posture_verdict(yaml_data: dict, rubric: dict | None = None) -> list[d
         sev = (w.get("severity") or "low").lower()
         if _SEV_RANK.get(sev, 3) < _SEV_RANK.get(b["worst_severity"], 3):
             b["worst_severity"] = sev
-        if (
-            (w.get("kind") == "design")
-            and (strat in aggravating or not strat)
-            and spread >= spread_min
-        ):
+        if (w.get("kind") == "design") and (strat in aggravating or not strat) and spread >= spread_min:
             b["pervasive_homegrown"] = True
 
     # Confirmed threats NOT already folded under a weakness still count toward
@@ -124,8 +120,12 @@ def build_posture_verdict(yaml_data: dict, rubric: dict | None = None) -> list[d
         # signal already reaches the theme via the weakness loop above.
         # Keep _design_src in sync with _shared_sources.DESIGN_LEVEL_SOURCES.
         _design_src = {
-            "requirements-compliance", "known-threats", "architecture-coverage",
-            "threat-hypothesis", "architectural-anti-pattern", "coverage-gap",
+            "requirements-compliance",
+            "known-threats",
+            "architecture-coverage",
+            "threat-hypothesis",
+            "architectural-anti-pattern",
+            "coverage-gap",
         }
         if (t.get("source") or "").strip() in _design_src:
             continue
