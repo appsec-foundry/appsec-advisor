@@ -1867,6 +1867,14 @@ if [ "$DRY_RUN" != "true" ] && [ "$RERENDER" != "true" ]; then
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/source_auth_scanner.py" \
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --quiet >/dev/null 2>&1 || true
+  # Route-inventory-driven IDOR/BOLA + missing-route-auth CONFIRMER (cross-lang).
+  # Reads .route-inventory.json, opens each suspect handler body and confirms the
+  # missing ownership/auth predicate -> .authz-confirm-findings.json (ingested by
+  # merge_threats beside .source-auth-findings.json). Non-Node stacks that the
+  # regex AUTHZ-002/008 cannot reach are covered here; unresolved suspects stay
+  # design-level via ARCH-BOLA-001 / ARCH-AUTHN-001.
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/authz_confirm.py" \
+      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
   # P2 — implementation-strategy axis: classify per weakness class whether a
   # standard vetted control is used (exculpatory) or security is home-grown
   # (aggravating). Consumed by merge_threats.build_weakness_register at finalize.

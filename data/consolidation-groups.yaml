@@ -49,7 +49,7 @@ groups:
     title: "Sensitive Routes Registered Without Authentication Middleware"
     scope: per-component
     match_any:
-      - source_check_id: [AUTHZ-008]
+      - source_check_id: [AUTHZ-008, AUTHZ-302]
 
   - id: dependabot-ecosystems
     title: "Dependabot Ecosystem Coverage Incomplete"

@@ -379,6 +379,8 @@ _AUTHZ_TO_STRIDE: dict[str, str] = {
     "AUTHZ-006": "Spoofing",  # JWT decode without verify
     "AUTHZ-007": "Spoofing",  # express-jwt without algorithms
     "AUTHZ-008": "Elevation of Privilege",  # Missing auth middleware
+    "AUTHZ-301": "Elevation of Privilege",  # Confirmed IDOR/BOLA (authz_confirm.py)
+    "AUTHZ-302": "Elevation of Privilege",  # Confirmed missing route auth (authz_confirm.py)
     "INJ-001": "Tampering",  # SQL injection — request data in query string
     "INJ-002": "Elevation of Privilege",  # Command injection — shell RCE
     "INJ-003": "Information Disclosure",  # SSRF — reach internal targets
@@ -458,15 +460,19 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
     }
 
 
-def _load_source_auth_findings(output_dir: Path) -> list[dict]:
-    """Load `.source-auth-findings.json` (output of
-    `scripts/source_auth_scanner.py`) and convert each finding into a
-    merged-threats threat record.
+def _load_source_auth_findings(
+    output_dir: Path, filename: str = ".source-auth-findings.json"
+) -> list[dict]:
+    """Load a source-auth-findings-shaped sidecar and convert each finding into
+    a merged-threats threat record. Default file is
+    `.source-auth-findings.json` (scripts/source_auth_scanner.py); the same
+    loader also ingests `.authz-confirm-findings.json`
+    (scripts/authz_confirm.py) — both share the schema and converter.
 
-    Missing file → empty list (the scanner is opt-in; absence is the
-    default state on repos that have not yet adopted it).
+    Missing file → empty list (both producers are presence-gated; absence is the
+    default state on repos that have not yet adopted them).
     """
-    path = output_dir / ".source-auth-findings.json"
+    path = output_dir / filename
     if not path.exists():
         return []
     try:
@@ -1543,6 +1549,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # `scripts/source_auth_scanner.py`. Loaded only when
     # `.source-auth-findings.json` is on disk (the scanner is opt-in).
     source_auth_threats = _load_source_auth_findings(out_dir)
+    # Route-inventory-driven IDOR/BOLA + missing-route-auth confirmations
+    # (scripts/authz_confirm.py → .authz-confirm-findings.json), same schema.
+    source_auth_threats += _load_source_auth_findings(out_dir, ".authz-confirm-findings.json")
     if source_auth_threats:
         flat.extend(source_auth_threats)
     # `.dep-scan.json` ingestion was removed 2026-05 — supply-chain
