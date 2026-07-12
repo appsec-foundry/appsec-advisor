@@ -1487,3 +1487,38 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "Unfiltered request attributes let a client escalate privileges by setting protected columns."
     remediation: "Set an explicit $fillable allowlist and bind only validated/allow-listed fields ($request->only([...]))."
+
+  - id: AUTHZ-RB-001
+    name: "JWT decoded without verification — Ruby"
+    description: >
+      ruby-jwt `JWT.decode` with verification disabled (3rd arg `false`) or the
+      `none` algorithm accepts a forged/unsigned token.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)JWT\.decode\s*\([^)]*\bfalse\b|algorithms?\s*(?::|=>)\s*\[?\s*["'']none["'']'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "Disabling verification lets an attacker forge a token and impersonate any user."
+    remediation: "Call JWT.decode with verify=true and a pinned algorithm (e.g. algorithm: 'RS256')."
+
+  - id: AUTHZ-RB-002
+    name: "Mass assignment — Rails permit! / params in update — Ruby"
+    description: >
+      `params.permit!` (permits every attribute) or `update/create` with a raw
+      `params[...]` hash lets a client set privileged attributes (admin, role).
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)params\.permit!|\.(?:update|update_attributes|create|new)\s*\(\s*params\['
+    counter_scope: line
+    counter_patterns:
+      - '\.permit\s*\('
+    severity_if_violated: High
+    cwe: CWE-915
+    finding_type: FT-041
+    breach_vector: "Internet Anon"
+    rationale: "Unfiltered params let a client escalate privileges by setting protected attributes."
+    remediation: "Use strong parameters: params.require(:x).permit(:allowed, :fields) — never permit! or raw params."

@@ -453,6 +453,21 @@ def test_php_mass_assignment_flagged(tmp_path: Path) -> None:
     assert "AUTHZ-PHP-002" in _mobile_ids(tmp_path)
 
 
+def test_ruby_jwt_noverify_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "a.rb", "payload = JWT.decode(token, nil, false)\n")
+    assert "AUTHZ-RB-001" in _mobile_ids(tmp_path)
+
+
+def test_ruby_mass_assignment_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "m.rb", "user.update(params.permit!)\n")
+    assert "AUTHZ-RB-002" in _mobile_ids(tmp_path)
+
+
+def test_ruby_strong_params_suppressed(tmp_path: Path) -> None:
+    _write(tmp_path, "m.rb", "user.update(params.require(:user).permit(:name, :email))\n")
+    assert "AUTHZ-RB-002" not in _mobile_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 
