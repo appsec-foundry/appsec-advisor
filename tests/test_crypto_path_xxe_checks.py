@@ -443,6 +443,16 @@ def test_csharp_jwt_validation_disabled_flagged(tmp_path: Path) -> None:
     assert "AUTHZ-CS-001" in _mobile_ids(tmp_path)
 
 
+def test_php_jwt_none_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "a.php", "<?php $d = JWT::decode($jwt, $key, ['HS256', 'none']);\n")
+    assert "AUTHZ-PHP-001" in _mobile_ids(tmp_path)
+
+
+def test_php_mass_assignment_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "m.php", "<?php class User extends Model { protected $guarded = []; }\n")
+    assert "AUTHZ-PHP-002" in _mobile_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 

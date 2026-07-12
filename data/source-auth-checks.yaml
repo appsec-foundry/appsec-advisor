@@ -1453,3 +1453,37 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "Disabling signing-key validation lets an attacker forge a token and impersonate any user."
     remediation: "Set ValidateIssuerSigningKey = true and RequireSignedTokens = true with a pinned key/algorithm."
+
+  - id: AUTHZ-PHP-001
+    name: "JWT verification allows the 'none' algorithm — PHP"
+    description: >
+      firebase/php-jwt `JWT::decode` whose allowed-algorithms include `none`
+      accepts an unsigned/forged token.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)JWT::decode\s*\([^;]*["'']none["'']'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-347
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "Allowing `none` lets an attacker submit an unsigned token and impersonate any user."
+    remediation: "Pin a single strong algorithm (e.g. 'RS256'); never include 'none' in the allowed list."
+
+  - id: AUTHZ-PHP-002
+    name: "Mass assignment — Laravel unguarded model / request->all() — PHP"
+    description: >
+      An empty `$guarded = []` (everything fillable) or `fill/create/update` with
+      `$request->all()` lets a client set privileged columns (role, is_admin).
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)\$guarded\s*=\s*\[\s*\]|->(?:fill|forceFill)\s*\(\s*\$request->all|::(?:create|update)\s*\(\s*\$request->all'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-915
+    finding_type: FT-041
+    breach_vector: "Internet Anon"
+    rationale: "Unfiltered request attributes let a client escalate privileges by setting protected columns."
+    remediation: "Set an explicit $fillable allowlist and bind only validated/allow-listed fields ($request->only([...]))."
