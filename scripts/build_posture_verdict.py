@@ -119,6 +119,16 @@ def build_posture_verdict(yaml_data: dict, rubric: dict | None = None) -> list[d
     for t in yaml_data.get("threats") or []:
         if not isinstance(t, dict):
             continue
+        # Design-level threats and folded insecure-practice sites must NOT
+        # escalate a principle to VIOLATED as "confirmed instances" — their
+        # signal already reaches the theme via the weakness loop above.
+        # Keep _design_src in sync with _shared_sources.DESIGN_LEVEL_SOURCES.
+        _design_src = {
+            "requirements-compliance", "known-threats", "architecture-coverage",
+            "threat-hypothesis", "architectural-anti-pattern", "coverage-gap",
+        }
+        if (t.get("source") or "").strip() in _design_src:
+            continue
         if (t.get("evidence_tier") or "confirmed-exploitable") == "insecure-practice":
             continue
         tid = (t.get("id") or t.get("t_id") or "").strip().upper()

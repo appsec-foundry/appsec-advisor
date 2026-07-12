@@ -1772,7 +1772,12 @@ def build_weakness_register(
     for ds in design_signals or []:
         if not isinstance(ds, dict):
             continue
-        wcid = (ds.get("weakness_class") or "").strip() or classify_cwe(
+        # Clamp the externally-supplied class to a known cluster id; a malformed
+        # bridge file must not inject an out-of-enum class that later fails
+        # schema validation. Fall back to CWE-derived classification.
+        _raw_wc = (ds.get("weakness_class") or "").strip()
+        _valid_wc = {c.get("id") for c in (vocab.get("clusters") or [])}
+        wcid = _raw_wc if _raw_wc in _valid_wc else classify_cwe(
             ds.get("cwe") or "", vocab, warn=False
         )
         b = _bucket(wcid)
@@ -1842,7 +1847,10 @@ def build_weakness_register(
                 severity = base
         # Exculpatory: a standard-vetted control lowers the residual severity
         # one band (the deviation is an isolated slip against a sound baseline).
-        if resolved_strategy == "standard-vetted":
+        # NEVER for a `confirmed` weakness — a proven exploit must not be
+        # de-ranked below its own instance severity (risk-register R1); the
+        # softening applies to design-risk gaps only.
+        if resolved_strategy == "standard-vetted" and severity_basis != "confirmed":
             severity = _lower_severity(severity)
 
         statement = b["statements"][0] if b["statements"] else (

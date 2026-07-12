@@ -36,6 +36,7 @@ domains:
        jsonwebtoken, jose, "@fastify/jwt"]
     bespoke_patterns:
       - 'jwt\.decode\('                         # decode without verify
+      - "algorithms\\s*:\\s*\\[\\s*['\"]none"    # verify with alg:none accepted
       - 'crypto\.randomBytes\([^)]*\)\s*.{0,40}token'   # hand-rolled session token
 
   weak_crypto:

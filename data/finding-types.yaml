@@ -161,6 +161,24 @@ finding_types:
     parent_category: TH-03
     cwe_any: [CWE-319, CWE-311]
 
+  - id: FT-172
+    name: "Broken Hash Primitive"
+    parent_category: TH-03
+    cwe_any: [CWE-328]
+    title_hints: ["MD5", "SHA1", "createHash", "MessageDigest"]
+
+  - id: FT-173
+    name: "Insecure Randomness"
+    parent_category: TH-03
+    cwe_any: [CWE-330]
+    title_hints: ["Math.random", "java.util.Random", "predictable token"]
+
+  - id: FT-174
+    name: "Insecure Cipher Mode"
+    parent_category: TH-03
+    cwe_any: [CWE-327]
+    title_hints: ["ECB", "cipher mode"]
+
   # ---------- File Handling ----------
   - id: FT-060
     name: "Path Traversal / ZIP Slip"

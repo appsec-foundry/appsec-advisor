@@ -2591,10 +2591,21 @@ def _weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | No
     weaknesses = yaml_data.get("weaknesses") or []
     if not weaknesses:
         return None
+    # Design-level threats (architecture-coverage, coverage-gap,
+    # requirements-compliance, …) carry NO evidence_tier and must NOT inflate the
+    # confirmed tally — they are represented by their `design` weakness heading.
+    # Folded insecure-practice sites are likewise excluded. A code threat without
+    # a tier (legacy / added post-register) still counts as a confirmed finding.
+    # Keep in sync with _shared_sources.DESIGN_LEVEL_SOURCES.
+    _design_src = {
+        "requirements-compliance", "known-threats", "architecture-coverage",
+        "threat-hypothesis", "architectural-anti-pattern", "coverage-gap",
+    }
     confirmed = sum(
         1
         for t in (yaml_data.get("threats") or [])
         if (t.get("evidence_tier") or "confirmed-exploitable") != "insecure-practice"
+        and (t.get("source") or "").strip() not in _design_src
     )
     implementation = sum(1 for w in weaknesses if w.get("kind") == "implementation")
     design = sum(1 for w in weaknesses if w.get("kind") == "design")
@@ -14693,6 +14704,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # reflect only real, evidence-backed findings.
     _COVERAGE_GAP_SOURCES = {"coverage-gap", "architectural-anti-pattern"}
     threats = [t for t in threats if t.get("source") not in _COVERAGE_GAP_SOURCES]
+    # P1.4 anti-duplication: an insecure-practice site folded under a weakness's
+    # `practice_evidence` must NOT also render as a standalone §8 finding card
+    # ("never three peers"). Drop those rows when the weakness register exists;
+    # they remain visible under their weakness heading and in SARIF/pentest.
+    if ctx.yaml_data.get("weaknesses"):
+        threats = [t for t in threats if t.get("evidence_tier") != "insecure-practice"]
     # Tracks whether any row was carried forward from a prior deeper scan
     # without re-verification (incremental depth-downgrade). Drives a
     # depth-independent §8 footnote — unlike the quick-only banner line, this

@@ -752,7 +752,7 @@ checks:
       - '(?i)\b(path\.basename|sanitize|normalize\w*|allowlist|whitelist|isAbsolute)\b'
     severity_if_violated: High
     cwe: CWE-22
-    finding_type: FT-071
+    finding_type: FT-060
     breach_vector: "Internet Anon"
     rationale: >
       A request-controlled path with `../` can read arbitrary files
@@ -789,9 +789,178 @@ checks:
     counter_patterns: []
     severity_if_violated: High
     cwe: CWE-611
-    finding_type: FT-072
+    finding_type: FT-004
     breach_vector: "Internet Anon"
     rationale: >
       External-entity resolution turns XML input into a file-read / SSRF
       primitive (classic `file:///etc/passwd` and internal-URL fetches).
     remediation: "Disable DTD / external-entity processing (noent:false, resolveExternals:false) or use a parser that rejects DOCTYPE."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase A) — Java + Python injection sinks.
+  # Same CWEs as INJ-001/002 so they fold via consolidation-groups
+  # (sql-injection / command-injection -per-component). Node patterns do
+  # not match these languages.
+  # ===================================================================
+
+  - id: INJ-JAVA-001
+    name: "SQL injection via string-concatenated query — Java"
+    description: >
+      A JDBC/JPA query built by concatenating (`+`) request-derived data into a
+      SQL string (createQuery / createNativeQuery / prepareStatement /
+      executeQuery) instead of a bound parameter.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '(?is)\.(createQuery|createNativeQuery|prepareStatement|executeQuery|executeUpdate|execute)\s*\(\s*"[^"]*\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\b[^"]*"\s*\+'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '\.setParameter\(|\bPreparedStatement\b[^\n]*\?'
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: >
+      Concatenated request data in a SQL string lets an attacker alter the query
+      (auth bypass, data exfiltration, UNION reads).
+    remediation: "Use bound parameters (setParameter / ? placeholders / Spring Data derived queries); never concatenate request data into SQL."
+
+  - id: INJ-JAVA-002
+    name: "Command injection — Java"
+    description: >
+      `Runtime.getRuntime().exec(...)` or `new ProcessBuilder(...)` invoked with a
+      concatenated / request-derived argument runs an attacker-influenced command.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '(?:Runtime\.getRuntime\(\)\.exec|new\s+ProcessBuilder)\s*\([^)]*\+'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "Request data concatenated into a shell/exec argument yields arbitrary command execution."
+    remediation: "Avoid the shell; pass a fixed argv array with validated, allow-listed arguments."
+
+  - id: INJ-PY-001
+    name: "SQL injection via string-formatted query — Python"
+    description: >
+      A DB cursor / ORM raw query built with an f-string, `%`, `+`, or `.format()`
+      of request data (cursor.execute / .raw / .extra) instead of a bound
+      parameter. The safe `execute("… %s", (val,))` placeholder form does NOT
+      match (the `%` there is inside the literal).
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/migrations/**",
+       "**/.venv/**", "**/venv/**"]
+    pattern: '(?is)\.(execute|executemany|raw|extra)\s*\(\s*(?:f["'']|["''][^"'']*["'']\s*(?:%|\+|\.format\s*\())'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: >
+      f-string / % / + / .format interpolation of request data into SQL lets an
+      attacker rewrite the query.
+    remediation: "Use parameterized queries: cursor.execute(sql, params) with %s / :name placeholders; never interpolate."
+
+  - id: INJ-PY-002
+    name: "Command injection — Python"
+    description: >
+      `os.system` / `os.popen` / `subprocess(..., shell=True)` invoked with
+      request-derived input runs an attacker-influenced shell command.
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/.venv/**", "**/venv/**"]
+    pattern: '(?is)os\.system\s*\(|os\.popen\s*\(|subprocess\.(?:call|run|Popen|check_output|check_call)\s*\([^)]*shell\s*=\s*True'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "A shell command built from request data yields arbitrary command execution."
+    remediation: "Use subprocess with a fixed argv list and shell=False; validate/allow-list any dynamic argument."
+
+  - id: INJ-JAVA-003
+    name: "SSRF — outbound request to a concatenated URL — Java"
+    description: >
+      A RestTemplate / WebClient / URL.openConnection call whose target URL is
+      built by concatenation (`+`), i.e. from dynamic (often request) data.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '(?:\.(?:getForObject|getForEntity|exchange|execute)|new\s+URL|\.openConnection)\s*\([^)]*\+'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|whitelist|isAllowed|URI\.create\("https?://[a-z])'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-JAVA-004
+    name: "Path traversal — filesystem access from a concatenated path — Java"
+    description: >
+      A File / Paths.get / FileInputStream built by concatenation (`+`) with no
+      canonicalization, letting `../` escape the intended directory.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '(?:new\s+File|Paths\.get|new\s+FileInputStream|new\s+FileReader)\s*\([^)]*\+'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(getCanonicalPath|normalize|startsWith|FilenameUtils)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path with `../` can read/write arbitrary files."
+    remediation: "Resolve + canonicalize the path and assert it stays within an allowed base directory."
+
+  - id: INJ-PY-003
+    name: "SSRF — outbound request to a formatted URL — Python"
+    description: >
+      requests.* / urlopen called with an f-string or concatenated URL, i.e.
+      built from dynamic (often request) data.
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/.venv/**", "**/venv/**"]
+    pattern: '(?is)(?:requests\.(?:get|post|put|delete|head|request)|urlopen|urllib\.request\.urlopen)\s*\(\s*(?:f["'']|["''][^"'']*["'']\s*(?:%|\+|\.format\s*\()|[A-Za-z_][\w.]*\s*\+)'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|whitelist|is_allowed|urlparse)\b'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-PY-004
+    name: "Path traversal — filesystem access from a formatted path — Python"
+    description: >
+      open() / os.path.join / Path() built with an f-string or concatenation and
+      no canonicalization, letting `../` escape the intended directory.
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/.venv/**", "**/venv/**"]
+    pattern: '(?is)(?:open|os\.path\.join|Path)\s*\(\s*(?:f["''][^"'']*\{|[A-Za-z_][\w.]*\s*\+|["''][^"'']*["'']\s*\+)'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(basename|safe_join|abspath|realpath|startswith|secure_filename)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path with `../` can read/write arbitrary files."
+    remediation: "Canonicalize (os.path.realpath) and assert the result stays within an allowed base directory."

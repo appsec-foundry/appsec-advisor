@@ -74,12 +74,16 @@ def test_standard_vetted_suppresses_pure_design_gap() -> None:
     assert w == []
 
 
-def test_standard_vetted_lowers_confirmed_severity() -> None:
+def test_standard_vetted_does_not_lower_confirmed_severity() -> None:
+    # R1: a weakness never hides an instance's severity. A standard-vetted
+    # control may soften a design-risk gap, but NOT a `confirmed` weakness —
+    # a proven High sink stays High regardless of a vetted baseline elsewhere.
     threats = [{"t_id": "T-001", "source": "stride", "cwe": "CWE-89", "component_id": "a",
                 "risk": "High", "evidence": {"file": "a.ts", "line": 1}}]
     w = mt.build_weakness_register(threats, [_design_signal()], {"injection": "standard-vetted"})
     assert len(w) == 1
-    assert w[0]["severity"] == "Medium"  # High → Medium (exculpated)
+    assert w[0]["severity_basis"] == "confirmed"
+    assert w[0]["severity"] == "High"  # NOT lowered — proven instance preserved
     assert w[0]["implementation_strategy"] == "standard-vetted"
 
 
