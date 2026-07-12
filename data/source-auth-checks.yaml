@@ -1413,3 +1413,26 @@ checks:
     breach_vector: "Physical / Local"
     rationale: "AsyncStorage is unencrypted; secrets are recoverable on a rooted/jailbroken or backed-up device."
     remediation: "Use react-native-keychain or react-native-encrypted-storage for secrets."
+
+  # ===================================================================
+  # Access-control tuning (per-language JWT verification + mass assignment).
+  # IDOR/BOLA + missing-route-auth stay JS-only (AUTHZ-002/008): they need an
+  # inline request-marker / multi-line scope the low-FP regex engine lacks.
+  # ===================================================================
+
+  - id: AUTHZ-GO-001
+    name: "JWT parsed without signature verification — Go"
+    description: >
+      golang-jwt `ParseUnverified`, the `none` signing method, or the unsafe
+      no-signature type accepts a forged/unsigned token.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: 'jwt\.ParseUnverified\s*\(|jwt\.SigningMethodNone\b|UnsafeAllowNoneSignatureType'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "Skipping signature verification lets an attacker forge a token and impersonate any user."
+    remediation: "Use jwt.Parse with a keyfunc that pins the expected signing method; reject `none`."

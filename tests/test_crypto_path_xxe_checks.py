@@ -430,6 +430,14 @@ def test_react_native_asyncstorage_secret_flagged(tmp_path: Path) -> None:
     assert "MOBILE-RN-001" in _mobile_ids(tmp_path)
 
 
+# --- access control: per-language JWT + mass assignment ---------------------
+
+
+def test_go_jwt_unverified_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "a.go", "token, _, _ := jwt.ParseUnverified(raw, claims)\n")
+    assert "AUTHZ-GO-001" in _mobile_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 
