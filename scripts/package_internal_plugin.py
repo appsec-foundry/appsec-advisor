@@ -80,6 +80,8 @@ ANY_LEVEL_FILE_EXCLUDES = {
 }
 PATH_EXCLUDES = {
     ("data", "appsec-requirements-fallback.yaml"),
+    ("docs", "analysis"),
+    ("docs", "internal"),
     ("docs", "security"),
     ("scripts", "docs"),
     ("skills", "create-threat-model", "docs"),

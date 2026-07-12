@@ -3,7 +3,7 @@
 **Status:** verified against the code (2026-07-03), not yet implemented.
 **Goal:** Switch the compact runtime (`SKILL-full-runtime.md`, via `orchestration_controller.py`) from **opt-in** (`APPSEC_THIN_ORCHESTRATOR=1`) to **default with opt-out** (`=0`) — but only if parity is proven.
 
-**Execution:** new branch off `dev` (not `main`/`dev` directly), targeted test suite + `make check`, **stop before push/merge** → summary + diff. Read `AGENTS.md` before non-trivial changes (contract/drift rules). Working directory: `/home/mrohr/appsec-advisor`.
+**Execution:** new branch off `dev` (not `main`/`dev` directly), targeted test suite + `make check`, **stop before push/merge** → summary + diff. Read `AGENTS.md` before non-trivial changes (contract/drift rules). Working directory: `/home/user/appsec-advisor`.
 
 ---
 
@@ -16,7 +16,7 @@ Commit `d57d5a3` (2026-07-03) added a deterministic compose backstop `_compose_i
 
 ## Phase 0 — Prove parity *(hard gate, no merge code)*
 
-Controlled A/B: **thin vs legacy, same model, repo `/home/mrohr/juice-shop`, same depth**, 2–3 runs each (variance baseline). Compare YAML.
+Controlled A/B: **thin vs legacy, same model, repo `/home/user/juice-shop`, same depth**, 2–3 runs each (variance baseline). Compare YAML.
 
 Already ~parity (comparison thin `docs/security-thin` vs baseline `docs/security`):
 - Threats 53 vs 55, mitigations 53 vs 55, components 11 vs 10, attack surface **107=107**, STRIDE all 6 categories comparable, LLM/AI 5=5, 0 threats without evidence/mitigation link.

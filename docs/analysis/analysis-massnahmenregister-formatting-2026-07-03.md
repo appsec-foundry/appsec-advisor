@@ -1,7 +1,7 @@
 # §9 Mitigation Register — formatting analysis
 
 **Date:** 2026-07-03 · **Scope:** analysis only, no changes applied.
-**Reference run:** `/home/mrohr/juice-shop/docs/security-thin/threat-model.md` (§9 = lines 3169–4540).
+**Reference run:** `/home/user/juice-shop/docs/security-thin/threat-model.md` (§9 = lines 3169–4540).
 **Single renderer:** `scripts/compose_threat_model.py` (per-mitigation card loop starts at `:14869`).
 
 Three defects were reported. All three reproduce in §9. Root causes and every producer

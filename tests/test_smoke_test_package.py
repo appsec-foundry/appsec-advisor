@@ -100,6 +100,8 @@ def test_fails_when_entry_command_missing(tmp_path: Path) -> None:
         (".agent-run.log", False),
         ("nested/.appsec-progress.json", False),
         ("skills/create-threat-model/docs", True),
+        ("docs/analysis", True),
+        ("docs/internal", True),
         ("data/appsec-requirements-fallback.yaml", False),
     ],
 )

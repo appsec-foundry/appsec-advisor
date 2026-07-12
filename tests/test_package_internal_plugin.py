@@ -121,9 +121,15 @@ def _make_org_profile(root):
 
 def test_copy_source_applies_excludes(tmp_path):
     source = _make_source(tmp_path / "src")
+    (source / "docs" / "analysis").mkdir(parents=True)
+    (source / "docs" / "analysis" / "plan.md").write_text("internal\n", encoding="utf-8")
+    (source / "docs" / "internal" / "analysis").mkdir(parents=True)
+    (source / "docs" / "internal" / "note.md").write_text("internal\n", encoding="utf-8")
     build = tmp_path / "build" / "acme"
     pkg.copy_source(source, build)
     assert (build / ".claude-plugin" / "plugin.json").is_file()
+    assert not (build / "docs" / "analysis").exists()
+    assert not (build / "docs" / "internal").exists()
     assert not (build / "tests").exists()
     assert not (build / "scripts" / "__pycache__").exists()
     assert not (build / "scripts" / "docs").exists()
