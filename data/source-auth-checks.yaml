@@ -1194,3 +1194,79 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "A request-controlled path enables `../` traversal or file inclusion (LFI/RFI)."
     remediation: "Allow-list the file, use basename(), and resolve+verify the path stays within an allowed base."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase B) — Ruby / Rails injection sinks.
+  # ===================================================================
+
+  - id: INJ-RB-001
+    name: "SQL injection via string interpolation — Ruby/Rails"
+    description: >
+      An ActiveRecord where / find_by_sql / execute built with a `#{}`
+      interpolation or `+` concatenation instead of a bound parameter.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)(?:\.where|\.find_by_sql|\.execute|\.select_all|\.select_value|\.pluck)\s*\(\s*["''][^\n]*?(?:#\{|["'']\s*\+)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: "Interpolated request data in SQL lets an attacker alter the query."
+    remediation: "Use bound parameters: where('name = ?', name) or the hash form where(name: name)."
+
+  - id: INJ-RB-002
+    name: "Command injection — Ruby"
+    description: >
+      A shell invocation (system / exec / backticks / IO.popen / Open3) built
+      with a `#{}` interpolation or `+` concatenation.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)(?:\bsystem\s*\(|\bexec\s*\(|IO\.popen\s*\(|Open3\.\w+\s*\()[^)]*(?:#\{|\+)|\x60[^\x60]*#\{'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "A shell command built from request data yields arbitrary command execution."
+    remediation: "Pass an argv array to system(cmd, *args); never interpolate request data into a shell string."
+
+  - id: INJ-RB-003
+    name: "SSRF — outbound request to an interpolated URL — Ruby"
+    description: >
+      Net::HTTP / HTTParty / RestClient / URI.open called with a `#{}` or `+`
+      URL built from dynamic (often request) data.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)(?:Net::HTTP\.(?:get|post|get_response)|HTTParty\.\w+|RestClient\.\w+|URI\.open|URI\.parse)\s*\([^)]*(?:#\{|\+)'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|allowed_hosts)\b'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-RB-004
+    name: "Path traversal — filesystem access from an interpolated path — Ruby"
+    description: >
+      File.read / File.open / IO.read / send_file built with a `#{}` or `+` path
+      and no canonicalization, letting `../` escape the intended directory.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)(?:File\.(?:read|open|new|binread)|IO\.read|send_file)\s*\([^)]*(?:#\{|\+)'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(File\.basename|File\.expand_path|start_with\?)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path with `../` can read/write arbitrary files."
+    remediation: "Use File.basename and File.expand_path; assert the result stays within an allowed base directory."

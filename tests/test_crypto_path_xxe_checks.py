@@ -295,6 +295,39 @@ def test_php_path_traversal_flagged(tmp_path: Path) -> None:
     assert "INJ-PHP-004" in _inj_ids(tmp_path)
 
 
+# --- multi-stack: Ruby / Rails (Phase B) ------------------------------------
+
+
+def test_ruby_md5_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "h.rb", "digest = Digest::MD5.hexdigest(password)\n")
+    assert "CRYPTO-RB-001" in _crypto_ids(tmp_path)
+
+
+def test_ruby_rand_token_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "t.rb", "token = rand(9999).to_s\n")
+    assert "CRYPTO-RB-002" in _crypto_ids(tmp_path)
+
+
+def test_ruby_sqli_interpolation_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "r.rb", 'User.where("name = \'#{params[:name]}\'")\n')
+    assert "INJ-RB-001" in _inj_ids(tmp_path)
+
+
+def test_ruby_command_injection_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "c.rb", 'system("ping #{params[:host]}")\n')
+    assert "INJ-RB-002" in _inj_ids(tmp_path)
+
+
+def test_ruby_ssrf_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "s.rb", 'Net::HTTP.get(URI("http://#{host}/api"))\n')
+    assert "INJ-RB-003" in _inj_ids(tmp_path)
+
+
+def test_ruby_path_traversal_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "p.rb", 'File.read("/data/#{params[:f]}")\n')
+    assert "INJ-RB-004" in _inj_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 

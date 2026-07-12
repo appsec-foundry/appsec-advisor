@@ -343,3 +343,41 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
     remediation: "Use random_bytes() / random_int() for any security value."
+
+  # --- Ruby crypto (multi-stack Phase B) ---
+  - id: CRYPTO-RB-001
+    name: "Broken hash primitive (MD5/SHA-1) — Ruby"
+    description: >
+      `Digest::MD5` / `Digest::SHA1` used as a cryptographic hash. Non-security
+      uses (ETags, cache keys) are suppressed.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: 'Digest::(?:MD5|SHA1)\b'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Internet Anon"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use Digest::SHA256+ for integrity and bcrypt (has_secure_password) for credentials."
+
+  - id: CRYPTO-RB-002
+    name: "Non-cryptographic RNG for a secret/token — Ruby"
+    description: >
+      `rand()` / `Random.rand` for a token/secret/OTP is predictable;
+      `SecureRandom` is the safe alternative.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}(?:\brand\s*\(|Random\.rand)'
+    counter_scope: line
+    counter_patterns:
+      - '\bSecureRandom\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use SecureRandom (hex / urlsafe_base64) for any security value."
