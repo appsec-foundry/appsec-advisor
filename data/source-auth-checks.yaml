@@ -964,3 +964,79 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "A request-controlled path with `../` can read/write arbitrary files."
     remediation: "Canonicalize (os.path.realpath) and assert the result stays within an allowed base directory."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase B) — Go injection sinks.
+  # ===================================================================
+
+  - id: INJ-GO-001
+    name: "SQL injection via formatted query — Go"
+    description: >
+      A database/sql Query/Exec built with fmt.Sprintf or `+` concatenation
+      instead of `$1`/`?` bind parameters.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '(?is)\.(?:Query|QueryRow|QueryContext|QueryRowContext|Exec|ExecContext)\s*\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?(?:fmt\.Sprintf|["\x60][^"\x60]*["\x60]\s*\+)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: "Formatted/concatenated request data in SQL lets an attacker alter the query."
+    remediation: "Use bind parameters ($1 / ? placeholders) with the args variadic; never Sprintf into SQL."
+
+  - id: INJ-GO-002
+    name: "Command injection — Go"
+    description: >
+      `exec.Command` invoked via a shell (`sh -c`) or with a concatenated
+      argument runs an attacker-influenced command.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '(?is)exec\.Command(?:Context)?\s*\(\s*(?:"(?:sh|bash|/bin/sh|cmd)"[^)]*"-c"|[^)]*\+)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "A shell command built from request data yields arbitrary command execution."
+    remediation: "Invoke the binary directly with a fixed argv; never pass request data to `sh -c`."
+
+  - id: INJ-GO-003
+    name: "SSRF — outbound request to a formatted URL — Go"
+    description: >
+      net/http Get/Post/NewRequest called with a fmt.Sprintf or concatenated URL
+      built from dynamic (often request) data.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '(?is)(?:http\.(?:Get|Post|Head)|http\.NewRequest(?:WithContext)?|\.Get)\s*\([^)]*(?:fmt\.Sprintf|\+)'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|allowedHosts|url\.Parse)\b'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-GO-004
+    name: "Path traversal — filesystem access from a formatted path — Go"
+    description: >
+      os.Open / os.ReadFile / ioutil.ReadFile / filepath.Join built by
+      concatenation with no cleaning, letting `../` escape the intended directory.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '(?is)(?:os\.Open|os\.ReadFile|ioutil\.ReadFile|os\.OpenFile)\s*\([^)]*\+'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(filepath\.Clean|filepath\.Base|strings\.HasPrefix)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path with `../` can read/write arbitrary files."
+    remediation: "filepath.Clean the path and assert it stays within an allowed base directory."

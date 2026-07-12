@@ -196,6 +196,39 @@ def test_python_path_traversal_flagged(tmp_path: Path) -> None:
     assert "INJ-PY-004" in _inj_ids(tmp_path)
 
 
+# --- multi-stack: Go (Phase B) ----------------------------------------------
+
+
+def test_go_md5_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "h.go", "h := md5.New()\n")
+    assert "CRYPTO-GO-001" in _crypto_ids(tmp_path)
+
+
+def test_go_math_rand_token_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "t.go", "token := rand.Intn(9999)\n")
+    assert "CRYPTO-GO-002" in _crypto_ids(tmp_path)
+
+
+def test_go_sqli_sprintf_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "r.go", 'rows, _ := db.Query(fmt.Sprintf("SELECT * FROM u WHERE n=\'%s\'", name))\n')
+    assert "INJ-GO-001" in _inj_ids(tmp_path)
+
+
+def test_go_command_injection_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "c.go", 'exec.Command("sh", "-c", "ping "+host)\n')
+    assert "INJ-GO-002" in _inj_ids(tmp_path)
+
+
+def test_go_ssrf_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "s.go", 'resp, _ := http.Get(fmt.Sprintf("http://%s/api", host))\n')
+    assert "INJ-GO-003" in _inj_ids(tmp_path)
+
+
+def test_go_path_traversal_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "p.go", 'data, _ := os.ReadFile("/data/" + name)\n')
+    assert "INJ-GO-004" in _inj_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 
