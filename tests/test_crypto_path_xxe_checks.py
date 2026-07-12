@@ -397,6 +397,39 @@ def test_ios_keychain_suppressed(tmp_path: Path) -> None:
     assert "MOBILE-IOS-001" not in _mobile_ids(tmp_path)
 
 
+# --- multi-stack: cross-platform Flutter/Dart + React Native (Phase C) ------
+
+
+def test_dart_md5_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "h.dart", "final digest = md5.convert(utf8.encode(password));\n")
+    assert "CRYPTO-DART-001" in _crypto_ids(tmp_path)
+
+
+def test_dart_random_token_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "t.dart", "final token = Random().nextInt(9999).toString();\n")
+    assert "CRYPTO-DART-002" in _crypto_ids(tmp_path)
+
+
+def test_dart_random_secure_suppressed(tmp_path: Path) -> None:
+    _write(tmp_path, "t.dart", "final token = Random.secure().nextInt(9999);\n")
+    assert "CRYPTO-DART-002" not in _crypto_ids(tmp_path)
+
+
+def test_dart_sqlite_injection_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "d.dart", 'db.rawQuery("SELECT * FROM u WHERE n = \'$name\'");\n')
+    assert "MOBILE-DART-001" in _mobile_ids(tmp_path)
+
+
+def test_dart_insecure_storage_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "s.dart", 'prefs.setString("auth_token", token);\n')
+    assert "MOBILE-DART-002" in _mobile_ids(tmp_path)
+
+
+def test_react_native_asyncstorage_secret_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "s.tsx", 'await AsyncStorage.setItem("token", jwt);\n')
+    assert "MOBILE-RN-001" in _mobile_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 

@@ -1352,3 +1352,64 @@ checks:
     breach_vector: "Physical / Local"
     rationale: "Secrets in UserDefaults are recoverable from an unencrypted backup or a jailbroken device."
     remediation: "Store secrets in the Keychain (kSecClassGenericPassword), never UserDefaults."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase C) — cross-platform (Flutter/Dart,
+  # React Native) mobile sinks.
+  # ===================================================================
+
+  - id: MOBILE-DART-001
+    name: "SQL injection in local SQLite (sqflite) — Dart"
+    description: >
+      A sqflite rawQuery / execute built with a `$` interpolation or `+`
+      concatenation instead of the `?` + whereArgs binding.
+    file_patterns: ["**/*.dart"]
+    exclude_file_patterns: ["**/test/**", "**/*_test.dart", "**/.dart_tool/**"]
+    pattern: '(?is)\.(?:rawQuery|rawInsert|rawUpdate|rawDelete|execute)\s*\(\s*["''\x60][^\n]*?(?:\$\{?[A-Za-z_]|["''\x60]\s*\+)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: Medium
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Physical / Local"
+    rationale: "Interpolated input in a local SQL query can corrupt or exfiltrate on-device data."
+    remediation: "Use ? placeholders with whereArgs; never interpolate into the SQL string."
+
+  - id: MOBILE-DART-002
+    name: "Secret stored in plaintext SharedPreferences — Dart/Flutter"
+    description: >
+      A token/secret written to shared_preferences is unencrypted;
+      flutter_secure_storage is the correct store and is suppressed.
+    file_patterns: ["**/*.dart"]
+    exclude_file_patterns: ["**/test/**", "**/*_test.dart", "**/.dart_tool/**"]
+    pattern: '(?is)\.setString\s*\(\s*["''][^"'']*(?i:token|password|secret|refresh|jwt|credential)'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(flutter_secure_storage|FlutterSecureStorage)\b'
+    severity_if_violated: Medium
+    cwe: CWE-922
+    finding_type: FT-090
+    breach_vector: "Physical / Local"
+    rationale: "Secrets in shared_preferences are recoverable via backup, root, or forensic access."
+    remediation: "Use flutter_secure_storage (Keystore/Keychain-backed), never plain shared_preferences."
+
+  - id: MOBILE-RN-001
+    name: "Secret stored in AsyncStorage — React Native"
+    description: >
+      A token/secret written to AsyncStorage is stored unencrypted;
+      react-native-keychain / EncryptedStorage are the correct stores.
+    file_patterns: ["**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/node_modules/**", "**/dist/**"]
+    pattern: '(?is)AsyncStorage\.setItem\s*\([^)]*(?i:token|password|secret|refresh|jwt|credential)'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(react-native-keychain|EncryptedStorage|Keychain)\b'
+    severity_if_violated: Medium
+    cwe: CWE-922
+    finding_type: FT-090
+    breach_vector: "Physical / Local"
+    rationale: "AsyncStorage is unencrypted; secrets are recoverable on a rooted/jailbroken or backed-up device."
+    remediation: "Use react-native-keychain or react-native-encrypted-storage for secrets."

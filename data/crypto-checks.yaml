@@ -455,3 +455,37 @@ checks:
     breach_vector: "Physical / Local"
     rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
     remediation: "Use SecRandomCopyBytes (or arc4random_buf) for any security value."
+
+  # --- Flutter / Dart crypto (multi-stack Phase C — mobile) ---
+  - id: CRYPTO-DART-001
+    name: "Broken hash primitive (MD5/SHA-1) — Dart"
+    description: "`md5.convert` / `sha1.convert` (package:crypto) used as a security hash."
+    file_patterns: ["**/*.dart"]
+    exclude_file_patterns: ["**/test/**", "**/*_test.dart", "**/.dart_tool/**"]
+    pattern: '\b(?:md5|sha1)\.convert\s*\('
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Physical / Local"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use sha256 for integrity and a password KDF for credentials."
+
+  - id: CRYPTO-DART-002
+    name: "Non-cryptographic RNG for a secret/token — Dart"
+    description: "`Random()` (dart:math) for a token/secret is predictable; use `Random.secure()`."
+    file_patterns: ["**/*.dart"]
+    exclude_file_patterns: ["**/test/**", "**/*_test.dart", "**/.dart_tool/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}\bRandom\s*\(\s*\)'
+    counter_scope: line
+    counter_patterns:
+      - 'Random\.secure'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Physical / Local"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use Random.secure() for any security value."
