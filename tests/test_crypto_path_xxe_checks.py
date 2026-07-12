@@ -262,6 +262,39 @@ def test_csharp_path_traversal_flagged(tmp_path: Path) -> None:
     assert "INJ-CS-004" in _inj_ids(tmp_path)
 
 
+# --- multi-stack: PHP (Phase B) ---------------------------------------------
+
+
+def test_php_md5_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "h.php", "<?php $h = md5($password);\n")
+    assert "CRYPTO-PHP-001" in _crypto_ids(tmp_path)
+
+
+def test_php_mt_rand_token_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "t.php", "<?php $token = mt_rand(1000, 9999);\n")
+    assert "CRYPTO-PHP-002" in _crypto_ids(tmp_path)
+
+
+def test_php_sqli_superglobal_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "r.php", "<?php mysqli_query($c, \"SELECT * FROM u WHERE n='\" . $_GET['n'] . \"'\");\n")
+    assert "INJ-PHP-001" in _inj_ids(tmp_path)
+
+
+def test_php_command_injection_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "c.php", "<?php system('ping ' . $_GET['host']);\n")
+    assert "INJ-PHP-002" in _inj_ids(tmp_path)
+
+
+def test_php_ssrf_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "s.php", "<?php $data = file_get_contents($_GET['url']);\n")
+    assert "INJ-PHP-003" in _inj_ids(tmp_path)
+
+
+def test_php_path_traversal_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "p.php", "<?php readfile('/data/' . $_GET['f']);\n")
+    assert "INJ-PHP-004" in _inj_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 

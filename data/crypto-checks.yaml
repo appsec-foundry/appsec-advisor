@@ -305,3 +305,41 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
     remediation: "Use RandomNumberGenerator.GetBytes for any security value."
+
+  # --- PHP crypto (multi-stack Phase B) ---
+  - id: CRYPTO-PHP-001
+    name: "Broken hash primitive (MD5/SHA-1) — PHP"
+    description: >
+      `md5()` / `sha1()` used as a cryptographic hash (passwords, integrity).
+      Non-security uses (ETags, cache keys) are suppressed.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '\b(?:md5|sha1)\s*\('
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Internet Anon"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use password_hash() (bcrypt/argon2) for credentials and hash('sha256', …) for integrity."
+
+  - id: CRYPTO-PHP-002
+    name: "Non-cryptographic RNG for a secret/token — PHP"
+    description: >
+      `rand()` / `mt_rand()` / `uniqid()` for a token/secret/OTP is predictable;
+      `random_bytes` / `random_int` are the safe alternatives.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}\b(?:mt_rand|rand|uniqid)\s*\('
+    counter_scope: line
+    counter_patterns:
+      - '(?i)\b(random_bytes|random_int)\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use random_bytes() / random_int() for any security value."

@@ -1116,3 +1116,81 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "A request-controlled path with `../` can read/write arbitrary files."
     remediation: "Canonicalize (Path.GetFullPath) and assert the result stays within an allowed base directory."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase B) — PHP injection sinks.
+  # ===================================================================
+
+  - id: INJ-PHP-001
+    name: "SQL injection via interpolated/concatenated query — PHP"
+    description: >
+      A mysqli_query / PDO ->query / Laravel DB::select built with a request
+      superglobal or `. $var` concatenation instead of a bound parameter.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)(?:mysqli_query|->query|->exec|DB::(?:select|statement|raw)|pg_query)\s*\([^)]*(?:\$_(?:GET|POST|REQUEST|COOKIE)|["''\x60][^"''\x60]*["''\x60]\s*\.\s*\$)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: "Interpolated/concatenated request data in SQL lets an attacker alter the query."
+    remediation: "Use prepared statements (PDO bindParam / mysqli placeholders / Eloquent bindings)."
+
+  - id: INJ-PHP-002
+    name: "Command injection — PHP"
+    description: >
+      `system` / `exec` / `shell_exec` / `passthru` / `popen` invoked with a
+      request superglobal or `. $var` concatenation.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)(?:system|exec|shell_exec|passthru|popen|proc_open)\s*\([^)]*(?:\$_(?:GET|POST|REQUEST|COOKIE)|["''][^"'']*["'']\s*\.\s*\$)'
+    counter_scope: line
+    counter_patterns:
+      - '(?i)\b(escapeshellarg|escapeshellcmd)\b'
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "A shell command built from request data yields arbitrary command execution."
+    remediation: "Avoid the shell; if unavoidable, escapeshellarg every dynamic argument."
+
+  - id: INJ-PHP-003
+    name: "SSRF — outbound request to a request-controlled URL — PHP"
+    description: >
+      curl_setopt(CURLOPT_URL, …) or file_get_contents fetching a URL built from a
+      request superglobal or `. $var` concatenation.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)(?:curl_setopt\s*\([^)]*CURLOPT_URL[^)]*(?:\$_|\.\s*\$)|file_get_contents\s*\(\s*(?:\$_(?:GET|POST|REQUEST)|["'']https?://))'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|allowed_hosts|parse_url)\b'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-PHP-004
+    name: "Path traversal / file inclusion from request input — PHP"
+    description: >
+      fopen / readfile / include / require / file_get_contents built from a
+      request superglobal or `. $var` concatenation, enabling `../` traversal or
+      remote/local file inclusion.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)(?:fopen|readfile|include|include_once|require|require_once|file_get_contents)\s*\(?\s*[^;)]*(?:\$_(?:GET|POST|REQUEST|COOKIE)|["''][^"'']*["'']\s*\.\s*\$)'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(basename|realpath|in_array)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path enables `../` traversal or file inclusion (LFI/RFI)."
+    remediation: "Allow-list the file, use basename(), and resolve+verify the path stays within an allowed base."
