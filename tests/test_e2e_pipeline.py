@@ -128,6 +128,7 @@ def _load_module(name: str, path: Path):
 
 
 compose = _load_module("compose_threat_model", SCRIPTS / "compose_threat_model.py")
+qa_checks = _load_module("qa_checks", SCRIPTS / "qa_checks.py")
 
 # Reuse the canonical SARIF validator that test_export_sarif.py uses, rather
 # than re-implementing structural checks here (single source of truth).
@@ -671,3 +672,58 @@ def test_export_sarif_matches_golden(e2e_run: Path) -> None:
     assert produced == golden.read_text(encoding="utf-8"), (
         f"exported SARIF != golden. If intentional, regenerate: {_REGEN_HINT}"
     )
+
+
+# ---------------------------------------------------------------------------
+# P1.4 — weakness-class register render (proposal §4a). The weakness view is
+# gated on weaknesses[] being present, so the committed golden (no register)
+# stays byte-identical; this test injects a register and asserts the composer
+# renders the systemic view cleanly and QA-safe.
+# ---------------------------------------------------------------------------
+
+
+def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
+    yml = e2e_run / "threat-model.yaml"
+    doc = yaml.safe_load(yml.read_text(encoding="utf-8"))
+    tids = [t.get("id") or t.get("t_id") for t in doc.get("threats", []) if (t.get("id") or t.get("t_id"))][:2]
+    assert len(tids) == 2, "fixture needs ≥2 threats to reference as instances"
+    doc["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "severity": "Critical",
+            "severity_basis": "confirmed",
+            "statement": "SQL built by concatenation; no parametrized layer.",
+            "observable_backing": {
+                "absent_control_signal": [{"pattern": "sequelize", "hit_count": 0}],
+                "practice_evidence": [{"file": "routes/x.ts", "line": 1, "id": tids[0]}],
+            },
+            "affected_components": ["api"],
+            "instances": [
+                {"id": tids[0], "basis": "confirmed-exploitable"},
+                {"id": tids[1], "basis": "confirmed-exploitable"},
+            ],
+        }
+    ]
+    yml.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+    rendered, warnings = compose.render(CONTRACT, e2e_run)
+    assert warnings == [], f"unexpected compose warnings: {warnings}"
+    # Systemic weakness view is present in §8.
+    assert "**Weakness Classes**" in rendered
+    assert "**Injection**" in rendered
+    assert "(injection · design · confirmed)" in rendered
+    # P4 — the systemic posture verdict table renders alongside it (the header
+    # em-dash is normalized to a hyphen by the prose-fix pass, so match loosely).
+    assert "Security Principles" in rendered and "Systemic Posture" in rendered
+    assert "Input Validation" in rendered
+    assert "VIOLATED" in rendered
+    # Post-consolidation basis breakdown is present in the verdict.
+    assert "**Findings:**" in rendered
+    assert "confirmed-exploitable ·" in rendered
+    # QA invariants pass on the rendered document (the block adds no anchor /
+    # section that check_invariants would reject).
+    (e2e_run / "threat-model.md").write_text(rendered, encoding="utf-8")
+    inv = qa_checks.check_invariants(e2e_run / "threat-model.md")
+    assert inv.ok, f"check_invariants rejected the weakness-register render: {inv.__dict__}"

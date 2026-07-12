@@ -90,6 +90,14 @@ from _manifest_readers import (
     read_readme_tags as _read_readme_tags,
 )
 
+# P1: single-source weakness-class map, shared with merge_threats.py.
+# `_MULTI_MATCH_WARNED` is re-exported so existing call sites/tests keep
+# mutating the shared warned-CWE set.
+from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
+from weakness_classifier import MULTI_MATCH_WARNED as _MULTI_MATCH_WARNED  # noqa: F401
+from weakness_classifier import classify_threat as _wc_classify_threat
+from weakness_classifier import load_weakness_classes as _wc_load_weakness_classes
+
 try:
     import jsonschema
 
@@ -2569,6 +2577,30 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
     return out
 
 
+def _weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | None:
+    """Post-consolidation finding count split by evidence basis (P1.4 / §9.2).
+
+    Returns ``(total, confirmed, implementation, design)`` or ``None`` when the
+    weakness register is empty (pre-P1 data → caller keeps legacy behaviour).
+
+    `confirmed` counts register threats that are NOT folded insecure-practice
+    sites (those live under a weakness's practice_evidence and must not be
+    double-counted). `implementation` / `design` count the weakness headings by
+    `kind`. total = confirmed + implementation + design.
+    """
+    weaknesses = yaml_data.get("weaknesses") or []
+    if not weaknesses:
+        return None
+    confirmed = sum(
+        1
+        for t in (yaml_data.get("threats") or [])
+        if (t.get("evidence_tier") or "confirmed-exploitable") != "insecure-practice"
+    )
+    implementation = sum(1 for w in weaknesses if w.get("kind") == "implementation")
+    design = sum(1 for w in weaknesses if w.get("kind") == "design")
+    return (confirmed + implementation + design, confirmed, implementation, design)
+
+
 def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     data = _load_fragment(ctx, "verdict", section["fragment"])
     _validate_fragment("verdict", data, section["schema"])
@@ -2576,8 +2608,15 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     # prose must NOT cite exact counts (they drift — a 2026-05 run claimed
     # "eleven High" when there were 17); this authoritative line is computed
     # from threats[] so the Critical/High/Medium/Low breakdown is always exact.
+    # P1.4: when the weakness register is populated, folded insecure-practice
+    # sites live under their weakness (practice_evidence) and are NOT standalone
+    # findings, so exclude them from the severity tally to keep Total honest.
+    _breakdown = _weakness_basis_breakdown(ctx.yaml_data)
+    _fold_practice = _breakdown is not None
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for t in ctx.yaml_data.get("threats") or []:
+        if _fold_practice and (t.get("evidence_tier") == "insecure-practice"):
+            continue
         sev = (t.get("risk") or t.get("severity") or "").strip().lower()
         if sev in counts:
             counts[sev] += 1
@@ -2593,6 +2632,12 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     if counts["info"] > 0:
         rd_parts.append(f"⚪ Info: {counts['info']}")
     risk_distribution = "**Risk distribution:** " + " · ".join(rd_parts) + f" · **Total: {total}**"
+    if _breakdown is not None:
+        n, confirmed, impl, design = _breakdown
+        risk_distribution += (
+            f"<br/>**Findings:** {n} — {confirmed} confirmed-exploitable · "
+            f"{impl} implementation · {design} design"
+        )
     # Deterministic scope-coverage line — PL-facing. States how many components
     # were analyzed in depth vs. modeled, computed from meta.component_selection
     # (.stride-selection.json), so the executive verdict never implies the whole
@@ -4040,7 +4085,6 @@ def _build_tier_cards(
 # Weakness-cluster vocabulary loader (data/weakness-classes.yaml).
 # ---------------------------------------------------------------------------
 
-_WEAKNESS_CLASSES_CACHE: dict[str, Any] | None = None
 _STRENGTH_CLUSTERS_CACHE: dict[str, Any] | None = None
 
 
@@ -4387,25 +4431,12 @@ def _strip_embedded_evidence_file(title: str, threat: dict | None) -> str:
 
 
 def _load_weakness_classes() -> dict[str, Any]:
-    """Lazy-load and cache the weakness-classes vocabulary."""
-    global _WEAKNESS_CLASSES_CACHE
-    if _WEAKNESS_CLASSES_CACHE is not None:
-        return _WEAKNESS_CLASSES_CACHE
-    # Resolve plugin root from this file's location (scripts/compose_*.py).
-    here = Path(__file__).resolve()
-    plugin_root = here.parent.parent
-    candidate = plugin_root / "data" / "weakness-classes.yaml"
-    if not candidate.exists():
-        # Empty fallback — every threat falls into the `_unmapped` cluster.
-        _WEAKNESS_CLASSES_CACHE = {"clusters": []}
-        return _WEAKNESS_CLASSES_CACHE
-    import yaml as _yaml
+    """Lazy-load and cache the weakness-classes vocabulary.
 
-    try:
-        _WEAKNESS_CLASSES_CACHE = _yaml.safe_load(candidate.read_text()) or {"clusters": []}
-    except Exception:
-        _WEAKNESS_CLASSES_CACHE = {"clusters": []}
-    return _WEAKNESS_CLASSES_CACHE
+    Delegates to the canonical `weakness_classifier` module so the composer and
+    the threat merger share one class map (P1 weakness-class evidence model).
+    """
+    return _wc_load_weakness_classes()
 
 
 _ARCH_CONTROLS_CACHE: dict[str, Any] | None = None
@@ -5071,40 +5102,19 @@ def _measure_prio_prefix(ctx: RenderContext, mid: str) -> str:
     return f"{digit} " if digit else ""
 
 
-_MULTI_MATCH_WARNED: set[str] = set()
+# `_MULTI_MATCH_WARNED` is imported from weakness_classifier at module top so
+# the composer and merger share one warned-CWE set (P1). Tests mutate it.
 
 
 def _classify_threat_cluster(threat: dict, vocab: dict | None = None) -> str:
     """Return the weakness-cluster id for a single threat (CWE-based).
 
-    When a CWE is listed in more than one cluster, the cluster appearing
-    earliest in the YAML wins (deterministic per file order). A stderr
-    warning is emitted on the FIRST encounter of each ambiguous CWE so
-    operators see the routing hazard immediately — silent first-match
-    was the root cause of Bug A (CWE-916 in both broken_auth and
-    weak_crypto routed to whichever cluster came first).
+    Delegates to the canonical `weakness_classifier` module (shared with the
+    threat merger). First-match-by-file-order wins on an ambiguous CWE, and a
+    one-time stderr warning surfaces the routing hazard; the warned-CWE set is
+    the module-level `_MULTI_MATCH_WARNED` alias (tests mutate it directly).
     """
-    vocab = vocab or _load_weakness_classes()
-    cwe = (threat.get("cwe") or "").strip().upper()
-    if not cwe:
-        return "_unmapped"
-    matches: list[str] = []
-    for cluster in vocab.get("clusters") or []:
-        if cluster.get("id") == "_unmapped":
-            continue
-        if cwe in {c.strip().upper() for c in (cluster.get("cwes") or [])}:
-            matches.append(cluster["id"])
-    if not matches:
-        return "_unmapped"
-    if len(matches) > 1 and cwe not in _MULTI_MATCH_WARNED:
-        _MULTI_MATCH_WARNED.add(cwe)
-        sys.stderr.write(
-            f"compose_threat_model: WARNING — {cwe} matches multiple "
-            f"weakness clusters {matches}; first-match wins ({matches[0]}). "
-            f"Consider removing the CWE from all but one cluster in "
-            f"data/weakness-classes.yaml to make the routing deterministic.\n"
-        )
-    return matches[0]
+    return _wc_classify_threat(threat, vocab)
 
 
 def _tier_for_cluster(cluster_id: str, fallback_tier: str, vocab: dict | None = None) -> str:
@@ -7298,8 +7308,45 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
     # single source of truth — the literal here only kicks in when the
     # contract is missing/corrupt.
     max_rows = (ctx.contract["sections"].get("top_findings") or {}).get("table", {}).get("rows", {}).get("max", 5)
+    # P1.4 — design-risk weaknesses (W-NNN) may enter findings_ranked (§9.3).
+    # They have no threats[] row, so resolve them from the weakness register and
+    # render a distinct design-risk row that links to the §8 Weakness Classes
+    # anchor. Empty register → no W-NNN ids → this map is unused.
+    _wk_by_id = {
+        (w.get("id") or "").strip().upper(): w for w in (ctx.yaml_data.get("weaknesses") or []) if w.get("id")
+    }
+    _wk_labels = {
+        c.get("id"): c.get("label")
+        for c in (_load_weakness_classes().get("clusters") or [])
+        if c.get("id")
+    }
     rendered: list[dict[str, Any]] = []
     for idx, tid in enumerate(qualifying_ids[:max_rows], start=1):
+        wk = _wk_by_id.get((tid or "").strip().upper())
+        if wk is not None:
+            # Design-risk weakness row — no CVSS / no proven exploit; the
+            # "(design-risk)" tag keeps it visually distinct from confirmed rows.
+            label = _wk_labels.get(wk.get("weakness_class")) or (wk.get("weakness_class") or "Weakness")
+            stmt = (wk.get("statement") or "").strip()
+            wtitle = f"{label} (design-risk)" + (f" — {stmt}" if stmt else "")
+            comps = wk.get("affected_components") or []
+            wc_anchor, wc_name = resolve_component(comps[0] if comps else None)
+            rendered.append(
+                {
+                    "rank": idx,
+                    "criticality": (wk.get("severity") or "").lower(),
+                    "path_glyph": "",
+                    "path_anchor": "",
+                    "finding_id": (tid or "").strip().upper(),
+                    "finding_title": wtitle[:160],
+                    "component_id": wc_anchor,
+                    "component_name": wc_name,
+                    "mitigations": [
+                        {"id": "", "action": f"Introduce a central {label.lower()} control", "priority": "", "kind": ""}
+                    ],
+                }
+            )
+            continue
         t = threats.get(tid) or {}
         # Component cell: use the canonical C-NN anchor.
         c_anchor, c_name = resolve_component(t.get("component_id") or t.get("component"))
@@ -14481,6 +14528,119 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
     return "\n".join(lines).rstrip() + "\n"
 
 
+_POSTURE_VERDICT_EMOJI = {"VIOLATED": "🔴", "WEAK": "🟠", "ADEQUATE": "🟢"}
+
+
+def _render_security_principles(ctx: RenderContext) -> str:
+    """P4 — the systemic posture verdict table: per security principle, a
+    deterministic VIOLATED / WEAK / ADEQUATE row fused from the weakness
+    register + confirmed findings + implementation strategy
+    (build_posture_verdict). Answers "incidental bugs vs. systemically broken".
+    Rendered only when the register yields at least one principle row (pre-P1
+    data → "" → goldens unchanged). Not a heading anchor — a bold block.
+    """
+    # Gated on the weakness register: the systemic verdict is Layer-2 on top of
+    # the two-type register. No register (pre-P1 data) → no table → goldens
+    # unchanged.
+    if not (ctx.yaml_data.get("weaknesses") or []):
+        return ""
+    try:
+        rows = _build_posture_verdict(ctx.yaml_data)
+    except Exception:  # noqa: BLE001 — never let the verdict crash the render
+        rows = []
+    if not rows:
+        return ""
+    out: list[str] = ["**Security Principles — Systemic Posture**", ""]
+    out.append(
+        "Each principle is scored deterministically from the findings that "
+        "exercise it: **VIOLATED** (a confirmed exploit or a pervasive "
+        "home-grown/absent control), **WEAK** (isolated deviations), or "
+        "**ADEQUATE** (no confirmed gap; a standard control in use)."
+    )
+    out.append("")
+    out.append("| Principle | Verdict | Signal |")
+    out.append("|---|---|---|")
+    for r in rows:
+        emoji = _POSTURE_VERDICT_EMOJI.get(r.get("verdict"), "")
+        signal = " · ".join(r.get("drivers") or []) or "—"
+        out.append(f"| {r.get('label')} | {emoji} {r.get('verdict')} | {signal} |")
+    out.append("")
+    return "\n".join(out)
+
+
+def _render_weakness_classes(ctx: RenderContext) -> str:
+    """P1.4 — the systemic 'weakness as heading, confirmed findings as its
+    instances' view (proposal §4a). Rendered inside §8, above the per-finding
+    cards, ONLY when the weakness register is populated (pre-P1 data → "").
+
+    A `design` weakness marks a centrally-absent control; an `implementation`
+    weakness a recurring insecure pattern. Confirmed-exploitable findings are
+    linked as F-NNN instances; non-exploitable sites are counted as practice
+    evidence. Deterministic; no LLM; not a new heading anchor (a bold block, so
+    it adds no §8 sub-section / TOC entry / contract surface).
+    """
+    weaknesses = ctx.yaml_data.get("weaknesses") or []
+    if not weaknesses:
+        return ""
+    vocab = _load_weakness_classes()
+    labels = {c.get("id"): c.get("label") for c in (vocab.get("clusters") or []) if c.get("id")}
+    _basis_rank = {"design-risk": 0, "confirmed": 1}
+    _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+    def _sort_key(w: dict) -> tuple:
+        return (
+            _sev_rank.get((w.get("severity") or "").strip().lower(), 9),
+            _basis_rank.get((w.get("severity_basis") or "").strip().lower(), 9),
+            w.get("id") or "",
+        )
+
+    out: list[str] = ["**Weakness Classes**", ""]
+    out.append(
+        f"The findings roll up into {len(weaknesses)} systemic weakness "
+        "class(es). A **design** weakness marks a centrally-absent control; an "
+        "**implementation** weakness a recurring insecure pattern. Confirmed "
+        "findings are listed as instances; non-exploitable sites are counted as "
+        "practice evidence (design-risk severity carries no CVSS)."
+    )
+    out.append("")
+    for w in sorted(weaknesses, key=_sort_key):
+        emoji = ctx.severity_emoji((w.get("severity") or "").strip().lower())
+        label = labels.get(w.get("weakness_class")) or (w.get("weakness_class") or "Other")
+        kind = (w.get("kind") or "").strip()
+        basis = (w.get("severity_basis") or "").strip()
+        statement = (w.get("statement") or "").strip()
+        # Anchor so a Top Findings design-risk row [W-NNN](#w-nnn) resolves here.
+        wid = (w.get("id") or "").strip().lower()
+        anchor = f'<a id="{wid}"></a>' if wid else ""
+        strat = (w.get("implementation_strategy") or "").strip()
+        facets = f"{w.get('weakness_class')} · {kind} · {basis}" + (f" · {strat}" if strat else "")
+        parts = [f"- {anchor}{emoji} **{label}** ({facets})"]
+        if statement:
+            parts.append(f" — {statement}")
+        line = "".join(parts)
+        inst_links = []
+        for i in w.get("instances") or []:
+            iid = (i.get("id") or "").strip().upper()
+            m = re.search(r"(\d+)$", iid)
+            if m:
+                n = m.group(1)
+                inst_links.append(f"[F-{n}](#f-{n})")
+        tail: list[str] = []
+        if inst_links:
+            tail.append("Instances: " + ", ".join(inst_links))
+        n_practice = len((w.get("observable_backing") or {}).get("practice_evidence") or [])
+        if n_practice:
+            tail.append(f"Practice sites: {n_practice}")
+        comps = w.get("affected_components") or []
+        if comps:
+            tail.append("Affected: " + ", ".join(comps))
+        if tail:
+            line += "<br/>&nbsp;&nbsp;" + " · ".join(tail)
+        out.append(line)
+    out.append("")
+    return "\n".join(out)
+
+
 def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render §8 Findings Register in the canonical 8.A/B/C/D layout.
 
@@ -14654,6 +14814,22 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         f"Denial of Service: {stride_map['dos']} · Elevation of Privilege: {stride_map['elev_priv']}"
     )
     lines.append("")
+
+    # ---- Security Principles verdict (P4) --------------------------------
+    # Systemic posture table (VIOLATED/WEAK/ADEQUATE per principle). Renders
+    # nothing until the weakness register yields a principle row.
+    _principles_block = _render_security_principles(ctx)
+    if _principles_block:
+        lines.append(_principles_block.rstrip())
+        lines.append("")
+
+    # ---- Weakness Classes (P1.4) -----------------------------------------
+    # Systemic 'weakness heading + confirmed instances' view. Renders nothing
+    # (and thus leaves pre-P1 goldens byte-identical) until weaknesses[] exists.
+    _weakness_block = _render_weakness_classes(ctx)
+    if _weakness_block:
+        lines.append(_weakness_block.rstrip())
+        lines.append("")
 
     # ---- Findings index (jump-list) --------------------------------------
     # A compact, ID-ordered list of every finding card in §8 so the reader can

@@ -2088,7 +2088,20 @@ def main() -> int:
         doc["cross_repo_dependencies"] = (
             cross_repo if isinstance(cross_repo, list) else cross_repo.get("dependencies", [])
         )
-    if threat_hypotheses:
+    # Weakness-class register (P1) — carry the deterministic `weaknesses[]` folded
+    # by merge_threats.build_weakness_register straight through to the export.
+    # Instances reference the same T-NNN ids as threats[]. Absent on legacy/first
+    # runs → key omitted.
+    weaknesses = merged.get("weaknesses") or []
+    if weaknesses:
+        doc["weaknesses"] = weaknesses
+    if threat_hypotheses and not weaknesses:
+        # P1.3c: when the weakness register exists, unpromoted design signals are
+        # folded into weaknesses[] (rendered as design-weakness headings), so
+        # `threat_hypotheses[]` — the retired user-facing "hypothesis" list — is
+        # suppressed to avoid showing the same design gap twice (Fact R). Legacy
+        # runs with no register keep emitting it (readable one release, §Migration).
+        #
         # Only emit if every entry has the required schema fields; otherwise
         # skip — meta_findings/threat_hypotheses synthesis from raw intermediates
         # is non-trivial and is queued for a follow-up migration step.

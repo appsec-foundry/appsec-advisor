@@ -1,0 +1,64 @@
+# security-libraries.yaml — P2 implementation-strategy axis
+# (docs/internal/analysis/implplan-weakness-class-evidence-model.md §P2).
+#
+# Per weakness class, the vetted library/protocol names whose PRESENCE (in
+# package.json deps or a source import) is exculpatory, and the bespoke-pattern
+# regexes whose presence is a "home-grown / misused" signal. The strategy is
+# derived by scripts/detect_impl_strategy.py:
+#
+#   vetted present  AND  no bespoke signal   → standard-vetted  (exculpatory)
+#   vetted present  AND  bespoke signal      → standard-misused (a finding)
+#   no vetted       AND  bespoke signal      → home-grown       (risk multiplier)
+#   neither                                  → none             (strongest signal)
+#
+# RULE (proposal §2 / I2-adjacent): standard-vetted requires a *detected lib*
+# AND *no misuse signal* — never library-presence alone (else alg:none gets a
+# free pass). The detector enforces this; do not weaken it here.
+#
+# Keys are data/weakness-classes.yaml cluster ids so the reconciler can map a
+# strategy straight onto the matching weakness.
+
+version: 1
+domains:
+  injection:
+    # Parameterized ORMs / query builders + input-validation schema libs.
+    vetted_libs:
+      [sequelize, prisma, "@prisma/client", typeorm, knex, "drizzle-orm", mikro-orm,
+       zod, joi, "@hapi/joi", yup, ajv, "express-validator", "class-validator"]
+    bespoke_patterns:
+      - '\.query\(\s*[`''"][^`''"]*\$\{'      # template-literal SQL interpolation
+      - '\.query\(\s*[`''"][^`''"]*\+\s*'      # string-concatenation SQL
+      - 'sequelize\.query\('                    # raw query beside the ORM
+
+  broken_auth:
+    vetted_libs:
+      [passport, next-auth, "@auth/core", "openid-client", "express-session",
+       jsonwebtoken, jose, "@fastify/jwt"]
+    bespoke_patterns:
+      - 'jwt\.decode\('                         # decode without verify
+      - 'crypto\.randomBytes\([^)]*\)\s*.{0,40}token'   # hand-rolled session token
+
+  weak_crypto:
+    vetted_libs:
+      [argon2, bcrypt, bcryptjs, "libsodium-wrappers", libsodium, scrypt, "node-forge"]
+    bespoke_patterns:
+      - "crypto\\.createHash\\(\\s*['\"`]md5"   # md5 as a hash primitive
+      - "crypto\\.createHash\\(\\s*['\"`]sha1"  # sha1 as a hash primitive
+      - 'Math\.random\(\)'                       # non-CSPRNG for tokens/keys
+
+  output_xss_csp:
+    vetted_libs: [dompurify, "sanitize-html", xss, helmet]
+    bespoke_patterns:
+      - 'dangerouslySetInnerHTML'
+      - '\.innerHTML\s*='
+      - 'bypassSecurityTrustHtml'
+
+  missing_authz:
+    vetted_libs: ["@casl/ability", casl, accesscontrol, "express-jwt", "@nestjs/passport"]
+    bespoke_patterns:
+      - "req\\.user\\.(role|isAdmin)\\s*==="    # ad-hoc per-handler role check
+
+  server_side_exposure:
+    vetted_libs: [ssrf-req-filter, helmet]
+    bespoke_patterns:
+      - 'axios\.(get|post)\(\s*req\.'            # user-controlled outbound request

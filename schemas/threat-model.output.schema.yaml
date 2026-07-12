@@ -533,6 +533,14 @@ properties:
           # is absent. Encouraged but not strictly required by the schema.
           type: [string, "null"]
           maxLength: 40
+        evidence_tier:
+          # P1 (weakness-class evidence model): evidence BASIS of the finding —
+          # confirmed-exploitable (proven sink, CVSS-eligible) vs
+          # insecure-practice (bad-practice site, exploit chain unproven, no
+          # CVSS). Distinct from any verification-state field. Mirrors
+          # threats-merged.schema.yaml.
+          type: [string, "null"]
+          enum: [confirmed-exploitable, insecure-practice, null]
         scenario:
           type: string
           minLength: 10
@@ -904,7 +912,89 @@ properties:
           type: [string, "null"]
           pattern: "^M-\\d{3,}$"
 
+  weaknesses:
+    # P1 (weakness-class evidence model) — mirror of the merged register's
+    # PARENT rows (see schemas/threats-merged.schema.yaml `weaknesses`).
+    # A weakness is a Type-B finding (kind: design|implementation) that carries
+    # its confirmed-exploitable Type-A findings as instances[]. Replaces the
+    # user-facing role of `threat_hypotheses[]`: the observable design signal
+    # is rendered as a weakness heading, never as a speculative "hypothesis".
+    # IDs use W-NNN (never T-NNN — out of the contiguous sequence).
+    type: [array, "null"]
+    items:
+      type: object
+      additionalProperties: true
+      required:
+        - id
+        - weakness_class
+        - kind
+        - statement
+        - severity
+        - severity_basis
+        - observable_backing
+      properties:
+        id:
+          type: string
+          pattern: "^W-\\d{3,}$"
+        weakness_class:
+          type: string
+          enum: [injection, broken_auth, missing_authz, weak_crypto,
+                 server_side_exposure, output_xss_csp, sensitive_disclosure,
+                 dos, outdated_deps, _unmapped]
+        kind:
+          type: string
+          enum: [design, implementation]
+        statement:
+          type: string
+          minLength: 1
+        severity:
+          type: string
+          enum: [Critical, High, Medium, Low]
+        severity_basis:
+          type: string
+          enum: [confirmed, design-risk]
+        implementation_strategy:
+          type: [string, "null"]
+          enum: [none, home-grown, standard-misused, standard-vetted, null]
+        observable_backing:
+          type: object
+          additionalProperties: true
+          properties:
+            absent_control_signal:
+              type: array
+            practice_evidence:
+              type: array
+              items:
+                type: object
+                properties:
+                  file: { type: string }
+                  line: { type: [integer, "null"] }
+        affected_components:
+          type: array
+          items: { type: string }
+        instances:
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id:
+                type: string
+                pattern: "^[TF]-\\d{3,}$"
+              file: { type: string }
+              line: { type: [integer, "null"] }
+              basis:
+                type: string
+                enum: [confirmed-exploitable]
+              poc_hint: { type: [string, "null"] }
+
   threat_hypotheses:
+    # DEPRECATED (P1, weakness-class evidence model): retired as a user-facing
+    # category. The producer stops emitting this list (see P1.3
+    # arch_coverage_to_threats.py); its observable design content now flows into
+    # `weaknesses[]` as design-weakness headings, its speculative content is
+    # dropped. Kept readable for one release for back-compat (incremental
+    # prior-finding carry maps old entries → new design signals); removed after.
     # Persisted from $OUTPUT_DIR/.architecture-coverage.json by Phase 11.
     # Renders in Section 7.2 as "Threat Hypotheses Requiring Validation".
     # MUST NOT appear in Section 8 Threat Register, MUST NOT carry a

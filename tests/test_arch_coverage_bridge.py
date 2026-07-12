@@ -702,3 +702,76 @@ def test_persist_cli(tmp_path: Path) -> None:
     assert "HYP-001" in proc.stdout
     doc = _yaml.safe_load(yaml_path.read_text())
     assert doc["threat_hypotheses"][0]["id"] == "HYP-001"
+
+
+# ---------------------------------------------------------------------------
+# P1.3 — design-signal emission (replaces routing to threat_hypotheses[])
+# ---------------------------------------------------------------------------
+
+
+def test_build_design_signals_emits_backed_signal():
+    coverage = {
+        "threat_hypotheses": [
+            {
+                "hypothesis_id": "ARCH-HYP-SQLI-001",
+                "rule_id": "ARCH-SQLI-001",
+                "cwe": "CWE-89",
+                "proof_state": "control-derived",
+                "confidence": "low",
+                "generic_threat_title": "Injection through missing centralized input validation",
+                "positive_signals": [{"file": "routes/search.ts", "line": 23, "signal": "raw concat"}],
+            }
+        ]
+    }
+    signals, dropped = bridge.build_design_signals(coverage)
+    assert len(signals) == 1
+    s = signals[0]
+    assert s["weakness_class"] == "injection"
+    assert s["cwe"] == "CWE-89"
+    assert s["absent_control_signal"]
+    assert dropped == []
+
+
+def test_build_design_signals_drops_speculation_without_backing():
+    # I2 / §0: no observable absent-control signal → dropped, never shown.
+    coverage = {
+        "threat_hypotheses": [
+            {"hypothesis_id": "ARCH-HYP-XSS-009", "rule_id": "ARCH-XSS-001",
+             "cwe": "CWE-79", "proof_state": "control-derived", "confidence": "low",
+             "positive_signals": []}
+        ]
+    }
+    signals, dropped = bridge.build_design_signals(coverage)
+    assert signals == []
+    assert len(dropped) == 1 and dropped[0]["hypothesis_id"] == "ARCH-HYP-XSS-009"
+
+
+def test_build_design_signals_skips_confirmed_high():
+    # Confirmed+high promotes to threats[] via select_and_build — not a signal.
+    coverage = {
+        "threat_hypotheses": [
+            {"hypothesis_id": "ARCH-HYP-1", "rule_id": "ARCH-SQLI-001", "cwe": "CWE-89",
+             "proof_state": "confirmed", "confidence": "high",
+             "positive_signals": [{"file": "a.ts", "line": 1, "signal": "x"}]}
+        ]
+    }
+    signals, _ = bridge.build_design_signals(coverage)
+    assert signals == []
+
+
+def test_emit_design_signals_cli(tmp_path):
+    cov = tmp_path / ".architecture-coverage.json"
+    cov.write_text(json.dumps({"threat_hypotheses": [
+        {"hypothesis_id": "H1", "rule_id": "ARCH-SQLI-001", "cwe": "CWE-89",
+         "proof_state": "control-derived", "confidence": "low",
+         "positive_signals": [{"file": "a.ts", "line": 1, "signal": "x"}]}
+    ]}), encoding="utf-8")
+    rc = subprocess.run(
+        [sys.executable, str(BRIDGE), "emit-design-signals",
+         "--input", str(cov), "--output-dir", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert rc.returncode == 0, rc.stderr
+    out = json.loads((tmp_path / ".arch-design-signals.json").read_text())
+    assert len(out["design_signals"]) == 1
+    assert out["design_signals"][0]["weakness_class"] == "injection"

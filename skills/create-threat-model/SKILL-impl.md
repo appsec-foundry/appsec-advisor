@@ -1867,6 +1867,11 @@ if [ "$DRY_RUN" != "true" ] && [ "$RERENDER" != "true" ]; then
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/source_auth_scanner.py" \
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --quiet >/dev/null 2>&1 || true
+  # P2 — implementation-strategy axis: classify per weakness class whether a
+  # standard vetted control is used (exculpatory) or security is home-grown
+  # (aggravating). Consumed by merge_threats.build_weakness_register at finalize.
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_impl_strategy.py" \
+      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
   if [ -f "$OUTPUT_DIR/.route-inventory.json" ]; then
     RI_COUNT=$(python3 -c "import json;print(len((json.load(open('$OUTPUT_DIR/.route-inventory.json')) or {}).get('routes') or []))" 2>/dev/null || echo 0)
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  ROUTE_INVENTORY_PREPASS  .route-inventory.json ready (${RI_COUNT} routes)" \
@@ -1888,6 +1893,7 @@ Behaviour contract:
 - **Extractor finds no routes** (non-web repo, unsupported framework) → empty inventory, the sidecar-only fallback applies exactly as before; non-fatal.
 - **Script error** (`|| true`) → non-fatal; the analyst's own Phase 2.6 attempt is the second line of defence, and a genuinely empty baseline still renders via the sidecar additions.
 - **`.source-auth-findings.json` produced** → `merge_threats.py` ingests every AUTHZ-NNN finding into the threat-merge candidate pool; absent file → non-fatal, STRIDE-only authz coverage as before.
+- **`.impl-strategy.json` produced** → `merge_threats.build_weakness_register` stamps `implementation_strategy` on each weakness and applies the exculpatory (standard-vetted control present → a pure design gap is suppressed / residual severity lowered one band) or aggravating (home-grown / none → severity multiplier) effect; absent file → non-fatal, weaknesses carry no strategy as before.
 
 ### Stage 1 Handoff Banner
 

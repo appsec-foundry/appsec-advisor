@@ -1806,3 +1806,75 @@ class TestAutoRepairInvalidJSON:
         # file was rewritten to valid JSON
         assert "\\!" not in bad.read_text()
         assert "auto-repaired" in capsys.readouterr().err
+
+
+class TestWeaknessRegister:
+    """P1 weakness-class evidence model — build_weakness_register reconciler
+    (proposal §4a/§4b/§4d-bis). Folds confirmed findings + practice sites +
+    arch design signals into one weakness heading per class."""
+
+    def _confirmed(self, tid, cwe, comp, risk, file):
+        return {
+            "t_id": tid, "source": "source-scan", "cwe": cwe,
+            "component_id": comp, "risk": risk,
+            "evidence": {"file": file, "line": 10},
+        }
+
+    def test_fold_two_sinks_plus_design_signal(self, mt):
+        # §4b: ≥1 proven + absent control → ONE design weakness, sinks as instances.
+        threats = [
+            self._confirmed("T-001", "CWE-89", "login", "Critical", "routes/login.ts"),
+            self._confirmed("T-002", "CWE-89", "search", "High", "routes/search.ts"),
+        ]
+        design = [{
+            "weakness_class": "injection",
+            "statement": "SQL built by concatenation; no parametrized layer.",
+            "absent_control_signal": [{"pattern": "sequelize", "search_paths": ["routes"], "hit_count": 0}],
+        }]
+        w = mt.build_weakness_register(threats, design)
+        assert len(w) == 1
+        wk = w[0]
+        assert wk["weakness_class"] == "injection"
+        assert wk["kind"] == "design"
+        assert len(wk["instances"]) == 2
+        assert {i["id"] for i in wk["instances"]} == {"T-001", "T-002"}
+        assert wk["severity_basis"] == "confirmed"
+        assert wk["severity"] == "Critical"  # max instance risk
+        assert "absent_control_signal" in wk["observable_backing"]
+        assert wk["id"].startswith("W-")
+
+    def test_confirmed_only_no_backing_is_not_a_weakness(self, mt):
+        # §4b "control present" row: proven instances, no absent-control signal,
+        # no practice → NOT a systemic weakness (stays plain threats[]).
+        threats = [self._confirmed("T-001", "CWE-89", "login", "High", "a.ts")]
+        assert mt.build_weakness_register(threats, None) == []
+
+    def test_pervasive_homegrown_design_risk_can_be_critical(self, mt):
+        # §4e: pervasive (≥2 components) + home-grown + no central control →
+        # design-risk Critical even with zero confirmed instances.
+        practice = [
+            {"source": "stride", "cwe": "CWE-327", "component_id": "a",
+             "evidence": {"file": "a.ts", "line": 1}, "evidence_tier": "insecure-practice"},
+            {"source": "stride", "cwe": "CWE-327", "component_id": "b",
+             "evidence": {"file": "b.ts", "line": 2}, "evidence_tier": "insecure-practice"},
+        ]
+        design = [{"weakness_class": "weak_crypto", "implementation_strategy": "home-grown",
+                   "severity": "Medium", "absent_control_signal": [{"pattern": "argon2", "hit_count": 0}]}]
+        w = mt.build_weakness_register(practice, design)
+        assert len(w) == 1
+        assert w[0]["severity_basis"] == "design-risk"
+        assert w[0]["severity"] == "Critical"
+        assert "practice_evidence" in w[0]["observable_backing"]
+
+    def test_isolated_practice_is_implementation_kind(self, mt):
+        # Single component, no absent-control signal → isolated implementation
+        # weakness folding the practice sites (§4d-bis anti-explosion).
+        practice = [
+            {"source": "stride", "cwe": "CWE-89", "component_id": "seeder",
+             "evidence": {"file": "seed.ts", "line": i}, "evidence_tier": "insecure-practice"}
+            for i in range(5)
+        ]
+        w = mt.build_weakness_register(practice, None)
+        assert len(w) == 1
+        assert w[0]["kind"] == "implementation"
+        assert len(w[0]["observable_backing"]["practice_evidence"]) == 5

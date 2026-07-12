@@ -47,6 +47,7 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore
 
+from weakness_classifier import classify_cwe
 
 _HERE = Path(__file__).resolve().parent
 
@@ -219,6 +220,59 @@ def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
         )
 
     return threats, skipped
+
+
+def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
+    """Normalize UNPROMOTED architecture-coverage hypotheses into design-signal
+    records consumed by merge_threats.build_weakness_register (P1.3).
+
+    Replaces routing these to a user-facing `threat_hypotheses[]` list (Fact R):
+    the observable design gap folds into a weakness heading, its speculative
+    framing is dropped. Emission gate (I2 / proposal §0): a signal is emitted
+    ONLY when it carries an observable absent-control signal
+    (`controls_absent_evidence` / `positive_signals`); pure "might be
+    vulnerable" speculation with no such signal is dropped, not shown.
+
+    Confirmed+high hypotheses are NOT design signals — they promote to
+    `threats[]` via select_and_build / merge-into as before.
+    """
+    signals: list[dict] = []
+    dropped: list[dict] = []
+    for hyp in coverage.get("threat_hypotheses") or []:
+        if not isinstance(hyp, dict):
+            continue
+        hid = hyp.get("hypothesis_id")
+        if hyp.get("proof_state") == "confirmed" and hyp.get("confidence") == "high":
+            continue  # promoted to threats[] — handled by select_and_build
+        backing = hyp.get("controls_absent_evidence") or hyp.get("positive_signals") or []
+        if not backing:
+            dropped.append(
+                {
+                    "hypothesis_id": hid,
+                    "rule_id": hyp.get("rule_id"),
+                    "reason": "no observable absent-control signal — dropped (proposal §0)",
+                }
+            )
+            continue
+        cwe = (hyp.get("cwe") or "").strip()
+        signal = {
+            "rule_id": hyp.get("rule_id"),
+            "hypothesis_id": hid,
+            "weakness_class": classify_cwe(cwe, warn=False) if cwe else "_unmapped",
+            "cwe": cwe or None,
+            "component": hyp.get("component_id"),
+            "statement": (
+                hyp.get("generic_threat_title")
+                or hyp.get("title")
+                or "Central control observably absent"
+            ),
+            "absent_control_signal": list(backing),
+            # Populated by the P2 misuse/strategy layer; None until then.
+            "implementation_strategy": hyp.get("implementation_strategy"),
+            "severity": hyp.get("severity") or "Medium",
+        }
+        signals.append(signal)
+    return signals, dropped
 
 
 _DOMAIN_TO_STRIDE = {
@@ -479,6 +533,13 @@ def _main(argv: list[str]) -> int:
     s_merge.add_argument("--input", required=True, help="Path to .architecture-coverage.json")
     s_merge.add_argument("--threats-merged", required=True, help="Path to .threats-merged.json (in-place update).")
 
+    s_signals = sub.add_parser(
+        "emit-design-signals",
+        help="Write .arch-design-signals.json for the merge_threats weakness reconciler (P1.3).",
+    )
+    s_signals.add_argument("--input", required=True, help="Path to .architecture-coverage.json")
+    s_signals.add_argument("--output-dir", required=True)
+
     s_persist = sub.add_parser(
         "persist-hypotheses", help="Merge unpromoted hypotheses into threat-model.yaml#threat_hypotheses[]"
     )
@@ -509,6 +570,27 @@ def _main(argv: list[str]) -> int:
                     "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "threats": threats,
                     "skipped": skipped,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(str(target))
+        return 0
+
+    if args.cmd == "emit-design-signals":
+        out_dir = Path(args.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        design_signals, dropped = build_design_signals(coverage)
+        target = out_dir / ".arch-design-signals.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "design_signals": design_signals,
+                    "dropped": dropped,
                 },
                 indent=2,
             )

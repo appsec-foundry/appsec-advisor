@@ -720,3 +720,78 @@ checks:
       internal services, cloud metadata endpoints, or the loopback interface
       — pivoting past the network perimeter the application sits behind.
     remediation: "Validate the URL against a strict allowlist of hosts/schemes, resolve and block private/link-local ranges, and disable redirects to internal targets."
+
+  - id: INJ-004
+    name: "Path traversal — filesystem access from request input"
+    description: >
+      A filesystem call (fs.readFile / createReadStream / sendFile / path.join)
+      is built from req.body / req.query / req.params with no canonicalization,
+      letting `../` sequences escape the intended directory.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    pattern: '(?is)\b(?:fs\.(?:readFile|readFileSync|createReadStream|readdir\w*)|res\.sendFile|res\.download|path\.(?:join|resolve))\s*\([^)]*\breq\.(?:body|query|params)\b'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(path\.basename|sanitize|normalize\w*|allowlist|whitelist|isAbsolute)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-071
+    breach_vector: "Internet Anon"
+    rationale: >
+      A request-controlled path with `../` can read arbitrary files
+      (/etc/passwd, source, secrets) or write outside the intended root.
+    remediation: "Resolve the path, assert it stays within an allowed base directory (path.resolve + startsWith), and use path.basename on user input."
+
+  - id: INJ-005
+    name: "XXE — XML parsed with external entities enabled"
+    description: >
+      An XML parser is configured to resolve external entities (noent/external
+      general entities), allowing an attacker's DOCTYPE to read local files or
+      trigger SSRF via entity expansion.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    pattern: "(?is)(noent\\s*:\\s*true|noEnt\\s*:\\s*true|resolveExternals\\s*:\\s*true|externalEntities\\s*:\\s*true|libxmljs\\.parseXml\\w*\\([^)]*noent)"
+    counter_scope: line
+    counter_window: 0
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-611
+    finding_type: FT-072
+    breach_vector: "Internet Anon"
+    rationale: >
+      External-entity resolution turns XML input into a file-read / SSRF
+      primitive (classic `file:///etc/passwd` and internal-URL fetches).
+    remediation: "Disable DTD / external-entity processing (noent:false, resolveExternals:false) or use a parser that rejects DOCTYPE."

@@ -1,0 +1,114 @@
+# crypto-checks.yaml — deterministic cryptography rule pack
+# (docs/internal/analysis/implplan-weakness-class-evidence-model.md §P3.1).
+#
+# Run through the SAME engine as data/source-auth-checks.yaml (see
+# scripts/source_auth_scanner.py DEFAULT_EXTRA_CHECKS_REL) — NO new Python.
+# Closes the largest deterministic gap: before this pack, `weak_crypto` was
+# detectable only via the STRIDE LLM. Each rule carries counter_patterns so a
+# legitimate non-security use (cache keys, checksums, ETags, jitter) is
+# suppressed rather than mis-reported.
+#
+# Overlap rule: hardcoded key CWE-798 stays in the Authn/Secrets scanners — do
+# NOT double-count it here.
+
+checks:
+  # ===================================================================
+  # CRYPTO-001 — MD5 / SHA-1 used as a cryptographic hash primitive.
+  # ===================================================================
+  - id: CRYPTO-001
+    name: "Broken hash primitive (MD5/SHA-1)"
+    description: >
+      `crypto.createHash('md5'|'sha1')` uses a hash that is broken for any
+      security purpose (password storage, signatures, integrity of untrusted
+      data). Non-security uses (cache keys, ETags, dedupe fingerprints) are
+      suppressed by the counter-patterns.
+    file_patterns: ["**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**",
+       "**/__mocks__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**",
+       "**/build/**", "**/coverage/**"]
+    pattern: "crypto\\.createHash\\(\\s*['\"`](md5|sha1)['\"`]"
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|integrity|content[_-]?hash|gravatar|cache\b)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-CRYPTO-HASH
+    breach_vector: "Internet Anon"
+    rationale: >
+      MD5/SHA-1 are collision-broken; used for passwords they are trivially
+      cracked, and for integrity of attacker-influenced data they are forgeable.
+    remediation: "Use SHA-256+ for integrity and a password KDF (argon2id / bcrypt / scrypt) for credentials."
+
+  # ===================================================================
+  # CRYPTO-002 — Math.random() for a security-sensitive value.
+  # ===================================================================
+  - id: CRYPTO-002
+    name: "Non-cryptographic RNG for a secret/token"
+    description: >
+      `Math.random()` is not a CSPRNG; using it for tokens, secrets, OTPs,
+      nonces, session ids, or password-reset values yields predictable output.
+      The pattern only fires when a security-sensitive identifier is on the
+      same line, so animation/jitter uses do not match.
+    file_patterns: ["**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**",
+       "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"]
+    pattern: "(?i)\\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|password|salt|verif\\w*code)\\b[^\\n]{0,60}math\\.random\\(\\)|math\\.random\\(\\)[^\\n]{0,60}\\b(token|secret|otp|nonce|reset|salt)\\b"
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-CRYPTO-RNG
+    breach_vector: "Internet Anon"
+    rationale: >
+      A predictable token/secret lets an attacker guess or brute-force session
+      identifiers, reset links, or OTPs.
+    remediation: "Use crypto.randomBytes / crypto.randomUUID / webcrypto getRandomValues for any security value."
+
+  # ===================================================================
+  # CRYPTO-003 — bcrypt cost factor too low.
+  # ===================================================================
+  - id: CRYPTO-003
+    name: "bcrypt cost factor below 10"
+    description: >
+      A bcrypt work factor under 10 (`genSalt(n)` / `hash(pw, n)`) makes
+      offline cracking cheap. Modern guidance is ≥ 10–12.
+    file_patterns: ["**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/fixtures/**",
+       "**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"]
+    pattern: "bcrypt\\w*\\.(?:genSaltSync|genSalt)\\s*\\(\\s*[1-9]\\s*[),]|bcrypt\\w*\\.(?:hashSync|hash)\\s*\\([^,)]*,\\s*[1-9]\\s*[),]"
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: Medium
+    cwe: CWE-916
+    finding_type: FT-CRYPTO-KDF
+    breach_vector: "Internet Anon"
+    rationale: >
+      Low bcrypt rounds shrink the attacker's per-guess cost, undermining the
+      whole point of an adaptive password hash.
+    remediation: "Set the bcrypt cost factor to at least 10 (12+ preferred); benchmark for ~250ms/hash."
+
+  # ===================================================================
+  # CRYPTO-004 — AES-ECB mode (leaks plaintext structure).
+  # ===================================================================
+  - id: CRYPTO-004
+    name: "Insecure ECB cipher mode"
+    description: >
+      ECB mode encrypts identical plaintext blocks to identical ciphertext,
+      leaking structure. Use an authenticated mode (GCM) instead.
+    file_patterns: ["**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/fixtures/**",
+       "**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"]
+    pattern: "createCipheriv\\(\\s*['\"`][a-z0-9-]*-ecb"
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: Medium
+    cwe: CWE-327
+    finding_type: FT-CRYPTO-MODE
+    breach_vector: "Internet Anon"
+    rationale: "ECB reveals patterns in the plaintext and provides no integrity."
+    remediation: "Use AES-256-GCM (or libsodium secretbox) with a unique nonce per message."

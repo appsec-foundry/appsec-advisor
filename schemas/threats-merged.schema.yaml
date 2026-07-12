@@ -187,6 +187,17 @@ properties:
           type: [string, "null"]
           enum: [verified, verified-prior, refuted, ambiguous, unchecked,
                  carried-unverified-shallower-depth, null]
+        evidence_tier:
+          # P1 (weakness-class evidence model): the evidence BASIS of the
+          # threat — distinct from `evidence_check` (verification state); do
+          # NOT overload the two. `confirmed-exploitable` = proven sink,
+          # CVSS-eligible, appears as a weakness instances[] entry;
+          # `insecure-practice` = definite bad-practice site, exploit chain
+          # unproven, no CVSS, folded as the weakness's practice_evidence[].
+          # Default (applied by merge_threats.py): confirmed-exploitable when a
+          # sink is proven, else insecure-practice.
+          type: [string, "null"]
+          enum: [confirmed-exploitable, insecure-practice, null]
         evidence_flags:
           # Annotated by the appsec-evidence-verifier. Parallel to
           # triage_flags. Each entry carries a flag_id (EV-NNN),
@@ -232,6 +243,103 @@ properties:
                 version_fallback:
                   type: [string, "null"]
                   enum: ["3.1", null]
+
+  weaknesses:
+    # P1 (weakness-class evidence model) — the unified register's PARENT rows.
+    # Produced by the merge_threats.py reconciler: grouping key
+    # (weakness_class × scope), with the weakness as the heading and confirmed
+    # threats folded in as instances[] (proposal §4a/§4d-bis). Arch-coverage
+    # design signals (formerly threat_hypotheses[]) collapse into the matching
+    # weakness's statement + observable_backing.absent_control_signal[] instead
+    # of being emitted as peers. Optional (absent on legacy/first runs).
+    #
+    # IDs use the W-NNN prefix — NEVER T-NNN: a weakness is never CVSS-scored
+    # and MUST stay out of the T-NNN contiguous sequence that
+    # validate_intermediate asserts (mirrors MF-NNN meta-findings).
+    type: [array, "null"]
+    items:
+      type: object
+      additionalProperties: true
+      required:
+        - id
+        - weakness_class
+        - kind
+        - statement
+        - severity
+        - severity_basis
+        - observable_backing
+      properties:
+        id:
+          type: string
+          pattern: "^W-\\d{3,}$"
+        weakness_class:
+          # A data/weakness-classes.yaml cluster id.
+          type: string
+          enum: [injection, broken_auth, missing_authz, weak_crypto,
+                 server_side_exposure, output_xss_csp, sensitive_disclosure,
+                 dos, outdated_deps, _unmapped]
+        kind:
+          # design = a central control is observably ABSENT (no single sink);
+          # implementation = a specific non-best-practice pattern in code.
+          type: string
+          enum: [design, implementation]
+        statement:
+          # Observable structural fact, never speculation (proposal §0).
+          type: string
+          minLength: 1
+        severity:
+          type: string
+          enum: [Critical, High, Medium, Low]
+        severity_basis:
+          # confirmed  = driven by ≥1 confirmed-exploitable instance;
+          # design-risk = scaled by pervasiveness × strategy × exposure, no CVSS.
+          type: string
+          enum: [confirmed, design-risk]
+        implementation_strategy:
+          # Populated in P2 (recon inventory + misuse layer).
+          type: [string, "null"]
+          enum: [none, home-grown, standard-misused, standard-vetted, null]
+        observable_backing:
+          # REQUIRED — at least one of the arrays MUST be non-empty, else the
+          # weakness is NOT emitted (proposal §0 emission rule / I2). The
+          # non-empty invariant is a Python post-check (qa_checks I2 guard),
+          # not structurally expressible here.
+          type: object
+          additionalProperties: true
+          properties:
+            absent_control_signal:
+              # design backing: controls_absent_evidence / positive_signals
+              # proving the central control is absent.
+              type: array
+            practice_evidence:
+              # implementation backing: file:line of non-best-practice sites.
+              type: array
+              items:
+                type: object
+                properties:
+                  file: { type: string }
+                  line: { type: [integer, "null"] }
+        affected_components:
+          # kind:design weaknesses are app-wide; the spread is listed here.
+          type: array
+          items: { type: string }
+        instances:
+          # Type-A confirmed-exploitable findings folded under this weakness.
+          # Each keeps its own T-/F-NNN id, file:line, CVSS and POC hint.
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id:
+                type: string
+                pattern: "^[TF]-\\d{3,}$"
+              file: { type: string }
+              line: { type: [integer, "null"] }
+              basis:
+                type: string
+                enum: [confirmed-exploitable]
+              poc_hint: { type: [string, "null"] }
 
 # Additional invariants enforced by Python post-checks in
 # validate_intermediate.py (not expressible in Draft 2020-12):

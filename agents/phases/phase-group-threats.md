@@ -551,8 +551,25 @@ Pipeline:
    Before dispatch, write `$OUTPUT_DIR/.merge-context/component-map.json` as JSON object `{component_id: {name, trust_boundaries}}`. Pass only the path; do not inline the component map in the prompt.
    Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage-validator dispatch above, using `$MERGER_MODEL` in the message.
 
+2.5. **Emit weakness design signals (P1)** — before finalize, normalize
+   *unpromoted* architecture-coverage hypotheses into design-signal records so
+   finalize's weakness reconciler can fold them under the matching weakness
+   heading (proposal §4b) instead of surfacing them as a separate
+   `threat_hypotheses[]` list beside proven findings. File-presence-gated on the
+   Phase-2.6 coverage output; absent → no-op (reconciler simply gets no design
+   fold). Only hypotheses carrying an observable absent-control signal are
+   emitted; pure speculation is dropped (I2 / proposal §0).
+   ```bash
+   if [ -f "$OUTPUT_DIR/.architecture-coverage.json" ]; then
+     python3 "$CLAUDE_PLUGIN_ROOT/scripts/arch_coverage_to_threats.py" emit-design-signals \
+         --input "$OUTPUT_DIR/.architecture-coverage.json" \
+         --output-dir "$OUTPUT_DIR" > /dev/null
+   fi
+   ```
+
 3. **Finalize** — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" finalize --output-dir "$OUTPUT_DIR"`
    - Reads `.merge-candidates.json` + embedded `auto_decisions` + (if present) `.merge-decisions.json`, applies decisions, performs the deterministic 8-field sort, assigns `T-001`..`T-NNN`, writes `.threats-merged.json`.
+   - Also reads `.arch-design-signals.json` (step 2.5, if present) and writes the deterministic `weaknesses[]` register (P1) alongside `threats[]`.
    - If `.merge-decisions.json` is missing (merger failed or was skipped), every candidate group is treated as "keep all" — no dedup, but no data loss.
 
 The hybrid path produces a `.threats-merged.json` whose schema is byte-compatible with the inline merge output — downstream steps (coverage checks, Phase 10 SCA synthesis, Phase 10b triage validation) do not need to know which path produced the file.

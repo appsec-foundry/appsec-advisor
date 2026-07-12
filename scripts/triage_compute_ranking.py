@@ -708,6 +708,41 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
                 "verified_chain_ids": verified_membership.get(tid, []),
             }
         )
+    # 6f-bis — design-risk weaknesses (P1.4 / proposal §9.3). A pervasive design
+    # weakness with ZERO confirmed instances is not in threats[], yet may be the
+    # report's #1 risk. Fold each such weakness into findings_ranked as a
+    # W-NNN entry so it competes for the top slot. `confirmed`-basis weaknesses
+    # are already represented by their instances and are skipped here. Score
+    # mirrors _finding_score's severity/impact weighting plus a pervasiveness
+    # bonus; carries `severity_basis: design-risk` so the renderer tags it
+    # distinctly and never implies a proven exploit. No-op when the register is
+    # empty → legacy ranking is byte-identical.
+    for w in yaml_data.get("weaknesses") or []:
+        if not isinstance(w, dict) or (w.get("severity_basis") or "") != "design-risk":
+            continue
+        wid = (w.get("id") or "").strip()
+        if not wid:
+            continue
+        sev = w.get("severity") or "Medium"
+        spread = len(w.get("affected_components") or [])
+        score = 150 * _sev_rank(sev) + 40 * _impact_rank(sev) + 10 * spread + 5
+        fnd_scored.append(
+            {
+                "rank": 0,
+                "id": wid,
+                "effective_severity": sev,
+                "raw_severity": sev,
+                "severity_basis": "design-risk",
+                "kind": w.get("kind"),
+                "weakness_class": w.get("weakness_class"),
+                "chain_role": "none",
+                "breach_distance": 3,
+                "score": score,
+                "compound_chain_ids": [],
+                "verified_chain_ids": [],
+            }
+        )
+
     fnd_scored.sort(key=lambda x: (-x["score"], x["id"]))
     for i, f in enumerate(fnd_scored, start=1):
         f["rank"] = i

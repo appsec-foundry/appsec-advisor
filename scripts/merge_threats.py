@@ -44,6 +44,8 @@ from typing import Any
 
 import yaml
 from _atomic_io import atomic_write_json, atomic_write_text
+from _shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
+from weakness_classifier import classify_cwe, classify_threat, load_weakness_classes
 
 # Stable ordering for the T-NNN deterministic sort.
 _RISK_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -1596,6 +1598,322 @@ def cmd_collect(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Weakness-class register (P1 weakness-class evidence model, proposal §4a/§4b/
+# §4d-bis). The reconciler that folds confirmed findings + non-exploitable
+# practice sites + arch-coverage design signals into ONE weakness heading per
+# (weakness_class, scope), instead of emitting them as peers (or as a separate
+# `threat_hypotheses[]` list beside proven findings — Fact R).
+#
+# Emitted ADDITIVELY into .threats-merged.json as `weaknesses[]`; `threats[]`
+# is left untouched so existing consumers keep working. Deterministic; no LLM.
+# ---------------------------------------------------------------------------
+
+_SEVERITY_ORDER = ["Low", "Medium", "High", "Critical"]
+_SYSTEMIC_SPREAD_MIN_DEFAULT = 2
+
+
+def _spread_min_for_class(wcid: str, vocab: dict) -> int:
+    """Per-class `systemic_spread_min` override (weakness-classes.yaml), else 2.
+    A `kind: implementation` class rolls up into one app-wide `kind: design`
+    weakness once it recurs across ≥ this many components with no central
+    control present (that co-occurrence IS the systemic signal — §4d-bis)."""
+    for c in vocab.get("clusters") or []:
+        if c.get("id") == wcid:
+            try:
+                return int(c.get("systemic_spread_min") or _SYSTEMIC_SPREAD_MIN_DEFAULT)
+            except (TypeError, ValueError):
+                return _SYSTEMIC_SPREAD_MIN_DEFAULT
+    return _SYSTEMIC_SPREAD_MIN_DEFAULT
+
+
+def _first_evidence(t: dict) -> dict:
+    ev = t.get("evidence")
+    if isinstance(ev, list):
+        ev = next((e for e in ev if isinstance(e, dict)), {})
+    elif not isinstance(ev, dict):
+        ev = {}
+    return ev
+
+
+# Weak-crypto family (weakness-classes.yaml weak_crypto cluster). A weak hash /
+# low KDF rounds / ECB mode / non-CSPRNG is a *definite bad practice* but its
+# exploitability (actual cracking / forgery) is not statically established — so
+# it is insecure-practice, never confirmed-exploitable, and folds under a
+# weak_crypto weakness rather than standing as a proven vuln (proposal §3/§4a).
+_PRACTICE_TIER_CWES = frozenset(
+    {"CWE-327", "CWE-328", "CWE-329", "CWE-330", "CWE-916", "CWE-326"}
+)
+
+
+def _instance_evidence_tier(t: dict) -> str:
+    """Evidence basis of a code/config threat. Respects an explicit
+    `evidence_tier` set upstream (STRIDE analyzer, P1); otherwise a proven sink
+    (code/config source WITH file evidence) defaults to confirmed-exploitable,
+    everything else to insecure-practice. Weak-crypto CWEs are always
+    insecure-practice (definite bad practice, exploit not established)."""
+    et = t.get("evidence_tier")
+    if et in ("confirmed-exploitable", "insecure-practice"):
+        return et
+    if (t.get("cwe") or "").strip().upper() in _PRACTICE_TIER_CWES:
+        return "insecure-practice"
+    src = (t.get("source") or "").strip()
+    has_file = bool((_first_evidence(t).get("file") or "").strip())
+    if src in (CODE_LEVEL_SOURCES | CONFIG_DEFECT_SOURCES) and has_file:
+        return "confirmed-exploitable"
+    return "insecure-practice"
+
+
+def _max_severity(sevs: list[str]) -> str:
+    idx = -1
+    for s in sevs:
+        try:
+            idx = max(idx, _SEVERITY_ORDER.index((s or "").strip().title()))
+        except ValueError:
+            continue
+    return _SEVERITY_ORDER[idx] if idx >= 0 else "Medium"
+
+
+def _lower_severity(sev: str) -> str:
+    """Drop one severity band (floor Low) — the exculpatory effect of a
+    standard-vetted control (P2 / §4e)."""
+    try:
+        i = _SEVERITY_ORDER.index((sev or "").strip().title())
+    except ValueError:
+        return sev
+    return _SEVERITY_ORDER[max(0, i - 1)]
+
+
+def build_weakness_register(
+    threats: list[dict],
+    design_signals: list[dict] | None = None,
+    impl_strategy: dict[str, str] | None = None,
+) -> list[dict]:
+    """Fold confirmed findings, non-exploitable practice sites, and arch-coverage
+    design signals into one `weaknesses[]` heading per weakness class (§4b fold).
+
+    Grouping key is (weakness_class, scope): `kind: design` weaknesses are
+    app-wide (one per class, `affected_components[]` lists the spread);
+    `kind: implementation` groups per component but rolls up to a single
+    app-wide design weakness once the class recurs across ≥ SYSTEMIC_SPREAD_MIN
+    components with no central control (§4d-bis). Instances keep their own
+    T-/F-NNN + file:line + basis. Emits a weakness ONLY when it carries
+    observable backing — an absent-control signal OR practice evidence (I2 /
+    proposal §0); a class with only confirmed instances and no absent-control
+    signal stays as plain `threats[]` (the "control present" §4b row)."""
+    vocab = load_weakness_classes()
+    # wcid -> aggregate
+    agg: dict[str, dict] = {}
+
+    def _bucket(wcid: str) -> dict:
+        return agg.setdefault(
+            wcid,
+            {
+                "instances": [],
+                "instance_severities": [],
+                "practice": [],
+                "absent": [],
+                "statements": [],
+                "components": [],
+                "strategies": [],
+                "design_severities": [],
+            },
+        )
+
+    def _add_component(b: dict, comp: str) -> None:
+        comp = (comp or "").strip()
+        if comp and comp not in b["components"]:
+            b["components"].append(comp)
+
+    for t in threats:
+        src = (t.get("source") or "").strip()
+        wcid = classify_threat(t, vocab, warn=False)
+        b = _bucket(wcid)
+        _add_component(b, t.get("component_id") or t.get("component") or "")
+        if src in DESIGN_LEVEL_SOURCES:
+            # A design-level threat contributes the absent-control backing, not
+            # an instance (design gaps are never CVSS-scored / exploit-proven).
+            for a in t.get("controls_absent_evidence") or []:
+                b["absent"].append(a)
+            st = (t.get("title") or "").strip()
+            if st:
+                b["statements"].append(st)
+            b["design_severities"].append(t.get("risk") or "Medium")
+            continue
+        tier = _instance_evidence_tier(t)
+        # Stamp the resolved basis back onto the threat so downstream consumers
+        # (yaml export → composer count breakdown) can distinguish a confirmed
+        # finding from a folded practice site without re-deriving it. Additive
+        # key; unknown to SARIF/changelog, so no export regresses.
+        t["evidence_tier"] = tier
+        ev = _first_evidence(t)
+        tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+        if tier == "confirmed-exploitable" and tid:
+            inst = {
+                "id": tid,
+                "file": (ev.get("file") or "").strip(),
+                "line": ev.get("line"),
+                "basis": "confirmed-exploitable",
+            }
+            if t.get("poc_hint"):
+                inst["poc_hint"] = t["poc_hint"]
+            b["instances"].append(inst)
+            b["instance_severities"].append(t.get("risk") or "Medium")
+        else:
+            pe = {"file": (ev.get("file") or "").strip(), "line": ev.get("line")}
+            # Carry the source T-id so the renderer can dedupe a folded practice
+            # site against the primary register (honest post-consolidation count).
+            if tid:
+                pe["id"] = tid
+            if pe["file"]:
+                b["practice"].append(pe)
+
+    # Fold externally-supplied design signals (P1.3 bridge output).
+    for ds in design_signals or []:
+        if not isinstance(ds, dict):
+            continue
+        wcid = (ds.get("weakness_class") or "").strip() or classify_cwe(
+            ds.get("cwe") or "", vocab, warn=False
+        )
+        b = _bucket(wcid)
+        for a in ds.get("absent_control_signal") or ds.get("controls_absent_evidence") or []:
+            b["absent"].append(a)
+        st = (ds.get("statement") or ds.get("title") or "").strip()
+        if st:
+            b["statements"].append(st)
+        strat = (ds.get("implementation_strategy") or "").strip()
+        if strat:
+            b["strategies"].append(strat)
+        b["design_severities"].append(ds.get("severity") or "Medium")
+        comps = ds.get("affected_components")
+        if not comps and ds.get("component"):
+            comps = [ds["component"]]
+        for c in comps or []:
+            _add_component(b, c)
+
+    weaknesses: list[dict] = []
+    seq = 0
+    for wcid in sorted(agg):
+        b = agg[wcid]
+        has_absent = bool(b["absent"])
+        has_practice = bool(b["practice"])
+        # I2 / §4b: a weakness needs observable backing. Confirmed instances
+        # alone (no absent-control signal, no practice site) → NOT a systemic
+        # weakness; those stay as plain findings in threats[].
+        if not (has_absent or has_practice):
+            continue
+
+        spread = len(b["components"])
+        systemic = spread >= _spread_min_for_class(wcid, vocab)
+        # A weakness is `design` when a central control is observably absent
+        # (absent-control signal) OR the class recurs systemically across
+        # components; otherwise it is an isolated `implementation` weakness.
+        kind = "design" if (has_absent or systemic) else "implementation"
+
+        # Implementation strategy (P2): a design-signal strategy wins; else the
+        # repo-wide detector's class verdict (detect_impl_strategy.py).
+        resolved_strategy = b["strategies"][0] if b["strategies"] else (impl_strategy or {}).get(wcid)
+
+        confirmed = bool(b["instances"])
+        # Fall B (§4b "control present"): a standard-vetted control IS the
+        # central control, so a PURE design gap (no confirmed instance, no
+        # bad-practice site) is exculpated — suppressed, not shown.
+        if resolved_strategy == "standard-vetted" and kind == "design" and not confirmed and not has_practice:
+            continue
+
+        if confirmed:
+            # Driven by a proven exploit: keep the real instance severity band.
+            severity_basis = "confirmed"
+            severity = _max_severity(b["instance_severities"])
+        else:
+            severity_basis = "design-risk"
+            base = _max_severity(b["design_severities"] or ["Medium"])
+            strat_set = {s.lower() for s in b["strategies"]}
+            if resolved_strategy:
+                strat_set.add(resolved_strategy.lower())
+            homegrown = bool(strat_set & {"none", "home-grown"})
+            # §4e: design-risk scales with pervasiveness × strategy. Pervasive +
+            # (home-grown|none) may reach Critical; pervasive alone bumps once.
+            if systemic and homegrown:
+                severity = "Critical"
+            elif systemic:
+                severity = _max_severity([base, "High"])
+            else:
+                severity = base
+        # Exculpatory: a standard-vetted control lowers the residual severity
+        # one band (the deviation is an isolated slip against a sound baseline).
+        if resolved_strategy == "standard-vetted":
+            severity = _lower_severity(severity)
+
+        statement = b["statements"][0] if b["statements"] else (
+            f"Recurring {wcid.replace('_', ' ')} handling across "
+            f"{spread} component(s) with no central control."
+        )
+
+        observable_backing: dict = {}
+        if has_absent:
+            observable_backing["absent_control_signal"] = b["absent"]
+        if has_practice:
+            observable_backing["practice_evidence"] = b["practice"]
+
+        seq += 1
+        w = {
+            "id": f"W-{seq:03d}",
+            "weakness_class": wcid,
+            "kind": kind,
+            "statement": statement,
+            "severity": severity,
+            "severity_basis": severity_basis,
+            "observable_backing": observable_backing,
+        }
+        if b["components"]:
+            w["affected_components"] = sorted(b["components"])
+        if resolved_strategy:
+            w["implementation_strategy"] = resolved_strategy
+        if b["instances"]:
+            w["instances"] = b["instances"]
+        weaknesses.append(w)
+    return weaknesses
+
+
+def _load_design_signals(out_dir: Path) -> list[dict]:
+    """Optional arch-coverage design-signal records (P1.3 bridge output),
+    consumed by the weakness reconciler. Absent file → no design fold."""
+    path = out_dir / ".arch-design-signals.json"
+    if not path.exists():
+        return []
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(doc, dict):
+        return list(doc.get("design_signals") or [])
+    return list(doc) if isinstance(doc, list) else []
+
+
+def _load_impl_strategy(out_dir: Path) -> dict[str, str]:
+    """Optional per-weakness-class implementation strategy (P2 —
+    detect_impl_strategy.py output). Returns {weakness_class: strategy};
+    absent/malformed file → {} (no strategy effect)."""
+    path = out_dir / ".impl-strategy.json"
+    if not path.exists():
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    strategies = (doc or {}).get("strategies") if isinstance(doc, dict) else None
+    if not isinstance(strategies, dict):
+        return {}
+    out: dict[str, str] = {}
+    for wclass, entry in strategies.items():
+        if isinstance(entry, dict) and entry.get("strategy"):
+            out[wclass] = str(entry["strategy"])
+        elif isinstance(entry, str):
+            out[wclass] = entry
+    return out
+
+
 def cmd_finalize(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
     cand_path = out_dir / ".merge-candidates.json"
@@ -1623,12 +1941,23 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     # to the global T-ids just assigned — must run AFTER _assign_t_ids.
     threats = _remap_scenario_local_refs(threats)
 
+    # Weakness-class register (P1) — folds confirmed findings + non-exploitable
+    # practice sites + arch-coverage design signals into one weakness heading
+    # per class. Runs AFTER _assign_t_ids so instances[] reference real T-ids.
+    # Additive: `threats[]` is untouched. `weaknesses` omitted when empty so
+    # legacy consumers and golden diffs are unaffected until a signal exists.
+    weaknesses = build_weakness_register(
+        threats, _load_design_signals(out_dir), _load_impl_strategy(out_dir)
+    )
+
     payload = {
         "version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "threats": threats,
         "resolved_prior_findings": cand.get("resolved_prior_findings") or [],
     }
+    if weaknesses:
+        payload["weaknesses"] = weaknesses
 
     out_path = out_dir / ".threats-merged.json"
     # Atomic write — `.threats-merged.json` is a canonical intermediate

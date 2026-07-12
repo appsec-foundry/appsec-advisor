@@ -60,6 +60,12 @@ except ImportError:
 
 DEFAULT_CHECKS_REL = Path("data") / "source-auth-checks.yaml"
 
+# Additional catalogs run through the SAME engine when `--checks` is not given.
+# P3 (weakness-class evidence model): the crypto rule pack lives in its own file
+# for clarity but is a peer catalog — no separate scanner. Missing files are
+# skipped silently, so adding a catalog here is safe.
+DEFAULT_EXTRA_CHECKS_REL = [Path("data") / "crypto-checks.yaml"]
+
 # Hard exclusions on top of per-check exclude_file_patterns (universal):
 # the scanner never reads anything under these paths even if a check's
 # file_patterns matches.
@@ -569,8 +575,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    catalog_paths: list[Path] = []
     if args.checks:
-        checks_path = args.checks
+        catalog_paths = [args.checks]
     else:
         plugin_root = _discover_plugin_root()
         if plugin_root is None:
@@ -579,13 +586,18 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        checks_path = plugin_root / DEFAULT_CHECKS_REL
-    if not checks_path.is_file():
-        print(f"source_auth_scanner: checks file {checks_path} not found", file=sys.stderr)
+        catalog_paths = [plugin_root / DEFAULT_CHECKS_REL]
+        # Peer catalogs (P3 crypto pack) — run through the same engine; skip if absent.
+        catalog_paths += [plugin_root / rel for rel in DEFAULT_EXTRA_CHECKS_REL]
+    if not catalog_paths or not catalog_paths[0].is_file():
+        print(f"source_auth_scanner: checks file {catalog_paths[0] if catalog_paths else '?'} not found", file=sys.stderr)
         return 2
 
     try:
-        checks = load_checks(checks_path)
+        checks = []
+        for cp in catalog_paths:
+            if cp.is_file():
+                checks.extend(load_checks(cp))
     except (ValueError, KeyError) as e:
         print(f"source_auth_scanner: failed to load checks: {e}", file=sys.stderr)
         return 2
