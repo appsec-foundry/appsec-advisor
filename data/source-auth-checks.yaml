@@ -1329,3 +1329,26 @@ checks:
     breach_vector: "Network MITM"
     rationale: "A JS bridge reachable from untrusted web content can invoke native code / exfiltrate data."
     remediation: "Avoid the bridge for untrusted content; restrict to https app-owned pages and @JavascriptInterface-annotated methods on API 17+."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase C) — iOS (Swift/Obj-C) mobile sinks.
+  # ===================================================================
+
+  - id: MOBILE-IOS-001
+    name: "Secret stored in UserDefaults — iOS"
+    description: >
+      A token/password/secret written to UserDefaults / NSUserDefaults is stored
+      unencrypted in the app container, recoverable via backup or forensic access.
+      The Keychain is the correct store and is suppressed.
+    file_patterns: ["**/*.swift", "**/*.m"]
+    exclude_file_patterns: ["**/*Tests.swift", "**/*Test.m", "**/Pods/**"]
+    pattern: '(?is)(?:UserDefaults|NSUserDefaults)[^\n]{0,100}(?i:token|password|secret|refresh|jwt|credential)'
+    counter_scope: line
+    counter_patterns:
+      - '(?i)\b(keychain|SecItemAdd|kSecClass)\b'
+    severity_if_violated: Medium
+    cwe: CWE-922
+    finding_type: FT-090
+    breach_vector: "Physical / Local"
+    rationale: "Secrets in UserDefaults are recoverable from an unencrypted backup or a jailbroken device."
+    remediation: "Store secrets in the Keychain (kSecClassGenericPassword), never UserDefaults."

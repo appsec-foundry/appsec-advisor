@@ -369,6 +369,34 @@ def test_android_webview_bridge_flagged(tmp_path: Path) -> None:
     assert "MOBILE-AND-003" in _mobile_ids(tmp_path)
 
 
+# --- multi-stack: iOS (Phase C, mobile) -------------------------------------
+
+
+def test_ios_cc_md5_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "H.swift", "CC_MD5(data.bytes, CC_LONG(data.count), &digest)\n")
+    assert "CRYPTO-SWIFT-001" in _crypto_ids(tmp_path)
+
+
+def test_ios_insecure_random_token_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "T.swift", "let token = String(random())\n")
+    assert "CRYPTO-SWIFT-002" in _crypto_ids(tmp_path)
+
+
+def test_ios_arc4random_token_suppressed(tmp_path: Path) -> None:
+    _write(tmp_path, "T.swift", "let token = arc4random_uniform(9999)\n")
+    assert "CRYPTO-SWIFT-002" not in _crypto_ids(tmp_path)
+
+
+def test_ios_userdefaults_secret_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "S.swift", 'UserDefaults.standard.set(authToken, forKey: "token")\n')
+    assert "MOBILE-IOS-001" in _mobile_ids(tmp_path)
+
+
+def test_ios_keychain_suppressed(tmp_path: Path) -> None:
+    _write(tmp_path, "S.swift", 'let token = keychain.get("authToken")  // Keychain, not UserDefaults\n')
+    assert "MOBILE-IOS-001" not in _mobile_ids(tmp_path)
+
+
 # --- path traversal / XXE ---------------------------------------------------
 
 

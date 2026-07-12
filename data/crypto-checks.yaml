@@ -416,3 +416,42 @@ checks:
     breach_vector: "Physical / Local"
     rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
     remediation: "Use java.security.SecureRandom for any security value."
+
+  # --- iOS (Swift / Objective-C) crypto (multi-stack Phase C — mobile) ---
+  - id: CRYPTO-SWIFT-001
+    name: "Broken hash primitive (MD5/SHA-1) — iOS"
+    description: >
+      CommonCrypto `CC_MD5`/`CC_SHA1` or CryptoKit `Insecure.MD5`/`Insecure.SHA1`
+      used as a cryptographic hash. Non-security uses suppressed.
+    file_patterns: ["**/*.swift", "**/*.m"]
+    exclude_file_patterns: ["**/*Tests.swift", "**/*Test.m", "**/Pods/**"]
+    pattern: '\bCC_(?:MD5|SHA1)\s*\(|Insecure\.(?:MD5|SHA1)\b'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Physical / Local"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use SHA-256+ (CryptoKit SHA256) for integrity and a KDF for credentials."
+
+  - id: CRYPTO-SWIFT-002
+    name: "Non-cryptographic RNG for a secret/token — iOS"
+    description: >
+      `random()` / `rand()` / `drand48()` for a token/secret is predictable;
+      `arc4random` / `SecRandomCopyBytes` are the safe alternatives and are
+      suppressed.
+    file_patterns: ["**/*.swift", "**/*.m"]
+    exclude_file_patterns: ["**/*Tests.swift", "**/*Test.m", "**/Pods/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}\b(?:rand|random|drand48)\s*\('
+    counter_scope: line
+    counter_patterns:
+      - '\b(arc4random|SecRandomCopyBytes)\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Physical / Local"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use SecRandomCopyBytes (or arc4random_buf) for any security value."
