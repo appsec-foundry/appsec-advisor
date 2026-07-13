@@ -454,8 +454,19 @@ def _app_only(*, stores=True, server_rendered=True):
     """A single-tier monolith: only application components. Client and Data are
     empty canonical tiers → candidates for ghost rendering."""
     desc = "Spring Boot backend" + ("; Thymeleaf server-rendered views" if server_rendered else "")
-    comps = [{"id": "svc", "name": "Backend", "tier": "application", "paths": ["src/main/java/**", "pom.xml"], "description": desc}]
-    threats = [{"id": "T-001", "component": "svc", "risk": "Critical"}, {"id": "T-002", "component": "svc", "risk": "High"}]
+    comps = [
+        {
+            "id": "svc",
+            "name": "Backend",
+            "tier": "application",
+            "paths": ["src/main/java/**", "pom.xml"],
+            "description": desc,
+        }
+    ]
+    threats = [
+        {"id": "T-001", "component": "svc", "risk": "Critical"},
+        {"id": "T-002", "component": "svc", "risk": "High"},
+    ]
     tb = [{"from": "external", "to": "svc", "name": "Public to app"}]
     if stores:
         tb += [
@@ -463,10 +474,19 @@ def _app_only(*, stores=True, server_rendered=True):
             {"from": "svc", "to": "sqlite-legacy-auth", "name": "App to SQLite"},
         ]
     yaml_data = {"components": comps, "threats": threats, "trust_boundaries": tb, "meta": {}}
-    apd = {"attack_paths": [{"class": "sqli", "actor": "internet-anon", "target": "application", "findings": ["T-001"]}]}
+    apd = {
+        "attack_paths": [{"class": "sqli", "actor": "internet-anon", "target": "application", "findings": ["T-001"]}]
+    }
     tax = {
         "glyph_sequence": ["①"],
-        "classes": [{"id": "sqli", "short_label": "SQLi", "default_actor": "internet-anon", "default_target_tier": "application"}],
+        "classes": [
+            {
+                "id": "sqli",
+                "short_label": "SQLi",
+                "default_actor": "internet-anon",
+                "default_target_tier": "application",
+            }
+        ],
     }
     return yaml_data, apd, tax
 

@@ -142,16 +142,25 @@ def _ghost_reason(tier: str, components: list, trust_boundaries: list) -> str:
         )
         server_rendered = any(
             k in parts
-            for k in ("thymeleaf", "jsp", "freemarker", "mvc view", "server-side render", "ssr", "blade", "razor", ".erb", "haml")
+            for k in (
+                "thymeleaf",
+                "jsp",
+                "freemarker",
+                "mvc view",
+                "server-side render",
+                "ssr",
+                "blade",
+                "razor",
+                ".erb",
+                "haml",
+            )
         )
         return "no distinct client tier — server-rendered" if server_rendered else "no distinct client tier"
     if tier == "data":
         stores = _data_stores(trust_boundaries)
         if stores:
             return f"data embedded in-process ({', '.join(stores[:3])}) — no separate tier"
-        hay = " ".join(
-            (tb.get("to") or "").lower() for tb in (trust_boundaries or []) if isinstance(tb, dict)
-        )
+        hay = " ".join((tb.get("to") or "").lower() for tb in (trust_boundaries or []) if isinstance(tb, dict))
         if any(h in hay for h in _DB_HINT):
             return "data embedded in-process — no separate tier"
         return "no separate data tier"

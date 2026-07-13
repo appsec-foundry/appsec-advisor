@@ -1617,9 +1617,7 @@ def _emit_activity(tool: str, inp: dict, sid: str) -> None:
 # Matches a clean, single python3 invocation of one of the plugin's own
 # background watchdog scripts (heartbeat / deadline) and nothing else. Used by
 # the PreToolUse auto-approve guard below.
-_WATCHDOG_CMD_RE = re.compile(
-    r'^python3?\s+["\']?\S*scripts/(?:skill_watchdog|budget_watchdog)\.py\b'
-)
+_WATCHDOG_CMD_RE = re.compile(r'^python3?\s+["\']?\S*scripts/(?:skill_watchdog|budget_watchdog)\.py\b')
 
 
 def _is_sanctioned_background_watchdog(cmd: str) -> bool:
