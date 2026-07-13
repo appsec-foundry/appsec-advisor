@@ -248,9 +248,7 @@ def _check_mcp(profile: dict) -> list[str]:
         if has_url:
             parsed = urlparse(url)
             if parsed.username or parsed.password or "@" in (parsed.netloc or ""):
-                errors.append(
-                    f"mcp: server '{name}' url must not embed credentials; use a ${{ENV_VAR}} header instead"
-                )
+                errors.append(f"mcp: server '{name}' url must not embed credentials; use a ${{ENV_VAR}} header instead")
     return errors
 
 

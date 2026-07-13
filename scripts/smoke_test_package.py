@@ -155,7 +155,7 @@ def check_surface_manifest(root: Path) -> None:
     mcp_path = root / ".mcp.json"
     declared: set[str] = set()
     if mcp_path.is_file():
-        declared = set((json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {}))
+        declared = set(json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {})
     for server in mcp.get("included") or []:
         if server not in declared:
             _die(f"package surface says MCP server {server!r} is included, but it is not in .mcp.json")

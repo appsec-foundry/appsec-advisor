@@ -588,7 +588,7 @@ def test_apply_package_surface_policy(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _build_with_mcp(tmp_path, servers_yaml: str) -> "object":
+def _build_with_mcp(tmp_path, servers_yaml: str) -> object:
     build = tmp_path / "build"
     profile = build / "org-profile" / "org-profile.yaml"
     profile.parent.mkdir(parents=True)
@@ -636,9 +636,7 @@ def test_apply_mcp_policy_no_servers_writes_no_file(tmp_path):
 
 
 def test_apply_mcp_policy_exclude_all_removes_stale_file(tmp_path):
-    build = _build_with_mcp(
-        tmp_path, "mcp:\n  servers:\n    acme-sast:\n      url: ${SAST_URL}\n"
-    )
+    build = _build_with_mcp(tmp_path, "mcp:\n  servers:\n    acme-sast:\n      url: ${SAST_URL}\n")
     (build / pkg.MCP_CONFIG).write_text('{"mcpServers": {"stale": {}}}', encoding="utf-8")
     result = pkg.apply_mcp_policy(build, {"mcp_servers": {"exclude": ["acme-sast"]}})
     assert result == {"included": [], "removed": ["acme-sast"]}

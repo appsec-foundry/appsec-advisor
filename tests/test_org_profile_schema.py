@@ -225,9 +225,7 @@ def test_mcp_http_server_passes(acme_profile):
 
 
 def test_mcp_stdio_server_passes(acme_profile):
-    acme_profile["mcp"] = {
-        "servers": {"acme-sca": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/sca", "args": ["--json"]}}
-    }
+    acme_profile["mcp"] = {"servers": {"acme-sca": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/sca", "args": ["--json"]}}}
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert errors == [], errors
 
