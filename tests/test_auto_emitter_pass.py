@@ -34,6 +34,7 @@ EXPECTED_SEQUENCE = [
     "emit_finding_fix_mitigations.py",
     "emit_clean_finding_titles.py",
     "emit_general_mitigation_titles.py",
+    "hydrate_mitigation_details.py",
     "sanitize_perimeter_claims.py",
     "reclassify_components.py",
     "enforce_control_taxonomy.py",

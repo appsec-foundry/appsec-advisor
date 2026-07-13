@@ -957,10 +957,12 @@ class TestRenderMitigationRegisterBranches:
         )
         # M-003: pre-fenced code_example shape (rendered verbatim)
         data["mitigations"][2].update({"how_code": "```ts\nsanitize(input);\n```", "how_code_lang": "ts"})
+        data["threats"][0]["evidence"] = [{"file": "routes/login.ts", "line": 34}]
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
         assert "**How:**" in rendered
         assert "**Verification:**" in rendered
+        assert "Example implementation in `" in rendered
 
     def test_multi_cwe_extra_snippets_and_prevents_cwes(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
@@ -982,7 +984,7 @@ class TestRenderMitigationRegisterBranches:
         rendered, _ = compose.render(CONTRACT, out)
         assert "Prevents CWEs" in rendered
         # extra-snippet block label for the second CWE class
-        assert "Additional pattern for" in rendered
+        assert "Additional example implementation" in rendered
 
     def test_operational_strengths_all_demoted_empty_banner(self, tmp_path):
         out = _prepare_output_dir(tmp_path)

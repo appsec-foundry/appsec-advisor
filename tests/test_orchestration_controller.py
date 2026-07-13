@@ -477,9 +477,11 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     (frag / "security-architecture.md").write_text("## 7. Security Architecture\n", encoding="utf-8")
 
     md = output / "threat-model.md"
+    commands = []
 
     def fake_run(cmd, **kwargs):
         # Simulate compose_threat_model.py writing the report; all steps succeed.
+        commands.append(cmd)
         if any("compose_threat_model.py" in str(c) for c in cmd):
             md.write_text("# Threat Model\n", encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, "", "")
@@ -489,6 +491,10 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     action = controller.next_action(output)
     assert md.is_file()  # composed deterministically
     assert action["stage"] == "stage3"  # routed to QA, NOT re-dispatched as stage2
+    rendered_scripts = " ".join(" ".join(map(str, cmd)) for cmd in commands)
+    assert "emit_general_mitigation_titles.py" in rendered_scripts
+    assert "hydrate_mitigation_details.py" in rendered_scripts
+    assert "validate_mitigation_quality.py" in rendered_scripts
 
 
 def test_next_action_falls_back_to_stage2_when_compose_fails(tmp_path, monkeypatch):

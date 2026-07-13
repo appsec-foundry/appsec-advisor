@@ -450,7 +450,8 @@ For `evidence`: file path relative to REPO_ROOT and line number. File-only if no
 - `mitigation_title` = concise action phrase (verb + subject + location). Becomes the `M-NNN` heading. Not `"Fix CSRF"` — `"Add CSRF token validation to all state-changing endpoints"`.
 - `remediation` is **NEVER null** and `remediation.steps` is **NEVER empty**. At least two concrete steps per threat. If uncertain, write the best available guidance — even a generic hardening step beats null.
 - Name the specific API, middleware, library call, or config key — never "use a library" when you can say "use `helmet.contentSecurityPolicy()` in Express".
-- Include `code_example` for findings where the correct implementation is non-obvious. 3–10 lines, language-tagged. Omit for pure-config fixes.
+- Include `code_example` for findings where the correct implementation is non-obvious. Use 3–10 lines in the project's detected language and APIs, anchored to the cited evidence file. When useful, add short `Before` / `After` comments that explain the unsafe behavior and the security property the changed line enforces; never use pseudocode or an unverified dependency. Omit for pure-config fixes.
+- Include `verification` for every Critical or High fix: name an executable test, request plus expected response, CI assertion, or configuration check. Never write "verify the fix works"; state the exploit input and the expected rejection or the exact control that must be present.
 - Use the actual framework version detected (`package.json`, `pom.xml`, etc.).
 - Reference: one OWASP Cheat Sheet URL, CWE ID, or RFC per threat.
 
@@ -576,7 +577,8 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
           "<concrete step 1 — name specific API/config/library>",
           "<concrete step 2>"
         ],
-        "code_example": "<minimal language-tagged code snippet showing the fix, or null if fix is purely config/docs>",
+        "code_example": "<minimal project-language snippet showing the fix; use concise Before/After comments when they clarify the security change, or null if fix is purely config/docs>",
+        "verification": "<specific test, request + expected result, CI assertion, or configuration check>",
         "reference": "<OWASP URL, CWE-NNN, RFC NNNN, or matched requirement ID — see Requirements reference lookup>",
         "blueprint": "<optional — [BP-ID](section-url) — Section Title, from blueprints[] lookup>"
       },

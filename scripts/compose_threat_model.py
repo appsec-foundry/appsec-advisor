@@ -6795,12 +6795,13 @@ def _verified_chain_map(ctx: RenderContext) -> dict[str, list[str]]:
 
 
 def _verdict_bullet_badge(refs: list[str], fmap: dict[str, list[str]]) -> str:
-    """Return the ` — ✓ **end-to-end verified** (AC-…)` suffix for a Verdict
-    bullet whose refs anchor one or more fully-viable abuse chains, else ''.
+    """Return a plain-language verification suffix for a Verdict bullet.
 
-    The badge makes the code-proven worst-case bullets stand out inside the red
-    blockquote without adding a separate line (see ms-template.md Verdict spec).
-    T-NNN refs are normalised to F-NNN to match ``matched_finding_ids``.
+    Management-summary readers need the confidence signal, not an abuse-case ID
+    or the technical chain mechanics. The underlying refs remain in the fragment
+    for auditability; this presentation layer intentionally emits only a short
+    ``verified attack path`` badge. T-NNN refs are normalised to F-NNN to match
+    ``matched_finding_ids``.
     """
     if not fmap or not refs:
         return ""
@@ -6813,10 +6814,7 @@ def _verdict_bullet_badge(refs: list[str], fmap: dict[str, list[str]]) -> str:
         for cid in fmap.get(fid, []):
             if cid not in chains:
                 chains.append(cid)
-    if not chains:
-        return ""
-    links = ", ".join(f"[{c}](#{c.lower()})" for c in chains)
-    return f" — ✓ **end-to-end verified** ({links})"
+    return " — ✓ verified attack path" if chains else ""
 
 
 def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -16008,19 +16006,21 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                         _step_n += 1
                         lines.append(f"{_step_n}. {_wrap_inline_code(s)}")
                 lines.append("")
-            # Caption the code block so the reader knows it is an illustrative
-            # sketch (not necessarily a drop-in complete fix), which file it
-            # applies to, and that the numbered steps / How prose are the
-            # authoritative recommendation (juice-shop 2026-07-03 user report: a
-            # bare fence left readers unsure whether the snippet was the full fix
-            # or where it belonged).
+            # Introduce every code example with its source location and the
+            # mitigation it demonstrates. A bare fenced block forces the reader
+            # to infer both its file and purpose from surrounding prose; this
+            # deterministic sentence keeps examples skimmable and makes clear
+            # that the ordered steps, not a partial snippet, are authoritative.
             _has_guidance = bool(how) or bool(isinstance(steps, list) and steps)
-            _cap_loc = f" in `{file_line_inline}`" if file_line_inline else ""
-            _code_caption = (
-                f"_Illustrative change{_cap_loc} — the steps above are the full recommendation:_"
-                if _has_guidance
-                else f"_Illustrative change{_cap_loc}:_"
-            )
+            _caption_title = _escape_heading_placeholders(title)
+            if file_line_inline:
+                _code_caption = f"_Example implementation in `{file_line_inline}`: it applies **{_caption_title}**."
+            else:
+                _code_caption = f"_Example implementation for **{_caption_title}**:"
+            if _has_guidance:
+                _code_caption += " The ordered steps above remain authoritative._"
+            else:
+                _code_caption += "_"
             if how_code:
                 lines.append(_code_caption)
                 lines.append("")
@@ -16051,9 +16051,8 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # reader can see which class the snippet addresses.
             for extra_cwe, extra_snip in extra_cwe_snippets:
                 cwe_num = extra_cwe.split("-", 1)[-1]
-                lines.append(
-                    f"_Additional pattern for [{extra_cwe}](https://cwe.mitre.org/data/definitions/{cwe_num}.html):_"
-                )
+                _extra_loc = f" in `{file_line_inline}`" if file_line_inline else ""
+                lines.append(f"_Additional example implementation{_extra_loc} for [{extra_cwe}](https://cwe.mitre.org/data/definitions/{cwe_num}.html):_")
                 lines.append("")
                 lines.append(f"```{extra_snip.get('lang') or how_lang}")
                 lines.append(extra_snip.get("code", "").rstrip())

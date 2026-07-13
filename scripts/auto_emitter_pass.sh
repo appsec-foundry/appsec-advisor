@@ -102,6 +102,10 @@ if [ "$DRY_RUN" = "false" ]; then
     # on the addressed CWE (the actionable detail stays in the block body's
     # How/steps/code). Idempotent (stashes _title_source).
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_general_mitigation_titles.py" "$OUTPUT_DIR" 2>&1 || true
+    # Promote the analyzer's concrete remediation from addressed findings onto
+    # the canonical mitigation cards. This keeps YAML/SARIF consumers aligned
+    # with the rendered register and supplies the P1/P2 quality gate below.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/hydrate_mitigation_details.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true
     # RC-1 + RC-6 (2026-05): canonicalise security_controls[].control names

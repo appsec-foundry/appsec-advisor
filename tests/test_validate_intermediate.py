@@ -263,6 +263,20 @@ def test_stride_code_example_non_string_rejected():
     assert not ok
 
 
+def test_stride_verification_string_is_valid():
+    data = _stride_threat_with_code_example(None)
+    data["threats"][0]["remediation"]["verification"] = "npm test -- auth.spec.ts"
+    ok, errors = vi.validate_stride(data)
+    assert ok, errors
+
+
+def test_stride_verification_non_string_rejected():
+    data = _stride_threat_with_code_example(None)
+    data["threats"][0]["remediation"]["verification"] = ["not a string"]
+    ok, errors = vi.validate_stride(data)
+    assert not ok
+
+
 def test_write_first_stub_is_schema_valid():
     """The mandatory STRIDE write-first stub (appsec-stride-analyzer.md
     "Write-first guarantee") must satisfy stride.schema.yaml — otherwise a

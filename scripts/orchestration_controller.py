@@ -961,6 +961,17 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
         except (OSError, subprocess.SubprocessError):
             return False
 
+    # Complete the canonical mitigation cards before any fragment or report is
+    # rendered. The normal skill path already ran these idempotent helpers; the
+    # thin-runtime recovery path can reach this point after a turn cut-off, so
+    # it must not bypass the developer-actionability contract.
+    if not _run(str(SCRIPT_DIR / "emit_general_mitigation_titles.py"), str(output_dir)):
+        return False
+    if not _run(str(SCRIPT_DIR / "hydrate_mitigation_details.py"), str(output_dir)):
+        return False
+    if not _run(str(SCRIPT_DIR / "validate_mitigation_quality.py"), str(output_dir)):
+        return False
+
     # Mechanical structural fragments (idempotent backstop), then the strict
     # compose, then the prose-fix + autofix tail (AGENTS.md "Critical ordering").
     _run(

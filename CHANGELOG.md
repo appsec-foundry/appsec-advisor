@@ -7,6 +7,7 @@ All notable changes to this project are documented here.
 ### Changed
 
 - Systemic weaknesses now appear in their own report chapter and link to the findings, unsafe practices, or missing controls that support them. Broad CWE families no longer merge unrelated attack paths into one weakness.
+- Management Summary verdicts now use short plain language and hide finding IDs, file locations, and abuse-case IDs. Technical detail remains in the findings and architecture sections.
 
 ### Fixed
 

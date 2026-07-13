@@ -12,8 +12,10 @@
              data.bullets[{title,body,refs}], data.closing.
              severity_emoji is a filter-injected helper.
              verified_suffixes[] (renderer-computed, one per bullet): a
-             ` — ✓ end-to-end verified (AC-…)` badge for bullets whose findings
-             anchor a fully-viable abuse chain, else '' (abuse-cases.json).
+             plain-language ` — ✓ verified attack path` badge for bullets whose
+             findings anchor a fully-viable abuse chain, else '' (abuse-cases.json).
+             Finding references remain provenance data and are intentionally not
+             rendered in this product-owner-facing block.
 -#}
 ### Verdict
 
@@ -31,7 +33,7 @@
 <blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
 
 {% for bullet in data.bullets -%}
-- **{{ bullet.title }}** — {{ bullet.body }} *({{ bullet.refs | linkify_refs }})*{{ verified_suffixes[loop.index0] if verified_suffixes else "" }}
+- **{{ bullet.title }}** — {{ bullet.body }}{{ verified_suffixes[loop.index0] if verified_suffixes else "" }}
 {% endfor %}
 </blockquote>
 

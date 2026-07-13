@@ -252,7 +252,7 @@ Five questions to ask about each prose field you just wrote:
 
 ## Pair G — MS Verdict bullet ALTITUDE (`ms-verdict.json::bullets[].body`)
 
-The Verdict is the one block the **product owner / project lead** reads. Bullets must state the *business consequence* and the *class* of weakness — the `refs` field already links the engineer to the finding. Config-level detail (config keys, library versions, CVE numbers, file:line, framework symbols, ports) belongs in §8/§7, never here.
+The Verdict is the one block the **product owner / project lead** reads. Bullets must state the *business consequence* and the *class* of weakness. The `refs` field is audit provenance only; engineers find the detail in §8/§7. Config-level detail (config keys, library versions, CVE numbers, file:line, framework symbols, ports) belongs there, never here.
 
 ### BEFORE (engineer altitude — wrong for the Verdict)
 
@@ -268,11 +268,11 @@ The Verdict is the one block the **product owner / project lead** reads. Bullets
 ### AFTER (product-owner altitude)
 
 > - **Anyone can use the app without signing in** — it ships no authentication layer, so every function is open to unauthenticated callers on the public internet.
-> - **Attackers can read or change the whole database** — the app builds database queries by pasting request text straight into SQL instead of using a query layer, so a crafted request can run arbitrary database commands or reach other customers' data.
-> - **The application skips several standard security practices** — among them server-side authorization and hardened session handling, which together let an attacker escalate from a normal account toward admin access.
+> - **Attackers can read or change customer data** — the application does not consistently keep one customer's data separate from another's.
+> - **A normal account can gain administrator access** — important permissions are not checked reliably before sensitive actions are allowed.
 
 ### Regel
 1. **Lead with the business outcome** ("anyone can use the app without signing in"), not the mechanism.
 2. **Describe the missing control as a class** ("no authentication layer", "skips several standard practices"), not a config key.
-3. **No config keys / versions / CVE / file:line / framework symbols** in `body` — the `refs` pointer carries the detail for the engineer who follows the link.
+3. **No config keys / versions / CVE / file:line / framework symbols / security acronyms** in `body` — the technical detail belongs in §7 and §8.
 4. **A pure config-line ("missing httpOnly") is not a Verdict bullet** — fold it into a broader "hardened session handling" class or leave it to §7.

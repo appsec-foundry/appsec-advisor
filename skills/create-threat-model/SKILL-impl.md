@@ -2537,12 +2537,26 @@ Both scripts are **idempotent** — they strip prior auto-emitted entries before
 # body. The script runs the same fixed sequence of deterministic emitters, each
 # best-effort `|| true`, gated on DRY_RUN=false, tee'd to .agent-run.log. The
 # emitter ORDER and rationale (meta-findings → mitigation backfills → title
-# normalisation → yaml hygiene → control-taxonomy → auth-coverage → vektors →
+# normalisation → mitigation-detail hydration → yaml hygiene → control-taxonomy → auth-coverage → vektors →
 # registration/public-repo/asset-links → secret-mask) live in the script's header
 # and per-call comments. Idempotent + best-effort; NOT re-run inside the
 # Re-Render Loop.
 bash "$CLAUDE_PLUGIN_ROOT/scripts/auto_emitter_pass.sh" \
     "$OUTPUT_DIR" "$REPO_ROOT" "$CLAUDE_PLUGIN_ROOT" "$DRY_RUN"
+```
+
+**Urgent-mitigation quality gate.** After the auto-emitter pass, P1/P2
+`kind: fix` cards must identify the source file for every code example; P1/P2
+cards must also have at least two concrete steps and one executable verification
+instruction. The hydration pass first copies these details from the addressed
+findings; if they remain absent, stop before rendering so the producer can be
+repaired rather than shipping a vague recommendation. Review, investigate, and
+accepted-risk cards are deliberately outside this gate.
+
+```bash
+if [ "$DRY_RUN" != "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_mitigation_quality.py" "$OUTPUT_DIR" || exit 2
+fi
 ```
 
 **Completeness assertion — build phase (2026-06-26).** Immediately after the

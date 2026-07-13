@@ -178,7 +178,7 @@ edit `_render_top_threats_architecture` (and its tests), not this agent prompt.
 
 ### MS prose — single-pass discipline (perf 2026-06-05, hard rule)
 
-Author `ms-verdict.json` **exactly once**. Do **NOT** re-open or rewrite an MS fragment to "tighten", "polish", or "shrink toward the word budget" by eye — that speculative re-authoring (the former 2-3× churn per fragment) burned Stage-2 wall time for zero content gain. The word budgets below are a deterministic contract; meet them on the first write.
+Author `ms-verdict.json` **exactly once**. Do **NOT** re-open or rewrite an MS fragment to "tighten", "polish", or "shrink toward the word budget" by eye — that speculative re-authoring (the former 2-3× churn per fragment) burned Stage-2 wall time for zero content gain. The readability limits below are a deterministic contract; meet them on the first write.
 
 After authoring the MS fragment, run the compactness gate **once**:
 
@@ -186,10 +186,10 @@ After authoring the MS fragment, run the compactness gate **once**:
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_ms_compactness.py" "$OUTPUT_DIR"
 ```
 
-- **Exit 0 (PASS)** → the fragments are within budget. **Stop. Do not rewrite
+- **Exit 0 (PASS)** → the fragments are concise and management-readable. **Stop. Do not rewrite
   anything.** Proceed to the next fragment / compose.
 - **Exit 1 (FAIL)** → re-author **ONLY** the specific field(s) the script names
-  (it prints `fragment: field is N words (max M)` per violation). Touch nothing
+  (it prints the specific field and violation). Touch nothing
   else, then re-run the gate once to confirm. Never rewrite a field the gate did
   not flag.
 
@@ -203,20 +203,22 @@ Renders as the §1 Verdict block (red/yellow/green HTML blockquote). **Author EX
 ```json
 {
   "severity": "red",                     // enum: "green" | "yellow" | "red" — REQUIRED. NOT "verdict_color"/"verdict_label".
-  "opening": "<2-4 sentence posture statement, 60-800 chars>",   // REQUIRED. NO F-NNN/T-NNN ids (regex-blocked). Posture, not a finding list.
+  "opening": "<1-2 short-sentence posture statement, 60-450 chars>",   // REQUIRED. NO F-NNN/T-NNN ids (regex-blocked). Posture, not a finding list.
   "bullets_intro": "<1 sentence introducing the blockquote, 20-200 chars>",  // OPTIONAL. No F/T ids.
   "bullets": [                           // REQUIRED, 2-8 items. NOT "worst_case_scenarios".
     {
-      "title": "<business-outcome headline, 5-80 chars>",
-      "body": "<how the attacker achieves it, 20-400 chars>",
+      "title": "<plain-language business-outcome headline, 5-60 chars>",
+      "body": "<one short sentence: outcome and broad protection gap, 20-260 chars>",
       "refs": ["T-001", "F-012"]         // REQUIRED, 1-5 ids, each matching ^[FT]-\\d{3,4}$
     }
   ],
-  "closing": "<1-2 sentence wrap, 40-300 chars>"   // REQUIRED. NO F/T ids (regex-blocked). NOT "closing_prose".
+  "closing": "<one short plain-language wrap, 40-220 chars>"   // REQUIRED. NO F/T ids (regex-blocked). NOT "closing_prose".
 }
 ```
 
 **Forbidden legacy keys** (they were the 2026-06-05 parallel-render drift): `verdict_label`, `verdict_color`, `worst_case_scenarios`, `closing_prose`, `verdict_prose`. The ONLY top-level keys are the five above. Do not cite exact severity counts in `opening` (the composer injects the authoritative `**Risk distribution:** …` line). Run the MS compactness gate after authoring (see "MS prose — single-pass discipline").
+
+**Management-language hard gate.** A product owner must understand the verdict without security training. `opening` is at most 52 words; each bullet body is **one sentence, at most 32 words**; `closing` is at most 220 characters. Never use security acronyms or implementation vocabulary in `opening`, `title`, `body`, or `closing`: for example `JWT`, `RSA`, `SQL`, `XSS`, `XML`, `API`, `endpoint`, `middleware`, `localStorage`, `HttpOnly`, `sandbox`, file paths, line numbers, code, or backticks. Say "account takeover", "customer data exposed", "server takeover", "active login stolen", or "unapproved discounts" instead. `refs` are audit provenance only: the renderer deliberately hides IDs, finding titles, locations, and abuse-case IDs in this block. Every reference must directly support the scenario; never pad a bullet with a loosely related Critical finding. The renderer shows only the plain-language badge `✓ verified attack path` when a referenced finding anchors a fully viable chain.
 
 ### `ms-anti-patterns.json` authoring contract (OPTIONAL — architecture anti-patterns)
 

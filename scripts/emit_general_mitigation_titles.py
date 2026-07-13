@@ -96,6 +96,8 @@ _GENERAL_TITLE_BY_CWE: dict[str, str] = {
     "CWE-732": "Apply least-privilege permissions",
     "CWE-269": "Apply least-privilege permissions",
     "CWE-307": "Rate-limit and lock out repeated authentication attempts",
+    "CWE-203": "Return uniform authentication errors",
+    "CWE-259": "Use a unique secret per credential record",
     "CWE-829": "Pin third-party dependencies to immutable versions",
     "CWE-1104": "Pin the container base image to an immutable digest",
     "CWE-506": "Disable untrusted package install scripts",
@@ -108,13 +110,33 @@ _GENERAL_TITLE_BY_CWE: dict[str, str] = {
     "CWE-352": "Add anti-CSRF protection to state-changing requests",
     "CWE-916": "Hash passwords with a strong, salted algorithm",
     "CWE-327": "Replace the weak cryptographic algorithm",
+    "CWE-328": "Use modern cryptographic hash and KDF algorithms",
+    "CWE-400": "Rate-limit expensive requests and bound input size",
+    "CWE-502": "Use safe YAML parsing with resource limits",
+    "CWE-602": "Enforce authorization on the server",
+    "CWE-668": "Scope real-time events to authorized recipients",
     "CWE-703": "Add a container healthcheck",
+    "CWE-807": "Use trusted client IPs for rate limiting",
+    "CWE-942": "Restrict CORS to trusted origins",
+    "CWE-1004": "Set secure session-cookie attributes",
     "CWE-1021": "Add framing and clickjacking protections",
+    "CWE-1357": "Set least-privilege CI workflow permissions",
+    "CWE-330": "Use cryptographically secure random values",
+    "CWE-338": "Use cryptographically secure random values",
+    "CWE-346": "Restrict CORS to trusted origins",
+    "CWE-548": "Disable public directory listings",
+    "CWE-915": "Allowlist client-controlled fields",
+    "CWE-284": "Apply least-privilege filesystem access",
 }
 
 # Disambiguators — one CWE, two genuinely different fixes. (regex on the lowered
 # original title) → title. Checked before the plain CWE map.
 _DISAMBIGUATE: dict[str, list[tuple[str, str]]] = {
+    "CWE-522": [
+        (r"oidc|trusted publishing|dockerhub|npm", "Use workload identity for package publishing"),
+        (r"authorization code|implicit flow|pkce|oauth", "Use OAuth authorization code flow with PKCE"),
+        (r"derived-password|provider sub|identity", "Bind OAuth identities to provider subject IDs"),
+    ],
     "CWE-347": [
         (
             r"cosign|provenance|attest|sigstore|release|image|artifact|workflow|supply",
@@ -123,6 +145,7 @@ _DISAMBIGUATE: dict[str, list[tuple[str, str]]] = {
         (r"jwt|token|alg|expressjwt|rs256|hs256|decode|verify", "Enforce JWT signature and algorithm verification"),
     ],
     "CWE-400": [
+        (r"query timeout|search endpoint|database query", "Set database query timeouts and rate limits"),
         (r"yaml|alias|anchor|xml|entity|bomb|zip|decompress|billion", "Bound parser and decompression resource limits"),
         (
             r"event loop|worker|cpu|vm\b|runincontext|thread|timeout|synchronous",

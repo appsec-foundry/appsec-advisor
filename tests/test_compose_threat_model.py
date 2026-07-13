@@ -328,14 +328,12 @@ def test_verdict_renders_red_blockquote(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     assert "border-left: 3px solid #dc2626" in rendered
-    # At least one F/T-NNN linkified citation inside the blockquote. The
-    # finding link may carry a leading severity dot (🔴/🟠/🟡/🟢) — added by
-    # linkify_refs so the Verdict findings are annotated like every other
-    # linked-findings context.
-    assert re.search(
-        r"\*\((?:[🔴🟠🟡🟢⚪]\s)?\[[FT]-00[12]\]\(#[ft]-00[12]\)(?: — [^)]+)?\)\*",
-        rendered,
-    )
+    # Source references remain in the fragment for auditability, but the
+    # product-owner blockquote intentionally omits finding IDs and locators.
+    verdict_start = rendered.index('<blockquote style="border-left: 3px solid #dc2626')
+    verdict_end = rendered.index("</blockquote>", verdict_start)
+    verdict_block = rendered[verdict_start:verdict_end]
+    assert not re.search(r"\[[FT]-\d{3,4}\]\(#[ft]-\d{3,4}\)", verdict_block)
 
 
 def test_top_threats_has_five_columns(tmp_path: Path) -> None:
@@ -3944,10 +3942,11 @@ def test_verdict_badges_bullet_anchoring_fully_viable_chain(tmp_path: Path) -> N
         ],
     )
     out = compose._render_verdict(ctx, env, section)
-    # Fully-viable chain badges its bullet, linking §9.
-    assert "✓ **end-to-end verified** ([AC-T-001](#ac-t-001))" in out
-    # partially_blocked chains do NOT badge — no contradiction with the red box.
-    assert "AC-T-009" not in out
+    # Fully-viable chain badges the bullet without exposing an abuse-case ID.
+    assert "✓ verified attack path" in out
+    assert "AC-T-001" not in out
+    # The product-owner block deliberately hides implementation-level finding IDs.
+    assert "[F-001]" not in out and "[F-002]" not in out
 
 
 def test_verdict_badge_normalises_t_ref_and_omits_when_no_chain(tmp_path: Path) -> None:
@@ -3960,10 +3959,11 @@ def test_verdict_badge_normalises_t_ref_and_omits_when_no_chain(tmp_path: Path) 
         abuse_cases=[{"id": "AC-T-002", "chain_verdict": "fully_viable", "matched_finding_ids": ["F-003"]}],
     )
     out = compose._render_verdict(ctx, env, section)
-    # T-003 ref normalises to F-003, which anchors AC-T-002.
-    assert "✓ **end-to-end verified** ([AC-T-002](#ac-t-002))" in out
+    # T-003 ref normalises to F-003 internally and receives a generic badge.
+    assert "✓ verified attack path" in out
+    assert "AC-T-002" not in out
     # The bullet with no chain-anchoring finding is left un-badged.
-    assert out.count("end-to-end verified") == 1
+    assert out.count("✓ verified attack path") == 1
 
 
 def test_verdict_no_badge_when_abuse_sidecar_absent(tmp_path: Path) -> None:

@@ -131,5 +131,5 @@ required:
   #   containment boundary. Real containment lives in the guard scripts — see the
   #   header comment at the top of this file.
   - entry: "Bash(*)"
-    reason: "all shell commands used by agents, deterministic orchestration_controller.py invocations, scripts, and phase-group files; per-command entries cannot cover compound commands and variable-assignment chains — see comment above"
+    reason: "all shell commands used by agents, deterministic orchestration_controller.py invocations, mitigation-quality gates, scripts, and phase-group files; per-command entries cannot cover compound commands and variable-assignment chains — see comment above"
     category: shell

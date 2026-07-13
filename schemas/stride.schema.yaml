@@ -150,6 +150,13 @@ $defs:
                   type: array
                   items: { type: string }
                 code_example: { type: [string, "null"] }
+                verification:
+                  # A concrete post-change check: test name, request plus
+                  # expected result, CI assertion, or configuration check.
+                  # Required for P1/P2 fix cards by the post-backfill quality
+                  # gate; optional here so intermediate component output can
+                  # still be merged and enriched before that final gate.
+                  type: [string, "null"]
                 reference:    { type: string }
             evidence:
               type: [object, "null"]

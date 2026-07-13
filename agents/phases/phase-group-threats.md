@@ -1188,10 +1188,10 @@ When a mitigation addresses **two or more** findings, the `**Addresses:**` block
 3. <next step>
 
 ```<lang>
-// Before (<file>:<line>):
+// Before (<file>:<line>) — <why this behavior is unsafe>:
 <code>
 
-// After:
+// After — <security property now enforced>:
 <code>
 ```
 
@@ -1216,7 +1216,7 @@ When a mitigation addresses **two or more** findings, the `**Addresses:**` block
 | `**Effort:**` | always | `Low` (< 2h, single file) · `Medium` (half-day, multi-file) · `High` (multi-day, architectural). On its own line. |
 | `**Why:**` | always | 1–3 sentences. **When a Blueprint applies, quote the Blueprint rationale verbatim** before adding any custom commentary. |
 | `**How:**` | always | Numbered steps. **When a Blueprint applies, the first step MUST come from the Blueprint section** — do not invent your own first step. |
-| Code block | when fix involves code or config | Language-tagged before/after snippet (3–10 lines). The `Before` snippet carries a `(<file>:<line>)` provenance comment on the first line; the `After` snippet shows the fixed form. Omit the block only when the fix is purely operational (e.g. "rotate the secret in vault"). |
+| Code block | when fix involves code or config | Language-tagged before/after snippet (3–10 lines) using APIs present in the repository. The `Before` comment names `(<file>:<line>)` and, when useful, why the current behavior is unsafe; the `After` comment states the security property enforced. The renderer introduces every block with an `Example implementation in <file>` sentence. Omit the block only when the fix is purely operational (e.g. "rotate the secret in vault"). |
 | `**Verification:**` | always | Concrete check the developer can run after the fix — never "verify the fix works". |
 | `**Reference:**` | always | CWE Pillar link + OWASP Top 10 / OWASP LLM link (external CWE/OWASP URL — never internal anchor). Use `➚` arrow prefix per link for visual consistency. |
 | `---` separator | always (between blocks) | A standalone `---` line between consecutive M-NNN blocks within a priority group; not required before the first block of a group (the group's own `---` after the intro sentence serves). |

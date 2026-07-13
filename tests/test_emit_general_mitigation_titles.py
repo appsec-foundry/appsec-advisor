@@ -172,6 +172,43 @@ def test_cwe306_maps_to_general_title_no_truncation():
     assert not d["mitigations"][0]["title"].endswith(" to")
 
 
+def test_common_unmapped_cwes_receive_short_class_level_titles():
+    d = _data(
+        {"id": "M-019", "title": "Remove public access to /encryptionkeys and /ftp/quarantine directory listings", "threat_ids": ["T-019"]},
+        {"id": "M-023", "title": "Exclude role from the User resource and hard-code the registration role", "threat_ids": ["T-023"]},
+        threats=[
+            {"id": "T-019", "cwe": "CWE-548"},
+            {"id": "T-023", "cwe": "CWE-915"},
+        ],
+    )
+    egm.apply(d)
+    titles = {m["id"]: m["title"] for m in d["mitigations"]}
+    assert titles == {
+        "M-019": "Disable public directory listings",
+        "M-023": "Allowlist client-controlled fields",
+    }
+
+
+def test_title_map_covers_common_fallback_and_oauth_variants():
+    d = _data(
+        {"id": "M-026", "title": "Replace long-lived NPM_TOKEN with OIDC Trusted Publishing", "threat_ids": ["T-026"]},
+        {"id": "M-046", "title": "Replace global broadcast with per-socket targeted emit", "threat_ids": ["T-046"]},
+        {"id": "M-054", "title": "Cap wallet set size and add rate limiting", "threat_ids": ["T-054"]},
+        threats=[
+            {"id": "T-026", "cwe": "CWE-522"},
+            {"id": "T-046", "cwe": "CWE-668"},
+            {"id": "T-054", "cwe": "CWE-400"},
+        ],
+    )
+    egm.apply(d)
+    titles = {m["id"]: m["title"] for m in d["mitigations"]}
+    assert titles == {
+        "M-026": "Use workload identity for package publishing",
+        "M-046": "Scope real-time events to authorized recipients",
+        "M-054": "Rate-limit expensive requests and bound input size",
+    }
+
+
 def test_idempotent():
     d = _data(
         {"id": "M-007", "title": "Pin base image to @sha256:<digest>", "threat_ids": ["T-005"]},
