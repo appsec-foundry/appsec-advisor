@@ -1951,3 +1951,30 @@ class TestWeaknessRegister:
         assert len(w) == 1
         assert w[0]["kind"] == "implementation"
         assert len(w[0]["observable_backing"]["practice_evidence"]) == 5
+
+
+def test_load_design_signals_fallback_generates_from_coverage(mt, tmp_path):
+    # The Phase-9 agent's `emit-design-signals` step is a soft instruction that
+    # is sometimes skipped; when .arch-design-signals.json is absent,
+    # _load_design_signals must fall back to generating signals from
+    # .architecture-coverage.json so architectural design gaps still fold into
+    # the weakness register.
+    coverage = {
+        "version": 1,
+        "threat_hypotheses": [
+            {
+                "hypothesis_id": "ARCH-HYP-INPUT-001",
+                "rule_id": "ARCH-INPUT-001",
+                "cwe": "CWE-20",
+                "architectural_theme": "InputValidation",
+                "proof_state": "control-derived",
+                "generic_threat_title": "Injection through missing centralized input validation",
+                "weak_or_missing_controls": ["Schema Validation"],
+            }
+        ],
+    }
+    (tmp_path / ".architecture-coverage.json").write_text(json.dumps(coverage))
+    assert not (tmp_path / ".arch-design-signals.json").exists()
+    signals = mt._load_design_signals(tmp_path)
+    assert len(signals) == 1
+    assert signals[0]["weakness_class"] == "injection"

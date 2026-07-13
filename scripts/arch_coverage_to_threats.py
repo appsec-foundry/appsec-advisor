@@ -35,6 +35,7 @@ severity_cap; never Critical individually (arch.md §Severity-Policy).
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import sys
@@ -50,6 +51,35 @@ except ImportError:  # pragma: no cover
 from weakness_classifier import classify_cwe
 
 _HERE = Path(__file__).resolve().parent
+
+
+@functools.lru_cache(maxsize=1)
+def _theme_to_primary_cluster() -> dict:
+    """Invert posture-rubric ``theme_by_weakness_class`` → {theme: primary
+    cluster}. Multiple clusters share a theme (InputValidation ← injection AND
+    output_xss_csp); the FIRST listed is the primary manifestation, so an
+    architectural theme maps to the cluster its concrete instances most likely
+    live in (InputValidation → injection, Authorization → missing_authz,
+    Authentication → broken_auth, DataProtection → weak_crypto). Missing/
+    unreadable rubric → {} (caller falls back to CWE classification)."""
+    if yaml is None:
+        return {}
+    path = _HERE.parent / "data" / "posture-rubric.yaml"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return {}
+    mapping: dict[str, str] = {}
+    for cluster, theme in (doc.get("theme_by_weakness_class") or {}).items():
+        mapping.setdefault(str(theme), str(cluster))  # first-wins = primary
+    return mapping
+
+
+def _cluster_for_theme(theme: Any) -> str | None:
+    """Primary weakness cluster for an architectural theme, or None."""
+    if not theme:
+        return None
+    return _theme_to_primary_cluster().get(str(theme))
 
 
 _STRIDE_NO_SPACE_TO_SPACED = {
@@ -244,7 +274,18 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
         hid = hyp.get("hypothesis_id")
         if hyp.get("proof_state") == "confirmed" and hyp.get("confidence") == "high":
             continue  # promoted to threats[] — handled by select_and_build
-        backing = hyp.get("controls_absent_evidence") or hyp.get("positive_signals") or []
+        # A control-derived hypothesis carries its observable absent-control
+        # signal under `weak_or_missing_controls` (the control assessment named
+        # the missing/weak central control); older shapes use
+        # `controls_absent_evidence` / `positive_signals`. Any of them is
+        # observable backing — without this, every control-derived design gap was
+        # silently dropped and never reached the weakness register.
+        backing = (
+            hyp.get("controls_absent_evidence")
+            or hyp.get("weak_or_missing_controls")
+            or hyp.get("positive_signals")
+            or []
+        )
         if not backing:
             dropped.append(
                 {
@@ -255,10 +296,19 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
             )
             continue
         cwe = (hyp.get("cwe") or "").strip()
+        # A control-derived hypothesis's CWE is often the generic parent (e.g.
+        # CWE-20 → _unmapped), which would strand the signal in a bucket with no
+        # confirmed instances. Prefer the architectural theme mapped to its
+        # primary cluster so the design gap folds onto the SAME class as the
+        # concrete findings (an InputValidation gap folds onto the injection
+        # instances); fall back to CWE classification.
+        wclass = _cluster_for_theme(hyp.get("architectural_theme"))
+        if not wclass:
+            wclass = classify_cwe(cwe, warn=False) if cwe else "_unmapped"
         signal = {
             "rule_id": hyp.get("rule_id"),
             "hypothesis_id": hid,
-            "weakness_class": classify_cwe(cwe, warn=False) if cwe else "_unmapped",
+            "weakness_class": wclass,
             "cwe": cwe or None,
             "component": hyp.get("component_id"),
             "statement": (hyp.get("generic_threat_title") or hyp.get("title") or "Central control observably absent"),

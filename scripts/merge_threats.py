@@ -1889,18 +1889,38 @@ def build_weakness_register(
 
 
 def _load_design_signals(out_dir: Path) -> list[dict]:
-    """Optional arch-coverage design-signal records (P1.3 bridge output),
-    consumed by the weakness reconciler. Absent file → no design fold."""
+    """Arch-coverage design-signal records (P1.3 bridge output), consumed by the
+    weakness reconciler so architectural design gaps fold into the weakness
+    register with their instances.
+
+    Prefer the emitted ``.arch-design-signals.json``. If it is absent, fall back
+    to generating the signals here from ``.architecture-coverage.json``: the
+    Phase-9 agent is *instructed* to run ``arch_coverage_to_threats.py
+    emit-design-signals``, but that soft step is sometimes skipped under
+    turn-budget pressure — which silently dropped EVERY architectural design
+    weakness from the report. The deterministic fallback makes the fold happen
+    regardless of whether the agent ran the separate emit step."""
     path = out_dir / ".arch-design-signals.json"
-    if not path.exists():
-        return []
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if isinstance(doc, dict):
-        return list(doc.get("design_signals") or [])
-    return list(doc) if isinstance(doc, list) else []
+    if path.exists():
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            doc = None
+        if isinstance(doc, dict):
+            return list(doc.get("design_signals") or [])
+        if isinstance(doc, list):
+            return list(doc)
+    cov_path = out_dir / ".architecture-coverage.json"
+    if cov_path.exists():
+        try:
+            cov = json.loads(cov_path.read_text(encoding="utf-8"))
+            from arch_coverage_to_threats import build_design_signals
+
+            signals, _ = build_design_signals(cov)
+            return signals
+        except Exception:  # noqa: BLE001 — a fallback must never break finalize
+            return []
+    return []
 
 
 def _load_impl_strategy(out_dir: Path) -> dict[str, str]:

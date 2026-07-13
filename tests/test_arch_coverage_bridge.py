@@ -769,6 +769,62 @@ def test_build_design_signals_skips_confirmed_high():
     assert signals == []
 
 
+def test_build_design_signals_recognizes_weak_or_missing_controls():
+    # A control-derived hypothesis carries its absent-control signal under
+    # `weak_or_missing_controls`; it must count as backing. Previously it was
+    # dropped, silently losing every architectural design weakness.
+    coverage = {
+        "threat_hypotheses": [
+            {
+                "hypothesis_id": "ARCH-HYP-INPUT-001",
+                "rule_id": "ARCH-INPUT-001",
+                "cwe": "CWE-20",
+                "domain": "InputVal",
+                "architectural_theme": "InputValidation",
+                "proof_state": "control-derived",
+                "confidence": "low",
+                "generic_threat_title": "Injection through missing centralized input validation",
+                "weak_or_missing_controls": ["Schema Validation", "Allowlist Validation"],
+                "positive_signals": [],
+            }
+        ]
+    }
+    signals, dropped = bridge.build_design_signals(coverage)
+    assert len(signals) == 1, "weak_or_missing_controls must count as observable backing"
+    s = signals[0]
+    # CWE-20 alone classifies to _unmapped; the architectural theme maps it onto
+    # the injection cluster so the design gap folds with the concrete injection
+    # findings instead of stranding in an empty bucket.
+    assert s["weakness_class"] == "injection"
+    assert "Schema Validation" in s["absent_control_signal"]
+    assert dropped == []
+
+
+def test_build_design_signals_theme_maps_authz_and_authn():
+    coverage = {
+        "threat_hypotheses": [
+            {
+                "hypothesis_id": "H1",
+                "rule_id": "R1",
+                "cwe": "CWE-862",
+                "architectural_theme": "Authorization",
+                "proof_state": "control-derived",
+                "weak_or_missing_controls": ["Centralised AuthZ Policy"],
+            },
+            {
+                "hypothesis_id": "H2",
+                "rule_id": "R2",
+                "cwe": "CWE-306",
+                "architectural_theme": "Authentication",
+                "proof_state": "control-derived",
+                "weak_or_missing_controls": ["Route Authentication Middleware"],
+            },
+        ]
+    }
+    signals, _ = bridge.build_design_signals(coverage)
+    assert {s["weakness_class"] for s in signals} == {"missing_authz", "broken_auth"}
+
+
 def test_emit_design_signals_cli(tmp_path):
     cov = tmp_path / ".architecture-coverage.json"
     cov.write_text(
