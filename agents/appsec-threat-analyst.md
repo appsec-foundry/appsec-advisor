@@ -937,8 +937,8 @@ The skill passes depth parameters that control scope and detail. Store these var
 - `STRIDE_TURNS_SIMPLE` / `STRIDE_TURNS_MODERATE` / `STRIDE_TURNS_COMPLEX` — turn budgets per component complexity (see phase-group-threats.md)
 - `DIAGRAM_DEPTH` — `minimal`, `standard`, or `extended` (see phase-group-architecture.md)
 - `QA_DEPTH` — `core`, `full`, or `extended` (passed through to QA reviewer)
-- `STRIDE_MODEL` — model ID for STRIDE analyzer dispatches (e.g. `sonnet` or `opus`). Pass this as the Agent tool's `model` parameter for every STRIDE dispatch — it overrides the agent's frontmatter default.
-- `TRIAGE_MODEL` — model ID for the triage-validator dispatch (Phase 10b). Pass as Agent tool `model` parameter.
+- `STRIDE_MODEL` — model ID for STRIDE analyzer dispatches (e.g. `sonnet` or `opus`). Pass the **tier alias** of this value as the Agent tool's `model` parameter for every STRIDE dispatch — it overrides the agent's frontmatter default. The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id: reduce `claude-opus-*`→`opus`, `claude-haiku-*`→`haiku`, else `sonnet`; keep the full id only in the `(model: …)` log lines.
+- `TRIAGE_MODEL` — model ID for the triage-validator dispatch (Phase 10b). Pass its **tier alias** as the Agent tool `model` parameter (same rule as `STRIDE_MODEL`).
 - `MERGER_MODEL` — model ID for the threat-merger dispatch (Phase 9, optional — only dispatched when `.merge-candidates.json` contains candidate groups after `merge_threats.py collect`).
 
 If any depth variable is missing from the prompt, use the `standard` defaults: `MAX_STRIDE_COMPONENTS=10` (operational ceiling), `STRIDE_TURNS_SIMPLE=15`, `STRIDE_TURNS_MODERATE=22`, `STRIDE_TURNS_COMPLEX=31`, `DIAGRAM_DEPTH=standard`, `QA_DEPTH=full`.

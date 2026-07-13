@@ -419,7 +419,7 @@ When no obvious priority files are derivable (rare, e.g. brand-new component wit
 - data-persistence: 170 s → ~80 s by reading the ORM model + raw-query route directly.
 
 
-Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
+Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and the `model` parameter set to the **tier alias** of `$STRIDE_MODEL` — overrides the agent's frontmatter default. **The Agent tool's `model` parameter accepts ONLY the bare tier aliases `sonnet` / `opus` / `haiku`; a full version id (`claude-sonnet-4-6`, `claude-opus-4-7`, …) is rejected.** Reduce `$STRIDE_MODEL` to its tier for the parameter: any `claude-opus-*` / `opus*` → `opus`, any `claude-haiku-*` / `haiku*` → `haiku`, anything else (incl. `claude-sonnet-*`) → `sonnet`; a value that is already a bare alias passes through unchanged. Keep the full `$STRIDE_MODEL` id ONLY in the `(model: …)` log lines (below) so cost accounting stays exact. This same tier-alias reduction applies to **every** Agent-tool `model` parameter in this skill (triage, recon, context, config, actor, abuse, renderer). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
 
 **STRIDE_PROFILE forwarding (M3.5).** The `STRIDE_PROFILE_JSON` env var (set by the skill from `.skill-config.json → stride_profile`) is forwarded verbatim into Group A of every per-component dispatch prompt. When the user runs with `--reasoning-model sonnet-economy --assessment-depth quick` the JSON encodes the A-F depth-reduction flags. With the opt-in `--stride-cap N` flag the JSON is `{"max_threats_per_category": N, "stride_profile_label": "full (per-category cap N)"}` — full depth except the key-gated per-category cap. Otherwise it is `{"stride_profile_label":"full"}` and the analyzer runs at full depth. Emit the line as:
 
@@ -539,7 +539,7 @@ Pipeline:
    ```
    subagent_type: "appsec-advisor:appsec-threat-merger"
    description: "Dedup / consolidate candidate threat groups"
-   model: $MERGER_MODEL
+   model: <tier alias of $MERGER_MODEL — sonnet/opus/haiku only>
    run_in_background: false
    prompt: |
      REPO_ROOT=<REPO_ROOT>
@@ -549,7 +549,7 @@ Pipeline:
      COMPONENT_MAP_PATH=<OUTPUT_DIR>/.merge-context/component-map.json
    ```
    Before dispatch, write `$OUTPUT_DIR/.merge-context/component-map.json` as JSON object `{component_id: {name, trust_boundaries}}`. Pass only the path; do not inline the component map in the prompt.
-   Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage-validator dispatch above, using `$MERGER_MODEL` in the message.
+   The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id — `$MERGER_MODEL` resolves to a full id at `standard` (`claude-sonnet-5`) and `thorough` (`claude-opus-*`), so reduce it to its tier for the param (see the STRIDE dispatch note in Phase 9). Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage-validator dispatch above, using the full `$MERGER_MODEL` id in the message.
 
 2.5. **Emit weakness design signals (P1)** — before finalize, normalize
    *unpromoted* architecture-coverage hypotheses into design-signal records so
@@ -1674,7 +1674,7 @@ prompt: |
   MODEL_ID=<TRIAGE_MODEL>
 ```
 
-Pass `$TRIAGE_MODEL` (resolved from `--reasoning-model` by the skill) as the Agent tool's `model` parameter — overrides the agent's frontmatter `model: sonnet` default.
+Pass the **tier alias** of `$TRIAGE_MODEL` (resolved from `--reasoning-model` by the skill) as the Agent tool's `model` parameter — overrides the agent's frontmatter `model: sonnet` default. The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id — reduce `$TRIAGE_MODEL` to its tier (see the STRIDE dispatch note in Phase 9); keep the full id only in the `(model: …)` log line.
 
 **Log before dispatch:**
 ```bash
@@ -1848,7 +1848,7 @@ prompt: |
   MODEL_ID=$ABUSE_VERIFIER_MODEL
 ```
 
-`$ABUSE_VERIFIER_MODEL` defaults to `sonnet` (→ host session); pin via `APPSEC_ABUSE_VERIFIER_MODEL`. SKILL-impl.md Stage 1c is authoritative for operational runs. Set the Agent `model` param explicitly or the frontmatter `sonnet` default silently wins.
+`$ABUSE_VERIFIER_MODEL` defaults to `sonnet` (→ host session); pin via `APPSEC_ABUSE_VERIFIER_MODEL`. SKILL-impl.md Stage 1c is authoritative for operational runs. Set the Agent `model` param explicitly (as the **tier alias** — `sonnet`/`opus`/`haiku`, never a full version id; reduce a pinned `claude-sonnet-5` to `sonnet`, see the STRIDE dispatch note in Phase 9) or the frontmatter `sonnet` default silently wins.
 
 Dispatch all candidates together (wall-clock ≈ the slowest single case, not the sum). Each agent writes one `.abuse-case-verdict-<AC-ID>.json`. **Budget-critical guard:** if `$OUTPUT_DIR/.budget-critical` exists before this step, skip the fan-out — the merge below records every candidate as `inconclusive`.
 

@@ -26,7 +26,7 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 - `subagent_type`: `appsec-advisor:appsec-context-resolver`
 - `description`: `Resolve context for threat model`
 - `run_in_background`: `false` (concurrent foreground — dispatched in the SAME message as recon/config so they run in parallel and all return this turn; never background it — this harness cannot resume a backgrounded agent)
-- `model`: `$CONTEXT_RESOLVER_MODEL` from `.skill-config.json` (defaults to `sonnet`; under `--reasoning-model sonnet-economy` becomes `haiku` regardless of depth — pure file-IO + summary task)
+- `model`: the **tier alias** of `$CONTEXT_RESOLVER_MODEL` from `.skill-config.json` (defaults to `sonnet`; under `--reasoning-model sonnet-economy` becomes `haiku` regardless of depth — pure file-IO + summary task). The Agent `model` param takes only bare tier aliases (`sonnet`/`opus`/`haiku`); if the value is a full version id (env pin / sonnet-economy fallback), reduce it to its tier — see the STRIDE dispatch note in `phase-group-threats.md` Phase 9.
 - `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, `MODEL_ID=$CONTEXT_RESOLVER_MODEL` (so the agent logs the model it was actually dispatched on — not a hardcoded `sonnet`), `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set)
 
 Log `AGENT_INVOKE` before dispatch. After the agent returns (or cache hit): read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment.
@@ -164,7 +164,7 @@ Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.
 - `subagent_type`: `appsec-advisor:appsec-recon-scanner`
 - `description`: `Reconnaissance scan`
 - `run_in_background`: `false` (concurrent foreground — dispatched in the SAME message as context-resolver/config so they run in parallel and all return this turn; never background it — this harness cannot resume a backgrounded agent)
-- `model`: `$RECON_SCANNER_MODEL` from `.skill-config.json`. Default routing is `haiku` at every depth and reasoning tier — recon is grep-based pattern detection plus lookup-table verdicts (e.g. lockfile-disable severity per ecosystem, repo-visibility-conditional severity for self-hosted runners), all decision-table-driven and Haiku-suitable. Override per-run via `APPSEC_RECON_SCANNER_MODEL=sonnet` if a specific repo needs Sonnet's stronger instruction-following on novel patterns.
+- `model`: the **tier alias** of `$RECON_SCANNER_MODEL` from `.skill-config.json` (Agent `model` param = bare tier alias only — `sonnet`/`opus`/`haiku`; reduce a full version id to its tier, see the STRIDE dispatch note in `phase-group-threats.md` Phase 9). Default routing is `haiku` at every depth and reasoning tier — recon is grep-based pattern detection plus lookup-table verdicts (e.g. lockfile-disable severity per ecosystem, repo-visibility-conditional severity for self-hosted runners), all decision-table-driven and Haiku-suitable. Override per-run via `APPSEC_RECON_SCANNER_MODEL=sonnet` if a specific repo needs Sonnet's stronger instruction-following on novel patterns.
 - `prompt`: `REPO_ROOT=<absolute repo path>` and `OUTPUT_DIR=<absolute output path>` and `MODEL_ID=$RECON_SCANNER_MODEL` (so the agent logs the model it was actually dispatched on — not a hardcoded `sonnet`) and `SCAN_MANIFEST=<value of SCAN_MANIFEST variable — true or false>`
 
 After both Phase 1 and Phase 2 have returned, read `$OUTPUT_DIR/.recon-summary.md`. Store contents for Phases 3–11:
@@ -222,7 +222,10 @@ orchestrator turn as context-resolver and recon-scanner):**
   message as context-resolver/recon-scanner so they run in parallel and all
   return this turn; never background it — this harness cannot resume a
   backgrounded agent)
-- `model`: `$CONFIG_SCANNER_MODEL` from `.skill-config.json` (defaults to
+- `model`: the **tier alias** of `$CONFIG_SCANNER_MODEL` from `.skill-config.json` (Agent
+  `model` param = bare tier alias only — `sonnet`/`opus`/`haiku`; reduce a full version
+  id to its tier, see the STRIDE dispatch note in `phase-group-threats.md` Phase 9;
+  defaults to
   `haiku` at all reasoning tiers — YAML-rule-engine task,
   pattern-matching against a static check catalog, Haiku-suitable at every
   depth. Override via `APPSEC_CONFIG_SCANNER_MODEL`.)
