@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Changed
+
+- Systemic weaknesses now appear in their own report chapter and link to the findings, unsafe practices, or missing controls that support them. Broad CWE families no longer merge unrelated attack paths into one weakness.
+
 ### Fixed
 
 - Threat models no longer render evidence-refuted findings. New scans drop those candidates before output; incremental scans record resolutions in the changelog instead.

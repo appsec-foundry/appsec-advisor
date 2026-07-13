@@ -1698,31 +1698,36 @@ def build_weakness_register(
     design_signals: list[dict] | None = None,
     impl_strategy: dict[str, str] | None = None,
 ) -> list[dict]:
-    """Fold confirmed findings, non-exploitable practice sites, and arch-coverage
-    design signals into one `weaknesses[]` heading per weakness class (§4b fold).
+    """Build narrowly-scoped, evidence-backed systemic weaknesses.
 
-    Grouping key is (weakness_class, scope): `kind: design` weaknesses are
-    app-wide (one per class, `affected_components[]` lists the spread);
-    `kind: implementation` groups per component but rolls up to a single
-    app-wide design weakness once the class recurs across ≥ SYSTEMIC_SPREAD_MIN
-    components with no central control (§4d-bis). Instances keep their own
-    T-/F-NNN + file:line + basis. Emits a weakness ONLY when it carries
-    observable backing — an absent-control signal OR practice evidence (I2 /
-    proposal §0); a class with only confirmed instances and no absent-control
-    signal stays as plain `threats[]` (the "control present" §4b row)."""
+    A CWE family is a reporting taxonomy, not a root cause.  The former
+    implementation used it as the grouping key, which could put SQL injection,
+    XXE and path traversal below one ``injection`` heading.  A weakness now has
+    one concrete control scope: an architecture rule, or one repeated unsafe
+    practice in one component.  Confirmed findings are evidence only when their
+    exact CWE and scope match that control.  A weakness remains valid without a
+    confirmed exploit when architecture or practice evidence proves the control
+    gap.
+    """
     vocab = load_weakness_classes()
-    # wcid -> aggregate
+    weakness_labels = {str(c.get("id")): str(c.get("label")) for c in (vocab.get("clusters") or [])}
     agg: dict[str, dict] = {}
 
-    def _bucket(wcid: str) -> dict:
+    def _bucket(
+        key: str, *, wcid: str, kind: str, title: str, statement: str, cwe: str | None = None
+    ) -> dict:
         return agg.setdefault(
-            wcid,
+            key,
             {
+                "weakness_class": wcid,
+                "kind": kind,
+                "title": title[:80],
+                "statement": statement,
+                "cwe": (cwe or "").upper(),
                 "instances": [],
                 "instance_severities": [],
                 "practice": [],
                 "absent": [],
-                "statements": [],
                 "components": [],
                 "strategies": [],
                 "design_severities": [],
@@ -1734,20 +1739,21 @@ def build_weakness_register(
         if comp and comp not in b["components"]:
             b["components"].append(comp)
 
+    confirmed: list[dict] = []
     for t in threats:
         src = (t.get("source") or "").strip()
         wcid = classify_threat(t, vocab, warn=False)
-        b = _bucket(wcid)
-        _add_component(b, t.get("component_id") or t.get("component") or "")
         if src in DESIGN_LEVEL_SOURCES:
-            # A design-level threat contributes the absent-control backing, not
-            # an instance (design gaps are never CVSS-scored / exploit-proven).
+            cwe = (t.get("cwe") or "").strip().upper()
+            statement = (t.get("title") or "Central security control observably absent").strip()
+            scope = (t.get("rule_id") or t.get("hypothesis_id") or statement).strip()
+            b = _bucket(
+                f"design:{scope}", wcid=wcid, kind="design", title=statement, statement=statement, cwe=cwe
+            )
             for a in t.get("controls_absent_evidence") or []:
                 b["absent"].append(a)
-            st = (t.get("title") or "").strip()
-            if st:
-                b["statements"].append(st)
             b["design_severities"].append(t.get("risk") or "Medium")
+            _add_component(b, t.get("component_id") or t.get("component") or "")
             continue
         tier = _instance_evidence_tier(t)
         # Stamp the resolved basis back onto the threat so downstream consumers
@@ -1755,23 +1761,24 @@ def build_weakness_register(
         # finding from a folded practice site without re-deriving it. Additive
         # key; unknown to SARIF/changelog, so no export regresses.
         t["evidence_tier"] = tier
-        ev = _first_evidence(t)
-        tid = (t.get("t_id") or t.get("id") or "").strip().upper()
-        if tier == "confirmed-exploitable" and tid:
-            inst = {
-                "id": tid,
-                "file": (ev.get("file") or "").strip(),
-                "line": ev.get("line"),
-                "basis": "confirmed-exploitable",
-            }
-            if t.get("poc_hint"):
-                inst["poc_hint"] = t["poc_hint"]
-            b["instances"].append(inst)
-            b["instance_severities"].append(t.get("risk") or "Medium")
+        if tier == "confirmed-exploitable":
+            confirmed.append(t)
         else:
+            # A practice weakness is deliberately component- and CWE-scoped.
+            # It is not promoted to a design weakness merely because another
+            # component happens to have a sibling CWE in the same family.
+            cwe = (t.get("cwe") or "").strip().upper()
+            component = (t.get("component_id") or t.get("component") or "").strip()
+            scope = f"practice:{wcid}:{cwe or 'none'}:{component or 'unscoped'}"
+            label = cwe or wcid.replace("_", " ")
+            statement = f"Unsafe {label} handling in {component or 'the assessed scope'}."
+            family = weakness_labels.get(wcid) or wcid.replace("_", " ").title()
+            title = f"{family} safeguards in {component or 'scope'}"
+            b = _bucket(scope, wcid=wcid, kind="implementation", title=title, statement=statement, cwe=cwe)
+            _add_component(b, component)
+            ev = _first_evidence(t)
+            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
             pe = {"file": (ev.get("file") or "").strip(), "line": ev.get("line")}
-            # Carry the source T-id so the renderer can dedupe a folded practice
-            # site against the primary register (honest post-consolidation count).
             if tid:
                 pe["id"] = tid
             if pe["file"]:
@@ -1787,12 +1794,13 @@ def build_weakness_register(
         _raw_wc = (ds.get("weakness_class") or "").strip()
         _valid_wc = {c.get("id") for c in (vocab.get("clusters") or [])}
         wcid = _raw_wc if _raw_wc in _valid_wc else classify_cwe(ds.get("cwe") or "", vocab, warn=False)
-        b = _bucket(wcid)
+        cwe = (ds.get("cwe") or "").strip().upper()
+        scope = (ds.get("rule_id") or ds.get("hypothesis_id") or ds.get("statement") or ds.get("title") or wcid).strip()
+        statement = (ds.get("statement") or ds.get("title") or "Central security control observably absent").strip()
+        title = (ds.get("title") or statement).strip()
+        b = _bucket(f"design:{scope}", wcid=wcid, kind="design", title=title, statement=statement, cwe=cwe)
         for a in ds.get("absent_control_signal") or ds.get("controls_absent_evidence") or []:
             b["absent"].append(a)
-        st = (ds.get("statement") or ds.get("title") or "").strip()
-        if st:
-            b["statements"].append(st)
         strat = (ds.get("implementation_strategy") or "").strip()
         if strat:
             b["strategies"].append(strat)
@@ -1805,8 +1813,9 @@ def build_weakness_register(
 
     weaknesses: list[dict] = []
     seq = 0
-    for wcid in sorted(agg):
-        b = agg[wcid]
+    for key in sorted(agg):
+        b = agg[key]
+        wcid = b["weakness_class"]
         has_absent = bool(b["absent"])
         has_practice = bool(b["practice"])
         # I2 / §4b: a weakness needs observable backing. Confirmed instances
@@ -1817,28 +1826,45 @@ def build_weakness_register(
 
         spread = len(b["components"])
         systemic = spread >= _spread_min_for_class(wcid, vocab)
-        # A weakness is `design` when a central control is observably absent
-        # (absent-control signal) OR the class recurs systemically across
-        # components; otherwise it is an isolated `implementation` weakness.
-        kind = "design" if (has_absent or systemic) else "implementation"
+        kind = b["kind"]
 
         # Implementation strategy (P2): a design-signal strategy wins; else the
         # repo-wide detector's class verdict (detect_impl_strategy.py).
         resolved_strategy = b["strategies"][0] if b["strategies"] else (impl_strategy or {}).get(wcid)
 
-        confirmed = bool(b["instances"])
+        # Attach only evidence that proves this exact control proposition.
+        # A missing generic CWE is intentionally not broadened to the class.
+        for t in confirmed:
+            t_cwe = (t.get("cwe") or "").strip().upper()
+            if not b["cwe"] or t_cwe != b["cwe"]:
+                continue
+            component = (t.get("component_id") or t.get("component") or "").strip()
+            if kind == "implementation" and b["components"] and component not in b["components"]:
+                continue
+            ev = _first_evidence(t)
+            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+            if not tid:
+                continue
+            inst = {"id": tid, "file": (ev.get("file") or "").strip(), "line": ev.get("line"), "basis": "confirmed-exploitable"}
+            if t.get("poc_hint"):
+                inst["poc_hint"] = t["poc_hint"]
+            b["instances"].append(inst)
+            b["instance_severities"].append(t.get("risk") or "Medium")
+            _add_component(b, component)
+
+        confirmed_basis = bool(b["instances"])
         # Fall B (§4b "control present"): a standard-vetted control IS the
         # central control, so a PURE design gap (no confirmed instance, no
         # bad-practice site) is exculpated — suppressed, not shown.
-        if resolved_strategy == "standard-vetted" and kind == "design" and not confirmed and not has_practice:
+        if resolved_strategy == "standard-vetted" and kind == "design" and not confirmed_basis and not has_practice:
             continue
 
-        if confirmed:
+        if confirmed_basis:
             # Driven by a proven exploit: keep the real instance severity band.
             severity_basis = "confirmed"
             severity = _max_severity(b["instance_severities"])
         else:
-            severity_basis = "design-risk"
+            severity_basis = "design-risk" if has_absent else "observed-practice"
             base = _max_severity(b["design_severities"] or ["Medium"])
             strat_set = {s.lower() for s in b["strategies"]}
             if resolved_strategy:
@@ -1846,9 +1872,9 @@ def build_weakness_register(
             homegrown = bool(strat_set & {"none", "home-grown"})
             # §4e: design-risk scales with pervasiveness × strategy. Pervasive +
             # (home-grown|none) may reach Critical; pervasive alone bumps once.
-            if systemic and homegrown:
+            if kind == "design" and systemic and homegrown:
                 severity = "Critical"
-            elif systemic:
+            elif kind == "design" and systemic:
                 severity = _max_severity([base, "High"])
             else:
                 severity = base
@@ -1860,11 +1886,7 @@ def build_weakness_register(
         if resolved_strategy == "standard-vetted" and severity_basis != "confirmed":
             severity = _lower_severity(severity)
 
-        statement = (
-            b["statements"][0]
-            if b["statements"]
-            else (f"Recurring {wcid.replace('_', ' ')} handling across {spread} component(s) with no central control.")
-        )
+        statement = b["statement"]
 
         observable_backing: dict = {}
         if has_absent:
@@ -1877,6 +1899,7 @@ def build_weakness_register(
             "id": f"W-{seq:03d}",
             "weakness_class": wcid,
             "kind": kind,
+            "title": b["title"],
             "statement": statement,
             "severity": severity,
             "severity_basis": severity_basis,

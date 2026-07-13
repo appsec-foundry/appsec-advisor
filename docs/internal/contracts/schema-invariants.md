@@ -79,3 +79,18 @@ Five maps across three Python files implicitly encode the fragment ↔ schema �
 > Line numbers drift as the files evolve; the canonical match is on the symbol name, not the number. ``scripts/check_fragment_registry.py`` extracts each map by name via AST, so the gate keeps working even when the line numbers go stale.
 
 `data/sections-contract.yaml` is the human-edited declaration that every other map should align with; the maps duplicate fragments of it because each consumer reads only the slice it needs. Adding a new fragment means touching all five maps + the contract + the schema + the fragment's `.j2` template under `templates/fragments/` when it renders via one (the `_render_template` call in `docs/internal/runbooks/adding-a-section.md`). The mechanical sequence is documented in `docs/internal/runbooks/adding-a-section.md`. The automated drift gate lives in `scripts/check_fragment_registry.py` (see Phase A1 of the refactoring plan) — when present it MUST stay green in CI.
+
+## §4g. Systemic weakness evidence invariant
+
+`weaknesses[]` records are first-class assessment conclusions rendered in the
+unnumbered **Systemic Weaknesses** chapter. A W-NNN may cite confirmed F-NNN
+findings, unsafe-practice locations, or absent-control evidence. Its
+`severity_basis` is therefore `confirmed`, `observed-practice`, or
+`design-risk`; only the linked findings may carry CVSS. A CWE family is never a
+weakness scope: `scripts/merge_threats.py` may group evidence only when it
+shares one concrete control scope. Management Summary and §7 links point to W,
+while W links to its supporting findings.
+
+Every W-NNN has a required `title` of at most 80 characters. It is the short,
+reader-facing heading and must not contain CWE IDs, source paths, routes, or
+code snippets; `statement` holds the explanatory detail instead.

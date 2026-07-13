@@ -38,7 +38,7 @@
 # required column) are breaking changes. Bump `contract_version` and
 # record in CHANGELOG.
 
-contract_version: 4   # v4 adds §1.5 identified_actors (actors.md §14)
+contract_version: 5   # v5 adds the unnumbered Systemic Weaknesses chapter
 
 # ---------------------------------------------------------------------------
 # Document-wide settings
@@ -59,6 +59,7 @@ document:
     - { id: quick_mode_notice, condition: "is_quick_depth" }
     - toc
     - management_summary
+    - { id: systemic_weaknesses, condition: "has_weakness_register" }
     # Item 3 (2026-05-28): activate the previously dormant Critical
     # Attack Tree fragment producer. The unnumbered `## Critical Attack
     # Tree` section sits between the Management Summary and §1 and
@@ -369,6 +370,16 @@ sections:
       - "^Follow-up Actions$"
       - "^Overall Security Rating$"
       - "^⚠ Worst Case Scenarios$"
+
+  # -- Systemic Weaknesses (post-MS, unnumbered) --------------------------
+  # Computed from `weaknesses[]`. Each W-NNN is an evidence-backed control
+  # conclusion; its confirmed F-NNN links are evidence, not child findings.
+  systemic_weaknesses:
+    heading: "## Systemic Weaknesses"
+    heading_numbered: false
+    anchor: "systemic-weaknesses"
+    fragment_type: computed
+    conditional: "has_weakness_register"
 
   # -- Critical Attack Tree (post-MS, unnumbered) --------------------------
   # Item 3 (2026-05-28): activated dormant section. The renderer

@@ -2694,8 +2694,8 @@ class TestWeaknessBasisBreakdown:
         assert compose._weakness_basis_breakdown(yd) == (2, 1, 0, 1)
 
 
-class TestWeaknessClassesRender:
-    """P1.4 — _render_weakness_classes: systemic weakness view in §8."""
+class TestSystemicWeaknessesRender:
+    """Systemic weaknesses render as a dedicated evidence-backed chapter."""
 
     class _Ctx:
         def __init__(self, yaml_data):
@@ -2705,8 +2705,7 @@ class TestWeaknessClassesRender:
             return {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(k, "")
 
     def test_empty_when_no_register(self):
-        # Pre-P1 data → "" → §8 goldens stay byte-identical.
-        assert compose._render_weakness_classes(self._Ctx({"threats": []})) == ""
+        assert compose._render_systemic_weaknesses(self._Ctx({"threats": []})) == ""
 
     def test_renders_heading_instances_and_practice(self):
         ctx = self._Ctx(
@@ -2726,13 +2725,13 @@ class TestWeaknessClassesRender:
                 ]
             }
         )
-        block = compose._render_weakness_classes(ctx)
-        assert "**Weakness Classes**" in block
-        assert "**Injection**" in block
-        assert "(injection · design · confirmed)" in block
+        block = compose._render_systemic_weaknesses(ctx)
+        assert "## Systemic Weaknesses" in block
+        assert "W-001 — no parametrized layer" in block
+        assert "**Assessment basis:** design · confirmed." in block
         assert "[F-001](#f-001)" in block and "[F-002](#f-002)" in block
-        assert "Practice sites: 2" in block
-        assert "Affected: api" in block
+        assert "**Observed practice:** `a`, `b`" in block
+        assert "**Affected components:** api" in block
 
     def test_sorted_by_severity_then_basis(self):
         ctx = self._Ctx(
@@ -2759,9 +2758,9 @@ class TestWeaknessClassesRender:
                 ]
             }
         )
-        block = compose._render_weakness_classes(ctx)
-        # Critical injection must render before Low dos.
-        assert block.index("Injection") < block.index("Denial of Service")
+        block = compose._render_systemic_weaknesses(ctx)
+        # Critical weakness must render before Low weakness.
+        assert block.index("W-002 — y") < block.index("W-001 — x")
 
 
 class TestTopFindingsDesignRiskRow:

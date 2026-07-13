@@ -268,6 +268,11 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
     """
     signals: list[dict] = []
     dropped: list[dict] = []
+    control_by_rule = {
+        str(rule.get("rule_id")): str(rule.get("control"))
+        for rule in (coverage.get("rules_evaluated") or [])
+        if isinstance(rule, dict) and rule.get("rule_id") and rule.get("control")
+    }
     for hyp in coverage.get("threat_hypotheses") or []:
         if not isinstance(hyp, dict):
             continue
@@ -305,13 +310,20 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
         wclass = _cluster_for_theme(hyp.get("architectural_theme"))
         if not wclass:
             wclass = classify_cwe(cwe, warn=False) if cwe else "_unmapped"
+        control = control_by_rule.get(str(hyp.get("rule_id") or ""))
+        statement = (
+            f"{control} is not consistently enforced."
+            if control
+            else (hyp.get("generic_threat_title") or hyp.get("title") or "Central control observably absent")
+        )
         signal = {
             "rule_id": hyp.get("rule_id"),
             "hypothesis_id": hid,
             "weakness_class": wclass,
             "cwe": cwe or None,
             "component": hyp.get("component_id"),
-            "statement": (hyp.get("generic_threat_title") or hyp.get("title") or "Central control observably absent"),
+            "title": control or (hyp.get("title") or "Security control weakness"),
+            "statement": statement,
             "absent_control_signal": list(backing),
             # Populated by the P2 misuse/strategy layer; None until then.
             "implementation_strategy": hyp.get("implementation_strategy"),

@@ -692,6 +692,7 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
             "id": "W-001",
             "weakness_class": "injection",
             "kind": "design",
+            "title": "Database query safety",
             "severity": "Critical",
             "severity_basis": "confirmed",
             "statement": "SQL built by concatenation; no parametrized layer.",
@@ -710,10 +711,11 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
 
     rendered, warnings = compose.render(CONTRACT, e2e_run)
     assert warnings == [], f"unexpected compose warnings: {warnings}"
-    # Systemic weakness view is present in §8.
-    assert "**Weakness Classes**" in rendered
-    assert "**Injection**" in rendered
-    assert "(injection · design · confirmed)" in rendered
+    # Systemic weaknesses are a first-class chapter, not a §8 class roll-up.
+    assert "## Systemic Weaknesses" in rendered
+    assert "W-001 — Database query safety" in rendered
+    assert "SQL built by concatenation; no parametrized layer." in rendered
+    assert "**Confirmed findings:**" in rendered
     # P4 — the systemic posture verdict table (hoisted 2026-07-13) renders as the
     # `### Security Principles` subsection INSIDE the Management Summary, not §8.
     assert "### Security Principles" in rendered
@@ -728,12 +730,12 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
     assert ms_start < rendered.index("### Security Principles") < ms_end, (
         "Security Principles table must render inside the Management Summary"
     )
-    # §8 keeps only a back-reference to the Management Summary table (no dup).
-    assert "**Security Principles** table of the Management Summary" in rendered
-    assert rendered.index("### Security Principles") < rendered.index("**Weakness Classes**")
-    # Post-consolidation basis breakdown is present in the verdict.
-    assert "**Findings:**" in rendered
-    assert "confirmed-exploitable ·" in rendered
+    # §8 points to the central weakness chapter rather than duplicating it.
+    assert "[Systemic Weaknesses](#systemic-weaknesses)" in rendered
+    assert rendered.index("### Security Principles") < rendered.index("## Systemic Weaknesses")
+    # Findings and systemic weaknesses are reported as separate evidence types.
+    assert "**Assessment evidence:**" in rendered
+    assert "confirmed-exploitable finding(s)" in rendered
     # QA invariants pass on the rendered document (the block adds no anchor /
     # section that check_invariants would reject).
     (e2e_run / "threat-model.md").write_text(rendered, encoding="utf-8")

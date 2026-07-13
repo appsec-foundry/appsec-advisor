@@ -929,6 +929,7 @@ properties:
         - id
         - weakness_class
         - kind
+        - title
         - statement
         - severity
         - severity_basis
@@ -945,6 +946,10 @@ properties:
         kind:
           type: string
           enum: [design, implementation]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
         statement:
           type: string
           minLength: 1
@@ -953,7 +958,7 @@ properties:
           enum: [Critical, High, Medium, Low]
         severity_basis:
           type: string
-          enum: [confirmed, design-risk]
+          enum: [confirmed, observed-practice, design-risk]
         implementation_strategy:
           type: [string, "null"]
           enum: [none, home-grown, standard-misused, standard-vetted, null]

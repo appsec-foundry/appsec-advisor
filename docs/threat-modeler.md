@@ -181,6 +181,13 @@ These OWASP Juice Shop runs anchor on three measured points from July 2026 — *
 > [!NOTE]
 > Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
 
+**Cross-repo check (standard).** A standard run on a second, smaller repository confirms that cost tracks codebase size. [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app) — an intentionally-vulnerable Spring Boot monolith used as a scanner-validation fixture — was assessed at `standard` on plugin **v0.4.1** with the session on **Sonnet 4.6**. It cost **$24.65** for the session ($24.05 Sonnet 4.6 + $0.60 Haiku helpers) and surfaced 49 threats across 5 analyzed components. The threat-model pipeline itself reported ~69 min wall and ~97 min of agent compute; the rest of the measured session went to the repair loop and interactive iteration, so treat the dollar figure as a loose upper bound for a repo this size. The lower bill versus Juice Shop's $34.14 follows from the smaller repository — fewer files read means fewer cached input tokens, and token volume is the dominant cost driver (see *Background: why Sonnet 4.6 costs less*).
+
+| Repo | Stack | Mode | Plugin | Session | Threats | API cost |
+|---|---|---|---|---|---|---|
+| OWASP Juice Shop | Node/Angular | standard | — | Sonnet 4.6 | 83 | $34.14 |
+| insecure-spring-app | Spring Boot | standard | v0.4.1 | Sonnet 4.6 | 49 | $24.65 |
+
 `--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the same standard benchmark, a cap of 2 reduced the finding count from 83 to about 52 and saved roughly $4. The selected cap is recorded in the report.
 
 ### Reasoning model

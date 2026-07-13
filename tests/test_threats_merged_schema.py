@@ -48,6 +48,7 @@ def _valid_weakness() -> dict:
         "id": "W-001",
         "weakness_class": "injection",
         "kind": "design",
+        "title": "Database query safety",
         "statement": "SQL built by string concatenation; no parametrized layer.",
         "severity": "High",
         "severity_basis": "confirmed",
@@ -226,6 +227,7 @@ def test_weakness_empty_backing_rejected() -> None:
             "id": "W-001",
             "weakness_class": "injection",
             "kind": "design",
+            "title": "Input validation",
             "statement": "x",
             "severity": "High",
             "severity_basis": "design-risk",
@@ -243,6 +245,7 @@ def test_weakness_duplicate_id_rejected() -> None:
         "id": "W-001",
         "weakness_class": "injection",
         "kind": "design",
+        "title": "Input validation",
         "statement": "x",
         "severity": "High",
         "severity_basis": "design-risk",
@@ -261,6 +264,7 @@ def test_weakness_with_backing_accepted() -> None:
             "id": "W-001",
             "weakness_class": "injection",
             "kind": "design",
+            "title": "Input validation",
             "statement": "x",
             "severity": "High",
             "severity_basis": "design-risk",
@@ -269,3 +273,31 @@ def test_weakness_with_backing_accepted() -> None:
     ]
     ok, errors = validate_threats_merged(data)
     assert ok, f"valid weakness rejected: {errors}"
+
+
+def test_observed_practice_weakness_is_schema_valid() -> None:
+    data = _load()
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "implementation",
+            "title": "Database query safety",
+            "statement": "Unsafe query construction in the persistence boundary.",
+            "severity": "High",
+            "severity_basis": "observed-practice",
+            "observable_backing": {"practice_evidence": [{"file": "routes/search.ts", "line": 23}]},
+        }
+    ]
+    ok, errors = validate_threats_merged(data)
+    assert ok, f"observed practice weakness rejected: {errors}"
+
+
+def test_weakness_title_length_is_enforced() -> None:
+    data = _load()
+    weakness = _valid_weakness()
+    weakness["title"] = "x" * 81
+    data["weaknesses"] = [weakness]
+    ok, errors = validate_threats_merged(data)
+    assert not ok
+    assert any("title" in error for error in errors)

@@ -264,6 +264,7 @@ properties:
         - id
         - weakness_class
         - kind
+        - title
         - statement
         - severity
         - severity_basis
@@ -283,6 +284,11 @@ properties:
           # implementation = a specific non-best-practice pattern in code.
           type: string
           enum: [design, implementation]
+        title:
+          # Short reader-facing title; technical detail belongs in statement.
+          type: string
+          minLength: 1
+          maxLength: 80
         statement:
           # Observable structural fact, never speculation (proposal §0).
           type: string
@@ -291,10 +297,11 @@ properties:
           type: string
           enum: [Critical, High, Medium, Low]
         severity_basis:
-          # confirmed  = driven by ≥1 confirmed-exploitable instance;
-          # design-risk = scaled by pervasiveness × strategy × exposure, no CVSS.
+          # confirmed = linked confirmed finding(s);
+          # observed-practice = concrete unsafe pattern, no confirmed exploit;
+          # design-risk = absent central control, no CVSS.
           type: string
-          enum: [confirmed, design-risk]
+          enum: [confirmed, observed-practice, design-risk]
         implementation_strategy:
           # Populated in P2 (recon inventory + misuse layer).
           type: [string, "null"]

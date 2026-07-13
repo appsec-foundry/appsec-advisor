@@ -9508,7 +9508,15 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
         report.issues.append("yaml top-level is not a mapping")
         return report
 
-    yaml_threat_count = len(yaml_data.get("threats") or [])
+    yaml_threats_all = yaml_data.get("threats") or []
+    # P1.4: insecure-practice threats are suppressed from §8 when a weakness register
+    # exists (compose_threat_model.py _render_threat_register P1.4 filter). Exclude
+    # them from the yaml count so this check does not false-positive on runs that
+    # produce a weakness register.
+    if yaml_data.get("weaknesses"):
+        yaml_threats_all = [t for t in yaml_threats_all
+                            if t.get("evidence_tier") != "insecure-practice"]
+    yaml_threat_count = len(yaml_threats_all)
     yaml_mitigation_count = len(yaml_data.get("mitigations") or [])
 
     md_text = md_path.read_text(encoding="utf-8")

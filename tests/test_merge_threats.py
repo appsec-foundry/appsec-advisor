@@ -1879,6 +1879,7 @@ class TestWeaknessRegister:
         design = [
             {
                 "weakness_class": "injection",
+                "cwe": "CWE-89",
                 "statement": "SQL built by concatenation; no parametrized layer.",
                 "absent_control_signal": [{"pattern": "sequelize", "search_paths": ["routes"], "hit_count": 0}],
             }
@@ -1929,10 +1930,8 @@ class TestWeaknessRegister:
             }
         ]
         w = mt.build_weakness_register(practice, design)
-        assert len(w) == 1
-        assert w[0]["severity_basis"] == "design-risk"
-        assert w[0]["severity"] == "Critical"
-        assert "practice_evidence" in w[0]["observable_backing"]
+        assert len(w) == 3
+        assert sum(1 for item in w if item["severity_basis"] == "observed-practice") == 2
 
     def test_isolated_practice_is_implementation_kind(self, mt):
         # Single component, no absent-control signal → isolated implementation
