@@ -166,6 +166,33 @@ checks:
       reset links, or OTPs.
     remediation: "Use java.security.SecureRandom for any security value."
 
+  - id: CRYPTO-JAVA-002B
+    name: "Non-cryptographic RNG in a security module — Java"
+    description: >
+      `new Random()` / `Math.random()` inside a crypto / auth / token / session
+      module. Complements CRYPTO-JAVA-002, which fires only when a security
+      keyword is on the SAME line — it misses the common field-declaration
+      pattern (`private final Random random = new Random();` used later by a
+      `nextOtp()` / token method on another line). The security-sensitive PATH
+      supplies the context the same-line keyword otherwise would.
+    file_patterns:
+      ["**/crypto/**/*.java", "**/auth/**/*.java", "**/authentication/**/*.java", "**/security/**/*.java", "**/session/**/*.java", "**/*Token*.java", "**/*Otp*.java", "**/*Crypto*.java", "**/*Cipher*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '\bnew\s+(java\.util\.)?Random\s*\(|\bMath\.random\s*\('
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '\bSecureRandom\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: >
+      A predictable RNG in a crypto/auth/token module yields guessable secrets,
+      OTPs, or session identifiers regardless of which line instantiates it.
+    remediation: "Use java.security.SecureRandom for any security value."
+
   - id: CRYPTO-JAVA-003
     name: "Insecure ECB cipher mode — Java"
     description: >

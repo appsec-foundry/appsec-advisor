@@ -542,3 +542,43 @@ def test_crypto_findings_fold_under_weak_crypto_weakness() -> None:
     assert len(w[0]["observable_backing"]["practice_evidence"]) == 2
     # crypto is a practice, never a confirmed exploit
     assert all(t["evidence_tier"] == "insecure-practice" for t in threats)
+
+
+# ---------------------------------------------------------------------------
+# CRYPTO-JAVA-002B — weak RNG in a security module (field-declaration pattern)
+# ---------------------------------------------------------------------------
+
+
+def test_java_field_random_in_security_module_flagged(tmp_path: Path) -> None:
+    # The RNG is instantiated as a field and the secret-generating use is on a
+    # different line, so the same-line CRYPTO-JAVA-002 misses it. The path/name-
+    # scoped 002B catches the common `private Random random = new Random()`.
+    _write(
+        tmp_path,
+        "LegacyTokenService.java",
+        "import java.util.Random;\n"
+        "class LegacyTokenService {\n"
+        "  private final Random random = new Random();\n"
+        "  int nextOtp() { return random.nextInt(1000000); }\n"
+        "}\n",
+    )
+    assert "CRYPTO-JAVA-002B" in _crypto_ids(tmp_path)
+
+
+def test_java_random_in_ordinary_file_not_flagged(tmp_path: Path) -> None:
+    # `new Random()` outside a crypto/auth/token/session module is out of scope
+    # for 002B (kept low-FP by the security-path/name gate).
+    _write(tmp_path, "OrderController.java", "  Random r = new Random(); // pick a demo row\n")
+    assert "CRYPTO-JAVA-002B" not in _crypto_ids(tmp_path)
+
+
+def test_java_securerandom_nearby_suppresses(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "CryptoService.java",
+        "class CryptoService {\n"
+        "  private final Random random = new Random();\n"
+        "  private final SecureRandom sr = new SecureRandom();\n"
+        "}\n",
+    )
+    assert "CRYPTO-JAVA-002B" not in _crypto_ids(tmp_path)
