@@ -1844,9 +1844,13 @@ def _heading_to_section_id(heading: str, contract: dict) -> str | None:
 # list-shape nits. They surface as advisories but must NOT trigger the
 # skill-layer Re-Render Loop: re-authoring a fragment + recompose is an LLM
 # pass (minutes) that is not worth a diagram-too-wide or walkthrough-too-short
-# finding. Everything NOT listed here (broken diagram, missing table/section,
-# §7 contract-structure drift, wrong T-ID reference) stays blocking and
-# re-renders as before. Override per run with APPSEC_QA_COSMETIC_BLOCKING=1.
+# finding.
+#
+# The Re-Render Loop is a document-integrity safety net, not a general prose
+# polisher. Keep its trigger set explicit: a new action type is manual review
+# by default until its impact and repairability have been assessed. This avoids
+# accidentally turning a future presentational check into an LLM repair pass.
+# Override per run with APPSEC_QA_COSMETIC_BLOCKING=1.
 COSMETIC_ACTION_TYPES = frozenset(
     {
         "diagram_compactness",
@@ -1857,19 +1861,47 @@ COSMETIC_ACTION_TYPES = frozenset(
     }
 )
 
+# Only defects that leave the rendered document incomplete, misleading, or
+# unusable may start the fragment-fixer loop. A missing section/subsection,
+# malformed diagram or TOC link, incorrect table schema, wrong threat reference,
+# or an empty in-scope section are all substantive report-integrity defects.
+BLOCKING_ACTION_TYPES = frozenset(
+    {
+        "report_integrity",
+        "mermaid_syntax",
+        "toc_nested_link",
+        "auth_method_decomposition",
+        "validation_approach_first",
+        "control_subsection_coverage",
+        "walkthrough_coverage",
+        "chain_tid_consistency",
+        "missing_required_subsection",
+        "missing_section",
+        "table_schema_drift",
+    }
+)
+
 
 def _action_severity(action_type: str) -> str:
-    """Classify a repair-plan action ``type`` as ``"cosmetic"`` or ``"blocking"``.
+    """Classify a repair-plan action as blocking, cosmetic, or manual review.
 
     Only ``blocking`` actions with a writable fragment target drive the
     Re-Render Loop (``cmd_repair_plan`` exit 1). Cosmetic-only plans return
     exit 4 (``cosmetic_advisory``) — surfaced, not re-rendered. Setting
     ``APPSEC_QA_COSMETIC_BLOCKING=1`` restores the pre-2026-06-22 behaviour
     where every action was blocking.
+
+    An unclassified action returns ``"manual_review"``. It remains visible and
+    is handled by the one-shot QA/manual-review path, but cannot silently spend
+    an LLM repair iteration merely because it names a fragment.
     """
     if os.environ.get("APPSEC_QA_COSMETIC_BLOCKING") == "1":
         return "blocking"
-    return "cosmetic" if action_type in COSMETIC_ACTION_TYPES else "blocking"
+    if action_type in COSMETIC_ACTION_TYPES:
+        return "cosmetic"
+    if action_type in BLOCKING_ACTION_TYPES:
+        return "blocking"
+    return "manual_review"
 
 
 def _render_integrity_actions(output_dir: Path) -> tuple[list[str], list[dict]]:
@@ -2656,10 +2688,11 @@ def _classify_plan_status(
     decide whether iteration can possibly converge:
 
       * ``pass``              — no issues, no actions, no work.
-      * ``manual_review``     — issues exist but every action's
-                                ``fragments_to_rewrite`` is empty. Re-rendering
-                                cannot fix this (typically renderer/checker
-                                drift); the loop must short-circuit.
+      * ``manual_review``     — issues exist but no explicitly blocking action
+                                has a writable fragment target. Re-rendering
+                                cannot fix this safely (typically
+                                renderer/checker drift or a new unclassified
+                                check); the loop must short-circuit.
       * ``cosmetic_advisory`` — (2026-06-22) the only writable-fragment actions
                                 are ``severity == "cosmetic"`` (compactness,
                                 walkthrough depth, list shape, recon-IAM hint).
@@ -2676,17 +2709,18 @@ def _classify_plan_status(
     run's all-``posture_renderer_bug`` repair plan would have burnt 3 ×
     ~10 min loop iterations on a problem only a code change can fix.
     """
-    # A blocking action is ANY non-cosmetic action, whether or not it has a
-    # writable fragment. `actionable` stays gated on a fragment (the re-render
-    # loop can only fix a fragment-backed defect); a blocking action with no
-    # fragment is real but needs manual review, not re-rendering. Blocking must
-    # always win over co-occurring cosmetic advisories — the 2026-07 QA bug was
-    # that a genuine contract defect with no fragment target (e.g. a computed
-    # Top Threats table-schema drift) was silently demoted to
-    # `cosmetic_advisory` (exit 4, treated like pass) whenever any cosmetic
-    # action happened to carry a writable fragment.
-    blocking = any(a.get("severity") != "cosmetic" for a in actions)
-    actionable = any(a.get("fragments_to_rewrite") and a.get("severity") != "cosmetic" for a in actions)
+    # `actionable` stays gated on an explicitly blocking action with a writable
+    # fragment. Unknown actions intentionally require manual review rather than
+    # inheriting the historic "anything non-cosmetic re-renders" behaviour.
+    # Blocking still wins over co-occurring cosmetic or manual-review actions.
+    # Plans written before the severity field existed are intentionally treated
+    # as blocking for backward compatibility; newly emitted unknown actions are
+    # tagged ``manual_review`` by `_action_severity` above.
+    blocking = any(a.get("severity", "blocking") == "blocking" for a in actions)
+    actionable = any(
+        a.get("fragments_to_rewrite") and a.get("severity", "blocking") == "blocking"
+        for a in actions
+    )
     cosmetic = any(a.get("fragments_to_rewrite") and a.get("severity") == "cosmetic" for a in actions)
     if not issues:
         return "pass", actionable

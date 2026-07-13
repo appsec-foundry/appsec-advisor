@@ -2093,8 +2093,11 @@ class TestRepairPlanStatusClassification:
         # Bare-bones MD will violate many contract rules — the important
         # invariant is that the status field is one of the documented values
         # and `actionable` is consistent with the action set.
-        assert plan["status"] in {"pass", "fail", "manual_review"}
-        assert plan["actionable"] == any(a.get("fragments_to_rewrite") for a in plan["actions"])
+        assert plan["status"] in {"pass", "fail", "manual_review", "cosmetic_advisory"}
+        assert plan["actionable"] == any(
+            a.get("fragments_to_rewrite") and a.get("severity") == "blocking"
+            for a in plan["actions"]
+        )
 
 
 class TestTableSchemaDriftClassification:

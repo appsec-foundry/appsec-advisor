@@ -733,14 +733,14 @@ def test_action_severity_cosmetic_types(monkeypatch):
 
 def test_action_severity_blocking_types(monkeypatch):
     monkeypatch.delenv("APPSEC_QA_COSMETIC_BLOCKING", raising=False)
-    # chain_tid_consistency and walkthrough_coverage are deliberately blocking.
+    # These types all correspond to substantive document-integrity defects.
     for t in (
         "mermaid_syntax",
         "missing_section",
         "table_schema_drift",
         "chain_tid_consistency",
         "walkthrough_coverage",
-        "unclassified",
+        "report_integrity",
     ):
         assert qa._action_severity(t) == "blocking"
 
@@ -748,6 +748,11 @@ def test_action_severity_blocking_types(monkeypatch):
 def test_action_severity_env_override_forces_blocking(monkeypatch):
     monkeypatch.setenv("APPSEC_QA_COSMETIC_BLOCKING", "1")
     assert qa._action_severity("diagram_compactness") == "blocking"
+
+
+def test_action_severity_unclassified_type_requires_manual_review(monkeypatch):
+    monkeypatch.delenv("APPSEC_QA_COSMETIC_BLOCKING", raising=False)
+    assert qa._action_severity("future_presentation_check") == "manual_review"
 
 
 def test_classify_plan_status_cosmetic_only():
@@ -766,6 +771,18 @@ def test_classify_plan_status_mixed_blocking_wins():
     status, actionable = qa._classify_plan_status(["issue"], actions)
     assert status == "fail"
     assert actionable is True
+
+
+def test_classify_plan_status_unclassified_writable_action_does_not_rerender():
+    actions = [
+        {
+            "fragments_to_rewrite": [".fragments/x.md"],
+            "severity": "manual_review",
+        }
+    ]
+    status, actionable = qa._classify_plan_status(["future presentation check"], actions)
+    assert status == "manual_review"
+    assert actionable is False
 
 
 def test_classify_plan_status_no_severity_key_is_blocking():
