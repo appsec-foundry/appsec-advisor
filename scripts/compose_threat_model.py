@@ -11,7 +11,8 @@ architecture. It reads:
     4. ``<output>/.fragments/*.json`` and ``*.md`` — LLM-authored data and
        prose fragments for sections the LLM is allowed to supply content
        for (verdict, architecture-assessment, critical-attack-tree, prose
-       sections like system-overview).
+       sections like system-overview). Architecture diagrams are regenerated
+       directly from the canonical YAML at this composition boundary.
 
 And emits ``<output>/threat-model.md`` deterministically. Identical inputs
 produce byte-identical output. The LLM never writes Markdown directly — it
@@ -94,6 +95,7 @@ from _manifest_readers import (
 # `_MULTI_MATCH_WARNED` is re-exported so existing call sites/tests keep
 # mutating the shared warned-CWE set.
 from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
+from pregenerate_fragments import gen_architecture_diagrams
 from weakness_classifier import MULTI_MATCH_WARNED as _MULTI_MATCH_WARNED  # noqa: F401
 from weakness_classifier import classify_threat as _wc_classify_threat
 from weakness_classifier import load_weakness_classes as _wc_load_weakness_classes
@@ -9596,14 +9598,13 @@ def _subsection_drift_hint(md: str, section: dict, level: int) -> str:
 
 
 def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict) -> str:
-    """Load a LLM-authored prose fragment (.md) and validate its structural
-    constraints (first heading matches, required subsections present).
+    """Render a Markdown section and validate its structural constraints.
 
     Enrichments applied at render time (never by the LLM):
-      * §2 architecture_diagrams — inject a `<a id="c-NN">` component anchor
-        table underneath `### 2.3 Components` if the LLM fragment did not
-        provide one. Without this anchor, every downstream C-NN reference in
-        the Top Findings and Findings Register tables becomes a dead link.
+      * §2 architecture_diagrams — regenerate the complete fragment from YAML,
+        then inject a `<a id="c-NN">` component anchor table underneath
+        `### 2.3 Components`. LLM edits to the on-disk fragment are never a
+        producer of final report content.
 
     Quick-mode override:
       * §7 security_architecture — when running at quick depth, the renderer
@@ -9621,7 +9622,13 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
             # non-empty override means the prior rich §7 should be preserved.
             return override or ""
     fragment_name = section["fragment"]
-    md = _load_fragment(ctx, section_id, fragment_name)
+    if section_id == "architecture_diagrams":
+        # §2 is structural data, not LLM prose. Keeping this at the final
+        # composition chokepoint prevents a renderer from reintroducing extra
+        # Mermaid nodes after the pre-generator has enforced compactness.
+        md = gen_architecture_diagrams(ctx.yaml_data)
+    else:
+        md = _load_fragment(ctx, section_id, fragment_name)
     if not isinstance(md, str):
         raise FragmentError(section_id, f"expected Markdown text in {fragment_name}")
 

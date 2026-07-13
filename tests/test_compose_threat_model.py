@@ -91,6 +91,24 @@ def test_toc_emits_numbering_gap_note(tmp_path: Path) -> None:
     assert "§6 was retired" in rendered
 
 
+def test_architecture_diagrams_are_regenerated_at_the_composition_boundary(tmp_path: Path) -> None:
+    """A renderer must not be able to reintroduce Mermaid drift after pregen."""
+    out = _prepare_output_dir(tmp_path)
+    fragment = out / ".fragments" / "architecture-diagrams.md"
+    fragment.write_text(
+        "## 2. Architecture Diagrams\n\n"
+        "### 2.2 Container Architecture\n\n"
+        "```mermaid\nflowchart TB\nLLM_DRIFT[Eleven-node renderer output]\n```\n",
+        encoding="utf-8",
+    )
+
+    rendered, _ = compose.render(CONTRACT, out)
+
+    assert "Eleven-node renderer output" not in rendered
+    assert "### 2.2 Container Architecture" in rendered
+    assert "### 2.3 Components" in rendered
+
+
 def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, warnings = compose.render(CONTRACT, out)
@@ -338,10 +356,10 @@ def test_figure1_attacks_are_labelled_arrows_with_clean_legend(tmp_path: Path) -
     empty title bar). Tier bands are neutral slate (red is only attacks/actors)."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    m = re.search(r"```mermaid\nflowchart TB.+?```", rendered, re.DOTALL)
-    if not m:
+    blocks = re.findall(r"```mermaid\nflowchart TB.+?```", rendered, re.DOTALL)
+    fig1 = next((block for block in blocks if re.search(r'[①②③④⑤⑥⑦]', block)), None)
+    if fig1 is None:
         return  # fixture produced no Figure 1 (no attack paths) → nothing to verify
-    fig1 = m.group(0)
     # Attack edges carry a mid-edge label that names the class (glyph present).
     assert re.search(r'==>\|"[^"]*[①②③④⑤⑥⑦]', fig1), "attack edges must be labelled with the class glyph+name"
     # No coloured glyph CHIP on the boxes any more (glyphs moved onto the arrows).

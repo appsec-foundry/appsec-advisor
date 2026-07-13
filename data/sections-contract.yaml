@@ -727,11 +727,12 @@ sections:
         # A bare `-->` without a label is forbidden — it hides whether
         # traffic is HTTP, HTTPS, an ORM call, a file I/O path, etc.
         require_edge_labels: true
-        # §2.2 is authored by pregenerate_fragments.py and may be enriched
-        # by the Phase-11 renderer when ENRICH_ARCH_FRAGMENTS=true.
-        # Unlike §2.3/§2.4 the Phase-11 LLM IS allowed to enrich §2.2
-        # (it adds port numbers and names the auth middleware box).
-        skip_phase11_enrichment: false
+        # §2.2 is generator-owned like §2.3/§2.4. A renderer previously
+        # appended per-container threat rows and exceeded this eight-node cap
+        # on the 2026-07-13 Juice Shop standard run. Protocol labels and
+        # middleware detail must be derived by the generator, never added by
+        # the Phase-11 LLM.
+        skip_phase11_enrichment: true
 
       "2.3 Components":
         # Mandatory mermaid declaration line — `graph LR` is forbidden

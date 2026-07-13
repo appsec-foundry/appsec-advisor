@@ -61,3 +61,6 @@ def test_thin_runtime_uses_bounded_stage_reads():
     assert "RESUME_FROM_PHASE=9-merge" in text
     assert "ORG_PROFILE_PATH = org_profile_path" in text
     assert "▶ Stage 1/<TOTAL_STAGES>" in text
+    assert "## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs" in text
+    assert "## Stage 3 - QA Review` to `### Stage 3 handoff banner" in text
+    assert "marker to EOF" not in text

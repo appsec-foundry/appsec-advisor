@@ -1,12 +1,10 @@
 # Compact Full/Rebuild Runtime
 
-This runtime is used only for non-dry `full` and `rebuild` scans without
-resume, deadline/cost watchdogs, or `APPSEC_LIVE_PHASE=1`. Those special paths
-remain on `SKILL-impl.md`.
+Only for non-dry `full`/`rebuild` scans without resume, deadline/cost watchdogs,
+or `APPSEC_LIVE_PHASE=1`; those paths use `SKILL-impl.md`.
 
-The Python controller owns deterministic preflight and filesystem state. The
-main session owns only user-visible output, Task lifecycle, Agent dispatch, and
-the existing deterministic gates.
+The controller owns deterministic preflight/state; the session owns output,
+Task lifecycle, Agent dispatch, and gates.
 
 ## 1. Prepare
 
@@ -254,10 +252,15 @@ are satisfied or inapplicable. Do not repeat them.
 
 ## 6. Stage 2 onward
 
-At the Stage-2 handoff, read `SKILL-impl.md` from the
-`<!-- LAZY-LOAD BOUNDARY` marker to EOF and follow it. This keeps rendering,
-QA, repair, architect review, completion, cleanup, and error handling on the
-existing contract.
+Read only:
+
+- 2: `## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs`.
+  Failure/cut-off only: through `## Incremental Mode`.
+- 3: `## Stage 3 - QA Review` to `### Stage 3 handoff banner`.
+  QA/semantic repair only: through `## Stage 4 - Architect Review`.
+- 4: `## Stage 4 - Architect Review` to `## Completion Summary`.
+- Done: `## Completion Summary` to `## Error Handling`.
+- Error: `## Error Handling` to EOF on that branch.
 
 **Mandatory finalize gate (deterministic — do NOT skip).** After the Stage-2
 renderer agent(s) return, and again before you emit any completion summary, you

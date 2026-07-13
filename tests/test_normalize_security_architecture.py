@@ -143,6 +143,51 @@ def test_password_block_diagram_not_duplicated(tmp_path):
     assert pw.count("sequenceDiagram") == 1
 
 
+def test_nonmechanism_auth_heading_is_folded_into_the_preceding_method(tmp_path):
+    fragment = """## 7. Security Architecture
+
+### 7.2 Identity and Authentication Controls
+
+**Controls covered:** [Password-Based Authentication](#password-based-authentication)
+
+#### 7.2.1 Password-Based Authentication
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    U->>API: login
+```
+
+**Security assessment**
+
+Password authentication is present.
+
+**Relevant findings**
+
+- None identified.
+
+#### 7.2.2 Login Rate Limiting
+
+The login route has no rate limit.
+
+**Security assessment**
+
+The missing limit permits credential stuffing.
+
+**Relevant findings**
+
+- [F-001](#f-001)
+"""
+    out, changes = nrm.normalize_text(fragment)
+    p = _write(tmp_path, out)
+    assert "#### 7.2.2 Login Rate Limiting" not in out
+    assert "**Login Rate Limiting.**" in out
+    assert any("folded non-mechanism" in change for change in changes)
+    assert qc.check_auth_method_decomposition(p).ok == 1, qc.check_auth_method_decomposition(p).issues
+    assert qc.check_control_subsection_coverage(p).ok == 1, qc.check_control_subsection_coverage(p).issues
+    assert qc.check_subcontrol_naming_canonical(p).ok == 1, qc.check_subcontrol_naming_canonical(p).issues
+
+
 def test_idempotent(tmp_path):
     once, changes1 = nrm.normalize_text(DEFECTIVE)
     twice, changes2 = nrm.normalize_text(once)

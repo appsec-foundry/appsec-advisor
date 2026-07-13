@@ -2811,7 +2811,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    ```
 
    **— Parallel-render variant (`PARALLEL_RENDER=true`).** Dispatch **two** `appsec-advisor:appsec-threat-renderer` Agent calls **in a single message** so they run concurrently (same proven Level-0 fan-out as the STRIDE / abuse-verifier pattern). Pass all original configuration variables verbatim to **both** (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, ENRICH_ARCH_FRAGMENTS, SKIP_ATTACK_PATHS_AUTHORING, SKIP_ATTACK_WALKTHROUGHS, VERBOSE_REPORT, INVOCATION_ARGS, etc.). **⚠ Set each Agent call's `model` parameter to the tier alias of `$RENDERER_MODEL` — explicitly, on BOTH calls.** The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id: reduce a pin like `claude-sonnet-5` to `sonnet` (see the STRIDE dispatch note in `phase-group-threats.md` Phase 9). Like the STRIDE dispatch, omitting it silently falls back to the renderer's frontmatter default (`model: sonnet` in `agents/appsec-threat-renderer.md`), so an `APPSEC_RENDERER_MODEL` pin is ignored. The default resolves to `sonnet` → the host session, so the byte-unchanged behaviour is preserved when no pin is set. Add exactly one differing key per call:
-   - Agent **S** — `description: "Render: §7 Security Architecture"`, prompt adds `RENDER_ROLE=secarch`. Authors only `security-architecture.md` (+ `architecture-diagrams.md`); does NOT compose.
+   - Agent **S** — `description: "Render: §7 Security Architecture"`, prompt adds `RENDER_ROLE=secarch`. Authors only `security-architecture.md`; does NOT compose or edit generator-owned §2 diagrams.
    - Agent **M** — `description: "Render: Management Summary"`, prompt adds `RENDER_ROLE=ms`. Authors only `ms-verdict.json` (+ `ms-critical-attack-tree.json` when ≥2 Critical, + `security-posture-attack-paths.json` unless skipped), runs the MS compactness gate; does NOT compose.
 
    Wait for **both** to return, then compose + QA **at skill level** (the work the split agents deliberately skip):
@@ -3753,7 +3753,9 @@ json.dump({'status': 'pass', 'source': 'deterministic-post-content-repair',
        #   exit 2 → tool error (missing threat-model.md, unreadable
        #            plan). Log and fall through to the existing path so
        #            the heavy agent can still try.
-       python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_repair_plan.py "$OUTPUT_DIR"
+       # Capture the JSON receipt instead of printing it into the main session;
+       # the repair loop uses the exit code for its next decision.
+       APPLIER_OUTPUT=$(python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_repair_plan.py "$OUTPUT_DIR")
        APPLIER_RC=$?
        if APPLIER_RC == 0:
            # Refresh the gate so the next loop turn observes the fix.
