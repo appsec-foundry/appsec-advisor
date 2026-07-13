@@ -1,0 +1,83 @@
+# mass-assignment-signatures.yaml — declarative catalog for the entity-aware
+# two-pass mass-assignment detector (scripts/mass_assignment_scanner.py, CWE-915).
+#
+# WHY A SEPARATE SCANNER (not source-auth-checks.yaml):
+#   source_auth_scanner.py is a single-line regex engine. It already covers the
+#   cases a single regex *can* express — JS/TS `req.body.*` (AUTHZ-003/004) and
+#   Python `request.data` (AUTHZ-101/102), both CWE-915/FT-041. What no single
+#   regex can express is the Spring case: `@RequestBody <T>` is only unsafe when
+#   <T> is a *privileged persistence entity* declared in ANOTHER file. That needs
+#   a two-pass cross-symbol correlation → this catalog + its dedicated scanner.
+#
+# SCOPE (Phase 1): Java / Spring only. JS/Python/Rails/.NET binding sinks are
+#   intentionally NOT listed here — they are either already covered by the
+#   AUTHZ-* checks above or deferred to Phase 2. Keeping the surface Java-only is
+#   the FP-precision decision from the implementation plan §8/§9.
+#
+# Consumed by scripts/mass_assignment_scanner.py — the field names below are that
+# script's contract, not the generic source_auth_scanner engine's.
+
+version: 1
+
+# check_id / classification stamped on every emitted finding. AUTHZ-202 sits in
+# the AUTHZ namespace (schema pattern ^(?:AUTHZ|INJ)-[0-9]{3}$) right after the
+# only other Java authz check, AUTHZ-201 (jjwt unsigned parse). merge_threats
+# maps it to Elevation of Privilege.
+check_id: AUTHZ-202
+finding_type: FT-041          # "Mass Assignment" (data/finding-types.yaml)
+cwe: CWE-915
+severity: High                # exploitability is raised during triage / chain fold
+severity_admin_guarded: Medium  # sink behind an admin authz guard → implementation weakness, not dropped
+breach_vector: "Internet User"  # needs an authenticated normal user
+
+# Case-insensitive; identifiers are normalised (lowercased, underscores stripped)
+# before comparison, so `isAdmin`, `is_admin` and `admin` all collapse to the
+# same token. An entity is "privileged" iff it declares >=1 of these fields.
+privileged_fields:
+  - role
+  - roles
+  - admin
+  - isadmin          # matches isAdmin / is_admin after normalisation
+  - administrator
+  - authorities
+  - permission
+  - permissions
+  - privilege
+  - privileges
+  - scope
+  - scopes
+  - enabled
+  - verified
+  - isstaff          # is_staff
+  - issuperuser      # is_superuser
+  - accounttype      # account_type
+  - usertype         # user_type
+  # NOTE: ownership/financial fields (owner, ownerId, userId, tenantId, balance,
+  # credit, price) are deferred to Phase 2 — higher FP rate, not required to
+  # close the reference-fixture gap. See plan §9 (prefer under-reporting).
+
+# Java annotations that mark a type as a persistence entity / model.
+entity_signals:
+  - '@Entity'         # JPA
+  - '@Table'          # JPA (usually paired with @Entity, but sufficient alone)
+  - '@Document'       # Spring Data MongoDB / Elasticsearch
+
+# Annotations on a privileged FIELD that neutralise it (the field cannot be set
+# from the deserialised body). If ALL of an entity's privileged fields are
+# neutralised, the entity is not treated as privileged → no finding.
+field_suppressors:
+  - '@JsonIgnore'
+  - 'access\s*=\s*[\w.]*READ_ONLY'   # @JsonProperty(access = Access.READ_ONLY)
+
+# A handler is an unsafe sink iff it (a) has a write-mapping annotation AND
+# (b) binds a privileged entity via @RequestBody / @ModelAttribute.
+write_mapping: '@(?:Post|Put|Patch)Mapping\b|@RequestMapping\b[^)]*method\s*=\s*[^)]*(?:POST|PUT|PATCH)'
+bind: '@(?:RequestBody|ModelAttribute)\s+(?:final\s+)?([A-Za-z_$][\w$]*)\b'
+
+# Method- or class-level authorization restricting the handler to admins. When
+# present on the sink handler (or its controller class) the mass assignment is
+# not reachable by a normal user → the finding is downgraded to an
+# implementation weakness (severity_admin_guarded), NOT dropped: an admin-only
+# self-service that still accepts privileged fields is a defence-in-depth gap.
+# Matched case-insensitively.
+admin_guard: '@PreAuthorize\([^)]*(?:hasRole|hasAnyRole|hasAuthority|hasAnyAuthority)\s*\([^)]*ADMIN|@Secured\([^)]*ADMIN|@RolesAllowed\([^)]*ADMIN'

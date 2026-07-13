@@ -379,6 +379,7 @@ _AUTHZ_TO_STRIDE: dict[str, str] = {
     "AUTHZ-006": "Spoofing",  # JWT decode without verify
     "AUTHZ-007": "Spoofing",  # express-jwt without algorithms
     "AUTHZ-008": "Elevation of Privilege",  # Missing auth middleware
+    "AUTHZ-202": "Elevation of Privilege",  # Spring @RequestBody→entity mass assignment (mass_assignment_scanner.py)
     "AUTHZ-301": "Elevation of Privilege",  # Confirmed IDOR/BOLA (authz_confirm.py)
     "AUTHZ-302": "Elevation of Privilege",  # Confirmed missing route auth (authz_confirm.py)
     "INJ-001": "Tampering",  # SQL injection — request data in query string
@@ -1550,6 +1551,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # Route-inventory-driven IDOR/BOLA + missing-route-auth confirmations
     # (scripts/authz_confirm.py → .authz-confirm-findings.json), same schema.
     source_auth_threats += _load_source_auth_findings(out_dir, ".authz-confirm-findings.json")
+    # Entity-aware Spring mass-assignment (scripts/mass_assignment_scanner.py →
+    # .mass-assignment-findings.json), same source-auth schema + converter.
+    source_auth_threats += _load_source_auth_findings(out_dir, ".mass-assignment-findings.json")
     if source_auth_threats:
         flat.extend(source_auth_threats)
     # `.dep-scan.json` ingestion was removed 2026-05 — supply-chain

@@ -1,8 +1,38 @@
 # Implementation plan — Mass-assignment (CWE-915) detector
 
-**Status:** ready to implement in a clean session
+**Status:** ✅ Phase 1 IMPLEMENTED (2026-07-13, uncommitted `dev`).
 **Owner:** TBD
 **Prereqs read:** this file is self-contained; no prior session context needed.
+
+> **Implementation notes / deviations from this plan (verified during build):**
+> - **§1 premise corrected.** CWE-915 detection is *not* absent — JS/TS
+>   (`AUTHZ-003/004`) and Python (`AUTHZ-101/102`) mass-assignment checks already
+>   ship in `data/source-auth-checks.yaml` (all FT-041). The *only* real gap is
+>   **Java/Spring** `@RequestBody <PrivEntity>`, which no single regex can express.
+> - **Scope = Java/Spring only** (plan §8 Phase 1). The §5 JS/Python/Rails binding
+>   rows were **dropped** — they duplicate the existing AUTHZ-* checks and would
+>   double-count.
+> - **check_id = `AUTHZ-202`** (AUTHZ namespace, schema-valid, after AUTHZ-201),
+>   **FT-041** reused (not newly added). Emits `.mass-assignment-findings.json`
+>   (source-auth schema); `merge_threats` ingests it via one extra
+>   `_load_source_auth_findings(..., ".mass-assignment-findings.json")` line +
+>   an `AUTHZ-202 → Elevation of Privilege` map entry — mirrors the
+>   `.authz-confirm-findings.json` precedent.
+> - **No STRIDE-analyzer bridge row (§6.3) added.** The finding is injected
+>   deterministically through merge ingestion (like every other AUTHZ-NNN),
+>   so an LLM "you MUST emit" row is unnecessary and would risk a duplicate.
+> - **Acceptance met:** `--dry-run` on the external fixture flags **exactly**
+>   `ProfileController:35` (**High**, exploitable) + `AdminUserController:23`
+>   (**Medium**, admin-guarded implementation-weakness), `clean.*` silent.
+> - **Phase 2 admin-guard downgrade DONE (2026-07-13).** A method- or class-level
+>   admin authz annotation (`@PreAuthorize hasRole/hasAuthority ADMIN`, `@Secured`,
+>   `@RolesAllowed`) on the sink handler downgrades the finding to
+>   `severity_admin_guarded: Medium` and marks it "admin-guarded" (defence-in-depth
+>   gap), not dropped. 12 unit tests + schema validation + 340 regression tests green.
+> - Files: `scripts/mass_assignment_scanner.py`,
+>   `data/mass-assignment-signatures.yaml`,
+>   `tests/test_mass_assignment_scanner.py`; edits to `merge_threats.py` +
+>   `skills/create-threat-model/SKILL-impl.md`.
 
 Part of the P1 (STRIDE bespoke-recall) track. Sibling work already landed on
 `dev`: `CRYPTO-JAVA-002B` (weak-RNG field pattern) and `CRYPTO-HOMEGROWN-XOR`
