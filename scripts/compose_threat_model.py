@@ -13644,9 +13644,18 @@ _CODE_STRING_RE = re.compile(
 
 
 def _string_literal_is_code(inner: str) -> bool:
-    if _SQL_KW_RE.search(inner):
+    # A real SQL statement co-occurs ≥2 distinct keywords (SELECT…FROM,
+    # …JOIN…WHERE). A kebab-case slug / CSS class that merely CONTAINS one
+    # keyword as a hyphen-delimited word is NOT code — `-` is a `\b` boundary,
+    # so `\bupdate\b` fires spuriously inside an anchor id like
+    # "dependency-update-posture" (and "create-account", "data-from-source"),
+    # which then backtick-wrapped the whole `<a id="…">` and broke the anchor.
+    kw = len({m.group(1).lower() for m in _SQL_KW_RE.finditer(inner)})
+    if kw >= 2:
         return True
-    return "=" in inner and ("+" in inner or "(" in inner or ";" in inner)
+    # An assignment / concatenation expression — or a single-keyword query
+    # fragment that also carries a query operator (`… where x = …`).
+    return "=" in inner and ("+" in inner or "(" in inner or ";" in inner or kw >= 1)
 
 
 def _wrap_code_string_literals(text: str) -> str:

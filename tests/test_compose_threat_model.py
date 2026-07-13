@@ -4593,6 +4593,34 @@ def test_codify_leaves_prose_apostrophes_alone() -> None:
     assert compose._codify_inline_identifiers(raw) == raw
 
 
+def test_string_literal_is_code_rejects_single_keyword_slug() -> None:
+    """A quoted kebab-case slug/id that merely CONTAINS one SQL keyword as a
+    hyphen-delimited word is NOT code — `\\bupdate\\b` fires inside
+    "dependency-update-posture" (a `-` is a word boundary), which used to
+    backtick-wrap the whole `<a id="…">` anchor and break it."""
+    for slug in (
+        "dependency-update-posture",
+        "create-account",
+        "delete-user",
+        "data-from-source",
+        "select-list",
+        "where-clause",
+    ):
+        assert not compose._string_literal_is_code(slug), f"slug wrongly flagged as code: {slug!r}"
+    # Real multi-keyword SQL and 1-keyword-plus-operator fragments STILL count.
+    assert compose._string_literal_is_code("select id from users where x = 1")
+    assert compose._string_literal_is_code("o.owner_id = u.id where u.email = x")
+    assert compose._string_literal_is_code("q = 'a' + b")
+
+
+def test_html_anchor_id_not_backticked() -> None:
+    """Regression (golden): an injected `<a id="…">` heading anchor whose slug
+    contains a SQL keyword must survive the render passes un-backticked."""
+    line = '<a id="dependency-update-posture"></a>'
+    assert compose._wrap_code_string_literals(line) == line
+    assert compose._fold_code_strings_in_prose(line) == line
+
+
 def test_sql_literal_survives_cctld_escape_pass() -> None:
     """Regression: `_escape_dot_tld_identifiers` treats `u.id` as the `.id`
     ccTLD and backticks it mid-string; folding the literal FIRST protects it so
