@@ -26,9 +26,11 @@ version: 1
 check_id: AUTHZ-202
 finding_type: FT-041          # "Mass Assignment" (data/finding-types.yaml)
 cwe: CWE-915
-severity: High                # exploitability is raised during triage / chain fold
-severity_admin_guarded: Medium  # sink behind an admin authz guard → implementation weakness, not dropped
+severity: High                # base for VERTICAL privilege fields (role/admin/...)
+severity_ownership: Medium    # base for OWNERSHIP/tenant/financial fields only (horizontal / IDOR-adjacent)
 breach_vector: "Internet User"  # needs an authenticated normal user
+# An admin authz guard on the sink steps the severity down one band
+# (High→Medium, Medium→Low) — the finding is a defence-in-depth weakness, not dropped.
 
 # Case-insensitive; identifiers are normalised (lowercased, underscores stripped)
 # before comparison, so `isAdmin`, `is_admin` and `admin` all collapse to the
@@ -52,9 +54,25 @@ privileged_fields:
   - issuperuser      # is_superuser
   - accounttype      # account_type
   - usertype         # user_type
-  # NOTE: ownership/financial fields (owner, ownerId, userId, tenantId, balance,
-  # credit, price) are deferred to Phase 2 — higher FP rate, not required to
-  # close the reference-fixture gap. See plan §9 (prefer under-reporting).
+
+# Ownership / multi-tenant / financial fields (Phase 2). Binding these from a
+# request body is HORIZONTAL authz tampering (reassign a record's owner/tenant,
+# overwrite a server-set price/balance) — IDOR-adjacent, not vertical
+# self-promotion. Lower base severity (severity_ownership) to keep noise
+# proportionate; the two-pass entity+unguarded-write guard is what keeps FPs low.
+ownership_fields:
+  - owner
+  - ownerid          # ownerId / owner_id
+  - ownerusername    # ownerUsername
+  - userid           # userId / user_id (foreign-key ownership)
+  - tenant
+  - tenantid         # tenantId / tenant_id
+  - organizationid   # organizationId / organization_id
+  - accountid        # accountId / account_id
+  - balance
+  - credit
+  - price
+  - amount
 
 # Java annotations that mark a type as a persistence entity / model.
 entity_signals:

@@ -194,6 +194,58 @@ def test_unguarded_handler_stays_high(tmp_path: Path) -> None:
     assert "admin-guarded" not in findings[0].title
 
 
+# --- ownership tier: horizontal tampering → Medium -------------------------
+
+
+def test_ownership_field_binding_is_medium(tmp_path: Path) -> None:
+    entity = (
+        "@Entity\npublic class CustomerOrder {\n"
+        "    private Long id;\n"
+        "    private String product;\n"
+        "    private String tenant;\n}\n"
+    )
+    ctrl = _CONTROLLER.replace("AppUser", "CustomerOrder")
+    _write(tmp_path, "CustomerOrder.java", entity)
+    _write(tmp_path, "OrderController.java", ctrl)
+    findings = _scan(tmp_path)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.severity == "Medium"  # ownership-only, unguarded
+    assert "horizontal authorization tampering" in f.scenario
+
+
+def test_ownership_field_admin_guarded_is_low(tmp_path: Path) -> None:
+    entity = (
+        "@Entity\npublic class CustomerOrder {\n"
+        "    private Long id;\n"
+        "    private String owner;\n}\n"
+    )
+    ctrl = _CONTROLLER.replace("AppUser", "CustomerOrder").replace(
+        '    @PutMapping("/me")',
+        '    @PostMapping\n    @PreAuthorize("hasRole(\'ADMIN\')")',
+    )
+    _write(tmp_path, "CustomerOrder.java", entity)
+    _write(tmp_path, "OrderController.java", ctrl)
+    findings = _scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "Low"  # Medium base stepped down one band
+
+
+def test_vertical_field_wins_severity_over_ownership(tmp_path: Path) -> None:
+    # An entity carrying BOTH a vertical (role) and an ownership (owner) field
+    # is High (vertical dominates), not Medium.
+    entity = (
+        "@Entity\npublic class AppUser {\n"
+        "    private String owner;\n"
+        "    private String role;\n}\n"
+    )
+    _write(tmp_path, "AppUser.java", entity)
+    _write(tmp_path, "ProfileController.java", _CONTROLLER)
+    findings = _scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "High"
+
+
 # --- @ModelAttribute binding path ------------------------------------------
 
 

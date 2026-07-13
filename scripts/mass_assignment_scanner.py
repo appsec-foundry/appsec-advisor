@@ -66,9 +66,10 @@ class Catalog:
     finding_type: str
     cwe: str
     severity: str
-    severity_admin_guarded: str
+    severity_ownership: str
     breach_vector: str
     privileged_fields: set[str]
+    ownership_fields: set[str]
     entity_signals: list[str]
     field_suppressors: list[re.Pattern[str]]
     write_mapping: re.Pattern[str]
@@ -98,6 +99,19 @@ class Entity:
     name: str
     file: str
     fields: list[str]
+    has_vertical: bool  # >=1 vertical privilege field (role/admin/…) vs ownership-only
+
+
+# Severity bands, low → high. An admin guard steps a finding down one band.
+_BANDS = ["Low", "Medium", "High", "Critical"]
+
+
+def _step_down(severity: str) -> str:
+    try:
+        i = _BANDS.index(severity)
+    except ValueError:
+        return severity
+    return _BANDS[max(0, i - 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +135,10 @@ def load_catalog(path: Path) -> Catalog:
             finding_type=str(raw["finding_type"]),
             cwe=str(raw["cwe"]).upper(),
             severity=str(raw.get("severity") or "High"),
-            severity_admin_guarded=str(raw.get("severity_admin_guarded") or "Medium"),
+            severity_ownership=str(raw.get("severity_ownership") or "Medium"),
             breach_vector=str(raw.get("breach_vector") or "Internet User"),
             privileged_fields={_norm(f) for f in raw["privileged_fields"]},
+            ownership_fields={_norm(f) for f in (raw.get("ownership_fields") or [])},
             entity_signals=[str(s) for s in raw["entity_signals"]],
             field_suppressors=[re.compile(p) for p in (raw.get("field_suppressors") or [])],
             write_mapping=re.compile(raw["write_mapping"]),
@@ -193,9 +208,13 @@ def discover_entities(file_rel: str, text: str, cat: Catalog) -> list[Entity]:
     entity_name = m.group(1)
 
     priv_fields: list[str] = []
+    has_vertical = False
     for fm in _FIELD_RE.finditer(text):
         field_name = fm.group(1)
-        if _norm(field_name) not in cat.privileged_fields:
+        norm = _norm(field_name)
+        is_vertical = norm in cat.privileged_fields
+        is_ownership = norm in cat.ownership_fields
+        if not (is_vertical or is_ownership):
             continue
         # Suppressor check: any field-suppressor annotation in the 3 lines above.
         line_idx = text.count("\n", 0, fm.start())
@@ -203,10 +222,11 @@ def discover_entities(file_rel: str, text: str, cat: Catalog) -> list[Entity]:
         if any(sup.search(window) for sup in cat.field_suppressors):
             continue
         priv_fields.append(field_name)
+        has_vertical = has_vertical or is_vertical
 
     if not priv_fields:
         return []
-    return [Entity(name=entity_name, file=file_rel, fields=priv_fields)]
+    return [Entity(name=entity_name, file=file_rel, fields=priv_fields, has_vertical=has_vertical)]
 
 
 # ---------------------------------------------------------------------------
@@ -258,34 +278,39 @@ def find_sinks(
         if not cat.write_mapping.search(back):
             continue  # a bind without a write-mapping is not a state-changing sink
 
+        # Base severity by field tier: vertical privilege (role/admin) is
+        # self-promotion → High; ownership/tenant/financial only is horizontal
+        # tampering → Medium.
+        base_severity = cat.severity if entity.has_vertical else cat.severity_ownership
+
         # Admin-guard downgrade: a method- or class-level admin authz annotation
-        # means a normal user cannot reach the sink → implementation weakness.
+        # means a normal user cannot reach the sink → step severity down one band.
         guarded = bool(cat.admin_guard.search(back) or cat.admin_guard.search(class_guard_block))
-        severity = cat.severity_admin_guarded if guarded else cat.severity
+        severity = _step_down(base_severity) if guarded else base_severity
 
         fields = ", ".join(entity.fields)
-        if guarded:
-            scenario = (
-                f"Admin-guarded write handler binds the request body directly to "
-                f"the privileged entity `{bound_type}` (declared in `{entity.file}`) "
-                f"via @RequestBody/@ModelAttribute, accepting privileged field(s) "
-                f"[{fields}]. An authorization guard restricts the endpoint to "
-                f"admins, so this is not exploitable by a normal user — but it is "
-                f"an implementation weakness (defence-in-depth): the writable "
-                f"surface is not isolated by a DTO/allowlist and would self-elevate "
-                f"if the guard were ever loosened."
-            )
-            title = f"Mass assignment (admin-guarded) — request body bound to entity {bound_type} — {file_rel}:{line_idx + 1}"
-        else:
-            scenario = (
-                f"Write handler binds the request body directly to the privileged "
-                f"entity `{bound_type}` (declared in `{entity.file}`) via "
-                f"@RequestBody/@ModelAttribute. A normal authenticated user can set "
-                f"privileged field(s) [{fields}] they must not control (mass "
-                f"assignment / self-promotion). No field allowlist or DTO isolates "
-                f"the writable surface."
-            )
-            title = f"Mass assignment — request body bound to entity {bound_type} — {file_rel}:{line_idx + 1}"
+        harm = (
+            "set privileged field(s) they must not control (mass assignment / "
+            "self-promotion)"
+            if entity.has_vertical
+            else "overwrite ownership / tenant / financial field(s) on the record "
+            "(horizontal authorization tampering)"
+        )
+        guard_note = (
+            " An authorization guard restricts the endpoint to admins, so this is "
+            "not exploitable by a normal user — but the writable surface is still "
+            "not isolated by a DTO/allowlist (defence-in-depth weakness)."
+            if guarded
+            else ""
+        )
+        scenario = (
+            f"Write handler binds the request body directly to the privileged "
+            f"entity `{bound_type}` (declared in `{entity.file}`) via "
+            f"@RequestBody/@ModelAttribute, letting the caller {harm} via field(s) "
+            f"[{fields}]. No field allowlist or DTO isolates the writable surface.{guard_note}"
+        )
+        guard_label = " (admin-guarded)" if guarded else ""
+        title = f"Mass assignment{guard_label} — request body bound to entity {bound_type} — {file_rel}:{line_idx + 1}"
 
         findings.append(
             Finding(

@@ -26,9 +26,21 @@
 >   (**Medium**, admin-guarded implementation-weakness), `clean.*` silent.
 > - **Phase 2 admin-guard downgrade DONE (2026-07-13).** A method- or class-level
 >   admin authz annotation (`@PreAuthorize hasRole/hasAuthority ADMIN`, `@Secured`,
->   `@RolesAllowed`) on the sink handler downgrades the finding to
->   `severity_admin_guarded: Medium` and marks it "admin-guarded" (defence-in-depth
->   gap), not dropped. 12 unit tests + schema validation + 340 regression tests green.
+>   `@RolesAllowed`) on the sink handler steps severity down one band and marks it
+>   "admin-guarded" (defence-in-depth gap), not dropped.
+> - **Phase 2 ownership/financial field tier DONE (2026-07-13).** A second
+>   `ownership_fields` vocab (owner/ownerId/userId/tenantId/balance/credit/price/…)
+>   is HORIZONTAL authz tampering → base severity Medium (`severity_ownership`) vs
+>   High for vertical privilege fields; admin-guard steps each down one band
+>   (High→Medium, Medium→Low). Verified FP-free on the fixture (still exactly
+>   ProfileController High + AdminUserController Medium). 15 unit tests + schema
+>   validation + 343 regression tests green.
+> - **Phase 2 multi-language (JS/Python/Rails/.NET) two-pass: DEFERRED, recommend
+>   NOT building.** JS (`AUTHZ-003/004`) and Python (`AUTHZ-101/102`) mass
+>   assignment are already covered by the single-regex `source_auth_scanner`; a
+>   two-pass entity-aware scanner for dynamic languages is high-effort, high-FP,
+>   redundant, and unbacked by any fixture demonstrating a miss (plan §9: keep
+>   non-Java gated). Revisit only if a concrete non-Java miss surfaces.
 > - Files: `scripts/mass_assignment_scanner.py`,
 >   `data/mass-assignment-signatures.yaml`,
 >   `tests/test_mass_assignment_scanner.py`; edits to `merge_threats.py` +
