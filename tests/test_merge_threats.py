@@ -832,6 +832,53 @@ class TestConsolidateByGroup:
         assert "lib/insecurity.ts" in s["affected_files"]
         assert "routes/chatbot.ts" in s["affected_files"]
 
+    def test_path_traversal_splits_read_vs_upload(self, mt):
+        # CWE-22 spans two sink families with different fixes: a READ traversal
+        # (open/serve an attacker-chosen path) and an UPLOAD traversal (store a
+        # file under an attacker-chosen original filename). They must NOT fold —
+        # the upload weakness would inherit the read finding's title/fix/severity.
+        read = _threat(
+            cwe="CWE-22",
+            stride="Information Disclosure",
+            risk="Critical",
+            title="Path Traversal via File Name Parameter — Unauthenticated",
+            evidence={"file": "serverside/FileReadController.java", "line": 19},
+        )
+        read["component_id"] = "sb"
+        upload = _threat(
+            cwe="CWE-22",
+            stride="Elevation of Privilege",
+            risk="High",
+            title="Path Traversal via File Upload — Original Filename Used Directly",
+            evidence={"file": "web/BusinessFileStorage.java", "line": 17},
+        )
+        upload["component_id"] = "sb"
+        out = mt._consolidate_by_group([read, upload])
+        assert len(out) == 2, "read + upload traversal must stay separate findings"
+
+    def test_path_traversal_reads_still_consolidate(self, mt):
+        # Two READ traversals in one component DO fold — the desired class rollup
+        # is preserved; only the read/upload split is new.
+        r1 = _threat(
+            cwe="CWE-22",
+            stride="Information Disclosure",
+            risk="High",
+            title="Path Traversal via name parameter",
+            evidence={"file": "a/ReadOne.java", "line": 3},
+        )
+        r1["component_id"] = "sb"
+        r2 = _threat(
+            cwe="CWE-22",
+            stride="Information Disclosure",
+            risk="High",
+            title="Path Traversal via path parameter",
+            evidence={"file": "a/ReadTwo.java", "line": 9},
+        )
+        r2["component_id"] = "sb"
+        out = mt._consolidate_by_group([r1, r2])
+        assert len(out) == 1
+        assert out[0]["instance_count"] == 2
+
     def test_idor_consolidates_cross_component(self, mt):
         # CWE-639 joins the idor-object-authz group (cross-component): broken
         # object-level authz is ONE systemic control gap. Each route survives
