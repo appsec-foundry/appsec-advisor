@@ -19,6 +19,16 @@
 # strategy straight onto the matching weakness.
 
 version: 1
+#
+# `central_control` (optional, per domain) — P4/Gap-A marker for a security
+# control that SHOULD be centralized (input validation, output encoding, access
+# control, authentication). When such a domain has a `bespoke_hit` and NO vetted
+# library (strategy `home-grown` / `standard-misused`), detect_impl_strategy
+# emits a design signal so the reconciler surfaces a *design-risk weakness* even
+# when no concrete SQLi/XSS/IDOR instance was confirmed — the observable backing
+# is the bespoke sink's own file:line (I2). `statement` is the weakness text.
+# Domains WITHOUT `central_control` (weak_crypto — covered by crypto-checks.yaml;
+# server_side_exposure) never emit this signal, to avoid double-surfacing.
 domains:
   injection:
     # Parameterized ORMs / query builders + input-validation schema libs.
@@ -29,6 +39,9 @@ domains:
       - '\.query\(\s*[`''"][^`''"]*\$\{'      # template-literal SQL interpolation
       - '\.query\(\s*[`''"][^`''"]*\+\s*'      # string-concatenation SQL
       - 'sequelize\.query\('                    # raw query beside the ORM
+    central_control:
+      principle: "input validation / query parametrization"
+      statement: "SQL/inputs are handled with hand-rolled string building; no vetted parametrization or input-validation library backs the request surface."
 
   broken_auth:
     vetted_libs:
@@ -38,6 +51,9 @@ domains:
       - 'jwt\.decode\('                         # decode without verify
       - "algorithms\\s*:\\s*\\[\\s*['\"]none"    # verify with alg:none accepted
       - 'crypto\.randomBytes\([^)]*\)\s*.{0,40}token'   # hand-rolled session token
+    central_control:
+      principle: "authentication / token verification"
+      statement: "Authentication is handled with hand-rolled token logic; no vetted authentication/JWT library governs verification."
 
   weak_crypto:
     vetted_libs:
@@ -53,11 +69,17 @@ domains:
       - 'dangerouslySetInnerHTML'
       - '\.innerHTML\s*='
       - 'bypassSecurityTrustHtml'
+    central_control:
+      principle: "output encoding / sanitization"
+      statement: "HTML/DOM sinks are written directly; no vetted output-encoding or sanitization library guards the render path."
 
   missing_authz:
     vetted_libs: ["@casl/ability", casl, accesscontrol, "express-jwt", "@nestjs/passport"]
     bespoke_patterns:
       - "req\\.user\\.(role|isAdmin)\\s*==="    # ad-hoc per-handler role check
+    central_control:
+      principle: "authorization / access control"
+      statement: "Access control is enforced by ad-hoc per-handler role checks; no centralized authorization layer backs the request surface."
 
   server_side_exposure:
     vetted_libs: [ssrf-req-filter, helmet]

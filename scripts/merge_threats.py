@@ -1897,13 +1897,20 @@ def _load_design_signals(out_dir: Path) -> list[dict]:
     weakness reconciler so architectural design gaps fold into the weakness
     register with their instances.
 
-    Prefer the emitted ``.arch-design-signals.json``. If it is absent, fall back
-    to generating the signals here from ``.architecture-coverage.json``: the
-    Phase-9 agent is *instructed* to run ``arch_coverage_to_threats.py
-    emit-design-signals``, but that soft step is sometimes skipped under
-    turn-budget pressure — which silently dropped EVERY architectural design
-    weakness from the report. The deterministic fallback makes the fold happen
-    regardless of whether the agent ran the separate emit step."""
+    Two independent streams are merged (both fold into the same weakness buckets
+    by class):
+
+    1. **Arch-coverage** — prefer the emitted ``.arch-design-signals.json``; if
+       absent, generate deterministically from ``.architecture-coverage.json``
+       (the Phase-9 agent is *instructed* to run ``arch_coverage_to_threats.py
+       emit-design-signals``, but that soft step is sometimes skipped under
+       turn-budget pressure — which silently dropped EVERY architectural design
+       weakness; the fallback makes the fold happen regardless).
+    2. **Impl-strategy (Gap-A)** — ``.impl-design-signals.json`` from
+       detect_impl_strategy: a home-grown / misused *central control* (unsafe SQL
+       handling, direct DOM sinks, ad-hoc authz) surfaced as a design-risk
+       weakness even when no concrete instance was confirmed."""
+    signals: list[dict] = []
     path = out_dir / ".arch-design-signals.json"
     if path.exists():
         try:
@@ -1911,20 +1918,31 @@ def _load_design_signals(out_dir: Path) -> list[dict]:
         except (OSError, json.JSONDecodeError):
             doc = None
         if isinstance(doc, dict):
-            return list(doc.get("design_signals") or [])
-        if isinstance(doc, list):
-            return list(doc)
-    cov_path = out_dir / ".architecture-coverage.json"
-    if cov_path.exists():
-        try:
-            cov = json.loads(cov_path.read_text(encoding="utf-8"))
-            from arch_coverage_to_threats import build_design_signals
+            signals.extend(doc.get("design_signals") or [])
+        elif isinstance(doc, list):
+            signals.extend(doc)
+    else:
+        cov_path = out_dir / ".architecture-coverage.json"
+        if cov_path.exists():
+            try:
+                cov = json.loads(cov_path.read_text(encoding="utf-8"))
+                from arch_coverage_to_threats import build_design_signals
 
-            signals, _ = build_design_signals(cov)
-            return signals
-        except Exception:  # noqa: BLE001 — a fallback must never break finalize
-            return []
-    return []
+                arch_signals, _ = build_design_signals(cov)
+                signals.extend(arch_signals)
+            except Exception:  # noqa: BLE001 — a fallback must never break finalize
+                pass
+    impl_path = out_dir / ".impl-design-signals.json"
+    if impl_path.exists():
+        try:
+            idoc = json.loads(impl_path.read_text(encoding="utf-8"))
+            if isinstance(idoc, dict):
+                signals.extend(idoc.get("design_signals") or [])
+            elif isinstance(idoc, list):
+                signals.extend(idoc)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return signals
 
 
 def _load_impl_strategy(out_dir: Path) -> dict[str, str]:

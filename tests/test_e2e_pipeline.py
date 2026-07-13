@@ -714,11 +714,23 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
     assert "**Weakness Classes**" in rendered
     assert "**Injection**" in rendered
     assert "(injection · design · confirmed)" in rendered
-    # P4 — the systemic posture verdict table renders alongside it (the header
-    # em-dash is normalized to a hyphen by the prose-fix pass, so match loosely).
-    assert "Security Principles" in rendered and "Systemic Posture" in rendered
+    # P4 — the systemic posture verdict table (hoisted 2026-07-13) renders as the
+    # `### Security Principles` subsection INSIDE the Management Summary, not §8.
+    assert "### Security Principles" in rendered
+    assert "Systemic Posture" in rendered
     assert "Input Validation" in rendered
     assert "VIOLATED" in rendered
+    # Placement: the verdict table sits in the Management Summary (between its
+    # `## Management Summary` heading and the next `## ` section), so a
+    # systemically-violated principle is loud at executive level.
+    ms_start = rendered.index("## Management Summary")
+    ms_end = rendered.index("\n## ", ms_start + 1)
+    assert ms_start < rendered.index("### Security Principles") < ms_end, (
+        "Security Principles table must render inside the Management Summary"
+    )
+    # §8 keeps only a back-reference to the Management Summary table (no dup).
+    assert "**Security Principles** table of the Management Summary" in rendered
+    assert rendered.index("### Security Principles") < rendered.index("**Weakness Classes**")
     # Post-consolidation basis breakdown is present in the verdict.
     assert "**Findings:**" in rendered
     assert "confirmed-exploitable ·" in rendered

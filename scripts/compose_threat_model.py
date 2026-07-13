@@ -9312,6 +9312,13 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # anti-patterns block (renders nothing when the LLM authored no
         # ms-ai-exposure.json, i.e. the system has no LLM/AI surface).
         "ai_exposure_ms",
+        # systemic_posture — the P4 "### Security Principles" verdict table
+        # (VIOLATED/WEAK/ADEQUATE per principle), hoisted from §8 (2026-07-13) so
+        # a systemically-violated principle is loud at executive level. Placed
+        # before the heatmap so the reader sees the structural posture before the
+        # per-flow view. Renders nothing when the weakness register is empty
+        # (has_weakness_register).
+        "systemic_posture",
         # security_posture_at_a_glance now renders the merged
         # "### Security Posture & Top Threats" section (Figure 1 + Figure 2
         # heatmap + the Top Threats table); the standalone top_threats child
@@ -9336,6 +9343,15 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             ai_ms = _render_ai_exposure(ctx, env)
             if ai_ms.strip():
                 parts.append(ai_ms.rstrip())
+            continue
+        if sid == "systemic_posture":
+            # P4 verdict table (computed, no LLM fragment) — rendered via the
+            # special-case path (like the anti-patterns / AI-exposure callouts)
+            # so a run with no weakness register demands no fragment and adds
+            # nothing.
+            sp_ms = _render_security_principles(ctx)
+            if sp_ms.strip():
+                parts.append(sp_ms.rstrip())
             continue
         sec = sections.get(sid)
         if sec is None:
@@ -14711,12 +14727,17 @@ _POSTURE_VERDICT_EMOJI = {"VIOLATED": "🔴", "WEAK": "🟠", "ADEQUATE": "🟢"
 
 
 def _render_security_principles(ctx: RenderContext) -> str:
-    """P4 — the systemic posture verdict table: per security principle, a
-    deterministic VIOLATED / WEAK / ADEQUATE row fused from the weakness
-    register + confirmed findings + implementation strategy
-    (build_posture_verdict). Answers "incidental bugs vs. systemically broken".
-    Rendered only when the register yields at least one principle row (pre-P1
-    data → "" → goldens unchanged). Not a heading anchor — a bold block.
+    """P4 — the systemic posture verdict: per security principle a deterministic
+    VIOLATED / WEAK / ADEQUATE row fused from the weakness register + confirmed
+    findings + implementation strategy (build_posture_verdict). Answers
+    "incidental bugs vs. systemically broken".
+
+    Hoisted 2026-07-13 from §8 into the Management Summary as the
+    `### Security Principles` subsection, so a systemically-violated principle —
+    e.g. Access Control or Input Validation — is loud at executive level even
+    when no single concrete instance carries it; §8 keeps only a back-reference
+    (see `_render_threat_register`). Gated on the weakness register: no register
+    (pre-P1 data / clean repo) → "" → goldens unchanged.
     """
     # Gated on the weakness register: the systemic verdict is Layer-2 on top of
     # the two-type register. No register (pre-P1 data) → no table → goldens
@@ -14729,12 +14750,33 @@ def _render_security_principles(ctx: RenderContext) -> str:
         rows = []
     if not rows:
         return ""
-    out: list[str] = ["**Security Principles — Systemic Posture**", ""]
+    out: list[str] = ["### Security Principles", ""]
+    # Lead: name the systemically-VIOLATED principles up front so the executive
+    # reader sees "Access Control is broken by design" without reading the table.
+    violated = [str(r.get("label")) for r in rows if r.get("verdict") == "VIOLATED"]
+    if violated:
+        if len(violated) == 1:
+            subj = f"**{violated[0]}** is"
+        else:
+            subj = ", ".join(f"**{v}**" for v in violated[:-1]) + f" and **{violated[-1]}** are"
+        out.append(
+            f"{subj} **systemically violated** — the weakness recurs across the "
+            "architecture, not as an isolated finding. This is the report's "
+            "**Systemic Posture**: each principle below is scored deterministically "
+            "from the findings that exercise it."
+        )
+    else:
+        out.append(
+            "This is the report's **Systemic Posture**: each principle below is "
+            "scored deterministically from the findings that exercise it — none "
+            "is systemically violated."
+        )
+    out.append("")
     out.append(
-        "Each principle is scored deterministically from the findings that "
-        "exercise it: **VIOLATED** (a confirmed exploit or a pervasive "
-        "home-grown/absent control), **WEAK** (isolated deviations), or "
-        "**ADEQUATE** (no confirmed gap; a standard control in use)."
+        "**VIOLATED** = a confirmed exploit or a pervasive home-grown/absent "
+        "control · **WEAK** = isolated deviations · **ADEQUATE** = no confirmed "
+        "gap; a standard control in use. Per-class detail: the Weakness Classes "
+        "in the Findings Register (§8)."
     )
     out.append("")
     out.append("| Principle | Verdict | Signal |")
@@ -15000,12 +15042,18 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     )
     lines.append("")
 
-    # ---- Security Principles verdict (P4) --------------------------------
-    # Systemic posture table (VIOLATED/WEAK/ADEQUATE per principle). Renders
-    # nothing until the weakness register yields a principle row.
-    _principles_block = _render_security_principles(ctx)
-    if _principles_block:
-        lines.append(_principles_block.rstrip())
+    # ---- Systemic posture back-reference (P4) ----------------------------
+    # The Security Principles verdict table (VIOLATED/WEAK/ADEQUATE per
+    # principle) was hoisted to the Management Summary (2026-07-13) so the
+    # systemic posture is loud at executive level; §8 keeps only this pointer
+    # plus the per-class Weakness Classes drill-down below, so the verdict is
+    # not shown twice.
+    if ctx.yaml_data.get("weaknesses"):
+        lines.append(
+            "The systemic posture verdict (VIOLATED / WEAK / ADEQUATE per "
+            "security principle) is in the **Security Principles** table of the "
+            "Management Summary; the per-class detail follows below."
+        )
         lines.append("")
 
     # ---- Weakness Classes (P1.4) -----------------------------------------
@@ -16346,6 +16394,11 @@ def render(
             "critical_category_count": _category_count_by_severity(_threats, category_taxonomy, "critical"),
             "verdict_severity": _verdict_severity_from_fragment(fragments_dir),
             "check_requirements": bool(yaml_data.get("meta", {}).get("check_requirements")),
+            # Optional MS "Security Principles" systemic-posture table — true when
+            # the weakness register is populated (weaknesses[] non-empty). Gates
+            # the hoisted P4 verdict table so pre-register runs / clean repos with
+            # no register render nothing (goldens unchanged).
+            "has_weakness_register": bool(yaml_data.get("weaknesses")),
             # Optional MS "Architectural Anti-Patterns" callout — true when the
             # threat-renderer authored ms-anti-patterns.json (gated on presence;
             # the renderer also self-gates defensively).

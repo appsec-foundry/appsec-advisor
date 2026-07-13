@@ -350,6 +350,11 @@ sections:
       # authoritative `preserve_on_downgrade:` block at the end of this file
       # (substrate: fragment, ms-ai-exposure.json).
       - { id: ai_exposure_ms,              condition: "has_llm_surface" }
+      # systemic_posture — P4 "### Security Principles" verdict table, hoisted
+      # from §8 (2026-07-13) so a systemically-violated principle is visible at
+      # executive level. Computed (no LLM fragment); rendered via the
+      # special-case path in _render_management_summary.
+      - { id: systemic_posture,           condition: "has_weakness_register" }
       - { id: requirements_compliance_ms, condition: "check_requirements" }
       - { id: triage_notes,               condition: "triage_has_warnings" }
     forbidden_subsection_patterns:                  # regexes; match = QA-strip
@@ -433,6 +438,22 @@ sections:
     schema:   "ai-exposure.schema.json"
     template: "ai-exposure.md.j2"
     conditional: "has_llm_surface"
+
+  # Security Principles — the P4 systemic posture verdict (Layer-2). Per
+  # security principle, a deterministic VIOLATED / WEAK / ADEQUATE row fused
+  # from the weakness register + confirmed findings + implementation strategy
+  # (scripts/build_posture_verdict.py). Hoisted 2026-07-13 from §8 into the
+  # Management Summary so a systemically-violated principle (e.g. Access
+  # Control, Input Validation) is loud at executive level even absent a concrete
+  # instance; §8 carries a back-reference. COMPUTED — no LLM fragment; rendered
+  # via the special-case path in `_render_management_summary` (like the
+  # anti-patterns / AI-exposure callouts). Gated by `has_weakness_register`
+  # (weaknesses[] non-empty), so pre-register runs / clean repos render nothing.
+  systemic_posture:
+    heading: "### Security Principles"
+    heading_numbered: false
+    fragment_type: computed
+    conditional: "has_weakness_register"
 
   # Security Posture at a Glance — architecture heatmap showing where the
   # Critical findings concentrate and which attack paths connect them.

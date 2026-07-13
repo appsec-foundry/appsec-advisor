@@ -99,9 +99,21 @@ def collect_dependencies(repo_root: Path) -> set[str]:
     return deps
 
 
-def _bespoke_hit(repo_root: Path, patterns: list[str]) -> bool:
+_BESPOKE_EVIDENCE_CAP = 5
+
+
+def _scan_bespoke(repo_root: Path, patterns: list[str]) -> tuple[bool, list[dict[str, Any]]]:
+    """Scan the source tree once for a domain's bespoke/misuse patterns.
+
+    Returns ``(hit, evidence)`` where ``hit`` is the whole-text boolean used for
+    strategy classification (parity with the former ``_bespoke_hit`` — catches
+    multi-line matches too), and ``evidence`` is up to ``_BESPOKE_EVIDENCE_CAP``
+    repo-root-relative ``{file, line}`` sites (line-based) used as the observable
+    backing of the Gap-A design signal (I2). Evidence may be empty even when
+    ``hit`` is True (a match only visible across line boundaries) — the signal
+    emitter then simply does not fire, which is the conservative choice."""
     if not patterns:
-        return False
+        return False, []
     compiled: list[re.Pattern] = []
     for pat in patterns:
         try:
@@ -109,7 +121,9 @@ def _bespoke_hit(repo_root: Path, patterns: list[str]) -> bool:
         except re.error:
             continue
     if not compiled:
-        return False
+        return False, []
+    hit = False
+    evidence: list[dict[str, Any]] = []
     for f in _iter_source_files(repo_root):
         try:
             if f.stat().st_size > _MAX_FILE_BYTES:
@@ -117,9 +131,25 @@ def _bespoke_hit(repo_root: Path, patterns: list[str]) -> bool:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if any(rx.search(text) for rx in compiled):
-            return True
-    return False
+        if not hit and any(rx.search(text) for rx in compiled):
+            hit = True
+        if len(evidence) < _BESPOKE_EVIDENCE_CAP:
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if any(rx.search(line) for rx in compiled):
+                    try:
+                        rel = str(f.relative_to(repo_root))
+                    except ValueError:
+                        rel = f.name
+                    evidence.append({"file": rel, "line": lineno})
+                    if len(evidence) >= _BESPOKE_EVIDENCE_CAP:
+                        break
+        if hit and len(evidence) >= _BESPOKE_EVIDENCE_CAP:
+            break
+    return hit, evidence
+
+
+def _bespoke_hit(repo_root: Path, patterns: list[str]) -> bool:
+    return _scan_bespoke(repo_root, patterns)[0]
 
 
 def _classify(vetted_found: list[str], bespoke_hit: bool) -> str:
@@ -144,17 +174,74 @@ def build_strategy_map(repo_root: Path) -> dict[str, dict[str, Any]]:
         if not isinstance(spec, dict):
             continue
         vetted = [lib for lib in (spec.get("vetted_libs") or []) if lib in deps]
-        bespoke = _bespoke_hit(repo_root, spec.get("bespoke_patterns") or [])
+        bespoke, evidence = _scan_bespoke(repo_root, spec.get("bespoke_patterns") or [])
         strategy = _classify(vetted, bespoke)
         # `none` carries no signal for the reconciler; omit to keep the sidecar tight.
         if strategy == "none":
             continue
-        out[wclass] = {
+        entry: dict[str, Any] = {
             "strategy": strategy,
             "vetted_libs_found": sorted(vetted),
             "bespoke_hit": bespoke,
         }
+        # Gap-A: carry the sink sites so build_impl_design_signals can back a
+        # design-risk weakness with observable file:line evidence.
+        if evidence:
+            entry["bespoke_evidence"] = evidence
+        out[wclass] = entry
     return out
+
+
+def build_impl_design_signals(
+    strategy_map: dict[str, dict[str, Any]], catalog: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Gap-A: for each `central_control` domain whose control is home-grown or
+    misused (bespoke sink present, not a vetted standard), emit a design signal
+    so the reconciler surfaces a design-risk weakness EVEN WHEN no concrete
+    SQLi/XSS/IDOR instance was confirmed — the observable backing (I2) is the
+    bespoke sink's own file:line. Consumed by merge_threats._load_design_signals.
+
+    Only fires for domains marked `central_control` in security-libraries.yaml
+    (input validation, output encoding, access control, authentication) and only
+    for `home-grown` / `standard-misused` strategies with concrete evidence — a
+    `standard-vetted` domain emits nothing (the vetted control IS the control),
+    and a domain with no bespoke evidence emits nothing (no speculation)."""
+    catalog = catalog if catalog is not None else _load_catalog()
+    domains = catalog.get("domains") or {}
+    signals: list[dict[str, Any]] = []
+    for wclass, entry in (strategy_map or {}).items():
+        strategy = entry.get("strategy")
+        if strategy not in ("home-grown", "standard-misused"):
+            continue
+        evidence = entry.get("bespoke_evidence") or []
+        if not evidence:
+            continue
+        cc = ((domains.get(wclass) or {}) if isinstance(domains.get(wclass), dict) else {}).get("central_control")
+        if not isinstance(cc, dict):
+            continue  # domain is not a centralizable control → do not surface
+        # Component spread proxy: distinct parent directories of the sink sites.
+        # ≥ SYSTEMIC_SPREAD_MIN dirs → the reconciler treats it as systemic
+        # (severity bump, principle VIOLATED); a single dir stays WEAK.
+        comps = sorted({(str(e.get("file") or "").rsplit("/", 1)[0] or ".") for e in evidence})
+        backing = [
+            {
+                "pattern": cc.get("principle") or wclass.replace("_", " "),
+                "hit_count": len(evidence),
+                "example": f"{evidence[0].get('file')}:{evidence[0].get('line')}",
+            }
+        ]
+        signals.append(
+            {
+                "rule_id": "IMPL-STRATEGY",
+                "weakness_class": wclass,
+                "statement": cc.get("statement") or f"Home-grown {wclass.replace('_', ' ')} handling.",
+                "absent_control_signal": backing,
+                "implementation_strategy": strategy,
+                "severity": "Medium",
+                "affected_components": comps,
+            }
+        )
+    return signals
 
 
 def _main(argv: list[str]) -> int:
@@ -173,6 +260,15 @@ def _main(argv: list[str]) -> int:
     target = out_dir / ".impl-strategy.json"
     atomic_write_json(target, {"version": 1, "strategies": strategies}, indent=2)
     print(f"detect_impl_strategy: wrote {target} ({len(strategies)} classes with a strategy signal)")
+
+    # Gap-A: emit design signals for home-grown/misused central controls so the
+    # reconciler surfaces a design-risk weakness even absent a confirmed
+    # instance. Separate sidecar (merge_threats._load_design_signals merges it
+    # with the arch-coverage stream); absent/empty → non-fatal, no weakness.
+    design_signals = build_impl_design_signals(strategies)
+    ds_target = out_dir / ".impl-design-signals.json"
+    atomic_write_json(ds_target, {"version": 1, "design_signals": design_signals}, indent=2)
+    print(f"detect_impl_strategy: wrote {ds_target} ({len(design_signals)} central-control design signal(s))")
     return 0
 
 
