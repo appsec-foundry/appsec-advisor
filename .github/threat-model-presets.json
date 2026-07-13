@@ -1,0 +1,114 @@
+{
+  "_comment": "Single source of truth for the Threat Model (Preset) dispatch workflow. Each slug MUST also appear in the workflow_dispatch use_case dropdown (.github/workflows/threat-model-dispatch.yml). reasoning_model: sonnet-economy for quick/standard, opus-cheap for thorough (drop the field to use the depth default: opus at thorough). output_path is resolved relative to the plugin checkout root, i.e. OUTSIDE the target checkout (required for untrusted scans).",
+
+  "juice-shop-quick": {
+    "target_repo": "juice-shop/juice-shop",
+    "target_ref": "master",
+    "mode": "full",
+    "assessment_depth": "quick",
+    "reasoning_model": "sonnet-economy",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/juice-shop-quick",
+    "max_duration_sec": 4200
+  },
+  "juice-shop-standard": {
+    "target_repo": "juice-shop/juice-shop",
+    "target_ref": "master",
+    "mode": "full",
+    "assessment_depth": "standard",
+    "reasoning_model": "sonnet-economy",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/juice-shop-standard",
+    "max_duration_sec": 7200
+  },
+  "juice-shop-thorough": {
+    "target_repo": "juice-shop/juice-shop",
+    "target_ref": "master",
+    "mode": "full",
+    "assessment_depth": "thorough",
+    "reasoning_model": "opus-cheap",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/juice-shop-thorough",
+    "max_duration_sec": 9000
+  },
+
+  "spring-quick": {
+    "target_repo": "matthiasrohr/insecure-spring-app",
+    "target_ref": "master",
+    "mode": "full",
+    "assessment_depth": "quick",
+    "reasoning_model": "sonnet-economy",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/spring-quick",
+    "max_duration_sec": 4200
+  },
+  "spring-standard": {
+    "target_repo": "matthiasrohr/insecure-spring-app",
+    "target_ref": "master",
+    "mode": "full",
+    "assessment_depth": "standard",
+    "reasoning_model": "sonnet-economy",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/spring-standard",
+    "max_duration_sec": 7200
+  },
+  "spring-thorough": {
+    "target_repo": "matthiasrohr/insecure-spring-app",
+    "target_ref": "master",
+    "mode": "full",
+    "assessment_depth": "thorough",
+    "reasoning_model": "opus-cheap",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/spring-thorough",
+    "max_duration_sec": 9000
+  },
+
+  "python-quick": {
+    "target_repo": "matthiasrohr/insecure-python-app",
+    "target_ref": "master",
+    "mode": "full",
+    "assessment_depth": "quick",
+    "reasoning_model": "sonnet-economy",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/python-quick",
+    "max_duration_sec": 4200
+  },
+  "python-standard": {
+    "target_repo": "matthiasrohr/insecure-python-app",
+    "target_ref": "master",
+    "mode": "full",
+    "assessment_depth": "standard",
+    "reasoning_model": "sonnet-economy",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/python-standard",
+    "max_duration_sec": 7200
+  },
+  "python-thorough": {
+    "target_repo": "matthiasrohr/insecure-python-app",
+    "target_ref": "master",
+    "mode": "full",
+    "assessment_depth": "thorough",
+    "reasoning_model": "opus-cheap",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/python-thorough",
+    "max_duration_sec": 9000
+  }
+}

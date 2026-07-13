@@ -331,9 +331,18 @@ done
 
 # ── Pre-flight auth check ────────────────────────────────────────────
 if [ "$BILLING_MODE" = "subscription" ]; then
-    AUTH_JSON=$(claude auth status 2>/dev/null) || AUTH_JSON="{}"
-    if ! echo "$AUTH_JSON" | grep -q '"loggedIn": true'; then
-        die "Not authenticated for subscription billing.\n  • To use subscription: run 'claude auth login'\n  • To use API billing:  export ANTHROPIC_API_KEY=<your-key>"
+    if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+        # Non-interactive subscription auth (CI / unattended). The CLI consumes
+        # the OAuth token at request time, but `claude auth status` reflects only
+        # stored credentials (~/.claude/) and would false-negative here — so we
+        # trust the token and skip the interactive-login gate. An invalid token
+        # still surfaces as a real error from `claude -p` downstream.
+        info "Subscription auth via CLAUDE_CODE_OAUTH_TOKEN (non-interactive; skipping login preflight)"
+    else
+        AUTH_JSON=$(claude auth status 2>/dev/null) || AUTH_JSON="{}"
+        if ! echo "$AUTH_JSON" | grep -q '"loggedIn": true'; then
+            die "Not authenticated for subscription billing.\n  • To use subscription: run 'claude auth login' (interactive) or set CLAUDE_CODE_OAUTH_TOKEN (CI / non-interactive)\n  • To use API billing:  export ANTHROPIC_API_KEY=<your-key>"
+        fi
     fi
 fi
 

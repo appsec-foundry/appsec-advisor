@@ -1,0 +1,232 @@
+name: Threat Model (Preset)
+
+# Manually dispatched, preset-driven headless threat-model run against an
+# external target repository. One dispatch == one use_case == one job.
+# Presets live in .github/threat-model-presets.json (single source of truth).
+#
+# Auth: subscription billing via the CLAUDE_CODE_OAUTH_TOKEN secret
+# (`claude setup-token`). ANTHROPIC_API_KEY is deliberately NOT set — it would
+# take precedence and switch billing to per-token.
+
+on:
+  workflow_dispatch:
+    inputs:
+      use_case:
+        description: "Preset slug (must exist in threat-model-presets.json)"
+        type: choice
+        required: true
+        options:
+          - juice-shop-quick
+          - juice-shop-standard
+          - juice-shop-thorough
+          - spring-quick
+          - spring-standard
+          - spring-thorough
+          - python-quick
+          - python-standard
+          - python-thorough
+      plugin_ref:
+        description: "appsec-advisor ref to run (blank = the branch you dispatched from)"
+        type: string
+        required: false
+        default: ""
+      override_mode:
+        description: "Override preset mode (blank = preset)"
+        type: choice
+        required: false
+        default: ""
+        options: ["", "full", "incremental", "dry-run"]
+      override_depth:
+        description: "Override preset assessment depth (blank = preset)"
+        type: choice
+        required: false
+        default: ""
+        options: ["", "quick", "standard", "thorough"]
+
+permissions:
+  contents: read
+  security-events: write   # optional SARIF upload (cross-repo; see note below)
+
+concurrency:
+  # Never run the same use_case twice at once (shared output dir semantics).
+  group: threat-model-${{ inputs.use_case }}
+  cancel-in-progress: false
+
+jobs:
+  threat-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180   # job notbremse; --max-duration is the per-run cap
+    steps:
+      # 1) Plugin (this repo) — the branch you dispatched from, or plugin_ref.
+      - name: Checkout appsec-advisor (plugin)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+          path: .
+
+      # 2) Resolve the preset (+ CLI overrides) into step outputs.
+      - name: Resolve preset
+        id: preset
+        env:
+          USE_CASE: ${{ inputs.use_case }}
+          OVERRIDE_MODE: ${{ inputs.override_mode }}
+          OVERRIDE_DEPTH: ${{ inputs.override_depth }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+
+          use_case = os.environ["USE_CASE"]
+          presets = json.load(open(".github/threat-model-presets.json"))
+          if use_case not in presets:
+              print(f"::error::use_case '{use_case}' not found in threat-model-presets.json")
+              sys.exit(1)
+          p = presets[use_case]
+
+          mode  = os.environ.get("OVERRIDE_MODE")  or p["mode"]
+          depth = os.environ.get("OVERRIDE_DEPTH") or p["assessment_depth"]
+
+          out = {
+              "target_repo": p["target_repo"],
+              "target_ref": p.get("target_ref", "") or "",
+              "mode": mode,
+              "depth": depth,
+              "reasoning_model": p.get("reasoning_model", ""),
+              "session_model": p.get("session_model", ""),
+              "requirements": "true" if p.get("requirements") else "false",
+              "sarif": "true" if p.get("sarif") else "false",
+              "output_path": p["output_path"],
+              "max_duration_sec": str(p.get("max_duration_sec", "")),
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              for k, v in out.items():
+                  fh.write(f"{k}={v}\n")
+          print(f"Resolved '{use_case}': repo={out['target_repo']}@{out['target_ref'] or 'default'} "
+                f"mode={mode} depth={depth} reasoning={out['reasoning_model']} session={out['session_model']}")
+          PY
+
+      # 3) Target repo (external, untrusted) — into ./target.
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.preset.outputs.target_repo }}
+          ref: ${{ steps.preset.outputs.target_ref }}
+          path: target
+          persist-credentials: false
+
+      # 4) Sanitize the untrusted checkout: strip repo-owned Claude Code / IDE
+      #    config that the host tool would load before the plugin runs. These are
+      #    exactly the injection vectors preflight_untrusted.py refuses on — remove
+      #    them so the untrusted preflight passes, and flag any escaping symlinks.
+      - name: Sanitize untrusted checkout
+        run: |
+          set -euo pipefail
+          rm -rf  target/.claude
+          rm -f   target/.vscode/tasks.json
+          rm -f   target/.devcontainer/devcontainer.json
+          echo "Stripped repo-owned .claude / IDE task config from ./target"
+          # Escaping symlinks are not auto-removed (would change scan scope); the
+          # untrusted preflight will abort on them. Surface any for triage:
+          esc=$(find target -type l -printf '%p -> %l\n' 2>/dev/null || true)
+          [ -n "$esc" ] && { echo "::warning::symlinks present in target (untrusted preflight may reject):"; echo "$esc"; } || echo "no symlinks in target"
+
+      - name: Install toolchain
+        run: |
+          set -euo pipefail
+          npm install -g @anthropic-ai/claude-code@2   # latest 2.x: fixes + API/model compat, no surprise major bump
+          python3 -m pip install --quiet pyyaml jsonschema
+          claude --version
+
+      # 5) Write required CC permissions to USER scope (~/.claude/settings.json)
+      #    — NOT into ./target (that would trip the untrusted preflight).
+      - name: Write permissions (user scope)
+        run: make setup-target REPO="$PWD/target" SCOPE=user
+
+      # 6) Publish the effective (user-scope) permission allow-list for review.
+      #    check_permissions.py writes absolute, checkout/temp-specific paths, so
+      #    a byte-comparable baseline is impractical — this step is informational:
+      #    it redacts the volatile path prefixes and surfaces the tool/command
+      #    shape in the job summary + artifact so the blast radius stays reviewable.
+      - name: Publish effective permissions
+        run: |
+          python3 - <<'PY'
+          import json, os, re, pathlib
+
+          settings = pathlib.Path.home() / ".claude" / "settings.json"
+          perms = {}
+          if settings.is_file():
+              perms = (json.loads(settings.read_text()) or {}).get("permissions", {}) or {}
+
+          ws   = os.environ.get("GITHUB_WORKSPACE", "")
+          tmp  = os.environ.get("RUNNER_TEMP", "")
+          home = str(pathlib.Path.home())
+
+          def redact(s: str) -> str:
+              for pat, rep in ((ws, "<workspace>"), (tmp, "<tmp>"), (home, "<home>")):
+                  if pat:
+                      s = s.replace(pat, rep)
+              return re.sub(r"/tmp/[^/]+", "<tmp>", s)
+
+          eff = {k: sorted(redact(x) for x in (perms.get(k) or [])) for k in ("allow", "ask", "deny")}
+          txt = json.dumps(eff, indent=2, sort_keys=True) + "\n"
+          pathlib.Path("effective-permissions.json").write_text(txt)
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a") as fh:
+                  fh.write("### Effective permissions (user scope; volatile paths redacted)\n\n```json\n" + txt + "```\n")
+          print(f"allow={len(eff['allow'])} ask={len(eff['ask'])} deny={len(eff['deny'])}")
+          PY
+
+      # 7) The scan. Untrusted mode + economy defaults from the preset.
+      - name: Run threat model
+        env:
+          # Subscription billing. Do NOT add ANTHROPIC_API_KEY (would override).
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          OUT="$PWD/${{ steps.preset.outputs.output_path }}"
+          mkdir -p "$OUT"
+
+          MODE_FLAG=""
+          case "${{ steps.preset.outputs.mode }}" in
+            full)        MODE_FLAG="--full" ;;
+            incremental) MODE_FLAG="--incremental" ;;
+            dry-run)     MODE_FLAG="--dry-run" ;;
+            *) echo "::error::unknown mode '${{ steps.preset.outputs.mode }}'"; exit 1 ;;
+          esac
+
+          ARGS=( --repo "$PWD/target" --output "$OUT"
+                 --assessment-depth "${{ steps.preset.outputs.depth }}"
+                 --trust-mode untrusted
+                 $MODE_FLAG )
+          [ -n "${{ steps.preset.outputs.session_model }}" ]   && ARGS+=( --model "${{ steps.preset.outputs.session_model }}" )
+          [ -n "${{ steps.preset.outputs.reasoning_model }}" ] && ARGS+=( --reasoning-model "${{ steps.preset.outputs.reasoning_model }}" )
+          [ -n "${{ steps.preset.outputs.max_duration_sec }}" ] && ARGS+=( --max-duration "${{ steps.preset.outputs.max_duration_sec }}" )
+          [ "${{ steps.preset.outputs.sarif }}" = "true" ]        && ARGS+=( --sarif )
+          [ "${{ steps.preset.outputs.requirements }}" = "true" ] && ARGS+=( --requirements )
+
+          echo "run-headless.sh ${ARGS[*]}"
+          ./scripts/run-headless.sh "${ARGS[@]}"
+
+          cp -f effective-permissions.json "$OUT/" 2>/dev/null || true
+
+      # 8) Publish the report (md / yaml / sarif / run log / permissions).
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: threat-model-${{ inputs.use_case }}
+          path: ${{ steps.preset.outputs.output_path }}/
+          if-no-files-found: warn
+          retention-days: 90
+
+      # 9) Optional: surface findings in this repo's Code scanning tab.
+      #    NOTE: SARIF URIs point at ./target files that don't exist in this repo,
+      #    so alerts list but source links won't resolve. Non-fatal.
+      - name: Upload SARIF to Code Scanning
+        if: ${{ always() && steps.preset.outputs.sarif == 'true' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.preset.outputs.output_path }}/threat-model.sarif.json
+          category: threat-model-${{ inputs.use_case }}
