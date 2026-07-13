@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## 0.4.1 (2026-07-13)
+
+### Added
+
+- Multi-language scanner coverage: deterministic access-control, crypto, and mass-assignment rules now run against Java, Python, Go, and PHP codebases (plus C#/.NET, Ruby/Rails, and mobile stacks), so findings are no longer skewed toward JavaScript/TypeScript projects.
+- Headless runs support Claude subscription billing via `CLAUDE_CODE_OAUTH_TOKEN`, enabling unattended CI/dispatch runs without an interactive login or an API key.
+- Packaged plugins can ship organization MCP endpoints: MCP servers declared in an org profile are emitted into the built plugin's `.mcp.json`, so internal servers are wired up on install.
+
+### Improved
+
+- Architectural and design-level weaknesses are surfaced more prominently. A unified weakness register classifies findings by evidence tier and implementation strategy, flags home-grown or misused central security controls, and hoists a security-principles verdict into the Management Summary — so systemic design flaws are no longer buried under individual instance findings.
+
 ## 0.4.0-beta (2026-07-07)
 
 First public release. Still a beta: good for guided use, but not ready to run unattended in CI yet.
