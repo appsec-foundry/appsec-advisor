@@ -2,29 +2,25 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
-
-### Changed
-
-- Systemic weaknesses now appear in their own report chapter and link to the findings, unsafe practices, or missing controls that support them. Broad CWE families no longer merge unrelated attack paths into one weakness.
-- Management Summary verdicts now use short plain language and hide finding IDs, file locations, and abuse-case IDs. Technical detail remains in the findings and architecture sections.
-
-### Fixed
-
-- Threat models no longer render evidence-refuted findings. New scans drop those candidates before output; incremental scans record resolutions in the changelog instead.
-- Threat merger decisions now preserve every merged location and scenario, support partial groups, and cannot remove findings through a `keep` decision.
-
 ## 0.4.1 (2026-07-13)
 
 ### Added
 
-- Multi-language scanner coverage: deterministic access-control, crypto, and mass-assignment rules now run against Java, Python, Go, and PHP codebases (plus C#/.NET, Ruby/Rails, and mobile stacks), so findings are no longer skewed toward JavaScript/TypeScript projects.
-- Headless runs support Claude subscription billing via `CLAUDE_CODE_OAUTH_TOKEN`, enabling unattended CI/dispatch runs without an interactive login or an API key.
-- Packaged plugins can ship organization MCP endpoints: MCP servers declared in an org profile are emitted into the built plugin's `.mcp.json`, so internal servers are wired up on install.
+- Deterministic access-control, crypto, and mass-assignment scanners now run across Java, Python, Go, PHP, C#/.NET, Ruby/Rails, and mobile stacks, not just JavaScript/TypeScript.
+- Headless runs can bill against a Claude subscription via `CLAUDE_CODE_OAUTH_TOKEN`, so CI and dispatch runs work without an interactive login or an API key.
+- MCP servers declared in an org profile are written into the packaged plugin's `.mcp.json` and wired up on install.
 
-### Improved
+### Changed
 
-- Architectural and design-level weaknesses are surfaced more prominently. A unified weakness register classifies findings by evidence tier and implementation strategy, flags home-grown or misused central security controls, and hoists a security-principles verdict into the Management Summary — so systemic design flaws are no longer buried under individual instance findings.
+- Systemic and design-level weaknesses get their own report chapter and link to the findings that support them. A weakness register groups findings by evidence and implementation strategy, flags home-grown or misused central security controls, and surfaces a security-principles verdict in the Management Summary. Broad CWE families no longer collapse unrelated attack paths into one weakness.
+- Management Summary verdicts use plain language and drop finding IDs, file paths, and abuse-case IDs; the detail stays in the findings and architecture sections.
+
+### Fixed
+
+- Evidence-refuted findings are no longer rendered. New scans drop them before output; incremental scans note the resolution in the changelog.
+- Threat merging keeps every merged location and scenario and can no longer drop a finding through a `keep` decision.
+- More consistent mitigation rendering and consolidated finding locations.
+- Repair passes no longer drift across re-renders.
 
 ## 0.4.0-beta (2026-07-07)
 
