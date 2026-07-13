@@ -818,21 +818,8 @@ def test_section_3_is_per_finding_walkthroughs(tmp_path: Path) -> None:
     assert not re.search(r"```mermaid\s*\n\s*graph LR", s3), "§3 must not contain `graph LR` chain blocks any more"
 
 
-def test_evidence_check_badge_renders_on_refuted_and_ambiguous(tmp_path: Path) -> None:
-    """M3: rows with evidence_check=refuted carry a strikethrough title
-    + ⚠ *(evidence refuted)* marker; rows with evidence_check=ambiguous
-    carry an `evidence: ambiguous ◌` token in the location line. Verified
-    rows show `evidence: verified` (silent — no badge). The §8 footer
-    paragraph "**Evidence verification:**" is emitted once when any
-    refuted/ambiguous row is present and omitted otherwise.
-
-    Post-2026-05 layout note: the `◌ *(evidence ambiguous)*` marker that
-    used to sit beside the title was moved into the LOC line as
-    `evidence: ambiguous ◌` — keeping the title clean and lifting the
-    evidence verdict to the same row that carries the file path. The
-    refuted marker stays beside the title because strikethrough text
-    needs the title context to read.
-    """
+def test_evidence_check_badge_omits_refuted_candidates_and_renders_ambiguous(tmp_path: Path) -> None:
+    """The active register never renders refuted candidates or strikethroughs."""
     out = _prepare_output_dir(tmp_path)
     yml_path = out / "threat-model.yaml"
     data = yaml.safe_load(yml_path.read_text())
@@ -846,9 +833,8 @@ def test_evidence_check_badge_renders_on_refuted_and_ambiguous(tmp_path: Path) -
 
     rendered, _ = compose.render(CONTRACT, out)
 
-    # Card layout (2026-05): refuted → strikethrough card heading + ⚠;
-    # ambiguous / verified → a glyph in the **Evidence:** field.
-    assert re.search(r"#### F-\d+ · ~~.+~~ ⚠", rendered), "refuted heading marker missing"
+    assert "#### F-001 ·" not in rendered
+    assert "~~" not in rendered
     assert "◌ ambiguous" in rendered, "ambiguous marker missing"
     assert "✓ verified" in rendered
     # The unchecked verdict stays silent.

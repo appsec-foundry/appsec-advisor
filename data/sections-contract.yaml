@@ -1402,7 +1402,7 @@ sections:
     #   **Severity:** … · **Component:** [C-NN] … · **Location:** `file:line`
     #   **Issue:** …                     (consequence folded in; no Impact field)
     #   **Root cause:** …                (attack-class taxonomy description)
-    #   **Evidence:** <✓|◌|⚠> … (+ fenced code snippet when one exists)
+    #   **Evidence:** <✓|◌|↻> … (+ fenced code snippet when one exists)
     #   **Fix:** <plain remediation> → [M-NNN]
     #   **Classification:** Category · [CWE-NNN](cwe.mitre.org) · [OWASP A0X:2021](owasp.org)
     # History: pre-2026-05 was a 9-col then 4-col flat table (Story Card in the

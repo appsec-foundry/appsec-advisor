@@ -159,6 +159,20 @@ def test_validate_yaml_respects_prior_verdicts_and_non_list_threats(tmp_path: Pa
     }
 
 
+def test_config_file_exists_violation_verifies_when_target_file_is_absent(tmp_path: Path) -> None:
+    """A missing lockfile proves IAC-050; it is not a broken evidence anchor."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    finding = _threat("T-040", {"file": "package-lock.json", "line": 0})
+    finding.update(source="config-scan", config_check_id="IAC-050")
+
+    updated, stats = vel.validate_yaml({"threats": [finding]}, repo)
+
+    assert updated["threats"][0]["evidence_check"] == "verified"
+    assert updated["threats"][0]["evidence_flags"] == ["expected_file_absent"]
+    assert stats == {"sampled": 1, "verified": 1, "refuted": 0, "ambiguous": 0, "skipped": 0}
+
+
 def test_main_reports_input_errors(tmp_path: Path, capsys) -> None:
     repo = tmp_path / "repo"
     out = tmp_path / "out"
@@ -203,9 +217,8 @@ def test_main_updates_yaml_and_prints_stats(tmp_path: Path, capsys) -> None:
     assert vel.main([str(out), "--repo-root", str(repo)]) == 0
 
     written = vel.yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))
-    assert [t["evidence_check"] for t in written["threats"]] == ["verified", "refuted", "verified"]
-    assert written["threats"][1]["evidence_flags"] == ["file_missing"]
-    assert "sampled=2 verified=1 refuted=1 ambiguous=0 skipped(prior)=1" in capsys.readouterr().out
+    assert [t["evidence_check"] for t in written["threats"]] == ["verified", "verified"]
+    assert "sampled=2 verified=1 refuted=1 ambiguous=0 skipped(prior)=1 dropped_refuted=1" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

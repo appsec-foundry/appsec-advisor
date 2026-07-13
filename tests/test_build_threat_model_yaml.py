@@ -1867,6 +1867,19 @@ def test_build_threats_skips_info_stubs_and_missing_id():
                 "evidence": None,
                 "affected_parameter": "x" * 60,
             },
+            # Refuted candidates are evidence-verification output, not active
+            # findings. They stay in .threats-merged.json for audit but do not
+            # enter threat-model.yaml.
+            {
+                "t_id": "T-005",
+                "title": "Already fixed — routes/z.ts:3",
+                "component_id": "c1",
+                "likelihood": "High",
+                "risk": "High",
+                "cwe": "CWE-89",
+                "evidence": {"file": "z.ts", "line": 3},
+                "evidence_check": "refuted",
+            },
         ]
     }
     threats, warnings = b.build_threats(merged)
@@ -1880,6 +1893,7 @@ def test_build_threats_skips_info_stubs_and_missing_id():
     assert len(threats[1]["affected_parameter"]) <= 40
     assert threats[1]["affected_parameter"].endswith("…")
     assert any("observation-stub" in w for w in warnings)
+    assert any("evidence-refuted" in w for w in warnings)
 
 
 def test_build_mitigations_bumps_severity_to_max():

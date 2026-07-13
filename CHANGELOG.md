@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Fixed
+
+- Threat models no longer render evidence-refuted findings. New scans drop those candidates before output; incremental scans record resolutions in the changelog instead.
+
 ## 0.4.1 (2026-07-13)
 
 ### Added

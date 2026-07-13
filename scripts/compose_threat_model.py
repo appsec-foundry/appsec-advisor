@@ -14109,7 +14109,7 @@ def _build_threat_card(
     # -- 2. Location labelled row -----------------------------------------
     # **Location:** stays as a labelled row (file:line).
     # **Evidence verdict** stays attached to **Location:** so the verified /
-    # ambiguous / refuted status sits next to the file it applies to.
+    # ambiguous status sits next to the file it applies to.
     # R-7 (2026-05): Vektor field removed from the cell entirely — it was
     # adding a fourth labelled row without changing remediation priority.
     # Vektor still exists in the YAML for SARIF / pentest-tasks export and
@@ -14462,11 +14462,9 @@ def _build_threat_card(
     anchors = f'<a id="{tid.lower()}"></a>' + (f'<a id="f-{digits}"></a>' if digits else "")
 
     # Heading title = canonical class label without a single-location suffix
-    # (multi-instance findings already have no suffix); strike-through when
-    # refuted.
+    # (multi-instance findings already have no suffix). Refuted candidates are
+    # removed before composition and never render in the active register.
     head_title = re.sub(r"\s+—\s+\S.*$", "", raw_title).strip() or raw_title
-    if ec == "refuted":
-        head_title = f"~~{head_title}~~ ⚠"
     heading = f"#### {visible_id} · {_escape_heading_placeholders(head_title)}"
 
     # Meta line — Severity · Component · Location.
@@ -14536,14 +14534,12 @@ def _build_threat_card(
         "verified": "✓",
         "verified-prior": "✓",
         "ambiguous": "◌",
-        "refuted": "⚠",
         "carried-unverified-shallower-depth": "↻",
     }.get(ec, "")
     ev_word = {
         "verified": "verified",
         "verified-prior": "verified",
         "ambiguous": "ambiguous",
-        "refuted": "refuted",
         "carried-unverified-shallower-depth": "carried, unverified at this depth",
     }.get(ec, "")
     ev_prose = evidence_line[len("**Evidence:** ") :] if evidence_line.startswith("**Evidence:** ") else ""
@@ -15146,7 +15142,11 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # Vektor sort key — within a severity tier, scan dirtier paths first.
     vektor_order = {"repo-read": 0, "internet-anon": 1, "internet-user": 2, "victim-required": 3}
     all_threats_sorted = sorted(
-        threats,
+        (
+            threat
+            for threat in threats
+            if (threat.get("evidence_check") or "").strip().lower() != "refuted"
+        ),
         key=lambda t: (
             sev_rank.get((t.get("risk") or t.get("severity") or "").lower(), 99),
             vektor_order.get((t.get("vektor") or "").strip().lower(), 99),
@@ -16200,6 +16200,16 @@ def render(
     if not yaml_path.is_file():
         raise FragmentError("root", f"{yaml_path} not found — run Phase 11 YAML step first")
     yaml_data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
+    # Defense in depth for direct composer use or legacy artifacts: the
+    # builder and evidence backstop remove refuted candidates before writing
+    # the final YAML, but an active report must stay clean even if either step
+    # was bypassed. The merged intermediate remains the audit record.
+    if isinstance(yaml_data, dict) and isinstance(yaml_data.get("threats"), list):
+        yaml_data["threats"] = [
+            threat
+            for threat in yaml_data["threats"]
+            if not (isinstance(threat, dict) and (threat.get("evidence_check") or "").strip().lower() == "refuted")
+        ]
     # M-10c: Normalize threats[].title from em-dash form to paren form
     # ("SQL injection — routes/login.ts" → "SQL Injection (routes/login.ts)").
     # In-memory only — the on-disk yaml is left untouched so the schema

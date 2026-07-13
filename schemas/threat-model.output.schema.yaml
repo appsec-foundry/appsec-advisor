@@ -638,12 +638,13 @@ properties:
           # Verification status of the cited evidence. See
           # schemas/threats-merged.schema.yaml and
           # agents/appsec-evidence-verifier.md for the full state
-          # machine. Renderers may surface this as a small marker in
-          # the Threat Register row. `carried-unverified-shallower-depth` marks
+          # machine. The final active model excludes `refuted` candidates;
+          # they remain only in the merged intermediate audit trail.
+          # `carried-unverified-shallower-depth` marks
           # a prior threat carried into a shallower incremental re-scan that
           # could not re-confirm it (see threats-merged.schema.yaml).
           type: [string, "null"]
-          enum: [verified, verified-prior, refuted, ambiguous, unchecked,
+          enum: [verified, verified-prior, ambiguous, unchecked,
                  carried-unverified-shallower-depth, null]
         evidence_flags:
           # Parallel to triage_flags. Populated by the
@@ -793,8 +794,8 @@ properties:
           #                  pre-2026-05 behaviour). Renders as 🔧 in §9.
           #   review       — manual code review by a developer familiar with
           #                  the affected file. Emitted automatically for
-          #                  findings with `evidence_check ∈ {ambiguous,
-          #                  refuted}` or with no other M-NNN linkage.
+          #                  findings with `evidence_check == ambiguous`
+          #                  or with no other M-NNN linkage.
           #                  Renders as 🔍 in §9.
           #   investigate  — architectural / process-level review at the
           #                  component or theme level. Emitted for

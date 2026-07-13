@@ -816,6 +816,13 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
     ``.skill-config.json`` to keep them. Severity is read with the same
     effective_severity → risk → severity precedence the composer's
     ``_severity_counts`` uses, so the filtered set matches the rendered tally.
+
+    Evidence-refuted candidates are also excluded from the canonical list. A
+    current threat model is an active-risk snapshot, not a review queue: a
+    candidate whose cited evidence contradicts the claim must never reach the
+    report, exports, or mitigation register. The merged intermediate retains
+    the verdict for audit, while incremental reconciliation records a prior
+    finding as resolved in the changelog when applicable.
     Returns (threats, warnings).
     """
     floor_rank = _SEVERITY_FLOOR_RANK.get((register_floor or "medium").strip().lower(), 2)
@@ -823,6 +830,7 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
     warnings: list[str] = []
     skipped_stubs = 0
     skipped_below_floor = 0
+    skipped_refuted = 0
     for t in merged.get("threats", []):
         threat = dict(t)
         threat["id"] = threat.pop("t_id", threat.get("id"))
@@ -838,6 +846,9 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
         ).lower() == "info"
         if not threat.get("id") or is_info_stub:
             skipped_stubs += 1
+            continue
+        if (threat.get("evidence_check") or "").strip().lower() == "refuted":
+            skipped_refuted += 1
             continue
         # Severity-floor filter. Mirror the composer's effective_severity →
         # risk → severity precedence so the dropped set matches the rendered
@@ -875,6 +886,8 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
         warnings.append(
             f"threats: {skipped_below_floor} below severity floor ({(register_floor or 'medium').lower()}) dropped from register"
         )
+    if skipped_refuted:
+        warnings.append(f"threats: {skipped_refuted} evidence-refuted candidate(s) excluded from active model")
     return out, warnings
 
 
