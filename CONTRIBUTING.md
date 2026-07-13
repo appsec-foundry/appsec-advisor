@@ -100,7 +100,7 @@ For renderer or report-structure changes, also run:
 ```bash
 pytest tests/test_compose_threat_model.py
 pytest tests/test_render_properties.py
-pytest tests/test_reference_parity.py
+pytest tests/test_final_render_guards.py
 pytest tests/test_sarif_validation.py
 ```
 

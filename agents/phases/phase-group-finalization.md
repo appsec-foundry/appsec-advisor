@@ -599,7 +599,7 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
    - **MUST emit a `STEP_START` log line per repair iteration** (single Bash echo to `.agent-run.log` with the iteration counter and the listed fragment path). This keeps the API stream alive during the fix attempt and gives downstream diagnostics a trail. Without this, multi-minute silent edits trigger Anthropic's no-output-token timeout (the 2026-05-01 stream-kill root cause).
    - **MUST stop after 3 attempts per fragment** (compose `RC=4` indicates the per-fragment budget is exhausted). Do NOT retry a 4th time — escalate to the skill-level Re-Render Loop per the exit-code contract below.
 
-   **Forbidden in repair-iteration mode:** opening `ms-verdict.json` to "improve wording" while the actual repair plan flagged a different fragment. The repair plan's `fragments_to_rewrite` is the **only** thing you may edit until compose succeeds. Drift from this rule is a release-blocking violation flagged by `tests/test_pre_render_repair_scope.py` (drift-guard).
+   **Forbidden in repair-iteration mode:** opening `ms-verdict.json` to "improve wording" while the actual repair plan flagged a different fragment. The repair plan's `fragments_to_rewrite` is the **only** thing you may edit until compose succeeds. `tests/test_pre_render_repair_scope.py` protects this binding-whitelist instruction against prompt drift.
 
    **Exit-code contract:**
    - `0` → render succeeded, plan file is auto-deleted.
