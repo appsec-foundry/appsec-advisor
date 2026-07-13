@@ -50,8 +50,17 @@ DEFAULT_CATALOG_REL = Path("data") / "mass-assignment-signatures.yaml"
 
 # Directories never worth reading (build output, deps, tests live elsewhere).
 _EXCLUDE_DIRS = {
-    ".git", "node_modules", "target", "build", "out", "dist", "bin",
-    ".gradle", ".idea", ".mvn", "__pycache__",
+    ".git",
+    "node_modules",
+    "target",
+    "build",
+    "out",
+    "dist",
+    "bin",
+    ".gradle",
+    ".idea",
+    ".mvn",
+    "__pycache__",
 }
 # Path fragments that mark test / generated sources — excluded even mid-tree.
 _EXCLUDE_FRAGMENTS = ("/test/", "/tests/", "/generated/")
@@ -218,7 +227,7 @@ def discover_entities(file_rel: str, text: str, cat: Catalog) -> list[Entity]:
             continue
         # Suppressor check: any field-suppressor annotation in the 3 lines above.
         line_idx = text.count("\n", 0, fm.start())
-        window = "\n".join(lines[max(0, line_idx - 3):line_idx + 1])
+        window = "\n".join(lines[max(0, line_idx - 3) : line_idx + 1])
         if any(sup.search(window) for sup in cat.field_suppressors):
             continue
         priv_fields.append(field_name)
@@ -265,7 +274,7 @@ def find_sinks(
     cm = _CLASS_RE.search(text)
     if cm:
         class_idx = text.count("\n", 0, cm.start())
-        class_guard_block = "\n".join(lines[max(0, class_idx - 5):class_idx + 1])
+        class_guard_block = "\n".join(lines[max(0, class_idx - 5) : class_idx + 1])
 
     findings: list[Finding] = []
     for m in cat.bind.finditer(text):
@@ -274,7 +283,7 @@ def find_sinks(
         if entity is None:
             continue  # binding a non-entity DTO is the safe pattern — skip
         line_idx = text.count("\n", 0, m.start())
-        back = "\n".join(lines[max(0, line_idx - _BIND_BACK_WINDOW):line_idx + 1])
+        back = "\n".join(lines[max(0, line_idx - _BIND_BACK_WINDOW) : line_idx + 1])
         if not cat.write_mapping.search(back):
             continue  # a bind without a write-mapping is not a state-changing sink
 
@@ -290,11 +299,9 @@ def find_sinks(
 
         fields = ", ".join(entity.fields)
         harm = (
-            "set privileged field(s) they must not control (mass assignment / "
-            "self-promotion)"
+            "set privileged field(s) they must not control (mass assignment / self-promotion)"
             if entity.has_vertical
-            else "overwrite ownership / tenant / financial field(s) on the record "
-            "(horizontal authorization tampering)"
+            else "overwrite ownership / tenant / financial field(s) on the record (horizontal authorization tampering)"
         )
         guard_note = (
             " An authorization guard restricts the endpoint to admins, so this is "
@@ -397,7 +404,9 @@ def _discover_plugin_root() -> Path | None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Entity-aware two-pass mass-assignment scanner (Java/Spring)")
     ap.add_argument("--repo-root", type=Path, required=True, help="Repository to scan")
-    ap.add_argument("--output-dir", type=Path, help="Output dir for .mass-assignment-findings.json (omit with --dry-run)")
+    ap.add_argument(
+        "--output-dir", type=Path, help="Output dir for .mass-assignment-findings.json (omit with --dry-run)"
+    )
     ap.add_argument("--catalog", type=Path, help="Override signatures YAML path")
     ap.add_argument("--dry-run", action="store_true", help="Print findings to stdout, do NOT write sidecar")
     ap.add_argument("--quiet", action="store_true", help="Suppress summary line")

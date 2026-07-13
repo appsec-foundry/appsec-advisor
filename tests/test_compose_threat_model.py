@@ -4577,10 +4577,7 @@ def test_codify_keeps_real_code_tokens() -> None:
 def test_codify_folds_sql_string_literal_into_one_span() -> None:
     """A code-signal quoted literal is wrapped whole, so a column ref inside a
     SQL query is never half-backticked (the F-006 garble)."""
-    raw = (
-        "constructs a query: 'select o.* from orders o join users u on "
-        "o.owner_id = u.id where u.email = ' + email"
-    )
+    raw = "constructs a query: 'select o.* from orders o join users u on o.owner_id = u.id where u.email = ' + email"
     out = compose._codify_inline_identifiers(raw)
     assert "`o.owner_id`" not in out, f"mid-string column ref garbled: {out!r}"
     assert "`'select o.* from orders" in out, f"SQL literal not folded: {out!r}"
@@ -4625,10 +4622,7 @@ def test_sql_literal_survives_cctld_escape_pass() -> None:
     """Regression: `_escape_dot_tld_identifiers` treats `u.id` as the `.id`
     ccTLD and backticks it mid-string; folding the literal FIRST protects it so
     the query is never half-backticked (`on `o.owner_id` = `u.id``)."""
-    line = (
-        "concatenation: 'select o.* from orders o join users u on "
-        "o.owner_id = u.id where u.email = x' extracts rows"
-    )
+    line = "concatenation: 'select o.* from orders o join users u on o.owner_id = u.id where u.email = x' extracts rows"
     folded = compose._fold_code_strings_in_prose(line)
     out = compose._escape_dot_tld_identifiers(folded)
     out = compose._codify_inline_code_in_prose(out)

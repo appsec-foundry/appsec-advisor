@@ -142,11 +142,7 @@ def test_read_only_get_handler_not_flagged(tmp_path: Path) -> None:
 
 
 def test_is_admin_variant_flagged(tmp_path: Path) -> None:
-    entity = (
-        "@Entity\npublic class Account {\n"
-        "    private String name;\n"
-        "    private boolean isAdmin;\n}\n"
-    )
+    entity = "@Entity\npublic class Account {\n    private String name;\n    private boolean isAdmin;\n}\n"
     ctrl = _CONTROLLER.replace("AppUser", "Account")
     _write(tmp_path, "Account.java", entity)
     _write(tmp_path, "AccountController.java", ctrl)
@@ -161,7 +157,7 @@ def test_is_admin_variant_flagged(tmp_path: Path) -> None:
 def test_method_level_admin_guard_downgrades(tmp_path: Path) -> None:
     ctrl = _CONTROLLER.replace(
         '    @PutMapping("/me")',
-        '    @PostMapping\n    @PreAuthorize("hasRole(\'ADMIN\')")',
+        "    @PostMapping\n    @PreAuthorize(\"hasRole('ADMIN')\")",
     )
     _write(tmp_path, "AppUser.java", _ENTITY)
     _write(tmp_path, "AdminUserController.java", ctrl)
@@ -176,7 +172,7 @@ def test_method_level_admin_guard_downgrades(tmp_path: Path) -> None:
 def test_class_level_admin_guard_downgrades(tmp_path: Path) -> None:
     ctrl = _CONTROLLER.replace(
         "public class ProfileController {",
-        '@PreAuthorize("hasRole(\'ADMIN\')")\npublic class ProfileController {',
+        "@PreAuthorize(\"hasRole('ADMIN')\")\npublic class ProfileController {",
     )
     _write(tmp_path, "AppUser.java", _ENTITY)
     _write(tmp_path, "ProfileController.java", ctrl)
@@ -215,14 +211,10 @@ def test_ownership_field_binding_is_medium(tmp_path: Path) -> None:
 
 
 def test_ownership_field_admin_guarded_is_low(tmp_path: Path) -> None:
-    entity = (
-        "@Entity\npublic class CustomerOrder {\n"
-        "    private Long id;\n"
-        "    private String owner;\n}\n"
-    )
+    entity = "@Entity\npublic class CustomerOrder {\n    private Long id;\n    private String owner;\n}\n"
     ctrl = _CONTROLLER.replace("AppUser", "CustomerOrder").replace(
         '    @PutMapping("/me")',
-        '    @PostMapping\n    @PreAuthorize("hasRole(\'ADMIN\')")',
+        "    @PostMapping\n    @PreAuthorize(\"hasRole('ADMIN')\")",
     )
     _write(tmp_path, "CustomerOrder.java", entity)
     _write(tmp_path, "OrderController.java", ctrl)
@@ -234,11 +226,7 @@ def test_ownership_field_admin_guarded_is_low(tmp_path: Path) -> None:
 def test_vertical_field_wins_severity_over_ownership(tmp_path: Path) -> None:
     # An entity carrying BOTH a vertical (role) and an ownership (owner) field
     # is High (vertical dominates), not Medium.
-    entity = (
-        "@Entity\npublic class AppUser {\n"
-        "    private String owner;\n"
-        "    private String role;\n}\n"
-    )
+    entity = "@Entity\npublic class AppUser {\n    private String owner;\n    private String role;\n}\n"
     _write(tmp_path, "AppUser.java", entity)
     _write(tmp_path, "ProfileController.java", _CONTROLLER)
     findings = _scan(tmp_path)
@@ -250,9 +238,7 @@ def test_vertical_field_wins_severity_over_ownership(tmp_path: Path) -> None:
 
 
 def test_model_attribute_binding_flagged(tmp_path: Path) -> None:
-    ctrl = _CONTROLLER.replace("@RequestBody AppUser", "@ModelAttribute AppUser").replace(
-        "@PutMapping", "@PostMapping"
-    )
+    ctrl = _CONTROLLER.replace("@RequestBody AppUser", "@ModelAttribute AppUser").replace("@PutMapping", "@PostMapping")
     _write(tmp_path, "AppUser.java", _ENTITY)
     _write(tmp_path, "ProfileController.java", ctrl)
     assert len(_scan(tmp_path)) == 1

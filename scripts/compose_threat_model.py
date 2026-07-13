@@ -13585,13 +13585,9 @@ _BRAND_RISK_EXT = frozenset({"js", "jsx", "mjs", "cjs"})
 # `socket.io`, `engine.io`, `evil.com`, `foo.dev`. A real API call ends in a
 # method name (`socket.emit`, `restTemplate.getForObject`) whose last segment
 # is none of these.
-_DOTTED_NONCODE_SUFFIX = frozenset(
-    {"io", "js", "net", "org", "com", "dev", "ai", "co", "gg", "app", "xyz"}
-)
+_DOTTED_NONCODE_SUFFIX = frozenset({"io", "js", "net", "org", "com", "dev", "ai", "co", "gg", "app", "xyz"})
 # …unless a known code head precedes it (defensive; `req.io` etc. are code).
-_DOTTED_CODE_HEADS = frozenset(
-    {"req", "res", "ctx", "this", "self", "process", "window", "document", "console"}
-)
+_DOTTED_CODE_HEADS = frozenset({"req", "res", "ctx", "this", "self", "process", "window", "document", "console"})
 
 
 def _file_token_is_product_name(token: str) -> bool:
@@ -13638,9 +13634,7 @@ _SQL_KW_RE = re.compile(
 )
 # Escape-aware so a Java/JS literal ending in a backslash-escaped quote
 # (`'… = \''`) is captured whole instead of cut at the inner `\'`.
-_CODE_STRING_RE = re.compile(
-    r"(?<!`)('(?:[^'\n`\\]|\\.){6,240}'|\"(?:[^\"\n`\\]|\\.){6,240}\")(?!`)"
-)
+_CODE_STRING_RE = re.compile(r"(?<!`)('(?:[^'\n`\\]|\\.){6,240}'|\"(?:[^\"\n`\\]|\\.){6,240}\")(?!`)")
 
 
 def _string_literal_is_code(inner: str) -> bool:
@@ -13742,9 +13736,7 @@ def _code_token_is_embedded(seg: str, ms: int, me: int) -> bool:
     return False
 
 
-def _sub_outside_spans(
-    pattern: re.Pattern[str], s: str, reject: Callable[[str], bool] | None = None
-) -> str:
+def _sub_outside_spans(pattern: re.Pattern[str], s: str, reject: Callable[[str], bool] | None = None) -> str:
     """Wrap `pattern` group(1) in backticks, but ONLY in the parts of `s`
     that are not already inside a backtick span / link target / HTML tag /
     entity. Prevents a later code matcher from re-wrapping a token inside a
@@ -13829,9 +13821,7 @@ def _codify_inline_identifiers(text: str) -> str:
         run = _sub_outside_spans(_CODE_FILE_RE, run, reject=_file_token_is_product_name)
         run = _sub_outside_spans(_CODE_CALL_RE, run)
         run = _sub_outside_spans(_CODE_BARE_CALL_RE, run)
-        run = _sub_outside_spans(
-            _CODE_DOTTED_RE, run, reject=lambda t: not _dotted_token_is_code(t)
-        )
+        run = _sub_outside_spans(_CODE_DOTTED_RE, run, reject=lambda t: not _dotted_token_is_code(t))
         run = _sub_outside_spans(_CODE_ENV_RE, run)
         out_parts.append(run)
     # Final pass: absorb un-backticked code that FLANKS an inline span the
