@@ -218,6 +218,29 @@ def test_refuted_keystone_not_elevated() -> None:
     assert any("elevated:keystone" in r for r in reasons2)
 
 
+def test_ambiguous_keystone_not_elevated() -> None:
+    """RC.P2a: an *ambiguous* verdict (evidence pointer could not be confirmed
+    against real code — e.g. it lands on a package/import line) must be treated
+    like refuted for chain elevation: no promotion, raw risk preserved.
+    """
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+
+    caps = {"contributor_cap": {"default": "High"}}
+    criteria = {"never_individual_critical": [], "always_critical_cwes": [], "conditional_critical": {}}
+
+    ambiguous = {"risk": "High", "evidence_check": "ambiguous", "primary_cwe": "CWE-89"}
+    eff, reasons = tcr._compute_effective(ambiguous, "keystone", 4, caps, criteria, 2)
+    assert eff == "High", f"ambiguous keystone must not elevate; got {eff}"
+    assert any("suppressed:evidence_ambiguous" in r for r in reasons)
+
+    # Contributor role: an ambiguous finding is not elevated by the chain either.
+    amb_contrib = {"risk": "Medium", "evidence_check": "ambiguous", "primary_cwe": "CWE-89"}
+    eff_c, reasons_c = tcr._compute_effective(amb_contrib, "contributor", 4, caps, criteria, 2)
+    assert eff_c == "Medium"
+    assert any("suppressed:evidence_ambiguous(contributor)" in r for r in reasons_c)
+
+
 def test_always_critical_cwe_promotes_under_context() -> None:
     """always_critical_cwes must PROMOTE an under-scored finding to Critical
     when the required context holds — e.g. a CWE-915 mass assignment reaching

@@ -2610,6 +2610,8 @@ def _weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | No
         for t in (yaml_data.get("threats") or [])
         if (t.get("evidence_tier") or "confirmed-exploitable") != "insecure-practice"
         and (t.get("source") or "").strip() not in _design_src
+        # RC.P2a: unverifiable/refuted evidence is not "confirmed-exploitable".
+        and (t.get("evidence_check") or "").strip() not in ("ambiguous", "refuted")
     )
     implementation = sum(1 for w in weaknesses if w.get("kind") == "implementation")
     design = sum(1 for w in weaknesses if w.get("kind") == "design")

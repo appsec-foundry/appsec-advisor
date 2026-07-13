@@ -70,6 +70,21 @@ def test_unfolded_confirmed_threat_counts_but_folded_not_double() -> None:
     assert rows["InputValidation"]["confirmed_instances"] == 2
 
 
+def test_unverified_evidence_not_counted_as_confirmed() -> None:
+    # RC.P2a: ambiguous/refuted evidence pointers are not confirmed instances,
+    # so they must not drive a principle to VIOLATED on confirmed grounds. Only
+    # the verified threat counts.
+    yd = {
+        "threats": [
+            {"id": "T-01", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable", "evidence_check": "verified"},
+            {"id": "T-02", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable", "evidence_check": "ambiguous"},
+            {"id": "T-03", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable", "evidence_check": "refuted"},
+        ],
+    }
+    rows = {r["theme"]: r for r in bpv.build_posture_verdict(yd)}
+    assert rows["InputValidation"]["confirmed_instances"] == 1
+
+
 def test_rows_sorted_worst_first() -> None:
     yd = {
         "weaknesses": [

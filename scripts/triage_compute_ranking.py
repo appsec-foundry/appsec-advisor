@@ -439,22 +439,30 @@ def _compute_effective(
     # finding's effective severity above raw. Suppression is opt-in via
     # the evidence-verifier's verdict; absent/unchecked findings behave
     # identically to pre-M2.
-    evidence_refuted = t.get("evidence_check") == "refuted"
+    # RC.P2a (2026-07): an *ambiguous* verdict — the evidence pointer could not
+    # be confirmed against real code (e.g. it lands on a package/import line, is
+    # out of range, or is an unverified inferred anchor) — is treated like
+    # refuted for chain elevation: an unverifiable finding must not be pulled up
+    # to Critical/High by a chain it only nominally belongs to. Consistent with
+    # the "never downgrade raw auditor risk" policy above — raw severity is still
+    # preserved; only the chain-elevation is suppressed.
+    evidence_state = t.get("evidence_check")
+    evidence_unverified = evidence_state in ("refuted", "ambiguous")
 
     # Chain elevation by role
-    if chain_role == "keystone" and chain_severity > eff and not evidence_refuted:
+    if chain_role == "keystone" and chain_severity > eff and not evidence_unverified:
         eff = chain_severity
         reasons.append(f"elevated:keystone({_sev_label(chain_severity)})")
-    elif chain_role == "keystone" and chain_severity > eff and evidence_refuted:
-        reasons.append("suppressed:evidence_refuted(keystone)")
-    elif chain_role == "contributor" and not evidence_refuted:
+    elif chain_role == "keystone" and chain_severity > eff and evidence_unverified:
+        reasons.append(f"suppressed:evidence_{evidence_state}(keystone)")
+    elif chain_role == "contributor" and not evidence_unverified:
         contributor_cap = _sev_rank((caps.get("contributor_cap") or {}).get("default", "High"))
         target = max(eff, min(chain_severity, contributor_cap))
         if target > eff:
             eff = target
             reasons.append(f"elevated:contributor_cap({_sev_label(target)})")
-    elif chain_role == "contributor" and evidence_refuted:
-        reasons.append("suppressed:evidence_refuted(contributor)")
+    elif chain_role == "contributor" and evidence_unverified:
+        reasons.append(f"suppressed:evidence_{evidence_state}(contributor)")
 
     # Per-CWE cap
     cwe = _finding_cwe(t)

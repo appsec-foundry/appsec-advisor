@@ -131,6 +131,11 @@ def build_posture_verdict(yaml_data: dict, rubric: dict | None = None) -> list[d
             continue
         if (t.get("evidence_tier") or "confirmed-exploitable") == "insecure-practice":
             continue
+        # RC.P2a: an unverifiable (ambiguous) or refuted evidence pointer is not a
+        # *confirmed* instance — it must not drive a principle to VIOLATED on
+        # confirmed grounds. Raw severity is untouched; it can still count as WEAK.
+        if (t.get("evidence_check") or "").strip() in ("ambiguous", "refuted"):
+            continue
         tid = (t.get("id") or t.get("t_id") or "").strip().upper()
         if tid and tid in folded_ids:
             continue  # already counted via its weakness's instances[]
