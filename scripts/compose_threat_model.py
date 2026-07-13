@@ -59,7 +59,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import _safe_cond
 import jinja2
@@ -9824,6 +9824,11 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # mode and blow up on the next `#` inside `](#t-NNN)`. Runs last so the
     # linkify passes above see the raw text first.
     md = _escape_dollar_operators(md)
+    # Fold whole code-signal string literals (SQL queries, concatenated
+    # expressions) into one span BEFORE the ccTLD escape, so a column ref like
+    # `u.id` is not mistaken for the `.id` ccTLD and backticked mid-string
+    # (which would half-backtick the query — see _fold_code_strings_in_prose).
+    md = _fold_code_strings_in_prose(md)
     md = _escape_dot_tld_identifiers(md)
     # `_escape_html_payloads_in_prose` is intentionally NOT called here —
     # markdown fragments are only one of several section types and the
@@ -11796,6 +11801,33 @@ def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
     return "".join(out_chunks)
 
 
+def _fold_code_strings_in_prose(md: str) -> str:
+    """Fold a whole code-signal quoted string literal (a SQL query, a
+    concatenated expression) into ONE backtick span, across all prose.
+
+    Runs BEFORE ``_escape_dot_tld_identifiers`` so that pass — which would
+    otherwise mistake a column ref like ``u.id`` for the Indonesia ``.id``
+    ccTLD and backtick it mid-string — sees the literal as an already-masked
+    span and leaves its interior alone. Without this, the stray inner backtick
+    then defeats the whole-literal fold and the per-token matchers half-backtick
+    the query (``on `o.owner_id` = `u.id` where `u.email` = …``). Skips fenced
+    blocks and heading lines; idempotent."""
+    if not md:
+        return md
+    out_chunks: list[str] = []
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL):
+        if chunk.startswith("```"):
+            out_chunks.append(chunk)
+            continue
+        lines = chunk.split("\n")
+        for i, line in enumerate(lines):
+            if re.match(r"^\s{0,3}#{1,6}\s", line):
+                continue  # heading
+            lines[i] = _wrap_code_string_literals(line)
+        out_chunks.append("\n".join(lines))
+    return "".join(out_chunks)
+
+
 def _codify_inline_code_in_prose(md: str) -> str:
     """Backtick un-marked inline code (member access, calls, dotted refs, file
     paths, UPPER_SNAKE env/secret names) across ALL prose — the §3 walkthrough
@@ -13518,6 +13550,101 @@ _CODE_DOTTED_RE = re.compile(
 _CODE_ENV_RE = re.compile(r"(?<![`\w.])([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?![`\w])")
 
 
+# --- Fail-closed guards for the two AMBIGUOUS matchers -------------------
+# `_CODE_FILE_RE` (`Stem.js`) and `_CODE_DOTTED_RE` (`word.word`) match token
+# *shapes* that also occur in product names (`Node.js`, `socket.io`,
+# `Fastify.js`) and prose abbreviations (`e.g`, `i.e`). Wrapping those in
+# backticks reads as a spurious code reference. The old defence subtracted a
+# hand-maintained brand allowlist (`_DOT_TLD_KNOWN_NAMES`) — fail-open: any
+# un-listed library (`engine.io`, `Fastify.js`) leaked. Instead require
+# POSITIVE evidence the token is real code before wrapping; unknown-but-code-
+# shaped prose stays prose.
+#
+# JS-ecosystem extensions whose `Stem.ext` form collides with library naming.
+# `.ts`/`.tsx` are deliberately EXCLUDED — a bare Capitalised `App.tsx` is far
+# more likely a real component file than a product name, and TS-named brands
+# are rare. Brands overwhelmingly use `.js`.
+_BRAND_RISK_EXT = frozenset({"js", "jsx", "mjs", "cjs"})
+# Dotted-token last-segments that mark a PRODUCT / DOMAIN, not a method call:
+# `socket.io`, `engine.io`, `evil.com`, `foo.dev`. A real API call ends in a
+# method name (`socket.emit`, `restTemplate.getForObject`) whose last segment
+# is none of these.
+_DOTTED_NONCODE_SUFFIX = frozenset(
+    {"io", "js", "net", "org", "com", "dev", "ai", "co", "gg", "app", "xyz"}
+)
+# …unless a known code head precedes it (defensive; `req.io` etc. are code).
+_DOTTED_CODE_HEADS = frozenset(
+    {"req", "res", "ctx", "this", "self", "process", "window", "document", "console"}
+)
+
+
+def _file_token_is_product_name(token: str) -> bool:
+    """True when a ``_CODE_FILE_RE`` match is almost certainly a product name,
+    not a file reference: a JS-ecosystem extension on a single Capitalised
+    stem, with no path separator and no ``:line`` locator. Real file references
+    in these reports carry a path (``routes/login.ts``) or a locator
+    (``OrderLookupDao.java:22``); bare ``Fastify.js`` / ``Node.js`` do not."""
+    if "/" in token or "\\" in token or ":" in token:
+        return False  # has a path or a :line -> a real reference
+    stem, _, rest = token.partition(".")
+    ext = rest.rsplit(".", 1)[-1].lower()
+    if ext not in _BRAND_RISK_EXT:
+        return False
+    # Single Capitalised word stem == product-shaped (Node, Vue, Fastify, Hapi).
+    return bool(re.fullmatch(r"[A-Z][A-Za-z0-9]*", stem))
+
+
+def _dotted_token_is_code(token: str) -> bool:
+    """False for the two dotted shapes that are NOT code: prose abbreviations
+    (``e.g``, ``i.e``, ``a.m`` — any single-letter segment) and product /
+    domain names (``socket.io``, ``engine.io``, ``evil.com`` — a product/TLD
+    last segment with no known code head). Everything else — real method calls
+    (``socket.emit``, ``restTemplate.getForObject``) and member chains
+    (``req.body.email``) — stays code."""
+    segs = token.lower().split(".")
+    if all(len(s) == 1 for s in segs):
+        return False  # abbreviation: e.g / i.e / a.m / a.k.a
+    if segs[-1] in _DOTTED_NONCODE_SUFFIX and segs[0] not in _DOTTED_CODE_HEADS:
+        return False  # product / domain: socket.io, evil.com
+    return True
+
+
+# A quoted string literal that is really CODE (a SQL query, a concatenated
+# expression) — wrap the WHOLE literal as one span so the per-token matchers
+# never reach inside it and half-backtick a column ref (`o.owner_id`) while
+# leaving the surrounding query as prose. The code-signal gate keeps ordinary
+# prose apostrophes ("the attacker's request") out: they carry no SQL keyword
+# and no `=`+operator combination.
+_SQL_KW_RE = re.compile(
+    r"\b(select|insert|update|delete|drop|union|from|where|join|values|"
+    r"create|alter|exec)\b",
+    re.I,
+)
+# Escape-aware so a Java/JS literal ending in a backslash-escaped quote
+# (`'… = \''`) is captured whole instead of cut at the inner `\'`.
+_CODE_STRING_RE = re.compile(
+    r"(?<!`)('(?:[^'\n`\\]|\\.){6,240}'|\"(?:[^\"\n`\\]|\\.){6,240}\")(?!`)"
+)
+
+
+def _string_literal_is_code(inner: str) -> bool:
+    if _SQL_KW_RE.search(inner):
+        return True
+    return "=" in inner and ("+" in inner or "(" in inner or ";" in inner)
+
+
+def _wrap_code_string_literals(text: str) -> str:
+    """Backtick a whole quoted string literal when it is unambiguously code."""
+
+    def _repl(m: re.Match[str]) -> str:
+        span = m.group(1)
+        if not _string_literal_is_code(span[1:-1]):
+            return span
+        return f"`{span}`"
+
+    return _CODE_STRING_RE.sub(_repl, text)
+
+
 _CODE_SPAN_MASK_RE = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
 
 # A finding/mitigation title carries its evidence pointer as a TRAILING
@@ -13590,16 +13717,24 @@ def _code_token_is_embedded(seg: str, ms: int, me: int) -> bool:
     return False
 
 
-def _sub_outside_spans(pattern: re.Pattern[str], s: str) -> str:
+def _sub_outside_spans(
+    pattern: re.Pattern[str], s: str, reject: Callable[[str], bool] | None = None
+) -> str:
     """Wrap `pattern` group(1) in backticks, but ONLY in the parts of `s`
     that are not already inside a backtick span / link target / HTML tag /
     entity. Prevents a later code matcher from re-wrapping a token inside a
     span an earlier matcher just created. Tokens that `_code_token_is_embedded`
-    flags as mid-expression are left untouched (no partial backticking)."""
+    flags as mid-expression are left untouched (no partial backticking).
+
+    ``reject`` is an optional fail-closed guard: when it returns True for a
+    matched token, the token is left as prose (used to keep product names and
+    prose abbreviations out of the ambiguous file / dotted matchers)."""
 
     def _wrap_seg(seg: str) -> str:
         def _repl(mm: re.Match[str]) -> str:
             if _code_token_is_embedded(seg, mm.start(1), mm.end(1)):
+                return mm.group(0)
+            if reject is not None and reject(mm.group(1)):
                 return mm.group(0)
             return f"`{mm.group(1)}`"
 
@@ -13660,8 +13795,19 @@ def _codify_inline_identifiers(text: str) -> str:
         # The outer span mask only knows about backticks present before this
         # run; spans created here must be protected too.
         run = p
-        for _rx in (_CODE_FILE_RE, _CODE_CALL_RE, _CODE_BARE_CALL_RE, _CODE_DOTTED_RE, _CODE_ENV_RE):
-            run = _sub_outside_spans(_rx, run)
+        # First fold whole code-signal string literals into one span so no
+        # per-token matcher reaches inside a SQL query / concatenated
+        # expression and half-backticks a column ref.
+        run = _wrap_code_string_literals(run)
+        # Two matchers are ambiguous and run fail-closed (positive-evidence
+        # guard); the other three shapes are unambiguously code.
+        run = _sub_outside_spans(_CODE_FILE_RE, run, reject=_file_token_is_product_name)
+        run = _sub_outside_spans(_CODE_CALL_RE, run)
+        run = _sub_outside_spans(_CODE_BARE_CALL_RE, run)
+        run = _sub_outside_spans(
+            _CODE_DOTTED_RE, run, reject=lambda t: not _dotted_token_is_code(t)
+        )
+        run = _sub_outside_spans(_CODE_ENV_RE, run)
         out_parts.append(run)
     # Final pass: absorb un-backticked code that FLANKS an inline span the
     # author only partially wrapped (e.g. `foo.forEach((x) => { `bar(x)` })`).
@@ -14336,19 +14482,14 @@ def _build_threat_card(
             _tail = f" … (+{len(_pairs) - _cap} more)" if len(_pairs) > _cap else ""
             instances_card = f"**Instances ({len(_pairs)}):** " + ", ".join(_shown) + _tail
 
-    # Root cause — systemic control failure from the attack-class taxonomy
-    # (findings of one class share it); fall back to explicit YAML root_cause.
-    root_cause = ""
-    if attack_taxonomy:
-        _cls_slug = _classify_finding_class(t, attack_taxonomy)
-        if _cls_slug:
-            _cls = next(
-                (c for c in (attack_taxonomy.get("classes") or []) if c.get("id") == _cls_slug),
-                {},
-            )
-            root_cause = " ".join((_cls.get("description") or "").split())
-    if not root_cause and root_cause_explicit:
-        root_cause = root_cause_explicit
+    # Root cause — Option 3 (2026-07-13): the attack-class taxonomy description
+    # is TIER-GENERIC — the identical sentence repeats across every finding of a
+    # class (in the reference report, 5 distinct strings across 38 findings) and
+    # carries no finding-specific information; worse, the tier bucket sometimes
+    # mismatches the finding (a plaintext-logging finding stamped with the
+    # SSRF/path-handling sentence). It is dropped. Only a finding-authored
+    # ``root_cause`` (specific by construction) survives.
+    root_cause = root_cause_explicit
     if root_cause:
         root_cause = root_cause[0].upper() + root_cause[1:]
     root_card = f"**Root cause:** {root_cause}" if root_cause else ""
@@ -14376,7 +14517,14 @@ def _build_threat_card(
     ev_parts: list[str] = []
     if ev_glyph:
         ev_parts.append(f"{ev_glyph} {ev_word}")
-    if ev_prose:
+    # Option 3 (2026-07-13): when a code snippet follows, the snippet IS the
+    # proof — restating it as a SYNTHESISED Evidence sentence (a paraphrase of
+    # Issue derived from the CWE class) only adds length, so it is dropped and
+    # only the one-line verdict glyph (a confidence signal, not redundant)
+    # remains. Operator-authored ``evidence_summary`` is intentional content and
+    # is preserved even with a snippet; findings without a snippet keep whatever
+    # prose they have, since it is then the only evidence text.
+    if ev_prose and (not snippet_block or evidence_summary_explicit):
         ev_parts.append(ev_prose)
     evidence_card = ("**Evidence:** " + " — ".join(ev_parts)) if ev_parts else ""
 
@@ -16482,6 +16630,7 @@ def render(
     # `Socket.IO` auto-linked by GFM (user report 2026-06). Idempotent — an
     # already-escaped `Socket\.IO` is not re-matched; fenced code/links/comments
     # are skipped.
+    rendered = _apply_outside_changelog(rendered, _fold_code_strings_in_prose)
     rendered = _escape_dot_tld_identifiers(rendered)
 
     # Final em-dash normalization — convert " — " (U+2014 surrounded by
@@ -16735,20 +16884,23 @@ def infer_threat_category(t: dict, taxonomy: dict[str, dict]) -> str:
       4. Full-text keyword heuristic (legacy).
       5. STRIDE → TH fallback.
     """
-    cid = t.get("threat_category_id") or t.get("category_id") or t.get("_category")
-    if cid and cid in taxonomy:
-        return cid
-    # CWE → TH deterministic lookup. Runs before keyword heuristics so a
-    # well-classified finding (e.g. CWE-321 = hardcoded crypto key) lands in
-    # TH-03 Cryptographic Failures even when its title contains words that
-    # would otherwise match an earlier keyword bucket ("authentication",
-    # "JWT key", etc.).
+    # CWE → TH deterministic lookup runs FIRST — the CWE is a precise,
+    # authoritative classification; the stored ``threat_category_id`` is a
+    # coarse LLM tag that is frequently wrong (observed: a CWE-89 SQLi tagged
+    # TH-10 OAuth/OIDC, a CWE-611 XXE tagged TH-13). When a curated CWE→TH
+    # entry exists it supersedes the stored id, so the ``**Classification:**``
+    # label + OWASP mapping stay consistent with the CWE. CWE-321 (hardcoded
+    # crypto key) → TH-03 regardless of how the title is worded.
     cwe_norm = _normalize_cwe(t.get("cwe") or t.get("cwe_id"))
     if cwe_norm:
         cwe_map = _build_cwe_to_th_map()
         mapped = cwe_map.get(cwe_norm)
         if mapped and (not taxonomy or mapped in taxonomy):
             return mapped
+    # Stored category id — trusted only when the CWE is absent or unmapped.
+    cid = t.get("threat_category_id") or t.get("category_id") or t.get("_category")
+    if cid and cid in taxonomy:
+        return cid
     # Title-first pass: match against the short title only to avoid spurious
     # category assignments caused by attack-vector references in the description
     # (e.g. "…exploitable via sql injection" in a crypto-failure finding).

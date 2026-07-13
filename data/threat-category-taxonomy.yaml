@@ -437,6 +437,7 @@ categories:
 
 cwe_to_th:
   CWE-79: [TH-11, TH-01]         # XSS -> primary XSS, secondary Injection
+  CWE-116: [TH-11, TH-01]        # Improper Output Encoding/Escaping -> XSS primary
   CWE-89: [TH-01]                # SQL Injection
   CWE-94: [TH-05, TH-01]         # Code Injection -> RCE primary, Injection secondary
   CWE-502: [TH-05]               # Deserialization

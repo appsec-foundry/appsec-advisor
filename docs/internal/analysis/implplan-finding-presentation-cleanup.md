@@ -1,6 +1,8 @@
 # Implementation plan — finding presentation cleanup (formatting + verbosity)
 
-**Status:** ready to implement in a clean session
+**Status:** PARTIALLY IMPLEMENTED 2026-07-13 (uncommitted, `dev`). See
+"Implementation record" at the bottom — the code-formatting root cause was
+mis-located in §C and is corrected there; C/D landed, A/B still open.
 **Owner:** TBD
 **Prereqs read:** self-contained; no prior session context needed.
 
@@ -173,3 +175,48 @@ same low-risk vein as the P2a triage/render fixes already on `dev`.
 - Severity depth knobs: `compose_threat_model.py:13235` (`_FINDING_DEPTH`).
 - Prose fixer: `scripts/apply_prose_fixes.py`.
 - Reference model + baseline counts: this file, §0.
+
+---
+
+## Implementation record (2026-07-13, uncommitted on `dev`)
+
+Verified the plan against code + the reference report first; two §C/§D
+fundstellen were wrong and are corrected here.
+
+**Done — "code not shown as code" (broader than §C):** the garbled/over-eager
+inline formatting is **not** in `apply_prose_fixes.py` — it is
+`_codify_inline_identifiers` (`compose_threat_model.py:13620`). Reworked its two
+ambiguous matchers from *fail-open* (wrap everything, subtract a brand allowlist)
+to *fail-closed* (wrap only on positive code evidence):
+- `_file_token_is_product_name` — bare `Node.js`/`Fastify.js`/`Koa.js` (JS-ext,
+  Capitalised stem, no path/`:line`) are product names → not wrapped. Real file
+  refs (`routes/login.ts:34`) still wrap.
+- `_dotted_token_is_code` — `socket.io`/`engine.io`/`evil.com` (product/TLD
+  suffix) and `e.g`/`i.e` (all-single-letter) → prose. Method calls
+  (`socket.emit`, `restTemplate.getForObject`) and member chains still wrap.
+- `_wrap_code_string_literals` + `_fold_code_strings_in_prose` — a code-signal
+  quoted literal (SQL query, concat expr) is folded into ONE span **before**
+  `_escape_dot_tld_identifiers`, so a column ref like `u.id` is never mistaken
+  for the `.id` ccTLD and half-backticked mid-query. Killed the F-006
+  ``on `o.owner_id` = `u.id` where `u.email` `` garble in both §8 and §3.
+
+Reference re-render deltas: `e.g` false-backticks 27→0, half-backticked column
+refs 2→0.
+
+**Done — §D verbosity (Option 3) + two taxonomy bugs the plan missed:**
+- Dropped the tier-generic `**Root cause:**` (23→0 in the reference; it was 5
+  distinct strings across 38 findings, sometimes topically wrong). Only a
+  finding-authored `root_cause` survives.
+- Dropped the *synthesised* `**Evidence:**` restatement when a snippet follows
+  (snippet is the proof); operator-authored `evidence_summary` preserved.
+- **Classification/OWASP taxonomy fix** (`infer_threat_category`): the curated
+  CWE→TH map is now authoritative over the noisy stored `threat_category_id`
+  (was: stored short-circuits). Fixes F-006 SQLi `OAuth/OIDC·A07 → Injection·A03`
+  and 12 other mislabels; added `CWE-116 → [TH-11,TH-01]` so F-031 XSS reads
+  `Cross-Site Scripting (XSS)·A03`.
+
+Tests: added codify/fold/taxonomy cases; updated two tests that pinned the old
+(buggy) behaviour. Full targeted suite green (1547 passed).
+
+**Still open:** §A (language-aware fence comment prefix — `// Dockerfile:` still
+renders) and §B (degenerate `:1` evidence lines). Both mechanical; not started.

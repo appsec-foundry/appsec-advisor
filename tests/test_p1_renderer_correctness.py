@@ -129,19 +129,30 @@ class TestCweToThMapping:
         # No `cwe` field → falls through to keyword pass → "sql injection" → TH-01.
         assert compose.infer_threat_category(threat, taxonomy) == "TH-01"
 
-    def test_explicit_threat_category_id_short_circuits_lookup(self):
-        """When the yaml carries `threat_category_id` directly, that wins
-        over both the CWE map and the keyword heuristic."""
+    def test_cwe_map_wins_over_stored_category_id(self):
+        """A curated CWE→TH mapping is authoritative and supersedes a stored
+        `threat_category_id` (2026-07-13): the stored id is a coarse LLM tag
+        that is frequently wrong (observed: CWE-89 SQLi tagged TH-10 OAuth).
+        CWE-89 maps to TH-01 Injection regardless of the stored id."""
         import yaml
 
         tax_raw = yaml.safe_load((REPO_ROOT / "data" / "threat-category-taxonomy.yaml").read_text())
         taxonomy = {c["id"]: c for c in tax_raw["categories"]}
-        # Title says SQL but explicit category says TH-03 — explicit wins.
         threat = {
-            "threat_category_id": "TH-03",
+            "threat_category_id": "TH-03",  # wrong stored tag
             "cwe": "CWE-89",
             "title": "SQL injection in login",
         }
+        assert compose.infer_threat_category(threat, taxonomy) == "TH-01"
+
+    def test_stored_category_id_used_when_cwe_absent_or_unmapped(self):
+        """The stored `threat_category_id` is still the fallback when the
+        finding carries no CWE (or an unmapped one)."""
+        import yaml
+
+        tax_raw = yaml.safe_load((REPO_ROOT / "data" / "threat-category-taxonomy.yaml").read_text())
+        taxonomy = {c["id"]: c for c in tax_raw["categories"]}
+        threat = {"threat_category_id": "TH-03", "title": "some finding"}
         assert compose.infer_threat_category(threat, taxonomy) == "TH-03"
 
 

@@ -4538,6 +4538,77 @@ def test_evidence_summary_codify_wraps_dotted_method_call() -> None:
     assert result.count("`") >= 2, f"dotted method call not backticked: {result!r}"
 
 
+def test_codify_skips_product_names_and_abbreviations() -> None:
+    """Fail-closed guard: product / library names and prose abbreviations must
+    NOT be backticked, even when un-listed in any brand allowlist."""
+    for token in (
+        "socket.io",
+        "engine.io",
+        "Fastify.js",
+        "Hapi.js",
+        "Koa.js",
+        "evil.com",
+    ):
+        raw = f"the {token} thing here"
+        out = compose._codify_inline_identifiers(raw)
+        assert f"`{token}`" not in out, f"product name wrongly codified: {out!r}"
+    for token in ("e.g", "i.e", "a.m"):
+        raw = f"for example {token}. and so on"
+        out = compose._codify_inline_identifiers(raw)
+        assert "`" not in out, f"abbreviation wrongly codified: {out!r}"
+
+
+def test_codify_keeps_real_code_tokens() -> None:
+    """Positive-evidence tokens still wrap: method calls, member chains, file
+    locators, env vars."""
+    for token in (
+        "socket.emit",
+        "restTemplate.getForObject",
+        "req.body.email",
+        "req.query.q",
+        "routes/login.ts:34",
+        "GITHUB_TOKEN",
+        "application.yml",
+    ):
+        out = compose._codify_inline_identifiers(f"see {token} for detail")
+        assert f"`{token}`" in out, f"real code token dropped: {out!r}"
+
+
+def test_codify_folds_sql_string_literal_into_one_span() -> None:
+    """A code-signal quoted literal is wrapped whole, so a column ref inside a
+    SQL query is never half-backticked (the F-006 garble)."""
+    raw = (
+        "constructs a query: 'select o.* from orders o join users u on "
+        "o.owner_id = u.id where u.email = ' + email"
+    )
+    out = compose._codify_inline_identifiers(raw)
+    assert "`o.owner_id`" not in out, f"mid-string column ref garbled: {out!r}"
+    assert "`'select o.* from orders" in out, f"SQL literal not folded: {out!r}"
+
+
+def test_codify_leaves_prose_apostrophes_alone() -> None:
+    """Ordinary possessive/quote apostrophes carry no code signal and must not
+    be folded into a code span."""
+    raw = "the attacker's request stole the victim's session cookie"
+    assert compose._codify_inline_identifiers(raw) == raw
+
+
+def test_sql_literal_survives_cctld_escape_pass() -> None:
+    """Regression: `_escape_dot_tld_identifiers` treats `u.id` as the `.id`
+    ccTLD and backticks it mid-string; folding the literal FIRST protects it so
+    the query is never half-backticked (`on `o.owner_id` = `u.id``)."""
+    line = (
+        "concatenation: 'select o.* from orders o join users u on "
+        "o.owner_id = u.id where u.email = x' extracts rows"
+    )
+    folded = compose._fold_code_strings_in_prose(line)
+    out = compose._escape_dot_tld_identifiers(folded)
+    out = compose._codify_inline_code_in_prose(out)
+    assert "`u.id`" not in out, f"column ref half-backticked: {out!r}"
+    assert "`o.owner_id`" not in out
+    assert "`'select o.* from orders" in out, f"SQL literal not folded: {out!r}"
+
+
 def test_section7_title_relevant_findings_titles_bare_bullet_links():
     ctx = _StubLabelCtx(
         {
