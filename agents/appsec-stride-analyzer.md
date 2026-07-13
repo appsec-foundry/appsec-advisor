@@ -366,7 +366,7 @@ followed.
 1. Look at the recon section text verbatim — it usually names the file (e.g. `frontend/src/app/oauth/oauth.component.ts`). Use that as the evidence file.
 2. Set `cwe` from the FT-*/* row above (FT-091 → CWE-598/522, FT-092 → CWE-345/287, FT-093 → CWE-522/922).
 3. Set `stride` to *Spoofing* or *Information Disclosure* (TH-10's STRIDE mapping).
-4. Title format follows the standard `<weakness class> — <file:line>` rule from `appsec-threat-analyst.md:647`.
+4. Title format follows `shared/finding-title-contract.md`: include a location only for one concrete instance. Consolidation later emits class-only titles.
 5. Cite the recon section in the scenario: *"Section 7.9 reports `<verbatim phrase>` — verified at `<file:line>`."* The architect-reviewer's Sub-Check 15.6 (added 2026-05) will flag the component if a Section 7.9/7.10 trigger pattern exists with no corresponding finding.
 
 **Why this is mandatory and not a heuristic.** The TH-10 taxonomy in

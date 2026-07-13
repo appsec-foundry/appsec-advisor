@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalise finding TITLES to ``<weakness class> — <file[:line]>``.
+"""Normalise finding TITLES to a weakness class plus a single-location suffix.
 
 Problem
 -------
@@ -16,11 +16,11 @@ and the compact xref label appends ``(file, "param")`` on top — so a cell read
 [innerHTML])")``. The title contract (``agents`` finding-title rule) is
 ``<weakness class> — <file[:line]>`` ONLY — no payloads, parameters, or code.
 
-This emitter rewrites ``threats[].title`` to that clean form: a normalised
-weakness phrase (implementation mechanism after ``via`` removed, embedded file
-tokens / parentheticals stripped) plus a single compact ``file:line`` locator.
-The full file path, parameter, and remediation detail remain available in the
-§8 card's Location / Evidence / How rows and the YAML evidence block.
+This emitter rewrites ``threats[].title`` to a normalised weakness phrase
+(implementation mechanism after ``via`` removed, embedded file tokens /
+parentheticals stripped). A single-location finding adds one compact
+``file:line`` locator; a consolidated multi-location finding stays class-only.
+Its full location set remains available in the §8 Instances row and YAML.
 
 Idempotent: the original title is stashed in ``_title_source`` and re-derived
 from it each run, so the canonical title never drifts.
@@ -92,6 +92,20 @@ def _evidence_loc(threat: dict) -> str:
     return ""
 
 
+def _has_multiple_instance_locations(threat: dict) -> bool:
+    """Whether a consolidated finding has more than one distinct location."""
+    locations: set[tuple[str, int | None]] = set()
+    for instance in threat.get("instances") or []:
+        if not isinstance(instance, dict):
+            continue
+        file = (instance.get("file") or "").strip()
+        if not file:
+            continue
+        line = instance.get("line")
+        locations.add((file, line if isinstance(line, int) and line > 0 else None))
+    return len(locations) > 1
+
+
 def clean_weakness(raw_title: str) -> str:
     """Extract the clean weakness-class phrase from a verbose finding title."""
     s = (raw_title or "").strip()
@@ -156,13 +170,17 @@ def build_clean_title(raw_title: str, threat: dict) -> str:
     # clean_weakness has already stripped any trailing file token, so an em-dash
     # remaining here is the check-name's internal "class — qualifier" separator.
     weakness = re.split(r"\s+[—–-]\s+", weakness, maxsplit=1)[0].strip()
-    # The authoritative locator is the evidence file:line (the title-embedded
-    # token is often a truncated / basename-only echo). Compact it to a basename
-    # when it is a deep path.
-    loc = _basename_loc(_evidence_loc(threat))
-    if not loc:
-        m = _FILE_TOKEN_RE.search(raw_title or "")
-        loc = _basename_loc((m.group(1) + (m.group(2) or "")) if m else "")
+    # Consolidated findings own several concrete locations. A representative
+    # path in their title looks authoritative while hiding the rest, so only a
+    # single-location finding gets the compact locator suffix.
+    loc = ""
+    if not _has_multiple_instance_locations(threat):
+        # The authoritative locator is the evidence file:line (the
+        # title-embedded token is often a truncated / basename-only echo).
+        loc = _basename_loc(_evidence_loc(threat))
+        if not loc:
+            m = _FILE_TOKEN_RE.search(raw_title or "")
+            loc = _basename_loc((m.group(1) + (m.group(2) or "")) if m else "")
     # Hard length enforcement: a weakness class that is still too long (verbose
     # check name with no em-dash to split on) is truncated on a word boundary so
     # the rendered "<weakness> — <loc>" fits the schema's 80-char ceiling.

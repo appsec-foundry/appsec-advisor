@@ -100,6 +100,19 @@ def test_fallback_uses_embedded_file_when_evidence_has_no_file():
     assert ecf.build_clean_title(t["title"], t) == "Open redirect — routes/redirect.ts:12"
 
 
+def test_consolidated_finding_omits_representative_location_from_title():
+    t = _t(
+        "Insecure Direct Object Reference (routes/address.ts:11)",
+        file="routes/address.ts",
+        line=11,
+        instances=[
+            {"file": "routes/address.ts", "line": 11},
+            {"file": "routes/order.ts", "line": 148},
+        ],
+    )
+    assert ecf.build_clean_title(t["title"], t) == "Insecure Direct Object Reference"
+
+
 def test_source_auth_class_qualifier_name_keeps_class_only():
     # Source-auth scanner check names arrive as "Class — qualifier clause" with
     # their own em-dash; the title must carry only the weakness class.

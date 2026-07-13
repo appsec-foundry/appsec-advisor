@@ -2623,6 +2623,8 @@ class TestInstancesCard:
         assert "Instances (2):" in card
         assert "lib/insecurity.ts:191" in card
         assert "routes/chatbot.ts:248" in card
+        assert "#### F-001 · Insecure JWT Verification" in card
+        assert "**Location:** Multiple locations (2)" in card
 
     def test_mixed_severity_shows_per_instance_dots(self, tmp_path):
         t = self._systemic_threat(

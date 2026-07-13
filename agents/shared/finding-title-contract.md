@@ -6,7 +6,8 @@ Canonical form for every threat's `title` field. Read this before authoring titl
 > The rules below are the authoring target, but Stage-1 titles drift under turn
 > pressure (verbose `via <impl>` phrasing, embedded files, crammed parameters).
 > `scripts/emit_clean_finding_titles.py` (auto-emitter pass) **normalizes every
-> title** to `<Weakness class> — <file:line>` (stored form; rendered as
+> title** to a weakness class plus a location only for one-instance findings
+> (stored form; rendered as
 > `<Weakness class> (<file>)` in cross-references, bare weakness in the §8
 > heading), stashing the original in `_title_source` (idempotent). It strips
 > `via/using/through <impl>`, parentheticals, parameters, payloads, and embedded
@@ -19,10 +20,12 @@ Canonical form for every threat's `title` field. Read this before authoring titl
 
 ## Format
 
-`<Weakness class> (<relative_file_path[:line]>)` — MAX 80 chars.
+`<Weakness class> (<relative_file_path[:line]>)` for one instance, otherwise
+`<Weakness class>` — MAX 80 chars.
 
 - **Weakness class:** short noun phrase identifying WHAT the vulnerability is. Title-case the leading word. Examples: `SQL Injection`, `Hardcoded Cryptographic Key`, `Server-Side Template Injection`, `Insecure Direct Object Reference`, `Cross-Site Scripting`.
-- **Location:** source-tree path (with optional `:line`) in PARENS, never via em-dash. Path comes from `evidence[0].file`.
+- **Location:** source-tree path (with optional `:line`) in PARENS, never via em-dash. Path comes from `evidence[0].file` when exactly one distinct instance exists.
+- **Multiple instances:** omit the path from the title. The generated §8 `Instances (N)` row is the complete location evidence.
 - **No file applies** (cross-cutting / architectural): omit parens entirely.
 
 ## Hard rules
@@ -57,10 +60,12 @@ Three further patterns are author-discipline only (no automated check rejects th
 - `JWT Algorithm Confusion (lib/insecurity.ts:54)`
 - `XXE External Entity Parsing (routes/dataExport.ts:42)`
 - `Path Traversal via Archive Extraction (routes/fileUpload.ts:88)`
+- `Insecure Direct Object Reference` (multiple locations; see `Instances`)
 
 **Bad:**
 - `SQL injection — routes/login.ts:34` (em-dash separator before file — use parens)
-- `SQL Injection` (no file, no location — too generic)
+- `SQL Injection` for a one-instance finding with source evidence (class-only
+  is valid only for consolidated multi-location or cross-cutting findings)
 - `` Reflected XSS via `bypassSecurityTrustHtml(queryParam)` `` (function-call expression in title)
 - `JWT alg:none bypass — express-jwt 0.1.3 (CVE-2020-15084)` (library@version + payload phrase + em-dash + CVE)
 - `XXE via XML file upload — libxmljs2 noent:true` (library + payload phrase)

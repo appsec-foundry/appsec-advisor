@@ -1768,14 +1768,33 @@ def _strip_trailing_locator(label: str) -> str:
     return s
 
 
+def _distinct_instance_locations(t: dict) -> list[tuple[str, int | None, str]]:
+    """Return unique consolidated locations in their producer-defined order."""
+    locations: list[tuple[str, int | None, str]] = []
+    seen: set[tuple[str, int | None]] = set()
+    for instance in t.get("instances") or []:
+        if not isinstance(instance, dict):
+            continue
+        file = (instance.get("file") or "").strip()
+        if not file:
+            continue
+        line = instance.get("line")
+        line = line if isinstance(line, int) and line > 0 else None
+        key = (file, line)
+        if key in seen:
+            continue
+        seen.add(key)
+        locations.append((file, line, (instance.get("severity") or "").strip().lower()))
+    return locations
+
+
 def _canonical_finding_title(t: dict) -> str:
-    """Return the canonical short title for a finding in `<weakness class>
-    — <file:line>` form.
+    """Return a canonical finding title with a locator only for one instance.
 
     Inputs (in priority order):
       1. ``t['cwe']`` → look up in `_CWE_CLASS_NAMES` for the class label.
       2. ``t['evidence'].file:line`` → append as the trailing `— file:line`
-         token. Falls back to no suffix when evidence missing.
+         token only when the finding has at most one distinct instance.
       3. ``t['title']`` (legacy narrative form) → used only when CWE is
          unmapped, in which case the first 5 non-stopword tokens of the
          existing title are kept as the class label so the result is
@@ -1849,7 +1868,9 @@ def _canonical_finding_title(t: dict) -> str:
     if not class_label:
         return ""
 
-    # Evidence file:line suffix.
+    # Evidence file:line suffix. Consolidated findings deliberately retain
+    # only the weakness class: §8 renders their complete location set as
+    # Instances, and a representative path in the title is misleading.
     ev = t.get("evidence") or {}
     ev_file = ""
     ev_line = None
@@ -1861,7 +1882,7 @@ def _canonical_finding_title(t: dict) -> str:
         ev_file = (first.get("file") or "").strip()
         ev_line = first.get("line")
 
-    if ev_file:
+    if ev_file and len(_distinct_instance_locations(t)) <= 1:
         loc = f"{ev_file}:{ev_line}" if ev_line else ev_file
         return f"{class_label} — `{loc}`"
     return class_label
@@ -14440,8 +14461,9 @@ def _build_threat_card(
     visible_id = f"F-{digits}" if digits else tid
     anchors = f'<a id="{tid.lower()}"></a>' + (f'<a id="f-{digits}"></a>' if digits else "")
 
-    # Heading title = canonical class label without the trailing "— file:line"
-    # (the file lives in the Location field); strike-through when refuted.
+    # Heading title = canonical class label without a single-location suffix
+    # (multi-instance findings already have no suffix); strike-through when
+    # refuted.
     head_title = re.sub(r"\s+—\s+\S.*$", "", raw_title).strip() or raw_title
     if ec == "refuted":
         head_title = f"~~{head_title}~~ ⚠"
@@ -14461,48 +14483,40 @@ def _build_threat_card(
     if (t.get("impact") or "").strip().lower() == "critical" and sev != "critical":
         sev_disp += " _(raw Critical)_"
     comp_part = component_line[len("**Component:** ") :] if component_line.startswith("**Component:** ") else "—"
-    # Keep file AND line inside ONE code span (`lib/insecurity.ts:58`) — the
-    # earlier form ``` `file`:line ``` left the line number bare outside the
-    # backticks (user report 2026-06-12). Mirrors the `loc` construction at
-    # _strip/_synthesise_evidence_summary which already span the whole token.
-    loc_part = (f"`{ev_file}" + (f":{ev_line}" if ev_line else "") + "`") if ev_file else "—"
+    # A consolidated finding has no canonical representative location. Its
+    # Instances row below is the complete location evidence; naming the first
+    # evidence hit here duplicates and over-emphasises it.
+    _instance_pairs = _distinct_instance_locations(t)
+    if len(_instance_pairs) > 1:
+        loc_part = f"Multiple locations ({len(_instance_pairs)})"
+    else:
+        # Keep file AND line inside ONE code span (`lib/insecurity.ts:58`) — the
+        # earlier form ``` `file`:line ``` left the line number bare outside the
+        # backticks (user report 2026-06-12).
+        loc_part = (f"`{ev_file}" + (f":{ev_line}" if ev_line else "") + "`") if ev_file else "—"
     meta_line = f"**Severity:** {sev_disp}  ·  **Component:** {comp_part}  ·  **Location:** {loc_part}"
 
     # Instances — for a systemic finding consolidated from N per-file / per-stage
     # hits of one config check (see merge_threats._consolidate_config_checks),
     # surface every hit so the single card still names all affected locations.
-    # The Location meta-line above shows the representative hit; this line lists
-    # the full set (capped, with a "+N more" tail to keep the card compact).
     instances_card = ""
-    _instances = t.get("instances") or []
-    if isinstance(_instances, list) and len(_instances) > 1:
-        _locs: list[str] = []
-        _sevs: list[str] = []
-        for _ins in _instances:
-            if not isinstance(_ins, dict):
-                continue
-            _f = (_ins.get("file") or "").strip()
-            if not _f:
-                continue
-            _ln = _ins.get("line")
-            _locs.append(f"`{_f}:{_ln}`" if isinstance(_ln, int) and _ln > 0 else f"`{_f}`")
-            _sevs.append((_ins.get("severity") or "").strip().lower())
-        # Deduplicate while preserving order (workflows differ by file; a
-        # multi-stage Dockerfile differs by line). Keep each location's severity
-        # alongside it so a mixed-severity systemic finding can show per-instance
-        # dots (e.g. JWT: Critical algorithm-confusion + High decode-no-verify).
-        _seen: set = set()
-        _pairs = [(loc, sv) for loc, sv in zip(_locs, _sevs) if not (loc in _seen or _seen.add(loc))]
-        if _pairs:
-            _distinct_sevs = {sv for _, sv in _pairs if sv}
+    if len(_instance_pairs) > 1:
+        if _instance_pairs:
+            _distinct_sevs = {severity for _, _, severity in _instance_pairs if severity}
             _mixed = len(_distinct_sevs) > 1
             _cap = 8
-            _shown_pairs = _pairs[:_cap]
+            _shown_pairs = _instance_pairs[:_cap]
             _shown = [
-                (f"{_SEV_ICON_TBL.get(sv, '')} {loc}".strip() if _mixed and sv else loc) for loc, sv in _shown_pairs
+                (
+                    f"{_SEV_ICON_TBL.get(severity, '')} "
+                    f"`{file}:{line}`".strip()
+                    if _mixed and severity
+                    else (f"`{file}:{line}`" if line else f"`{file}`")
+                )
+                for file, line, severity in _shown_pairs
             ]
-            _tail = f" … (+{len(_pairs) - _cap} more)" if len(_pairs) > _cap else ""
-            instances_card = f"**Instances ({len(_pairs)}):** " + ", ".join(_shown) + _tail
+            _tail = f" … (+{len(_instance_pairs) - _cap} more)" if len(_instance_pairs) > _cap else ""
+            instances_card = f"**Instances ({len(_instance_pairs)}):** " + ", ".join(_shown) + _tail
 
     # Root cause — Option 3 (2026-07-13): the attack-class taxonomy description
     # is TIER-GENERIC — the identical sentence repeats across every finding of a

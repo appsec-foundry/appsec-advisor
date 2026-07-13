@@ -89,9 +89,10 @@ if [ "$DRY_RUN" = "false" ]; then
     # and skipped.
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_finding_fix_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     # Clean finding TITLES (2026-06-12) — normalize threats[].title to
-    # `<weakness class> — <file:line>` (strip `via <impl>`, parens, params,
-    # embedded files). The verbose code-laden titles otherwise render into every
-    # xref cell (§2/§4/§2.3/§8). Idempotent (_title_source). Runs before the
+    # `<weakness class> — <file:line>` for one location, or class-only for
+    # consolidated findings (strip `via <impl>`, parens, params, embedded files).
+    # The verbose code-laden titles otherwise render into every xref cell
+    # (§2/§4/§2.3/§8). Idempotent (_title_source). Runs before the
     # mitigation-title pass (independent; that keys on CWE, not title).
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_clean_finding_titles.py" "$OUTPUT_DIR" 2>&1 || true
     # General mitigation TITLES (2026-06-12) — runs AFTER all mitigation
