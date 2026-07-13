@@ -12,6 +12,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Threat models no longer render evidence-refuted findings. New scans drop those candidates before output; incremental scans record resolutions in the changelog instead.
+- Threat merger decisions now preserve every merged location and scenario, support partial groups, and cannot remove findings through a `keep` decision.
 
 ## 0.4.1 (2026-07-13)
 

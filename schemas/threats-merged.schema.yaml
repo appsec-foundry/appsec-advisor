@@ -91,6 +91,30 @@ properties:
           properties:
             file: { type: string }
             line: { type: [integer, "null"] }
+        # A lossless merger stores every affected location here. The primary
+        # evidence remains the report anchor; instances retain the additional
+        # scenario/provenance needed for incremental diffs and audit.
+        instances:
+          type: array
+          items:
+            type: object
+            required: [file, line]
+            properties:
+              file: { type: string }
+              line: { type: [integer, "null"] }
+              severity: { type: [string, "null"] }
+              snippet: { type: [string, "null"] }
+              scenario: { type: [string, "null"] }
+              source_ref: { type: [string, "null"] }
+        affected_files:
+          type: array
+          items: { type: string }
+        instance_count:
+          type: integer
+          minimum: 1
+        merged_from:
+          type: array
+          items: { type: string }
         source:
           type: string
           enum:

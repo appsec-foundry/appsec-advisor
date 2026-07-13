@@ -64,6 +64,11 @@ When `SKIP_ATTACK_WALKTHROUGHS=true`, `attack-walkthroughs.md` contains only a s
 
 When a threat carries `evidence.file` (and optionally `evidence.line`), §8 must surface that exact source location in the finding card's `**Location:**` meta field. `scripts/compose_threat_model.py:_build_threat_card` renders it as one backticked token, for example `` `lib/insecurity.ts:58` ``, while the component remains a separate `C-NN` anchor in the same meta line. Do not collapse the location back into the component anchor or split the line number outside the code span.
 
+When the merger folds multiple members, it MUST retain every member as an
+`instances[]` record with its file, line, severity and available scenario /
+source reference. `affected_files[]` and `instance_count` are derived from
+that list; `merged_from` alone is not sufficient audit evidence.
+
 ## §4f. Fragment registry maps — single source of truth
 
 Five maps across three Python files implicitly encode the fragment ↔ schema ↔ contract-section relation. Any change to one MUST be reflected in the others, or the pipeline silently produces broken cross-references or skipped validations. Keep this table in sync whenever a map moves:

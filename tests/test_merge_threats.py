@@ -59,6 +59,7 @@ def _threat(**overrides):
         "evidence": {"file": "src/auth/login.py", "line": 42},
         "source": "stride",
         "architectural_violation": False,
+        "threat_category_id": "TH-01",
     }
     base.update(overrides)
     return base
@@ -551,6 +552,8 @@ class TestDecisionApplication:
         assert len(result) == 1
         assert "merged_from" in result[0]
         assert "b" in result[0]["merged_from"]
+        assert result[0]["instance_count"] == 2
+        assert {instance["file"] for instance in result[0]["instances"]} == {"a.py", "b.py"}
 
     def test_consolidate_promotes_arch_violation(self, mt):
         threats = [
@@ -630,7 +633,7 @@ class TestDecisionApplication:
 
 class TestEndToEnd:
     def test_collect_produces_candidates_file(self, mt, tmp_path):
-        _write_stride(tmp_path, "auth", [_threat()])
+        _write_stride(tmp_path, "auth", [_threat(scenario="Attacker reaches the first unsafe SQL sink.")])
         _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
 
         rc = mt.main(["collect", "--output-dir", str(tmp_path)])
@@ -639,6 +642,11 @@ class TestEndToEnd:
         assert cand["threat_count_raw"] == 2
         assert cand["candidate_group_count"] == 1
         assert cand["auto_decision_count"] == 0
+        member = next(entry for entry in cand["candidate_groups"][0]["members"] if entry["component_id"] == "auth")
+        assert member["scenario_excerpt"] == "Attacker reaches the first unsafe SQL sink."
+        assert member["cwe"] == "CWE-89"
+        assert member["source"] == "stride"
+        assert member["instances"] == [{"file": "src/auth/login.py", "line": 42, "severity": "High"}]
 
     def test_collect_records_auto_decisions_and_removes_agent_candidates(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat(threat_category_id="TH-01")])
@@ -673,11 +681,14 @@ class TestEndToEnd:
         (tmp_path / ".merge-decisions.json").write_text(
             json.dumps(
                 {
-                    "version": 1,
+                    "version": 2,
+                    "generated_at": "2026-07-13T00:00:00Z",
+                    "model": "sonnet",
                     "decisions": [
                         {
                             "group_id": gid,
                             "action": "merge",
+                            "member_indices": [0, 1],
                             "merge_target_index": 0,
                             "rationale": "duplicate",
                         }
@@ -690,6 +701,24 @@ class TestEndToEnd:
         merged = json.loads((tmp_path / ".threats-merged.json").read_text())
         assert len(merged["threats"]) == 1
         assert merged["threats"][0]["t_id"] == "T-001"
+
+    def test_finalize_accepts_legacy_v1_decision(self, mt, tmp_path):
+        _write_stride(tmp_path, "auth", [_threat()])
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
+        mt.main(["collect", "--output-dir", str(tmp_path)])
+        gid = json.loads((tmp_path / ".merge-candidates.json").read_text())["candidate_groups"][0]["group_id"]
+        (tmp_path / ".merge-decisions.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decisions": [{"group_id": gid, "action": "merge", "merge_target_index": 0}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert len(merged["threats"]) == 1
 
     def test_collect_missing_dir_returns_error(self, mt, tmp_path):
         rc = mt.main(["collect", "--output-dir", str(tmp_path / "does-not-exist")])
@@ -1723,12 +1752,60 @@ class TestApplyDecisionsBranches:
         out = mt._apply_decisions(threats, [{"group_id": gid, "action": "keep", "keep_indices": "nope"}])
         assert len(out) == 2
 
-    def test_keep_drops_unlisted(self, mt):
-        # lines 1389-1391: keep_indices keeps only listed positions.
+    def test_keep_cannot_drop_unlisted(self, mt):
+        # A legacy partial keep is invalid: keep is a no-op, never a deletion.
         threats = self._two_group()
         gid = self._gid(mt, threats)
         out = mt._apply_decisions(threats, [{"group_id": gid, "action": "keep", "keep_indices": [0]}])
-        assert len(out) == 1
+        assert len(out) == 2
+
+    def test_merge_across_primary_categories_is_rejected(self, mt):
+        threats = self._two_group()
+        threats[1]["threat_category_id"] = "TH-02"
+        gid = self._gid(mt, threats)
+        out = mt._apply_decisions(threats, [{"group_id": gid, "action": "merge", "merge_target_index": 0}])
+        assert len(out) == 2
+
+    def test_partial_merge_preserves_unrelated_member_and_metadata(self, mt):
+        threats = [
+            {
+                "component_id": "a",
+                **_threat(
+                    evidence={"file": "a.py", "line": 1},
+                    scenario="The first route passes attacker input to the same unsafe helper.",
+                    mitigation_ids=["M-001"],
+                ),
+            },
+            {
+                "component_id": "b",
+                **_threat(
+                    evidence={"file": "b.py", "line": 2},
+                    scenario="The second route passes attacker input to the same unsafe helper.",
+                    mitigation_ids=["M-002"],
+                ),
+            },
+            {
+                "component_id": "c",
+                **_threat(evidence={"file": "c.py", "line": 3}, scenario="A distinct SQL execution sink."),
+            },
+        ]
+        gid = self._gid(mt, threats)
+        out = mt._apply_decisions(
+            threats,
+            [
+                {"group_id": gid, "action": "merge", "member_indices": [0, 1], "merge_target_index": 0},
+                {"group_id": gid, "action": "keep", "member_indices": [2]},
+            ],
+        )
+        assert len(out) == 2
+        merged = next(threat for threat in out if threat["component_id"] == "a")
+        assert merged["instance_count"] == 2
+        assert {instance["scenario"] for instance in merged["instances"]} == {
+            "The first route passes attacker input to the same unsafe helper.",
+            "The second route passes attacker input to the same unsafe helper.",
+        }
+        assert merged["mitigation_ids"] == ["M-001", "M-002"]
+        assert any(threat["component_id"] == "c" for threat in out)
 
     def test_consolidate_bad_target_skipped(self, mt):
         # line 1396: consolidate out-of-range target → continue.
@@ -1756,7 +1833,13 @@ class TestCmdCollectFinalizeBranches:
             json.dumps({"findings": [{"title": "CORS", "file": "ci.yml", "line": 1}]}), encoding="utf-8"
         )
         (tmp_path / ".source-auth-findings.json").write_text(
-            json.dumps({"findings": [{"check_id": "AUTHZ-002", "title": "IDOR", "file": "r.ts", "line": 2}]}),
+            json.dumps(
+                {
+                    "findings": [
+                        {"check_id": "AUTHZ-002", "title": "IDOR", "file": "r.ts", "line": 2, "cwe": ["CWE-862"]}
+                    ]
+                }
+            ),
             encoding="utf-8",
         )
         rc = mt.main(["collect", "--output-dir", str(tmp_path)])
@@ -1765,6 +1848,8 @@ class TestCmdCollectFinalizeBranches:
         sources = {t.get("source") for t in cand["threats"]}
         assert "config-scan" in sources
         assert "source-scan" in sources
+        source_threat = next(t for t in cand["threats"] if t.get("source") == "source-scan")
+        assert source_threat["threat_category_id"] == "TH-06"
 
     def test_finalize_missing_candidates(self, mt, tmp_path, capsys):
         # lines 1518-1519: no .merge-candidates.json → error.
@@ -1794,7 +1879,7 @@ class TestCmdCollectFinalizeBranches:
         cand = json.loads((tmp_path / ".merge-candidates.json").read_text())
         gid = next(g["group_id"] for g in cand["candidate_groups"])
         (tmp_path / ".merge-decisions.json").write_text(
-            json.dumps({"decisions": [{"group_id": gid, "action": "keep", "keep_indices": [0]}]}),
+            json.dumps({"decisions": [{"group_id": gid, "action": "merge", "merge_target_index": 0}]}),
             encoding="utf-8",
         )
         rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
@@ -1809,6 +1894,27 @@ class TestCmdCollectFinalizeBranches:
         (tmp_path / ".merge-decisions.json").write_text(json.dumps([]), encoding="utf-8")
         rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
         assert rc == 0
+
+    def test_finalize_rejects_invalid_v2_decisions_without_dropping_findings(self, mt, tmp_path, capsys):
+        _write_stride(tmp_path, "a", [_threat(evidence={"file": "a.py", "line": 1})])
+        _write_stride(tmp_path, "b", [_threat(evidence={"file": "b.py", "line": 2})])
+        mt.main(["collect", "--output-dir", str(tmp_path)])
+        gid = json.loads((tmp_path / ".merge-candidates.json").read_text())["candidate_groups"][0]["group_id"]
+        (tmp_path / ".merge-decisions.json").write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "generated_at": "now",
+                    "model": "sonnet",
+                    "decisions": [{"group_id": gid, "action": "merge", "member_indices": [0, 1]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert len(merged["threats"]) == 2
+        assert "ignoring invalid .merge-decisions.json" in capsys.readouterr().err
 
     def test_finalize_attack_surface_coverage_gap(self, mt, tmp_path):
         # lines 1562-1586: yaml present, threat has id not covered → gaps file.

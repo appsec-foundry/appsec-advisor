@@ -68,6 +68,7 @@ _STRIDE_LETTER = {
 
 _CWE_RE = re.compile(r"^CWE-(\d+)$")
 _TH_ID_RE = re.compile(r"^TH-[0-9]{2}$")
+_MERGE_DECISIONS_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "merge-decisions.schema.json"
 
 
 @functools.lru_cache(maxsize=1)
@@ -320,7 +321,7 @@ def _config_finding_to_threat(f: dict) -> dict:
     cwe = cwes[0] if cwes else ""
     severity = f.get("severity") or "Medium"
     stride = f.get("stride") or f.get("stride_category") or "Information Disclosure"
-    return {
+    threat = {
         "title": f.get("title") or "",
         "scenario": f.get("scenario") or "",
         "stride": stride,
@@ -350,6 +351,14 @@ def _config_finding_to_threat(f: dict) -> dict:
         "mitigation_title": f.get("recommended_mitigation_title"),
         "finding_type_id": f.get("finding_type_id"),
     }
+    # The merger's category guard applies equally to deterministic findings.
+    # Derive the canonical category where the CWE taxonomy is authoritative;
+    # leave genuinely unmapped configuration findings unclassified so they are
+    # conservatively kept rather than merged on a guessed architectural role.
+    category = _threat_category_id_for(threat)
+    if category:
+        threat["threat_category_id"] = category
+    return threat
 
 
 # `dep-scan` ingestion (`.dep-scan.json` → CVE-shaped threats) was removed
@@ -436,7 +445,7 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
     severity = f.get("severity") or "Medium"
     file_path = f.get("file") or ""
     component_id, component_name = _guess_component_from_path(file_path)
-    return {
+    threat = {
         "title": f.get("title") or "",
         "scenario": f.get("scenario") or "",
         "stride": stride,
@@ -459,6 +468,10 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         "mitigation_title": f.get("recommended_mitigation_title"),
         "finding_type_id": f.get("finding_type_id"),
     }
+    category = _threat_category_id_for(threat)
+    if category:
+        threat["threat_category_id"] = category
+    return threat
 
 
 def _load_source_auth_findings(output_dir: Path, filename: str = ".source-auth-findings.json") -> list[dict]:
@@ -979,6 +992,39 @@ def _instances_of(m: dict) -> list[dict]:
     return [inst]
 
 
+def _candidate_member(threat: dict) -> dict:
+    """Return the bounded, data-only merger view of a candidate threat.
+
+    A title and file:line are not enough to distinguish one shared defect from
+    two sinks in the same CWE class. Keep the comparison context in the
+    candidate artifact rather than asking the merger to read source code. The
+    scenario excerpt is bounded so a pathological analyzer response cannot
+    consume the merger's entire context window.
+    """
+    scenario = threat.get("scenario")
+    if not isinstance(scenario, str):
+        scenario = ""
+    if len(scenario) > 1200:
+        scenario = scenario[:1197].rstrip() + "..."
+    return {
+        "component_id": threat.get("component_id"),
+        "component_name": threat.get("component_name"),
+        "title": threat.get("title"),
+        "scenario_excerpt": scenario,
+        "evidence": threat.get("evidence"),
+        "instances": _instances_of(threat),
+        "risk": threat.get("risk"),
+        "cwe": threat.get("cwe"),
+        "stride": threat.get("stride"),
+        "threat_category_id": threat.get("threat_category_id"),
+        "additional_categories": threat.get("additional_categories") or [],
+        "source": threat.get("source"),
+        "source_check_id": threat.get("source_check_id"),
+        "config_check_id": threat.get("config_check_id"),
+        "source_ref": threat.get("local_id") or threat.get("source_scan_ref") or threat.get("config_scan_ref"),
+    }
+
+
 def _consolidate_by_group(threats: list[dict]) -> list[dict]:
     """Collapse findings sharing a consolidation-group bucket into ONE systemic
     finding carrying ``instances[]`` / ``affected_files[]`` / ``instance_count``
@@ -1131,17 +1177,7 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
                 "cwe": cwe,
                 "stride": stride,
                 "member_count": len(members),
-                "members": [
-                    {
-                        "component_id": m.get("component_id"),
-                        "component_name": m.get("component_name"),
-                        "title": m.get("title"),
-                        "evidence": m.get("evidence"),
-                        "risk": m.get("risk"),
-                        "threat_category_id": m.get("threat_category_id"),
-                    }
-                    for m in members
-                ],
+                "members": [_candidate_member(m) for m in members],
             }
         )
         for m in members:
@@ -1177,19 +1213,7 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
                 "endpoint": endpoint,
                 "cwe_family": family,
                 "member_count": len(members),
-                "members": [
-                    {
-                        "component_id": m.get("component_id"),
-                        "component_name": m.get("component_name"),
-                        "title": m.get("title"),
-                        "evidence": m.get("evidence"),
-                        "risk": m.get("risk"),
-                        "cwe": m.get("cwe"),
-                        "stride": m.get("stride"),
-                        "threat_category_id": m.get("threat_category_id"),
-                    }
-                    for m in members
-                ],
+                "members": [_candidate_member(m) for m in members],
             }
         )
 
@@ -1424,6 +1448,143 @@ def _reconstruct_group_member_indices(threats: list[dict]) -> dict[str, list[int
     return out
 
 
+def _decision_positions(decision: dict, member_indices: list[int]) -> list[int] | None:
+    """Resolve a v2 decision's subset, or all group members for v1.
+
+    A malformed subset is ignored rather than widened. This is deliberately
+    fail-closed: a merger may only remove a member it named explicitly.
+    """
+    requested = decision.get("member_indices")
+    if requested is None:
+        return list(range(len(member_indices)))
+    if not isinstance(requested, list) or not requested:
+        return None
+    if any(not isinstance(pos, int) or pos < 0 or pos >= len(member_indices) for pos in requested):
+        return None
+    if len(set(requested)) != len(requested):
+        return None
+    return list(requested)
+
+
+def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: bool) -> None:
+    """Preserve every merged location, scenario and mitigation on survivor."""
+    instances: list[dict] = []
+    files: list[str] = []
+    mitigation_ids: list[str] = []
+    refs: list[str] = []
+    component_ids: list[str] = []
+    for member in members:
+        prior_components = member.get("merged_from")
+        if not isinstance(prior_components, list):
+            prior_components = []
+        for component_id in [member.get("component_id"), *prior_components]:
+            if isinstance(component_id, str) and component_id and component_id not in component_ids:
+                component_ids.append(component_id)
+        for instance in _instances_of(member):
+            instance = dict(instance)
+            evidence = member.get("evidence") if isinstance(member.get("evidence"), dict) else {}
+            instance.setdefault("file", (evidence.get("file") or "").strip())
+            instance.setdefault("line", evidence.get("line"))
+            scenario = member.get("scenario")
+            if isinstance(scenario, str) and scenario.strip():
+                instance["scenario"] = scenario.strip()
+            source_ref = member.get("local_id") or member.get("source_scan_ref") or member.get("config_scan_ref")
+            if source_ref:
+                instance["source_ref"] = source_ref
+            instances.append(instance)
+            file_path = (instance.get("file") or "").strip()
+            if file_path and file_path not in files:
+                files.append(file_path)
+        for mitigation_id in member.get("mitigation_ids") or []:
+            if mitigation_id not in mitigation_ids:
+                mitigation_ids.append(mitigation_id)
+        ref = member.get("local_id") or member.get("source_scan_ref") or member.get("config_scan_ref")
+        if ref and ref not in refs:
+            refs.append(ref)
+
+    survivor["instances"] = instances
+    survivor["affected_files"] = sorted(files)
+    survivor["instance_count"] = len(instances)
+    if systemic:
+        survivor["systemic"] = True
+    if mitigation_ids:
+        survivor["mitigation_ids"] = mitigation_ids
+    if refs:
+        survivor["consolidated_refs"] = refs
+    if component_ids:
+        survivor["merged_from"] = component_ids
+
+
+def _same_primary_threat_category(members: list[dict]) -> bool:
+    """Return whether every member has one identical canonical TH category.
+
+    The merger agent is instructed not to join different architectural threat
+    categories. Enforce that rule here as well: the decision file is
+    untrusted input and cannot be the only guard against an invalid merge.
+    """
+    categories = [member.get("threat_category_id") for member in members]
+    return (
+        bool(categories)
+        and all(isinstance(category, str) and _TH_ID_RE.match(category) for category in categories)
+        and len(set(categories)) == 1
+    )
+
+
+def _highest_risk_target(target: int, positions: list[int], member_indices: list[int], threats: list[dict]) -> bool:
+    """Ensure a decision cannot discard the highest-severity member."""
+    selected_risks = [_risk_rank(threats[member_indices[pos]].get("risk")) for pos in positions]
+    return _risk_rank(threats[member_indices[target]].get("risk")) == min(selected_risks)
+
+
+@functools.lru_cache(maxsize=1)
+def _load_merge_decisions_schema() -> dict:
+    """Load the v2 merger-decision contract used for agent output."""
+    return json.loads(_MERGE_DECISIONS_SCHEMA.read_text(encoding="utf-8"))
+
+
+def _read_agent_decisions(path: Path) -> list[dict]:
+    """Read v2 decisions only when they satisfy their schema.
+
+    Existing v1 artifacts and bare decision lists remain readable for
+    incremental resumes. Their destructive operations are still constrained by
+    `_apply_decisions`; v2 is the schema-validated format emitted going
+    forward. Invalid v2 input is ignored as a whole so a bad agent write can
+    never silently delete findings.
+    """
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"merge_threats: ignoring unreadable {path.name}: {exc}\n")
+        return []
+    if isinstance(doc, list):
+        return [d for d in doc if isinstance(d, dict)]
+    if not isinstance(doc, dict):
+        sys.stderr.write(f"merge_threats: ignoring {path.name}: top level must be an object or legacy list\n")
+        return []
+    if doc.get("version") == 2:
+        try:
+            from jsonschema import Draft202012Validator
+
+            errors = sorted(
+                Draft202012Validator(_load_merge_decisions_schema()).iter_errors(doc), key=lambda e: list(e.path)
+            )
+        except (ImportError, OSError, ValueError, json.JSONDecodeError) as exc:
+            sys.stderr.write(f"merge_threats: ignoring {path.name}: cannot load decision schema: {exc}\n")
+            return []
+        if errors:
+            detail = "; ".join(f"{list(error.absolute_path)}: {error.message}" for error in errors[:3])
+            sys.stderr.write(f"merge_threats: ignoring invalid {path.name}: {detail}\n")
+            return []
+    elif doc.get("version") not in (None, 1):
+        sys.stderr.write(f"merge_threats: ignoring {path.name}: unsupported version {doc.get('version')!r}\n")
+        return []
+    decisions = doc.get("decisions") or []
+    if not isinstance(decisions, list):
+        sys.stderr.write(f"merge_threats: ignoring {path.name}: decisions must be an array\n")
+        return []
+    return [d for d in decisions if isinstance(d, dict)]
+
+
 def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
     """Apply LLM-produced merge decisions.
 
@@ -1431,16 +1592,15 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
       {
         "group_id": "G-abcd1234",       # or "GE-…" for endpoint groups
         "action": "merge" | "keep" | "consolidate",
-        "keep_indices": [0, 2],         # for "keep": which group members survive
+        "member_indices": [0, 2],       # v2: subset affected by this decision
         "merge_target_index": 0,        # for "merge": which member absorbs the rest
         "consolidated_title": "...",    # for "consolidate": new systemic title
         "rationale": "..."
       }
 
     Unknown group_ids and malformed decisions are ignored (safe-by-default:
-    every threat survives). Over time, the triage-validator can flag
-    suspiciously absent decisions, but the Python layer never drops a
-    threat it cannot justify dropping.
+    every threat survives). `keep` is always a no-op; only a valid, explicit
+    merge/consolidate subset can remove members.
     """
     if not decisions:
         return threats
@@ -1450,6 +1610,7 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
     gid_to_indices = _reconstruct_group_member_indices(threats)
 
     drop: set[int] = set()
+    claimed_by_group: dict[str, set[int]] = {}
     for d in decisions:
         if not isinstance(d, dict):
             continue
@@ -1458,48 +1619,59 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
         member_indices = gid_to_indices.get(gid)
         if member_indices is None:
             continue
+        positions = _decision_positions(d, member_indices)
+        if positions is None:
+            continue
         if action == "merge":
             target = d.get("merge_target_index", 0)
-            if not isinstance(target, int) or target < 0 or target >= len(member_indices):
+            if (
+                not isinstance(target, int)
+                or target not in positions
+                or len(positions) < 2
+                or claimed_by_group.setdefault(gid, set()).intersection(positions)
+            ):
                 continue
             survivor = member_indices[target]
-            for pos, idx in enumerate(member_indices):
-                if pos == target:
-                    continue
-                # Record provenance on survivor
-                surv = threats[survivor]
-                other = threats[idx]
-                mf = surv.setdefault("merged_from", [surv.get("component_id")])
-                cid = other.get("component_id")
-                if cid and cid not in mf:
-                    mf.append(cid)
-                drop.add(idx)
-        elif action == "keep":
-            keep_positions = d.get("keep_indices")
-            if not isinstance(keep_positions, list):
+            selected = [member_indices[pos] for pos in positions]
+            if not _highest_risk_target(
+                target, positions, member_indices, threats
+            ) or not _same_primary_threat_category([threats[idx] for idx in selected]):
                 continue
-            for pos, idx in enumerate(member_indices):
-                if pos not in keep_positions:
-                    drop.add(idx)
+            _merge_member_metadata(threats[survivor], [threats[idx] for idx in selected], systemic=False)
+            drop.update(idx for idx in selected if idx != survivor)
+            claimed_by_group[gid].update(positions)
+        elif action == "keep":
+            # Keep is intentionally a no-op. Legacy v1 keep_indices must name
+            # every group member; anything narrower used to delete findings.
+            keep_positions = d.get("keep_indices")
+            if keep_positions is not None and (
+                not isinstance(keep_positions, list) or set(keep_positions) != set(range(len(member_indices)))
+            ):
+                continue
         elif action == "consolidate":
             target = d.get("merge_target_index", 0)
             new_title = d.get("consolidated_title")
-            if not isinstance(target, int) or target < 0 or target >= len(member_indices):
+            if (
+                not isinstance(target, int)
+                or target not in positions
+                or len(positions) < 3
+                or not isinstance(new_title, str)
+                or not new_title.strip()
+                or claimed_by_group.setdefault(gid, set()).intersection(positions)
+            ):
                 continue
             survivor = member_indices[target]
+            selected = [member_indices[pos] for pos in positions]
+            if not _highest_risk_target(
+                target, positions, member_indices, threats
+            ) or not _same_primary_threat_category([threats[idx] for idx in selected]):
+                continue
             surv = threats[survivor]
-            if isinstance(new_title, str) and new_title.strip():
-                surv["title"] = new_title.strip()
+            surv["title"] = new_title.strip()
             surv["architectural_violation"] = True
-            mf = surv.setdefault("merged_from", [surv.get("component_id")])
-            for pos, idx in enumerate(member_indices):
-                if pos == target:
-                    continue
-                other = threats[idx]
-                cid = other.get("component_id")
-                if cid and cid not in mf:
-                    mf.append(cid)
-                drop.add(idx)
+            _merge_member_metadata(surv, [threats[idx] for idx in selected], systemic=True)
+            drop.update(idx for idx in selected if idx != survivor)
+            claimed_by_group[gid].update(positions)
 
     return [t for i, t in enumerate(threats) if i not in drop]
 
@@ -1713,9 +1885,7 @@ def build_weakness_register(
     weakness_labels = {str(c.get("id")): str(c.get("label")) for c in (vocab.get("clusters") or [])}
     agg: dict[str, dict] = {}
 
-    def _bucket(
-        key: str, *, wcid: str, kind: str, title: str, statement: str, cwe: str | None = None
-    ) -> dict:
+    def _bucket(key: str, *, wcid: str, kind: str, title: str, statement: str, cwe: str | None = None) -> dict:
         return agg.setdefault(
             key,
             {
@@ -1747,9 +1917,7 @@ def build_weakness_register(
             cwe = (t.get("cwe") or "").strip().upper()
             statement = (t.get("title") or "Central security control observably absent").strip()
             scope = (t.get("rule_id") or t.get("hypothesis_id") or statement).strip()
-            b = _bucket(
-                f"design:{scope}", wcid=wcid, kind="design", title=statement, statement=statement, cwe=cwe
-            )
+            b = _bucket(f"design:{scope}", wcid=wcid, kind="design", title=statement, statement=statement, cwe=cwe)
             for a in t.get("controls_absent_evidence") or []:
                 b["absent"].append(a)
             b["design_severities"].append(t.get("risk") or "Medium")
@@ -1845,7 +2013,12 @@ def build_weakness_register(
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()
             if not tid:
                 continue
-            inst = {"id": tid, "file": (ev.get("file") or "").strip(), "line": ev.get("line"), "basis": "confirmed-exploitable"}
+            inst = {
+                "id": tid,
+                "file": (ev.get("file") or "").strip(),
+                "line": ev.get("line"),
+                "basis": "confirmed-exploitable",
+            }
             if t.get("poc_hint"):
                 inst["poc_hint"] = t["poc_hint"]
             b["instances"].append(inst)
@@ -2005,12 +2178,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     decisions: list[dict] = list(cand.get("auto_decisions") or [])
     dec_path = out_dir / ".merge-decisions.json"
     if dec_path.exists():
-        with dec_path.open() as fh:
-            dec_doc = json.load(fh)
-        if isinstance(dec_doc, dict):
-            decisions.extend(dec_doc.get("decisions") or [])
-        elif isinstance(dec_doc, list):
-            decisions.extend(dec_doc)
+        decisions.extend(_read_agent_decisions(dec_path))
 
     threats = _apply_decisions(threats, decisions)
     threats = _assign_t_ids(threats)

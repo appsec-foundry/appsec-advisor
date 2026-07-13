@@ -526,7 +526,7 @@ When `$MERGER_MODEL` is set to an Opus identifier (opt-in via `--reasoning-model
 Pipeline:
 
 1. **Collect** — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" collect --output-dir "$OUTPUT_DIR"`
-   - Reads all `.stride-*.json`, runs mechanical exact-dedup (same CWE + STRIDE + evidence.file + line), writes deterministic `auto_decisions` for unambiguous groups, groups only the remaining near-duplicate candidates (shared CWE + STRIDE letter with ≥2 members) for LLM judgment, and writes `$OUTPUT_DIR/.merge-candidates.json`.
+   - Reads all `.stride-*.json`, runs mechanical exact-dedup (same CWE + STRIDE + evidence.file + line), writes deterministic `auto_decisions` for unambiguous groups, groups only the remaining near-duplicate candidates (shared CWE + STRIDE letter with ≥2 members) for LLM judgment, and writes `$OUTPUT_DIR/.merge-candidates.json`. Candidate members carry a bounded scenario excerpt plus source/instance provenance so the merger compares exploit paths without reading repository source.
    - If the resulting `candidate_group_count` is `0`, **skip the merger dispatch entirely** — no ambiguous groups means nothing for LLM judgment.
 
 2. **Dispatch `appsec-threat-merger`** (only when candidates exist):
