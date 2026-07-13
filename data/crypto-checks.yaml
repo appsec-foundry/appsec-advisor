@@ -516,3 +516,28 @@ checks:
     breach_vector: "Physical / Local"
     rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
     remediation: "Use Random.secure() for any security value."
+
+  - id: CRYPTO-HOMEGROWN-XOR
+    name: "Hand-rolled XOR / repeating-key cipher"
+    description: >
+      A byte or char is XORed against a key array indexed modulo its length
+      (`data[i] ^ key[i % key.length]`) — the signature of a home-grown
+      repeating-key stream cipher. It is trivially reversible (known-plaintext or
+      frequency analysis), usually paired with a hardcoded key, and provides no
+      integrity. Language-agnostic: the same shape appears in Java/Kotlin/C#/Go/
+      JS/TS/Python/Ruby/PHP. This is NOT a substitute for an authenticated cipher.
+    file_patterns:
+      ["**/*.java", "**/*.kt", "**/*.cs", "**/*.go", "**/*.js", "**/*.ts", "**/*.py", "**/*.rb", "**/*.php", "**/*.scala"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.*", "**/*Tests.*", "**/*_test.*", "**/*.test.*", "**/target/**", "**/build/**", "**/dist/**", "**/node_modules/**"]
+    pattern: '\^\s*[A-Za-z_]\w*\s*\[[^\]\n]{0,40}%'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-327
+    finding_type: FT-174
+    breach_vector: "Internet Anon"
+    rationale: >
+      A reversible home-grown cipher protecting tokens, passwords, or exported
+      data can be broken without the key, disclosing every protected value.
+    remediation: "Use an authenticated cipher (AES-GCM) from a vetted library; never a hand-rolled XOR."

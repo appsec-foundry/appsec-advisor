@@ -582,3 +582,36 @@ def test_java_securerandom_nearby_suppresses(tmp_path: Path) -> None:
         "}\n",
     )
     assert "CRYPTO-JAVA-002B" not in _crypto_ids(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# CRYPTO-HOMEGROWN-XOR — hand-rolled repeating-key XOR cipher
+# ---------------------------------------------------------------------------
+
+
+def test_homegrown_xor_cipher_flagged(tmp_path: Path) -> None:
+    # `data[i] ^ key[i % key.length]` is the signature of a home-grown
+    # repeating-key stream cipher.
+    _write(
+        tmp_path,
+        "HomegrownCipher.java",
+        "class HomegrownCipher {\n"
+        "  byte enc(byte[] in, byte[] KEY, int i) {\n"
+        "    return (byte) (in[i] ^ KEY[i % KEY.length]);\n"
+        "  }\n"
+        "}\n",
+    )
+    assert "CRYPTO-HOMEGROWN-XOR" in _crypto_ids(tmp_path)
+
+
+def test_plain_xor_not_flagged(tmp_path: Path) -> None:
+    # A bare XOR without a modulo-indexed key array is ordinary bit manipulation,
+    # not a repeating-key cipher — must not fire.
+    _write(tmp_path, "Flags.java", "int merged = a ^ b;\nint toggled = mask ^ FLAG_BIT;\n")
+    assert "CRYPTO-HOMEGROWN-XOR" not in _crypto_ids(tmp_path)
+
+
+def test_homegrown_xor_language_agnostic(tmp_path: Path) -> None:
+    # Same signature in Python is caught too (language-agnostic file_patterns).
+    _write(tmp_path, "cipher.py", "out[i] = data[i] ^ key[i % len(key)]\n")
+    assert "CRYPTO-HOMEGROWN-XOR" in _crypto_ids(tmp_path)
