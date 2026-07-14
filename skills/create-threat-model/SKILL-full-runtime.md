@@ -25,8 +25,7 @@ Parse the returned JSON as `ACTION`. It has already been validated against
 
 - If `ACTION.action=abort`, print `ACTION.reason` and stop with
   `ACTION.exit_code`. Do not dispatch an agent.
-- Otherwise require `ACTION.action=dispatch_agent` and
-  `ACTION.stage=stage1`. Any other value is a fail-closed controller error.
+- Otherwise require `dispatch_agent` at `stage1`; otherwise fail closed.
 - Treat `ACTION.dispatch_values` as authoritative resolved configuration. Do
   not parse flags again and do not re-read `.skill-config.json` unless a later
   deterministic script requires it.
@@ -40,7 +39,6 @@ The controller has already:
 - acquired and heartbeated the run lock;
 - generated route, architecture-coverage, and source-auth prepasses;
 - fetched requirements according to the resolved fail mode;
-- written only canonical `event_log.py` log lines.
 
 ## 2. User-visible preflight
 
@@ -96,6 +94,8 @@ SCAN_MANIFEST = scan_manifest
 STRIDE_MODEL = stride_model
 TRIAGE_MODEL = triage_model
 MERGER_MODEL = merger_model
+RENDERER_MODEL = renderer_model
+ABUSE_VERIFIER_MODEL = abuse_verifier_model
 CONTEXT_RESOLVER_MODEL = context_resolver_model
 RECON_SCANNER_MODEL = recon_scanner_model
 QA_ROUTINE_MODEL = qa_routine_model

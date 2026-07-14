@@ -50,6 +50,12 @@ def test_thin_full_initial_context_is_materially_smaller_than_legacy():
     assert thin / legacy <= aggregate["thin_to_legacy_max_ratio"]
 
 
+def test_thin_rerender_initial_context_is_bounded():
+    surfaces = BUDGETS["surfaces"]
+    rerender = sum(_slice_bytes(surfaces[name]) for name in ("skill_router", "thin_rerender_runtime"))
+    assert rerender <= BUDGETS["aggregate"]["thin_rerender_pre_stage2_max_bytes"]
+
+
 def test_thin_runtime_uses_bounded_stage_reads():
     text = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
     assert "## Stage 1 — Threat Analysis & Triage" in text
@@ -64,3 +70,12 @@ def test_thin_runtime_uses_bounded_stage_reads():
     assert "## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs" in text
     assert "## Stage 3 - QA Review` to `### Stage 3 handoff banner" in text
     assert "marker to EOF" not in text
+
+
+def test_thin_rerender_runtime_starts_at_stage2():
+    text = (ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md").read_text(encoding="utf-8")
+    assert "ACTION.mode=rerender" in text
+    assert "Stage-1 prefix" in text
+    assert "## Stage 2 - Report Rendering" in text
+    assert "rerender mode file, Stage 1, or Stage 1c" in text
+    assert "RENDERER_MODEL = renderer_model" in text

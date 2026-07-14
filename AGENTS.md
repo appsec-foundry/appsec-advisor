@@ -50,9 +50,9 @@ and `skills/create-threat-model/SKILL-full-runtime.md` by default; opt out with
 `APPSEC_THIN_ORCHESTRATOR=0` to fall back to the legacy runtime. The controller
 owns deterministic preflight and emits schema-valid fixed actions; the skill
 owns Agent/Task calls and reads only the Stage-1 slice plus the current
-stage-local post-boundary slice. Incremental, rerender, resume, dry-run,
-deadline, and live-phase paths
-retain the legacy runtime. The compact path became the default after the
+stage-local post-boundary slice. Rerender has its own compact Stage-2 runtime;
+incremental, resume, dry-run, deadline, and live-phase paths retain the legacy
+runtime. The compact path became the default after the
 juice-shop standard parity A/B held (2026-07-04); `APPSEC_THIN_ORCHESTRATOR=0`
 remains the permanent escape hatch. Prompt byte ceilings live in
 `data/context-budgets.yaml`; runtime occupancy is measured with

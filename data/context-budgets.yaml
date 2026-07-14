@@ -10,6 +10,9 @@ surfaces:
   thin_full_runtime:
     path: skills/create-threat-model/SKILL-full-runtime.md
     max_bytes: 12000
+  thin_rerender_runtime:
+    path: skills/create-threat-model/SKILL-rerender-runtime.md
+    max_bytes: 10000
   legacy_initial_slice:
     path: skills/create-threat-model/SKILL-impl.md
     start: BOF
@@ -55,5 +58,8 @@ aggregate:
   # Router + compact runtime + Stage-1/1c slice. This is the full/rebuild
   # resident skill text before the Phase-9 fan-out.
   thin_full_pre_stage2_max_bytes: 90000
+  # Router + rerender runtime. Stage-2 instructions are loaded only after the
+  # controller has verified on-disk Stage-1 artifacts.
+  thin_rerender_pre_stage2_max_bytes: 18000
   # The compact path must remain materially smaller than the legacy prefix.
   thin_to_legacy_max_ratio: 0.50

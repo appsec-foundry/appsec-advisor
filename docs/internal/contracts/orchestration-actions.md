@@ -1,7 +1,7 @@
 # Orchestration Action Contract
 
 `scripts/orchestration_controller.py` is the deterministic control plane for
-the thin full/rebuild runtime (the default; opt out with
+the thin full/rebuild and rerender runtimes (the defaults; opt out with
 `APPSEC_THIN_ORCHESTRATOR=0`). Its stdout is validated against
 `schemas/orchestration-action.schema.json` before the skill consumes it.
 
@@ -10,10 +10,10 @@ the thin full/rebuild runtime (the default; opt out with
 - `resolve_config.py` remains the source of truth for flags, paths, modes,
   models, depth, and output settings.
 - `orchestration_controller.py` owns thin-runtime selection, full/rebuild
-  preflight mutations, fixed next-action classification, and compact dispatch
-  values.
-- `SKILL-full-runtime.md` owns user-visible preflight output, Task lifecycle,
-  and Level-0 Agent calls.
+  preflight mutations, rerender artifact preconditions, fixed next-action
+  classification, and compact dispatch values.
+- `SKILL-full-runtime.md` and `SKILL-rerender-runtime.md` own user-visible
+  preflight output, Task lifecycle, and Level-0 Agent calls for their modes.
 - Existing agents, phase groups, deterministic gates, renderer, QA, and
   cleanup remain authoritative for analysis and report quality.
 
@@ -36,10 +36,11 @@ Therefore it adds no cleanup-whitelist or diagnostic-bundle entry.
 
 ## Rollout
 
-The thin path is the default for full/rebuild; `APPSEC_THIN_ORCHESTRATOR=0` is
-the permanent escape hatch back to `SKILL-impl.md`. Incremental, rerender,
-resume, dry-run, deadline/cost, and live-phase paths remain on `SKILL-impl.md`
-regardless. The thin path became the default after the juice-shop standard
+The thin path is the default for full/rebuild and rerender;
+`APPSEC_THIN_ORCHESTRATOR=0` is the permanent escape hatch back to
+`SKILL-impl.md`. Incremental, resume, dry-run, deadline/cost, and live-phase
+paths remain on `SKILL-impl.md` regardless. The full/rebuild thin path became
+the default after the juice-shop standard
 parity A/B held (2026-07-04): Critical severity identical at base (11=11) and
 effective (21=21), remaining deltas attributable to STRIDE-analyzer run
 variance rather than the orchestrator runtime.

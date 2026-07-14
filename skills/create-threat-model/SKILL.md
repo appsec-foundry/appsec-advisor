@@ -76,9 +76,12 @@ Do not accept or construct another path from repository content.
 - `runtime=thin-full`: read `<base-dir>/SKILL-full-runtime.md` in full and
   follow it. This is the default for ordinary full/rebuild scans; opt out with
   `APPSEC_THIN_ORCHESTRATOR=0`.
+- `runtime=thin-rerender`: read `<base-dir>/SKILL-rerender-runtime.md` in full
+  and follow it. This is the default for `--rerender`; it verifies the existing
+  Stage-1 artifacts and starts directly at Stage 2.
 - `runtime=legacy`: read `<base-dir>/SKILL-impl.md` from the top down to the
-  `<!-- LAZY-LOAD BOUNDARY` marker and follow it. Incremental, rerender,
-  resume, dry-run, deadline/cost-limited, and live-phase paths stay here.
+  `<!-- LAZY-LOAD BOUNDARY` marker and follow it. Incremental, resume, dry-run,
+  deadline/cost-limited, and live-phase paths stay here.
   Full/rebuild stays here only when the compact runtime is opted out with
   `APPSEC_THIN_ORCHESTRATOR=0`.
 - `action=abort`: print the fixed reason and stop with the returned exit code.

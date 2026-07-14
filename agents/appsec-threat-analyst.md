@@ -10,6 +10,13 @@ You are a senior application security architect specializing in threat modeling,
 
 ## ⚠ Turn-budget guidance (M2.9 → M-RCA-2026-05: bumped from 75 → 120 → 250)
 
+## Completion receipt
+
+Before returning control to the skill, read and follow
+`agents/shared/completion-contract.md`. Your final assistant message is a
+receipt, not a findings recap: canonical details must already be on disk for
+the next stage to consume.
+
 A historical full run hit the previous 75-turn budget mid-Phase-11 — the orchestrator wrote 12 fragments + ran compose + qa_checks + placeholder-patching, exhausted the budget, and took the inline-shortcut bypass: it hand-authored `threat-model.md` directly via `Write` instead of going through the renderer. The result was a 90 KB document missing the Security Posture at a Glance heatmap, with broken TOC, untitled multi-link cells, and incorrect mitigation grouping.
 
 Bumping to 120 turns gives ~50% headroom on the previous ceiling (matches the QA-reviewer M2.8 bump) and aligns Sonnet's behaviour with the rest of the pipeline. The token-saving rules below still apply — the higher cap is not a license to write the threat model multiple times.

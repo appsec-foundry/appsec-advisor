@@ -60,13 +60,66 @@ def test_route_defaults_to_thin_for_full_or_rebuild(monkeypatch, tmp_path):
     assert incremental["runtime"] == "legacy"
 
 
-@pytest.mark.parametrize("key", ["dry_run", "resume", "rerender"])
+def test_route_defaults_to_compact_rerender(monkeypatch, tmp_path):
+    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
+    cfg = _cfg(tmp_path, "rerender")
+    cfg["rerender"] = True
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    action = controller.route([])
+    assert action["runtime"] == "thin-rerender"
+    assert action["instruction_file"] == str(controller.THIN_RERENDER_RUNTIME)
+
+
+@pytest.mark.parametrize("key", ["dry_run", "resume"])
 def test_route_keeps_special_paths_on_legacy(monkeypatch, tmp_path, key):
     monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path)
     cfg[key] = True
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
     assert controller.route([])["runtime"] == "legacy"
+
+
+def test_rerender_with_deadline_keeps_legacy_runtime(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+    cfg = _cfg(tmp_path, "rerender")
+    cfg.update({"rerender": True, "max_cost_usd": 1})
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    assert controller.route([])["runtime"] == "legacy"
+
+
+def test_compact_rerender_prepare_verifies_artifacts_and_dispatches_stage2(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path, "rerender")
+    cfg["rerender"] = True
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    for name in ("threat-model.yaml", ".threats-merged.json", ".triage-flags.json"):
+        (output / name).write_text("{}", encoding="utf-8")
+    fragments = output / ".fragments"
+    fragments.mkdir()
+    for name in ("system-overview.md", "assets.md", "security-architecture.md"):
+        (fragments / name).write_text("fragment", encoding="utf-8")
+
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed("lock acquired\n"))
+    action = controller.prepare(["--rerender"])
+    assert action["action"] == "dispatch_agent"
+    assert action["mode"] == "rerender"
+    assert action["stage"] == "stage2"
+    assert action["instruction_file"] == str(controller.THIN_RERENDER_RUNTIME)
+    assert Path(action["config_path"]).is_file()
+
+
+def test_compact_rerender_prepare_fails_before_lock_when_artifacts_are_missing(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path, "rerender")
+    cfg["rerender"] = True
+    Path(cfg["output_dir"]).mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    action = controller.prepare(["--rerender"])
+    assert action["action"] == "abort"
+    assert action["exit_code"] == 2
+    assert ".threats-merged.json" in action["reason"]
 
 
 @pytest.mark.parametrize("key", ["max_wall_time_seconds", "max_cost_usd"])
@@ -580,6 +633,8 @@ def test_dispatch_values_supply_runtime_defaults(tmp_path):
     assert values["reuse_recon_eligible"] is False
     assert values["write_pdf"] is False
     assert values["write_html"] is False
+    assert "renderer_model" in values
+    assert "abuse_verifier_model" in values
     assert set(values) == set(controller._DISPATCH_KEYS) | set(controller._DISPATCH_EXTRA_KEYS)
 
 
