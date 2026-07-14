@@ -140,13 +140,17 @@ def _derive_dispatch_stats(
     spawn_count = 0
     first_ts: str | None = None
     last_ts: str | None = None
+    subagent_types = {value.strip() for value in (subagent_type or "").split(",") if value.strip()}
+    if not subagent_types:
+        return None
+
     try:
         with log_path.open(encoding="utf-8", errors="replace") as fh:
             for raw in fh:
                 m = _match_hook_event(raw)
                 if not m:
                     continue
-                if m.group("subagent") != subagent_type:
+                if m.group("subagent") not in subagent_types:
                     continue
                 ts = m.group("ts")
                 if ts < since_iso:
@@ -316,7 +320,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--subagent-type",
         default=None,
-        help="Subagent identifier (e.g. appsec-advisor:appsec-threat-renderer) "
+        help="Subagent identifier, or a comma-separated set of identifiers "
+        "(e.g. appsec-advisor:appsec-threat-renderer) "
         "used to filter .hook-events.log when deriving dispatch_count + "
         "wall_secs_observed. Requires --since-iso. Optional — when omitted "
         "the derived fields are not added (back-compat).",

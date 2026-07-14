@@ -102,12 +102,10 @@ the condition stated *in* the section wins.
                                    │
 ┌──────────────────────────────────▼──────────────────────────────────┐
 │  Stage 2 - Report Rendering (M2.12 — fresh renderer budget)         │
-│  Agent: appsec-threat-renderer (Sonnet)                             │
+│  Agents: appsec-secarch-renderer + appsec-ms-renderer (Sonnet)      │
 │  Env  : Stage-2 render configuration                                │
-│  Does : write 2 LLM fragments (ms-verdict, ms-architecture-         │
-│         assessment) + optionally attack-walkthroughs +              │
-│         security-posture-attack-paths; then compose, patch          │
-│         placeholders, run qa_checks all                             │
+│  Does : write independent §7 and Management Summary fragments in    │
+│         parallel; the skill then composes and runs the QA path      │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
@@ -2830,9 +2828,17 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    fi
    ```
 
-   **— Parallel-render variant (`PARALLEL_RENDER=true`).** Dispatch **two** `appsec-advisor:appsec-threat-renderer` Agent calls **in a single message** so they run concurrently (same proven Level-0 fan-out as the STRIDE / abuse-verifier pattern). Pass all original configuration variables verbatim to **both** (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, ENRICH_ARCH_FRAGMENTS, SKIP_ATTACK_PATHS_AUTHORING, SKIP_ATTACK_WALKTHROUGHS, VERBOSE_REPORT, INVOCATION_ARGS, etc.). **⚠ Set each Agent call's `model` parameter to the tier alias of `$RENDERER_MODEL` — explicitly, on BOTH calls.** The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id: reduce a pin like `claude-sonnet-5` to `sonnet` (see the STRIDE dispatch note in `phase-group-threats.md` Phase 9). Like the STRIDE dispatch, omitting it silently falls back to the renderer's frontmatter default (`model: sonnet` in `agents/appsec-threat-renderer.md`), so an `APPSEC_RENDERER_MODEL` pin is ignored. The default resolves to `sonnet` → the host session, so the byte-unchanged behaviour is preserved when no pin is set. Add exactly one differing key per call:
-   - Agent **S** — `description: "Render: §7 Security Architecture"`, prompt adds `RENDER_ROLE=secarch`. Authors only `security-architecture.md`; does NOT compose or edit generator-owned §2 diagrams.
-   - Agent **M** — `description: "Render: Management Summary"`, prompt adds `RENDER_ROLE=ms`. Authors only `ms-verdict.json` (+ `ms-critical-attack-tree.json` when ≥2 Critical, + `security-posture-attack-paths.json` unless skipped), runs the MS compactness gate; does NOT compose.
+   **— Parallel-render variant (`PARALLEL_RENDER=true`).** Emit the single shared phase-start event **before** dispatch. The specialist agents must not race on `.phase-epoch`, `.appsec-checkpoint`, or `.appsec-progress.json`:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" \
+       phase-start "[Phase 11/11] Finalization (parallel renderer)" --agent threat-renderer
+   ```
+
+   Dispatch the two specialised agents **in a single message** so they run concurrently (same proven Level-0 fan-out as the STRIDE / abuse-verifier pattern). Pass all original configuration variables verbatim to both. **⚠ Set each Agent call's `model` parameter to the tier alias of `$RENDERER_MODEL` — explicitly, on BOTH calls.** The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id: reduce a pin like `claude-sonnet-5` to `sonnet` (see the STRIDE dispatch note in `phase-group-threats.md` Phase 9).
+
+   - Agent **S** — `appsec-advisor:appsec-secarch-renderer`, description: "Render: §7 Security Architecture". It receives only the §7-focused instruction surface and authors `security-architecture.md`; it does not compose or edit generator-owned §2 diagrams.
+   - Agent **M** — `appsec-advisor:appsec-ms-renderer`, description: "Render: Management Summary". It receives only the management-summary instruction surface and authors its owned JSON/conditional fragments; it does not compose.
 
    Wait for **both** to return, then compose + QA **at skill level** (the work the split agents deliberately skip):
 
@@ -2844,14 +2850,21 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    # doc (2026-06-05 parallel-render gotcha). Exit code is the only honest
    # signal. Retry compose once (mirrors the single-dispatch renderer's
    # Postcondition recovery) before handing off to the recovery path.
+   # Stage 3 runs `qa_checks.py all` for standard/thorough non-PR runs. Let
+   # that authoritative gate own Mermaid parsing once; quick/PR/no-QA paths
+   # retain the compose-time parse because no later full gate is guaranteed.
+   COMPOSE_MERMAID_ARG=""
+   if [ "$SKIP_QA" != "true" ] && [ "$DRY_RUN" != "true" ] && [ "$PR_MODE" != "true" ]; then
+       COMPOSE_MERMAID_ARG="--defer-mermaid-validation"
+   fi
    COMPOSE_RC=0
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
-       --output-dir "$OUTPUT_DIR" --strict || COMPOSE_RC=$?
+       --output-dir "$OUTPUT_DIR" --strict $COMPOSE_MERMAID_ARG || COMPOSE_RC=$?
    if [ "$COMPOSE_RC" -ne 0 ]; then
        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-renderer  COMPOSE_FAILED  rc=$COMPOSE_RC (parallel render) — retrying once" >> "$OUTPUT_DIR/.agent-run.log"
        COMPOSE_RC=0
        python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
-           --output-dir "$OUTPUT_DIR" --strict || COMPOSE_RC=$?
+           --output-dir "$OUTPUT_DIR" --strict $COMPOSE_MERMAID_ARG || COMPOSE_RC=$?
    fi
    if [ "$COMPOSE_RC" -eq 0 ]; then
        # Compose succeeded → run QA (on a stale MD it would be noise) and write
@@ -2908,7 +2921,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
        --duration-ms <duration_ms_from_usage> \
        --tool-uses <tool_uses_from_usage> \
        --tokens <total_tokens_from_usage> \
-       ${STAGE2_START_ISO:+--subagent-type appsec-advisor:appsec-threat-renderer --since-iso "$STAGE2_START_ISO"}
+       ${STAGE2_START_ISO:+--subagent-type appsec-advisor:appsec-secarch-renderer,appsec-advisor:appsec-ms-renderer --since-iso "$STAGE2_START_ISO"}
    ```
 
 ### Handoff banner

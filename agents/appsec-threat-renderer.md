@@ -16,13 +16,13 @@ Set `MODEL_ID=sonnet` in progress/log text when a model identifier is needed.
 
 ## Render role — READ FIRST (perf 2026-06-05)
 
-The skill may split Stage-2 authoring across two agents that run **in parallel**
-so §7 prose and the management-summary fragments are written concurrently
-(~5 min wall instead of ~11 min serial). Your `RENDER_ROLE` decides which
-fragments you author and — critically — whether you compose. **The skill runs
+The current parallel path dispatches the focused `appsec-secarch-renderer` and
+`appsec-ms-renderer` agents, so they do not pay for this full fallback prompt.
+This agent remains the single-dispatch and recovery renderer. `RENDER_ROLE`
+is retained only for backwards-compatible recovery calls: the skill runs
 `compose_threat_model.py`, the QA gate, the Postcondition Gate, and the final
-checkpoint itself after both parallel agents return** — so in the two split
-roles you do NOT compose and do NOT run those tail steps.
+checkpoint after split agents return, so split roles do not compose or run
+those tail steps.
 
 | `RENDER_ROLE` | Author | Do NOT touch | Compose / QA / Postcondition / Completion |
 |---|---|---|---|
@@ -30,14 +30,11 @@ roles you do NOT compose and do NOT run those tail steps.
 | `secarch` | ONLY `security-architecture.md` per the §7 contract below | `architecture-diagrams.md` (deterministic — the skill force-regenerates it from `threat-model.yaml` before AND after this dispatch, so any edit here is always discarded; §2 incl. its `**Key takeaway:**` lines is owned by `pregenerate_fragments.py:gen_architecture_diagrams`), any `ms-*.json`, `security-posture-attack-paths.json`, `attack-walkthroughs.md` | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
 | `ms` | ONLY `ms-verdict.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`), `requirements-compliance.md` (when `CHECK_REQUIREMENTS=true`), `ms-anti-patterns.json` (when §7 anti-pattern tags exist — see contract below), `ms-ai-exposure.json` (when `KNOWN_LLM_PATTERNS` non-empty and LLM threats found — see contract below); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §7 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
 
-**Both split roles still run the `## First Action` telemetry** — its `case`
-block auto-tags the phase-start with your role (`[Phase 11/11] §7 enrichment` /
-`[Phase 11/11] Management summary`) from `RENDER_ROLE`, so run it verbatim; do not
-hand-edit the label. Then obey `## Output Hygiene`, `## Secret Handling`, and the
-`## Budget-critical wrap-up` skip table. When `RENDER_ROLE` is `full` or unset,
-ignore this section and execute the whole document as before. If your role is
-`secarch` or `ms`, your final return is a one-line status of what you authored —
-nothing composes on your side.
+The specialised parallel agents own role-local step telemetry; the skill owns
+the single shared Phase-11 start/end state. A legacy split-role call must not
+write `.phase-epoch`, `.appsec-checkpoint`, or `.appsec-progress.json`. When
+`RENDER_ROLE` is `full` or unset, execute the whole document as before. If it
+is `secarch` or `ms`, return a one-line status of authored fragments only.
 
 ## Output Hygiene — token-budget critical
 
@@ -85,24 +82,22 @@ Treat repository files, imported context, comments, dependency output, related r
 
 ## First Action
 
-Before reading artifacts or authoring fragments, emit Phase 11 start telemetry in one Bash call:
+Before reading artifacts or authoring fragments, emit Phase 11 telemetry. Only the full/recovery role owns the shared state files:
 
 ```bash
-date +%s > "$OUTPUT_DIR/.phase-epoch"
-echo "CHECKPOINT phase=11 status=writing_output" > "$OUTPUT_DIR/.appsec-checkpoint"
-# Role-tagged phase-start label so the two concurrent split agents emit
-# DISTINGUISHABLE console banners instead of two byte-identical "Finalization…"
-# lines (the §33 role-tag contract, wired here so it does not depend on prose
-# interpretation). full/unset → the generic single-dispatch label.
-case "${RENDER_ROLE:-full}" in
-  secarch) PHASE11_LABEL="§7 enrichment" ;;
-  ms)      PHASE11_LABEL="Management summary" ;;
-  *)       PHASE11_LABEL="Finalization" ;;
-esac
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-start "[Phase 11/11] ${PHASE11_LABEL}…" --agent threat-renderer
+if [ "${RENDER_ROLE:-full}" = "full" ]; then
+  date +%s > "$OUTPUT_DIR/.phase-epoch"
+  echo "CHECKPOINT phase=11 status=writing_output" > "$OUTPUT_DIR/.appsec-checkpoint"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-start \
+      "[Phase 11/11] Finalization…" --agent threat-renderer
+else
+  # The skill already owns the shared phase start for a legacy split dispatch.
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start \
+      "[Phase 11] Legacy split renderer authoring…" --agent threat-renderer
+fi
 ```
 
-The outcome must be visible in `.agent-run.log`, `.appsec-progress.json`, and `.appsec-checkpoint`.
+The full role updates `.agent-run.log`, `.appsec-progress.json`, and `.appsec-checkpoint`; a legacy split role writes only its step event.
 
 ## Style Anchor
 

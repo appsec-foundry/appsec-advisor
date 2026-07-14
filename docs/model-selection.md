@@ -167,7 +167,8 @@ default recommendation still puts the *orchestrator* on the large-window model.
 |---|---|---|
 | `appsec-threat-merger` | dedup **0 vs 8** file:line collisions | **Sonnet 5** — quality buy-back |
 | `appsec-triage-validator` | **10 vs 15** defensible Criticals (better calibration) | **Sonnet 5** — quality buy-back |
-| `appsec-threat-renderer` / MS | outcome-first CISO framing | **Sonnet 5** — quality buy-back |
+| `appsec-threat-renderer` / `appsec-ms-renderer` | outcome-first CISO framing | **Sonnet 5** — quality buy-back |
+| `appsec-secarch-renderer` | evidence-grounded §7 control narrative | **Sonnet 5** — shared Stage-2 quality tier |
 | `appsec-abuse-case-verifier` | 4.6 reintroduces `inconclusive` verdicts | **Sonnet 5** (tier default; 4.6 opt-in only) |
 | `appsec-stride-analyzer` | **Sonnet 5 WORSE** — drops path-traversal, SSRF sink, prompt injection; folds the LLM chatbot | **stay on 4.6** — better recall **and** cheaper (win/win) |
 | `qa_content`, orchestrator | no observed delta | 4.6 / session |

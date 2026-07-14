@@ -7,6 +7,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Abuse-case verification now filters cases using recon evidence, avoiding expensive web-authentication checks triggered by documentation, scanner metadata, or broad CWE matches.
+- Parallel report rendering now uses focused §7 and Management Summary agents, avoiding the full renderer prompt for both roles. Standard runs defer duplicate Mermaid validation to the required QA stage; repair attempts skip the changelog audit until the final successful render.
 
 ## 0.5.0-beta (2026-07-14)
 

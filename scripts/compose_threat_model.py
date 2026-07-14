@@ -17737,6 +17737,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--dry-run", action="store_true", help="Write to stdout, do not touch the filesystem.")
     p.add_argument(
+        "--defer-mermaid-validation",
+        action="store_true",
+        help="Skip the compose-time Mermaid parse because a guaranteed subsequent `qa_checks.py all` pass owns it. "
+        "Internal pipeline optimization; never use for a final report without that QA pass.",
+    )
+    p.add_argument(
+        "--skip-changelog-audit",
+        action="store_true",
+        help="Skip the auxiliary full changelog-audit export for an intermediate compose attempt. "
+        "The final successful render must still generate the audit artifacts.",
+    )
+    p.add_argument(
         "--embed-figures",
         action="store_true",
         help="Also embed Figure 1 inline in the Markdown as a base64 data:image URI "
@@ -18502,7 +18514,7 @@ def main(argv: list[str] | None = None) -> int:
     # user can inspect the issue. A future strict-strict mode could exit
     # non-zero, but parity with the current QA-side semantics (warn-only)
     # is the conservative choice.
-    if not args.dry_run:
+    if not args.dry_run and not args.defer_mermaid_validation:
         try:
             import qa_checks as _qa_checks
 
@@ -18542,7 +18554,7 @@ def main(argv: list[str] | None = None) -> int:
     # Full, uncapped change-log audit export beside the report (threat-model.md's
     # own §Changelog is a 5-per-bucket window). Pure render of the yaml changelog;
     # never aborts the composed report. Only for the full threat-model document.
-    if not args.dry_run and args.document != "architecture":
+    if not args.dry_run and args.document != "architecture" and not args.skip_changelog_audit:
         try:
             import render_changelog_audit
 

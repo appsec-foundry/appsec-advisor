@@ -116,7 +116,7 @@ Generated reports are for technical, time-pressed engineers, architects, and sec
 
 Lead with the concrete route, file, library, component, config key, or API call. Keep detail that helps verify or fix; cut jargon, unexplained acronyms, and version-tag noise that does not change the action.
 
-Authoritative style anchor: `agents/shared/prose-style.md`; worked examples: `agents/shared/prose-samples.md`. When editing report-prose prompts (`agents/appsec-stride-analyzer.md`, `agents/phases/phase-group-finalization.md`, `agents/shared/ms-template.md`, `agents/appsec-threat-renderer.md`), keep those references wired. Drift-guarded by `tests/test_agent_definitions.py`.
+Authoritative style anchor: `agents/shared/prose-style.md`; worked examples: `agents/shared/prose-samples.md`. When editing report-prose prompts (`agents/appsec-stride-analyzer.md`, `agents/phases/phase-group-finalization.md`, `agents/shared/ms-template.md`, `agents/appsec-threat-renderer.md`, `agents/appsec-secarch-renderer.md`, `agents/appsec-ms-renderer.md`), keep those references wired. Drift-guarded by `tests/test_agent_definitions.py`.
 
 ### 11. Keep artifacts, code, and checks maintainable
 
@@ -181,7 +181,9 @@ Frontmatter pins all agents to Sonnet; runtime routing may override at dispatch.
 - `agents/appsec-evidence-verifier.md` — Sonnet, 40 max turns — Phase 10a sampled evidence verification.
 - `agents/appsec-abuse-case-verifier.md` — Sonnet, 28 max turns — Phase 10c per-abuse-case verification.
 - `agents/appsec-triage-validator.md` — Sonnet, 20 max turns — Phase 10b rating consistency validation.
-- `agents/appsec-threat-renderer.md` — Sonnet, 80 max turns — Stage 2 renderer; never re-runs analysis.
+- `agents/appsec-threat-renderer.md` — Sonnet, 80 max turns — Stage 2 full/recovery renderer; never re-runs analysis.
+- `agents/appsec-secarch-renderer.md` — Sonnet, 60 max turns — parallel Stage-2 §7 specialist; authors only `security-architecture.md`.
+- `agents/appsec-ms-renderer.md` — Sonnet, 32 max turns — parallel Stage-2 Management Summary specialist; authors only its summary fragments.
 - `agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns — Stage 3 QA reviewer.
 - `agents/appsec-architect-reviewer.md` — Sonnet, 40 max turns — Stage 4 advisory architect review; never edits final outputs.
 - `agents/appsec-fragment-fixer.md` — Sonnet, 30 max turns — Re-Render Loop fragment repair executor.
@@ -219,7 +221,9 @@ sync with this table.
 | `appsec-triage-validator` | Sonnet (Opus at thorough) | Opus at `thorough` or explicit `--reasoning-model opus` / `--triage-model opus`; deterministic floor in `triage_validate_ratings.py`; Sonnet at `quick` / `opus-cheap` / `sonnet`. **Standard buy-back:** `claude-sonnet-5` at `standard` (id pin — headless/hybrid only). |
 | `appsec-evidence-verifier` | Sonnet | Sampled re-read. |
 | `appsec-abuse-case-verifier` | Sonnet | Stage-1c fan-out (quality-showcase). **`claude-sonnet-5` at `standard` AND `thorough`; `claude-sonnet-4-6` only at `quick`**; pin via `APPSEC_ABUSE_VERIFIER_MODEL`. 4.6 reintroduces `inconclusive` verdicts, so 5 is the default at standard/thorough. Opus banned. |
-| `appsec-threat-renderer` | Sonnet | Fresh Stage-2 budget (quality-showcase). **`claude-sonnet-5` at `standard` AND `thorough`; `claude-sonnet-4-6` only at `quick`**; pin via `APPSEC_RENDERER_MODEL`. Dispatched as two parallel calls (§7 ‖ MS) + single + recovery — each must set the Agent `model` param. |
+| `appsec-threat-renderer` | Sonnet | Fresh Stage-2 full/recovery budget (quality-showcase). **`claude-sonnet-5` at `standard` AND `thorough`; `claude-sonnet-4-6` only at `quick`**; pin via `APPSEC_RENDERER_MODEL`. |
+| `appsec-secarch-renderer` | Sonnet | Parallel Stage-2 §7 specialist. Receives the same resolved `APPSEC_RENDERER_MODEL` tier as the full renderer. |
+| `appsec-ms-renderer` | Sonnet | Parallel Stage-2 Management Summary specialist. Receives the same resolved `APPSEC_RENDERER_MODEL` tier as the full renderer. |
 | `appsec-qa-reviewer` | Sonnet | Mechanical stages. `qa_content` = `claude-sonnet-4-6` at every depth; `qa_routine` Haiku at quick/standard, `claude-sonnet-4-6` at thorough. |
 | `appsec-architect-reviewer` | Opus | Override via `--architect-model sonnet` or `APPSEC_ARCHITECT_MODEL`. |
 
@@ -247,7 +251,7 @@ Instructions live in `agents/phases/`. This table is an orientation aid and a dr
 | 10a | 1 | `phase-group-threats.md` | `appsec-evidence-verifier` |
 | 10b | 1 | `phase-group-threats.md` | `appsec-triage-validator` |
 | 10c | 1 | `phase-group-threats.md` | `appsec-abuse-case-verifier` fan-out |
-| 11 | 2 | `phase-group-finalization.md` | `appsec-threat-renderer` |
+| 11 | 2 | `phase-group-finalization.md` | `appsec-secarch-renderer` + `appsec-ms-renderer` in parallel; `appsec-threat-renderer` for full/recovery |
 | QA | 3 | post-stage | `appsec-qa-reviewer` |
 | Arch | 4 | post-stage | `appsec-architect-reviewer` |
 

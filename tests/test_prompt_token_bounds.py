@@ -50,6 +50,10 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # evidence_summary "short inline identifiers only" code-formatting rule.
     # Measured 13_011; high = ~14% buffer above the new size.
     "agents/appsec-stride-analyzer.md": (6_500, 14_900),
+    # Parallel Stage-2 specialists intentionally keep only role-local
+    # instructions. They load their relevant legacy contract slice on demand.
+    "agents/appsec-secarch-renderer.md": (500, 1_200),
+    "agents/appsec-ms-renderer.md": (500, 1_200),
 }
 
 

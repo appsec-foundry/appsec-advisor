@@ -116,6 +116,12 @@ def test_composition_dispatch_uses_renderer(skill_impl_text):
     assert "Threat Model Renderer (Stage 2)" in skill_impl_text
 
 
+def test_parallel_composition_uses_role_specific_renderer_agents(skill_impl_text):
+    assert "appsec-advisor:appsec-secarch-renderer" in skill_impl_text
+    assert "appsec-advisor:appsec-ms-renderer" in skill_impl_text
+    assert "single shared phase-start event" in skill_impl_text
+
+
 def test_composition_documents_pre_generator_call(skill_impl_text):
     # Pre-dispatch pre-generation step must be documented
     assert "pregenerate_fragments.py" in skill_impl_text
