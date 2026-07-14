@@ -940,9 +940,9 @@ properties:
           pattern: "^W-\\d{3,}$"
         weakness_class:
           type: string
-          enum: [injection, broken_auth, missing_authz, weak_crypto,
-                 server_side_exposure, output_xss_csp, sensitive_disclosure,
-                 dos, outdated_deps, _unmapped]
+          enum: [injection, broken_auth, secret_management, missing_authz,
+                 weak_crypto, server_side_exposure, output_xss_csp,
+                 sensitive_disclosure, dos, outdated_deps, _unmapped]
         mechanism_id:
           type: [string, "null"]
           pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"

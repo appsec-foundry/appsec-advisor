@@ -300,9 +300,9 @@ properties:
         weakness_class:
           # A data/weakness-classes.yaml cluster id.
           type: string
-          enum: [injection, broken_auth, missing_authz, weak_crypto,
-                 server_side_exposure, output_xss_csp, sensitive_disclosure,
-                 dos, outdated_deps, _unmapped]
+          enum: [injection, broken_auth, secret_management, missing_authz,
+                 weak_crypto, server_side_exposure, output_xss_csp,
+                 sensitive_disclosure, dos, outdated_deps, _unmapped]
         mechanism_id:
           # Stable mechanism-level grouping key. Unlike weakness_class (a CWE
           # reporting family), this identifies the observable architectural
