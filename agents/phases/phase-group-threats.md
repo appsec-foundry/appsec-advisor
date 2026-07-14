@@ -1827,11 +1827,12 @@ Both sidecars run AFTER the triage agent completes — they consume `.triage-fla
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10c/11] Abuse Case Verification" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
     --output-dir "$OUTPUT_DIR" \
+    --signals "$OUTPUT_DIR/.recon-signals.json" \
     ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} || true
 # → .abuse-case-matches.json
 CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
 ```
-The matcher reads `.threats-merged.json`, applies each case's `scope_qualifier` and per-step `probe.sink_patterns`, and emits a structural verdict per case. Only `candidate` / `partial_candidate` cases proceed to verification.
+The matcher reads `.threats-merged.json` and `.recon-signals.json` when present, applies each case's `scope_qualifier` and per-step `probe.sink_patterns`, and emits a structural verdict per case. Only `candidate` / `partial_candidate` cases proceed to verification. A missing signal sidecar remains fail-open for compatibility.
 
 **Step 2 — verifier fan-out (one Sonnet agent per candidate, parallel — same pattern as Phase 9 STRIDE).** For each id in `$CANDIDATES`, dispatch:
 

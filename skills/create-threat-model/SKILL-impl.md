@@ -2632,6 +2632,7 @@ fi
    if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
        --output-dir "$OUTPUT_DIR" \
        --repo-root "$REPO_ROOT" \
+       --signals "$OUTPUT_DIR/.recon-signals.json" \
        ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"}; then
      ABUSE_PIPELINE_FAILED=1
      printf '\n\033[1;31m✗ Abuse-case match failed (match_abuse_cases.py match exited nonzero)\033[0m\n' >&2
@@ -2639,6 +2640,11 @@ fi
    CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
        list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
    ```
+   The matcher consumes the recon sidecar when it exists. Its scope qualifiers
+   prevent web-authentication abuse cases from reaching the verifier fan-out in
+   repositories that do not implement the required application surface. A
+   missing sidecar remains fail-open for compatibility: the matcher evaluates
+   the case from findings alone rather than failing the whole stage.
 2. **Verifier fan-out.**
 
    **⚠ HARD CONSTRAINT — ONE MESSAGE, ALL CANDIDATES, NO EXCEPTIONS.** Issue ALL `appsec-advisor:appsec-abuse-case-verifier` `Agent` calls **in a SINGLE message turn** (multiple tool-use blocks in one response) — one per AC-ID in `$CANDIDATES`. This is NOT optional and NOT sequential: **DO NOT dispatch one verifier, wait for it to return, then dispatch the next** — that collapses the fan-out to a serial chain (wall-clock × N instead of ≈ slowest single case). Concrete check: if you are about to call `Agent` for candidate 2 AFTER candidate 1 returned, you have already violated this — stop. (Same proven model the STRIDE fan-out points back to.)

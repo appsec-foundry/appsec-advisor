@@ -19,14 +19,17 @@ Matching algorithm (per case)
   * scope_qualifier — when a recon signals set is supplied, every
     `required_signals` entry must be present, else the case is `not_applicable`.
     When no signals file is given, scope is treated as satisfied (the matcher
-    never produces a false negative from a missing signals source).
+    never produces a false negative from a missing signals source). Auth, role,
+    and client-storage signals from the canonical recon sidecar must be backed
+    by a runtime source location rather than documentation or scanner metadata.
   * per step — `probe.sink_patterns` (regex) are matched against each finding's
     searchable text (title + scenario + cwe + component + evidence excerpt).
     The best-scoring finding is the step's `matched_finding_id`: each matching
     pattern contributes a specificity weight (CWE-code alternation > code-
     structural regex > bare prose phrase), a CWE bonus counts only against the
-    finding's own `cwe` field, and steps de-duplicate across a chain so a
-    two-step chain does not collapse onto one finding.
+    finding's own `cwe` field, and context-dependent CWEs need a matching
+    domain-specific sink as corroboration. Steps de-duplicate across a chain so
+    a two-step chain does not collapse onto one finding.
     `probe.control_patterns` matched against the finding's controls text mark a
     step as control-guarded.
   * structural verdict:
@@ -129,6 +132,44 @@ def _pattern_specificity(pat: str) -> int:
     return 1
 
 
+_CWE_ID_RE = re.compile(r"CWE-(\d+)", re.IGNORECASE)
+
+# These CWEs describe a weakness class that commonly spans unrelated domains.
+# A finding with only one of them is useful triage input, but is not sufficient
+# evidence that a particular abuse-case mechanism exists. For example, CWE-347
+# can describe unsigned artifact provenance as well as JWT verification. The
+# matcher therefore requires an accompanying code or mechanism phrase from the
+# case probe before dispatching an expensive verifier for these CWEs.
+_CONTEXT_DEPENDENT_CWES = frozenset({"284", "287", "347", "384"})
+
+_RUNTIME_SURFACE_SIGNALS = frozenset({"has_auth_surface", "has_role_concept", "has_client_storage"})
+_NON_RUNTIME_EVIDENCE_PREFIXES = (
+    "agents/",
+    "data/",
+    "docs/",
+    "examples/",
+    "tests/",
+    ".github/",
+)
+
+
+def _is_context_dependent_cwe_match(cwe_field: str, raw_pattern: str, rx: re.Pattern) -> bool:
+    """Return whether a matching CWE pattern is too broad to stand alone."""
+    if "CWE-" not in raw_pattern.upper() or not rx.search(cwe_field):
+        return False
+    return bool(set(_CWE_ID_RE.findall(cwe_field)) & _CONTEXT_DEPENDENT_CWES)
+
+
+def _is_runtime_surface_evidence(evidence: object) -> bool:
+    """Reject catalog, documentation, test, and CI evidence for app surfaces."""
+    if not isinstance(evidence, str):
+        return False
+    normalized = evidence.strip().lower()
+    if not normalized or normalized in {"none", "n/a", "unknown"}:
+        return False
+    return not normalized.startswith(_NON_RUNTIME_EVIDENCE_PREFIXES)
+
+
 def match_step(step: dict, findings: list[dict], exclude_ids: set[str] | None = None) -> dict:
     """Match one chain step to its best-fitting finding.
 
@@ -154,6 +195,8 @@ def match_step(step: dict, findings: list[dict], exclude_ids: set[str] | None = 
         text = _finding_text(finding)
         cwe_field = (finding.get("cwe") or "").strip()
         score = 0
+        has_mechanism_match = False
+        has_context_dependent_cwe_match = False
         for raw, rx in zip(raw_sinks, sinks):
             if not rx.search(text):
                 continue
@@ -162,7 +205,13 @@ def match_step(step: dict, findings: list[dict], exclude_ids: set[str] | None = 
             # finding's OWN cwe field, not a CWE named in passing in the prose.
             if spec == 5 and not (cwe_field and rx.search(cwe_field)):
                 spec = 1
+            elif spec == 5 and _is_context_dependent_cwe_match(cwe_field, raw, rx):
+                has_context_dependent_cwe_match = True
+            else:
+                has_mechanism_match = True
             score += spec
+        if has_context_dependent_cwe_match and not has_mechanism_match:
+            continue
         if score <= 0:
             continue
         fid = _finding_id(finding)
@@ -306,11 +355,25 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
 def _load_signals(path: str | None) -> set[str] | None:
     if not path:
         return None
-    doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    signal_path = Path(path)
+    if not signal_path.is_file():
+        return None
+    doc = json.loads(signal_path.read_text(encoding="utf-8"))
     if isinstance(doc, dict):
-        # accept {signal: true/false} or {signals: [...]}
-        if "signals" in doc and isinstance(doc["signals"], list):
-            return set(doc["signals"])
+        # Accept a direct {signal: bool} map, {signals: [name, ...]}, and the
+        # recon sidecar's canonical {signals: {name: bool}} shape.
+        if isinstance(doc.get("signals"), dict):
+            active = {str(k) for k, v in doc["signals"].items() if v}
+            evidence = doc.get("signal_evidence")
+            if isinstance(evidence, dict):
+                active.difference_update(
+                    signal
+                    for signal in _RUNTIME_SURFACE_SIGNALS & active
+                    if not _is_runtime_surface_evidence(evidence.get(signal))
+                )
+            return active
+        if isinstance(doc.get("signals"), list):
+            return {str(signal) for signal in doc["signals"]}
         return {k for k, v in doc.items() if v}
     if isinstance(doc, list):
         return set(doc)

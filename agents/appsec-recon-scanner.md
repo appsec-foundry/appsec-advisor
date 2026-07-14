@@ -654,8 +654,8 @@ After writing `.recon-summary.md`, write a second file `$OUTPUT_DIR/.recon-signa
   "schema_version": 1,
   "signals": {
     "has_public_routes": "<bool> — true when Cat 11 found ≥1 unauthenticated public HTTP route",
-    "has_auth_surface": "<bool> — true when Cat 1 Auth & session found authentication patterns",
-    "has_role_concept": "<bool> — true when Cat 2 Authorization found role/permission/admin concept",
+    "has_auth_surface": "<bool> — true only when executable application code authenticates users or authorizes their sessions/tokens",
+    "has_role_concept": "<bool> — true only when executable application code evaluates user, tenant, or service roles/permissions for access",
     "has_secrets_in_repo": "<bool> — true when Cat 12 found ≥1 hardcoded secret or .env in repo",
     "has_ci_pipeline": "<bool> — true when Cat 14 found ≥1 CI/CD pipeline file (.github/workflows, .gitlab-ci.yml, Jenkinsfile, etc.)",
     "has_external_apis": "<bool> — true when Cat 25b found ≥1 SaaS integration OR Cat 7 found external HTTP client patterns",
@@ -689,6 +689,9 @@ After writing `.recon-summary.md`, write a second file `$OUTPUT_DIR/.recon-signa
 ```
 
 **Signal assignment rules:**
+- `has_auth_surface` requires executable application code for user/service authentication or session/token authorization (for example an auth route, middleware, identity-provider integration, or token verification). Do **not** set it from documentation, prompt text, scanner rules, test fixtures, CI credentials, or an outbound API credential alone.
+- `has_role_concept` requires executable application code that evaluates a principal's role or permission to grant/deny access. Do **not** set it from role words in documentation, taxonomies, prompts, examples, or policy templates.
+- `has_client_storage` requires browser or mobile runtime code that stores a credential or token. Do **not** infer it from prose, build tooling, or files merely mentioning `localStorage` / `sessionStorage`.
 - `has_multi_tenancy_signal` requires **both** sub-conditions — this is the most commonly over-triggered signal. When only a tenant_id column exists without scoping middleware, keep the boolean `false` (avoids over-activating multi-tenant actors) BUT record it in `signal_evidence` with the `ISOLATION-GAP:` prefix — a tenant column with no enforced scoping is exactly the broken-isolation case and must stay visible to the STRIDE analyzer as a TH-20 candidate, not silently dropped.
 - `has_open_self_registration` classification: deterministic when a registration route is found AND it clearly lacks gating (no invite/payment/approval patterns in the same file/module). Ambiguous cases → `llm-fallback` classification.
 - All other signals are deterministic from existing Grep evidence — do not call LLM inference.
