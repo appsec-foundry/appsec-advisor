@@ -2,7 +2,13 @@
 
 All notable changes to this project are documented here.
 
-## 0.4.1 (2026-07-13)
+## Unreleased
+
+### Fixed
+
+- Abuse-case verification now filters cases using recon evidence, avoiding expensive web-authentication checks triggered by documentation, scanner metadata, or broad CWE matches.
+
+## 0.5.0-beta (2026-07-14)
 
 ### Added
 

@@ -1,6 +1,6 @@
 {
   "name": "appsec-advisor",
-  "version": "0.4.1-dev",
+  "version": "0.5.0-beta",
   "analysis_version": 3,
   "compatible_analysis_versions": [1, 2, 3],
   "description": "Application security threat modeling plugin. Provides AppSec-focused agents and skills for threat modeling, STRIDE analysis, dependency scanning, QA review, and security context resolution.",

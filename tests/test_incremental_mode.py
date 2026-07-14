@@ -2355,8 +2355,8 @@ class TestThreatModelHealth:
         # Rewind the baseline plugin_version to a version that is unambiguously a
         # MINOR bump behind the current plugin version, so the drift is stale
         # regardless of a `-dev` pre-release suffix on the current version.
-        # (Rewinding to the same minor, e.g. '0.4.0' while current is
-        # '0.4.1-dev', is only a *patch*-tier change → fresh, not what this test
+        # (Rewinding to the same minor, e.g. '0.5.0' while current is
+        # '0.5.0-beta', is only a *patch*-tier change → fresh, not what this test
         # asserts. Use a lower minor so `_classify_plugin_version` -> "minor".)
         yaml_path = outdir / "threat-model.yaml"
         text = yaml_path.read_text()
