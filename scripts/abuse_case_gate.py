@@ -72,8 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     for item in violations:
         print(
-            "ABUSE_CASE_GATE: violation "
-            f"{item['abuse_case_id']} ({item['chain_verdict']}) — {item['title']}",
+            f"ABUSE_CASE_GATE: violation {item['abuse_case_id']} ({item['chain_verdict']}) — {item['title']}",
             file=sys.stderr,
         )
     return 2

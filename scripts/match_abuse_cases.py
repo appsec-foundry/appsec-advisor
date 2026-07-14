@@ -41,11 +41,11 @@ Matching algorithm (per case)
 from __future__ import annotations
 
 import argparse
-from functools import lru_cache
 import importlib.util
 import json
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -352,7 +352,9 @@ def _scope_status(case: dict, signals: set[str] | None, repo_root: Path | None) 
             # Keep compatibility with callers that do not supply a repository:
             # absence of the inventory cannot disprove applicability.
             pass
-        elif not patterns or not any(_glob_matches(p.relative_to(repo_root), patterns) for p in _repo_source_files(repo_root)):
+        elif not patterns or not any(
+            _glob_matches(p.relative_to(repo_root), patterns) for p in _repo_source_files(repo_root)
+        ):
             unmet_paths = [str(p) for p in raw_patterns]
     return not unmet_signals and not unmet_paths, unmet_signals, unmet_paths
 

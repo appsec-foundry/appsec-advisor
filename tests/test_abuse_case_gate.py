@@ -7,7 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "scripts" / "abuse_case_gate.py"
 
@@ -39,17 +38,32 @@ def _case(fail_on: list[str], applies: list[str] | None = None) -> dict:
 
 
 def test_gate_blocks_explicit_final_verdict(tmp_path: Path):
-    _write(tmp_path, [{"abuse_case_id": "REPO-AC-001", "case": _case(["fully_viable"])}], [{"abuse_case_id": "REPO-AC-001", "chain_verdict": "fully_viable"}])
-    assert gate.evaluate(tmp_path) == [{"abuse_case_id": "REPO-AC-001", "title": "Replay", "chain_verdict": "fully_viable", "preset": None}]
+    _write(
+        tmp_path,
+        [{"abuse_case_id": "REPO-AC-001", "case": _case(["fully_viable"])}],
+        [{"abuse_case_id": "REPO-AC-001", "chain_verdict": "fully_viable"}],
+    )
+    assert gate.evaluate(tmp_path) == [
+        {"abuse_case_id": "REPO-AC-001", "title": "Replay", "chain_verdict": "fully_viable", "preset": None}
+    ]
     assert gate.main(["--output-dir", str(tmp_path)]) == 2
 
 
 def test_gate_ignores_unlisted_or_missing_verdict(tmp_path: Path):
-    _write(tmp_path, [{"abuse_case_id": "REPO-AC-001", "case": _case(["fully_viable"])}], [{"abuse_case_id": "REPO-AC-001", "chain_verdict": "inconclusive"}])
+    _write(
+        tmp_path,
+        [{"abuse_case_id": "REPO-AC-001", "case": _case(["fully_viable"])}],
+        [{"abuse_case_id": "REPO-AC-001", "chain_verdict": "inconclusive"}],
+    )
     assert gate.main(["--output-dir", str(tmp_path)]) == 0
 
 
 def test_gate_honours_preset_filter(tmp_path: Path):
-    _write(tmp_path, [{"abuse_case_id": "REPO-AC-001", "case": _case(["fully_viable"], ["release"])}], [{"abuse_case_id": "REPO-AC-001", "chain_verdict": "fully_viable"}], preset="ci")
+    _write(
+        tmp_path,
+        [{"abuse_case_id": "REPO-AC-001", "case": _case(["fully_viable"], ["release"])}],
+        [{"abuse_case_id": "REPO-AC-001", "chain_verdict": "fully_viable"}],
+        preset="ci",
+    )
     assert gate.main(["--output-dir", str(tmp_path)]) == 0
     assert gate.main(["--output-dir", str(tmp_path), "--preset", "release"]) == 2

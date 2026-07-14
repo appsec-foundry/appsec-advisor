@@ -71,8 +71,7 @@ def test_posture_rubric_themes_reference_known_classes() -> None:
     rubric = yaml.safe_load((DATA / "posture-rubric.yaml").read_text())
     keys = set(rubric.get("theme_by_weakness_class", {}))
     assert keys <= clusters, (
-        f"posture-rubric.yaml theme_by_weakness_class references unknown "
-        f"weakness classes: {keys - clusters}"
+        f"posture-rubric.yaml theme_by_weakness_class references unknown weakness classes: {keys - clusters}"
     )
 
 
@@ -80,7 +79,4 @@ def test_security_library_domains_reference_known_classes() -> None:
     clusters = _cluster_ids()
     lib = yaml.safe_load((DATA / "security-libraries.yaml").read_text())
     keys = set(lib.get("domains", {}))
-    assert keys <= clusters, (
-        f"security-libraries.yaml domains reference unknown "
-        f"weakness classes: {keys - clusters}"
-    )
+    assert keys <= clusters, f"security-libraries.yaml domains reference unknown weakness classes: {keys - clusters}"

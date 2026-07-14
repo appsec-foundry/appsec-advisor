@@ -21,7 +21,6 @@ import re
 import sys
 from pathlib import Path
 
-
 _VALID_SEVERITIES = {"Critical", "High", "Medium", "Low"}
 _VALID_STRIDE = {
     "Spoofing",
@@ -213,7 +212,9 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Promote confirmed source-probe abuse-case steps into merged findings.")
+    parser = argparse.ArgumentParser(
+        description="Promote confirmed source-probe abuse-case steps into merged findings."
+    )
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
