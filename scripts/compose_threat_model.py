@@ -9433,13 +9433,16 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # the anti-patterns are the architecturally-framed view of the systemic
         # weaknesses and now fold INTO the §6 Weakness Register cards
         # (_get_weakness_antipatterns). No standalone MS block.
-        # ai_exposure_ms — optional AI/LLM-exposure callout (renders nothing when
-        # the LLM authored no ms-ai-exposure.json, i.e. no LLM/AI surface).
-        "ai_exposure_ms",
-        # systemic_posture — the P4 "### Security Principles" verdict table
-        # (VIOLATED/WEAK/ADEQUATE per principle). Renders nothing when the weakness
-        # register is empty (has_weakness_register).
-        "systemic_posture",
+        #
+        # systemic_posture ("### Security Principles" VIOLATED/WEAK/ADEQUATE table)
+        # RETIRED from the MS (2026-07-14): it duplicated Top Weaknesses as a second
+        # systemic-framing block, scored every principle identically on a
+        # systemically-broken repo (no discrimination vs. the one-line Verdict), and
+        # only partially linked to the register (principles without a W-NNN rendered
+        # as dead all-red rows). The systemic story is now carried solely by Top
+        # Weaknesses + the §6 Weakness Register. `_render_security_principles` is
+        # retained for standalone callers/tests but is no longer wired into the MS.
+        #
         # top_weaknesses — the executive view of the root-cause control gaps
         # (2026-07-14), placed BEFORE the Security-Posture / Top-Threats block so
         # the reader sees "what is systemically wrong" before the per-finding view.
@@ -9449,6 +9452,13 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # (Figure 1 + Figure 2 heatmap + the Top Threats table).
         "security_posture_at_a_glance",
         "mitigations",
+        # ai_exposure_ms — optional AI/LLM-exposure callout, moved (2026-07-14) from
+        # MS position #2 into the specialized-surface band AFTER Top Mitigations. On
+        # a typical repo the LLM surface is a scoped secondary attack surface, not a
+        # headline finding, so its placement now matches its risk weight (the reader
+        # sees Verdict → root causes → concrete threats/mitigations first). Renders
+        # nothing when the LLM authored no ms-ai-exposure.json (no LLM/AI surface).
+        "ai_exposure_ms",
         "requirements_compliance_ms",
         "operational_strengths",
     ):
@@ -9468,15 +9478,9 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             if ai_ms.strip():
                 parts.append(ai_ms.rstrip())
             continue
-        if sid == "systemic_posture":
-            # P4 verdict table (computed, no LLM fragment) — rendered via the
-            # special-case path (like the anti-patterns / AI-exposure callouts)
-            # so a run with no weakness register demands no fragment and adds
-            # nothing.
-            sp_ms = _render_security_principles(ctx)
-            if sp_ms.strip():
-                parts.append(sp_ms.rstrip())
-            continue
+        # systemic_posture ("### Security Principles") retired from the MS tuple
+        # (2026-07-14); _render_security_principles is kept for standalone use but
+        # is no longer dispatched here.
         if sid == "top_weaknesses":
             tw_ms = _render_ms_top_weaknesses(ctx)
             if tw_ms.strip():
@@ -15214,10 +15218,7 @@ def _render_systemic_weaknesses(ctx: RenderContext) -> str:
         basis = (w.get("severity_basis") or "").strip() or "—"
         fids = _weakness_finding_ids(w)
         comps = w.get("affected_components") or []
-        out.append(
-            f"| [{wid}](#{wid.lower()}) — {title} | {sev_disp} | {basis} "
-            f"| {len(fids)} | {len(comps)} |"
-        )
+        out.append(f"| [{wid}](#{wid.lower()}) — {title} | {sev_disp} | {basis} | {len(fids)} | {len(comps)} |")
     out.append("")
 
     # -- Per-weakness cards ------------------------------------------------------
@@ -15502,17 +15503,15 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     )
     lines.append("")
 
-    # ---- Systemic posture back-reference (P4) ----------------------------
-    # The Security Principles verdict table (VIOLATED/WEAK/ADEQUATE per
-    # principle) was hoisted to the Management Summary (2026-07-13) so the
-    # systemic posture is loud at executive level; §8 keeps only this pointer
-    # while the evidence-backed weakness chapter is shown near the Management
-    # Summary, so the verdict is not shown twice.
+    # ---- Systemic weakness back-reference ---------------------------------
+    # The standalone "Security Principles" MS verdict table was retired
+    # (2026-07-14); the executive systemic view is now Top Weaknesses in the
+    # Management Summary, and the evidence-backed detail lives in the Weakness
+    # Register. §8 keeps only this pointer so the systemic story is not repeated.
     if ctx.yaml_data.get("weaknesses"):
         lines.append(
-            "The systemic posture verdict (VIOLATED / WEAK / ADEQUATE per "
-            "security principle) is in the **Security Principles** table of the "
-            "Management Summary; evidence-backed weaknesses are documented in "
+            "The systemic root-cause view is summarized in **Top Weaknesses** in "
+            "the Management Summary; evidence-backed weaknesses are documented in "
             "the [Weakness Register](#weakness-register)."
         )
         lines.append("")

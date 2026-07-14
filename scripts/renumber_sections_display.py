@@ -37,8 +37,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _slug import github_render_slug  # noqa: E402  (link-target form compose emits — preserves `--`)
-from _slug import github_slug  # noqa: E402  (single source of truth, mirrors compose)
+from _slug import (
+    github_render_slug,  # noqa: E402  (link-target form compose emits — preserves `--`)
+    github_slug,  # noqa: E402  (single source of truth, mirrors compose)
+)
 
 # Top-level number remap. Order matters only for readability — each is matched by
 # its own capture, not by sequential string replacement, so there is no cascade risk

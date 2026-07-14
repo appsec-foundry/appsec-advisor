@@ -298,6 +298,10 @@ Abuse cases are loaded in this order:
    `<repo>/.appsec/abuse-cases/` in the target repository is loaded
    automatically. Use the `REPO-AC-NNN` ID prefix. The org profile's `disable`
    list still applies, and IDs must be unique across all layers.
+4. **One scan** — `--abuse-case-file <repo-relative-path>` adds a YAML file
+   below the target repository without making it part of the default directory.
+   Repeat `--only-abuse-case <ID>` to restrict that scan to selected active
+   cases. Paths outside the repository and unknown IDs fail the stage.
 
 Example repo-local case (`<repo>/.appsec/abuse-cases/payments.yaml`):
 
@@ -319,7 +323,22 @@ abuse_cases:
           sink_patterns: ["idempotenc(y|e)[-_ ]?key"]
 ```
 
-`probe.sink_patterns` matches chain steps to findings. The assessment then checks each step against the code.
+`scope_qualifier.required_signals` selects cases for systems with a relevant
+surface; `path_patterns` additionally requires at least one matching
+repository-relative path. `probe.sink_patterns` first match existing findings
+and, when none exists, perform a bounded direct source probe to decide whether
+the case deserves verifier attention. A source-probe hit is only a candidate:
+the verifier must still establish reachability and controls from code evidence.
+
+For an opt-in CI gate, add `release_gate` to a case. Only explicitly listed
+final verdicts block the run; `inconclusive` stays visible but does not become a
+surprise release failure:
+
+```yaml
+release_gate:
+  fail_on: [fully_viable]
+  applies_to_presets: [release-review]
+```
 
 ## MCP servers
 

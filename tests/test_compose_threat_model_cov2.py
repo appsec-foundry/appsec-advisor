@@ -17,8 +17,8 @@ import importlib.util
 import json
 import shutil
 import sys
-from types import ModuleType, SimpleNamespace
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 

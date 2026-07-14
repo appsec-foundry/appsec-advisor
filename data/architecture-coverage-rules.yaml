@@ -463,6 +463,10 @@ hypothesis_rules:
     generic_threat_title: "Unauthenticated access to a privileged operation"
     hypothesis_id_prefix: ARCH-HYP-AUTHN
     control: "Route Authentication"
+    # Map this design signal to a weakness-phrased mechanism so the Weakness
+    # Register title reads as a weakness ("Endpoints are reachable without enforced
+    # authentication"), not the bare control name "Route Authentication" (2026-07-14).
+    weakness_mechanism: missing-endpoint-authentication
     domain: IAM
     cwe: CWE-306
     threat_category_id: TH-06
@@ -594,3 +598,57 @@ hypothesis_rules:
       Capped at High — confirmed RCE primitives jump to Critical on their own and are captured by code-level STRIDE rules, not by this hypothesis-tier rule.
     reviewer_note: >
       Hypothesis stays at proof_state=control-derived until a real trace is produced; do not promote on absence of an exculpatory schema.
+
+  # ARCH-SUPPLY-001 (2026-07-14): supply-chain integrity of the build pipeline.
+  # Third-party GitHub Actions pinned to a mutable tag/branch (@v3, @main) instead
+  # of an immutable commit SHA let a retagged or compromised upstream run with the
+  # pipeline's token and secret scope. Scoped to THIRD-PARTY owners via negative
+  # lookahead (not actions/ or github/) so the ubiquitous first-party @vN pattern
+  # does not dominate the signal — the real risk is a mutable third-party action
+  # with secret access (juice-shop: calibreapp/image-actions@main). Emits the
+  # design signal that materialises the "Build pipeline trusts mutable third-party
+  # references" weakness (mechanism build-pipeline-mutable-refs → outdated_deps).
+  - id: ARCH-SUPPLY-001
+    title: "CI/CD workflow trusts third-party actions pinned to mutable references"
+    architectural_theme: SupplyChain
+    generic_threat_title: "Supply-chain compromise via a mutable build dependency"
+    hypothesis_id_prefix: ARCH-HYP-SUPPLY
+    control: "Third-Party Action Pinning"
+    weakness_mechanism: build-pipeline-mutable-refs
+    domain: SupplyChain
+    cwe: CWE-829
+    threat_category_id: TH-14
+    stride: Tampering
+    weak_or_missing_controls:
+      - "Commit-SHA Action Pinning"
+      - "Dependency Provenance Verification"
+    preconditions:
+      - kind: code_signal
+        description: "A workflow step invokes an external GitHub Action."
+        any_pattern:
+          - "(?i)\\buses:\\s*[\\w.-]+/[\\w./-]+@"
+    positive_signals:
+      any_pattern:
+        # A THIRD-PARTY action (not actions/ or github/) pinned to a mutable ref:
+        # a version tag (v3, 1.2.3), latest, or a branch (main/master/develop/…).
+        - "(?i)\\buses:\\s*(?!actions/|github/)[\\w.-]+/[\\w./-]+@(?:v?\\d+(?:\\.\\d+)*|latest|main|master|develop|release[\\w.-]*)\\b"
+    exculpatory_signals:
+      any_pattern:
+        # Pinned to a full 40-character commit SHA — the recommended immutable pin.
+        - "(?i)\\buses:\\s*[\\w.-]+/[\\w./-]+@[0-9a-f]{40}\\b"
+    severity_cap: High
+    output: hypothesis_only
+    review_intent: >
+      Hypothesis: a workflow resolves a third-party action to a mutable tag or branch instead of an immutable commit SHA, so a retagged or compromised upstream executes with the pipeline's privileges and secrets.
+    finding_when:
+      - "`uses:` references a third-party action by tag (vN) or branch instead of a 40-char commit SHA"
+      - "A build/release job with secret access depends on a mutable third-party ref"
+    not_a_finding_when:
+      - "The action is pinned to a full 40-character commit SHA"
+      - "The action is first-party (actions/*, github/*) and covered by the platform's own release process"
+    required_evidence: >
+      The `uses:` line showing a mutable @ref (tag/branch) on a third-party action, plus the absence of SHA pinning for that action.
+    severity_reason: >
+      Capped at High — exploitation requires the upstream action to be compromised or retagged; blast radius is the pipeline's token/secret scope.
+    reviewer_note: >
+      Confirm the action is third-party (not actions/* or github/*) and that the job it runs in can read repository or org secrets; a mutable ref in a secretless lint job is lower risk.

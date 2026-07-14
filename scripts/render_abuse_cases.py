@@ -312,7 +312,7 @@ def _case_markdown(m: dict) -> str:
     # registers) so the heading auto-slug stays clean and both the `#ac-t-nnn`
     # cross-ref and the editor outline resolve (2026-07-14).
     out.append(f'<a id="{cid.lower()}"></a>')
-    out.append(f'### {cid} — {m["title"]}')
+    out.append(f"### {cid} — {m['title']}")
     out.append("")
     out.append(
         f"> **Source:** {src} · **Actor:** {m['actor_label']} · "
@@ -492,7 +492,14 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
         p = Path(org_profile)
         profile = rac._load_yaml(p)
         profile_dir = p.parent
-    cases, _ = rac.resolve_abuse_cases(profile, profile_dir, PLUGIN_ROOT, Path(repo_root) if repo_root else None)
+    extra_case_files, _ = _match_mod()._scan_case_config(output_dir)
+    cases, _ = rac.resolve_abuse_cases(
+        profile,
+        profile_dir,
+        PLUGIN_ROOT,
+        Path(repo_root) if repo_root else None,
+        extra_case_files=extra_case_files,
+    )
     case_by_id = {c["id"]: c for c in cases}
 
     tm_path = output_dir / "threat-model.yaml"

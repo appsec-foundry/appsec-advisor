@@ -158,6 +158,32 @@ def test_repo_local_duplicate_of_library_is_reported(tmp_path: Path):
     assert any("duplicate" in e.lower() and "AC-T-001" in e for e in errors), errors
 
 
+def test_explicit_case_file_under_repo_is_loaded(tmp_path: Path):
+    case_file = tmp_path / "security" / "payments.yaml"
+    case_file.parent.mkdir()
+    case_file.write_text(_VALID_CASE.replace("ORG-AC-001", "REPO-AC-010"), encoding="utf-8")
+
+    cases, errors = rac.resolve_abuse_cases(
+        {"abuse_cases": {"inherit_defaults": False}},
+        None,
+        repo_root=tmp_path,
+        extra_case_files=[Path("security/payments.yaml")],
+    )
+
+    assert errors == []
+    assert [case["id"] for case in cases] == ["REPO-AC-010"]
+
+
+def test_explicit_case_file_cannot_escape_repo(tmp_path: Path):
+    outside = tmp_path.parent / "outside.yaml"
+    outside.write_text(_VALID_CASE, encoding="utf-8")
+    cases, errors = rac.resolve_abuse_cases(
+        {"abuse_cases": {"inherit_defaults": False}}, None, repo_root=tmp_path, extra_case_files=[outside]
+    )
+    assert cases == []
+    assert any("outside the repository" in error for error in errors)
+
+
 # ---------------------------------------------------------------------------
 # grants / requires chain consistency
 # ---------------------------------------------------------------------------

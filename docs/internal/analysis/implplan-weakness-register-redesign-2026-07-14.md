@@ -6,7 +6,7 @@ suite green (9375+ passed). See "Implementation record" at the end.
 
 **User chose:** Hybrid (C) mitigation integration (§4) and phased implementation.
 
-**Author context:** Follows the juice-shop thorough v0.4.1 run. Builds on
+**Author context:** Follows the juice-shop thorough v0.5.0-beta run. Builds on
 [implplan-design-weakness-emphasis.md] (systemic_posture MS table, DONE
 2026-07-13) and [proposal-weakness-class-evidence-model.md] (the
 `build_weakness_register` data model). This plan does **not** re-derive the

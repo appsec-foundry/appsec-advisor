@@ -190,10 +190,7 @@ def test_dispatch_derivation_accepts_parallel_specialist_types(tmp_path):
         tmp_path,
         **{
             "--stage": "2",
-            "--subagent-type": (
-                "appsec-advisor:appsec-secarch-renderer,"
-                "appsec-advisor:appsec-ms-renderer"
-            ),
+            "--subagent-type": ("appsec-advisor:appsec-secarch-renderer,appsec-advisor:appsec-ms-renderer"),
             "--since-iso": "2026-07-14T07:09:00Z",
         },
     )

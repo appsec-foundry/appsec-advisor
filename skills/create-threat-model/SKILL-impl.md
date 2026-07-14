@@ -775,6 +775,8 @@ Parse the user's arguments for the following flags:
 | `--no-walkthroughs` | `SKIP_ATTACK_WALKTHROUGHS=true` — skip authoring `attack-walkthroughs.md` in Stage 2; the composer renders §3 with chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2. Also implied by `--assessment-depth quick`. | `false` at standard/thorough; `true` at quick |
 | `--abuse-cases` | `skip_abuse_case_verification=false` — force the Stage 1c abuse-case verifier fan-out ON at any depth (overrides the quick-depth default-off). Conflicts with `--no-abuse-cases`. | on at standard/thorough; off at quick |
 | `--no-abuse-cases` | `skip_abuse_case_verification=true` — force the Stage 1c abuse-case verifier fan-out OFF at any depth (skips matcher + verifiers + chain fold even at standard/thorough; §9 renders the not-applicable catalog and no finding is chain-elevated). Conflicts with `--abuse-cases`. | on at standard/thorough; off at quick |
+| `--abuse-case-file <path>` | Add a YAML case file below the target repository for this scan. May be repeated; paths outside the repository are rejected. | none |
+| `--only-abuse-case <ID>` | Restrict this scan's verification to active case IDs. May be repeated; an unknown ID fails the stage. | all active cases |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
 | `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html`, figure references rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
@@ -2600,7 +2602,7 @@ The YAML integrity gate that runs before this section will still pass after the 
 
 **Why this lives at the skill level.** Abuse-case discovery → verifier fan-out → `.abuse-case-verdicts.json` is documented in `phase-group-threats.md` as running "after Phase 10b and before Phase 11". But Stage 1 is dispatched with `STAGE1_PHASE_LIMIT=10b`, whose analyst branch stops *after* Phase 10b plus the deterministic Phase-11 substeps 1–3 — it never reaches it. Running it here — after the YAML is final, before Stage 2 renders — closes the gap deterministically and keeps it out of Stage 1's turn budget.
 
-Runs only when `DRY_RUN=false` **and** `skip_abuse_case_verification=false` (resolved in `.skill-config.json` from the `--abuse-cases` / `--no-abuse-cases` flags — default on at standard/thorough, off at quick; see the Argument Parsing table). Entirely non-fatal — any failure leaves §9 to render its catalog/placeholder.
+Runs only when `DRY_RUN=false` **and** `skip_abuse_case_verification=false` (resolved in `.skill-config.json` from the `--abuse-cases` / `--no-abuse-cases` flags — default on at standard/thorough, off at quick; see the Argument Parsing table). Matcher/verifier failures remain visible and non-fatal; an abuse case that explicitly declares `release_gate` is the exception and fails closed.
 
 **Skip the whole stage** (no matcher, no verifier fan-out, no escalation, no chain fold, no §9 render-from-verdicts, and no TaskList row — it was not created in the bootstrap) when **either** `DRY_RUN=true` **or** `skip_abuse_case_verification=true`. In the skip case the §9 fragment is still produced by the deterministic `render_abuse_cases.py` backstop in the Stage-3 pre-generation block, which no-ops to the not-applicable catalog/placeholder because no `.abuse-case-verdicts.json` exists — so §8 → §10 numbering stays contiguous and no finding is chain-elevated. Read the flag at stage entry:
 
@@ -2661,6 +2663,13 @@ fi
    if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR"; then
      ABUSE_PIPELINE_FAILED=1
      printf '\n\033[1;31m✗ Abuse-case finalize failed (match_abuse_cases.py finalize exited nonzero)\033[0m\n' >&2
+   fi
+   # Cases may opt into a deterministic release gate in their definition.
+   # Only an explicitly configured final verdict blocks; inconclusive remains
+   # visible rather than becoming an implicit, surprise gate.
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/abuse_case_gate.py" --output-dir "$OUTPUT_DIR"; then
+     printf '\n\033[1;31m✗ Configured abuse-case release gate failed\033[0m\n' >&2
+     exit 2
    fi
    # DG-2: a pipeline crash must NOT masquerade as "no abuse cases apply". When
    # ABUSE_PIPELINE_FAILED=1 the §9 not-applicable catalog below is rendering

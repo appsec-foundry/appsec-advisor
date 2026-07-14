@@ -41,6 +41,7 @@ Matching algorithm (per case)
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
 import importlib.util
 import json
 import re
@@ -152,6 +153,93 @@ _NON_RUNTIME_EVIDENCE_PREFIXES = (
     ".github/",
 )
 
+# A source probe is deliberately a *candidate generator*, not a verdict.  It
+# closes the historic blind spot where a configured scenario was never
+# investigated merely because upstream analysis did not emit a matching
+# finding.  The verifier still has to establish reachability and controls.
+_SOURCE_PROBE_SKIP_DIRS = frozenset({".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "target"})
+_SOURCE_PROBE_MAX_FILES = 5_000
+_SOURCE_PROBE_MAX_BYTES = 1_000_000
+
+
+def _safe_repo_glob(pattern: object) -> str | None:
+    """Return a repository-relative glob, or ``None`` for an unsafe value."""
+    if not isinstance(pattern, str) or not pattern.strip():
+        return None
+    normalized = pattern.replace("\\", "/")
+    if normalized.startswith("/") or any(part == ".." for part in normalized.split("/")):
+        return None
+    return normalized
+
+
+@lru_cache(maxsize=8)
+def _repo_source_files(repo_root: Path) -> tuple[Path, ...]:
+    """Return a bounded, deterministic inventory for direct source probes."""
+    files: list[Path] = []
+    try:
+        for path in sorted(repo_root.rglob("*")):
+            try:
+                rel = path.relative_to(repo_root)
+            except ValueError:
+                continue
+            if any(part in _SOURCE_PROBE_SKIP_DIRS for part in rel.parts):
+                continue
+            if not path.is_file():
+                continue
+            try:
+                if path.stat().st_size > _SOURCE_PROBE_MAX_BYTES:
+                    continue
+            except OSError:
+                continue
+            files.append(path)
+            if len(files) >= _SOURCE_PROBE_MAX_FILES:
+                break
+    except OSError:
+        return tuple(files)
+    return tuple(files)
+
+
+def _glob_matches(relative_path: Path, patterns: list[str]) -> bool:
+    """Match a repo-relative path without ever interpreting user data as a path."""
+    for pattern in patterns:
+        if relative_path.match(pattern):
+            return True
+        # pathlib's ``match`` treats ``**/`` as one-or-more path components,
+        # while users conventionally expect ``services/**/*.py`` to include
+        # ``services/payments.py`` as well.  Test the zero-directory variant
+        # explicitly without handing the pattern to a shell or filesystem glob.
+        if "/**/" in pattern and relative_path.match(pattern.replace("/**/", "/")):
+            return True
+    return False
+
+
+def _source_probe(step: dict, repo_root: Path | None) -> dict | None:
+    """Return direct source evidence for a step's sink, if present.
+
+    A hit only means "this scenario deserves verification".  It intentionally
+    does not claim the sink is reachable or vulnerable; that remains the
+    verifier's code-reading job.
+    """
+    if repo_root is None or not repo_root.is_dir():
+        return None
+    probe = step.get("probe") or {}
+    sinks = _compile(probe.get("sink_patterns") or [])
+    if not sinks:
+        return None
+    hints = [p for p in (_safe_repo_glob(v) for v in (probe.get("entry_points") or {}).get("file_hints", [])) if p]
+    for path in _repo_source_files(repo_root):
+        rel = path.relative_to(repo_root)
+        if hints and not _glob_matches(rel, hints):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if any(rx.search(line) for rx in sinks):
+                return {"file": str(rel).replace("\\", "/"), "line": line_no, "excerpt": line.strip()[:300]}
+    return None
+
 
 def _is_context_dependent_cwe_match(cwe_field: str, raw_pattern: str, rx: re.Pattern) -> bool:
     """Return whether a matching CWE pattern is too broad to stand alone."""
@@ -170,7 +258,12 @@ def _is_runtime_surface_evidence(evidence: object) -> bool:
     return not normalized.startswith(_NON_RUNTIME_EVIDENCE_PREFIXES)
 
 
-def match_step(step: dict, findings: list[dict], exclude_ids: set[str] | None = None) -> dict:
+def match_step(
+    step: dict,
+    findings: list[dict],
+    exclude_ids: set[str] | None = None,
+    repo_root: Path | None = None,
+) -> dict:
     """Match one chain step to its best-fitting finding.
 
     Scoring (not first-match): every sink pattern that hits a finding contributes
@@ -228,34 +321,50 @@ def match_step(step: dict, findings: list[dict], exclude_ids: set[str] | None = 
             ctext = _controls_text(finding)
             controls_found = [rx.pattern for rx in controls if rx.search(ctext)]
 
+    direct_evidence = None
+    if matched_id is None:
+        direct_evidence = _source_probe(step, repo_root)
+
     return {
         "step": step.get("step"),
         "label": step.get("label"),
         "required": step.get("required", True),
         "grants": step.get("grants"),
         "requires": step.get("requires"),
-        "matched": matched_id is not None,
+        "matched": matched_id is not None or direct_evidence is not None,
         "matched_finding_id": matched_id,
-        "evidence": matched_evidence,
+        "evidence": matched_evidence or direct_evidence,
+        "match_basis": "finding" if matched_id is not None else ("source_probe" if direct_evidence else None),
         "controls_found": controls_found,
     }
 
 
-def _scope_ok(case: dict, signals: set[str] | None) -> bool:
-    if signals is None:
-        return True  # no signals source → cannot disprove applicability
-    required = (case.get("scope_qualifier") or {}).get("required_signals") or []
-    return all(sig in signals for sig in required)
+def _scope_status(case: dict, signals: set[str] | None, repo_root: Path | None) -> tuple[bool, list[str], list[str]]:
+    """Evaluate declarative scope gates: all signals, any path pattern."""
+    qualifier = case.get("scope_qualifier") or {}
+    required = qualifier.get("required_signals") or []
+    unmet_signals = [] if signals is None else [sig for sig in required if sig not in signals]
+    raw_patterns = qualifier.get("path_patterns") or []
+    patterns = [p for p in (_safe_repo_glob(v) for v in raw_patterns) if p]
+    unmet_paths: list[str] = []
+    if raw_patterns:
+        if repo_root is None or not repo_root.is_dir():
+            # Keep compatibility with callers that do not supply a repository:
+            # absence of the inventory cannot disprove applicability.
+            pass
+        elif not patterns or not any(_glob_matches(p.relative_to(repo_root), patterns) for p in _repo_source_files(repo_root)):
+            unmet_paths = [str(p) for p in raw_patterns]
+    return not unmet_signals and not unmet_paths, unmet_signals, unmet_paths
 
 
-def match_case(case: dict, findings: list[dict], signals: set[str] | None) -> dict:
-    applicable = _scope_ok(case, signals)
+def match_case(case: dict, findings: list[dict], signals: set[str] | None, repo_root: Path | None = None) -> dict:
+    applicable, unmet_signals, unmet_paths = _scope_status(case, signals, repo_root)
     # Thread consumed finding ids so a later step prefers a distinct finding —
     # a two-step chain (IDOR → mass-assignment) must not collapse to one finding.
     step_matches = []
     consumed: set[str] = set()
     for s in case.get("chain") or []:
-        m = match_step(s, findings, exclude_ids=consumed)
+        m = match_step(s, findings, exclude_ids=consumed, repo_root=repo_root if applicable else None)
         if m.get("matched") and m.get("matched_finding_id"):
             consumed.add(m["matched_finding_id"])
         step_matches.append(m)
@@ -265,17 +374,15 @@ def match_case(case: dict, findings: list[dict], signals: set[str] | None) -> di
     # Capture WHY a case is not a candidate so the §9 renderer can show the
     # generic catalog with a short relevant/not-relevant reason instead of
     # silently dropping every evaluated-but-not-applicable case.
-    unmet_signals: list[str] = []
     reason: str | None = None
     if not applicable:
-        req_sigs = (case.get("scope_qualifier") or {}).get("required_signals") or []
-        unmet_signals = [s for s in req_sigs if signals is not None and s not in signals]
         verdict = "not_applicable"
-        reason = (
-            "required precondition(s) absent in this codebase: " + ", ".join(unmet_signals)
-            if unmet_signals
-            else "scope preconditions not met for this codebase"
-        )
+        reasons = []
+        if unmet_signals:
+            reasons.append("required signal(s) absent: " + ", ".join(unmet_signals))
+        if unmet_paths:
+            reasons.append("no repository path matched: " + ", ".join(unmet_paths))
+        reason = "; ".join(reasons) or "scope preconditions not met for this codebase"
     elif required and len(required_hit) == len(required):
         verdict = "candidate"
     elif not required_hit:
@@ -293,8 +400,14 @@ def match_case(case: dict, findings: list[dict], signals: set[str] | None) -> di
         "structural_verdict": verdict,
         "reason": reason,
         "unmet_signals": unmet_signals or None,
-        "matched_finding_ids": [m["matched_finding_id"] for m in step_matches if m["matched"]],
+        "unmet_path_patterns": unmet_paths or None,
+        "matched_finding_ids": [m["matched_finding_id"] for m in step_matches if m.get("matched_finding_id")],
         "step_matches": step_matches,
+        # The verifier needs the full chain definition (not merely the
+        # matcher projection) for org- and repo-local cases.  It remains data,
+        # never instructions, and is intentionally persisted with the audit
+        # sidecar that explains why a case was selected.
+        "case": case,
     }
 
 
@@ -380,6 +493,17 @@ def _load_signals(path: str | None) -> set[str] | None:
     return None
 
 
+def _scan_case_config(output_dir: Path) -> tuple[list[Path], set[str]]:
+    """Read optional per-scan case files and ID filters from run config."""
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [], set()
+    files = [Path(p) for p in (cfg.get("abuse_case_files") or []) if isinstance(p, str)]
+    ids = {str(cid) for cid in (cfg.get("only_abuse_case_ids") or []) if isinstance(cid, str)}
+    return files, ids
+
+
 def cmd_match(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     findings_path = Path(args.findings) if args.findings else out_dir / ".threats-merged.json"
@@ -394,13 +518,23 @@ def cmd_match(args: argparse.Namespace) -> int:
         profile = rac._load_yaml(p)
         profile_dir = p.parent
     repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else None
-    cases, errors = _rac().resolve_abuse_cases(profile, profile_dir, PLUGIN_ROOT, repo_root)
+    extra_case_files, only_ids = _scan_case_config(out_dir)
+    cases, errors = _rac().resolve_abuse_cases(
+        profile, profile_dir, PLUGIN_ROOT, repo_root, extra_case_files=extra_case_files
+    )
     if errors:
         for e in errors:
             sys.stderr.write(f"ERROR: {e}\n")
         return 1
 
-    matches = [match_case(c, findings, signals) for c in cases]
+    unknown_ids = sorted(only_ids - {c.get("id") for c in cases})
+    if unknown_ids:
+        for cid in unknown_ids:
+            sys.stderr.write(f"ERROR: selected abuse-case id {cid!r} is not active\n")
+        return 1
+    if only_ids:
+        cases = [c for c in cases if c.get("id") in only_ids]
+    matches = [match_case(c, findings, signals, repo_root=repo_root) for c in cases]
     result = {"schema_version": 1, "matches": matches}
     (out_dir / ".abuse-case-matches.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     n_cand = sum(1 for m in matches if m["structural_verdict"] in ("candidate", "partial_candidate"))

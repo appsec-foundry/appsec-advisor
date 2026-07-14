@@ -1441,6 +1441,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Force abuse-case verification OFF at any depth "
                         "(skip the Stage 1c verifier fan-out even at "
                         "standard/thorough).")
+    p.add_argument(
+        "--abuse-case-file",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Add a repository-local YAML abuse-case file for this scan. May be repeated.",
+    )
+    p.add_argument(
+        "--only-abuse-case",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="Verify only the named active abuse case. May be repeated.",
+    )
     p.add_argument("--register-severity-floor",
                    dest="register_severity_floor",
                    choices=("critical", "high", "medium", "low", "informational"),
@@ -1676,6 +1690,10 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         cfg["skip_attack_walkthroughs_label"] = "authored (LLM)"
     cfg.update(resolve_abuse_case_verification(ns, depth_info["assessment_depth"]))
     cfg.update(resolve_paths(ns, ns.dry_run))
+    # Paths are consumed as data by resolve_abuse_cases.py, which constrains
+    # them to REPO_ROOT before reading. Never interpolate these values in Bash.
+    cfg["abuse_case_files"] = list(ns.abuse_case_file or [])
+    cfg["only_abuse_case_ids"] = list(ns.only_abuse_case or [])
 
     # B2c — repo-size auto-cap. Must run after resolve_paths so we have
     # the final repo_root value, and after resolve_assessment_depth so we

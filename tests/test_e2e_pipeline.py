@@ -717,23 +717,22 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
     assert "W-001 — Database query safety" in rendered
     assert "SQL built by concatenation; no parametrized layer." in rendered
     assert "**Confirmed findings:**" in rendered
-    # P4 — the systemic posture verdict table (hoisted 2026-07-13) renders as the
-    # `### Security Principles` subsection INSIDE the Management Summary, not §8.
-    assert "### Security Principles" in rendered
-    assert "Systemic Posture" in rendered
-    assert "Input Validation" in rendered
-    assert "VIOLATED" in rendered
-    # Placement: the verdict table sits in the Management Summary (between its
-    # `## Management Summary` heading and the next `## ` section), so a
-    # systemically-violated principle is loud at executive level.
+    # The standalone "### Security Principles" verdict table was retired from the
+    # Management Summary (2026-07-14): it duplicated Top Weaknesses as a second
+    # systemic-framing block and only partially linked to the register. The
+    # executive systemic view is now carried solely by `### Top Weaknesses`.
+    assert "### Security Principles" not in rendered
+    # `### Top Weaknesses` renders INSIDE the Management Summary (between its
+    # `## Management Summary` heading and the next `## ` section) and before the
+    # central Weakness Register it links into.
+    assert "### Top Weaknesses" in rendered
     ms_start = rendered.index("## Management Summary")
     ms_end = rendered.index("\n## ", ms_start + 1)
-    assert ms_start < rendered.index("### Security Principles") < ms_end, (
-        "Security Principles table must render inside the Management Summary"
+    assert ms_start < rendered.index("### Top Weaknesses") < ms_end, (
+        "Top Weaknesses table must render inside the Management Summary"
     )
-    # The MS Security Principles table points to the central Weakness Register.
     assert "[Weakness Register](#weakness-register)" in rendered
-    assert rendered.index("### Security Principles") < rendered.index("## 6. Weakness Register")
+    assert rendered.index("### Top Weaknesses") < rendered.index("## 6. Weakness Register")
     # Findings and systemic weaknesses are reported as separate evidence types.
     assert "**Assessment evidence:**" in rendered
     assert "confirmed-exploitable finding(s)" in rendered

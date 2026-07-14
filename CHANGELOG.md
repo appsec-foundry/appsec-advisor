@@ -4,10 +4,9 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
-### Fixed
+### Added
 
-- Abuse-case verification now filters cases using recon evidence, avoiding expensive web-authentication checks triggered by documentation, scanner metadata, or broad CWE matches.
-- Parallel report rendering now uses focused §7 and Management Summary agents, avoiding the full renderer prompt for both roles. Standard runs defer duplicate Mermaid validation to the required QA stage; repair attempts skip the changelog audit until the final successful render.
+- Abuse cases can now be selected from repository signals, path patterns, or a bounded source probe, with per-scan case files and optional release gates for verified chains.
 
 ## 0.5.0-beta (2026-07-14)
 
@@ -28,6 +27,8 @@ All notable changes to this project are documented here.
 - Threat merging keeps every merged location and scenario and can no longer drop a finding through a `keep` decision.
 - More consistent mitigation rendering and consolidated finding locations.
 - Repair passes no longer drift across re-renders.
+- Abuse-case verification now filters cases using recon evidence, avoiding expensive web-authentication checks triggered by documentation, scanner metadata, or broad CWE matches.
+- Parallel report rendering now uses focused §7 and Management Summary agents, avoiding the full renderer prompt for both roles. Standard runs defer duplicate Mermaid validation to the required QA stage; repair attempts skip the changelog audit until the final successful render.
 
 ## 0.4.0-beta (2026-07-07)
 

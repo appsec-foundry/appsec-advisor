@@ -99,12 +99,20 @@ def test_cwe_specific_pattern_outranks_incidental_prose():
     # in passing must NOT capture a mass-assignment step (CWE-915) — the CWE-code
     # pattern is more specific than the incidental prose hit. (juice-shop
     # 2026-07-13: AC-T-002 step 2 mis-linked to F-008 IDOR.)
-    idor = {"t_id": "T-008", "title": "Insecure Direct Object Reference",
-            "scenario": "attacker can escalate role via enumerated object",
-            "cwe": "CWE-639", "evidence": {"file": "routes/address.ts", "line": 11}}
-    massassign = {"t_id": "T-009", "title": "Mass assignment privileged field",
-                  "scenario": "role field accepted from request body",
-                  "cwe": "CWE-915", "evidence": {"file": "routes/verify.ts", "line": 53}}
+    idor = {
+        "t_id": "T-008",
+        "title": "Insecure Direct Object Reference",
+        "scenario": "attacker can escalate role via enumerated object",
+        "cwe": "CWE-639",
+        "evidence": {"file": "routes/address.ts", "line": 11},
+    }
+    massassign = {
+        "t_id": "T-009",
+        "title": "Mass assignment privileged field",
+        "scenario": "role field accepted from request body",
+        "cwe": "CWE-915",
+        "evidence": {"file": "routes/verify.ts", "line": 53},
+    }
     step = _step(2, "CWE-(915|266|269)")
     step["probe"]["sink_patterns"].append("(?i)(role|privilege) escalation")
     step["probe"]["sink_patterns"].append("(?i)mass assignment")
@@ -112,13 +120,69 @@ def test_cwe_specific_pattern_outranks_incidental_prose():
     assert m["matched_finding_id"] == "T-009"
 
 
+def test_context_dependent_cwe_needs_mechanism_evidence():
+    """A broad access-control CWE alone must not create an IDOR candidate."""
+    generic_access_control = {
+        "t_id": "T-001",
+        "title": "CLI configuration trust boundary",
+        "scenario": "A command-line option changes the trust mode.",
+        "cwe": "CWE-284",
+        "evidence": {"file": "scripts/tool.sh", "line": 12},
+    }
+    idor = {
+        "t_id": "T-002",
+        "title": "Missing ownership check on object read",
+        "scenario": "An authenticated caller can read another user's object.",
+        "cwe": "CWE-284",
+        "evidence": {"file": "routes/object.ts", "line": 24},
+    }
+    step = _step(1, "CWE-(639|284|862|863|566)")
+    step["probe"]["sink_patterns"].append("(?i)ownership check")
+
+    assert not mac.match_step(step, [generic_access_control])["matched"]
+    assert mac.match_step(step, [idor])["matched_finding_id"] == "T-002"
+
+
+def test_context_dependent_jwt_cwe_needs_jwt_mechanism_evidence():
+    """CWE-347 artifact provenance must not be treated as JWT verification."""
+    unsigned_artifact = {
+        "t_id": "T-001",
+        "title": "Unsigned build artifact",
+        "scenario": "Release provenance is not verified.",
+        "cwe": "CWE-347",
+        "evidence": {"file": ".github/workflows/release.yml", "line": 1},
+    }
+    jwt_verifier = {
+        "t_id": "T-002",
+        "title": "JWT verification accepts an attacker-controlled algorithm",
+        "scenario": "jwt.verify accepts a token without an algorithm allowlist.",
+        "cwe": "CWE-347",
+        "evidence": {"file": "middleware/auth.ts", "line": 24},
+    }
+    step = _step(1, "CWE-347")
+    step["probe"]["sink_patterns"].append("jwt\\.verify")
+
+    assert not mac.match_step(step, [unsigned_artifact])["matched"]
+    assert mac.match_step(step, [jwt_verifier])["matched_finding_id"] == "T-002"
+
+
 def test_chain_steps_do_not_collapse_to_one_finding():
     # A two-step chain (IDOR read → mass-assignment write) must map to two
     # distinct findings, not the same one twice.
-    idor = {"t_id": "T-008", "title": "IDOR", "scenario": "escalate role",
-            "cwe": "CWE-639", "evidence": {"file": "a.ts", "line": 1}}
-    massassign = {"t_id": "T-009", "title": "Mass assignment", "scenario": "role field",
-                  "cwe": "CWE-915", "evidence": {"file": "b.ts", "line": 2}}
+    idor = {
+        "t_id": "T-008",
+        "title": "IDOR",
+        "scenario": "escalate role",
+        "cwe": "CWE-639",
+        "evidence": {"file": "a.ts", "line": 1},
+    }
+    massassign = {
+        "t_id": "T-009",
+        "title": "Mass assignment",
+        "scenario": "role field",
+        "cwe": "CWE-915",
+        "evidence": {"file": "b.ts", "line": 2},
+    }
     step1 = _step(1, "CWE-(639|284|862)")
     step2 = _step(2, "CWE-(915|266|269)", requires="state")
     case = _case([step1, step2])
@@ -198,6 +262,79 @@ def test_scope_treated_satisfied_when_no_signals_source():
     r = mac.match_case(case, findings, signals=None)  # no signals file → cannot disprove
     assert r["applicable"] is True
     assert r["structural_verdict"] == "candidate"
+
+
+def test_direct_source_probe_makes_case_a_candidate_without_finding(tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "template.ts").write_text("render(innerHTML);\n", encoding="utf-8")
+    case = _case([_step(1, "innerHTML")])
+
+    result = mac.match_case(case, [], signals=None, repo_root=tmp_path)
+
+    assert result["structural_verdict"] == "candidate"
+    step = result["step_matches"][0]
+    assert step["match_basis"] == "source_probe"
+    assert step["matched_finding_id"] is None
+    assert step["evidence"] == {"file": "src/template.ts", "line": 1, "excerpt": "render(innerHTML);"}
+
+
+def test_scope_path_patterns_gate_case_without_shell_path_expansion(tmp_path: Path):
+    (tmp_path / "services").mkdir()
+    (tmp_path / "services" / "payments.py").write_text("refund()\n", encoding="utf-8")
+    case = _case([_step(1, "refund")])
+    case["scope_qualifier"] = {"path_patterns": ["services/**/*.py"]}
+
+    assert mac.match_case(case, [], signals=None, repo_root=tmp_path)["applicable"] is True
+    case["scope_qualifier"] = {"path_patterns": ["../outside/**/*.py"]}
+    result = mac.match_case(case, [], signals=None, repo_root=tmp_path)
+    assert result["structural_verdict"] == "not_applicable"
+    assert result["unmet_path_patterns"] == ["../outside/**/*.py"]
+
+
+def test_load_signals_reads_canonical_recon_sidecar_shape(tmp_path: Path):
+    signal_path = tmp_path / ".recon-signals.json"
+    signal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "signals": {"has_auth_surface": True, "has_role_concept": False},
+                "signal_evidence": {"has_auth_surface": "middleware/auth.ts:12"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert mac._load_signals(str(signal_path)) == {"has_auth_surface"}
+
+
+def test_load_signals_rejects_non_runtime_evidence_for_surface_signals(tmp_path: Path):
+    """Documentation and scanner catalogs cannot activate web abuse cases."""
+    signal_path = tmp_path / ".recon-signals.json"
+    signal_path.write_text(
+        json.dumps(
+            {
+                "signals": {
+                    "has_auth_surface": True,
+                    "has_role_concept": True,
+                    "has_client_storage": True,
+                    "has_ci_pipeline": True,
+                },
+                "signal_evidence": {
+                    "has_auth_surface": "agents/phases/auth.md:12",
+                    "has_role_concept": "data/cwe-taxonomy.yaml:4",
+                    "has_client_storage": "docs/frontend-guide.md:8",
+                    "has_ci_pipeline": ".github/workflows/tests.yml:1",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert mac._load_signals(str(signal_path)) == {"has_ci_pipeline"}
+
+
+def test_load_signals_treats_missing_sidecar_as_unknown_scope(tmp_path: Path):
+    assert mac._load_signals(str(tmp_path / ".recon-signals.json")) is None
 
 
 # ---------------------------------------------------------------------------

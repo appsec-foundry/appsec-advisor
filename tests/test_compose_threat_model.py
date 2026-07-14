@@ -183,7 +183,9 @@ def test_architectural_anti_patterns_merge_into_weakness_register(tmp_path: Path
     }
     ctx = _Ctx(
         {
-            "weaknesses": [{"id": "W-002", "weakness_class": "injection", "instances": [{"id": "T-003"}, {"id": "T-007"}]}],
+            "weaknesses": [
+                {"id": "W-002", "weakness_class": "injection", "instances": [{"id": "T-003"}, {"id": "T-007"}]}
+            ],
         }
     )
     # Stub the fragment loader for this ctx via a monkeypatched attribute path:
@@ -206,10 +208,11 @@ def test_ai_exposure_absent_renders_nothing(tmp_path: Path) -> None:
     assert "### AI / LLM Exposure" not in rendered
 
 
-def test_ai_exposure_renders_after_anti_patterns(tmp_path: Path) -> None:
+def test_ai_exposure_renders_in_specialized_band(tmp_path: Path) -> None:
     """When ms-ai-exposure.json is present, the callout renders inside the
-    Management Summary, after the Verdict and before the Security Posture
-    section, naming each risk with its OWASP LLM id, a severity emoji and a
+    Management Summary in the specialized-surface band — after the Security
+    Posture / Top Threats and Top Mitigations tables (2026-07-14 move from MS
+    position #2) — naming each risk with its OWASP LLM id, a severity emoji and a
     linkified finding reference."""
     out = _prepare_output_dir(tmp_path)
     frag = {
@@ -245,11 +248,13 @@ def test_ai_exposure_renders_after_anti_patterns(tmp_path: Path) -> None:
     assert "Prompt Injection" in ms_slice
     assert "LLM01" in ms_slice
     assert "Excessive Agency" in ms_slice
-    # Ordering: Verdict → AI Exposure → Security Posture.
+    # Ordering (2026-07-14): Verdict → Security Posture & Top Threats → Top
+    # Mitigations → AI Exposure. The LLM callout now sits in the specialized-
+    # surface band after the headline threat/mitigation tables, not at MS #2.
     v = ms_slice.find("### Verdict")
-    a = ms_slice.find("### AI / LLM Exposure")
     s = ms_slice.find("### Security Posture & Top Threats")
-    assert v < a < s, f"ai-exposure out of order: verdict={v} ai={a} posture={s}"
+    a = ms_slice.find("### AI / LLM Exposure")
+    assert v < s < a, f"ai-exposure out of order: verdict={v} posture={s} ai={a}"
     # A linkified finding reference (T-001 normalises to the F-001 anchor).
     assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), (
         f"no linkified finding in ai-exposure callout: {ms_slice[a:s]!r}"
@@ -4722,11 +4727,20 @@ def test_ms_top_weaknesses_table_and_ordering():
     class _Ctx:
         yaml_data = {
             "weaknesses": [
-                {"id": "W-003", "title": "Object-Level Ownership Check", "severity": "Critical",
-                 "severity_basis": "confirmed", "instances": [{"id": "T-008"}]},
-                {"id": "W-007", "title": "Weak Cryptography safeguards in auth", "severity": "Medium",
-                 "severity_basis": "observed-practice",
-                 "observable_backing": {"practice_evidence": [{"id": "T-027"}]}},
+                {
+                    "id": "W-003",
+                    "title": "Object-Level Ownership Check",
+                    "severity": "Critical",
+                    "severity_basis": "confirmed",
+                    "instances": [{"id": "T-008"}],
+                },
+                {
+                    "id": "W-007",
+                    "title": "Weak Cryptography safeguards in auth",
+                    "severity": "Medium",
+                    "severity_basis": "observed-practice",
+                    "observable_backing": {"practice_evidence": [{"id": "T-027"}]},
+                },
             ]
         }
 

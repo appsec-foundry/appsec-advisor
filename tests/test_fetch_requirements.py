@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import fetch_requirements as fr
+import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "fetch_requirements.py"
@@ -58,7 +59,10 @@ def _http_server(body: bytes):
         def log_message(self, *a):  # silence per-request logging
             pass
 
-    srv = socketserver.TCPServer(("127.0.0.1", 0), _H)
+    try:
+        srv = socketserver.TCPServer(("127.0.0.1", 0), _H)
+    except PermissionError as exc:
+        pytest.skip(f"local TCP listeners are unavailable in this environment: {exc}")
     port = srv.server_address[1]
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()

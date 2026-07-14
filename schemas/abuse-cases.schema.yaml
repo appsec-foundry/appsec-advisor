@@ -68,6 +68,11 @@ $defs:
             items: { type: string }
           path_patterns:
             type: array
+            description: >
+              Repository-relative glob patterns. At least one pattern must
+              match a regular file for the case to be in scope. Patterns are
+              evaluated as data, never as shell paths; absolute paths and
+              parent traversal do not match.
             items: { type: string }
       chain:
         type: array

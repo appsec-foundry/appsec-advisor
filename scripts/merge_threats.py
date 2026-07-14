@@ -1891,11 +1891,16 @@ def _mechanism_from_text(text: str) -> str | None:
         return "application-owned-cryptography"
     if "blacklist" in lower and any(token in lower for token in ("validation", "regex", "input")):
         return "blacklist-only-input-validation"
-    if any(token in lower for token in ("concatenated quer", "string-concatenated sql", "raw sql string interpolation")):
+    if any(
+        token in lower for token in ("concatenated quer", "string-concatenated sql", "raw sql string interpolation")
+    ):
         return "database-query-concatenation"
     if any(token in lower for token in ("output encoding", "raw html", "sanitizer bypass", "sanitiser bypass")):
         return "frontend-output-encoding"
-    if any(token in lower for token in ("route by route", "per-handler", "centralized authorization", "centralised authorization")):
+    if any(
+        token in lower
+        for token in ("route by route", "per-handler", "centralized authorization", "centralised authorization")
+    ):
         return "route-by-route-authorization"
     return None
 
@@ -2000,7 +2005,9 @@ def build_weakness_register(
 
     def _design_bucket(t: dict, *, wcid: str, cwe: str | None = None) -> dict:
         raw_title = str(t.get("title") or t.get("generic_threat_title") or "").strip()
-        raw_statement = str(t.get("statement") or raw_title or "Security mechanism is not consistently enforced.").strip()
+        raw_statement = str(
+            t.get("statement") or raw_title or "Security mechanism is not consistently enforced."
+        ).strip()
         mechanism_hint = t.get("mechanism_id") or _mechanism_from_text(" ".join((raw_title, raw_statement)))
         # A named external advisory is evidence for vulnerability-management,
         # not evidence that every CWE in the affected library shares one code
