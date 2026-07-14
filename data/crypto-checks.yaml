@@ -6,7 +6,8 @@
 # Closes the largest deterministic gap: before this pack, `weak_crypto` was
 # detectable only via the STRIDE LLM. Each rule carries counter_patterns so a
 # legitimate non-security use (cache keys, checksums, ETags, jitter) is
-# suppressed rather than mis-reported.
+# suppressed rather than mis-reported. MD5/SHA-1 rules additionally require a
+# local, named security purpose; the algorithm token alone is not a finding.
 #
 # Overlap rule: hardcoded key CWE-798 stays in the Authn/Secrets scanners — do
 # NOT double-count it here.
@@ -30,6 +31,8 @@ checks:
     pattern: "crypto\\.createHash\\(\\s*['\"`](md5|sha1)['\"`]"
     counter_scope: window
     counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|integrity|content[_-]?hash|gravatar|cache\b)'
     severity_if_violated: Medium
@@ -133,6 +136,8 @@ checks:
     pattern: 'MessageDigest\.getInstance\(\s*"(?i:MD5|SHA-?1)"'
     counter_scope: window
     counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|integrity|content[_-]?hash)'
     severity_if_violated: Medium
@@ -224,6 +229,8 @@ checks:
     pattern: 'hashlib\.(md5|sha1)\('
     counter_scope: window
     counter_window: 2
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
       - 'usedforsecurity\s*=\s*False'
@@ -267,6 +274,8 @@ checks:
     pattern: '\b(?:md5|sha1)\.(?:New|Sum)\b'
     counter_scope: window
     counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
     severity_if_violated: Medium
@@ -306,6 +315,8 @@ checks:
     pattern: '\b(?:MD5|SHA1)\.(?:Create|HashData)\b|new\s+(?:MD5|SHA1)(?:CryptoServiceProvider|Managed)\b'
     counter_scope: window
     counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
     severity_if_violated: Medium
@@ -344,6 +355,8 @@ checks:
     pattern: '\b(?:md5|sha1)\s*\('
     counter_scope: window
     counter_window: 2
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
     severity_if_violated: Medium
@@ -382,6 +395,8 @@ checks:
     pattern: 'Digest::(?:MD5|SHA1)\b'
     counter_scope: window
     counter_window: 2
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
     severity_if_violated: Medium
@@ -419,6 +434,8 @@ checks:
     pattern: 'MessageDigest\.getInstance\(\s*"(?i:MD5|SHA-?1)"'
     counter_scope: window
     counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
     severity_if_violated: Medium
@@ -455,6 +472,8 @@ checks:
     pattern: '\bCC_(?:MD5|SHA1)\s*\(|Insecure\.(?:MD5|SHA1)\b'
     counter_scope: window
     counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
     severity_if_violated: Medium
@@ -492,6 +511,8 @@ checks:
     pattern: '\b(?:md5|sha1)\.convert\s*\('
     counter_scope: window
     counter_window: 2
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
     counter_patterns:
       - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
     severity_if_violated: Medium

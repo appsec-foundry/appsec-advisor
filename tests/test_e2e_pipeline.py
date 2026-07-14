@@ -711,8 +711,9 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
 
     rendered, warnings = compose.render(CONTRACT, e2e_run)
     assert warnings == [], f"unexpected compose warnings: {warnings}"
-    # Systemic weaknesses are a first-class chapter, not a §8 class roll-up.
-    assert "## Systemic Weaknesses" in rendered
+    # Weaknesses are a first-class register (renamed + repositioned before the
+    # Findings Register in the 2026-07-14 redesign), not a §8 class roll-up.
+    assert "## 6. Weakness Register" in rendered
     assert "W-001 — Database query safety" in rendered
     assert "SQL built by concatenation; no parametrized layer." in rendered
     assert "**Confirmed findings:**" in rendered
@@ -730,9 +731,9 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
     assert ms_start < rendered.index("### Security Principles") < ms_end, (
         "Security Principles table must render inside the Management Summary"
     )
-    # §8 points to the central weakness chapter rather than duplicating it.
-    assert "[Systemic Weaknesses](#systemic-weaknesses)" in rendered
-    assert rendered.index("### Security Principles") < rendered.index("## Systemic Weaknesses")
+    # The MS Security Principles table points to the central Weakness Register.
+    assert "[Weakness Register](#weakness-register)" in rendered
+    assert rendered.index("### Security Principles") < rendered.index("## 6. Weakness Register")
     # Findings and systemic weaknesses are reported as separate evidence types.
     assert "**Assessment evidence:**" in rendered
     assert "confirmed-exploitable finding(s)" in rendered

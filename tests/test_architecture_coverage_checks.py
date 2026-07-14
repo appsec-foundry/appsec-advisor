@@ -98,6 +98,12 @@ def test_every_rule_appears_in_rules_evaluated(tmp_path: Path) -> None:
     assert seen == ALL_RULE_IDS
 
 
+def test_rules_evaluated_carries_weakness_mechanism_metadata(tmp_path: Path) -> None:
+    out = _run_engine(tmp_path)
+    assert _verdict(out, "ARCH-SQLI-001")["weakness_mechanism"] == "database-query-concatenation"
+    assert _verdict(out, "ARCH-XSS-001")["weakness_mechanism"] == "frontend-output-encoding"
+
+
 def test_output_validates_against_schema(tmp_path: Path) -> None:
     (tmp_path / "app.ts").write_text(
         "app.use(cors({origin:'*', credentials:true}));\nconst dsn = 'postgres://u:p@h/db?sslmode=disable';\n"

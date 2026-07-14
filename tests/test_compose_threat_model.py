@@ -82,13 +82,13 @@ def test_infobox_tags_string_is_split_into_list(tmp_path: Path) -> None:
 
 
 def test_toc_emits_numbering_gap_note(tmp_path: Path) -> None:
-    """The contract intentionally skips §6 (Use Cases retired). A bare 5→7 jump
-    reads as a bug, so the TOC must carry an explicit non-contiguous-numbering
-    note naming the missing section (2026-05-31 'Wo ist Kapitel 6?' report)."""
+    """§6 is now the Weakness Register (2026-07-14), gated on has_weakness_register.
+    This fixture has no weaknesses, so §6 is absent and the TOC still names the
+    gap explicitly — as "not present in this report" (no longer "retired")."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     assert "Section numbering is non-contiguous" in rendered
-    assert "§6 was retired" in rendered
+    assert "§6 is not present in this report" in rendered
 
 
 def test_architecture_diagrams_are_regenerated_at_the_composition_boundary(tmp_path: Path) -> None:
@@ -163,62 +163,37 @@ def test_architectural_anti_patterns_absent_renders_nothing(tmp_path: Path) -> N
     assert "### Architectural Anti-Patterns" not in rendered
 
 
-def test_architectural_anti_patterns_renders_after_verdict(tmp_path: Path) -> None:
-    """When ms-anti-patterns.json is present, the callout renders inside the
-    Management Summary, immediately after the Verdict and before the Security
-    Posture section, naming each pattern (NO leading severity glyph — it
-    collided with the per-finding dots) with a linkified finding reference."""
-    out = _prepare_output_dir(tmp_path)
+def test_architectural_anti_patterns_merge_into_weakness_register(tmp_path: Path) -> None:
+    """2026-07-14: the Architectural Anti-Patterns are no longer a separate MS
+    callout — they fold into the §6 Weakness Register cards, attached to the
+    weakness owning the plurality of each anti-pattern's cited findings."""
+
+    class _Ctx:
+        def __init__(self, yaml_data):
+            self.yaml_data = yaml_data
+
     frag = {
         "anti_patterns": [
             {
-                "name": "SPA without BFF",
-                "severity": "red",
-                "description": "The SPA holds its sole session credential in "
-                "localStorage with no Backend-for-Frontend to keep it server-side, "
-                "so any XSS yields full token exfiltration.",
-                "affected_components": ["C-01"],
-                "findings": [{"ref": "T-001", "label": "JWT in localStorage"}],
-            },
-            {
                 "name": "Raw SQL string interpolation",
-                "description": "Login and search interpolate untrusted input "
-                "directly into raw SQL, bypassing the ORM parameter binding across "
-                "multiple routes.",
-                "findings": [{"ref": "F-002", "label": "SQL injection bypass"}],
-            },
+                "description": "Login and search interpolate untrusted input into raw SQL.",
+                "findings": [{"ref": "T-003"}, {"ref": "T-007"}],
+            }
         ]
     }
-    (out / ".fragments" / "ms-anti-patterns.json").write_text(json.dumps(frag))
-
-    rendered, _ = compose.render(CONTRACT, out)
-    ms_slice = rendered.split("## Management Summary", 1)[1].split("\n## ", 1)[0]
-
-    assert "### Architectural Anti-Patterns" in ms_slice
-    assert "**SPA without BFF**" in ms_slice
-    assert "**Raw SQL string interpolation**" in ms_slice
-    # Ordering: Verdict → Anti-Patterns → Security Posture.
-    v = ms_slice.find("### Verdict")
-    a = ms_slice.find("### Architectural Anti-Patterns")
-    s = ms_slice.find("### Security Posture & Top Threats")
-    assert v < a < s, f"anti-patterns out of order: verdict={v} ap={a} posture={s}"
-    # A linkified finding reference (T-001 normalises to the F-001 anchor).
-    assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), (
-        f"no linkified finding in anti-patterns callout: {ms_slice[a:s]!r}"
+    ctx = _Ctx(
+        {
+            "weaknesses": [{"id": "W-002", "weakness_class": "injection", "instances": [{"id": "T-003"}, {"id": "T-007"}]}],
+        }
     )
+    # Stub the fragment loader for this ctx via a monkeypatched attribute path:
+    # _get_weakness_antipatterns catches load errors, so inject via a cached map.
+    ctx._weakness_antipatterns = None
+    import unittest.mock as _mock
 
-    ap_block = ms_slice[a:s]
-    # No leading severity glyph before the pattern name — the coloured circle
-    # used to collide with the per-finding severity dots (user report 2026-06).
-    assert not re.search(r"[🔴🟠🟡🟢]\s*\*\*SPA without BFF\*\*", ap_block), (
-        f"anti-pattern name still carries a leading severity circle: {ap_block!r}"
-    )
-    # Clean nested structure (indented sub-bullets), not <br/>↳-crammed.
-    assert "↳" not in ap_block, f"legacy ↳ cramming still present: {ap_block!r}"
-    assert "_Findings:_" in ap_block
-    assert "_Affected components:_" in ap_block  # first pattern declares them
-    # Sub-bullets are indented under the pattern bullet.
-    assert re.search(r"\n {4}- _Findings:_", ap_block), f"findings sub-bullet not indented: {ap_block!r}"
+    with _mock.patch.object(compose, "_load_fragment", return_value=frag):
+        mapping = compose._get_weakness_antipatterns(ctx)
+    assert mapping.get("W-002") and mapping["W-002"][0]["name"] == "Raw SQL string interpolation"
 
 
 def test_ai_exposure_absent_renders_nothing(tmp_path: Path) -> None:
@@ -328,12 +303,13 @@ def test_verdict_renders_red_blockquote(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     assert "border-left: 3px solid #dc2626" in rendered
-    # Source references remain in the fragment for auditability, but the
-    # product-owner blockquote intentionally omits finding IDs and locators.
+    # 2026-07-14 (user point 7): each worst-case bullet now cites its findings and
+    # the systemic weakness they roll up to, so the executive scenarios name their
+    # evidence. (File paths / CWE numbers remain out of the blockquote.)
     verdict_start = rendered.index('<blockquote style="border-left: 3px solid #dc2626')
     verdict_end = rendered.index("</blockquote>", verdict_start)
     verdict_block = rendered[verdict_start:verdict_end]
-    assert not re.search(r"\[[FT]-\d{3,4}\]\(#[ft]-\d{3,4}\)", verdict_block)
+    assert re.search(r"\[F-\d{3,4}\]\(#f-\d{3,4}\)", verdict_block)
 
 
 def test_top_threats_has_five_columns(tmp_path: Path) -> None:
@@ -355,7 +331,7 @@ def test_figure1_attacks_are_labelled_arrows_with_clean_legend(tmp_path: Path) -
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     blocks = re.findall(r"```mermaid\nflowchart TB.+?```", rendered, re.DOTALL)
-    fig1 = next((block for block in blocks if re.search(r'[①②③④⑤⑥⑦]', block)), None)
+    fig1 = next((block for block in blocks if re.search(r"[①②③④⑤⑥⑦]", block)), None)
     if fig1 is None:
         return  # fixture produced no Figure 1 (no attack paths) → nothing to verify
     # Attack edges carry a mid-edge label that names the class (glyph present).
@@ -3945,8 +3921,9 @@ def test_verdict_badges_bullet_anchoring_fully_viable_chain(tmp_path: Path) -> N
     # Fully-viable chain badges the bullet without exposing an abuse-case ID.
     assert "✓ verified attack path" in out
     assert "AC-T-001" not in out
-    # The product-owner block deliberately hides implementation-level finding IDs.
-    assert "[F-001]" not in out and "[F-002]" not in out
+    # 2026-07-14 (user point 7): each bullet cites its findings; the abuse-case ID
+    # itself stays hidden (readers get the finding + weakness, not chain mechanics).
+    assert "[F-001](#f-001)" in out and "[F-002](#f-002)" in out
 
 
 def test_verdict_badge_normalises_t_ref_and_omits_when_no_chain(tmp_path: Path) -> None:
@@ -4665,3 +4642,124 @@ def test_section7_title_relevant_findings_noop_without_section7():
     ctx = _StubLabelCtx({"F-002": "Insecure JWT Verification"})
     md = "## 8. Findings Register\n\n- 🔴 [F-002](#f-002) — rationale.\n"
     assert compose._section7_title_relevant_findings(ctx, md) == md
+
+
+# ---------------------------------------------------------------------------
+# Weakness-Register redesign (2026-07-14)
+# ---------------------------------------------------------------------------
+
+
+def test_finding_to_weakness_map_inverts_instances_and_practice():
+    weaknesses = [
+        {"id": "W-002", "instances": [{"id": "T-008"}, {"id": "T-044"}]},
+        {
+            "id": "W-008",
+            "observable_backing": {"practice_evidence": [{"id": "T-020"}, {"id": "T-047"}]},
+        },
+    ]
+    m = compose._build_finding_to_weakness_map(weaknesses)
+    # Both T-NNN and F-NNN forms resolve to the owning weakness.
+    assert m["T-008"]["id"] == "W-002"
+    assert m["F-008"]["id"] == "W-002"
+    assert m["F-044"]["id"] == "W-002"
+    assert m["T-020"]["id"] == "W-008"
+    assert m["F-047"]["id"] == "W-008"
+
+
+def test_finding_to_weakness_map_first_owner_wins_deterministically():
+    # A finding claimed by two weaknesses keeps the lowest weakness id.
+    weaknesses = [
+        {"id": "W-009", "instances": [{"id": "T-005"}]},
+        {"id": "W-003", "instances": [{"id": "T-005"}]},
+    ]
+    m = compose._build_finding_to_weakness_map(weaknesses)
+    assert m["F-005"]["id"] == "W-003"
+
+
+def test_sec7_table_rewrites_findings_to_weaknesses():
+    class _Ctx:
+        yaml_data = {
+            "weaknesses": [
+                {"id": "W-005", "title": "Parameterized Database Access", "instances": [{"id": "T-003"}]},
+            ]
+        }
+
+    ctx = _Ctx()
+    md = (
+        "| Mechanism | Status | Findings |\n"
+        "| Password login | 🔴 Unsafe | 🔴 [F-003](#f-003) — SQL injection auth bypass — `login.ts:34` |\n"
+        "| Mass assign | 🔴 Unsafe | 🔴 [F-009](#f-009) — Mass assignment |\n"
+    )
+    out = compose._rewrite_sec7_table_findings_to_weaknesses(ctx, md)
+    # Mapped finding → weakness link with weakness title, finding label dropped.
+    assert "[W-005](#w-005) — Parameterized Database Access" in out
+    assert "F-003" not in out
+    # Unmapped finding is preserved untouched.
+    assert "[F-009](#f-009)" in out
+
+
+def test_sec7_rewrite_dedupes_within_cell_and_ignores_prose():
+    class _Ctx:
+        yaml_data = {
+            "weaknesses": [
+                {"id": "W-001", "title": "Route Authentication", "instances": [{"id": "T-015"}, {"id": "T-061"}]},
+            ]
+        }
+
+    ctx = _Ctx()
+    md = (
+        "| Ctrl | 🔴 [F-015](#f-015) — a<br/>🔴 [F-061](#f-061) — b |\n"
+        "- 🔴 [F-015 — evidence prose](#f-015) — this bullet is NOT a table row\n"
+    )
+    out = compose._rewrite_sec7_table_findings_to_weaknesses(ctx, md)
+    # Both findings collapse to a single W-001 link in the table cell.
+    assert out.count("[W-001](#w-001)") == 1
+    # Prose bullet (not starting with |) keeps its finding citation.
+    assert "[F-015 — evidence prose](#f-015)" in out
+
+
+def test_ms_top_weaknesses_table_and_ordering():
+    class _Ctx:
+        yaml_data = {
+            "weaknesses": [
+                {"id": "W-003", "title": "Object-Level Ownership Check", "severity": "Critical",
+                 "severity_basis": "confirmed", "instances": [{"id": "T-008"}]},
+                {"id": "W-007", "title": "Weak Cryptography safeguards in auth", "severity": "Medium",
+                 "severity_basis": "observed-practice",
+                 "observable_backing": {"practice_evidence": [{"id": "T-027"}]}},
+            ]
+        }
+
+        @staticmethod
+        def severity_emoji(s):
+            return {"critical": "🔴", "medium": "🟡"}.get(s, "")
+
+    out = compose._render_ms_top_weaknesses(_Ctx())
+    assert out.startswith("### Top Weaknesses")
+    # Bullet form (2026-07-14): "- 🔴 **[W-003](#w-003) — Title** (Critical) — …".
+    assert "**[W-003](#w-003) — Object-Level Ownership Check**" in out
+    assert "[F-008](#f-008)" in out
+    # Critical sorts above Medium.
+    assert out.index("W-003") < out.index("W-007")
+    # Title's " safeguards in ..." tail is stripped.
+    assert "Weak Cryptography**" in out
+
+
+def test_weakness_remediation_rollup_is_deduped():
+    class _Ctx:
+        yaml_data = {
+            "threats": [
+                {"id": "T-008", "mitigation_ids": ["M-015"]},
+                {"id": "T-044", "mitigation_ids": ["M-015", "M-020"]},
+            ]
+        }
+
+    ctx = _Ctx()
+    w = {"instances": [{"id": "T-008"}, {"id": "T-044"}]}
+    fmap = compose._get_finding_mitigation_map(ctx)
+    tactical = []
+    for fid in compose._weakness_finding_ids(w):
+        for mid in fmap.get(fid, []):
+            if mid not in tactical:
+                tactical.append(mid)
+    assert tactical == ["M-015", "M-020"]  # M-015 deduped across the two findings

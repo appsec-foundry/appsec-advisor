@@ -164,7 +164,8 @@
         "skip_reason": { "type": ["string", "null"] },
         "decision": { "$ref": "#/$defs/decision" },
         "architectural_theme": { "$ref": "#/$defs/architectural_theme" },
-        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" }
+        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" },
+        "weakness_mechanism": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
       }
     },
     "control_assessment": {
@@ -198,7 +199,8 @@
           "uniqueItems": true
         },
         "architectural_theme": { "$ref": "#/$defs/architectural_theme" },
-        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" }
+        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" },
+        "weakness_mechanism": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
       }
     },
     "anti_pattern_candidate": {
@@ -252,7 +254,8 @@
           "description": "Always true for architectural-anti-pattern source per schemas/threat-model.output.schema.yaml comment block."
         },
         "architectural_theme": { "$ref": "#/$defs/architectural_theme" },
-        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" }
+        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" },
+        "weakness_mechanism": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
       }
     },
     "threat_hypothesis": {
@@ -328,7 +331,8 @@
           ]
         },
         "architectural_theme": { "$ref": "#/$defs/architectural_theme" },
-        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" }
+        "generic_threat_title": { "$ref": "#/$defs/generic_threat_title" },
+        "weakness_mechanism": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
       },
       "allOf": [
         {

@@ -303,6 +303,12 @@ properties:
           enum: [injection, broken_auth, missing_authz, weak_crypto,
                  server_side_exposure, output_xss_csp, sensitive_disclosure,
                  dos, outdated_deps, _unmapped]
+        mechanism_id:
+          # Stable mechanism-level grouping key. Unlike weakness_class (a CWE
+          # reporting family), this identifies the observable architectural
+          # control gap that owns this register row.
+          type: [string, "null"]
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
         kind:
           # design = a central control is observably ABSENT (no single sink);
           # implementation = a specific non-best-practice pattern in code.

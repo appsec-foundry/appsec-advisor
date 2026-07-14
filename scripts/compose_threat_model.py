@@ -2574,8 +2574,12 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
             # --quick and return at standard/thorough). Lumping them all as
             # "retired in a prior revision" wrongly tells the reader recoverable
             # content is gone forever and masks the depth-downgrade behaviour.
-            _RETIRED = {6}  # genuinely removed from the contract
-            _DEPTH_SUPPRESSED = {3, 7}  # absent at quick, re-introduced deeper
+            # §6 is now the Weakness Register (2026-07-14), no longer retired. It
+            # is gated on has_weakness_register; when absent (no weaknesses found)
+            # it reads as "not present in this report" (the `other` bucket) rather
+            # than "retired".
+            _RETIRED: set[int] = set()  # nothing permanently retired from the contract
+            _DEPTH_SUPPRESSED = {3, 7}  # §3, §7 absent at quick, re-introduced deeper
             retired = [n for n in _missing if n in _RETIRED]
             suppressed = [n for n in _missing if n in _DEPTH_SUPPRESSED]
             other = [n for n in _missing if n not in _RETIRED and n not in _DEPTH_SUPPRESSED]
@@ -2719,7 +2723,12 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     # (fully_viable) abuse chain. Data-level (per bullet.refs) — no fuzzy
     # markdown parsing. Empty suffix when no viable chain / abuse skipped.
     fmap = _verified_chain_map(ctx)
-    verified_suffixes = [_verdict_bullet_badge(b.get("refs") or [], fmap) for b in (data.get("bullets") or [])]
+    # Each worst-case bullet gets a clickable citation (findings → weakness) plus
+    # the verified-path badge, so the executive scenarios name their evidence.
+    verified_suffixes = [
+        _verdict_bullet_refs_suffix(b.get("refs") or [], ctx) + _verdict_bullet_badge(b.get("refs") or [], fmap)
+        for b in (data.get("bullets") or [])
+    ]
     tpl = env.get_template(section["template"])
     return (
         tpl.render(
@@ -6817,6 +6826,36 @@ def _verdict_bullet_badge(refs: list[str], fmap: dict[str, list[str]]) -> str:
     return " — ✓ verified attack path" if chains else ""
 
 
+def _verdict_bullet_refs_suffix(refs: list[str], ctx: RenderContext) -> str:
+    """Clickable citation suffix for a Verdict worst-case bullet: the findings it
+    cites and the systemic weakness(es) they roll up to (2026-07-14). The
+    ms-verdict bullets carry `refs` but the LLM often omits the inline citation;
+    this renders it deterministically so every worst-case names its evidence."""
+    if not refs:
+        return ""
+    fw = _get_finding_weakness_map(ctx)
+    flinks: list[str] = []
+    wids: list[str] = []
+    for r in refs:
+        ru = str(r).strip().upper()
+        m = re.search(r"(\d+)$", ru)
+        if not m or not ru.startswith(("T-", "F-")):
+            continue
+        n = m.group(1)
+        link = f"[F-{n}](#f-{n})"
+        if link not in flinks:
+            flinks.append(link)
+        w = fw.get(f"F-{n}")
+        if w and w.get("id") and w["id"] not in wids:
+            wids.append(w["id"])
+    if not flinks:
+        return ""
+    tail = ", ".join(flinks)
+    if wids:
+        tail += " → " + ", ".join(f"[{wid}](#{wid.lower()})" for wid in wids)
+    return f" *({tail})*"
+
+
 def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Emit the `### Security Posture at a Glance` section per contract v2.
 
@@ -9313,6 +9352,72 @@ def _abuse_chain_ms_note(ctx: RenderContext) -> str:
     return note
 
 
+def _render_ms_top_weaknesses(ctx: RenderContext) -> str:
+    """Render the MS ``### Top Weaknesses`` table (2026-07-14 redesign).
+
+    The executive view of the systemic root-cause control gaps, placed before the
+    Mitigations tables. Top weaknesses by severity, each with the findings that
+    prove it and a link into the full Weakness Register. Computed from
+    ``weaknesses[]``; returns "" when the register is empty (nothing to show)."""
+    weaknesses = ctx.yaml_data.get("weaknesses") or []
+    if not weaknesses:
+        return ""
+    _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    _basis_rank = {"design-risk": 0, "confirmed": 1}
+
+    def _sort_key(w: dict) -> tuple:
+        return (
+            _sev_rank.get((w.get("severity") or "").strip().lower(), 9),
+            _basis_rank.get((w.get("severity_basis") or "").strip().lower(), 9),
+            w.get("id") or "",
+        )
+
+    ranked = sorted(weaknesses, key=_sort_key)
+    # Executive focus: the Critical/High root causes. Cap at 6 rows; if fewer than
+    # 3 reach High, top up from the ranked list so the table is never trivially short.
+    top = [w for w in ranked if (w.get("severity") or "").strip().lower() in ("critical", "high")]
+    if len(top) < 3:
+        top = ranked[: min(5, len(ranked))]
+    top = top[:6]
+    if not top:
+        return ""
+
+    out: list[str] = ["### Top Weaknesses", ""]
+    out.append(
+        "The systemic root-cause problems behind the findings — the classes to fix, "
+        "not just individual bugs. Each links to the full [Weakness Register]"
+        "(#6-weakness-register) with its findings and remediation."
+    )
+    out.append("")
+    for w in top:
+        wid = (w.get("id") or "").strip()
+        title = (w.get("title") or "").strip()
+        title = re.sub(r"\s+safeguards\s+in\s+.*$", "", title).strip()
+        sev = (w.get("severity") or "").strip()
+        sev_emoji = ctx.severity_emoji(sev.lower())
+        # Short, plain-language explanation: the first sentence of the per-class
+        # description (kept concise so the bullet stays scannable).
+        desc = (w.get("description") or w.get("statement") or "").strip()
+        first = re.split(r"(?<=[.!?])\s+", desc)[0] if desc else ""
+        if len(first) > 200:
+            first = first[:197].rstrip() + "…"
+        n_findings = len(_weakness_finding_ids(w))
+        proof_links = []
+        for fid in _weakness_finding_ids(w)[:3]:
+            m = re.search(r"(\d+)$", fid)
+            if m:
+                proof_links.append(f"[F-{m.group(1)}](#f-{m.group(1)})")
+        proof = ", ".join(proof_links)
+        if proof and n_findings > len(proof_links):
+            proof += f" (+{n_findings - len(proof_links)} more)"
+        proof_txt = f" _Proven by {proof}._" if proof else ""
+        lead = f"{sev_emoji} **[{wid}](#{wid.lower()}) — {title}** ({sev})"
+        expl = f" — {first}" if first else ""
+        out.append(f"- {lead}{expl}{proof_txt}")
+    out.append("")
+    return "\n".join(out)
+
+
 def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     # Explicit composition ensures the canonical subsection order is enforced.
     # `security_posture_at_a_glance` is rendered between `verdict` and
@@ -9324,26 +9429,24 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
     sections = ctx.contract["sections"]
     for sid in (
         "verdict",
-        # architectural_anti_patterns — optional named-anti-pattern callout
-        # right after the verdict (renders nothing when the LLM authored no
-        # ms-anti-patterns.json). Placed before the heatmap so the reader sees
-        # the structural design defects before the per-flow posture.
-        "architectural_anti_patterns",
-        # ai_exposure_ms — optional AI/LLM-exposure callout, right after the
-        # anti-patterns block (renders nothing when the LLM authored no
-        # ms-ai-exposure.json, i.e. the system has no LLM/AI surface).
+        # architectural_anti_patterns RETIRED as a separate MS callout (2026-07-14):
+        # the anti-patterns are the architecturally-framed view of the systemic
+        # weaknesses and now fold INTO the §6 Weakness Register cards
+        # (_get_weakness_antipatterns). No standalone MS block.
+        # ai_exposure_ms — optional AI/LLM-exposure callout (renders nothing when
+        # the LLM authored no ms-ai-exposure.json, i.e. no LLM/AI surface).
         "ai_exposure_ms",
         # systemic_posture — the P4 "### Security Principles" verdict table
-        # (VIOLATED/WEAK/ADEQUATE per principle), hoisted from §8 (2026-07-13) so
-        # a systemically-violated principle is loud at executive level. Placed
-        # before the heatmap so the reader sees the structural posture before the
-        # per-flow view. Renders nothing when the weakness register is empty
-        # (has_weakness_register).
+        # (VIOLATED/WEAK/ADEQUATE per principle). Renders nothing when the weakness
+        # register is empty (has_weakness_register).
         "systemic_posture",
-        # security_posture_at_a_glance now renders the merged
-        # "### Security Posture & Top Threats" section (Figure 1 + Figure 2
-        # heatmap + the Top Threats table); the standalone top_threats child
-        # was folded into it.
+        # top_weaknesses — the executive view of the root-cause control gaps
+        # (2026-07-14), placed BEFORE the Security-Posture / Top-Threats block so
+        # the reader sees "what is systemically wrong" before the per-finding view.
+        # Computed from weaknesses[]; renders nothing when the register is empty.
+        "top_weaknesses",
+        # security_posture_at_a_glance renders "### Security Posture & Top Threats"
+        # (Figure 1 + Figure 2 heatmap + the Top Threats table).
         "security_posture_at_a_glance",
         "mitigations",
         "requirements_compliance_ms",
@@ -9373,6 +9476,11 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             sp_ms = _render_security_principles(ctx)
             if sp_ms.strip():
                 parts.append(sp_ms.rstrip())
+            continue
+        if sid == "top_weaknesses":
+            tw_ms = _render_ms_top_weaknesses(ctx)
+            if tw_ms.strip():
+                parts.append(tw_ms.rstrip())
             continue
         sec = sections.get(sid)
         if sec is None:
@@ -9820,6 +9928,10 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         md = _inject_components_table(ctx, md)
     elif section_id == "security_architecture":
         md = _inject_security_architecture_links(ctx, md)
+        # Point 4 (2026-07-14): architecture control tables reference weaknesses,
+        # not individual findings. Runs before the severity-dot pass below so the
+        # swapped W-links are not re-dotted as findings.
+        md = _rewrite_sec7_table_findings_to_weaknesses(ctx, md)
     elif section_id == "attack_walkthroughs":
         md = _inject_attack_walkthroughs_intros(ctx, md)
 
@@ -10083,6 +10195,64 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     return md[: m.end()] + "\n" + cleaned_body.rstrip() + "\n" + insertion + md[section_end:]
 
 
+_SEC7_TABLE_F_LINK_RE = re.compile(
+    r"(?:[\U0001F534\U0001F7E0\U0001F7E1\U0001F7E2⚪]\s*)?"  # optional leading severity dot
+    r"\[F-(\d+)\]\(#f-\d+\)"  # the finding link
+    # optional ` — label`: consume the finding's whole label up to the cell (`|`),
+    # a `<br/>` (`<`), or the start of the NEXT finding link (`[F-`) — so a
+    # comma-separated multi-finding cell does not have one label swallow the next.
+    r"(?:\s*[—-]\s*(?:(?!\[F-)[^|<])*)?"
+)
+
+
+def _rewrite_sec7_table_findings_to_weaknesses(ctx: RenderContext, md: str) -> str:
+    """In §7 Security-Architecture TABLE rows only, rewrite each finding
+    reference to its owning weakness (deduped per cell), so the architecture
+    control overview points at the systemic control gap rather than individual
+    findings (2026-07-14 redesign, point 4).
+
+    Scope is deliberately limited to table rows (lines starting with ``|``): the
+    control-status overview is the *architecture aspect*. Evidence PROSE in the
+    deep §7.x subsections keeps its finding citations — there a specific finding
+    IS the appropriate evidence. A finding with no owning weakness is left as a
+    finding link (never dropped)."""
+    fw = _get_finding_weakness_map(ctx)
+    if not fw:
+        return md
+    out_lines: list[str] = []
+    for line in md.split("\n"):
+        if not line.lstrip().startswith("|") or "[F-" not in line:
+            out_lines.append(line)
+            continue
+        cells = line.split("|")
+        for ci, cell in enumerate(cells):
+            if "[F-" not in cell:
+                continue
+            seen: list[str] = []
+
+            def _repl(m: re.Match, _seen=seen) -> str:
+                w = fw.get(f"F-{m.group(1)}")
+                if not w or not w.get("id"):
+                    return m.group(0)  # no owning weakness → keep the finding link
+                wid = str(w["id"]).strip()
+                if wid in _seen:
+                    return ""  # dedupe within the cell
+                _seen.append(wid)
+                title = (w.get("title") or "").strip()
+                title = re.sub(r"\s+(safeguards|is not consistently enforced).*$", "", title).strip()
+                return f"[{wid}](#{wid.lower()})" + (f" — {title}" if title else "")
+
+            new_cell = _SEC7_TABLE_F_LINK_RE.sub(_repl, cell)
+            # Tidy separators left by removed duplicates.
+            new_cell = re.sub(r"(?:<br/>\s*){2,}", "<br/>", new_cell)
+            new_cell = re.sub(r"^\s*<br/>\s*|\s*<br/>\s*$", "", new_cell.strip())
+            new_cell = re.sub(r"(?:,\s*){2,}", ", ", new_cell)
+            new_cell = re.sub(r"^,\s*|\s*,\s*$", "", new_cell).strip()
+            cells[ci] = f" {new_cell} " if new_cell else " — "
+        out_lines.append("|".join(cells))
+    return "\n".join(out_lines)
+
+
 def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
     """Post-process §7: ensure every `**Linked threats:**` line inside a
     `### 7.x` subsection has its T-NNN / F-NNN refs linkified with labels.
@@ -10129,7 +10299,8 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
     if weaknesses and routing:
         threats_by_id = {
             (t.get("id") or t.get("t_id") or "").upper(): t
-            for t in (ctx.yaml_data.get("threats") or []) if isinstance(t, dict)
+            for t in (ctx.yaml_data.get("threats") or [])
+            if isinstance(t, dict)
         }
         for heading, rule in routing.items():
             allowed_cwes = {str(c).upper() for c in (rule.get("cwes") or [])}
@@ -10142,15 +10313,14 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
                 wc_match = wc in allowed_clusters
                 cwe_match = any(
                     (threats_by_id.get((i.get("id") or "").upper(), {}).get("cwe") or "").upper() in allowed_cwes
-                    for i in (w.get("instances") or []) if isinstance(i, dict)
+                    for i in (w.get("instances") or [])
+                    if isinstance(i, dict)
                 )
                 if wc_match or cwe_match:
                     relevant.append(w)
             if not relevant:
                 continue
-            links = ", ".join(
-                f"[{w['id']}](#{str(w['id']).lower()})" for w in relevant
-            )
+            links = ", ".join(f"[{w['id']}](#{str(w['id']).lower()})" for w in relevant)
             pattern = r"(^###\s+" + re.escape(heading) + r"\s*$)"
             md = re.sub(pattern, r"\1\n\n**Systemic weaknesses:** " + links, md, count=1, flags=re.MULTILINE)
     return md
@@ -14526,6 +14696,18 @@ def _build_threat_card(
         loc_part = (f"`{ev_file}" + (f":{ev_line}" if ev_line else "") + "`") if ev_file else "—"
     meta_line = f"**Severity:** {sev_disp}  ·  **Component:** {comp_part}  ·  **Location:** {loc_part}"
 
+    # Weakness back-link (2026-07-14 redesign): if this finding is an instance or
+    # practice site of a systemic weakness, link up to it so the reader can reach
+    # the root-cause control gap. The Weakness Register links back down here.
+    weakness_card = ""
+    _wk = _get_finding_weakness_map(ctx).get(tid.upper())
+    if _wk and _wk.get("id"):
+        _wid = str(_wk["id"]).strip()
+        _wtitle = (_wk.get("title") or _wk.get("statement") or "").strip()
+        _wtitle = re.sub(r"\s+(safeguards|is not consistently enforced).*$", "", _wtitle).strip()
+        _wlabel = f" — {_wtitle}" if _wtitle else ""
+        weakness_card = f"**Weakness:** [{_wid}](#{_wid.lower()}){_wlabel}"
+
     # Instances — for a systemic finding consolidated from N per-file / per-stage
     # hits of one config check (see merge_threats._consolidate_config_checks),
     # surface every hit so the single card still names all affected locations.
@@ -14538,8 +14720,7 @@ def _build_threat_card(
             _shown_pairs = _instance_pairs[:_cap]
             _shown = [
                 (
-                    f"{_SEV_ICON_TBL.get(severity, '')} "
-                    f"`{file}:{line}`".strip()
+                    f"{_SEV_ICON_TBL.get(severity, '')} `{file}:{line}`".strip()
                     if _mixed and severity
                     else (f"`{file}:{line}`" if line else f"`{file}`")
                 )
@@ -14635,6 +14816,8 @@ def _build_threat_card(
     # collapse adjacent lines into one paragraph. Blank lines render correctly
     # in GFM, Pandoc and weasyprint alike.
     fields = [meta_line]
+    if weakness_card:
+        fields.append(weakness_card)
     if instances_card:
         fields.append(instances_card)
     if issue_card:
@@ -14824,7 +15007,7 @@ def _render_security_principles(ctx: RenderContext) -> str:
         "**VIOLATED** = a confirmed exploit or a pervasive home-grown/absent "
         "control · **WEAK** = isolated deviations · **ADEQUATE** = no confirmed "
         "gap; a standard control in use. Evidence and scope are in the "
-        "[Systemic Weaknesses](#systemic-weaknesses) chapter."
+        "[Weakness Register](#weakness-register)."
     )
     out.append("")
     out.append("| Principle | Verdict | Signal |")
@@ -14840,17 +15023,149 @@ def _render_security_principles(ctx: RenderContext) -> str:
     return "\n".join(out)
 
 
-def _render_systemic_weaknesses(ctx: RenderContext) -> str:
-    """Render the central, evidence-backed W-register.
+def _weakness_finding_ids(w: dict) -> list[str]:
+    """All finding ids (upper) a weakness owns — confirmed instances + practice
+    sites — in a stable order (instances first)."""
+    ids: list[str] = []
+    for i in w.get("instances") or []:
+        if isinstance(i, dict) and i.get("id"):
+            ids.append(str(i["id"]).strip().upper())
+    for p in (w.get("observable_backing") or {}).get("practice_evidence") or []:
+        if isinstance(p, dict) and p.get("id"):
+            fid = str(p["id"]).strip().upper()
+            if fid not in ids:
+                ids.append(fid)
+    return ids
 
-    Weaknesses are assessment conclusions, not duplicate finding cards.  They
-    can be evidenced by confirmed findings, observed unsafe practice, or an
-    absent architectural control; only the first kind represents an exploit.
+
+def _get_finding_mitigation_map(ctx: RenderContext) -> dict[str, list[str]]:
+    """Cached ``finding id (T-NNN, upper) → [mitigation ids]`` map, for the
+    Hybrid weakness-remediation roll-up (each weakness surfaces the deduped
+    tactical mitigations of its findings)."""
+    cached = getattr(ctx, "_finding_mitigation_map", None)
+    if cached is None:
+        cached = {}
+        for t in ctx.yaml_data.get("threats") or []:
+            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+            if not tid:
+                continue
+            mids = t.get("mitigation_ids") or t.get("mitigations") or []
+            cached[tid] = [str(m).strip().upper() for m in mids if str(m).strip()]
+        ctx._finding_mitigation_map = cached
+    return cached
+
+
+def _get_finding_weakness_map(ctx: RenderContext) -> dict[str, dict]:
+    """Cached ``finding id → owning weakness`` map for the current render.
+
+    Built once per RenderContext from ``yaml_data.weaknesses`` and reused by the
+    §8 story card (`Weakness:` field) and the §7 F→W rewrite."""
+    cached = getattr(ctx, "_finding_weakness_map", None)
+    if cached is None:
+        cached = _build_finding_to_weakness_map(ctx.yaml_data.get("weaknesses") or [])
+        ctx._finding_weakness_map = cached
+    return cached
+
+
+def _build_finding_to_weakness_map(weaknesses: list[dict]) -> dict[str, dict]:
+    """Map a finding id (both ``T-NNN`` and ``F-NNN`` forms, upper-cased) → the
+    weakness that owns it.
+
+    Inverts each weakness's ``instances[]`` (confirmed findings) and
+    ``observable_backing.practice_evidence[]`` (folded practice sites) so §8 can
+    render a ``Weakness:`` back-link and §7 can cite the owning weakness instead
+    of the raw finding. A finding owned by more than one weakness keeps the first
+    by weakness-id order (deterministic). Phase 0 of the Weakness-Register
+    redesign (implplan-weakness-register-redesign-2026-07-14.md)."""
+    out: dict[str, dict] = {}
+    for w in sorted(weaknesses or [], key=lambda x: x.get("id") or ""):
+        ids: list[str] = []
+        for i in w.get("instances") or []:
+            if isinstance(i, dict) and i.get("id"):
+                ids.append(str(i["id"]).strip().upper())
+        for p in (w.get("observable_backing") or {}).get("practice_evidence") or []:
+            if isinstance(p, dict) and p.get("id"):
+                ids.append(str(p["id"]).strip().upper())
+        for fid in ids:
+            m = re.search(r"(\d+)$", fid)
+            if not m:
+                continue
+            for key in (f"T-{m.group(1)}", f"F-{m.group(1)}"):
+                out.setdefault(key, w)
+    return out
+
+
+def _weakness_finding_title_map(ctx: RenderContext) -> dict[str, str]:
+    """Cached ``finding id (F-/T-NNN, upper) → short title`` for the Weakness
+    Register bullet lists."""
+    cached = getattr(ctx, "_weakness_ftitle_map", None)
+    if cached is None:
+        cached = {}
+        for t in ctx.yaml_data.get("threats") or []:
+            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+            if not tid:
+                continue
+            title = (t.get("title") or "").strip()
+            title = re.sub(r"\s+—\s+\S.*$", "", title).strip() or title  # drop trailing " — file:line"
+            m = re.search(r"(\d+)$", tid)
+            if m:
+                for k in (f"T-{m.group(1)}", f"F-{m.group(1)}"):
+                    cached[k] = title
+        ctx._weakness_ftitle_map = cached
+    return cached
+
+
+def _get_weakness_antipatterns(ctx: RenderContext) -> dict[str, list[dict]]:
+    """Map ``weakness_id → [architectural anti-pattern, …]`` (2026-07-14 merge).
+
+    The Architectural Anti-Patterns (``.fragments/ms-anti-patterns.json``) are the
+    architecturally-framed view of the same systemic problems as the weaknesses,
+    so they fold INTO the Weakness Register instead of a separate MS callout. Each
+    anti-pattern is attached to the weakness owning the plurality of its cited
+    findings. Cached per RenderContext."""
+    cached = getattr(ctx, "_weakness_antipatterns", None)
+    if cached is not None:
+        return cached
+    cached = {}
+    fw = _get_finding_weakness_map(ctx)
+    try:
+        frag = _load_fragment(ctx, "architectural_anti_patterns", "ms-anti-patterns.json")
+    except Exception:  # noqa: BLE001 — absent fragment / minimal ctx → no anti-patterns
+        frag = None
+    aps = (frag or {}).get("anti_patterns") if isinstance(frag, dict) else None
+    for ap in aps or []:
+        if not isinstance(ap, dict):
+            continue
+        # Tally the weakness owning each cited finding; attach to the plurality.
+        tally: dict[str, int] = {}
+        for f in ap.get("findings") or []:
+            ref = str((f or {}).get("ref") or "").strip().upper()
+            w = fw.get(ref)
+            if w and w.get("id"):
+                tally[w["id"]] = tally.get(w["id"], 0) + 1
+        if not tally:
+            continue
+        wid = max(tally, key=lambda k: (tally[k], k))
+        cached.setdefault(wid, []).append(ap)
+    ctx._weakness_antipatterns = cached
+    return cached
+
+
+def _render_systemic_weaknesses(ctx: RenderContext) -> str:
+    """Render the Weakness Register (2026-07-14 redesign): an index table
+    followed by one card per systemic root-cause weakness, structured like the
+    Findings Register (index + per-item cards, bullet-listed evidence).
+
+    Each weakness is a fundamental control-gap CLASS (Broken Access Control,
+    Injection, …) that aggregates the findings, practice sites, and absent
+    architectural controls that prove it. Findings link back here via their
+    §-Findings `Weakness` field; the Hybrid remediation shows the structural fix
+    plus the deduped tactical mitigations rolled up from the weakness's findings.
     """
     weaknesses = ctx.yaml_data.get("weaknesses") or []
     if not weaknesses:
         return ""
-    _basis_rank = {"design-risk": 0, "confirmed": 1}
+    _basis_rank = {"confirmed": 0, "observed-practice": 1, "design-risk": 2}
     _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
     def _sort_key(w: dict) -> tuple:
@@ -14860,74 +15175,150 @@ def _render_systemic_weaknesses(ctx: RenderContext) -> str:
             w.get("id") or "",
         )
 
-    out: list[str] = ["## Systemic Weaknesses", ""]
+    ordered = sorted(weaknesses, key=_sort_key)
+    cmap = _component_slug_to_cnn_map(ctx)
+    ftitles = _weakness_finding_title_map(ctx)
+
+    def _f_link(fid_upper: str, *, with_title: bool = False) -> str:
+        m = re.search(r"(\d+)$", fid_upper)
+        if not m:
+            return ""
+        n = m.group(1)
+        link = f"[F-{n}](#f-{n})"
+        if with_title and ftitles.get(f"F-{n}"):
+            link += f" — {ftitles[f'F-{n}']}"
+        return link
+
+    # Explicit `weakness-register` alias so existing `#weakness-register` links
+    # (MS Security-Principles / Verdict) resolve alongside the numbered
+    # `#6-weakness-register` heading auto-slug.
+    out: list[str] = ['<a id="weakness-register"></a>', "## 6. Weakness Register", ""]
     out.append(
-        "These are evidence-backed security-control conclusions. They do not "
-        "duplicate the Findings Register: confirmed findings are one evidence "
-        "type; observed unsafe practice and absent controls can establish a "
-        "weakness without a confirmed exploit. Only confirmed findings may carry CVSS."
+        "The systemic root-cause control gaps behind the findings. Each weakness "
+        "aggregates the concrete findings that prove it (listed in the Findings "
+        "Register, which links back here via each finding's **Weakness** field), "
+        "the components it spans, and its remediation. A weakness may also rest on "
+        "observed unsafe practice or an absent architectural control without a "
+        "confirmed exploit — only confirmed findings carry CVSS."
     )
     out.append("")
-    for w in sorted(weaknesses, key=_sort_key):
-        emoji = ctx.severity_emoji((w.get("severity") or "").strip().lower())
+
+    # -- Index (at-a-glance), mirroring the Findings Register --------------------
+    out.append("| Weakness | Severity | Basis | Findings | Components |")
+    out.append("|----------|----------|-------|----------|------------|")
+    for w in ordered:
+        wid = (w.get("id") or "").strip()
+        title = (w.get("title") or "Weakness").strip()
+        sev = (w.get("severity") or "").strip()
+        sev_disp = f"{ctx.severity_emoji(sev.lower())} {sev}".strip()
+        basis = (w.get("severity_basis") or "").strip() or "—"
+        fids = _weakness_finding_ids(w)
+        comps = w.get("affected_components") or []
+        out.append(
+            f"| [{wid}](#{wid.lower()}) — {title} | {sev_disp} | {basis} "
+            f"| {len(fids)} | {len(comps)} |"
+        )
+    out.append("")
+
+    # -- Per-weakness cards ------------------------------------------------------
+    fmap = _get_finding_mitigation_map(ctx)
+    for w in ordered:
+        wid = (w.get("id") or "").strip()
+        title = (w.get("title") or w.get("statement") or "Security control weakness").strip()
+        sev = (w.get("severity") or "").strip()
+        sev_disp = f"{ctx.severity_emoji(sev.lower())} **{sev}**".strip()
         kind = (w.get("kind") or "").strip()
         basis = (w.get("severity_basis") or "").strip()
-        statement = (w.get("statement") or "").strip()
-        # Anchor so a Top Findings design-risk row [W-NNN](#w-nnn) resolves here.
-        wid = (w.get("id") or "").strip().lower()
-        anchor = f'<a id="{wid}"></a>' if wid else ""
-        strat = (w.get("implementation_strategy") or "").strip()
-        facets = f"{kind} · {basis}" + (f" · {strat}" if strat else "")
-        title = (w.get("title") or statement or "Security control weakness").strip()
-        line = f"### {anchor}{emoji} {wid.upper()} — {title}"
-        out.extend([line, "", f"**Assessment basis:** {facets}."])
-        if statement and statement != title:
-            out.extend(["", statement])
-        inst_links = []
-        for i in w.get("instances") or []:
-            iid = (i.get("id") or "").strip().upper()
-            m = re.search(r"(\d+)$", iid)
-            if m:
-                n = m.group(1)
-                inst_links.append(f"[F-{n}](#f-{n})")
-        tail: list[str] = []
-        if inst_links:
-            tail.append("**Confirmed findings:** " + ", ".join(inst_links))
-        backing = w.get("observable_backing") or {}
-        practice = backing.get("practice_evidence") or []
+        fids = _weakness_finding_ids(w)
+        # Anchor on its OWN line before the heading (like the Findings Register) so
+        # the heading auto-slug stays clean and both `#w-nnn` and the editor
+        # outline resolve. No emoji/HTML inside the heading text.
+        out.append(f'<a id="{wid.lower()}"></a>')
+        out.append(f"### {wid} — {title}")
+        out.append("")
+        _basis_txt = f"{kind} weakness · {basis}" if kind else basis
+        _count = f" · {len(fids)} finding{'s' if len(fids) != 1 else ''}" if fids else ""
+        out.append(f"{sev_disp} · {_basis_txt}{_count}")
+        body_text = (w.get("description") or w.get("statement") or "").strip()
+        if body_text and body_text != title:
+            out.extend(["", body_text])
+        out.append("")
+
+        # Architectural anti-pattern(s) — the architecturally-framed view of this
+        # weakness, merged in from the former separate MS callout (2026-07-14).
+        for ap in _get_weakness_antipatterns(ctx).get(wid) or []:
+            apname = (ap.get("name") or "").strip()
+            apdesc = (ap.get("description") or "").strip()
+            if apname:
+                out.append(f"**Architectural anti-pattern — {apname}.** {apdesc}".rstrip())
+                out.append("")
+
+        # Confirmed findings — bullet list (point 2).
+        inst_ids = [str(i.get("id")).strip().upper() for i in (w.get("instances") or []) if i.get("id")]
+        if inst_ids:
+            out.append("**Confirmed findings:**")
+            out.append("")
+            for fid in inst_ids:
+                link = _f_link(fid, with_title=True)
+                if link:
+                    out.append(f"- {link}")
+            out.append("")
+        # Practice sites — bullet list.
+        practice = (w.get("observable_backing") or {}).get("practice_evidence") or []
         if practice:
-            locations = []
-            for item in practice[:5]:
+            out.append("**Practice sites:**")
+            out.append("")
+            for item in practice:
                 if not isinstance(item, dict):
                     continue
+                pid = (item.get("id") or "").strip().upper()
                 path = (item.get("file") or "").strip()
                 line_no = item.get("line")
-                if path:
-                    locations.append(f"`{path}{f':{line_no}' if line_no else ''}`")
-            shown = ", ".join(locations) or f"{len(practice)} site(s)"
-            if len(practice) > 5:
-                shown += f" (+{len(practice) - 5} more)"
-            tail.append(f"**Observed practice:** {shown}")
-        absent = backing.get("absent_control_signal") or []
+                loc = f" (`{path}{f':{line_no}' if line_no else ''}`)" if path else ""
+                link = _f_link(pid, with_title=True) if pid else ""
+                out.append(f"- {link}{loc}" if link else f"- {loc.strip(' ()')}")
+            out.append("")
+        # Architecture evidence (absent controls) — inline (short phrases).
+        absent = (w.get("observable_backing") or {}).get("absent_control_signal") or []
         if absent:
             labels = []
-            for item in absent[:4]:
+            for item in absent[:6]:
                 if isinstance(item, str):
                     labels.append(item)
                 elif isinstance(item, dict):
                     labels.append(str(item.get("control") or item.get("pattern") or "control signal"))
-            shown = ", ".join(labels) or f"{len(absent)} control signal(s)"
-            if len(absent) > 4:
-                shown += f" (+{len(absent) - 4} more)"
-            tail.append(f"**Architecture evidence:** {shown}")
+            shown = ", ".join(labels)
+            if len(absent) > 6:
+                shown += f" (+{len(absent) - 6} more)"
+            out.append(f"**Architecture evidence:** {shown}")
+            out.append("")
+        # Affected components — inline C-NN links.
         comps = w.get("affected_components") or []
         if comps:
-            tail.append("**Affected components:** " + ", ".join(comps))
-        if tail:
-            out.extend(["  ", "<br/>".join(tail)])
-        out.append("")
-    out.append("")
-    return "\n".join(out)
+            comp_links = []
+            for c in comps:
+                cnn = cmap.get(str(c).strip().lower())
+                comp_links.append(f"[{cnn}](#{cnn.lower()})" if cnn else str(c))
+            out.append("**Affected components:** " + ", ".join(comp_links))
+            out.append("")
+        # Remediation (Hybrid): structural root-cause fix + deduped tactical
+        # mitigations rolled up from this weakness's findings, as a bullet list.
+        structural = (w.get("structural_recommendation") or "").strip()
+        tactical: list[str] = []
+        for fid in fids:
+            for mid in fmap.get(fid, []):
+                if mid not in tactical:
+                    tactical.append(mid)
+        if structural or tactical:
+            out.append("**Remediation:**")
+            out.append("")
+            if structural:
+                out.append(f"- **Structural** — {structural}")
+            if tactical:
+                mlinks = ", ".join(f"[{mid}](#{mid.lower()})" for mid in tactical)
+                out.append(f"- **Tactical** — {mlinks}")
+            out.append("")
+    return "\n".join(out).rstrip() + "\n"
 
 
 def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -14982,12 +15373,13 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # reflect only real, evidence-backed findings.
     _COVERAGE_GAP_SOURCES = {"coverage-gap", "architectural-anti-pattern"}
     threats = [t for t in threats if t.get("source") not in _COVERAGE_GAP_SOURCES]
-    # P1.4 anti-duplication: an insecure-practice site folded under a weakness's
-    # `practice_evidence` must NOT also render as a standalone §8 finding card
-    # ("never three peers"). Drop those rows when the weakness register exists;
-    # they remain visible under their weakness heading and in SARIF/pentest.
-    if ctx.yaml_data.get("weaknesses"):
-        threats = [t for t in threats if t.get("evidence_tier") != "insecure-practice"]
+    # Weakness-Register redesign (2026-07-14, Phase 1): practice-tier findings are
+    # now FIRST-CLASS §8 cards, not suppressed. They previously were dropped here
+    # ("never three peers") while still being referenced by F-NNN across
+    # §2/§4/§5/§7/§3 — leaving those links dangling at the missing §8 anchor
+    # (juice-shop 2026-07-13, ~22 broken links). The new model keeps every finding
+    # in §8 and cross-links it to its owning weakness (see `Weakness:` field
+    # below), so the finding is visible in BOTH places with links both ways.
     # Tracks whether any row was carried forward from a prior deeper scan
     # without re-verification (incremental depth-downgrade). Drives a
     # depth-independent §8 footnote — unlike the quick-only banner line, this
@@ -15121,7 +15513,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             "The systemic posture verdict (VIOLATED / WEAK / ADEQUATE per "
             "security principle) is in the **Security Principles** table of the "
             "Management Summary; evidence-backed weaknesses are documented in "
-            "[Systemic Weaknesses](#systemic-weaknesses)."
+            "the [Weakness Register](#weakness-register)."
         )
         lines.append("")
 
@@ -15187,11 +15579,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # Vektor sort key — within a severity tier, scan dirtier paths first.
     vektor_order = {"repo-read": 0, "internet-anon": 1, "internet-user": 2, "victim-required": 3}
     all_threats_sorted = sorted(
-        (
-            threat
-            for threat in threats
-            if (threat.get("evidence_check") or "").strip().lower() != "refuted"
-        ),
+        (threat for threat in threats if (threat.get("evidence_check") or "").strip().lower() != "refuted"),
         key=lambda t: (
             sev_rank.get((t.get("risk") or t.get("severity") or "").lower(), 99),
             vektor_order.get((t.get("vektor") or "").strip().lower(), 99),
@@ -15670,6 +16058,19 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     # mismatch). Single source of truth: linkify_with_label.
                     lines.append(f"- {ctx.linkify_with_label(ref)}")
                 lines.append("")
+                # Weaknesses these findings roll up to (2026-07-14): a mitigation
+                # that fixes findings also addresses the systemic weakness(es)
+                # behind them, so it links up to the §6 Weakness Register.
+                _fw = _get_finding_weakness_map(ctx)
+                _wids: list[str] = []
+                for ref in addressed:
+                    _w = _fw.get((str(ref) or "").strip().upper())
+                    if _w and _w.get("id") and _w["id"] not in _wids:
+                        _wids.append(_w["id"])
+                if _wids:
+                    _wl = ", ".join(f"[{wid}](#{wid.lower()})" for wid in _wids)
+                    lines.append(f"**Weaknesses addressed:** {_wl}")
+                    lines.append("")
 
             # Prevents CWEs — prefer explicit field; else derive from addressed findings.
             # Auto-derived CWEs are SUPPRESSED when the rest of the mitigation
@@ -16052,7 +16453,9 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             for extra_cwe, extra_snip in extra_cwe_snippets:
                 cwe_num = extra_cwe.split("-", 1)[-1]
                 _extra_loc = f" in `{file_line_inline}`" if file_line_inline else ""
-                lines.append(f"_Additional example implementation{_extra_loc} for [{extra_cwe}](https://cwe.mitre.org/data/definitions/{cwe_num}.html):_")
+                lines.append(
+                    f"_Additional example implementation{_extra_loc} for [{extra_cwe}](https://cwe.mitre.org/data/definitions/{cwe_num}.html):_"
+                )
                 lines.append("")
                 lines.append(f"```{extra_snip.get('lang') or how_lang}")
                 lines.append(extra_snip.get("code", "").rstrip())

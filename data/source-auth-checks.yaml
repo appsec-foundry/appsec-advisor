@@ -26,6 +26,8 @@
 #                              `call`  : match_line until balanced close-paren
 #                                        or counter_window lines (whichever first)
 #   counter_patterns         — list of regexes; ANY match suppresses the finding
+#   required_context_patterns — list of regexes; at least one must match in the
+#                               configured scope before the finding is emitted
 #   severity_if_violated     — Critical | High | Medium | Low
 #   cwe                      — primary CWE
 #   finding_type             — FT-NNN from finding-types.yaml

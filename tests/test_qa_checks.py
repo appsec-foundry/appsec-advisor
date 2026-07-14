@@ -2095,8 +2095,7 @@ class TestRepairPlanStatusClassification:
         # and `actionable` is consistent with the action set.
         assert plan["status"] in {"pass", "fail", "manual_review", "cosmetic_advisory"}
         assert plan["actionable"] == any(
-            a.get("fragments_to_rewrite") and a.get("severity") == "blocking"
-            for a in plan["actions"]
+            a.get("fragments_to_rewrite") and a.get("severity") == "blocking" for a in plan["actions"]
         )
 
 

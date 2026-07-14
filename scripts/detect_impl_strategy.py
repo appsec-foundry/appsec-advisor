@@ -234,6 +234,9 @@ def build_impl_design_signals(
             {
                 "rule_id": "IMPL-STRATEGY",
                 "weakness_class": wclass,
+                "mechanism_id": cc.get("mechanism_id"),
+                "cwe": cc.get("cwe"),
+                "title": cc.get("weakness_title"),
                 "statement": cc.get("statement") or f"Home-grown {wclass.replace('_', ' ')} handling.",
                 "absent_control_signal": backing,
                 "implementation_strategy": strategy,

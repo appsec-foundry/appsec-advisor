@@ -37,6 +37,11 @@ def test_md5_hash_flagged(tmp_path: Path) -> None:
     assert "CRYPTO-001" in _crypto_ids(tmp_path)
 
 
+def test_md5_without_security_context_is_not_a_finding(tmp_path: Path) -> None:
+    _write(tmp_path, "a.js", "const digest = crypto.createHash('md5').update(body).digest('hex')\n")
+    assert "CRYPTO-001" not in _crypto_ids(tmp_path)
+
+
 def test_md5_for_etag_suppressed(tmp_path: Path) -> None:
     # counter-pattern: non-security hashing must not fire.
     _write(tmp_path, "a.js", "const etag = crypto.createHash('md5').update(body) // cache etag\n")
@@ -71,8 +76,13 @@ def test_ecb_mode_flagged(tmp_path: Path) -> None:
 # --- multi-stack: Java crypto (Phase A) -------------------------------------
 
 
-def test_java_md5_flagged(tmp_path: Path) -> None:
+def test_java_md5_without_security_context_is_not_a_finding(tmp_path: Path) -> None:
     _write(tmp_path, "H.java", 'MessageDigest md = MessageDigest.getInstance("MD5");\n')
+    assert "CRYPTO-JAVA-001" not in _crypto_ids(tmp_path)
+
+
+def test_java_md5_for_password_is_flagged(tmp_path: Path) -> None:
+    _write(tmp_path, "H.java", 'MessageDigest passwordDigest = MessageDigest.getInstance("MD5");\n')
     assert "CRYPTO-JAVA-001" in _crypto_ids(tmp_path)
 
 
@@ -214,7 +224,7 @@ def test_python_path_traversal_flagged(tmp_path: Path) -> None:
 
 
 def test_go_md5_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "h.go", "h := md5.New()\n")
+    _write(tmp_path, "h.go", "passwordDigest := md5.New()\n")
     assert "CRYPTO-GO-001" in _crypto_ids(tmp_path)
 
 
@@ -247,7 +257,7 @@ def test_go_path_traversal_flagged(tmp_path: Path) -> None:
 
 
 def test_csharp_md5_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "H.cs", "using (var md5 = MD5.Create()) { }\n")
+    _write(tmp_path, "H.cs", "using (var passwordDigest = MD5.Create()) { }\n")
     assert "CRYPTO-CS-001" in _crypto_ids(tmp_path)
 
 
@@ -351,7 +361,7 @@ def _mobile_ids(tmp_path: Path) -> set[str]:
 
 
 def test_kotlin_md5_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "H.kt", 'val md = MessageDigest.getInstance("MD5")\n')
+    _write(tmp_path, "H.kt", 'val passwordDigest = MessageDigest.getInstance("MD5")\n')
     assert "CRYPTO-KT-001" in _crypto_ids(tmp_path)
 
 
@@ -388,7 +398,7 @@ def test_android_webview_bridge_flagged(tmp_path: Path) -> None:
 
 
 def test_ios_cc_md5_flagged(tmp_path: Path) -> None:
-    _write(tmp_path, "H.swift", "CC_MD5(data.bytes, CC_LONG(data.count), &digest)\n")
+    _write(tmp_path, "H.swift", "let passwordDigest = CC_MD5(data.bytes, CC_LONG(data.count), &digest)\n")
     assert "CRYPTO-SWIFT-001" in _crypto_ids(tmp_path)
 
 

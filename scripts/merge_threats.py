@@ -468,6 +468,13 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         "mitigation_title": f.get("recommended_mitigation_title"),
         "finding_type_id": f.get("finding_type_id"),
     }
+    # The crypto catalog establishes a security-relevant use before emitting a
+    # row. Preserve that fact explicitly; do not infer a weakness later from a
+    # CWE or an algorithm name alone.
+    if check_id == "CRYPTO-HOMEGROWN-XOR":
+        threat["mechanism_id"] = "application-owned-cryptography"
+    elif check_id.startswith("CRYPTO-"):
+        threat["mechanism_id"] = "weak-cryptographic-primitives"
     category = _threat_category_id_for(threat)
     if category:
         threat["threat_category_id"] = category
@@ -1865,35 +1872,79 @@ def _lower_severity(sev: str) -> str:
     return _SEVERITY_ORDER[max(0, i - 1)]
 
 
+def _normalise_mechanism_key(value: object) -> str:
+    """Return a stable, human-auditable mechanism key for a design signal."""
+    value = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    return value or "observed-security-mechanism"
+
+
+def _mechanism_from_text(text: str) -> str | None:
+    """Recognise the small set of architecture mechanisms that can arrive from
+    an LLM-authored architectural anti-pattern rather than a deterministic
+    design-signal sidecar. This is deliberately narrow: it gives established
+    patterns (BFF, application-owned crypto, blacklist validation) a stable
+    register identity without treating arbitrary prose as a mechanism."""
+    lower = (text or "").lower()
+    if "bff" in lower or "backend-for-frontend" in lower or "backend for frontend" in lower:
+        return "browser-clients-without-bff"
+    if any(token in lower for token in ("home-grown crypto", "homegrown crypto", "custom crypt", "own crypt")):
+        return "application-owned-cryptography"
+    if "blacklist" in lower and any(token in lower for token in ("validation", "regex", "input")):
+        return "blacklist-only-input-validation"
+    if any(token in lower for token in ("concatenated quer", "string-concatenated sql", "raw sql string interpolation")):
+        return "database-query-concatenation"
+    if any(token in lower for token in ("output encoding", "raw html", "sanitizer bypass", "sanitiser bypass")):
+        return "frontend-output-encoding"
+    if any(token in lower for token in ("route by route", "per-handler", "centralized authorization", "centralised authorization")):
+        return "route-by-route-authorization"
+    return None
+
+
 def build_weakness_register(
     threats: list[dict],
     design_signals: list[dict] | None = None,
     impl_strategy: dict[str, str] | None = None,
 ) -> list[dict]:
-    """Build narrowly-scoped, evidence-backed systemic weaknesses.
+    """Build narrowly-scoped, evidence-backed architectural weaknesses.
 
-    A CWE family is a reporting taxonomy, not a root cause.  The former
-    implementation used it as the grouping key, which could put SQL injection,
-    XXE and path traversal below one ``injection`` heading.  A weakness now has
-    one concrete control scope: an architecture rule, or one repeated unsafe
-    practice in one component.  Confirmed findings are evidence only when their
-    exact CWE and scope match that control.  A weakness remains valid without a
-    confirmed exploit when architecture or practice evidence proves the control
-    gap.
+    A CWE family is a reporting taxonomy, not a root cause. Weaknesses are
+    therefore keyed by an observable mechanism (for example, concatenated SQL
+    queries or route-by-route authorization), not by CWE class. A confirmed
+    exploit may substantiate an existing mechanism but never creates a systemic
+    weakness on its own. Conversely, a mechanism with concrete code or
+    architecture evidence is register-worthy even when no exploit path has been
+    established; it is emitted as ``design-risk`` / ``observed-practice`` and
+    never receives CVSS.
     """
     vocab = load_weakness_classes()
     weakness_labels = {str(c.get("id")): str(c.get("label")) for c in (vocab.get("clusters") or [])}
+    class_guidance = vocab.get("class_guidance") or {}
+    mechanism_guidance = vocab.get("mechanism_guidance") or {}
     agg: dict[str, dict] = {}
 
-    def _bucket(key: str, *, wcid: str, kind: str, title: str, statement: str, cwe: str | None = None) -> dict:
+    def _bucket(
+        key: str,
+        *,
+        wcid: str,
+        kind: str,
+        title: str,
+        statement: str,
+        cwe: str | None = None,
+        mechanism_id: str | None = None,
+        guidance: dict | None = None,
+        instance_source: str | None = None,
+    ) -> dict:
         return agg.setdefault(
             key,
             {
                 "weakness_class": wcid,
+                "mechanism_id": mechanism_id or _normalise_mechanism_key(key),
                 "kind": kind,
                 "title": title[:80],
                 "statement": statement,
                 "cwe": (cwe or "").upper(),
+                "guidance": guidance or {},
+                "instance_source": instance_source,
                 "instances": [],
                 "instance_severities": [],
                 "practice": [],
@@ -1909,20 +1960,115 @@ def build_weakness_register(
         if comp and comp not in b["components"]:
             b["components"].append(comp)
 
+    def _wname(wcid: str) -> str:
+        """The weakness (negative) name for a class — e.g. `missing_authz` →
+        "Broken Access Control". Prefers class_guidance.weakness_name, then the
+        cluster label, then a titled fallback. (2026-07-14 consolidation: the
+        register names the WEAKNESS, not the missing control.)"""
+        g = class_guidance.get(wcid) or {}
+        return str(g.get("weakness_name") or weakness_labels.get(wcid) or wcid.replace("_", " ").title()).strip()
+
+    def _guidance(mechanism_id: str | None, *, wcid: str, cwe: str | None = None) -> tuple[str, dict]:
+        """Return the stable mechanism id and its reader-facing guidance.
+
+        A producer can pass an explicit mechanism id. Practice-only rows fall
+        back to the first guidance entry that deliberately claims their CWE;
+        otherwise they retain a narrow CWE-scoped key instead of being merged
+        into every other member of the weakness class.
+        """
+        key = _normalise_mechanism_key(mechanism_id) if mechanism_id else ""
+        if key and isinstance(mechanism_guidance.get(key), dict):
+            return key, mechanism_guidance[key]
+        cwe_norm = (cwe or "").upper()
+        for candidate, candidate_guidance in mechanism_guidance.items():
+            if cwe_norm and cwe_norm in {str(v).upper() for v in (candidate_guidance.get("cwes") or [])}:
+                return str(candidate), candidate_guidance
+        return key or f"{wcid}-{cwe_norm.lower() or 'observed-practice'}", {}
+
+    def _title_and_guidance(
+        mechanism_id: str | None,
+        *,
+        wcid: str,
+        cwe: str | None,
+        fallback_title: str,
+        fallback_statement: str,
+    ) -> tuple[str, str, str, dict]:
+        mechanism, guidance = _guidance(mechanism_id, wcid=wcid, cwe=cwe)
+        title = str(guidance.get("weakness_name") or fallback_title or _wname(wcid)).strip()
+        statement = str(fallback_statement or guidance.get("description") or title).strip()
+        return mechanism, title, statement, guidance
+
+    def _design_bucket(t: dict, *, wcid: str, cwe: str | None = None) -> dict:
+        raw_title = str(t.get("title") or t.get("generic_threat_title") or "").strip()
+        raw_statement = str(t.get("statement") or raw_title or "Security mechanism is not consistently enforced.").strip()
+        mechanism_hint = t.get("mechanism_id") or _mechanism_from_text(" ".join((raw_title, raw_statement)))
+        # A named external advisory is evidence for vulnerability-management,
+        # not evidence that every CWE in the affected library shares one code
+        # weakness. It only attaches `known-vuln` instances below.
+        if (t.get("source") or "").strip() == "known-vuln":
+            wcid = "outdated_deps"
+            mechanism_hint = "vulnerability-management-gap"
+        mechanism, title, statement, guidance = _title_and_guidance(
+            mechanism_hint,
+            wcid=wcid,
+            cwe=cwe,
+            fallback_title=raw_title,
+            fallback_statement=raw_statement,
+        )
+        return _bucket(
+            f"mechanism:{mechanism}",
+            wcid=wcid,
+            kind="design",
+            title=title,
+            statement=statement,
+            cwe=(None if (t.get("source") or "").strip() == "known-vuln" else cwe),
+            mechanism_id=mechanism,
+            guidance=guidance,
+            instance_source="known-vuln" if (t.get("source") or "").strip() == "known-vuln" else None,
+        )
+
     confirmed: list[dict] = []
     for t in threats:
         src = (t.get("source") or "").strip()
         wcid = classify_threat(t, vocab, warn=False)
+        cwe = (t.get("cwe") or "").strip().upper()
         if src in DESIGN_LEVEL_SOURCES:
-            cwe = (t.get("cwe") or "").strip().upper()
-            statement = (t.get("title") or "Central security control observably absent").strip()
-            scope = (t.get("rule_id") or t.get("hypothesis_id") or statement).strip()
-            b = _bucket(f"design:{scope}", wcid=wcid, kind="design", title=statement, statement=statement, cwe=cwe)
+            b = _design_bucket(t, wcid=wcid, cwe=cwe)
             for a in t.get("controls_absent_evidence") or []:
                 b["absent"].append(a)
+            # Architectural anti-patterns commonly carry concrete file:line
+            # evidence but not a grep-shaped `controls_absent_evidence` record.
+            # That evidence proves the unsafe mechanism, so retain it as an
+            # observable backing rather than discarding a valid design weakness.
+            if not b["absent"]:
+                ev = _first_evidence(t)
+                if ev.get("file"):
+                    b["absent"].append(
+                        {
+                            "mechanism": b["mechanism_id"],
+                            "file": ev.get("file"),
+                            "line": ev.get("line"),
+                        }
+                    )
             b["design_severities"].append(t.get("risk") or "Medium")
             _add_component(b, t.get("component_id") or t.get("component") or "")
             continue
+        if src == "known-vuln":
+            # Known-vuln records are externally grounded version advisories.
+            # They prove a vulnerability-management gap without claiming that
+            # their implementation CWE is a single application-wide root cause.
+            b = _design_bucket(t, wcid="outdated_deps", cwe=cwe)
+            ev = _first_evidence(t)
+            b["absent"].append(
+                {
+                    "mechanism": b["mechanism_id"],
+                    "file": ev.get("file"),
+                    "line": ev.get("line"),
+                    "advisory": True,
+                }
+            )
+            b["design_severities"].append(t.get("risk") or "Medium")
+            _add_component(b, t.get("component_id") or t.get("component") or "")
         tier = _instance_evidence_tier(t)
         # Stamp the resolved basis back onto the threat so downstream consumers
         # (yaml export → composer count breakdown) can distinguish a confirmed
@@ -1932,17 +2078,24 @@ def build_weakness_register(
         if tier == "confirmed-exploitable":
             confirmed.append(t)
         else:
-            # A practice weakness is deliberately component- and CWE-scoped.
-            # It is not promoted to a design weakness merely because another
-            # component happens to have a sibling CWE in the same family.
-            cwe = (t.get("cwe") or "").strip().upper()
             component = (t.get("component_id") or t.get("component") or "").strip()
-            scope = f"practice:{wcid}:{cwe or 'none'}:{component or 'unscoped'}"
-            label = cwe or wcid.replace("_", " ")
-            statement = f"Unsafe {label} handling in {component or 'the assessed scope'}."
-            family = weakness_labels.get(wcid) or wcid.replace("_", " ").title()
-            title = f"{family} safeguards in {component or 'scope'}"
-            b = _bucket(scope, wcid=wcid, kind="implementation", title=title, statement=statement, cwe=cwe)
+            mechanism, title, statement, guidance = _title_and_guidance(
+                t.get("mechanism_id"),
+                wcid=wcid,
+                cwe=cwe,
+                fallback_title=f"{_wname(wcid)} is implemented inconsistently",
+                fallback_statement=(t.get("title") or "Observed insecure security-control practice.").strip(),
+            )
+            b = _bucket(
+                f"mechanism:{mechanism}",
+                wcid=wcid,
+                kind="implementation",
+                title=title,
+                statement=statement,
+                cwe=cwe,
+                mechanism_id=mechanism,
+                guidance=guidance,
+            )
             _add_component(b, component)
             ev = _first_evidence(t)
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()
@@ -1963,10 +2116,7 @@ def build_weakness_register(
         _valid_wc = {c.get("id") for c in (vocab.get("clusters") or [])}
         wcid = _raw_wc if _raw_wc in _valid_wc else classify_cwe(ds.get("cwe") or "", vocab, warn=False)
         cwe = (ds.get("cwe") or "").strip().upper()
-        scope = (ds.get("rule_id") or ds.get("hypothesis_id") or ds.get("statement") or ds.get("title") or wcid).strip()
-        statement = (ds.get("statement") or ds.get("title") or "Central security control observably absent").strip()
-        title = (ds.get("title") or statement).strip()
-        b = _bucket(f"design:{scope}", wcid=wcid, kind="design", title=title, statement=statement, cwe=cwe)
+        b = _design_bucket(ds, wcid=wcid, cwe=cwe)
         for a in ds.get("absent_control_signal") or ds.get("controls_absent_evidence") or []:
             b["absent"].append(a)
         strat = (ds.get("implementation_strategy") or "").strip()
@@ -1984,31 +2134,41 @@ def build_weakness_register(
     for key in sorted(agg):
         b = agg[key]
         wcid = b["weakness_class"]
+        # `_unmapped` is the CWE catch-all; it is not a coherent weakness class,
+        # so it never becomes a weakness (its findings stay as plain §8 findings).
+        if wcid == "_unmapped":
+            continue
         has_absent = bool(b["absent"])
         has_practice = bool(b["practice"])
-        # I2 / §4b: a weakness needs observable backing. Confirmed instances
-        # alone (no absent-control signal, no practice site) → NOT a systemic
-        # weakness; those stay as plain findings in threats[].
+        # A confirmed exploit alone is a finding, not evidence that a systemic
+        # mechanism exists. A weakness must independently carry an observed
+        # practice or architecture/control backing (I2).
         if not (has_absent or has_practice):
             continue
 
         spread = len(b["components"])
         systemic = spread >= _spread_min_for_class(wcid, vocab)
-        kind = b["kind"]
+        # kind is derived from the evidence: a class with an absent central
+        # control is a design weakness; otherwise it is an implementation one.
+        kind = "design" if has_absent else "implementation"
 
         # Implementation strategy (P2): a design-signal strategy wins; else the
         # repo-wide detector's class verdict (detect_impl_strategy.py).
         resolved_strategy = b["strategies"][0] if b["strategies"] else (impl_strategy or {}).get(wcid)
 
-        # Attach only evidence that proves this exact control proposition.
-        # A missing generic CWE is intentionally not broadened to the class.
+        # Attach only confirmed findings that substantiate THIS mechanism. CWE
+        # class matching alone would incorrectly put XXE/path traversal beneath a
+        # database-query weakness. Known-vuln mechanisms match their source,
+        # because their implementation CWE is not their management root cause.
         for t in confirmed:
-            t_cwe = (t.get("cwe") or "").strip().upper()
-            if not b["cwe"] or t_cwe != b["cwe"]:
+            if b.get("instance_source"):
+                if (t.get("source") or "").strip() != b["instance_source"]:
+                    continue
+            elif classify_threat(t, vocab, warn=False) != wcid:
+                continue
+            elif b.get("cwe") and (t.get("cwe") or "").strip().upper() != b["cwe"]:
                 continue
             component = (t.get("component_id") or t.get("component") or "").strip()
-            if kind == "implementation" and b["components"] and component not in b["components"]:
-                continue
             ev = _first_evidence(t)
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()
             if not tid:
@@ -2067,9 +2227,8 @@ def build_weakness_register(
         if has_practice:
             observable_backing["practice_evidence"] = b["practice"]
 
-        seq += 1
         w = {
-            "id": f"W-{seq:03d}",
+            "id": "",  # assigned after severity sort below
             "weakness_class": wcid,
             "kind": kind,
             "title": b["title"],
@@ -2078,13 +2237,43 @@ def build_weakness_register(
             "severity_basis": severity_basis,
             "observable_backing": observable_backing,
         }
+        if b.get("mechanism_id"):
+            w["mechanism_id"] = b["mechanism_id"]
         if b["components"]:
             w["affected_components"] = sorted(b["components"])
         if resolved_strategy:
             w["implementation_strategy"] = resolved_strategy
         if b["instances"]:
             w["instances"] = b["instances"]
+        # Per-class prose for the Weakness Register (2026-07-14 redesign):
+        # `description` explains the control + why the gap is systemic (better
+        # than a title restatement); `structural_recommendation` is the
+        # root-cause fix the Hybrid mitigation model surfaces alongside the
+        # tactical per-finding M-NNN roll-up. Sourced from weakness-classes.yaml
+        # `class_guidance`; absent for _unmapped / unlisted classes.
+        guidance = b.get("guidance") or ((class_guidance.get(wcid) or {}) if isinstance(class_guidance, dict) else {})
+        _desc = " ".join((guidance.get("description") or "").split()).strip()
+        _struct = " ".join((guidance.get("structural_fix") or "").split()).strip()
+        if _desc:
+            w["description"] = _desc
+        if _struct:
+            w["structural_recommendation"] = _struct
         weaknesses.append(w)
+
+    # Assign W-NNN ids in severity order (W-001 = most severe), with a
+    # confirmed-before-design tiebreak and class-alpha final key — so the ids
+    # match the register's display order and the highest-impact weakness is W-001.
+    _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    _basis_rank = {"confirmed": 0, "observed-practice": 1, "design-risk": 2}
+    weaknesses.sort(
+        key=lambda w: (
+            _sev_rank.get((w.get("severity") or "").strip().lower(), 9),
+            _basis_rank.get((w.get("severity_basis") or "").strip().lower(), 9),
+            w.get("weakness_class") or "",
+        )
+    )
+    for i, w in enumerate(weaknesses, start=1):
+        w["id"] = f"W-{i:03d}"
     return weaknesses
 
 

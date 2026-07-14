@@ -41,7 +41,10 @@ domains:
       - 'sequelize\.query\('                    # raw query beside the ORM
     central_control:
       principle: "input validation / query parametrization"
-      statement: "SQL/inputs are handled with hand-rolled string building; no vetted parametrization or input-validation library backs the request surface."
+      mechanism_id: database-query-concatenation
+      cwe: CWE-89
+      weakness_title: "Database access relies on concatenated queries"
+      statement: "Database queries are assembled from application values instead of passing those values through an enforced parameterised data-access path."
 
   broken_auth:
     vetted_libs:
@@ -53,7 +56,10 @@ domains:
       - 'crypto\.randomBytes\([^)]*\)\s*.{0,40}token'   # hand-rolled session token
     central_control:
       principle: "authentication / token verification"
-      statement: "Authentication is handled with hand-rolled token logic; no vetted authentication/JWT library governs verification."
+      mechanism_id: hand-rolled-token-verification
+      cwe: CWE-347
+      weakness_title: "Authentication relies on hand-rolled token verification"
+      statement: "Token verification is implemented in application code rather than behind one vetted and consistently configured authentication path."
 
   weak_crypto:
     vetted_libs:
@@ -71,7 +77,10 @@ domains:
       - 'bypassSecurityTrustHtml'
     central_control:
       principle: "output encoding / sanitization"
-      statement: "HTML/DOM sinks are written directly; no vetted output-encoding or sanitization library guards the render path."
+      mechanism_id: frontend-output-encoding
+      cwe: CWE-79
+      weakness_title: "Frontend rendering lacks enforced output encoding"
+      statement: "Browser rendering paths write HTML or DOM content directly without one enforced contextual-encoding or sanitisation boundary."
 
   missing_authz:
     vetted_libs: ["@casl/ability", casl, accesscontrol, "express-jwt", "@nestjs/passport"]
@@ -79,7 +88,10 @@ domains:
       - "req\\.user\\.(role|isAdmin)\\s*==="    # ad-hoc per-handler role check
     central_control:
       principle: "authorization / access control"
-      statement: "Access control is enforced by ad-hoc per-handler role checks; no centralized authorization layer backs the request surface."
+      mechanism_id: route-by-route-authorization
+      cwe: CWE-862
+      weakness_title: "Authorization is implemented route by route"
+      statement: "Authorization depends on per-handler checks instead of a policy boundary that consistently enforces role, ownership, and tenant scope."
 
   server_side_exposure:
     vetted_libs: [ssrf-req-filter, helmet]

@@ -2717,10 +2717,7 @@ def _classify_plan_status(
     # as blocking for backward compatibility; newly emitted unknown actions are
     # tagged ``manual_review`` by `_action_severity` above.
     blocking = any(a.get("severity", "blocking") == "blocking" for a in actions)
-    actionable = any(
-        a.get("fragments_to_rewrite") and a.get("severity", "blocking") == "blocking"
-        for a in actions
-    )
+    actionable = any(a.get("fragments_to_rewrite") and a.get("severity", "blocking") == "blocking" for a in actions)
     cosmetic = any(a.get("fragments_to_rewrite") and a.get("severity") == "cosmetic" for a in actions)
     if not issues:
         return "pass", actionable
@@ -9543,13 +9540,13 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
         return report
 
     yaml_threats_all = yaml_data.get("threats") or []
-    # P1.4: insecure-practice threats are suppressed from §8 when a weakness register
-    # exists (compose_threat_model.py _render_threat_register P1.4 filter). Exclude
-    # them from the yaml count so this check does not false-positive on runs that
-    # produce a weakness register.
-    if yaml_data.get("weaknesses"):
-        yaml_threats_all = [t for t in yaml_threats_all
-                            if t.get("evidence_tier") != "insecure-practice"]
+    # Weakness-Register redesign (2026-07-14, Phase 1): insecure-practice threats
+    # are now FIRST-CLASS §8 cards (no longer suppressed), so the yaml count and
+    # the md count both include them — no exclusion here. (Coverage-gap /
+    # architectural-anti-pattern placeholders are still excluded below, matching
+    # _render_threat_register.)
+    _COVERAGE_GAP_SOURCES = {"coverage-gap", "architectural-anti-pattern"}
+    yaml_threats_all = [t for t in yaml_threats_all if t.get("source") not in _COVERAGE_GAP_SOURCES]
     yaml_threat_count = len(yaml_threats_all)
     yaml_mitigation_count = len(yaml_data.get("mitigations") or [])
 

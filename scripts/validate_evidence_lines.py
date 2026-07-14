@@ -73,10 +73,9 @@ def _file_exists_config_check_ids() -> frozenset[str]:
 
 def _is_expected_absence_finding(threat: dict) -> bool:
     """Whether a missing evidence file positively proves this config finding."""
-    return (
-        (threat.get("source") or "").strip() == "config-scan"
-        and (threat.get("config_check_id") or "").strip() in _file_exists_config_check_ids()
-    )
+    return (threat.get("source") or "").strip() == "config-scan" and (
+        threat.get("config_check_id") or ""
+    ).strip() in _file_exists_config_check_ids()
 
 
 # RC.D — patterns that match a line containing only an import / package

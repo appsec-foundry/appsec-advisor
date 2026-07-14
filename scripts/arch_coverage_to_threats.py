@@ -273,6 +273,11 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
         for rule in (coverage.get("rules_evaluated") or [])
         if isinstance(rule, dict) and rule.get("rule_id") and rule.get("control")
     }
+    mechanism_by_rule = {
+        str(rule.get("rule_id")): str(rule.get("weakness_mechanism"))
+        for rule in (coverage.get("rules_evaluated") or [])
+        if isinstance(rule, dict) and rule.get("rule_id") and rule.get("weakness_mechanism")
+    }
     for hyp in coverage.get("threat_hypotheses") or []:
         if not isinstance(hyp, dict):
             continue
@@ -320,6 +325,7 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
             "rule_id": hyp.get("rule_id"),
             "hypothesis_id": hid,
             "weakness_class": wclass,
+            "mechanism_id": mechanism_by_rule.get(str(hyp.get("rule_id") or "")),
             "cwe": cwe or None,
             "component": hyp.get("component_id"),
             "title": control or (hyp.get("title") or "Security control weakness"),

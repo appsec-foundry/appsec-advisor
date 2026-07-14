@@ -48,6 +48,7 @@ def _check(
         counter_scope=counter_scope,
         counter_window=3,
         counter_patterns=[re.compile(p) for p in (counter_patterns or [])],
+        required_context_patterns=[],
         severity_if_violated="High",
         cwe="CWE-862",
         finding_type="missing-authz",
@@ -120,6 +121,21 @@ def test_authz001_suppressed_by_session_identity(tmp_path: Path) -> None:
         "}\n"
     )
     assert "AUTHZ-001" not in _ids(_scan(tmp_path))
+
+
+def test_required_context_pattern_gates_ambiguous_syntax(tmp_path: Path) -> None:
+    """A rule can require a local security purpose before it emits a finding."""
+    check_path = _write_checks(
+        tmp_path / "checks.yaml",
+        pattern="HASH\\(md5\\)",
+        required_context_patterns=["(?i)password"],
+    )
+    checks = S.load_checks(check_path)
+    (tmp_path / "plain.js").write_text("const value = HASH(md5);\n", encoding="utf-8")
+    (tmp_path / "password.js").write_text("const passwordDigest = HASH(md5);\n", encoding="utf-8")
+
+    findings = S.scan_repo(tmp_path, checks)
+    assert [(f.file, f.check_id) for f in findings] == [("password.js", "TEST-001")]
 
 
 def test_authz003_mass_assignment_privileged_field(tmp_path: Path) -> None:

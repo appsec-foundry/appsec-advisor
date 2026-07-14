@@ -130,6 +130,8 @@ def test_impl_design_signal_emitted_for_home_grown_central_control(tmp_path: Pat
     assert len(xss) == 1
     s = xss[0]
     assert s["implementation_strategy"] == "home-grown"
+    assert s["mechanism_id"] == "frontend-output-encoding"
+    assert s["title"] == "Frontend rendering lacks enforced output encoding"
     ac = s["absent_control_signal"][0]
     assert ac["hit_count"] >= 1 and ac["example"].endswith(":1")
 

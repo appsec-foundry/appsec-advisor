@@ -37,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _slug import github_render_slug  # noqa: E402  (link-target form compose emits — preserves `--`)
 from _slug import github_slug  # noqa: E402  (single source of truth, mirrors compose)
 
 # Top-level number remap. Order matters only for readability — each is matched by
@@ -72,11 +73,18 @@ def _renumber_token(old_number: str) -> str | None:
     return new_top + old_number[len(top) :]
 
 
-def _collect_heading_renumbers(text: str) -> list[tuple[str, str, str, str]]:
+def _collect_heading_renumbers(text: str) -> list[tuple[str, str, str, str, str, str]]:
     """Scan heading lines in scope; return [(old_heading_line, new_heading_line,
-    old_anchor, new_anchor), ...] using the SAME slug function compose uses, so
-    anchors round-trip byte-identically instead of being hand-derived."""
-    out: list[tuple[str, str, str, str]] = []
+    old_anchor, new_anchor, old_render_anchor, new_render_anchor), ...].
+
+    Two anchor forms are emitted per heading because compose uses TWO slug
+    functions: `github_slug` (collapsed, for `id="..."` declarations) and
+    `github_render_slug` (preserves the `--` double-hyphen GitHub/pandoc actually
+    render, for `(#...)` link TARGETS). A heading whose title contains ` & ` or
+    ` / ` (e.g. "OAuth / Social Login") produces a `--` link target the collapsed
+    slug can never match — so renumber left those TOC links dangling at the old
+    number after §7→§6 (juice-shop 2026-07-13). Rewriting BOTH forms closes that."""
+    out: list[tuple[str, str, str, str, str, str]] = []
     for line in text.splitlines():
         m = _HEADING_RE.match(line)
         if not m:
@@ -92,14 +100,22 @@ def _collect_heading_renumbers(text: str) -> list[tuple[str, str, str, str]]:
         # subsections).
         sep = ". " if "." not in number else " "
         new_heading_text = f"{new_number}{sep}{title}"
-        old_anchor = github_slug(f"{number}{sep}{title}")
+        old_heading_text = f"{number}{sep}{title}"
+        old_anchor = github_slug(old_heading_text)
         new_anchor = github_slug(new_heading_text)
+        old_render_anchor = github_render_slug(old_heading_text)
+        new_render_anchor = github_render_slug(new_heading_text)
         new_line = f"{hashes} {new_heading_text}"
-        out.append((line, new_line, old_anchor, new_anchor))
+        out.append((line, new_line, old_anchor, new_anchor, old_render_anchor, new_render_anchor))
     return out
 
 
 _CANONICAL_MARKER_RE = re.compile(r'(?m)^## 7\. Security Architecture$|id="7-security-architecture"')
+# 2026-07-14: the §6 Weakness Register now fills the retired §6 slot, so the
+# numbering is already contiguous and this cosmetic §7→§6 shift is obsolete (and
+# would collide with §6). Detecting any `## 6. ` top-level heading is the signal
+# that the gap is filled → renumber must no-op.
+_GAP_FILLED_RE = re.compile(r"(?m)^## 6\. \S")
 
 
 def renumber_sections_display(text: str) -> str:
@@ -115,6 +131,10 @@ def renumber_sections_display(text: str) -> str:
     """
     if not _CANONICAL_MARKER_RE.search(text):
         return text
+    # Gap already filled by §6 Weakness Register → numbering is contiguous; the
+    # cosmetic shift is obsolete and would collide. No-op.
+    if _GAP_FILLED_RE.search(text):
+        return text
     heading_renumbers = _collect_heading_renumbers(text)
     if not heading_renumbers:
         return text
@@ -122,8 +142,8 @@ def renumber_sections_display(text: str) -> str:
     out = text
 
     # 1. Heading lines themselves (## / ### / #### with an in-scope number).
-    for old_line, new_line, _old_anchor, _new_anchor in heading_renumbers:
-        out = out.replace(old_line, new_line)
+    for hr in heading_renumbers:
+        out = out.replace(hr[0], hr[1])
 
     # 2. Anchor ids/hrefs — longest anchor first so e.g. "72" is swapped before
     #    a hypothetical shorter overlapping anchor, then apply the `id="..."`
@@ -134,8 +154,11 @@ def renumber_sections_display(text: str) -> str:
     #    `§7`→`§6` text but the href target is a distinct token — without this the
     #    link stays pointed at the old `#7-...` anchor while every heading/id moved
     #    to `#6-...`, leaving a dangling in-page link.
+    #    Both slug forms (collapsed `id=` form + render `--` link-target form)
+    #    are swapped so a `(#722-oauth--social-login)` TOC link moves in lockstep
+    #    with its `id="622-..."`/`#622-oauth--social-login` heading.
     anchor_pairs = sorted(
-        {(old_a, new_a) for _o, _n, old_a, new_a in heading_renumbers if old_a != new_a},
+        {(o, n) for _l, _nl, oa, na, ora, nra in heading_renumbers for o, n in ((oa, na), (ora, nra)) if o != n},
         key=lambda p: -len(p[0]),
     )
     for old_anchor, new_anchor in anchor_pairs:

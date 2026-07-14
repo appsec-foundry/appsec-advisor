@@ -59,7 +59,6 @@ document:
     - { id: quick_mode_notice, condition: "is_quick_depth" }
     - toc
     - management_summary
-    - { id: systemic_weaknesses, condition: "has_weakness_register" }
     # Item 3 (2026-05-28): activate the previously dormant Critical
     # Attack Tree fragment producer. The unnumbered `## Critical Attack
     # Tree` section sits between the Management Summary and §1 and
@@ -84,10 +83,12 @@ document:
     - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
     - assets
     - attack_surface
-    # §6 Use Cases removed (2026-05) — value-vs-noise tradeoff. The numbering
-    # gap (§5 → §7) is intentional and accepted; full renumbering would
-    # require coordinated edits across composer regexes, QA pattern checks,
-    # pregenerator scaffolds, and every §7.x reference in the agent prompts.
+    # §6 Weakness Register (2026-07-14) — the standalone root-cause register now
+    # fills the slot left by the retired §6 Use Cases, so the document numbering
+    # is contiguous again (§5 → §6 → §7) and the cosmetic display-renumber pass is
+    # obsolete. A weakness is the systemic control gap; findings (§8) are its
+    # concrete instances, and §7 Security Architecture analyses the controls.
+    - { id: systemic_weaknesses, condition: "has_weakness_register" }
     #
     # §7 carries a `render_security_architecture` condition (true by default).
     # Set to False at compose-time when current depth is `quick` AND no rich
@@ -152,10 +153,10 @@ document:
         - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
         - assets
         - attack_surface
-        # §6 Use Cases removed (2026-05); see comment in main `order:` above.
+        # §6 Weakness Register (2026-07-14) — fills the retired §6 slot so the
+        # numbering is contiguous; see the main `order:` block above.
+        - { id: systemic_weaknesses, condition: "has_weakness_register" }
         - { id: security_architecture, condition: "render_security_architecture" }
-        # Italic placeholder explaining the §5 -> §8 numbering gap when
-        # §6 is permanently gone AND §7 is suppressed at quick depth.
         - { id: skipped_sections_placeholder, condition: "not render_security_architecture" }
         - { id: requirements_compliance, condition: "check_requirements" }
         - threat_register
@@ -371,13 +372,14 @@ sections:
       - "^Overall Security Rating$"
       - "^⚠ Worst Case Scenarios$"
 
-  # -- Systemic Weaknesses (post-MS, unnumbered) --------------------------
-  # Computed from `weaknesses[]`. Each W-NNN is an evidence-backed control
-  # conclusion; its confirmed F-NNN links are evidence, not child findings.
+  # -- Weakness Register (pre-Findings, unnumbered) -----------------------
+  # Computed from `weaknesses[]`. Each W-NNN is an evidence-backed root-cause
+  # control gap; its F-NNN links are the concrete instances/practice sites, and
+  # each such finding carries a `Weakness:` back-link in §8 (2026-07-14 redesign).
   systemic_weaknesses:
-    heading: "## Systemic Weaknesses"
-    heading_numbered: false
-    anchor: "systemic-weaknesses"
+    heading: "## 6. Weakness Register"
+    heading_numbered: true
+    anchor: "6-weakness-register"
     fragment_type: computed
     conditional: "has_weakness_register"
 

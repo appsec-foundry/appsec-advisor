@@ -34,7 +34,7 @@ clusters:
   - id: injection
     label: Injection
     plural_label: Injections
-    cwes: [CWE-89, CWE-943, CWE-78, CWE-94, CWE-95, CWE-611, CWE-22, CWE-23]
+    cwes: [CWE-89, CWE-943, CWE-78, CWE-94, CWE-95, CWE-611, CWE-22, CWE-23, CWE-502, CWE-1427]
     variants_by_cwe:
       CWE-89:  SQLi
       CWE-943: NoSQLi
@@ -55,7 +55,7 @@ clusters:
     # defect. Listing it in both clusters caused first-match-wins routing
     # ambiguity (T-022 routed via `broken_auth` only because broken_auth
     # came first in this YAML; reversing the list changed the routed tier).
-    cwes: [CWE-287, CWE-321, CWE-798, CWE-347, CWE-345, CWE-640, CWE-294, CWE-261, CWE-307]
+    cwes: [CWE-287, CWE-321, CWE-798, CWE-347, CWE-345, CWE-640, CWE-294, CWE-261, CWE-307, CWE-306, CWE-620]
     variants_by_cwe:
       CWE-287: auth bypass
       CWE-321: hardcoded key
@@ -71,7 +71,7 @@ clusters:
   - id: missing_authz
     label: Missing Authorization
     plural_label: Authorization Gaps
-    cwes: [CWE-285, CWE-639, CWE-269, CWE-352, CWE-862, CWE-863, CWE-732, CWE-915]
+    cwes: [CWE-285, CWE-639, CWE-269, CWE-352, CWE-862, CWE-863, CWE-732, CWE-915, CWE-602, CWE-942]
     variants_by_cwe:
       CWE-285: missing authz
       CWE-639: IDOR
@@ -107,7 +107,7 @@ clusters:
   - id: server_side_exposure
     label: Server-Side Exposure
     plural_label: Server-Side Exposures
-    cwes: [CWE-918, CWE-601, CWE-548, CWE-749, CWE-441, CWE-552]
+    cwes: [CWE-918, CWE-601, CWE-548, CWE-749, CWE-441, CWE-552, CWE-434]
     variants_by_cwe:
       CWE-918: SSRF
       CWE-601: open redirect
@@ -135,7 +135,7 @@ clusters:
   - id: sensitive_disclosure
     label: Sensitive Data Exposure
     plural_label: Data Exposures
-    cwes: [CWE-200, CWE-538, CWE-312, CWE-359, CWE-209, CWE-532, CWE-922]
+    cwes: [CWE-200, CWE-538, CWE-312, CWE-359, CWE-209, CWE-532, CWE-922, CWE-311, CWE-598]
     variants_by_cwe:
       CWE-200: info leak
       CWE-538: file leak
@@ -154,7 +154,7 @@ clusters:
   - id: dos
     label: Denial of Service
     plural_label: DoS Issues
-    cwes: [CWE-400, CWE-770, CWE-834, CWE-674]
+    cwes: [CWE-400, CWE-770, CWE-834, CWE-674, CWE-776]
     variants_by_cwe:
       CWE-400: resource
       CWE-770: unbounded
@@ -166,7 +166,7 @@ clusters:
   - id: outdated_deps
     label: Outdated Dependency
     plural_label: Outdated Dependencies
-    cwes: [CWE-1104, CWE-1395, CWE-937]
+    cwes: [CWE-1104, CWE-1395, CWE-937, CWE-829, CWE-1357, CWE-506, CWE-693]
     variants_by_cwe:
       CWE-1104: legacy
       CWE-1395: outdated
@@ -184,3 +184,190 @@ clusters:
     cwes: []
     preferred_tier: by_component
     stride: []
+
+# --------------------------------------------------------------------------
+# class_guidance — per-cluster prose for the Weakness Register (2026-07-14
+# redesign). `description` gives a 1-2 sentence explanation of the control and
+# why its absence is systemic (fills the "What / Why" of each W-NNN card, no
+# LLM authoring). `structural_fix` is the root-cause remediation the Hybrid
+# mitigation model surfaces alongside the tactical per-finding M-NNN roll-up.
+# Keyed by cluster id; `_unmapped`/absent → the renderer omits the prose.
+# --------------------------------------------------------------------------
+class_guidance:
+  injection:
+    weakness_name: "Injection"
+    description: >-
+      Untrusted input reaches an interpreter (SQL, OS shell, template, XML/YAML
+      parser) without parameterization or a strict allowlist. It is systemic
+      when the same unsafe construction pattern recurs across handlers rather
+      than being an isolated slip.
+    structural_fix: >-
+      adopt parameterized queries / safe APIs and centralised input validation
+      as the only sanctioned data-access and parsing path
+  broken_auth:
+    weakness_name: "Broken Authentication"
+    description: >-
+      Authentication or session-issuance is home-grown or misconfigured
+      (unpinned JWT algorithms, hardcoded signing material, weak session
+      lifecycle), so identity claims cannot be trusted end-to-end.
+    structural_fix: >-
+      consolidate authentication and token issuance behind a vetted library
+      with pinned algorithms and externally-managed secrets
+  missing_authz:
+    weakness_name: "Broken Access Control"
+    description: >-
+      Authorization is not enforced consistently at the server: object-ownership
+      and role checks are absent, client-side only, or scattered per-route
+      instead of centralised, so any authenticated caller can exceed its scope.
+    structural_fix: >-
+      introduce a centralised server-side authorization layer that enforces
+      object-level ownership and role checks on every request
+  weak_crypto:
+    weakness_name: "Weak Cryptography"
+    description: >-
+      Cryptographic primitives are broken or misused for their purpose (fast
+      unsalted hashes for passwords, predictable RNG for secrets, collision-broken
+      digests for integrity), so the protection they nominally provide does not hold.
+    structural_fix: >-
+      standardise on a password KDF (argon2id / bcrypt / scrypt), a CSPRNG for
+      secrets, and SHA-256+ for integrity across the codebase
+  server_side_exposure:
+    weakness_name: "Server-Side Request & Code Exposure"
+    description: >-
+      Server-side request handling exposes internal surface — SSRF, unsafe
+      deserialization, server-side eval, or unauthenticated internal endpoints —
+      that lets a request pivot into the trust boundary.
+    structural_fix: >-
+      remove server-side eval/deserialization of untrusted input and gate every
+      internal endpoint behind authentication and egress controls
+  output_xss_csp:
+    weakness_name: "Cross-Site Scripting"
+    description: >-
+      Output is rendered without contextual encoding and without a Content
+      Security Policy backstop, so attacker-controlled markup executes in other
+      users' browsers.
+    structural_fix: >-
+      encode output through the framework's contextual escaping and add a strict
+      Content-Security-Policy as defence in depth
+  sensitive_disclosure:
+    weakness_name: "Sensitive Data Exposure"
+    description: >-
+      Sensitive data (credentials, tokens, PII) is stored or transmitted without
+      adequate protection, so a single disclosure yields usable secrets.
+    structural_fix: >-
+      classify sensitive data and enforce encryption at rest/in transit plus
+      least-privilege access to it
+  dos:
+    weakness_name: "Denial of Service"
+    description: >-
+      Resource-consuming operations lack rate limiting or bounds, so a single
+      actor can exhaust capacity.
+    structural_fix: >-
+      apply rate limiting, request quotas, and input-size bounds on
+      resource-intensive endpoints
+  outdated_deps:
+    weakness_name: "Vulnerable & Outdated Dependencies"
+    description: >-
+      Dependencies with known vulnerabilities are shipped because update and
+      advisory-tracking are not enforced in the pipeline.
+    structural_fix: >-
+      enforce automated dependency updates and block known-vulnerable versions
+      in CI
+
+# mechanism_guidance deliberately names an observable architectural weakness,
+# rather than a CWE family or a missing framework. A mechanism is eligible for
+# the register when its producer provides concrete code/config/architecture
+# evidence; it does not need a proven exploit path. `cwes` only controls which
+# concrete findings may be attached as evidence to that mechanism.
+mechanism_guidance:
+  database-query-concatenation:
+    weakness_name: "Database access relies on concatenated queries"
+    cwes: [CWE-89]
+    description: >-
+      Database queries are assembled from application values instead of passing
+      those values through an enforced parameterised data-access path. This
+      leaves every call site responsible for preserving query structure.
+    structural_fix: >-
+      provide one parameterised repository or query-builder path and prohibit
+      application-value interpolation in database queries
+  blacklist-only-input-validation:
+    weakness_name: "API validation relies on regex blacklists"
+    cwes: [CWE-20, CWE-22, CWE-23]
+    description: >-
+      Request validation rejects selected bad patterns but does not define the
+      accepted data shape at the server boundary. New encodings and unanticipated
+      input forms can therefore reach downstream parsers or interpreters.
+    structural_fix: >-
+      enforce server-side schemas and domain-specific allowlists before input
+      reaches parsing, persistence, or command construction
+  frontend-output-encoding:
+    weakness_name: "Frontend rendering lacks enforced output encoding"
+    cwes: [CWE-79, CWE-80, CWE-87]
+    description: >-
+      Browser rendering paths write HTML or DOM content directly without one
+      enforced contextual-encoding or sanitisation boundary. Safety depends on
+      each individual component using the right API.
+    structural_fix: >-
+      use framework-safe rendering by default and isolate any required raw HTML
+      behind one reviewed sanitisation and Trusted Types policy
+  route-by-route-authorization:
+    weakness_name: "Authorization is implemented route by route"
+    cwes: [CWE-285, CWE-639, CWE-862, CWE-863]
+    description: >-
+      Authorization depends on per-handler checks instead of a policy boundary
+      that consistently enforces role, ownership, and tenant scope. New routes
+      can bypass protection by omitting a local check.
+    structural_fix: >-
+      enforce authorization through a shared server-side policy layer and make
+      ownership and tenant scope mandatory inputs to data access
+  hand-rolled-token-verification:
+    weakness_name: "Authentication relies on hand-rolled token verification"
+    cwes: [CWE-287, CWE-345, CWE-347]
+    description: >-
+      Token validation is implemented in application code rather than behind one
+      vetted and consistently configured authentication path. Algorithm, issuer,
+      audience, and key-handling checks can diverge between callers.
+    structural_fix: >-
+      centralise token validation on a vetted library with pinned algorithms,
+      issuer and audience checks, and managed signing keys
+  browser-clients-without-bff:
+    weakness_name: "Browser clients access privileged APIs without a BFF"
+    cwes: [CWE-922]
+    description: >-
+      A browser client retains session credentials and calls privileged APIs
+      directly instead of delegating token handling to a backend-for-frontend.
+      XSS or client-side integration mistakes can therefore expose reusable
+      credentials.
+    structural_fix: >-
+      introduce a backend-for-frontend that holds OAuth tokens server-side and
+      gives the browser a hardened HttpOnly session cookie
+  application-owned-cryptography:
+    weakness_name: "Cryptographic security is implemented in application code"
+    description: >-
+      Application code owns cryptographic protocol, key, or primitive decisions
+      that should be fixed by a vetted platform or library. Security then depends
+      on every caller choosing compatible algorithms and parameters.
+    structural_fix: >-
+      replace application-owned cryptographic protocol and key handling with a
+      vetted library or managed cryptographic service
+  weak-cryptographic-primitives:
+    weakness_name: "Security-sensitive data uses weak cryptographic primitives"
+    cwes: [CWE-327, CWE-328, CWE-330, CWE-916]
+    description: >-
+      Password, token, or integrity protection uses a weak hash, predictable
+      random source, or insufficient work factor. The application may use a
+      standard library, but the selected primitive does not provide the required
+      security property.
+    structural_fix: >-
+      standardise on a password KDF, a CSPRNG for secrets, and modern
+      authenticated cryptographic primitives with centrally reviewed parameters
+  vulnerability-management-gap:
+    weakness_name: "Vulnerability management does not prevent known-vulnerable dependencies"
+    cwes: [CWE-937]
+    description: >-
+      A resolved dependency version is known to be vulnerable and the delivery
+      process did not block or remediate it. This is distinct from a library's
+      historical reputation or from a missing process control alone.
+    structural_fix: >-
+      ingest version-resolved SCA advisories in CI, block policy-violating builds,
+      and track remediation to closure

@@ -1042,13 +1042,23 @@ class TestRenderThreatCardEvidenceSnippet:
         rendered, _ = compose.render(CONTRACT, out)
         assert "lib/x.ts" in rendered
 
-    def test_refuted_evidence_check_strikethrough(self, tmp_path):
+    def test_refuted_evidence_check_dropped_from_register(self, tmp_path):
+        # A refuted finding is excluded from the §8 threat register entirely
+        # (commit "Fix handling of refuted findings" — no strikethrough row).
         out = _prepare_output_dir(tmp_path)
         data = _load_fixture_yaml(out)
+        title = data["threats"][0]["title"]
+
+        # Baseline: not refuted → the §8 finding card heading is present.
+        _write_yaml(out, data)
+        baseline, _ = compose.render(CONTRACT, out)
+        assert any(ln.startswith("#### ") and title in ln for ln in baseline.splitlines())
+
+        # Refuted → the finding card heading is dropped from the register.
         data["threats"][0]["evidence_check"] = "refuted"
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
-        assert "~~" in rendered  # strikethrough heading
+        assert not any(ln.startswith("#### ") and title in ln for ln in rendered.splitlines())
 
     def test_raw_critical_annotation(self, tmp_path):
         out = _prepare_output_dir(tmp_path)

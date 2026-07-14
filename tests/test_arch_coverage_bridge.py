@@ -732,6 +732,30 @@ def test_build_design_signals_emits_backed_signal():
     assert dropped == []
 
 
+def test_build_design_signals_preserves_rule_mechanism():
+    coverage = {
+        "rules_evaluated": [
+            {
+                "rule_id": "ARCH-SQLI-001",
+                "control": "Parameterized Database Access",
+                "weakness_mechanism": "database-query-concatenation",
+            }
+        ],
+        "threat_hypotheses": [
+            {
+                "hypothesis_id": "ARCH-HYP-SQLI-001",
+                "rule_id": "ARCH-SQLI-001",
+                "cwe": "CWE-89",
+                "proof_state": "control-derived",
+                "positive_signals": [{"file": "routes/search.ts", "line": 23, "signal": "raw concat"}],
+            }
+        ],
+    }
+    signals, dropped = bridge.build_design_signals(coverage)
+    assert dropped == []
+    assert signals[0]["mechanism_id"] == "database-query-concatenation"
+
+
 def test_build_design_signals_drops_speculation_without_backing():
     # I2 / §0: no observable absent-control signal → dropped, never shown.
     coverage = {

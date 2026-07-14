@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).parent.parent
 FINALIZATION_PROMPT = REPO_ROOT / "agents" / "phases" / "phase-group-finalization.md"
 
@@ -17,7 +16,9 @@ def test_repair_scope_is_a_binding_whitelist():
 
     assert "**⚠⚠ HARD WHITELIST — `fragments_to_rewrite` is binding (not advisory):**" in prompt
     assert "**MUST edit only the path(s) listed in `actions[0].fragments_to_rewrite`.**" in prompt
-    assert "The repair plan's `fragments_to_rewrite` is the **only** thing you may edit until compose succeeds." in prompt
+    assert (
+        "The repair plan's `fragments_to_rewrite` is the **only** thing you may edit until compose succeeds." in prompt
+    )
 
 
 def test_repair_scope_preserves_the_deterministic_only_hard_ban():
@@ -35,4 +36,7 @@ def test_repair_scope_preserves_the_deterministic_only_hard_ban():
 
 
 def test_prompt_references_this_drift_guard():
-    assert "`tests/test_pre_render_repair_scope.py` protects this binding-whitelist instruction against prompt drift." in _prompt()
+    assert (
+        "`tests/test_pre_render_repair_scope.py` protects this binding-whitelist instruction against prompt drift."
+        in _prompt()
+    )

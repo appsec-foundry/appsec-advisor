@@ -123,6 +123,7 @@ class Check:
     counter_scope: str  # line | window | call
     counter_window: int
     counter_patterns: list[re.Pattern[str]]
+    required_context_patterns: list[re.Pattern[str]]
     severity_if_violated: str
     cwe: str
     finding_type: str
@@ -187,6 +188,10 @@ def load_checks(checks_path: Path) -> list[Check]:
                     counter_patterns=[
                         _compile_pattern(p, name="counter_patterns", check_id=cid)
                         for p in (entry.get("counter_patterns") or [])
+                    ],
+                    required_context_patterns=[
+                        _compile_pattern(p, name="required_context_patterns", check_id=cid)
+                        for p in (entry.get("required_context_patterns") or [])
                     ],
                     severity_if_violated=str(entry.get("severity_if_violated") or "Medium"),
                     cwe=str(entry.get("cwe") or "").upper(),
@@ -401,6 +406,31 @@ def _counter_match(
     return False
 
 
+def _required_context_matches(
+    lines: list[str],
+    match_line_idx: int,
+    check: Check,
+) -> bool:
+    """Require local evidence when a syntax token alone is ambiguous.
+
+    A bare MD5 call may serve a cache key, so rules may require an explicit
+    security-purpose signal in the same line, call, or forward window. This
+    deliberately favours defensible evidence over recall where data-flow
+    analysis is unavailable.
+    """
+    if not check.required_context_patterns:
+        return True
+    if check.counter_scope == "line":
+        scope_lines = [lines[match_line_idx]]
+    elif check.counter_scope == "call":
+        scope_lines = _scope_lines_for_call(lines, match_line_idx, check.counter_window)
+    else:  # window
+        end = min(len(lines), match_line_idx + check.counter_window + 1)
+        scope_lines = lines[match_line_idx:end]
+    blob = "\n".join(scope_lines)
+    return any(pattern.search(blob) for pattern in check.required_context_patterns)
+
+
 # ---------------------------------------------------------------------------
 # Core scanner
 # ---------------------------------------------------------------------------
@@ -469,6 +499,8 @@ def scan_file(
             # Resolve line number: count newlines before the match start.
             line_idx = text.count("\n", 0, m.start())
             if _counter_match(lines, line_idx, check):
+                continue
+            if not _required_context_matches(lines, line_idx, check):
                 continue
             findings.append(
                 Finding(

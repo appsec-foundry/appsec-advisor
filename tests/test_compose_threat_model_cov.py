@@ -2726,11 +2726,12 @@ class TestSystemicWeaknessesRender:
             }
         )
         block = compose._render_systemic_weaknesses(ctx)
-        assert "## Systemic Weaknesses" in block
-        assert "W-001 — no parametrized layer" in block
-        assert "**Assessment basis:** design · confirmed." in block
+        # 2026-07-14: numbered heading + index table + bullet cards.
+        assert "## 6. Weakness Register" in block
+        assert "### W-001 — no parametrized layer" in block
+        assert "design weakness · confirmed" in block
         assert "[F-001](#f-001)" in block and "[F-002](#f-002)" in block
-        assert "**Observed practice:** `a`, `b`" in block
+        assert "**Practice sites:**" in block and "`a`" in block and "`b`" in block
         assert "**Affected components:** api" in block
 
     def test_sorted_by_severity_then_basis(self):

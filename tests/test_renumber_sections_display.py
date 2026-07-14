@@ -76,6 +76,28 @@ def test_anchor_ids_and_hrefs_renumbered_consistently():
     assert "#7-security-architecture" not in out
 
 
+def test_double_hyphen_render_slug_link_targets_renumbered():
+    """Regression: a heading whose title contains ` / ` or ` & ` renders a
+    double-hyphen link target (`722-oauth--social-login`) that the collapsed
+    `github_slug` cannot match — renumber left those TOC links dangling at the
+    old §7 number after §7→§6 (juice-shop 2026-07-13). Both slug forms must move.
+    """
+    doc = _canonical(
+        '<a id="oauth-social-login"></a>\n'
+        "#### 7.2.2 OAuth / Social Login\n\n"
+        "- [7.2.2 OAuth / Social Login](#722-oauth--social-login)\n"
+        "#### 7.9.2 Secret & Key Management\n\n"
+        "- [7.9.2 Secret & Key Management](#792-secret--key-management)\n"
+    )
+    out = rsd.renumber_sections_display(doc)
+    assert "#### 6.2.2 OAuth / Social Login" in out
+    assert "(#622-oauth--social-login)" in out
+    assert "(#792-secret--key-management)" not in out
+    assert "(#692-secret--key-management)" in out
+    # No stale §7-numbered render-slug link target left behind.
+    assert "722-oauth--social-login" not in out
+
+
 def test_toc_top_level_ordered_list_renumbered():
     # A real document always carries the actual heading alongside any TOC/prose
     # reference to it — anchor remapping is learned from the heading (see

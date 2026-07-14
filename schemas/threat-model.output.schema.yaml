@@ -943,6 +943,9 @@ properties:
           enum: [injection, broken_auth, missing_authz, weak_crypto,
                  server_side_exposure, output_xss_csp, sensitive_disclosure,
                  dos, outdated_deps, _unmapped]
+        mechanism_id:
+          type: [string, "null"]
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
         kind:
           type: string
           enum: [design, implementation]

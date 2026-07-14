@@ -174,8 +174,16 @@ def test_cwe306_maps_to_general_title_no_truncation():
 
 def test_common_unmapped_cwes_receive_short_class_level_titles():
     d = _data(
-        {"id": "M-019", "title": "Remove public access to /encryptionkeys and /ftp/quarantine directory listings", "threat_ids": ["T-019"]},
-        {"id": "M-023", "title": "Exclude role from the User resource and hard-code the registration role", "threat_ids": ["T-023"]},
+        {
+            "id": "M-019",
+            "title": "Remove public access to /encryptionkeys and /ftp/quarantine directory listings",
+            "threat_ids": ["T-019"],
+        },
+        {
+            "id": "M-023",
+            "title": "Exclude role from the User resource and hard-code the registration role",
+            "threat_ids": ["T-023"],
+        },
         threats=[
             {"id": "T-019", "cwe": "CWE-548"},
             {"id": "T-023", "cwe": "CWE-915"},

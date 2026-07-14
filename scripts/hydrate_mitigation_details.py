@@ -71,7 +71,9 @@ def hydrate(data: dict) -> int:
         for field in _DETAIL_FIELDS:
             if _text(mitigation.get(field)):
                 continue
-            value = next((_text(remediation.get(field)) for remediation in source_rems if _text(remediation.get(field))), "")
+            value = next(
+                (_text(remediation.get(field)) for remediation in source_rems if _text(remediation.get(field))), ""
+            )
             if value:
                 mitigation[field] = value
                 card_changed = True

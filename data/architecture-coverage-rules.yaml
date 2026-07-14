@@ -301,6 +301,7 @@ hypothesis_rules:
     generic_threat_title: "Cross-site scripting through missing centralized output encoding"
     hypothesis_id_prefix: ARCH-HYP-XSS
     control: "Output Encoding / Templating Autoescape"
+    weakness_mechanism: frontend-output-encoding
     domain: FrontendSec
     cwe: CWE-79
     threat_category_id: TH-11
@@ -357,6 +358,7 @@ hypothesis_rules:
     generic_threat_title: "Injection through missing centralized input validation"
     hypothesis_id_prefix: ARCH-HYP-SQLI
     control: "Parameterized Database Access"
+    weakness_mechanism: database-query-concatenation
     domain: InputVal
     cwe: CWE-89
     threat_category_id: TH-01
@@ -410,6 +412,7 @@ hypothesis_rules:
     generic_threat_title: "Privilege abuse through inconsistent authorization"
     hypothesis_id_prefix: ARCH-HYP-AUTHZ
     control: "Centralised Authorization Policy"
+    weakness_mechanism: route-by-route-authorization
     domain: AuthZ
     cwe: CWE-862
     threat_category_id: TH-06

@@ -1421,6 +1421,12 @@ class TestSourceAuthFindingToThreat:
         assert out["stride"] == "Tampering"
         assert out["cwe"] == ""
 
+    def test_crypto_checks_preserve_an_explicit_mechanism(self, mt):
+        weak_primitive = mt._source_auth_finding_to_threat({"check_id": "CRYPTO-001"})
+        homegrown = mt._source_auth_finding_to_threat({"check_id": "CRYPTO-HOMEGROWN-XOR"})
+        assert weak_primitive["mechanism_id"] == "weak-cryptographic-primitives"
+        assert homegrown["mechanism_id"] == "application-owned-cryptography"
+
 
 class TestLoadSourceAuthFindings:
     def test_missing_file_empty(self, mt, tmp_path):
@@ -2002,9 +2008,10 @@ class TestWeaknessRegister:
         assert "absent_control_signal" in wk["observable_backing"]
         assert wk["id"].startswith("W-")
 
-    def test_confirmed_only_no_backing_is_not_a_weakness(self, mt):
-        # §4b "control present" row: proven instances, no absent-control signal,
-        # no practice → NOT a systemic weakness (stays plain threats[]).
+    def test_confirmed_only_class_is_not_a_weakness(self, mt):
+        # A concrete exploit is a finding, but does not independently prove a
+        # systemic architecture mechanism. The weakness needs observed practice
+        # or an absent-control signal (I2).
         threats = [self._confirmed("T-001", "CWE-89", "login", "High", "a.ts")]
         assert mt.build_weakness_register(threats, None) == []
 
@@ -2015,6 +2022,7 @@ class TestWeaknessRegister:
             {
                 "source": "stride",
                 "cwe": "CWE-327",
+                "mechanism_id": "weak-cryptographic-primitives",
                 "component_id": "a",
                 "evidence": {"file": "a.ts", "line": 1},
                 "evidence_tier": "insecure-practice",
@@ -2022,6 +2030,7 @@ class TestWeaknessRegister:
             {
                 "source": "stride",
                 "cwe": "CWE-327",
+                "mechanism_id": "weak-cryptographic-primitives",
                 "component_id": "b",
                 "evidence": {"file": "b.ts", "line": 2},
                 "evidence_tier": "insecure-practice",
@@ -2030,14 +2039,25 @@ class TestWeaknessRegister:
         design = [
             {
                 "weakness_class": "weak_crypto",
+                "mechanism_id": "application-owned-cryptography",
                 "implementation_strategy": "home-grown",
                 "severity": "Medium",
                 "absent_control_signal": [{"pattern": "argon2", "hit_count": 0}],
+                "affected_components": ["a", "b"],
             }
         ]
+        # Application-owned cryptography and weak selected primitives are
+        # distinct mechanisms: one addresses protocol/key ownership, the other
+        # the algorithm choice. They must not collapse just because they share a
+        # CWE family.
         w = mt.build_weakness_register(practice, design)
-        assert len(w) == 3
-        assert sum(1 for item in w if item["severity_basis"] == "observed-practice") == 2
+        assert len(w) == 2
+        by_mechanism = {item["mechanism_id"]: item for item in w}
+        owned = by_mechanism["application-owned-cryptography"]
+        assert owned["severity"] == "Critical"
+        assert owned["severity_basis"] == "design-risk"
+        primitives = by_mechanism["weak-cryptographic-primitives"]
+        assert len(primitives["observable_backing"]["practice_evidence"]) == 2
 
     def test_isolated_practice_is_implementation_kind(self, mt):
         # Single component, no absent-control signal → isolated implementation
@@ -2056,6 +2076,67 @@ class TestWeaknessRegister:
         assert len(w) == 1
         assert w[0]["kind"] == "implementation"
         assert len(w[0]["observable_backing"]["practice_evidence"]) == 5
+
+    def test_database_mechanism_does_not_absorb_other_injection_cwes(self, mt):
+        """A mechanism-level weakness is not a catch-all CWE-class bucket."""
+        threats = [
+            self._confirmed("T-001", "CWE-89", "api", "High", "routes/search.ts"),
+            self._confirmed("T-002", "CWE-611", "import", "High", "routes/import.ts"),
+        ]
+        design = [
+            {
+                "mechanism_id": "database-query-concatenation",
+                "weakness_class": "injection",
+                "cwe": "CWE-89",
+                "statement": "Database queries concatenate application values.",
+                "absent_control_signal": [{"pattern": "parameterized", "hit_count": 0}],
+            }
+        ]
+        weaknesses = mt.build_weakness_register(threats, design)
+        assert len(weaknesses) == 1
+        weakness = weaknesses[0]
+        assert weakness["title"] == "Database access relies on concatenated queries"
+        assert weakness["mechanism_id"] == "database-query-concatenation"
+        assert [item["id"] for item in weakness["instances"]] == ["T-001"]
+
+    def test_bff_architecture_mechanism_needs_no_exploit(self, mt):
+        threats = [
+            {
+                "t_id": "T-001",
+                "source": "architectural-anti-pattern",
+                "title": "SPA without BFF",
+                "cwe": "CWE-922",
+                "component_id": "web",
+                "risk": "High",
+                "evidence": {"file": "src/auth.ts", "line": 12},
+            }
+        ]
+        weaknesses = mt.build_weakness_register(threats)
+        assert len(weaknesses) == 1
+        weakness = weaknesses[0]
+        assert weakness["title"] == "Browser clients access privileged APIs without a BFF"
+        assert weakness["severity_basis"] == "design-risk"
+        assert weakness.get("instances") in (None, [])
+        assert weakness["observable_backing"]["absent_control_signal"][0]["file"] == "src/auth.ts"
+
+    def test_known_vuln_becomes_vulnerability_management_weakness(self, mt):
+        threats = [
+            {
+                "t_id": "T-001",
+                "source": "known-vuln",
+                "title": "Dependency version is affected by an advisory",
+                "cwe": "CWE-89",
+                "component_id": "build",
+                "risk": "High",
+                "evidence": {"file": "package-lock.json", "line": 42},
+            }
+        ]
+        weaknesses = mt.build_weakness_register(threats)
+        assert len(weaknesses) == 1
+        weakness = weaknesses[0]
+        assert weakness["weakness_class"] == "outdated_deps"
+        assert weakness["title"] == "Vulnerability management does not prevent known-vulnerable dependencies"
+        assert weakness["instances"][0]["id"] == "T-001"
 
 
 def test_load_design_signals_fallback_generates_from_coverage(mt, tmp_path):
