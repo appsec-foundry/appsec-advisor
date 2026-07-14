@@ -652,3 +652,58 @@ hypothesis_rules:
       Capped at High — exploitation requires the upstream action to be compromised or retagged; blast radius is the pipeline's token/secret scope.
     reviewer_note: >
       Confirm the action is third-party (not actions/* or github/*) and that the job it runs in can read repository or org secrets; a mutable ref in a secretless lint job is lower risk.
+
+  # ARCH-SECRET-001 (2026-07-14): insecure secret handling. Cryptographic keys,
+  # credentials and other high-entropy secrets committed as literals in source
+  # (rather than resolved from a managed store at runtime) hand every reader of the
+  # repo reusable signing material. Emits the design signal that materialises the
+  # "Secrets are committed to source instead of a managed store" weakness
+  # (mechanism secrets-committed-to-source → secret_management cluster); the
+  # confirmed hardcoded-key/credential findings (CWE-321/798) attach as evidence.
+  - id: ARCH-SECRET-001
+    title: "High-entropy secrets committed to source instead of a managed store"
+    architectural_theme: SecretManagement
+    generic_threat_title: "Reusable secret exposed directly in source code"
+    hypothesis_id_prefix: ARCH-HYP-SECRET
+    control: "Managed Secret Storage"
+    weakness_mechanism: secrets-committed-to-source
+    domain: DataProt
+    cwe: CWE-798
+    threat_category_id: TH-02
+    stride: InformationDisclosure
+    weak_or_missing_controls:
+      - "Managed Secret Store"
+      - "Runtime Secret Injection"
+    preconditions:
+      - kind: code_signal
+        description: "A secret-shaped identifier or embedded key material appears in source."
+        any_pattern:
+          - "(?i)-----BEGIN [A-Z ]*PRIVATE KEY-----"
+          - "(?i)\\b(private[_ ]?key|secret[_ ]?key|hmac|api[_ ]?key|passphrase|mnemonic|master[_ ]?key)\\b\\s*[:=]"
+    positive_signals:
+      any_pattern:
+        # A literal secret value in source: a PEM private-key block, or a
+        # secret-named identifier assigned a long string/base64 literal.
+        - "(?i)-----BEGIN [A-Z ]*PRIVATE KEY-----"
+        - "(?i)\\b(private[_ ]?key|secret[_ ]?key|hmac|api[_ ]?key|passphrase|mnemonic|master[_ ]?key)\\b\\s*[:=]\\s*['\"`][^'\"`\\n]{12,}['\"`]"
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)process\\.env\\."
+        - "(?i)\\b(vault|secretsmanager|secret[_ ]?manager|getsecret|readsecret|keyvault|ssm)\\b"
+        - "(?i)require\\(\\s*['\"]dotenv"
+    severity_cap: High
+    output: hypothesis_only
+    review_intent: >
+      Hypothesis: a cryptographic key, credential, or other secret is embedded as a literal in source instead of being injected from a managed secret store at runtime.
+    finding_when:
+      - "A PEM private-key block or long secret literal is assigned to a secret-named identifier in source"
+      - "A credential/API key/HMAC secret is hardcoded rather than read from env/secret store"
+    not_a_finding_when:
+      - "The value is read from process.env / a secret manager / an injected config"
+      - "The literal is a public key, a documented test fixture excluded from production, or a non-secret constant"
+    required_evidence: >
+      The source line embedding the secret literal, plus the absence of a runtime secret-resolution path for that value.
+    severity_reason: >
+      Capped at High — impact depends on what the secret protects; a signing key enabling token forgery reaches Critical only with a confirmed exploitation path.
+    reviewer_note: >
+      Distinguish real secrets (private keys, HMAC/signing material, live credentials) from public keys and test fixtures; confirm the value is used in production code paths.

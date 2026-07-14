@@ -55,11 +55,15 @@ clusters:
     # defect. Listing it in both clusters caused first-match-wins routing
     # ambiguity (T-022 routed via `broken_auth` only because broken_auth
     # came first in this YAML; reversing the list changed the routed tier).
-    cwes: [CWE-287, CWE-321, CWE-798, CWE-347, CWE-345, CWE-640, CWE-294, CWE-261, CWE-307, CWE-306, CWE-620]
+    #
+    # CWE-321 (hardcoded crypto key) and CWE-798 (hardcoded credential) moved to
+    # the dedicated `secret_management` cluster (2026-07-14): a committed key/
+    # credential is a secret-handling weakness (fix: managed secret store), not a
+    # broken-auth-flow defect. Same preferred_tier so the moved findings keep their
+    # application-tier routing.
+    cwes: [CWE-287, CWE-347, CWE-345, CWE-640, CWE-294, CWE-261, CWE-307, CWE-306, CWE-620]
     variants_by_cwe:
       CWE-287: auth bypass
-      CWE-321: hardcoded key
-      CWE-798: hardcoded credential
       CWE-347: JWT alg
       CWE-345: JWT alg
       CWE-640: reset bypass
@@ -67,6 +71,22 @@ clusters:
       CWE-307: rate-limit bypass
     preferred_tier: application
     stride: [Spoofing]
+
+  - id: secret_management
+    label: Secret Management
+    plural_label: Secret Management Issues
+    # Committed keys, credentials and other high-entropy secrets. Distinct from
+    # broken_auth (an auth-flow defect) and weak_crypto (a bad algorithm choice):
+    # the primitive may be fine, but the secret lives in source instead of a
+    # managed store. application tier matches broken_auth so the moved CWE-321/798
+    # findings do not re-tier.
+    cwes: [CWE-798, CWE-321, CWE-259, CWE-547, CWE-260]
+    variants_by_cwe:
+      CWE-798: hardcoded credential
+      CWE-321: hardcoded key
+      CWE-259: hardcoded password
+    preferred_tier: application
+    stride: [Information Disclosure, Spoofing]
 
   - id: missing_authz
     label: Missing Authorization
@@ -273,6 +293,16 @@ class_guidance:
     structural_fix: >-
       enforce automated dependency updates and block known-vulnerable versions
       in CI
+  secret_management:
+    weakness_name: "Secrets are committed to source instead of a managed store"
+    description: >-
+      Cryptographic keys, credentials, and other high-entropy secrets are embedded
+      as literals in source or config rather than resolved at runtime from a
+      managed secret store, so anyone with repository read access obtains reusable
+      signing material and credentials.
+    structural_fix: >-
+      move every secret to a managed secret store or injected environment
+      configuration, rotate the exposed values, and add secret-scanning to CI
 
 # mechanism_guidance deliberately names an observable architectural weakness,
 # rather than a CWE family or a missing framework. A mechanism is eligible for
@@ -348,6 +378,21 @@ mechanism_guidance:
     structural_fix: >-
       enforce authentication centrally at the routing and channel boundary so every
       exposed endpoint requires a verified session unless explicitly marked public
+  # secrets-committed-to-source (2026-07-14): the systemic secret-handling weakness
+  # emitted by the ARCH-SECRET-001 design signal. Routes to the secret_management
+  # cluster; its cwes list controls which confirmed findings attach as evidence
+  # (hardcoded keys CWE-321, credentials CWE-798, passwords CWE-259).
+  secrets-committed-to-source:
+    weakness_name: "Secrets are committed to source instead of a managed store"
+    cwes: [CWE-798, CWE-321, CWE-259, CWE-547]
+    description: >-
+      Cryptographic keys, credentials, and other high-entropy secrets are embedded
+      as literals in source or config rather than resolved at runtime from a
+      managed secret store, so anyone with repository read access obtains reusable
+      signing material and credentials.
+    structural_fix: >-
+      move every secret to a managed secret store or injected environment
+      configuration, rotate the exposed values, and add secret-scanning to CI
   # build-pipeline-mutable-refs (2026-07-14): the systemic supply-chain weakness
   # emitted by the ARCH-SUPPLY-001 design signal. Routes to the outdated_deps
   # cluster (CWE-829/1357) → Supply Chain theme.

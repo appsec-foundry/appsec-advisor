@@ -2173,8 +2173,22 @@ def build_weakness_register(
                     continue
             elif classify_threat(t, vocab, warn=False) != wcid:
                 continue
-            elif b.get("cwe") and (t.get("cwe") or "").strip().upper() != b["cwe"]:
-                continue
+            else:
+                # CWE gate for attaching a confirmed finding as evidence. Per the
+                # mechanism_guidance contract ("`cwes` only controls which concrete
+                # findings may be attached as evidence to that mechanism"), when the
+                # resolved mechanism enumerates its evidence CWEs, honor that set —
+                # a single mechanism can legitimately span several CWEs (e.g.
+                # "secrets committed to source" evidences both hardcoded keys
+                # CWE-321 and credentials CWE-798). Union with the single
+                # design-signal CWE so this only ever broadens attachment, never
+                # drops a finding that matched before; falls back to the single-CWE
+                # exact match when no mechanism CWE set is present.
+                _allowed_cwes = {str(c).strip().upper() for c in ((b.get("guidance") or {}).get("cwes") or [])}
+                if b.get("cwe"):
+                    _allowed_cwes.add(b["cwe"])
+                if _allowed_cwes and (t.get("cwe") or "").strip().upper() not in _allowed_cwes:
+                    continue
             component = (t.get("component_id") or t.get("component") or "").strip()
             ev = _first_evidence(t)
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()

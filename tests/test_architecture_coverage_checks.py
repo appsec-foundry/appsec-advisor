@@ -29,6 +29,8 @@ ALL_RULE_IDS = {
     "ARCH-AUTHN-001",
     "ARCH-BOLA-001",
     "ARCH-INPUT-001",
+    "ARCH-SUPPLY-001",
+    "ARCH-SECRET-001",
 }
 
 

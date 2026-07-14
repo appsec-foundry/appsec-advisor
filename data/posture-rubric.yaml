@@ -16,6 +16,7 @@ theme_by_weakness_class:
   missing_authz: Authorization
   broken_auth: Authentication
   weak_crypto: DataProtection
+  secret_management: DataProtection
   sensitive_disclosure: DataProtection
   server_side_exposure: AttackSurfaceDesign
   dos: SecureDefaults
