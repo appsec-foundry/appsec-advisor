@@ -3108,6 +3108,10 @@ if [ "$STAGE11_CUTOFF" = "true" ]; then
   FRAG_LIST=$(ls "$OUTPUT_DIR"/.fragments/ 2>/dev/null | sort | tr '\n' ' ')
   THREATS_MERGED="missing"; [ -f "$OUTPUT_DIR/.threats-merged.json" ] && THREATS_MERGED="present"
   TRIAGE_FLAGS="missing"; [ -f "$OUTPUT_DIR/.triage-flags.json" ] && TRIAGE_FLAGS="present"
+  # Cause-aware body: default is turn-budget exhaustion (the normal Phase-11
+  # cut-off), but an in-window STALL_RECOVERY line rewrites it to the API/network
+  # stall wording so a stalled stream is never mislabelled. See cutoff_cause.py.
+  CUTOFF_CAUSE=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/cutoff_cause.py" "$OUTPUT_DIR" --default budget 2>/dev/null || true)
   cat <<EOF >&2
 
 ══════════════════════════════════════════════════════════════
@@ -3122,10 +3126,8 @@ if [ "$STAGE11_CUTOFF" = "true" ]; then
   threat-model.yaml:      not produced
 
   Phase 11 (Finalization) entered but did not run compose_threat_model.py.
-  Likely cause: orchestrator turn-budget exhausted while writing fragments —
-  this happens most often on long --resume runs that have to plough through
-  Phases 3–10 again before reaching composition. The threats are merged and
-  partially rendered; only the final compose step is missing.
+
+${CUTOFF_CAUSE}
 
   Recover with:
       /appsec-advisor:create-threat-model --resume
@@ -3143,7 +3145,7 @@ fi
 
 The lock is released so the next `--resume` invocation isn't blocked. `.fragments/`, `.threats-merged.json`, `.triage-flags.json`, and the checkpoint are preserved so the resume run can pick them up.
 
-**Early-phase crash (no STRIDE files).** The `STAGE1_CUTOFF_NO_STRIDE=true` branch fires when the orchestrator died before reaching Phase 9 — typically inside Phase 1, 2, 3, 7, or 8. This is the case the historic 2026-04-25 silent-death bug fell into: the parent Claude Code session ended mid-Phase-3 without a `Stop` hook, leaving `.threat-modeling-context.md` and `.recon-summary.md` on disk but no `.stride-*.json` and no `threat-model.md`. Auto-resume is **not** safe here because the resume path at "Recovery path" below assumes Phase 9 has produced stride files; replaying Phases 3–8 from a partial state has no idempotency guarantee. The skill MUST surface the situation explicitly and exit cleanly so the user can choose `--resume` (continue from the checkpoint) or `--full` / `--rebuild` (start over):
+**Early-phase cut-off (no STRIDE files).** The `STAGE1_CUTOFF_NO_STRIDE=true` branch fires when the run was cut off before reaching Phase 9 — typically inside Phase 1, 2, 3, 7, or 8. Two distinct root causes land here and the banner MUST NOT conflate them: (a) an **API stream stall** — the sub-agent's model API response stream stopped emitting tokens and Claude Code's stream watchdog killed the *returning* `Agent` call (the orchestrator is alive; `stall_notice.py` has already logged a `STALL_RECOVERY` line); or (b) a genuine **session death** — the parent Claude Code session ended mid-Phase-3 without a `Stop` hook (the historic 2026-04-25 silent-death bug: window closed, OOM, network drop), leaving `.threat-modeling-context.md` and `.recon-summary.md` on disk but no `.stride-*.json` and no `threat-model.md`. `scripts/cutoff_cause.py` reads `.agent-run.log` for an in-window `STALL_RECOVERY` and emits the correct `Cause:` block so an API/network hiccup is never mislabelled as a crash. Either way, auto-resume is **not** safe here because the resume path at "Recovery path" below assumes Phase 9 has produced stride files; replaying Phases 3–8 from a partial state has no idempotency guarantee. The skill MUST surface the situation explicitly and exit cleanly so the user can choose `--resume` (continue from the checkpoint) or `--full` / `--rebuild` (start over):
 
 ```bash
 if [ "$STAGE1_CUTOFF_NO_STRIDE" = "true" ]; then
@@ -3166,10 +3168,14 @@ if [ "$STAGE1_CUTOFF_NO_STRIDE" = "true" ]; then
   fi
   CTX_MARK="missing"; [ -f "$OUTPUT_DIR/.threat-modeling-context.md" ] && CTX_MARK="present"
   RECON_MARK="missing"; [ -f "$OUTPUT_DIR/.recon-summary.md" ] && RECON_MARK="present"
+  # Cause-aware body: an in-window STALL_RECOVERY line ⇒ API stream stall
+  # (server-side / network), otherwise a genuine session death. Never let a
+  # stall surface as "orchestrator died". See scripts/cutoff_cause.py.
+  CUTOFF_CAUSE=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/cutoff_cause.py" "$OUTPUT_DIR" --default session_death 2>/dev/null || true)
   cat <<EOF >&2
 
 ══════════════════════════════════════════════════════════════
-  ASSESSMENT INCOMPLETE — orchestrator died before Phase 9
+  ASSESSMENT INCOMPLETE — cut off before Phase 9 (no STRIDE ran)
 ══════════════════════════════════════════════════════════════
 
   Last checkpoint:       phase=${CKPT_PHASE} status=${CKPT_STATUS}
@@ -3178,10 +3184,10 @@ if [ "$STAGE1_CUTOFF_NO_STRIDE" = "true" ]; then
   Recon summary:         ${RECON_MARK}
   Context resolution:    ${CTX_MARK}
 
-  The orchestrator session ended mid-pipeline without producing
-  a threat model. No STRIDE analysis ran. This is typically caused
-  by the parent Claude Code session being killed (window closed,
-  OOM, network drop) before the Stop hook could fire.
+  The run was cut off before Phase 9 — no STRIDE analysis ran, so no
+  threat model was produced.
+
+${CUTOFF_CAUSE}
 
   Recover with:
       /appsec-advisor:create-threat-model --resume
