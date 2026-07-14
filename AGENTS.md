@@ -305,6 +305,7 @@ Read only when relevant; code/data is authoritative where named. This section is
 
 - **Schema/report contracts:** `docs/internal/contracts/schema-invariants.md`, `data/sections-contract.yaml`, `scripts/validate_fragment.py`, `schemas/fragments/*.schema.json`.
 - **Runtime/config contracts:** `scripts/resolve_config.py`, `scripts/detect_session_model.py` (fail-safe host-session-model detection for routing transparency), `scripts/runtime_cleanup.py`, `docs/internal/contracts/cleanup-whitelist.md`, `data/required-permissions.yaml`.
+- **Run status / liveness:** `scripts/appsec_status.py --live` (skill `/appsec-advisor:status --live`, `--json` for polling), `scripts/watch_run.py <output_dir>` (phase-aware live follow) — active tool calls, per-component progress, and heartbeat freshness. To answer "is a scan running against repo X", read this against `--repo X`; do NOT grep for processes or infer liveness from the repo-root `.agent-run.log`, which may be a stale prior-run artifact. The live run's heartbeat and progress sidecars live under the OUTPUT_DIR (`<repo>/docs/security` by default), not the repo root. Full procedure: `docs/internal/runbooks/checking-run-status.md`.
 - **Output/security catalogs:** `data/cvss-eligible-cwes.yaml`, `data/pentest-eligible-cwes.yaml`, `scripts/plugin_meta.py`.
 - **Cross-repo context:** `docs/related-repos.yaml`, `scripts/load_related_repos.py`, `scripts/build_cross_repo_register.py`, `scripts/slice_cross_repo_for_component.py`.
 - **CLI/run flags:** `skills/create-threat-model/SKILL.md`.
