@@ -286,22 +286,20 @@ Override requirements for one run:
 
 ## Abuse cases
 
-Abuse cases are loaded in this order:
+The plugin loads cases in this order:
 
 1. **Plugin standard library** — `data/abuse-cases/default-library.yaml` (the
    `AC-T-NNN` mandatory set), unless an org profile sets
    `abuse_cases.inherit_defaults: false`.
 2. **Org profile** — `abuse_cases.add` is a glob (relative to the org-profile
-   directory) of extra case files; `abuse_cases.disable` removes ids; ids use
-   the `ORG-AC-NNN` prefix. Validated against `schemas/abuse-cases.schema.yaml`.
+   directory) of extra case files; `abuse_cases.disable` removes ids. Use the
+   `ORG-AC-NNN` ID prefix.
 3. **Repository** — any `*.yaml` under
    `<repo>/.appsec/abuse-cases/` in the target repository is loaded
-   automatically. Use the `REPO-AC-NNN` ID prefix. The org profile's `disable`
-   list still applies, and IDs must be unique across all layers.
+   automatically. Use the `REPO-AC-NNN` ID prefix. IDs must be unique.
 4. **One scan** — `--abuse-case-file <repo-relative-path>` adds a YAML file
-   below the target repository without making it part of the default directory.
-   Repeat `--only-abuse-case <ID>` to restrict that scan to selected active
-   cases. Paths outside the repository and unknown IDs fail the stage.
+   below the target repository. Repeat `--only-abuse-case <ID>` to run selected
+   cases only.
 
 Example repo-local case (`<repo>/.appsec/abuse-cases/payments.yaml`):
 
@@ -319,20 +317,27 @@ abuse_cases:
       - step: 1
         label: Reuse a prior idempotency key
         grants: replayed-request
+        finding:
+          title: Refund endpoint accepts a reused idempotency key
+          cwe: CWE-841
+          stride: Tampering
+          severity: High
+          mitigation_title: Enforce one-time idempotency keys per payment intent
+          remediation: Bind each key to one payment intent and reject reuse after a successful refund.
         probe:
           sink_patterns: ["idempotenc(y|e)[-_ ]?key"]
 ```
 
-`scope_qualifier.required_signals` selects cases for systems with a relevant
-surface; `path_patterns` additionally requires at least one matching
-repository-relative path. `probe.sink_patterns` first match existing findings
-and, when none exists, perform a bounded direct source probe to decide whether
-the case deserves verifier attention. A source-probe hit is only a candidate:
-the verifier must still establish reachability and controls from code evidence.
+Use `scope_qualifier.required_signals` and `path_patterns` to limit a case to
+relevant repositories. `probe.sink_patterns` match existing findings first; a
+direct source match is checked by the verifier before it is reported.
 
-For an opt-in CI gate, add `release_gate` to a case. Only explicitly listed
-final verdicts block the run; `inconclusive` stays visible but does not become a
-surprise release failure:
+Add `finding` when a direct source match should become a normal finding after
+verification. It supplies the classification and mitigation and links the
+resulting finding to the abuse-case step. Without it, the case remains a
+scenario check and no finding is created.
+
+Add `release_gate` to fail CI for selected final verdicts:
 
 ```yaml
 release_gate:

@@ -7,6 +7,7 @@ All notable changes to this project are documented here.
 ### Added
 
 - Abuse cases can now be selected from repository signals, path patterns, or a bounded source probe, with per-scan case files and optional release gates for verified chains.
+- A verifier-confirmed source-probe step can now become a normal finding when its abuse-case definition supplies classification and remediation metadata, so it participates in risk ranking and mitigation tracking.
 
 ## 0.5.0-beta (2026-07-14)
 

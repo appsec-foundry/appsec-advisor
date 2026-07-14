@@ -2664,6 +2664,17 @@ fi
      ABUSE_PIPELINE_FAILED=1
      printf '\n\033[1;31m✗ Abuse-case finalize failed (match_abuse_cases.py finalize exited nonzero)\033[0m\n' >&2
    fi
+   # A direct source probe is only a verifier candidate.  Materialise a normal
+   # finding only after its step was code-confirmed; the script also binds the
+   # new T-ID into both abuse sidecars.  Rebuild the deterministic YAML so its
+   # mitigation synthesis sees the promoted finding before triage / §9 render.
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/promote_verified_abuse_cases.py" --output-dir "$OUTPUT_DIR"; then
+     ABUSE_PIPELINE_FAILED=1
+     printf '\n\033[1;31m✗ Abuse-case finding promotion failed\033[0m\n' >&2
+   elif [ -f "$OUTPUT_DIR/.abuse-case-verdicts.json" ]; then
+     python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_threat_model_yaml.py" "$OUTPUT_DIR" \
+         --repo-root "$REPO_ROOT" --plugin-root "$CLAUDE_PLUGIN_ROOT" || ABUSE_PIPELINE_FAILED=1
+   fi
    # Cases may opt into a deterministic release gate in their definition.
    # Only an explicitly configured final verdict blocks; inconclusive remains
    # visible rather than becoming an implicit, surprise gate.
@@ -2680,7 +2691,7 @@ fi
    fi
    ```
 
-3b2. **Fold verified chains into severity** (deterministic, no LLM). Now that the abuse verdicts are final, re-run the deterministic triage ranking so a **code-verified `fully_viable` chain bubbles its constituent findings up** — not only in §9, but in §8 `effective_severity` AND the §1 `top_findings` / Management-Summary ranking. This re-reads `.abuse-case-verdicts.json` + `.abuse-case-matches.json` (the sidecars did not exist when Stage 1 ran Phase 10b) and re-applies the elevation + ranking onto the already-final `threat-model.yaml` + `.triage-flags.json`. The script **self-gates** via `--if-deterministic-owner` on the artifact marker `ranking.computed_by` in `.triage-flags.json` — written only by the deterministic Step 6 run — and exits cleanly otherwise. So this only acts in deterministic-triage mode, where `triage_compute_ranking.py` is the **sole owner** of `effective_severity` and there is no LLM refinement to clobber (`appsec-triage-validator.md` fast-path). Do NOT gate this on the `APPSEC_TRIAGE_DETERMINISTIC` env var: env vars do not reach skill-level Bash, so an env-gated call silently no-ops on every default run. Non-fatal and idempotent — the elevation is upward-only (`_detect_verified_abuse_chains`), so a second pass on identical inputs is a no-op. Under `.budget-critical` every chain is `inconclusive`, so there is nothing to fold and this is a harmless no-op.
+3b2. **Fold verified chains into severity** (deterministic, no LLM). Direct source probes confirmed by the verifier have just been materialised into normal findings and the YAML was rebuilt, so a **code-verified `fully_viable` chain bubbles every bound finding up** — not only in §9, but in §8 `effective_severity` AND the §1 `top_findings` / Management-Summary ranking. This re-reads `.abuse-case-verdicts.json` + `.abuse-case-matches.json` (the sidecars did not exist when Stage 1 ran Phase 10b) and re-applies the elevation + ranking onto the already-final `threat-model.yaml` + `.triage-flags.json`. The script **self-gates** via `--if-deterministic-owner` on the artifact marker `ranking.computed_by` in `.triage-flags.json` — written only by the deterministic Step 6 run — and exits cleanly otherwise. So this only acts in deterministic-triage mode, where `triage_compute_ranking.py` is the **sole owner** of `effective_severity` and there is no LLM refinement to clobber (`appsec-triage-validator.md` fast-path). Do NOT gate this on the `APPSEC_TRIAGE_DETERMINISTIC` env var: env vars do not reach skill-level Bash, so an env-gated call silently no-ops on every default run. Non-fatal and idempotent — the elevation is upward-only (`_detect_verified_abuse_chains`), so a second pass on identical inputs is a no-op. Under `.budget-critical` every chain is `inconclusive`, so there is nothing to fold and this is a harmless no-op.
    ```bash
    if [ -f "$OUTPUT_DIR/.abuse-case-verdicts.json" ]; then
      python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_compute_ranking.py" "$OUTPUT_DIR" \

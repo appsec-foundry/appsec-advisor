@@ -1833,7 +1833,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
 # → .abuse-case-matches.json
 CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
 ```
-The matcher reads `.threats-merged.json` and `.recon-signals.json` when present, applies each case's `scope_qualifier` (signals and repository path patterns), and emits a structural verdict per case. A sink may match an existing finding or a bounded direct source probe; the latter is only a verifier candidate, never a finding or verdict. Only `candidate` / `partial_candidate` cases proceed to verification. A missing signal sidecar remains fail-open for compatibility.
+The matcher reads `.threats-merged.json` and `.recon-signals.json` when present, applies each case's `scope_qualifier` (signals and repository path patterns), and emits a structural verdict per case. A sink may match an existing finding or a bounded direct source probe; the latter is only a verifier candidate, never a finding or verdict. After verification, `promote_verified_abuse_cases.py` may materialise a confirmed source-probe step into a normal finding only when the case declares its `chain[].finding` classification and remediation metadata. Only `candidate` / `partial_candidate` cases proceed to verification. A missing signal sidecar remains fail-open for compatibility.
 
 **Step 2 — verifier fan-out (one Sonnet agent per candidate, parallel — same pattern as Phase 9 STRIDE).** For each id in `$CANDIDATES`, dispatch:
 
@@ -1858,6 +1858,7 @@ Dispatch all candidates together (wall-clock ≈ the slowest single case, not th
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/promote_verified_abuse_cases.py" --output-dir "$OUTPUT_DIR" || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/abuse_case_gate.py" --output-dir "$OUTPUT_DIR"
 # → .abuse-case-verdicts.json (per-step verdicts folded into a chain verdict)
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 10c/11] Abuse Case Verification" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null

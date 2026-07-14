@@ -34,6 +34,13 @@ abuse_cases:
       - step: 1
         label: Stored XSS sink renders attacker markup
         grants: script_execution_in_victim_session
+        finding:
+          title: Stored XSS renders attacker-controlled markup
+          cwe: CWE-79
+          stride: Information Disclosure
+          severity: High
+          mitigation_title: Sanitize untrusted HTML before rendering
+          remediation: Use a context-aware HTML sanitizer and avoid trusted-HTML bypass APIs for user-controlled content.
         description: Attacker JavaScript executes in the victim's browser session.
         required: true
         probe:
@@ -51,6 +58,13 @@ abuse_cases:
         label: Session token readable from web-accessible storage
         grants: stolen_session_token
         requires: script_execution_in_victim_session
+        finding:
+          title: Session token stored in web-accessible client storage
+          cwe: CWE-922
+          stride: Information Disclosure
+          severity: High
+          mitigation_title: Store session tokens in HttpOnly cookies
+          remediation: Keep session credentials in Secure, HttpOnly, SameSite cookies rather than JavaScript-readable storage.
         description: Token exfiltrated from local/session storage via the Step 1 payload.
         required: true
         probe:
@@ -64,6 +78,13 @@ abuse_cases:
         label: Stolen token accepted for a new session
         grants: persistent_account_access
         requires: stolen_session_token
+        finding:
+          title: Token flow accepts a stolen bearer token without binding
+          cwe: CWE-287
+          stride: Spoofing
+          severity: High
+          mitigation_title: Use authorization-code flow with PKCE
+          remediation: Replace implicit or bearer-only token flows with authorization code plus PKCE and server-side token revocation.
         description: >-
           Exfiltrated token accepted for a new session; absence of token
           binding / PKCE removes the last server-side revocation opportunity.
@@ -96,6 +117,13 @@ abuse_cases:
         label: Missing ownership check on object read (IDOR)
         grants: arbitrary_object_read
         requires: low_priv_account
+        finding:
+          title: Object read lacks an ownership authorization check
+          cwe: CWE-639
+          stride: Information Disclosure
+          severity: High
+          mitigation_title: Enforce object-level authorization on reads
+          remediation: Compare the requested object's owner or tenant to the authenticated principal before returning data.
         description: >-
           Attacker enumerates and retrieves records for arbitrary object IDs;
           no ownership comparison is performed.
@@ -125,6 +153,13 @@ abuse_cases:
         label: Mass assignment allows privileged field write
         grants: elevated_role
         requires: arbitrary_object_read
+        finding:
+          title: Request body can mass-assign a privileged account field
+          cwe: CWE-915
+          stride: Elevation of Privilege
+          severity: High
+          mitigation_title: Allowlist writable account fields
+          remediation: Map requests to a DTO or allowlist and discard role, privilege, and ownership fields from client input.
         description: >-
           Update endpoint persists an unfiltered `role` (or equivalent) field
           supplied in the request body.
@@ -168,6 +203,13 @@ abuse_cases:
         label: JWT algorithm not pinned on verification
         grants: forgeable_token
         requires: any_valid_jwt
+        finding:
+          title: JWT verification does not pin the accepted algorithm
+          cwe: CWE-347
+          stride: Spoofing
+          severity: High
+          mitigation_title: Pin accepted JWT verification algorithms
+          remediation: Configure an explicit algorithm allowlist and reject unsigned or algorithm-confused tokens before claims are trusted.
         description: >-
           Verifier accepts attacker-chosen `alg` (e.g. `none` or HMAC-with-public-key),
           allowing token re-signing without the secret.
@@ -192,6 +234,13 @@ abuse_cases:
         label: Role claim trusted from token without re-fetch
         grants: admin_access
         requires: forgeable_token
+        finding:
+          title: Authorization trusts an unrefreshed token role claim
+          cwe: CWE-863
+          stride: Elevation of Privilege
+          severity: High
+          mitigation_title: Authorize roles from server-side state
+          remediation: Re-check privilege-sensitive roles against authoritative server-side state before granting administrative actions.
         description: >-
           Forged `role: admin` claim is accepted as authoritative because the
           role is not re-fetched from the database per request.
@@ -233,6 +282,13 @@ abuse_cases:
       - step: 1
         label: Registration endpoint binds an attacker-supplied privilege field
         grants: admin_access
+        finding:
+          title: Registration can mass-assign a privileged account field
+          cwe: CWE-915
+          stride: Elevation of Privilege
+          severity: High
+          mitigation_title: Allowlist registration fields
+          remediation: Use a registration DTO that excludes role, privilege, ownership, and other server-controlled fields.
         description: >-
           The account-creation handler persists the request body wholesale, so
           a client-supplied `role` (or `isAdmin`) field is written verbatim.
@@ -275,6 +331,13 @@ abuse_cases:
       - step: 1
         label: Secret material is extractable
         grants: stolen_signing_material
+        finding:
+          title: Signing material is exposed in application-controlled storage
+          cwe: CWE-798
+          stride: Information Disclosure
+          severity: High
+          mitigation_title: Move signing material to managed secret storage
+          remediation: Remove committed or served credentials, rotate them, and load replacements from a managed secret service or protected runtime configuration.
         description: >-
           A private key, signing secret, or credential file is committed to the
           source repository or served without authentication.
@@ -292,6 +355,13 @@ abuse_cases:
         label: Stolen material is accepted by the verification path
         grants: identity_forgery
         requires: stolen_signing_material
+        finding:
+          title: Token verification accepts credentials from exposed material
+          cwe: CWE-347
+          stride: Spoofing
+          severity: High
+          mitigation_title: Rotate signing material and bind token verification
+          remediation: Rotate exposed signing material, revoke affected tokens, and restrict token verification to managed active keys.
         description: >-
           The exposed key/secret is the same one the server trusts, so a token
           signed with it (or the leaked credential) is accepted as authentic.
@@ -323,6 +393,13 @@ abuse_cases:
       - step: 1
         label: User input reaches a code/template/deserialization sink
         grants: code_execution
+        finding:
+          title: User-controlled input reaches a server-side execution sink
+          cwe: CWE-94
+          stride: Elevation of Privilege
+          severity: Critical
+          mitigation_title: Remove dynamic server-side code execution
+          remediation: Eliminate eval-like execution and unsafe deserialization; use fixed allowlisted operations and data-only template handling.
         description: >-
           Attacker-controlled input is passed to `eval`, a server-side template
           engine, an unsafe sandbox, or an unsafe deserializer.
