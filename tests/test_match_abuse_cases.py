@@ -94,6 +94,39 @@ def test_invalid_regex_falls_back_to_literal():
     assert m["matched"]
 
 
+def test_cwe_specific_pattern_outranks_incidental_prose():
+    # An IDOR finding (CWE-639) whose scenario also mentions "role escalation"
+    # in passing must NOT capture a mass-assignment step (CWE-915) — the CWE-code
+    # pattern is more specific than the incidental prose hit. (juice-shop
+    # 2026-07-13: AC-T-002 step 2 mis-linked to F-008 IDOR.)
+    idor = {"t_id": "T-008", "title": "Insecure Direct Object Reference",
+            "scenario": "attacker can escalate role via enumerated object",
+            "cwe": "CWE-639", "evidence": {"file": "routes/address.ts", "line": 11}}
+    massassign = {"t_id": "T-009", "title": "Mass assignment privileged field",
+                  "scenario": "role field accepted from request body",
+                  "cwe": "CWE-915", "evidence": {"file": "routes/verify.ts", "line": 53}}
+    step = _step(2, "CWE-(915|266|269)")
+    step["probe"]["sink_patterns"].append("(?i)(role|privilege) escalation")
+    step["probe"]["sink_patterns"].append("(?i)mass assignment")
+    m = mac.match_step(step, [idor, massassign])
+    assert m["matched_finding_id"] == "T-009"
+
+
+def test_chain_steps_do_not_collapse_to_one_finding():
+    # A two-step chain (IDOR read → mass-assignment write) must map to two
+    # distinct findings, not the same one twice.
+    idor = {"t_id": "T-008", "title": "IDOR", "scenario": "escalate role",
+            "cwe": "CWE-639", "evidence": {"file": "a.ts", "line": 1}}
+    massassign = {"t_id": "T-009", "title": "Mass assignment", "scenario": "role field",
+                  "cwe": "CWE-915", "evidence": {"file": "b.ts", "line": 2}}
+    step1 = _step(1, "CWE-(639|284|862)")
+    step2 = _step(2, "CWE-(915|266|269)", requires="state")
+    case = _case([step1, step2])
+    r = mac.match_case(case, [idor, massassign], None)
+    ids = r["matched_finding_ids"]
+    assert ids == ["T-008", "T-009"], ids
+
+
 # ---------------------------------------------------------------------------
 # Case-level structural verdict
 # ---------------------------------------------------------------------------

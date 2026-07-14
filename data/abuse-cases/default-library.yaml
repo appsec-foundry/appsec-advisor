@@ -201,7 +201,11 @@ abuse_cases:
             - "token\\.role"
             - "decoded\\.role"
             - "req\\.user\\.role"
-            - "CWE-(639|266|269)"
+            # Broken-authorization CWEs only. NOT CWE-639 (user-controlled-key
+            # IDOR) — that belongs to the object-read step, and including it here
+            # mis-linked this role-claim-trust step to the IDOR finding
+            # (juice-shop 2026-07-13).
+            - "CWE-(863|862|266|269)"
             - "(?i)(role|privilege) escalation"
             - "(?i)admin (role|takeover)"
           control_patterns:
@@ -240,7 +244,10 @@ abuse_cases:
             - "(?i)mass assignment"
             - "(?i)(role|privilege|admin) escalation"
             - "(?i)registration"
-            - "CWE-(915|266|269|639)"
+            # Mass-assignment / privilege CWEs only. NOT CWE-639 (IDOR) — its
+            # inclusion mis-linked this mass-assignment step to the IDOR finding
+            # instead of the mass-assignment finding (juice-shop 2026-07-13).
+            - "CWE-(915|266|269)"
             - "\\.\\.\\.req\\.body"
             - "Object\\.assign\\(.*req\\.body"
           control_patterns:

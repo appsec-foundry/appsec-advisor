@@ -128,7 +128,8 @@ def test_fragment_markdown_structure(tmp_path: Path):
     md = rac.render_fragment(models)
     assert md.startswith("## 9. Abuse Cases")
     assert "| # | Scenario | Actor | Combined Risk | Verdict |" in md
-    assert '### <a id="ac-t-001"></a>AC-T-001 —' in md
+    assert '<a id="ac-t-001"></a>' in md
+    assert "### AC-T-001 —" in md
     # 3-column chain table: Evidence folded into Finding (`<br/>`), Status dropped.
     assert "| Step | Finding | Outcome |" in md
     assert "| Step | Finding | Evidence | Outcome | Status |" not in md

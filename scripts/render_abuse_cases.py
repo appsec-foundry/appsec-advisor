@@ -225,16 +225,18 @@ def render_case(
     """Build the structured render model for one abuse case (used for both the
     markdown block and the JSON sidecar).
 
-    Finding links are sourced with a fallback chain: the verifier's per-step
-    ``matched_finding_id`` (authoritative — it confirmed the step against the
-    code) FALLS BACK to the deterministic matcher's ``step_matches`` from
-    ``.abuse-case-matches.json``. The matcher always binds a finding to every
-    matched step (that is how the case became a candidate in the first place),
-    so even when a verifier sub-agent was cut off and wrote no verdict file,
-    the chain still renders its real findings instead of "_no matching
-    finding_". This keeps abuse cases provably *derived from findings*, and the
-    per-step status icon stays honest ("?" when unverified, ⚠/◐/✓ once a
-    verifier verdict exists). RC-2026-06.
+    Finding *identity* is sourced from the deterministic matcher's
+    ``step_matches`` (``.abuse-case-matches.json``) FIRST, falling back to the
+    verifier's per-step ``matched_finding_id``. The matcher binds each step to a
+    finding by scored CWE/sink specificity; the verifier is dispatched with that
+    binding and owns the *outcome* (the status icon) and the code *evidence*, not
+    the finding's identity. Trusting the verifier's id previously let a mis-fed or
+    unfinalized verifier freeze a wrong link into the chain — e.g. a
+    mass-assignment step echoed back as the IDOR finding (juice-shop 2026-07-13).
+    Matcher-first keeps the identity deterministic and reproducible while the
+    per-step icon stays honest ("?" when unverified, ⚠/◐/✓ once a verifier verdict
+    exists). When neither source binds a finding the row renders without a link.
+    RC-2026-06 / RC-2026-07.
     """
     cid = case["id"]
     chain_verdict = verdict.get("chain_verdict", "inconclusive")
@@ -248,14 +250,22 @@ def render_case(
         n = step.get("step")
         sv = sv_by_step.get(n, {})
         mm = match_steps.get(n, {})
-        # Verifier finding id is authoritative; fall back to the matcher's
-        # deterministic binding so an unfinished verifier never erases the link.
-        fid = _norm_fid(sv.get("matched_finding_id") or mm.get("matched_finding_id"))
+        # Finding IDENTITY: the deterministic matcher is authoritative (scored
+        # CWE/sink binding, reproducible). Fall back to the verifier's id only
+        # when the matcher bound nothing for this step. The verifier still owns
+        # the OUTCOME (status icon) below. The EVIDENCE locator must follow the
+        # SAME source as the identity — a matcher-overridden step must not show
+        # the verifier's stale evidence for the finding it displaced.
+        if mm.get("matched_finding_id"):
+            fid = _norm_fid(mm.get("matched_finding_id"))
+            ev = mm.get("evidence") or sv.get("evidence") or {}
+        else:
+            fid = _norm_fid(sv.get("matched_finding_id"))
+            ev = sv.get("evidence") or {}
         finding = findings_idx.get(fid, {})
         if finding:
             matched_findings.append(finding)
             step_of_fid.setdefault(fid, n)
-        ev = sv.get("evidence") or mm.get("evidence") or {}
         loc = ""
         if ev.get("file"):
             loc = f"{ev['file']}:{ev['line']}" if ev.get("line") else str(ev["file"])
@@ -298,7 +308,11 @@ def _case_markdown(m: dict) -> str:
     src = "mandatory" if m["source"] == "mandatory" else "analysis-discovered"
     cid = m["id"]
     out: list[str] = []
-    out.append(f'### <a id="{cid.lower()}"></a>{cid} — {m["title"]}')
+    # Anchor on its OWN line before the heading (matches the Findings / Weakness
+    # registers) so the heading auto-slug stays clean and both the `#ac-t-nnn`
+    # cross-ref and the editor outline resolve (2026-07-14).
+    out.append(f'<a id="{cid.lower()}"></a>')
+    out.append(f'### {cid} — {m["title"]}')
     out.append("")
     out.append(
         f"> **Source:** {src} · **Actor:** {m['actor_label']} · "

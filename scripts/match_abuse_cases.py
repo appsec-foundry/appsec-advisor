@@ -22,7 +22,11 @@ Matching algorithm (per case)
     never produces a false negative from a missing signals source).
   * per step — `probe.sink_patterns` (regex) are matched against each finding's
     searchable text (title + scenario + cwe + component + evidence excerpt).
-    The first matching finding is the step's `matched_finding_id`.
+    The best-scoring finding is the step's `matched_finding_id`: each matching
+    pattern contributes a specificity weight (CWE-code alternation > code-
+    structural regex > bare prose phrase), a CWE bonus counts only against the
+    finding's own `cwe` field, and steps de-duplicate across a chain so a
+    two-step chain does not collapse onto one finding.
     `probe.control_patterns` matched against the finding's controls text mark a
     step as control-guarded.
   * structural verdict:
@@ -106,18 +110,67 @@ def _compile(patterns: list[str]) -> list[re.Pattern]:
 # ---------------------------------------------------------------------------
 
 
-def match_step(step: dict, findings: list[dict]) -> dict:
+def _pattern_specificity(pat: str) -> int:
+    """Rank a sink pattern by how discriminating it is.
+
+    A CWE-code alternation is the strongest, most specific signal (weight 5); a
+    code-structural regex that matches source syntax (backslash escapes like
+    ``\\.``, ``\\(``, ``\\s``) is moderately specific (weight 2); a bare ``(?i)``
+    prose phrase is weak (weight 1) because it also matches an incidental mention
+    in an unrelated finding's scenario. This is what stops a mass-assignment step
+    (``CWE-915``) from being captured by an IDOR finding that merely says
+    "escalate own role" in its prose (juice-shop 2026-07-13: AC-T-002/003/004 all
+    mis-linked mass-assignment / role-claim steps to F-008 IDOR).
+    """
+    if "CWE-" in pat.upper():
+        return 5
+    if "\\" in pat:  # code-structural regex — matches source syntax, not prose
+        return 2
+    return 1
+
+
+def match_step(step: dict, findings: list[dict], exclude_ids: set[str] | None = None) -> dict:
+    """Match one chain step to its best-fitting finding.
+
+    Scoring (not first-match): every sink pattern that hits a finding contributes
+    its ``_pattern_specificity`` weight, but a CWE pattern earns its strong bonus
+    only when it matches the finding's OWN ``cwe`` field (not an incidental CWE
+    mention in prose). The highest-scoring finding wins; ties prefer a finding not
+    already consumed by an earlier step in the same chain (``exclude_ids``) so a
+    two-step chain does not degenerate into the same finding twice; final tie-break
+    is finding list order (deterministic).
+    """
+    exclude_ids = exclude_ids or set()
     probe = step.get("probe") or {}
-    sinks = _compile(probe.get("sink_patterns") or [])
+    raw_sinks = probe.get("sink_patterns") or []
+    sinks = _compile(raw_sinks)
     controls = _compile(probe.get("control_patterns") or [])
 
     matched_id = None
     matched_evidence = None
     controls_found: list[str] = []
-    for finding in findings:
+    best_key: tuple | None = None
+    for idx, finding in enumerate(findings):
         text = _finding_text(finding)
-        if any(rx.search(text) for rx in sinks):
-            matched_id = _finding_id(finding)
+        cwe_field = (finding.get("cwe") or "").strip()
+        score = 0
+        for raw, rx in zip(raw_sinks, sinks):
+            if not rx.search(text):
+                continue
+            spec = _pattern_specificity(raw)
+            # A CWE pattern only earns its strong bonus when it matches the
+            # finding's OWN cwe field, not a CWE named in passing in the prose.
+            if spec == 5 and not (cwe_field and rx.search(cwe_field)):
+                spec = 1
+            score += spec
+        if score <= 0:
+            continue
+        fid = _finding_id(finding)
+        # Maximise: score, then prefer a not-yet-consumed finding, then earliest.
+        key = (score, fid not in exclude_ids, -idx)
+        if best_key is None or key > best_key:
+            best_key = key
+            matched_id = fid
             ev = finding.get("evidence") or {}
             matched_evidence = {
                 "file": ev.get("file") if isinstance(ev, dict) else None,
@@ -125,7 +178,6 @@ def match_step(step: dict, findings: list[dict]) -> dict:
             }
             ctext = _controls_text(finding)
             controls_found = [rx.pattern for rx in controls if rx.search(ctext)]
-            break
 
     return {
         "step": step.get("step"),
@@ -149,7 +201,15 @@ def _scope_ok(case: dict, signals: set[str] | None) -> bool:
 
 def match_case(case: dict, findings: list[dict], signals: set[str] | None) -> dict:
     applicable = _scope_ok(case, signals)
-    step_matches = [match_step(s, findings) for s in case.get("chain") or []]
+    # Thread consumed finding ids so a later step prefers a distinct finding —
+    # a two-step chain (IDOR → mass-assignment) must not collapse to one finding.
+    step_matches = []
+    consumed: set[str] = set()
+    for s in case.get("chain") or []:
+        m = match_step(s, findings, exclude_ids=consumed)
+        if m.get("matched") and m.get("matched_finding_id"):
+            consumed.add(m["matched_finding_id"])
+        step_matches.append(m)
     required = [m for m in step_matches if m["required"]]
     required_hit = [m for m in required if m["matched"]]
 
