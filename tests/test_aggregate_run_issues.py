@@ -106,6 +106,64 @@ def test_stride_model_no_stride_invokes_no_issue(tmp_path):
     assert agg._extract_stride_model_mismatch(tmp_path, [], []) == []
 
 
+# ---------------------------------------------------------------------------
+# _extract_stride_ceiling_events (large-repo cap-lift surfacing)
+# ---------------------------------------------------------------------------
+
+
+def _write_selection(tmp_path, sel):
+    import json
+
+    (tmp_path / ".stride-selection.json").write_text(json.dumps(sel), encoding="utf-8")
+
+
+def test_stride_ceiling_lift_is_surfaced(tmp_path):
+    _write_selection(
+        tmp_path,
+        {"ceiling": 10, "lifted": True, "selected": [{"id": f"c{i}"} for i in range(14)], "excluded": []},
+    )
+    issues = agg._extract_stride_ceiling_events(tmp_path)
+    cats = {i["category"] for i in issues}
+    assert "stride_ceiling_lifted" in cats
+    assert issues[0]["severity"] == "warning"
+
+
+def test_stride_ceiling_overflow_dropped_is_surfaced(tmp_path):
+    _write_selection(
+        tmp_path,
+        {
+            "ceiling": 10,
+            "lifted": False,
+            "selected": [{"id": f"c{i}"} for i in range(10)],
+            "excluded": [
+                {"id": "internal-db", "reason": "ceiling-overflow"},
+                {"id": "x", "reason": "out-of-scope at depth=standard"},
+            ],
+        },
+    )
+    issues = agg._extract_stride_ceiling_events(tmp_path)
+    dropped = next(i for i in issues if i["category"] == "stride_ceiling_overflow_dropped")
+    assert dropped["evidence"]["dropped_components"] == ["internal-db"]
+
+
+def test_stride_ceiling_no_event_when_within_budget(tmp_path):
+    # The normal case (juice-shop): earned set fits the ceiling, nothing dropped.
+    _write_selection(
+        tmp_path,
+        {
+            "ceiling": 10,
+            "lifted": False,
+            "selected": [{"id": f"c{i}"} for i in range(7)],
+            "excluded": [{"id": "x", "reason": "out-of-scope at depth=standard"}],
+        },
+    )
+    assert agg._extract_stride_ceiling_events(tmp_path) == []
+
+
+def test_stride_ceiling_no_selection_file_no_issue(tmp_path):
+    assert agg._extract_stride_ceiling_events(tmp_path) == []
+
+
 def test_orphan_start_followed_by_real_start_pairs_only_once():
     """Bug #5 from 2026-04-26 19:55 — orphan PHASE_START preceded the real one.
 

@@ -971,6 +971,74 @@ def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _extract_stride_ceiling_events(output_dir: Path) -> list[dict]:
+    """Surface STRIDE component-ceiling pressure as run issues (large repos).
+
+    ``build_stride_dispatch_manifest`` prints ``EXPOSURE_CAP_LIFT`` to the console
+    when a repo has more genuinely-exposed components than the operational
+    ceiling (the ceiling lifts rather than drop attack surface), and records
+    ``ceiling-overflow`` for internal-only components it shed. Both were
+    console-log-only, so the completion summary never mentioned them and a user
+    could miss that a very large repo stressed the single-session merge budget or
+    dropped internal components. This lifts the same signal into ``.run-issues``
+    from the deterministic ``.stride-selection.json`` sidecar.
+    """
+    issues: list[dict] = []
+    sel_path = output_dir / ".stride-selection.json"
+    if not sel_path.is_file():
+        return issues
+    try:
+        sel = json.loads(sel_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return issues
+    if not isinstance(sel, dict):
+        return issues
+    ceiling = sel.get("ceiling")
+    n_selected = len(sel.get("selected") or [])
+    if sel.get("lifted"):
+        issues.append(
+            {
+                "category": "stride_ceiling_lifted",
+                "severity": "warning",
+                "title": (
+                    f"STRIDE ceiling lifted: {n_selected} earned components exceed the "
+                    f"operational ceiling ({ceiling}) — single-session merge/turn budget may be stressed"
+                ),
+                "evidence": {
+                    "log_file": ".stride-selection.json",
+                    "log_line": 1,
+                    "raw_event": f"lifted=true selected={n_selected} ceiling={ceiling}",
+                    "selected_components": n_selected,
+                    "ceiling": ceiling,
+                },
+            }
+        )
+    dropped = [
+        e.get("id")
+        for e in (sel.get("excluded") or [])
+        if isinstance(e, dict) and e.get("reason") == "ceiling-overflow" and e.get("id")
+    ]
+    if dropped:
+        issues.append(
+            {
+                "category": "stride_ceiling_overflow_dropped",
+                "severity": "warning",
+                "title": (
+                    f"{len(dropped)} internal-only component(s) dropped by the STRIDE ceiling "
+                    f"({ceiling}): {_clip(', '.join(dropped), 70)}"
+                ),
+                "evidence": {
+                    "log_file": ".stride-selection.json",
+                    "log_line": 1,
+                    "raw_event": f"ceiling-overflow dropped={len(dropped)} ceiling={ceiling}",
+                    "dropped_components": dropped,
+                    "ceiling": ceiling,
+                },
+            }
+        )
+    return issues
+
+
 def _qa_status_supersedes(output_dir: Path, plan_path: Path) -> bool:
     """True when ``.qa-status.json`` proves the repair plan at ``plan_path`` is
     stale — i.e. a passing QA status was written *after* (or at the same time
@@ -1178,6 +1246,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_recovery_events(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
+    issues.extend(_extract_stride_ceiling_events(output_dir))
     issues.extend(_extract_gate_events(output_dir))
     issues.extend(_extract_stride_model_mismatch(output_dir, hook_log, agent_log))
 
