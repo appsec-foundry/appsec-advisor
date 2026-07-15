@@ -3595,7 +3595,12 @@ def test_asset_table_converts_and_reflows_description():
 
 
 def test_asset_and_attack_surface_specs_widths_sum_to_100():
-    for widths in (qa._AS_COL_WIDTHS, qa._ASSET_COL_WIDTHS, qa._STRENGTH_COL_WIDTHS):
+    for widths in (
+        qa._AS_COL_WIDTHS,
+        qa._ASSET_COL_WIDTHS,
+        qa._STRENGTH_COL_WIDTHS_3,
+        qa._STRENGTH_COL_WIDTHS_4,
+    ):
         assert sum(int(w.rstrip("%")) for w in widths) == 100
 
 
@@ -3603,11 +3608,14 @@ def test_operational_strengths_table_converts_keeping_structural_breaks():
     # "What's in Place" carries STRUCTURAL <br/> (italic description, then one
     # implementation per line) that must survive the HTML conversion; only the
     # 44-char soft-wrap artifacts (compose now omits them) would be unwanted.
+    # 2026-07-15 — Gap merged into Effectiveness; Mitigates omitted when empty
+    # (3-col form). The merged Effectiveness cell carries the badge + substantive
+    # gap + its finding link-stack.
     gfm = (
-        "| Strength | What's in Place | Effectiveness | Gap | Mitigates |\n"
-        "|---|---|---|---|---|\n"
+        "| Strength | What's in Place | Effectiveness |\n"
+        "|---|---|---|\n"
         "| **Container Hardening** | _Build-time and runtime hardening._<br/>Automated SCA scanning<br/>"
-        "Container Security | ✅ Adequate | - | - |\n"
+        "Container Security | ✅ Adequate |\n"
     )
     out, count = qa._attack_surface_tables_to_html(f"### Operational Strengths\n\n{gfm}\n")
     assert count == 1 and '<table style="table-layout:fixed;width:100%">' in out

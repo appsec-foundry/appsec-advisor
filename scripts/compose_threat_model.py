@@ -8133,19 +8133,21 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
                 demoted_labels.append(r.get("label", "?"))
         rendered_rows = kept
 
-    # Gap and Mitigates are populated deterministically by
-    # `_build_strength_clusters` (Gap from open H/C in cluster remit,
-    # Mitigates from addressed-and-not-bypassed threats), so the 5-column
-    # layout always carries usable signal in cluster-mode. The legacy
-    # show_gap/show_mitigates suppression remains for the per-control
-    # fallback path where the YAML may not provide enough data.
+    # Merge Gap INTO the Effectiveness cell (2026-07-15): the effectiveness rating
+    # and the reason it is not higher belong together, and the standalone Gap
+    # column read as redundant. A row's gap is surfaced next to its badge only when
+    # SUBSTANTIVE (the "Bypassed by N …" text); generic per-severity fillers
+    # ("None identified", "Covers only part …") are dropped as noise.
     _GENERIC_GAPS = set(_GAP_BY_EFFECTIVENESS.values()) | {_GAP_FALLBACK, ""}
-    if clusters and rendered_rows:
-        show_gap = True
-        show_mitigates = True
-    else:
-        show_gap = any((r["gap"] or "").strip() not in _GENERIC_GAPS for r in rendered_rows)
-        show_mitigates = any(bool(r["mitigates"]) for r in rendered_rows)
+    for r in rendered_rows:
+        gap = (r.get("gap") or "").strip()
+        r["effectiveness_note"] = gap if gap and gap not in _GENERIC_GAPS else ""
+    # Mitigates is structurally prone to being empty — a control's
+    # successfully-held threats are rarely catalogued as findings, so
+    # "addressed-and-not-bypassed" yields nothing for most genuine strengths.
+    # Show the column only when at least one row carries a back-reference; a
+    # column of "—" is pure noise otherwise.
+    show_mitigates = any(bool(r["mitigates"]) for r in rendered_rows)
 
     # Optional overrides from fragment
     overrides_path = ctx.fragments_dir / "operational-strengths-overrides.json"
@@ -8212,7 +8214,6 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             overflow_count=overflow,
             overrides=overrides,
             show_intro=show_intro,
-            show_gap=show_gap,
             show_mitigates=show_mitigates,
             section7_present=section7_present,
             empty_banner=empty_banner,
@@ -10841,7 +10842,11 @@ _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
     {
         ("Method", "Route", "Risk", "Notes"),
         ("Asset", "Classification", "Description", "Linked Threats"),
-        ("Strength", "What's in Place", "Effectiveness", "Gap", "Mitigates"),
+        # Operational Strengths (2026-07-15): Gap merged into the Effectiveness
+        # cell; Mitigates shown only when populated. Both the 3-col (no Mitigates)
+        # and 4-col (with Mitigates) forms become fixed-layout HTML.
+        ("Strength", "What's in Place", "Effectiveness"),
+        ("Strength", "What's in Place", "Effectiveness", "Mitigates"),
     }
 )
 

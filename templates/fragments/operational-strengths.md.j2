@@ -18,12 +18,14 @@
     does not read as silently broken.
 
     Inputs:
-      rows         — list of {label, what_in_place, effectiveness, gap, mitigates}
-                     where `what_in_place` is a `<br/>`-joined compact list of
-                     the cluster's constituent controls.
+      rows         — list of {label, what_in_place, effectiveness,
+                     effectiveness_note, mitigates} where `what_in_place` is a
+                     `<br/>`-joined compact list of the cluster's constituent
+                     controls and `effectiveness_note` is the SUBSTANTIVE gap text
+                     (empty for generic fillers) merged into the Effectiveness cell.
       overrides    — { intentionally_vulnerable_or_deficient, bottom_line }
       overflow_count — extra controls beyond the rendered cluster set (0 normally)
-      show_intro / show_gap / show_mitigates / section7_present — booleans
+      show_intro / show_mitigates / section7_present — booleans
       empty_banner — italic paragraph rendered when `rows` is empty after the
                      strengths-only filter; empty string otherwise.
 -#}
@@ -37,10 +39,10 @@ Operational controls rated Adequate or Partial — grouped into broad clusters (
 Operational controls rated Adequate or Partial — grouped into broad clusters. Clusters demoted to Weak by open Critical/High findings are excluded here.
 {%- endif %}
 {% endif %}
-| Strength | What's in Place | Effectiveness{% if show_gap %} | Gap{% endif %}{% if show_mitigates %} | Mitigates{% endif %} |
-|---|---|---{% if show_gap %}|---{% endif %}{% if show_mitigates %}|---{% endif %}|
+| Strength | What's in Place | Effectiveness{% if show_mitigates %} | Mitigates{% endif %} |
+|---|---|---{% if show_mitigates %}|---{% endif %}|
 {%- for r in rows %}
-| **{{ r.label }}** | {{ r.what_in_place }} | {{ effectiveness_badge(r.effectiveness) }}{% if show_gap %} | {{ r.gap if r.gap else '—' }}{% endif %}{% if show_mitigates %} | {{ r.mitigates | format_strengths_mitigates if r.mitigates else '—' }}{% endif %} |
+| **{{ r.label }}** | {{ r.what_in_place }} | {{ effectiveness_badge(r.effectiveness) }}{% if r.effectiveness_note %} — {{ r.effectiveness_note }}{% endif %}{% if show_mitigates %} | {{ r.mitigates | format_strengths_mitigates if r.mitigates else '—' }}{% endif %} |
 {%- endfor %}
 
 {% if overflow_count > 0 -%}

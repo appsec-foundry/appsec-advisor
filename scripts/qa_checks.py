@@ -1471,8 +1471,8 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
          ``condition`` gates evaluated against simple counters).
       2. No forbidden_subsection_patterns appear under Management Summary.
       3. Required tables present the declared number of columns with the
-         declared headers (Top Findings: 6 cols; Operational Strengths: 5 cols; Mitigations sub-tables:
-         5 cols each).
+         declared headers (Top Findings: 6 cols; Operational Strengths: 3 or
+         4 cols; Mitigations sub-tables: 5 cols each).
     """
 
     report = Report("contract")
@@ -1787,10 +1787,13 @@ _TABLE_SCHEMA_CHECKS: list[tuple[str, str, list[str]]] = [
         "operational_strengths",
         "Operational Strengths",
         [
-            # M3.10 — categorical-cluster layout
-            "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
-            # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
+            # 2026-07-15 — Gap merged into Effectiveness; Mitigates shown only when
+            # a row carries a back-reference. 3-col (no Mitigates, the common case)
+            # and 4-col (with Mitigates) forms. The legacy 5-col
+            # `… | Effectiveness | Gap | Mitigates |` is intentionally omitted so
+            # reports rendered by old code are flagged.
             "| Strength | What's in Place | Effectiveness |",
+            "| Strength | What's in Place | Effectiveness | Mitigates |",
             # Post-2026-05 empty-state — every cluster demoted to Weak, no
             # table rendered, only an italic explanatory banner. Accept the
             # banner's stable opener as evidence the section was authored.
@@ -4047,8 +4050,13 @@ _AS_TABLE_HEADERS = ("Method", "Route", "Risk", "Notes")
 _AS_COL_WIDTHS = ("9%", "30%", "14%", "47%")
 _ASSET_TABLE_HEADERS = ("Asset", "Classification", "Description", "Linked Threats")
 _ASSET_COL_WIDTHS = ("22%", "13%", "32%", "33%")
-_STRENGTH_TABLE_HEADERS = ("Strength", "What's in Place", "Effectiveness", "Gap", "Mitigates")
-_STRENGTH_COL_WIDTHS = ("18%", "28%", "13%", "30%", "11%")
+# Operational Strengths (2026-07-15): Gap merged into the Effectiveness cell;
+# Mitigates column shown only when at least one row carries a back-reference.
+# Two fixed-layout forms — 3-col (no Mitigates) and 4-col (with Mitigates).
+_STRENGTH_TABLE_HEADERS_3 = ("Strength", "What's in Place", "Effectiveness")
+_STRENGTH_COL_WIDTHS_3 = ("20%", "33%", "47%")
+_STRENGTH_TABLE_HEADERS_4 = ("Strength", "What's in Place", "Effectiveness", "Mitigates")
+_STRENGTH_COL_WIDTHS_4 = ("18%", "30%", "40%", "12%")
 # Each spec: (headers, widths, {col_idx: inline-style}, prose_col_indices).
 # - inline-style per column: `overflow-wrap:anywhere` lets a long route / asset
 #   name wrap inside its fixed column; `white-space:nowrap` pins short tokens so
@@ -4067,18 +4075,31 @@ _FIXED_LAYOUT_SPECS = (
         frozenset({2}),  # Description (col 2) reflows; Linked Threats keeps its <br/> stack
     ),
     (
-        _STRENGTH_TABLE_HEADERS,
-        _STRENGTH_COL_WIDTHS,
+        _STRENGTH_TABLE_HEADERS_3,
+        _STRENGTH_COL_WIDTHS_3,
+        # All three columns carry prose/links (What's in Place structural <br/>;
+        # Effectiveness now holds the badge + merged substantive gap + its finding
+        # <br/> stack), so each wraps inside its fixed column.
         {
             0: "overflow-wrap:anywhere",
             1: "overflow-wrap:anywhere",
-            3: "overflow-wrap:anywhere",
-            4: "overflow-wrap:anywhere",
+            2: "overflow-wrap:anywhere",
         },
-        # No prose_cols: "What's in Place" carries STRUCTURAL <br/> (italic
-        # description line, then one implementation per line) that must survive;
-        # compose now exempts this table from soft-wrap so there are no stale
-        # 44-char artifact breaks to strip. Gap keeps its finding <br/> stack.
+        # No prose_cols: "What's in Place" and the merged Effectiveness cell carry
+        # STRUCTURAL <br/> (implementation lines; finding link stack) that must
+        # survive; compose exempts this table from soft-wrap so there are no stale
+        # 44-char artifact breaks to strip.
+        frozenset(),
+    ),
+    (
+        _STRENGTH_TABLE_HEADERS_4,
+        _STRENGTH_COL_WIDTHS_4,
+        {
+            0: "overflow-wrap:anywhere",
+            1: "overflow-wrap:anywhere",
+            2: "overflow-wrap:anywhere",
+            3: "overflow-wrap:anywhere",
+        },
         frozenset(),
     ),
 )

@@ -123,11 +123,11 @@ Highest-impact P1/P2 mitigations - 3 of 3 qualifying (3 total). Full detail in [
 
 Operational controls rated Adequate or Partial - grouped into broad clusters (full per-control breakdown in [§7](#7-security-architecture)). Clusters demoted to Weak by open Critical/High findings appear in [§7](#7-security-architecture) instead, not here.
 
-| Strength | What's in Place | Effectiveness | Gap | Mitigates |
-|----------------------|----------------------|-------------|----------------------|----------------|
-| **Container & Supply-Chain Hardening** | _Build-time and runtime hardening - minimal base image, non-root execution, dependency inventory._<br/>Container Base Image | ✅ Adequate | - | - |
-| **Authentication & Session Management** | _Identity issuance, route-level authorisation, and second-factor handling for this codebase._<br/>TOTP Two-Factor Authentication<br/>JWT-based Authentication | ⚠️ Partial | Coverage incomplete - see [§7](#7-security-architecture) control assessment. | - |
-| **Input Handling & Output Encoding** | _Boundary validation of untrusted input and consistent output encoding before persistence or rendering._<br/>Parameterized Database Access | ⚠️ Partial | Coverage incomplete - see [§7](#7-security-architecture) control assessment. | - |
+| Strength | What's in Place | Effectiveness |
+|----------------------|----------------------|----------------------|
+| **Container & Supply-Chain Hardening** | _Build-time and runtime hardening - minimal base image, non-root execution, dependency inventory._<br/>Container Base Image | ✅ Adequate |
+| **Authentication & Session Management** | _Identity issuance, route-level authorisation, and second-factor handling for this codebase._<br/>TOTP Two-Factor Authentication<br/>JWT-based Authentication | ⚠️ Partial - Coverage incomplete - see [§7](#7-security-architecture) control assessment. |
+| **Input Handling & Output Encoding** | _Boundary validation of untrusted input and consistent output encoding before persistence or rendering._<br/>Parameterized Database Access | ⚠️ Partial - Coverage incomplete - see [§7](#7-security-architecture) control assessment. |
 
 
 **Bottom line:** These controls narrow specific attack surfaces but none eliminates a Critical finding on its own - every remaining Critical path bypasses them.
@@ -159,7 +159,7 @@ graph LR
     classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
 ```
 
-**Findings** (full detail in [§8 Findings Register](#8-findings-register)): 🔴 [F-001](#f-001) SQL injection (product search) · 🔴 [F-002](#f-002) SQL injection (login) · 🔴 [F-003](#f-003) Hardcoded RSA signing key
+**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001) · [F-002](#f-002) · [F-003](#f-003)
 
 ---
 

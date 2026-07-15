@@ -726,6 +726,12 @@ def test_operational_strengths_has_three_columns(tmp_path: Path) -> None:
     # And the retired 5-column form is gone.
     legacy = "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |"
     assert legacy not in rendered, "retired 5-column Operational Strengths form leaked into the render"
+    # 2026-07-15 — Gap merged into Effectiveness, Mitigates suppressed when empty:
+    # neither may survive as a STANDALONE column in the Operational Strengths table.
+    os_body = rendered.split("### Operational Strengths", 1)[1].split("**Bottom line", 1)[0]
+    assert "| Effectiveness | Gap |" not in os_body
+    assert "| Gap | Mitigates |" not in os_body
+    assert "| Mitigates |" not in os_body
 
 
 def test_operational_strengths_gap_stacks_sample_findings(tmp_path: Path) -> None:
