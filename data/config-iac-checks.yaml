@@ -73,11 +73,18 @@ checks:
     remediation: "Remove --unsafe-perm; use non-root user"
 
   - id: IAC-005
-    name: "Dockerfile npm/pnpm/yarn uses --ignore-scripts"
+    name: "Dockerfile npm/pnpm/yarn install without --ignore-scripts"
     iac_type: Dockerfile
     file_pattern: "Dockerfile"
-    pattern: "(npm (ci|install)|pnpm install|yarn install).*--ignore-scripts"
-    expect: present
+    # Flag the BAD pattern (a JS package install that does NOT pass
+    # --ignore-scripts) rather than requiring the good flag globally. The old
+    # `expect: present` form fired on every Dockerfile that used no JS package
+    # manager at all — e.g. a Maven/Java image got a spurious npm finding
+    # (false positive, insecure-spring-app T-054, 2026-07-15). The negative
+    # lookahead + `expect: absent` fires only when an npm/pnpm/yarn install is
+    # actually present but unhardened, mirroring IAC-004 (--unsafe-perm).
+    pattern: "(npm (ci|install)|pnpm install|yarn install)(?!.*--ignore-scripts)"
+    expect: absent
     severity_if_violated: Medium
     cwe: CWE-506
     finding_type: FT-171
