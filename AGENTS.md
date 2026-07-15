@@ -309,6 +309,7 @@ Read only when relevant; code/data is authoritative where named. This section is
 - **Output/security catalogs:** `data/cvss-eligible-cwes.yaml`, `data/pentest-eligible-cwes.yaml`, `scripts/plugin_meta.py`.
 - **Cross-repo context:** `docs/related-repos.yaml`, `scripts/load_related_repos.py`, `scripts/build_cross_repo_register.py`, `scripts/slice_cross_repo_for_component.py`.
 - **CLI/run flags:** `skills/create-threat-model/SKILL.md`.
+- **Server-side dispatch:** `.github/workflows/threat-model-dispatch.yml` + `.github/threat-model-presets.json` run a headless threat model on a runner (no local checkout). Procedure, presets, and the OAuth/default-branch gotchas: `docs/internal/runbooks/server-side-dispatch.md`.
 - **Repo layout and prompt context:** `CONTRIBUTING.md`, `agents/shared/`, `agents/phases/`, `templates/fragments/*.j2`.
 - **Org packaging smoke test:** `github.com/matthiasrohr/appsec-advisor-org-packaging-example`.
 
