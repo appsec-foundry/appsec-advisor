@@ -1777,6 +1777,60 @@ def patch_placeholders(output_dir: Path, stats: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Slug-stamp backstop (compaction-proof second anchor)
+# ---------------------------------------------------------------------------
+
+
+def _stamp_slug_if_configured(output_dir: Path) -> None:
+    """Emit the slug-stamped deliverable copy set from the completion summary.
+
+    ``orchestration_controller.py``'s ``_stamp_if_configured`` is the primary
+    deterministic anchor, but it fires only when the mandatory ``next`` gate
+    returns ``action=complete`` — which in turn requires ``.qa-status.json`` on
+    disk. A context-compaction-resumed orchestrator that reconstructs Stage 3
+    from a summary can skip both the ``.qa-status.json`` write and the ``next``
+    call, leaving the canonical report shipped with no stamped set (the
+    2026-07-15 recurrence). This script is the ONE step that runs on every
+    completion path — even a hand-invoked summary after compaction — so it is a
+    reliable second anchor. Idempotent (re-stamps only when the canonical report
+    is newer than the stamped copy) and fail-safe (never raises into the
+    summary output). Guarded on the durable ``.skill-config.json`` slug.
+    """
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    slug = str(cfg.get("slug") or "").strip()
+    if not slug:
+        return
+    md = output_dir / "threat-model.md"
+    if not md.is_file():
+        return
+    stamped = output_dir / f"threat-model-{slug}.md"
+    try:
+        if stamped.is_file() and stamped.stat().st_mtime >= md.stat().st_mtime:
+            return  # already stamped from the current report — nothing to do
+    except OSError:
+        pass
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parent / "stamp_threat_model.py"),
+                "--output-dir",
+                str(output_dir),
+                "--slug",
+                slug,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1871,6 +1925,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.patch_placeholders:
         patch_placeholders(args.output_dir, stats)
+
+    # Second slug-stamp anchor (after any placeholder patch so the stamped copy
+    # carries the filled run-statistics). Idempotent; primary anchor lives in
+    # orchestration_controller._stamp_if_configured. See _stamp_slug_if_configured.
+    _stamp_slug_if_configured(args.output_dir)
 
     if not args.no_print:
         print(render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root), end="")
