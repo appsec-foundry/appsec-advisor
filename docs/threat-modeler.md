@@ -170,25 +170,25 @@ The number of analyzed components follows the repository's attack surface rather
 
 ### Cost by depth
 
-These OWASP Juice Shop runs anchor on three measured points from July 2026 — **quick** ($18.03, 68 minutes), **standard** ($34.14), and a full **thorough** run (about $47, 103 minutes) — all with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. The standard runtime (~85 minutes) is estimated from the quick and thorough anchors. They compare modes but do not predict the exact bill for another repository.
+These OWASP Juice Shop runs anchor on three measured points from July 2026 — **quick** ($18.03, 68 minutes), **standard** ($33.21, ~130 minutes), and a full **thorough** run (about $47, 103 minutes) — all with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. They compare modes but do not predict the exact bill for another repository.
 
 | Mode | Best fit | Review depth | API cost (USD) and time |
 |---|---|---|---|
 | **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | $18.03 and 68 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick.md)) |
-| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $34.14 and ~85 minutes (time est.) ([sample](../examples/threat-modeler/threat-model-juice-shop-standard.md)) |
+| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $33.21 and ~130 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard.md)) |
 | **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | About $47 and 103 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough.md)) |
 
 > [!NOTE]
 > Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
 
-**Cross-repo check (standard).** A standard run on a second, smaller repository confirms that cost tracks codebase size. [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app) — an intentionally-vulnerable Spring Boot monolith used as a scanner-validation fixture — was assessed at `standard` on plugin **v0.5.0-beta** with the session on **Sonnet 4.6**. It cost **$24.65** for the session ($24.05 Sonnet 4.6 + $0.60 Haiku helpers) and surfaced 49 threats across 5 analyzed components. The threat-model pipeline itself reported ~69 min wall and ~97 min of agent compute; the rest of the measured session went to the repair loop and interactive iteration, so treat the dollar figure as a loose upper bound for a repo this size. The lower bill versus Juice Shop's $34.14 follows from the smaller repository — fewer files read means fewer cached input tokens, and token volume is the dominant cost driver (see *Background: why Sonnet 4.6 costs less*).
+**Cross-repo check (standard).** A standard run on a second, smaller repository confirms that cost tracks codebase size. [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app) — an intentionally-vulnerable Spring Boot monolith used as a scanner-validation fixture — was assessed at `standard` on plugin **v0.5.0-beta** with the session on **Sonnet 4.6**. It cost **$24.65** for the session ($24.05 Sonnet 4.6 + $0.60 Haiku helpers) and surfaced 49 threats across 5 analyzed components. The threat-model pipeline itself reported ~69 min wall and ~97 min of agent compute; the rest of the measured session went to the repair loop and interactive iteration, so treat the dollar figure as a loose upper bound for a repo this size. The lower bill versus Juice Shop's $33.21 follows from the smaller repository — fewer files read means fewer cached input tokens, and token volume is the dominant cost driver (see *Background: why Sonnet 4.6 costs less*).
 
 | Repo | Stack | Mode | Plugin | Session | Threats | API cost |
 |---|---|---|---|---|---|---|
-| OWASP Juice Shop | Node/Angular | standard | — | Sonnet 4.6 | 83 | $34.14 |
+| OWASP Juice Shop | Node/Angular | standard | v0.5.0-beta | Sonnet 4.6 | 54 | $33.21 |
 | insecure-spring-app | Spring Boot | standard | v0.5.0-beta | Sonnet 4.6 | 49 | $24.65 |
 
-`--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the same standard benchmark, a cap of 2 reduced the finding count from 83 to about 52 and saved roughly $4. The selected cap is recorded in the report.
+`--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the standard benchmark, a cap of 2 trims the finding count by roughly a third and saves roughly $4. The selected cap is recorded in the report.
 
 ### Reasoning model
 
