@@ -1076,6 +1076,12 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     # it must not bypass the developer-actionability contract.
     if not _run(str(SCRIPT_DIR / "emit_general_mitigation_titles.py"), str(output_dir)):
         return False
+    # Scanner findings carry only a one-line mitigation_title; synthesise a
+    # structured remediation block (steps + verification) from the check library
+    # before hydration so the P1/P2 quality gate is satisfiable on the recovery
+    # path too (mirrors the auto-emitter pass ordering).
+    if not _run(str(SCRIPT_DIR / "backfill_scanner_remediation.py"), str(output_dir)):
+        return False
     if not _run(str(SCRIPT_DIR / "hydrate_mitigation_details.py"), str(output_dir)):
         return False
     if not _run(str(SCRIPT_DIR / "validate_mitigation_quality.py"), str(output_dir)):
@@ -1108,6 +1114,55 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
     return md.is_file()
+
+
+def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
+    """Deterministically produce the slug-stamped deliverable copy set.
+
+    ``--slug`` asks for a postfix-stamped, collision-proof copy of the
+    deliverables (``threat-model-<slug>.md`` / ``.yaml`` / ``.figure*.svg`` …).
+    In the skill body that stamp is the very last, LLM-driven Bash block and it
+    guards on an in-memory ``$SLUG`` shell variable — neither the variable nor
+    the "run this trailing step" intent survives a context compaction, so a
+    resumed run silently shipped the canonical files with no stamped set
+    (2026-07-15 juice-shop). Anchoring the stamp here, in the mandatory
+    re-entrant ``next`` gate that reads the durable on-disk config, makes it
+    deterministic: any run that reaches ``action=complete`` gets the stamped
+    copies regardless of compaction. Idempotent (re-stamps only when the
+    canonical report is newer than the stamped copy) and fail-safe (never
+    raises into ``next``'s JSON output). This gate fires before the skill's
+    post-summary cleanup, so ``.skill-config.json`` is still on disk; PDF/HTML
+    exported by the skill after this gate remain the trailing block's job.
+    """
+    slug = str(cfg.get("slug") or "").strip()
+    if not slug:
+        return
+    md = output_dir / "threat-model.md"
+    if not md.is_file():
+        return
+    stamped = output_dir / f"threat-model-{slug}.md"
+    try:
+        if stamped.is_file() and stamped.stat().st_mtime >= md.stat().st_mtime:
+            return  # already stamped from the current report — nothing to do
+    except OSError:
+        pass
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_DIR / "stamp_threat_model.py"),
+                "--output-dir",
+                str(output_dir),
+                "--slug",
+                slug,
+            ],
+            cwd=str(SCRIPT_DIR),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def next_action(output_dir: Path) -> dict[str, Any]:
@@ -1157,6 +1212,11 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             "stage": "stage4",
             "instruction_file": str(LEGACY_RUNTIME),
         }
+    # Deterministic slug-stamp backstop: the run is complete, so emit the
+    # postfix-stamped deliverable copy set here rather than relying on the
+    # trailing LLM-driven skill block (which a compaction-resumed orchestrator
+    # can skip, and whose $SLUG guard does not survive compaction anyway).
+    _stamp_if_configured(output_dir, cfg)
     return {
         **common,
         "action": "complete",

@@ -4598,19 +4598,35 @@ fi
 
 ### Slug stamping (only when `slug` is set)
 
-Runs **last** — after the PDF / HTML exports — so the stamped copy set includes every produced deliverable. When the resolved config carries a non-null `slug` (from `--slug [<value>]`), copy the canonical deliverables to a postfix-stamped, copy-ready set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json`, whichever exist), with copied figure references inside the copied Markdown repointed at the stamped SVGs. The canonical `threat-model.*` files are left untouched (the pipeline, gates, and incremental baseline depend on them). The slug was already resolved (random when bare `--slug`, explicit otherwise) by `resolve_config.py`, so the skill just reads it.
+**The authoritative stamp is deterministic and already ran.** The mandatory
+`orchestration_controller.py next` finalize gate stamps the core deliverables
+(`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.sarif.json`) the moment
+it returns `action=complete` — see `_stamp_if_configured`. That gate reads the
+durable on-disk `.skill-config.json`, so the stamp survives a context compaction
+that would wipe the in-memory `$SLUG` binding (2026-07-15 juice-shop: a
+compaction-resumed run skipped this trailing block entirely and shipped no
+stamped set). This block is therefore a **best-effort top-up** whose only unique
+job is stamping the PDF / HTML, which the skill exports *after* the `next` gate.
+
+Runs **last** — after the PDF / HTML exports — so the stamped copy set includes every produced deliverable. When the resolved config carries a non-null `slug` (from `--slug [<value>]`), copy the canonical deliverables to a postfix-stamped, copy-ready set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json`, whichever exist), with copied figure references inside the copied Markdown repointed at the stamped SVGs. The canonical `threat-model.*` files are left untouched (the pipeline, gates, and incremental baseline depend on them). `stamp_threat_model.py` is idempotent per slug, so re-stamping here after the `next` gate never conflicts.
 
 **Non-fatal** — a copy failure must not fail the assessment; the canonical model is already complete.
 
 ```bash
-# SLUG is already bound from dispatch_values (SKILL-full-runtime.md §3 alias table).
-# Do NOT re-read it from .skill-config.json here — that file is deleted by
-# runtime_cleanup.py --stage post-qa (Always-cleanup list, line 32/129) which runs
-# in "Post-summary cleanup" above, before this block. Re-reading it always yields ""
-# and silently skips the stamp (the FileNotFoundError is swallowed by 2>/dev/null).
-if [ -n "$SLUG" ]; then
+# Prefer the in-memory SLUG alias (bound from dispatch_values, SKILL-full-runtime.md
+# §3). Fall back to the durable on-disk config when the alias was lost (a
+# compaction-resumed orchestrator no longer carries it) — .skill-config.json is
+# still present under --keep-runtime-files, and in the non-keep case the `next`
+# gate already produced the core stamped set BEFORE post-summary cleanup deleted
+# the config, so this fallback only ever adds the PDF/HTML.
+STAMP_SLUG="$SLUG"
+if [ -z "$STAMP_SLUG" ] && [ -f "$OUTPUT_DIR/.skill-config.json" ]; then
+    STAMP_SLUG=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("slug") or "")' \
+        "$OUTPUT_DIR/.skill-config.json" 2>/dev/null || echo "")
+fi
+if [ -n "$STAMP_SLUG" ]; then
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/stamp_threat_model.py" \
-        --output-dir "$OUTPUT_DIR" --slug "$SLUG" \
+        --output-dir "$OUTPUT_DIR" --slug "$STAMP_SLUG" \
         2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
 fi
 ```

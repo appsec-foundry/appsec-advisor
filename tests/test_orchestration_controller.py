@@ -571,6 +571,65 @@ def test_next_action_falls_back_to_stage2_when_compose_fails(tmp_path, monkeypat
     assert action["stage"] == "stage2"
 
 
+def test_next_action_stamps_slug_deliverables_on_complete(tmp_path):
+    """The deterministic slug-stamp backstop: a completed run whose config
+    carries a non-null slug gets the postfix-stamped copy set produced by the
+    `next` gate itself — no reliance on the trailing LLM-driven skill block that
+    a compaction-resumed orchestrator can skip (2026-07-15 juice-shop)."""
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["slug"] = "juice-shop-standard-v0.5"
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    (output / ".qa-status.json").write_text("{}", encoding="utf-8")
+
+    action = controller.next_action(output)
+
+    assert action["action"] == "complete"
+    assert (output / "threat-model-juice-shop-standard-v0.5.md").is_file()
+    assert (output / "threat-model-juice-shop-standard-v0.5.yaml").is_file()
+
+
+def test_next_action_no_stamp_without_slug(tmp_path):
+    """No slug configured → the `next` gate produces no stamped copies."""
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)  # no "slug" key
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    (output / ".qa-status.json").write_text("{}", encoding="utf-8")
+
+    action = controller.next_action(output)
+
+    assert action["action"] == "complete"
+    assert not list(output.glob("threat-model-*.md"))
+
+
+def test_stamp_if_configured_is_idempotent_for_current_report(tmp_path, monkeypatch):
+    """A second `next` call at complete does not re-run the stamp when the
+    stamped copy already reflects the current (unchanged) canonical report."""
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["slug"] = "s1"
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    (output / "threat-model-s1.md").write_text("# report\n", encoding="utf-8")
+
+    calls = []
+    real_run = controller.subprocess.run
+
+    def counting_run(cmd, **kwargs):
+        calls.append(cmd)
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(controller.subprocess, "run", counting_run)
+    controller._stamp_if_configured(output, cfg)
+    assert calls == []  # stamped copy already up to date → no subprocess
+
+
 def test_action_schema_rejects_executable_command_field():
     with pytest.raises(controller.ControllerError):
         controller._validate_action(
