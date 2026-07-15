@@ -17,7 +17,7 @@ surfaces:
     path: skills/create-threat-model/SKILL-impl.md
     start: BOF
     end: "<!-- LAZY-LOAD BOUNDARY"
-    max_bytes: 226000
+    max_bytes: 228500
   full_stage1_slice:
     path: skills/create-threat-model/SKILL-impl.md
     start: "## Stage 1 — Threat Analysis & Triage"
@@ -27,7 +27,7 @@ surfaces:
     path: skills/create-threat-model/SKILL-impl.md
     start: "<!-- LAZY-LOAD BOUNDARY"
     end: EOF
-    max_bytes: 146000
+    max_bytes: 150000
   stage2_runtime_dispatch_slice:
     path: skills/create-threat-model/SKILL-impl.md
     start: "## Stage 2 - Report Rendering"
