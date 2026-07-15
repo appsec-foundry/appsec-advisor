@@ -211,6 +211,98 @@ def test_cmd_merge_warns_on_unfinalized(tmp_path, capsys):
     assert v["_not_finalized"] is True
 
 
+# --- partial finalization (mid-chain cut-off) ------------------------------
+
+
+def test_untouched_preseed_step_all_three_conditions():
+    # inconclusive + no reason + empty excerpt → untouched pre-seed
+    assert mod._is_untouched_preseed_step(
+        {"step": 2, "verdict": "inconclusive", "evidence": {"file": "x", "line": 1, "excerpt": ""}}
+    )
+    # a reason present → the verifier touched it (genuine inconclusive)
+    assert not mod._is_untouched_preseed_step(
+        {"step": 2, "verdict": "inconclusive", "reason": "handler precedence unclear"}
+    )
+    # an excerpt present → the verifier touched it
+    assert not mod._is_untouched_preseed_step(
+        {"step": 2, "verdict": "inconclusive", "evidence": {"excerpt": "vm.runInContext(...)"}}
+    )
+    # a decided verdict is never an untouched pre-seed
+    assert not mod._is_untouched_preseed_step({"step": 1, "verdict": "confirmed"})
+
+
+def test_load_verdict_files_flags_partial_finalization(tmp_path):
+    # Mirrors AC-T-001 (2026-07-15 juice-shop): step 1 confirmed, steps 2-3
+    # untouched pre-seed after a mid-chain turn-ceiling cut-off. The whole-file
+    # check returns False (a decided step exists) — this must still be surfaced.
+    _write(
+        tmp_path / ".abuse-case-verdict-AC-T-001.json",
+        {
+            "abuse_case_id": "AC-T-001",
+            "step_verdicts": [
+                {"step": 1, "verdict": "confirmed", "evidence": {"excerpt": "bypassSecurityTrustHtml(...)"}},
+                {"step": 2, "verdict": "inconclusive", "evidence": {"file": "x", "line": 1, "excerpt": ""}},
+                {"step": 3, "verdict": "inconclusive", "evidence": {"file": "y", "line": 2, "excerpt": ""}},
+            ],
+        },
+    )
+    out = mod._load_verdict_files(tmp_path)
+    v = out["AC-T-001"]
+    assert v.get("_not_finalized") is not True  # not a whole-file pre-seed
+    assert v["_partially_finalized"] is True
+    assert v["_unverified_steps"] == [2, 3]
+
+
+def test_fully_confirmed_chain_is_not_flagged(tmp_path):
+    _write(
+        tmp_path / ".abuse-case-verdict-AC-T-005.json",
+        {
+            "abuse_case_id": "AC-T-005",
+            "step_verdicts": [
+                {"step": 1, "verdict": "confirmed", "evidence": {"excerpt": "a"}},
+                {"step": 2, "verdict": "confirmed", "evidence": {"excerpt": "b"}},
+            ],
+        },
+    )
+    out = mod._load_verdict_files(tmp_path)
+    v = out["AC-T-005"]
+    assert "_not_finalized" not in v
+    assert "_partially_finalized" not in v
+
+
+def test_reasoned_inconclusive_step_is_not_partial(tmp_path):
+    # A confirmed step + a genuinely-reasoned inconclusive step → fully finalized.
+    _write(
+        tmp_path / ".abuse-case-verdict-AC-T-009.json",
+        {
+            "abuse_case_id": "AC-T-009",
+            "step_verdicts": [
+                {"step": 1, "verdict": "confirmed", "evidence": {"excerpt": "a"}},
+                {"step": 2, "verdict": "inconclusive", "reason": "no ownership check reachable within budget"},
+            ],
+        },
+    )
+    out = mod._load_verdict_files(tmp_path)
+    assert "_partially_finalized" not in out["AC-T-009"]
+
+
+def test_cmd_merge_warns_on_partial_finalization(tmp_path, capsys):
+    _write(
+        tmp_path / ".abuse-case-verdict-AC-T-001.json",
+        {
+            "abuse_case_id": "AC-T-001",
+            "step_verdicts": [
+                {"step": 1, "verdict": "confirmed", "evidence": {"excerpt": "a"}},
+                {"step": 2, "verdict": "inconclusive", "evidence": {"excerpt": ""}},
+            ],
+        },
+    )
+    rc = mod.cmd_merge(_ns(tmp_path))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "partially finalized" in err and "AC-T-001" in err
+
+
 def test_cmd_merge_no_unfinalized_warning_when_reasoned(tmp_path, capsys):
     _write(
         tmp_path / ".abuse-case-verdict-AC-T-009.json",
