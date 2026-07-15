@@ -102,6 +102,14 @@ if [ "$DRY_RUN" = "false" ]; then
     # on the addressed CWE (the actionable detail stays in the block body's
     # How/steps/code). Idempotent (stashes _title_source).
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_general_mitigation_titles.py" "$OUTPUT_DIR" 2>&1 || true
+    # Backfill a structured remediation block (steps + verification) on
+    # scanner-derived threats that carry only a one-line mitigation_title. The
+    # source/crypto/config scanners never author remediation.steps; without this
+    # the P1/P2 quality gate below hard-fails the build-mitigations fallback
+    # cards synthesised for those Critical/High findings. Sourced deterministically
+    # from the check library by id (falling back to the mitigation_title). MUST run
+    # BEFORE hydrate so the promoted card inherits real steps.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/backfill_scanner_remediation.py" "$OUTPUT_DIR" 2>&1 || true
     # Promote the analyzer's concrete remediation from addressed findings onto
     # the canonical mitigation cards. This keeps YAML/SARIF consumers aligned
     # with the rendered register and supplies the P1/P2 quality gate below.
