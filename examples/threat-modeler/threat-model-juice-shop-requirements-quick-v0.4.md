@@ -103,7 +103,7 @@ The highest-leverage repairs are: move the RSA private key out of source, replac
 
 Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the top threats per component. The in-figure legend on the right explains the attack scenarios, severity dots and symbols.
 
-![Figure 1 - Architecture & Top Threats](threat-model.figure1.svg)
+![Figure 1 - Architecture & Top Threats](threat-model-juice-shop-quick-v0.4.figure1.svg)
 
 **Figure 2 - Risk Flow: Actor → Tier → Impact**
 
