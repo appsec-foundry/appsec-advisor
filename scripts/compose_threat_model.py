@@ -12209,7 +12209,20 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
         if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
             out_chunks.append(chunk)
         else:
-            out_chunks.append(_FINDING_DOT_REF_RE.sub(_sub, chunk))
+            # The MS "Top Weaknesses" proof run (`… _Proven by [F-NNN], …._`)
+            # deliberately lists BARE finding ids so the single weakness dot owns
+            # the bullet's severity signal. The global F-dot retrofit would put an
+            # identical dot in front of every F-ref, collapsing the weakness→finding
+            # hierarchy into a flat row of same-looking dots (user 2026-07-15). Skip
+            # only those lines (uniquely identified by an italic `_Proven by ` run
+            # alongside a `[W-NNN](#w-nnn)` link); the weakness dot itself is emitted
+            # directly by _render_ms_top_weaknesses and is unaffected.
+            lines = chunk.split("\n")
+            for j, ln in enumerate(lines):
+                if "_Proven by " in ln and "](#w-" in ln:
+                    continue
+                lines[j] = _FINDING_DOT_REF_RE.sub(_sub, ln)
+            out_chunks.append("\n".join(lines))
     return "".join(out_chunks)
 
 

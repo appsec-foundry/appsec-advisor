@@ -3700,3 +3700,68 @@ def test_autofix_priority_circle_styling_is_idempotent(tmp_path: Path):
     assert second.count("●") == 1
     assert "❶" not in second  # legacy digit migrated away
     assert 'style="color:' not in second  # no fragile colour span
+
+
+# ---------------------------------------------------------------------------
+# MS "Top Weaknesses" proof run stays BARE — the single weakness dot owns the
+# bullet's severity signal, so the finding refs must NOT pick up the global
+# severity-dot / title-suffix enrichment (user 2026-07-15). Every other
+# context still gets its dots + titles.
+# ---------------------------------------------------------------------------
+
+_TW_YAML = textwrap.dedent(
+    """\
+    threats:
+      - id: T-013
+        title: Anonymous Attacker Obtains ADMIN Role
+        severity: critical
+      - id: T-014
+        title: H2 Database Console Accessible Without Authentication
+        severity: critical
+    """
+)
+
+
+def _write_tw_pair(path: Path, md_body: str) -> Path:
+    (path / "threat-model.yaml").write_text(_TW_YAML)
+    f = path / "threat-model.md"
+    f.write_text(md_body)
+    return f
+
+
+def test_annotate_id_refs_skips_top_weaknesses_proof_dots(tmp_path: Path):
+    md = _write_tw_pair(
+        tmp_path,
+        "## Management Summary\n\n"
+        "- 🔴 **[W-001](#w-001) — Endpoints reachable** (Critical) — desc. "
+        "_Proven by [F-013](#f-013), [F-014](#f-014)._\n\n"
+        "Normal prose ref to [F-013](#f-013) elsewhere.\n",
+    )
+    qa._annotate_id_refs(md)
+    out = md.read_text()
+    tw_line = next(ln for ln in out.splitlines() if "_Proven by" in ln)
+    normal_line = next(ln for ln in out.splitlines() if "Normal prose" in ln)
+    # Proof run: bare, no severity dot injected before its F-refs.
+    assert "🔴 [F-013]" not in tw_line and "[F-013](#f-013)" in tw_line
+    # The weakness's own dot survives.
+    assert "🔴 **[W-001]" in tw_line
+    # A normal F-ref elsewhere DID get its severity dot.
+    assert "🔴 [F-013](#f-013)" in normal_line
+
+
+def test_linkify_anchors_skips_top_weaknesses_proof_titles(tmp_path: Path):
+    md = _write_tw_pair(
+        tmp_path,
+        "## Management Summary\n\n"
+        "- 🔴 **[W-001](#w-001) — Endpoints reachable** (Critical) — desc. "
+        "_Proven by [F-013](#f-013), [F-014](#f-014)._\n\n"
+        "Normal prose ref to [F-014](#f-014) elsewhere.\n",
+    )
+    _report, new_text = qa.linkify_anchors(md)
+    tw_line = next(ln for ln in new_text.splitlines() if "_Proven by" in ln)
+    normal_line = next(ln for ln in new_text.splitlines() if "Normal prose" in ln)
+    # Proof run: no `— Title` suffix appended to its F-refs.
+    assert "Anonymous Attacker" not in tw_line
+    assert "H2 Database Console" not in tw_line
+    # A normal F-ref elsewhere DID get its title suffix.
+    assert "F-014](#f-014) — H2 Database Console" in normal_line

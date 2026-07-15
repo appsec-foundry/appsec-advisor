@@ -677,6 +677,13 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
         # AND trigger heading_hygiene's `[…]([…]) — <text>` rule.
         if stripped_lstrip.startswith("#"):
             continue
+        # MS "Top Weaknesses" proof run (`… _Proven by [F-NNN], …._`) lists BARE
+        # finding ids by design — the single weakness dot owns the bullet's
+        # severity signal (user 2026-07-15). Its F-refs are already linked by the
+        # composer, so skip label-suffix enrichment here; otherwise they expand to
+        # `[F-NNN] — Long Title` and reintroduce the clutter the bare form removes.
+        if "_Proven by " in line and "](#w-" in line:
+            continue
         new_line = line
 
         def _labelled(full: str, fallback_anchor: str) -> str:
@@ -3961,7 +3968,18 @@ def _annotate_id_refs(md_path: Path) -> int:
         if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
             out.append(chunk)
         else:
-            out.append(_M_REF_RE.sub(_m_sub, _F_REF_RE.sub(_f_sub, chunk)))
+            # The MS "Top Weaknesses" proof run lists BARE finding ids by design —
+            # the single weakness dot owns the bullet's severity signal (user
+            # 2026-07-15). Skip the F-dot retrofit on those lines only (M-refs are
+            # not present there, so the mitigation pass is a harmless no-op). Every
+            # other context keeps its finding severity dots.
+            lines_c = chunk.split("\n")
+            for j, ln in enumerate(lines_c):
+                if "_Proven by " in ln and "](#w-" in ln:
+                    lines_c[j] = _M_REF_RE.sub(_m_sub, ln)
+                else:
+                    lines_c[j] = _M_REF_RE.sub(_m_sub, _F_REF_RE.sub(_f_sub, ln))
+            out.append("\n".join(lines_c))
     new = "".join(out)
     if new != text:
         atomic_write_text(md_path, new)
