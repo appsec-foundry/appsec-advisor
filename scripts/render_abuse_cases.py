@@ -182,6 +182,26 @@ def _step_status_icon(verdict: str, controls_found: list) -> str:
     return "?"  # inconclusive / unknown
 
 
+def _step_unverified(sv: dict) -> bool:
+    """True when a step verdict is an untouched write-first pre-seed.
+
+    Canonical definition lives in ``verify_abuse_cases._is_untouched_preseed_step``
+    (kept in sync deliberately — both scripts are standalone): a step still
+    ``inconclusive`` with no ``reason`` AND no evidence ``excerpt`` is one the
+    verifier never re-wrote (it hit its turn ceiling before investigating this
+    step). Such a step is NOT a reasoned "couldn't decide" — it was never
+    examined — so a chain that carries one is only provisionally verified and the
+    render must say so rather than presenting the chain as fully checked
+    (2026-07-15 juice-shop AC-T-001: step 1 confirmed, steps 2-3 untouched).
+    """
+    if (sv.get("verdict") or "") != "inconclusive":
+        return False
+    if (sv.get("reason") or "").strip():
+        return False
+    excerpt = ((sv.get("evidence") or {}).get("excerpt") or "").strip()
+    return not excerpt
+
+
 # ---------------------------------------------------------------------------
 # Per-case rendering
 # ---------------------------------------------------------------------------
@@ -242,6 +262,11 @@ def render_case(
     chain_verdict = verdict.get("chain_verdict", "inconclusive")
     sv_by_step = {s.get("step"): s for s in verdict.get("step_verdicts") or []}
     match_steps = match_steps or {}
+    # Steps the verifier never actually examined (untouched write-first pre-seed
+    # after a mid-chain turn-ceiling cut-off). A chain carrying one is only
+    # provisionally verified — surfaced as a caveat in the render below so the
+    # "viable" verdict is not read as a fully-checked end-to-end result.
+    unverified_steps = sorted(n for n, sv in sv_by_step.items() if n is not None and _step_unverified(sv))
 
     rows = []
     matched_findings: list[dict] = []
@@ -295,6 +320,7 @@ def render_case(
         "prerequisite": (case.get("attacker") or {}).get("prerequisite", ""),
         "combined_risk": combined,
         "chain_verdict": chain_verdict,
+        "unverified_steps": unverified_steps,
         "rows": rows,
         "matched_finding_ids": matched_ids,
         "combined_risk_rationale": case.get("combined_risk_rationale", ""),
@@ -320,6 +346,19 @@ def _case_markdown(m: dict) -> str:
         f"**Verdict:** {icon} {label}"
     )
     out.append("")
+    # Honesty caveat: when the verifier hit its turn ceiling before examining
+    # some steps, the chain's verdict was computed from steps that were never
+    # actually checked. Flag it so a "viable" verdict is not misread as a
+    # fully-verified end-to-end result (2026-07-15 juice-shop AC-T-001/AC-T-002).
+    if m.get("unverified_steps"):
+        steps = ", ".join(str(s) for s in m["unverified_steps"])
+        plural = "s" if len(m["unverified_steps"]) > 1 else ""
+        out.append(
+            f"> ⚠ **Not verified end-to-end:** step{plural} {steps} reached the "
+            f"verifier's turn budget before investigation — this verdict is "
+            f"**provisional**; re-run to confirm the chain."
+        )
+        out.append("")
     out.append(f"**Goal:** {m['goal']}")
     out.append("")
     if m["prerequisite"]:
