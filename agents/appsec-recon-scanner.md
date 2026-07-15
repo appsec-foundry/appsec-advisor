@@ -135,6 +135,8 @@ Run these in parallel where possible:
 
 **M3.1 enforcement:** the orchestrator runs this pre-pass for you in `phase-group-recon.md → Step 0` so `.recon-patterns.json` should already exist when the recon-scanner agent starts. If it does, **skip the Bash call below and read the file directly**. Only invoke the script when the file is missing (orchestrator skipped it, or this agent was invoked standalone).
 
+> **Findings are capped per category** (40 examples each) to keep this file's Read from bloating your context — a recon pre-pass is a *signal*, not an exhaustive list. Each category's `count` is the **true** total and a `findings_truncated` field records how many were dropped; treat the listed findings as representative and re-grep on demand if you need more from a high-`count` category.
+
 ```bash
 if [ -f "$OUTPUT_DIR/.recon-patterns.json" ]; then
   echo "[recon-scanner]   ↳ Deterministic pre-pass already ran (orchestrator Step 0); reading .recon-patterns.json"

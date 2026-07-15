@@ -119,6 +119,19 @@ def detect_stall(output_dir: Path) -> bool:
     return False
 
 
+def cause_for(output_dir: Path, default: str = "session_death") -> tuple[str, str]:
+    """Return ``(kind, block)`` for a cut-off run — the single-source classifier.
+
+    ``kind`` is one of ``api_stall`` / ``session_death`` / ``budget``; ``block``
+    is the matching indented ``Cause:`` text. An in-window ``STALL_RECOVERY``
+    always wins over ``default``. Used by the cut-off banners (via ``main``) and
+    by ``appsec_status.py`` for its post-hoc last-run verdict so both surface the
+    same wording.
+    """
+    kind = "api_stall" if detect_stall(output_dir) else default
+    return kind, _CAUSE_BLOCKS[kind]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Emit the cause-aware cut-off banner block.")
     ap.add_argument("output_dir", help="Run output directory (holds .agent-run.log)")
@@ -131,9 +144,8 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    output_dir = Path(args.output_dir)
-    kind = "api_stall" if detect_stall(output_dir) else args.default_cause
-    sys.stdout.write(_CAUSE_BLOCKS[kind])
+    _, block = cause_for(Path(args.output_dir), args.default_cause)
+    sys.stdout.write(block)
     return 0
 
 

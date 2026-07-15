@@ -78,3 +78,27 @@ def test_missing_log_falls_back_to_default(tmp_path):
     r = _run(tmp_path / "does-not-exist", "--default", "session_death")
     assert r.returncode == 0
     assert "parent Claude Code session ended" in r.stdout
+
+
+def _import_cutoff_cause():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("cutoff_cause", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_cause_for_returns_kind_and_block(tmp_path):
+    mod = _import_cutoff_cause()
+    _write_run(tmp_path, start=1_000_000_000, log=_stall_line(1_000_000_500))
+    kind, block = mod.cause_for(tmp_path, "session_death")
+    assert kind == "api_stall"
+    assert "model API response stream stalled" in block
+
+
+def test_cause_for_default_when_no_stall(tmp_path):
+    mod = _import_cutoff_cause()
+    _write_run(tmp_path, start=1_000_000_000, log="")
+    assert mod.cause_for(tmp_path, "session_death")[0] == "session_death"
+    assert mod.cause_for(tmp_path, "budget")[0] == "budget"

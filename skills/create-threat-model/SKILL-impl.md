@@ -2053,14 +2053,23 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_state.py" \
     "$OUTPUT_DIR" --resume-guard --max-age-seconds 900
 GUARD_EXIT=$?
 if [ "$GUARD_EXIT" = "3" ]; then
-  # Helper already printed the user-facing reason. Drop the --resume
-  # intent and abort before dispatching Stage 1.
+  # Helper already printed the user-facing reason. Drop the --resume intent
+  # and abort before dispatching Stage 1. Release the lock this run acquired
+  # in "Skill-layer lock acquisition" above and clear the transient markers —
+  # the same cleanup the requirements pre-fetch gate performs on its abort.
+  # Without this, a refused resume leaves a fresh-heartbeat lock behind: the
+  # exact phantom-"scanning" state the guard exists to prevent, and one that
+  # makes the remediation it just printed (/appsec-advisor:clean-run-state)
+  # refuse while our heartbeat is still fresh.
+  rm -f "$OUTPUT_DIR/.appsec-lock"
+  rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
   exit 3
 fi
 ```
 
 Behaviour:
 - No checkpoint present → exit 0, resume proceeds (same as a fresh run).
+- **Checkpoint claims `phase≥1` but `.threat-modeling-context.md` is missing → exit 3** (checked before the status/age rules below). A checkpoint can outlive the intermediate files its phases produced — cleaned up, or written to a different `OUTPUT_DIR`. Resuming then silently re-runs the early phases and rebuilds the full analyst context on *every* attempt; the juice-shop 2026-07-14 loop stalled repeatedly this way, its `cache_read` ballooning 4.5M→9.8M tokens per resume. The helper points at re-running **without** `--resume` (auto-cleans the stale checkpoint) or `--rebuild`.
 - `status=completed` → exit 0, resume proceeds (the orchestrator will no-op and exit cleanly).
 - `status=started` or `status=aborted` AND checkpoint mtime ≤ 15 min → exit 0, resume proceeds.
 - `status=started` or `status=aborted` AND checkpoint mtime > 15 min → **exit 3**. The helper prints a remediation line pointing at `/appsec-advisor:clean-run-state` and `--full` / `--rebuild`. The skill does not dispatch Stage 1.
@@ -2079,7 +2088,12 @@ Behaviour:
        .stride-*.json             : <n files>
    ```
 3. Ask the user whether to resume from the last completed phase or start fresh.
-4. If resuming: pass `RESUME_FROM_PHASE=<N+1>` to the orchestrator (where N is the last completed phase). The orchestrator will skip completed phases and reuse existing intermediate files.
+4. If resuming, derive `RESUME_FROM_PHASE` **deterministically** from the checkpoint — never hand-compute `<N+1>`, because the phase field is a label, not an integer (`10b`, `9-merge` have no arithmetic successor, and `10b`+1 is undefined):
+   - `status=completed` **and** `need_render=true` (Stage 1 finished, Stage 2 never ran — the `needs_stage2` state) → **`RESUME_FROM_PHASE=11`**. This skips Phases 1–10b and re-enters at Phase-11 compose only, reusing `.threats-merged.json` + `.triage-flags.json` verbatim — the same Stage-2-only scope as the STAGE11 recovery dispatch (see §"Stage 2 - Report Rendering (recovery dispatch)"). This is the value the `need_render` intercept's "dispatch Stage 2 only" recommendation resolves to.
+   - `status=completed` at a **numeric** phase `N` → `RESUME_FROM_PHASE=N+1` (phase `N` is done; resume at the next phase).
+   - `status=started` or `status=aborted` at phase `N` → `RESUME_FROM_PHASE=N` (phase `N` was interrupted mid-flight — re-run it, do **not** skip it).
+
+   The orchestrator jumps directly to the specified phase and reuses existing intermediate files; any value it does not recognise falls back to the full Phases 1–11 pipeline (`agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT — early-exit branch"), so an unexpected label degrades safely to a fresh run rather than corrupting state.
 5. If starting fresh: proceed as normal (no `RESUME_FROM_PHASE`).
 
 If no checkpoint exists and `--resume` was passed, inform the user and proceed with a fresh assessment.

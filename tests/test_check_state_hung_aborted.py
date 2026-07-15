@@ -106,14 +106,47 @@ def test_aborted_checkpoint_is_cleaned(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+def _seed_resumable(tmp_path: Path, checkpoint_line: str) -> None:
+    """Seed a *valid* resumable state: checkpoint + the Phase-1 context file
+    its phases would have produced. Guards against the artifact-existence gate
+    firing in tests that mean to exercise a different dimension."""
+    (tmp_path / ".appsec-checkpoint").write_text(checkpoint_line)
+    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
+
+
 def test_resume_guard_allows_fresh_checkpoint(tmp_path: Path):
-    (tmp_path / ".appsec-checkpoint").write_text("phase=5 status=started\n")
+    _seed_resumable(tmp_path, "phase=5 status=started\n")
     code, msg = check_state._resume_guard_result(tmp_path, 900)
     assert code == 0
 
 
 def test_resume_guard_allows_completed_checkpoint(tmp_path: Path):
-    (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
+    _seed_resumable(tmp_path, "phase=11 status=completed\n")
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+    assert code == 0
+
+
+def test_resume_guard_refuses_completed_checkpoint_missing_context(tmp_path: Path):
+    # The juice-shop 2026-07-14 loop: checkpoint says done, but the Phase-1
+    # context file is gone → resume would re-run early phases and stall.
+    (tmp_path / ".appsec-checkpoint").write_text("phase=2 status=completed\n")
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+    assert code == 3
+    assert "threat-modeling-context.md is missing" in msg
+    assert "WITHOUT --resume" in msg
+
+
+def test_resume_guard_missing_context_started_also_refused(tmp_path: Path):
+    (tmp_path / ".appsec-checkpoint").write_text("phase=9 status=started\n")
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+    assert code == 3
+    assert "threat-modeling-context.md is missing" in msg
+
+
+def test_resume_guard_phase_zero_missing_context_not_refused(tmp_path: Path):
+    # Phase 0 (nothing completed) has no early artifact to promise — the
+    # artifact gate must not fire; the normal status path decides.
+    (tmp_path / ".appsec-checkpoint").write_text("phase=0 status=started\n")
     code, msg = check_state._resume_guard_result(tmp_path, 900)
     assert code == 0
 
@@ -167,6 +200,7 @@ def test_resume_guard_cli_writes_json(tmp_path: Path, capsys):
 
 def test_resume_guard_cli_exit_0_when_allowed(tmp_path: Path, capsys):
     (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
+    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
     code = check_state.main([str(tmp_path), "--resume-guard"])
     assert code == 0
 
@@ -174,6 +208,7 @@ def test_resume_guard_cli_exit_0_when_allowed(tmp_path: Path, capsys):
 def test_resume_guard_configurable_max_age(tmp_path: Path):
     cp = tmp_path / ".appsec-checkpoint"
     cp.write_text("phase=3 status=started\n")
+    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
     old = time.time() - 300  # 5 min
     os.utime(cp, (old, old))
     # With default 900 s window → allowed
@@ -229,6 +264,7 @@ def test_resume_guard_allows_stale_checkpoint_when_lock_proves_dead(tmp_path: Pa
     """Stale checkpoint + dead PID + stale heartbeat → resume allowed."""
     cp = tmp_path / ".appsec-checkpoint"
     cp.write_text("phase=3 status=started\n")
+    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
     old_cp = time.time() - 7200  # 2 h — well past 15 min
     os.utime(cp, (old_cp, old_cp))
 
@@ -264,6 +300,7 @@ def test_resume_guard_dead_pid_v1_lock_without_heartbeat(tmp_path: Path):
     → resume allowed (heartbeat absence is not a blocker when PID is dead)."""
     cp = tmp_path / ".appsec-checkpoint"
     cp.write_text("phase=5 status=started\n")
+    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
     old_cp = time.time() - 7200
     os.utime(cp, (old_cp, old_cp))
 

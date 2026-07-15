@@ -327,6 +327,7 @@ Prefer small, consistent changes. Before changing behavior, identify affected co
 | Org-profile schema or packaging scripts | example org packaging repo still builds cleanly |
 | Template (`.j2`) | renderer cell-builder, schema fields, `data/sections-contract.yaml`, render/QA tests |
 | Cleanup or runtime state | `scripts/runtime_cleanup.py`, cleanup/audit-artifact docs, `tests/test_runtime_cleanup.py` |
+| Checkpoint, resume, or run-state semantics (`.appsec-checkpoint` status vocabulary, `need_render`/`needs_stage2`, resume-guard freshness window, `RESUME_FROM_PHASE` values) | producer (`agents/appsec-threat-analyst.md` + `agents/phases/phase-group-finalization.md` checkpoint writes), gate (`scripts/check_state.py` `--resume-guard`/`clean()`), consumer (`skills/create-threat-model/SKILL-impl.md` §Resume from Checkpoint + pre-flight auto-clean skip), `tests/test_check_state*.py` — keep the four in sync |
 | Deterministic tail or source scanner | replay a golden fixture with `scripts/threat_fixture.py`; see `docs/internal/runbooks/threat-fixture.md` |
 | New run artifact/log/sidecar that could carry findings | `scripts/diagnostic_bundle.py` sensitive-content exclusions and `tests/test_diagnostic_bundle.py` |
 

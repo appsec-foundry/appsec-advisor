@@ -38,6 +38,16 @@ Read it like this:
   checkpoint → **stalled or dead** (a run driven from another session that
   crashed leaves no process to find, so age is the signal, not `ps`).
 
+When the previous run ended **without** producing `threat-model.md` and no scan
+is currently live, the snapshot leads with a **last-run verdict** — the same
+`cutoff_cause.py` classification the in-run cut-off banners use (`api_stall` vs
+`session_death` vs `budget`), plus the `--resume` recovery hint. This is the
+robust surface for the plugin-fault-vs-API question: the in-run banner only
+prints while the orchestrator turn survives, but this verdict renders in the
+next live status turn regardless. It is suppressed while a scan is genuinely
+running (lock held by a live pid) so an in-progress run is never mislabelled.
+The `--json` forms carry it under the `cutoff` key (`{kind, block}`, or `null`).
+
 Add `--json` for cron-style polling from a second terminal or the IDE:
 
 ```bash

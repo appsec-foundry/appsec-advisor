@@ -206,6 +206,34 @@ def test_classify_needs_stage2_false_when_md_present(tmp_path: Path):
     assert rep["needs_stage2"] is False
 
 
+def test_clean_preserves_needs_stage2_checkpoint(tmp_path: Path):
+    """The --resume pre-flight auto-clean must NOT wipe the need_render recovery
+    signal: it reaps the stale lock but keeps .appsec-checkpoint so --resume can
+    still dispatch Stage 2 only (regression — the checkpoint was being deleted)."""
+    cp = tmp_path / ".appsec-checkpoint"
+    cp.write_text("phase=10b status=completed need_render=true timestamp=x\n")
+    lock = tmp_path / ".appsec-lock"
+    lock.write_text(f"{_dead_pid()}\n1000000000\n")  # dead PID + ancient heartbeat
+    result = cs.clean(tmp_path)
+    assert result["skipped"] is False
+    assert ".appsec-lock" in result["removed"]  # stale lock reaped
+    assert ".appsec-checkpoint" not in result["removed"]  # recovery signal kept
+    assert ".appsec-checkpoint" in result["preserved"]
+    assert cp.exists()  # survives on disk
+    assert not lock.exists()
+
+
+def test_clean_wipes_completed_checkpoint_when_not_needs_stage2(tmp_path: Path):
+    """A completed checkpoint WITHOUT need_render (e.g. threat-model.md present)
+    is not a recovery signal — clean() still reaps it as before."""
+    cp = tmp_path / ".appsec-checkpoint"
+    cp.write_text("phase=11 status=completed\n")
+    result = cs.clean(tmp_path)
+    assert ".appsec-checkpoint" in result["removed"]
+    assert result.get("preserved") == []
+    assert not cp.exists()
+
+
 # ---------------------------------------------------------------------------
 # _render_text branches
 # ---------------------------------------------------------------------------
@@ -339,6 +367,7 @@ def test_main_resume_guard_missing_dir_json(tmp_path: Path, capsys):
 
 def test_main_resume_guard_allowed_json(tmp_path: Path, capsys):
     (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
+    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
     code = cs.main([str(tmp_path), "--resume-guard", "--json"])
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -348,6 +377,7 @@ def test_main_resume_guard_allowed_json(tmp_path: Path, capsys):
 
 def test_main_resume_guard_text_marker(tmp_path: Path, capsys):
     (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
+    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
     code = cs.main([str(tmp_path), "--resume-guard"])
     assert code == 0
     assert "✓" in capsys.readouterr().out  # check mark
@@ -381,6 +411,9 @@ def test_main_auto_clean_returns_0_on_clean(tmp_path: Path, capsys):
 def test_resume_guard_checkpoint_stat_oserror(tmp_path: Path, monkeypatch):
     cp = tmp_path / ".appsec-checkpoint"
     cp.write_text("phase=5 status=started\n")
+    # Present so the artifact-existence gate passes and the age/mtime path
+    # (which this test targets) is reached; boom only counts checkpoint stats.
+    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
     orig_stat = Path.stat
     state = {"n": 0}
 
