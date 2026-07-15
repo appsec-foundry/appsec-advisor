@@ -3765,3 +3765,31 @@ def test_linkify_anchors_skips_top_weaknesses_proof_titles(tmp_path: Path):
     assert "H2 Database Console" not in tw_line
     # A normal F-ref elsewhere DID get its title suffix.
     assert "F-014](#f-014) — H2 Database Console" in normal_line
+
+
+def test_enrichment_skips_attack_tree_findings_pointer(tmp_path: Path):
+    """The Critical Attack Tree findings pointer lists bare `[F-NNN]` ids; neither
+    the dot retrofit nor the title-suffix pass may decorate them (the tree above
+    already carries id + title). Guards against the double-title bug where a
+    space-separated (non-em-dash) title triggered a second appended title."""
+    md = _write_tw_pair(
+        tmp_path,
+        "## Critical Attack Tree\n\n"
+        "**Findings** (full detail in [§8 Findings Register](#8-findings-register)): "
+        "[F-013](#f-013) · [F-014](#f-014)\n\n"
+        "Normal prose ref to [F-013](#f-013) elsewhere.\n",
+    )
+    # Title-suffix pass.
+    _report, after_titles = qa.linkify_anchors(md)
+    md.write_text(after_titles)
+    # Dot retrofit.
+    qa._annotate_id_refs(md)
+    out = md.read_text()
+    ptr = next(ln for ln in out.splitlines() if "**Findings** (full detail" in ln)
+    normal = next(ln for ln in out.splitlines() if "Normal prose" in ln)
+    # Pointer stays bare: no dot, no title, and (critically) no doubled title.
+    assert "🔴 [F-013]" not in ptr
+    assert "Anonymous Attacker" not in ptr
+    assert ptr.count("[F-013](#f-013)") == 1
+    # A normal ref elsewhere still gets its dot + title.
+    assert "🔴 [F-013](#f-013) — Anonymous Attacker" in normal

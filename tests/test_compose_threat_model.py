@@ -1456,6 +1456,22 @@ def test_attack_tree_findings_pointer_dedups_and_skips_non_leaves() -> None:
     assert findings[0]["title"] == "SQLi login bypass"
 
 
+def test_is_bare_finding_ref_line() -> None:
+    """The bare-finding-ref predicate matches exactly the two contexts that list
+    undotted, untitled `[F-NNN]` ids (MS Top Weaknesses proof run + Critical
+    Attack Tree findings pointer) and nothing else."""
+    f = compose._is_bare_finding_ref_line
+    # Top Weaknesses proof run.
+    assert f("- 🔴 **[W-001](#w-001) — X** (Critical) — d. _Proven by [F-013](#f-013)._")
+    # Critical Attack Tree findings pointer.
+    assert f("**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001)")
+    # Normal contexts keep their enrichment.
+    assert not f("🔴 [F-005](#f-005) — OS Command Injection in a Verdict bullet")
+    assert not f("| 🔴 [F-001](#f-001) — Insecure JWT | C-02 |")
+    # A §8 reference that is NOT the pointer line (no finding list) stays enriched.
+    assert not f("See the [§8 Findings Register](#8-findings-register) for detail.")
+
+
 def test_normalize_visible_threat_ids() -> None:
     """Global backstop: every reader-visible T-NNN → F-NNN (link form rewrites
     text AND anchor; bare/prefixed prose and mermaid labels too), while

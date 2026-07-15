@@ -12185,6 +12185,26 @@ def _apply_outside_changelog(md: str, fn) -> str:
     return fn(md[:start]) + md[start:end] + fn(md[end:])
 
 
+def _is_bare_finding_ref_line(line: str) -> bool:
+    """True for lines that deliberately list BARE finding ids — no severity dot,
+    no ``— Title`` suffix — because a single higher-level signal already owns the
+    context. The global finding-ref enrichment passes (severity-dot retrofit in
+    this module, plus ``linkify_anchors`` / ``_annotate_id_refs`` in qa_checks)
+    skip these lines so their `[F-NNN](#f-nnn)` links stay compact.
+
+    Two contexts (user 2026-07-15):
+      • MS "Top Weaknesses" proof run — the single weakness dot owns the bullet's
+        severity signal (`… _Proven by [F-NNN], …._`).
+      • Critical Attack Tree findings pointer — the tree leaves above already
+        carry each finding's id + title, so the pointer is a bare jump-index.
+    """
+    if "_Proven by " in line and "](#w-" in line:
+        return True
+    if "full detail in" in line and "#8-findings-register" in line:
+        return True
+    return False
+
+
 def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
     """Prefix every finding cross-reference ``[F-NNN](#f-nnn)`` with its
     severity glyph so §5 Attack Surface and §7 Security Architecture carry the
@@ -12209,17 +12229,15 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
         if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
             out_chunks.append(chunk)
         else:
-            # The MS "Top Weaknesses" proof run (`… _Proven by [F-NNN], …._`)
-            # deliberately lists BARE finding ids so the single weakness dot owns
-            # the bullet's severity signal. The global F-dot retrofit would put an
-            # identical dot in front of every F-ref, collapsing the weakness→finding
+            # Bare-finding-ref lines (MS Top Weaknesses proof run, Critical Attack
+            # Tree findings pointer) deliberately list undotted `[F-NNN]` ids — a
+            # single higher-level signal owns the context. The global F-dot retrofit
+            # would put an identical dot in front of every ref, collapsing the
             # hierarchy into a flat row of same-looking dots (user 2026-07-15). Skip
-            # only those lines (uniquely identified by an italic `_Proven by ` run
-            # alongside a `[W-NNN](#w-nnn)` link); the weakness dot itself is emitted
-            # directly by _render_ms_top_weaknesses and is unaffected.
+            # only those lines; see _is_bare_finding_ref_line.
             lines = chunk.split("\n")
             for j, ln in enumerate(lines):
-                if "_Proven by " in ln and "](#w-" in ln:
+                if _is_bare_finding_ref_line(ln):
                     continue
                 lines[j] = _FINDING_DOT_REF_RE.sub(_sub, ln)
             out_chunks.append("\n".join(lines))
