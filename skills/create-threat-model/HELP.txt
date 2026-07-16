@@ -43,7 +43,8 @@ OUTPUT
                                change summary, next steps, and run statistics)
   --scan-manifest              Write a list of every file scanned to .scan-manifest.txt
   --slug [<value>]             Also emit a copy-ready, postfix-stamped set
-                               (threat-model-<slug>.md / .yaml / .figure*.svg / …)
+                               (threat-model-<slug>.md / .yaml / .figure*.svg /
+                               .sarif.json / .pdf / .html / pentest-tasks-<slug>.yaml)
                                so several models share one directory without
                                overwriting. Bare --slug picks a random postfix;
                                --slug <value> uses it (e.g. juice-shop-quick →

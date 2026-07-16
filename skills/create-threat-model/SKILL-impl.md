@@ -778,7 +778,7 @@ Parse the user's arguments for the following flags:
 | `--abuse-case-file <path>` | Add a YAML case file below the target repository for this scan. May be repeated; paths outside the repository are rejected. | none |
 | `--only-abuse-case <ID>` | Restrict this scan's verification to active case IDs. May be repeated; an unknown ID fails the stage. | all active cases |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
-| `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html`, figure references rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
+| `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json` / `pentest-tasks-<slug>.yaml`, figure and pentest-tasks references rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
@@ -4600,7 +4600,7 @@ fi
 
 **The authoritative stamp is deterministic and already ran.** The mandatory
 `orchestration_controller.py next` finalize gate stamps the core deliverables
-(`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.sarif.json`) the moment
+(`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.sarif.json` / `pentest-tasks-<slug>.yaml`) the moment
 it returns `action=complete` — see `_stamp_if_configured`. That gate reads the
 durable on-disk `.skill-config.json`, so the stamp survives a context compaction
 that would wipe the in-memory `$SLUG` binding (2026-07-15 juice-shop: a
@@ -4608,7 +4608,7 @@ compaction-resumed run skipped this trailing block entirely and shipped no
 stamped set). This block is therefore a **best-effort top-up** whose only unique
 job is stamping the PDF / HTML, which the skill exports *after* the `next` gate.
 
-Runs **last** — after the PDF / HTML exports — so the stamped copy set includes every produced deliverable. When the resolved config carries a non-null `slug` (from `--slug [<value>]`), copy the canonical deliverables to a postfix-stamped, copy-ready set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json`, whichever exist), with copied figure references inside the copied Markdown repointed at the stamped SVGs. The canonical `threat-model.*` files are left untouched (the pipeline, gates, and incremental baseline depend on them). `stamp_threat_model.py` is idempotent per slug, so re-stamping here after the `next` gate never conflicts.
+Runs **last** — after the PDF / HTML exports — so the stamped copy set includes every produced deliverable. When the resolved config carries a non-null `slug` (from `--slug [<value>]`), copy the canonical deliverables to a postfix-stamped, copy-ready set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json` / `pentest-tasks-<slug>.yaml`, whichever exist), with copied figure and pentest-tasks references inside the copied Markdown repointed at the stamped files. The canonical `threat-model.*` files are left untouched (the pipeline, gates, and incremental baseline depend on them). `stamp_threat_model.py` is idempotent per slug, so re-stamping here after the `next` gate never conflicts.
 
 **Non-fatal** — a copy failure must not fail the assessment; the canonical model is already complete.
 

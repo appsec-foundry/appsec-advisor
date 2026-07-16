@@ -26,6 +26,7 @@ All notable changes to this project are documented here.
 - IAC-005 no longer fires an npm `--ignore-scripts` finding on non-JavaScript images (e.g. Java/Maven).
 - Cut-off runs now say what happened, and tell an API stall apart from a lost session. Retries reuse the existing context instead of rebuilding it.
 - Long runs keep their place when the context window is compacted.
+- `--slug` now also stamps the pentest-tasks export (`pentest-tasks-<slug>.yaml`), so several models with pentest tasks can share one output directory without overwriting each other.
 
 ## 0.4.0-beta (2026-07-07)
 

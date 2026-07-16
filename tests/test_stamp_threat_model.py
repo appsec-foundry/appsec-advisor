@@ -12,6 +12,8 @@ def _seed_model(d: Path, *, figure2: bool = True, optional_outputs: bool = False
     md = "# Threat Model\n\n![Figure 1](threat-model.figure1.svg)\n"
     if figure2:
         md += "\n![Figure 2](threat-model.figure2.svg)\n"
+    if optional_outputs:
+        md += "\nEndpoint catalog exported to `pentest-tasks.yaml`.\n"
     (d / "threat-model.md").write_text(md, encoding="utf-8")
     (d / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
     (d / "threat-model.figure1.svg").write_text("<svg/>\n", encoding="utf-8")
@@ -21,6 +23,7 @@ def _seed_model(d: Path, *, figure2: bool = True, optional_outputs: bool = False
         (d / "threat-model.pdf").write_bytes(b"%PDF\n")
         (d / "threat-model.html").write_text("<html></html>\n", encoding="utf-8")
         (d / "threat-model.sarif.json").write_text('{"version":"2.1.0"}\n', encoding="utf-8")
+        (d / "pentest-tasks.yaml").write_text("meta: {}\ntasks: []\n", encoding="utf-8")
 
 
 def _run(*args: str):
@@ -80,6 +83,34 @@ def test_optional_deliverables_are_stamped(tmp_path):
     assert (tmp_path / "threat-model-bundle.pdf").is_file()
     assert (tmp_path / "threat-model-bundle.html").is_file()
     assert (tmp_path / "threat-model-bundle.sarif.json").is_file()
+
+
+def test_pentest_tasks_is_stamped_with_own_prefix(tmp_path):
+    _seed_model(tmp_path, optional_outputs=True)
+    r = _run("--output-dir", str(tmp_path), "--slug", "bundle")
+    assert r.returncode == 0, r.stderr
+    # Stamped copy uses the pentest-tasks prefix (not mangled to a threat-model name).
+    assert (tmp_path / "pentest-tasks-bundle.yaml").is_file()
+    # Canonical file is left untouched.
+    assert (tmp_path / "pentest-tasks.yaml").is_file()
+    # The prose reference inside the stamped md points at the stamped copy.
+    md_text = (tmp_path / "threat-model-bundle.md").read_text(encoding="utf-8")
+    assert "pentest-tasks-bundle.yaml" in md_text
+    assert "`pentest-tasks.yaml`" not in md_text
+
+
+def test_pentest_tasks_ref_not_rewritten_when_absent(tmp_path):
+    # md mentions pentest-tasks.yaml but the file was never exported → leave the
+    # prose reference as-is (mirrors the missing-figure guard).
+    _seed_model(tmp_path, figure2=False)
+    (tmp_path / "threat-model.md").write_text(
+        "# Threat Model\n\nSee `pentest-tasks.yaml`.\n\n![Figure 1](threat-model.figure1.svg)\n",
+        encoding="utf-8",
+    )
+    r = _run("--output-dir", str(tmp_path), "--slug", "nopt")
+    assert r.returncode == 0, r.stderr
+    assert not (tmp_path / "pentest-tasks-nopt.yaml").exists()
+    assert "`pentest-tasks.yaml`" in (tmp_path / "threat-model-nopt.md").read_text(encoding="utf-8")
 
 
 def test_same_slug_overwrites_previous_stamped_set(tmp_path):

@@ -46,7 +46,7 @@ else
        -o -name "threat-model.pdf" -o -name "threat-model.html" -o -name "threat-model.figure*.svg" \
        -o -name "threat-model-*.md" -o -name "threat-model-*.yaml" -o -name "threat-model-*.sarif.json" \
        -o -name "threat-model-*.pdf" -o -name "threat-model-*.html" -o -name "threat-model-*.figure*.svg" \
-       -o -name "pentest-tasks.yaml" -o -name ".architect-review.md" \
+       -o -name "pentest-tasks.yaml" -o -name "pentest-tasks-*.yaml" -o -name ".architect-review.md" \
        -o -name ".threat-modeling-context.md" -o -name ".recon-summary.md" \
        -o -name ".sca-practice-findings.json" -o -name ".known-bad-libs-findings.json" \
        -o -name ".stride-*.json" -o -name ".threats-merged.json" -o -name ".triage-flags.json" \

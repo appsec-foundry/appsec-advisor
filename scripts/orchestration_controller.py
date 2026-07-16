@@ -111,6 +111,7 @@ _REBUILD_GLOBS = (
     "threat-model-*.pdf",
     "threat-model-*.html",
     "threat-model-*.figure*.svg",
+    "pentest-tasks-*.yaml",
     ".stride-*.json",
     ".merge-*.json",
 )
