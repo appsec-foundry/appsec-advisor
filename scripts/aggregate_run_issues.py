@@ -1206,6 +1206,75 @@ def _now_iso_z() -> str:
 SCHEMA_VERSION = 1
 
 
+def reconcile_recovered_events(agent_log: list[tuple[int, str]], output_dir: Path) -> dict:
+    """Post-hoc all-clear for transient-but-recovered forensic events.
+
+    The harness reports every sub-agent stop as ``reason=unknown``, so at emit
+    time a benign compaction-recovery is indistinguishable from a real session
+    death: the raw ``.agent-run.log`` carries ``WARN SESSION_ABORTED_MIDRUN`` and
+    a per-invocation ``FATAL: schema validation failed`` that a later re-run
+    recovered. Both lines are truthful when written but alarming to a forensic
+    reader, who must otherwise correlate abort/resume pairs by hand to learn the
+    run was actually fine — the exact hand-work that drove an expensive
+    investigation on the 2026-07-16 juice-shop run.
+
+    This classifies each transient event as recovered (the run reached
+    completion) or unrecovered, reusing the already-loaded ``agent_log``: a
+    deterministic scan, zero LLM cost, no extra pass or invocation. Purely
+    additive — it never rewrites or downgrades the original lines.
+    """
+    aborts = 0
+    fatals = 0
+    build_ok = False
+    for _ln, raw in agent_log:
+        ev = _parse_event_line(raw)
+        if ev and ev.get("event") == "SESSION_ABORTED_MIDRUN":
+            aborts += 1
+        if "FATAL: schema validation failed" in raw:
+            fatals += 1
+        if "threat-model.yaml built deterministically" in raw or "YAML_GATE_PASSED" in raw:
+            build_ok = True
+    # Most reliable end-state signal: the canonical deliverable exists. Fall back
+    # to the yaml-gate-passed marker for a mid-pipeline reconciliation.
+    completed = (output_dir / "threat-model.md").exists() or build_ok
+    # A build-FATAL is transient only when a later build actually succeeded.
+    transient_fatals = fatals if build_ok else 0
+    unrecovered = (0 if completed else aborts) + (0 if build_ok else fatals)
+    return {
+        "mid_run_stops": aborts,
+        "transient_build_fatals": transient_fatals,
+        "run_completed": completed,
+        "unrecovered": unrecovered,
+    }
+
+
+def _append_reconciliation_line(output_dir: Path, rec: dict) -> None:
+    """Append one RUN_RECONCILED summary line to .agent-run.log (best-effort).
+
+    Silent when nothing transient happened, so a clean run gains no new line.
+    """
+    if rec["mid_run_stops"] == 0 and rec["transient_build_fatals"] == 0 and rec["unrecovered"] == 0:
+        return
+    if rec["unrecovered"] == 0:
+        level = "INFO "
+        detail = (
+            f"{rec['mid_run_stops']} mid-run stop(s) + {rec['transient_build_fatals']} "
+            f"transient build-FATAL — all recovered (run reached completion); 0 unrecovered"
+        )
+    else:
+        level = "WARN "
+        detail = (
+            f"{rec['unrecovered']} UNRECOVERED event(s) — run did not reach completion; inspect "
+            f"({rec['mid_run_stops']} mid-run stop(s), {rec['transient_build_fatals']} transient build-FATAL)"
+        )
+    line = f"{_now_iso_z()}  [--------]  {level}  skill  RUN_RECONCILED  {detail}\n"
+    try:
+        with (output_dir / ".agent-run.log").open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except OSError:
+        pass  # best-effort — a log append must never fail the run
+
+
 def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> dict:
     """Build the .run-issues.json structure (without fix_recommendation —
     that is added by recommend_fixes.py in a separate pass).
@@ -1267,6 +1336,17 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
         "auto_applicable_fixes": 0,  # filled in by recommend_fixes.py
     }
     run_status = "issues" if issues else "clean"
+
+    # Post-hoc all-clear (additive, deterministic, zero LLM cost): annotate the
+    # forensic log with a single RUN_RECONCILED line so transient-but-recovered
+    # SESSION_ABORTED_MIDRUN / build-FATAL events are visibly reconciled against
+    # the final run state, sparing a reader the abort/resume correlation by hand.
+    # Skip if already present (a re-run within the same scope) so it stays unique.
+    try:
+        if not any("RUN_RECONCILED" in raw for _ln, raw in agent_log):
+            _append_reconciliation_line(output_dir, reconcile_recovered_events(agent_log, output_dir))
+    except Exception:
+        pass  # never let the annotation break aggregation
 
     return {
         "schema_version": SCHEMA_VERSION,

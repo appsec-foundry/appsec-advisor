@@ -957,3 +957,74 @@ class TestMainCLI:
         rc = agg.main([str(tmp_path), "--no-recommend"])
         assert rc == 1
         assert "cannot write" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# reconcile_recovered_events + RUN_RECONCILED annotation
+# ---------------------------------------------------------------------------
+
+
+def _abort(phase: str) -> str:
+    return f"2026-07-16T08:00:00Z  [--------]  WARN   threat-analyst  SESSION_ABORTED_MIDRUN   phase={phase}  reason=unknown"
+
+
+def test_reconcile_all_recovered_when_run_completed(tmp_path):
+    # 2 mid-run stops + 1 build-FATAL, but a later build succeeded and the
+    # deliverable exists → everything recovered, nothing unrecovered.
+    (tmp_path / "threat-model.md").write_text("# report", encoding="utf-8")
+    log = [
+        (1, _abort("8")),
+        (2, "FATAL: schema validation failed"),
+        (3, "✓ threat-model.yaml built deterministically — 68 threats"),
+        (4, _abort("11")),
+    ]
+    rec = agg.reconcile_recovered_events(log, tmp_path)
+    assert rec == {
+        "mid_run_stops": 2,
+        "transient_build_fatals": 1,
+        "run_completed": True,
+        "unrecovered": 0,
+    }
+
+
+def test_reconcile_flags_unrecovered_when_no_completion(tmp_path):
+    # A build-FATAL with no successful rebuild and no deliverable → unrecovered.
+    log = [
+        (1, _abort("10b")),
+        (2, "FATAL: schema validation failed"),
+    ]
+    rec = agg.reconcile_recovered_events(log, tmp_path)
+    assert rec["run_completed"] is False
+    assert rec["transient_build_fatals"] == 0  # the FATAL was NOT recovered
+    assert rec["unrecovered"] == 2  # 1 abort (no completion) + 1 unrecovered FATAL
+
+
+def test_append_reconciliation_writes_all_clear_line(tmp_path):
+    log_path = tmp_path / ".agent-run.log"
+    log_path.write_text("existing\n", encoding="utf-8")
+    agg._append_reconciliation_line(
+        tmp_path, {"mid_run_stops": 3, "transient_build_fatals": 1, "run_completed": True, "unrecovered": 0}
+    )
+    tail = log_path.read_text(encoding="utf-8")
+    assert "RUN_RECONCILED" in tail
+    assert "all recovered" in tail
+    assert "INFO" in tail.splitlines()[-1]
+
+
+def test_append_reconciliation_silent_when_nothing_transient(tmp_path):
+    log_path = tmp_path / ".agent-run.log"
+    log_path.write_text("existing\n", encoding="utf-8")
+    agg._append_reconciliation_line(
+        tmp_path, {"mid_run_stops": 0, "transient_build_fatals": 0, "run_completed": True, "unrecovered": 0}
+    )
+    assert log_path.read_text(encoding="utf-8") == "existing\n"  # untouched
+
+
+def test_append_reconciliation_warns_on_unrecovered(tmp_path):
+    log_path = tmp_path / ".agent-run.log"
+    log_path.write_text("", encoding="utf-8")
+    agg._append_reconciliation_line(
+        tmp_path, {"mid_run_stops": 1, "transient_build_fatals": 0, "run_completed": False, "unrecovered": 1}
+    )
+    last = log_path.read_text(encoding="utf-8").splitlines()[-1]
+    assert "WARN" in last and "UNRECOVERED" in last
