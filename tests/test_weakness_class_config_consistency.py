@@ -80,3 +80,22 @@ def test_security_library_domains_reference_known_classes() -> None:
     lib = yaml.safe_load((DATA / "security-libraries.yaml").read_text())
     keys = set(lib.get("domains", {}))
     assert keys <= clusters, f"security-libraries.yaml domains reference unknown weakness classes: {keys - clusters}"
+
+
+def test_input_validation_mechanism_narrative_is_not_blacklist_asserting() -> None:
+    """The blacklist-only-input-validation mechanism is also reached for the
+    ARCH-INPUT-001 'missing centralized input validation' signal, so its narrative
+    must hold when validation is ABSENT — not assert a blacklist that may not
+    exist (insecure-spring-app W-003: register claimed a regex blacklist on paths
+    that had no @Valid / bean-validation at all). Guards that regression."""
+    doc = yaml.safe_load((DATA / "weakness-classes.yaml").read_text())
+    m = (doc.get("mechanism_guidance") or {}).get("blacklist-only-input-validation")
+    assert m, "blacklist-only-input-validation mechanism missing"
+    name = m["weakness_name"].lower()
+    desc = m["description"].lower()
+    # Must not assert a present blacklist control as THE weakness.
+    assert "relies on regex blacklist" not in name
+    # Narrative must acknowledge the absent-validation case, not only blacklist.
+    assert "absent" in desc
+    # Fix direction stays allowlist/schema enforcement.
+    assert "allowlist" in m["structural_fix"].lower() or "schema" in m["structural_fix"].lower()

@@ -321,12 +321,22 @@ mechanism_guidance:
       provide one parameterised repository or query-builder path and prohibit
       application-value interpolation in database queries
   blacklist-only-input-validation:
-    weakness_name: "API validation relies on regex blacklists"
+    # Reached both when the analyst describes blacklist/denylist validation AND
+    # when the ARCH-INPUT-001 "missing centralized input validation" signal fires,
+    # so the narrative must hold whether validation is ABSENT or merely
+    # blacklist-based. It previously asserted "relies on regex blacklists", which
+    # mischaracterised codebases that have NO validation at all — no @Valid /
+    # bean-validation constraints on the vulnerable parameters (insecure-spring-app
+    # W-003, 2026-07-16: the register claimed a blacklist that did not exist).
+    # Keep the phrasing consequence-focused, not present-control-asserting.
+    weakness_name: "Input handling lacks enforced boundary validation"
     cwes: [CWE-20, CWE-22, CWE-23]
     description: >-
-      Request validation rejects selected bad patterns but does not define the
-      accepted data shape at the server boundary. New encodings and unanticipated
-      input forms can therefore reach downstream parsers or interpreters.
+      Request handlers do not validate input against one enforced server-side
+      schema or allowlist at the boundary — validation is either absent on the
+      vulnerable parameters or limited to rejecting selected bad patterns (a
+      blacklist). New encodings and unanticipated input forms can therefore reach
+      downstream parsers or interpreters.
     structural_fix: >-
       enforce server-side schemas and domain-specific allowlists before input
       reaches parsing, persistence, or command construction
