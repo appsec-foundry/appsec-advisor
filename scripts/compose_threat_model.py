@@ -15256,10 +15256,7 @@ def _render_systemic_weaknesses(ctx: RenderContext) -> str:
         fids = _weakness_finding_ids(w)
         comps = w.get("affected_components") or []
         nf, nc = len(fids), len(comps)
-        meta = (
-            f"{basis} · {nf} finding{'s' if nf != 1 else ''} · "
-            f"{nc} component{'s' if nc != 1 else ''}"
-        )
+        meta = f"{basis} · {nf} finding{'s' if nf != 1 else ''} · {nc} component{'s' if nc != 1 else ''}"
         lead = f"{sev_disp} · " if sev_disp else ""
         out.append(f"- {lead}[{wid}](#{wid.lower()}) — {title} · {meta}")
     out.append("")

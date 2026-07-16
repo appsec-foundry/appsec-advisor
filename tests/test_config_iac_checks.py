@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
 import yaml
 
 CHECKS_PATH = Path(__file__).parent.parent / "data" / "config-iac-checks.yaml"

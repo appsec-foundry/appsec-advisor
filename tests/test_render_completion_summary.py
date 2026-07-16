@@ -1368,6 +1368,7 @@ class TestStampSlugBackstop:
         (tmp_path / "threat-model.md").write_text("# report\n")
         cfg = {"slug": slug} if slug is not None else {}
         import json as _json
+
         (tmp_path / ".skill-config.json").write_text(_json.dumps(cfg))
 
     def test_stamps_when_slug_set_and_no_stamped_copy(self, tmp_path: Path, monkeypatch):
@@ -1399,6 +1400,7 @@ class TestStampSlugBackstop:
         stamped.write_text("# stamped\n")
         # make the stamped copy strictly newer than the canonical report
         import os
+
         md = tmp_path / "threat-model.md"
         st = md.stat()
         os.utime(stamped, (st.st_atime + 10, st.st_mtime + 10))
@@ -1412,6 +1414,7 @@ class TestStampSlugBackstop:
         stamped = tmp_path / "threat-model-my-slug.md"
         stamped.write_text("# stale\n")
         import os
+
         md = tmp_path / "threat-model.md"
         st = md.stat()
         # canonical report is newer than the stamped copy -> must re-stamp
@@ -1423,8 +1426,10 @@ class TestStampSlugBackstop:
 
     def test_never_raises_on_subprocess_error(self, tmp_path: Path, monkeypatch):
         self._seed(tmp_path, "my-slug")
+
         def _boom(*a, **k):
             raise OSError("stamp exploded")
+
         monkeypatch.setattr(rcs.subprocess, "run", _boom)
         # must swallow — the completion summary must never fail on the stamp
         rcs._stamp_slug_if_configured(tmp_path)
