@@ -2,34 +2,29 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
+## 0.5.0-beta (Unreleased)
 
 ### Added
 
-- Abuse cases can now be selected from repository signals, path patterns, or a bounded source probe, with per-scan case files and optional release gates for verified chains.
-- A verifier-confirmed source-probe step can now become a normal finding when its abuse-case definition supplies classification and remediation metadata, so it participates in risk ranking and mitigation tracking.
-
-## 0.5.0-beta (2026-07-14)
-
-### Added
-
-- Deterministic access-control, crypto, and mass-assignment scanners now run across Java, Python, Go, PHP, C#/.NET, Ruby/Rails, and mobile stacks, not just JavaScript/TypeScript.
-- Headless runs can bill against a Claude subscription via `CLAUDE_CODE_OAUTH_TOKEN`, so CI and dispatch runs work without an interactive login or an API key.
-- MCP servers declared in an org profile are written into the packaged plugin's `.mcp.json` and wired up on install.
+- New Weakness Register: systemic and design-level weaknesses now get their own chapter. Findings are grouped by how strong the evidence is and by how a control is built (home-grown, misused, or missing), linked back to the findings behind them, and summarised as a security-principles verdict in the Management Summary. It also flags supply-chain risks (GitHub Actions on mutable tags/branches) and secrets committed to source. Broad CWE families no longer collapse unrelated issues into one.
+- Access-control, crypto, and mass-assignment scanners now cover Java, Python, Go, PHP, C#/.NET, Ruby/Rails, and mobile — not just JavaScript/TypeScript.
+- Headless runs can use a Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), so CI works without an API key.
+- Abuse cases can be picked from repo signals, path patterns, or a source probe, and gated on verified chains. A confirmed probe can turn into a regular finding.
+- Figure 1 shows missing architecture tiers as transparent placeholders instead of leaving them out.
+- MCP servers from an org profile are shipped in the packaged plugin.
 
 ### Changed
 
-- Systemic and design-level weaknesses get their own report chapter and link to the findings that support them. A weakness register groups findings by evidence and implementation strategy, flags home-grown or misused central security controls, and surfaces a security-principles verdict in the Management Summary. Broad CWE families no longer collapse unrelated attack paths into one weakness.
-- Management Summary verdicts use plain language and drop finding IDs, file paths, and abuse-case IDs; the detail stays in the findings and architecture sections.
+- Management Summary reads in plain language — no finding IDs, file paths, or abuse-case IDs.
+- Report order: Security Architecture before the Weakness Register, and leaner tables.
 
 ### Fixed
 
-- Evidence-refuted findings are no longer rendered. New scans drop them before output; incremental scans note the resolution in the changelog.
-- Threat merging keeps every merged location and scenario and can no longer drop a finding through a `keep` decision.
-- More consistent mitigation rendering and consolidated finding locations.
-- Repair passes no longer drift across re-renders.
-- Abuse-case verification now filters cases using recon evidence, avoiding expensive web-authentication checks triggered by documentation, scanner metadata, or broad CWE matches.
-- Parallel report rendering now uses focused §7 and Management Summary agents, avoiding the full renderer prompt for both roles. Standard runs defer duplicate Mermaid validation to the required QA stage; repair attempts skip the changelog audit until the final successful render.
+- Refuted findings are dropped before output; threat merging no longer loses locations or scenarios.
+- Scanner findings now get full remediation steps instead of failing the mitigation check.
+- Abuse-case verification skips expensive web-auth checks on weak matches, and chains cut off mid-way are marked provisional instead of "viable".
+- IAC-005 no longer fires an npm `--ignore-scripts` finding on non-JavaScript images (e.g. Java/Maven).
+- Large repos and cut-off runs report more clearly what happened, and retries don't rebuild the whole context.
 
 ## 0.4.0-beta (2026-07-07)
 
