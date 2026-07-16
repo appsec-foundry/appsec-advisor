@@ -253,6 +253,7 @@ Renders as the optional **`### AI / LLM Exposure`** callout in the Management Su
   "ai_risks": [                            // REQUIRED, 1-10, most severe first
     {
       "owasp_llm_id": "LLM01",             // OPTIONAL, enum LLM01..LLM10 (leading badge)
+      "owasp_asi_id": "ASI01",             // OPTIONAL, enum ASI01..ASI10 — agentic-surface risks only (renders a linked badge)
       "name": "Prompt Injection",          // REQUIRED, canonical risk name (4-60 chars)
       "severity": "red",                   // OPTIONAL, enum green|yellow|red; defaults red
       "description": "<1-2 sentence design-review prose: which untrusted input reaches which AI sink and why it is structural, 40-400 chars>",  // REQUIRED. Components/files referenced GENERICALLY.
@@ -266,6 +267,8 @@ Renders as the optional **`### AI / LLM Exposure`** callout in the Management Su
 ```
 
 **Naming vocabulary** (canonical OWASP LLM Top-10 risk names; do not invent one to pad the list): `Prompt Injection` (LLM01) · `Sensitive Information Disclosure` (LLM02) · `Model Supply Chain` (LLM03) · `Data & Model Poisoning` (LLM04) · `Improper Output Handling` (LLM05) · `Excessive Agency` (LLM06) · `System Prompt Leakage` (LLM07) · `Vector & Embedding Weaknesses` (LLM08) · `Misinformation` (LLM09) · `Unbounded Consumption` (LLM10). Map each to its `owasp_llm_id` and anchor it to the finding(s) where you recorded it.
+
+**`owasp_asi_id` (OPTIONAL — agentic surface).** When the risk is on an **agentic** surface (the component wires the LLM to tools, persistent memory, retrieval, or other agents — matching the ASI lens the STRIDE analyzer applied), also set `owasp_asi_id` (enum ASI01..ASI10). For most risks this is the agentic crosswalk of the `owasp_llm_id` you already set — `LLM01→ASI01`, `LLM06→ASI02`, `LLM03→ASI04`, `LLM05→ASI05`, `LLM04/LLM08→ASI06`, `LLM09→ASI09`, `LLM10→ASI08` — so set BOTH ids on the same risk. `ASI03` (Agent Identity & Privilege Abuse), `ASI07` (Insecure Inter-Agent Communication), and `ASI10` (Rogue Agents) have no LLM analog: set `owasp_asi_id` alone, and only when a genuine multi-agent / tool-wielding surface is present. Do NOT set an `owasp_asi_id` for a plain LLM call-and-return with no tools/memory/autonomy.
 
 ### `ms-top-mitigations.json` authoring contract
 

@@ -720,7 +720,7 @@ threat_categories:          # 18 architectural patterns (TH-01 .. TH-18)
     title: Injection
     cwe_pillar: CWE-707
     cwe_primary: CWE-74
-    owasp_top10_2021: A03
+    owasp_top10_2025: A05
     aggregated:
       max_risk: Critical
       max_cvss: 10.0
@@ -802,7 +802,7 @@ Sort: max-CVSS desc → finding_count desc → TH-ID asc.
 | **Max Risk** | 🔴 Critical (CVSS 10.0) |
 | **CWE Pillar** | [CWE-707](…) — Improper Neutralization |
 | **Canonical CWE** | [CWE-74](…) — Improper Neutralization of Special Elements |
-| **OWASP** | [A03:2021](…) — Injection |
+| **OWASP** | [A05:2025](…) — Injection |
 | **CWE Top 25** | 🏆 contains CWE-79 (#2), CWE-89 (#3), CWE-94 (#11) |
 | **Findings** | 7 (4 Critical, 3 High, 0 Medium, 0 Low) |
 | **Mitigated by** | [M-007](…) — Parameterize SQL queries · [M-008](…) — Replace notevil · [M-005](…) — Disable XXE · [M-009](…) — Field allowlist |
@@ -993,14 +993,14 @@ Segments:
 |---|---|---|---|
 | 🏆 Top 25 #R | CWE has `cwe_top25_2024` rank set in taxonomy | `🏆 Top 25 #<rank>` | `cwes.CWE-NNN.cwe_top25_2024` |
 | Pillar | CWE has `pillar` field ≠ null (i.e. CWE is not itself a pillar) | `Pillar [CWE-PPP](url)` | `cwes.CWE-NNN.pillar` + `pillars.CWE-PPP.url` |
-| OWASP | CWE has `owasp_top10_2021` mapping | `OWASP [A0X:2021](url)` | `cwes.CWE-NNN.owasp_top10_2021` + `owasp_top10_2021_urls.A0X` |
+| OWASP | CWE has `owasp_top10_2025` mapping | `OWASP [A0X:2025](url)` | `cwes.CWE-NNN.owasp_top10_2025` + `owasp_top10_2025_urls.A0X` |
 
 The three segments are separated by ` · ` (middle-dot with spaces). If a segment is unavailable, skip it — do not emit empty placeholders. The tag is **in addition to** the CWE link, on the same line, same cell.
 
 Example row in Threat Register for T-009 (SQL injection in product search):
 
 ```markdown
-| <a id="t-009"></a>T-009 | REST API | Information Disclosure | SQL injection in product search: … [CWE-89](https://cwe.mitre.org/data/definitions/89.html) 🏆 Top 25 #3 · Pillar [CWE-707](https://cwe.mitre.org/data/definitions/707.html) · OWASP [A03:2021](https://owasp.org/Top10/A03_2021-Injection/) | High | Critical | 🔴 Critical | … | [M-007](#m-007) — Parameterize raw queries |
+| <a id="t-009"></a>T-009 | REST API | Information Disclosure | SQL injection in product search: … [CWE-89](https://cwe.mitre.org/data/definitions/89.html) 🏆 Top 25 #3 · Pillar [CWE-707](https://cwe.mitre.org/data/definitions/707.html) · OWASP [A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/) | High | Critical | 🔴 Critical | … | [M-007](#m-007) — Parameterize raw queries |
 ```
 
 **When an LLM-related OWASP code is used** (`LLM03`, `LLM04`, etc. from `cwe-taxonomy.yaml → owasp_llm_top10`), emit it alongside the OWASP Top 10 tag with the same formatting, e.g. `OWASP [A10:2021](…) · LLM [LLM03](…)`. Only LLM-integrated components trigger this — the STRIDE analyzer decides.

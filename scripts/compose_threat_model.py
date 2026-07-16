@@ -14211,6 +14211,23 @@ def _balance_code_spans(text: str) -> str:
     return text
 
 
+# OWASP Top 10:2025 category → canonical deep-link (mirrors
+# data/cwe-taxonomy.yaml → owasp_top10_2025_urls). Used to render the
+# `[OWASP A0x:2025](…)` reference badge on each threat card.
+_OWASP_TOP10_2025_URLS = {
+    "A01": "https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/",
+    "A02": "https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/",
+    "A03": "https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/",
+    "A04": "https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/",
+    "A05": "https://owasp.org/Top10/2025/A05_2025-Injection/",
+    "A06": "https://owasp.org/Top10/2025/A06_2025-Insecure_Design/",
+    "A07": "https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/",
+    "A08": "https://owasp.org/Top10/2025/A08_2025-Software_or_Data_Integrity_Failures/",
+    "A09": "https://owasp.org/Top10/2025/A09_2025-Security_Logging_and_Alerting_Failures/",
+    "A10": "https://owasp.org/Top10/2025/A10_2025-Mishandling_of_Exceptional_Conditions/",
+}
+
+
 def _build_threat_card(
     t: dict,
     sev: str,
@@ -14652,9 +14669,11 @@ def _build_threat_card(
     if cwe_norm:
         cwe_num = cwe_norm.split("-", 1)[-1] if "-" in cwe_norm else cwe_norm
         refs_parts.append(f"[CWE-{cwe_num}](https://cwe.mitre.org/data/definitions/{cwe_num}.html)")
-    owasp_ref = cat_meta.get("owasp_top10_2021") or ""
+    owasp_ref = cat_meta.get("owasp_top10_2025") or ""
     if owasp_ref:
-        refs_parts.append(f"[OWASP {owasp_ref}:2021](https://owasp.org/Top10/{owasp_ref}_2021/)")
+        refs_parts.append(
+            f"[OWASP {owasp_ref}:2025]({_OWASP_TOP10_2025_URLS.get(owasp_ref, 'https://owasp.org/Top10/2025/')})"
+        )
     classification_line = ""
     if refs_parts:
         # Item 5: classification label is italic, not bold — the

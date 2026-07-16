@@ -342,7 +342,7 @@ Additionally check (semantic, not in helper):
 
 Phase 2 invariant: §6 and the MS Operational Strengths table are both rendered from `threat-model.yaml → security_controls[]`. Drift between the two views is a renderer defect.
 
-Validate per-`SC-NN` schema (architectural_control, domain, effectiveness ∈ {adequate/partial/weak/missing}, mitigates_findings, positive_framing, show_in_strengths_by_default). Cross-check §6 rows ↔ catalog: missing in §6 → silently insert; not in catalog → repair-plan flag; effectiveness drift → YAML wins, rewrite MD cell. Cross-check Operational Strengths is `[sc for sc in catalog if sc.effectiveness != 'missing' and sc.show_in_strengths_by_default]` sorted by effectiveness asc + `len(mitigates_findings)` desc, top 8. Validate Missing-by-design coverage via `cwe-taxonomy.yaml → owasp_top10_2021` and `architectural-controls.yaml → default_references.cwe[]`.
+Validate per-`SC-NN` schema (architectural_control, domain, effectiveness ∈ {adequate/partial/weak/missing}, mitigates_findings, positive_framing, show_in_strengths_by_default). Cross-check §6 rows ↔ catalog: missing in §6 → silently insert; not in catalog → repair-plan flag; effectiveness drift → YAML wins, rewrite MD cell. Cross-check Operational Strengths is `[sc for sc in catalog if sc.effectiveness != 'missing' and sc.show_in_strengths_by_default]` sorted by effectiveness asc + `len(mitigates_findings)` desc, top 8. Validate Missing-by-design coverage via `cwe-taxonomy.yaml → owasp_top10_2025` and `architectural-controls.yaml → default_references.cwe[]`.
 
 Skip 7d at `core`/`full` depth or when `threat-model.yaml` is absent.
 

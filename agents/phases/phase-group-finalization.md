@@ -1620,7 +1620,7 @@ Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-advisor/dat
 **Attacker position:** Unauthenticated attacker from the public internet.
 **Preconditions:** Endpoint is reachable from the internet (no IP allowlist, no VPN) AND no authentication middleware blocks the request.
 **Typical CWEs:** ➚ [CWE-89](https://cwe.mitre.org/data/definitions/89.html), ➚ [CWE-79](https://cwe.mitre.org/data/definitions/79.html), ➚ [CWE-306](https://cwe.mitre.org/data/definitions/306.html), ➚ [CWE-327](https://cwe.mitre.org/data/definitions/327.html), ➚ [CWE-611](https://cwe.mitre.org/data/definitions/611.html), ➚ [CWE-918](https://cwe.mitre.org/data/definitions/918.html).
-**Typical OWASP Top 10:** ➚ [A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/), ➚ [A03:2021](https://owasp.org/Top10/A03_2021-Injection/), ➚ [A07:2021](https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/).
+**Typical OWASP Top 10:** ➚ [A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/), ➚ [A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/), ➚ [A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/).
 
 ### <a id="vektor-internet-user"></a>Internet User
 
@@ -1628,7 +1628,7 @@ Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-advisor/dat
 **Attacker position:** Any authenticated low-privilege user (valid JWT / session).
 **Preconditions:** Attacker has signed up or otherwise obtained a valid user session AND endpoint is behind auth but not behind role/admin checks.
 **Typical CWEs:** ➚ [CWE-287](https://cwe.mitre.org/data/definitions/287.html), ➚ [CWE-352](https://cwe.mitre.org/data/definitions/352.html), ➚ [CWE-434](https://cwe.mitre.org/data/definitions/434.html), ➚ [CWE-611](https://cwe.mitre.org/data/definitions/611.html), ➚ [CWE-918](https://cwe.mitre.org/data/definitions/918.html).
-**Typical OWASP Top 10:** ➚ [A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/), ➚ [A04:2021](https://owasp.org/Top10/A04_2021-Insecure_Design/), ➚ [A05:2021](https://owasp.org/Top10/A05_2021-Security_Misconfiguration/), ➚ [A10:2021](https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/).
+**Typical OWASP Top 10:** ➚ [A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/), ➚ [A06:2025](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/), ➚ [A02:2025](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/).
 
 ### <a id="vektor-internet-priv-user"></a>Internet Priv User
 
@@ -1636,7 +1636,7 @@ Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-advisor/dat
 **Attacker position:** Authenticated admin-level user (JWT with admin role or equivalent).
 **Preconditions:** Attacker holds admin credentials or has elevated privileges AND endpoint is gated on admin role but still exploitable once reached.
 **Typical CWEs:** ➚ [CWE-79](https://cwe.mitre.org/data/definitions/79.html), ➚ [CWE-94](https://cwe.mitre.org/data/definitions/94.html), ➚ [CWE-862](https://cwe.mitre.org/data/definitions/862.html).
-**Typical OWASP Top 10:** ➚ [A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/).
+**Typical OWASP Top 10:** ➚ [A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/).
 
 ### <a id="vektor-victim-required"></a>Victim-Required
 
@@ -1644,7 +1644,7 @@ Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-advisor/dat
 **Attacker position:** Attacker needs victim interaction — social engineering, crafted link, or live session.
 **Preconditions:** Victim must click a link, load a page, or have an active session. Applies to XSS, CSRF, click-jacking, open redirect.
 **Typical CWEs:** ➚ [CWE-79](https://cwe.mitre.org/data/definitions/79.html), ➚ [CWE-352](https://cwe.mitre.org/data/definitions/352.html), ➚ [CWE-601](https://cwe.mitre.org/data/definitions/601.html), ➚ [CWE-1021](https://cwe.mitre.org/data/definitions/1021.html).
-**Typical OWASP Top 10:** ➚ [A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/), ➚ [A03:2021](https://owasp.org/Top10/A03_2021-Injection/).
+**Typical OWASP Top 10:** ➚ [A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/), ➚ [A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/).
 
 ### <a id="vektor-build-time"></a>Build-Time
 
@@ -1652,7 +1652,7 @@ Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-advisor/dat
 **Attacker position:** Attacker controls a build input — CI runner, dependency, base image, or external data fetched during build.
 **Preconditions:** Compromise of a dependency, registry, or base image OR compromise of a CI runner with write access to artifacts.
 **Typical CWEs:** ➚ [CWE-506](https://cwe.mitre.org/data/definitions/506.html), ➚ [CWE-829](https://cwe.mitre.org/data/definitions/829.html), ➚ [CWE-1039](https://cwe.mitre.org/data/definitions/1039.html), ➚ [CWE-1104](https://cwe.mitre.org/data/definitions/1104.html).
-**Typical OWASP Top 10:** ➚ [A08:2021](https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/).
+**Typical OWASP Top 10:** ➚ [A08:2025](https://owasp.org/Top10/2025/A08_2025-Software_or_Data_Integrity_Failures/).
 **OWASP LLM:** ➚ [LLM03:2025](https://genai.owasp.org/llmrisk/llm03-2025-supply-chain/), ➚ [LLM04:2025](https://genai.owasp.org/llmrisk/llm04-2025-data-and-model-poisoning/).
 
 ### <a id="vektor-repo-read"></a>Repo-Read
@@ -1661,7 +1661,7 @@ Canonical source: [data/breach-vector-taxonomy.yaml](../../../appsec-advisor/dat
 **Attacker position:** Attacker gains read access to source repository (leaked clone, forked fork, insider, compromised developer workstation).
 **Preconditions:** Read access to the source tree at or after commit time — no runtime exploit needed; the vulnerability is the content of the repo.
 **Typical CWEs:** ➚ [CWE-312](https://cwe.mitre.org/data/definitions/312.html), ➚ [CWE-540](https://cwe.mitre.org/data/definitions/540.html), ➚ [CWE-798](https://cwe.mitre.org/data/definitions/798.html).
-**Typical OWASP Top 10:** ➚ [A02:2021](https://owasp.org/Top10/A02_2021-Cryptographic_Failures/), ➚ [A07:2021](https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/).
+**Typical OWASP Top 10:** ➚ [A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/), ➚ [A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/).
 
 ### <a id="vektor-n-a"></a>n/a
 

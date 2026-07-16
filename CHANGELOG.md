@@ -12,9 +12,11 @@ All notable changes to this project are documented here.
 - Abuse cases can be picked from repo signals, path patterns, or a source probe, and gated on verified chains. A confirmed probe can turn into a regular finding.
 - Figure 1 shows missing architecture tiers as transparent placeholders instead of leaving them out.
 - MCP servers from an org profile are shipped in the packaged plugin.
+- OWASP Top 10 for Agentic Applications (2026, ASI) coverage: on an agentic surface (LLM wired to tools, memory, or other agents) the analyzer adds an Agentic-Top-10 lens and the AI/LLM Exposure callout tags each risk with a linked `ASIxx` badge.
 
 ### Changed
 
+- OWASP Top 10 references updated from the 2021 to the **2025** edition (SSRF folded into A01, new A03 Software Supply Chain Failures and A10 Mishandling of Exceptional Conditions, categories re-lettered). Finding badges, coverage-gap checks, and the CWE mapping now target 2025.
 - Management Summary reads in plain language — no finding IDs, file paths, or abuse-case IDs.
 - Report order: Security Architecture before the Weakness Register, and leaner tables.
 

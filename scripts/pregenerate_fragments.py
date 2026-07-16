@@ -5507,6 +5507,41 @@ _LLM_COMPONENT_HINTS = ("llm", "chatbot", "ai-agent", "ai agent", "genai", "copi
 
 _SEVERITY_RANK = {"critical": 3, "high": 2, "medium": 1, "low": 0}
 
+# LLM Top-10 → Agentic Top-10 (ASI) crosswalk. Only applied when the model has a
+# genuine AGENTIC surface (see `_AGENTIC_KEYWORDS`), so a plain LLM call-and-return
+# is never mislabelled as agentic. ASI03/ASI07/ASI10 have no LLM analog and are
+# only authored by the analyst-driven fragment, not this deterministic backstop.
+_LLM_TO_ASI_CROSSWALK = {
+    "LLM01": "ASI01",  # Prompt Injection      → Agent Goal Hijack
+    "LLM06": "ASI02",  # Excessive Agency      → Tool Misuse & Exploitation
+    "LLM03": "ASI04",  # Model Supply Chain    → Agentic Supply Chain
+    "LLM05": "ASI05",  # Improper Output       → Unexpected Code Execution
+    "LLM04": "ASI06",  # Data & Model Poisoning→ Memory & Context Poisoning
+    "LLM08": "ASI06",  # Vector & Embedding    → Memory & Context Poisoning
+    "LLM09": "ASI09",  # Misinformation        → Human-Agent Trust Exploitation
+    "LLM10": "ASI08",  # Unbounded Consumption → Cascading Agent Failures
+}
+# Substrings that mark a genuine agentic surface (tools/memory/multi-agent/autonomy)
+# in a threat's title+evidence+impact blob. Word-anchored where the token is short.
+_AGENTIC_KEYWORDS = (
+    "agentic",
+    "agent framework",
+    "multi-agent",
+    "tool-calling",
+    "tool calling",
+    "tool use",
+    "tool-use",
+    "function call",
+    "excessive agency",
+    "autonomous agent",
+    "mcp server",
+    "react agent",
+    "agentexecutor",
+    "crewai",
+    "autogen",
+    "langgraph",
+)
+
 
 def _llm_severity_glyph(sev_rank: int) -> str:
     if sev_rank >= 2:
@@ -5595,6 +5630,18 @@ def gen_ai_exposure(yaml_data: dict):
             b["sev_rank"] = max(b["sev_rank"], _SEVERITY_RANK.get(sev, 1))
             break
 
+    # Agentic surface? Only then does the LLM→ASI crosswalk apply, so a plain
+    # LLM call-and-return is never mislabelled with an Agentic-Top-10 badge.
+    agentic_blob = " ".join(
+        str(x or "").lower()
+        for th in threats
+        for x in (th.get("title"), th.get("evidence_summary"), th.get("impact_description"))
+    )
+    agentic_blob += " " + " ".join(
+        str(c.get("name") or "").lower() + " " + str(c.get("description") or "").lower() for c in components
+    )
+    agentic_surface = any(kw in agentic_blob for kw in _AGENTIC_KEYWORDS)
+
     if not buckets:
         # No LLM-categorizable threat — even if a component looks LLM-ish, there
         # is no concrete risk to surface, so emit nothing (zero-cost contract).
@@ -5635,6 +5682,9 @@ def gen_ai_exposure(yaml_data: dict):
             "description": b["description"],
             "findings": findings,
         }
+        asi_id = _LLM_TO_ASI_CROSSWALK.get(llm_id) if agentic_surface else None
+        if asi_id:
+            risk["owasp_asi_id"] = asi_id
         if affected:
             risk["affected_components"] = affected[:8]
         ai_risks.append((b["sev_rank"], llm_id, risk))

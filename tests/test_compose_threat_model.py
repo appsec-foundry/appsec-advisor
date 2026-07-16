@@ -231,6 +231,7 @@ def test_ai_exposure_renders_in_specialized_band(tmp_path: Path) -> None:
             },
             {
                 "owasp_llm_id": "LLM06",
+                "owasp_asi_id": "ASI02",
                 "name": "Excessive Agency",
                 "description": "The agent can invoke shell and SQL tools with no "
                 "human approval gate, so a successful injection escalates straight "
@@ -248,6 +249,8 @@ def test_ai_exposure_renders_in_specialized_band(tmp_path: Path) -> None:
     assert "Prompt Injection" in ms_slice
     assert "LLM01" in ms_slice
     assert "Excessive Agency" in ms_slice
+    # The Agentic-Top-10 (ASI) id renders as a linked badge to the OWASP resource.
+    assert "[ASI02](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)" in ms_slice
     # Ordering (2026-07-14): Verdict → Security Posture & Top Threats → Top
     # Mitigations → AI Exposure. The LLM callout now sits in the specialized-
     # surface band after the headline threat/mitigation tables, not at MS #2.

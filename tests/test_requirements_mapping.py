@@ -144,7 +144,7 @@ def test_remediation_reference_populates_when_requirement_is_known(tmp_path: Pat
         },
         # An OWASP reference shares the bracket-link shape but is NOT a declared
         # requirement ID → must be ignored (no phantom row).
-        {"id": "T-002", "risk": "low", "remediation": {"reference": "[A01:2021](https://owasp.org)"}},
+        {"id": "T-002", "risk": "low", "remediation": {"reference": "[A01:2025](https://owasp.org)"}},
     ]
     ctx = compose.RenderContext(
         output_dir=tmp_path,

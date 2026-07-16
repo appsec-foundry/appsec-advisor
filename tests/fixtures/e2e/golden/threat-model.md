@@ -692,7 +692,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Fix:** ● [M-002](#m-002) — Externalize RSA key
 
-**Classification:** Cryptographic Failures · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
+**Classification:** Cryptographic Failures · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
 
 <a id="t-001"></a><a id="f-001"></a>
 #### F-001 · SQL injection in product search
@@ -703,7 +703,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Fix:** ● [M-001](#m-001) — Parameterize SQL queries
 
-**Classification:** Injection · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
+**Classification:** Injection · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
 
 <a id="t-002"></a><a id="f-002"></a>
 #### F-002 · SQL injection in login
@@ -714,7 +714,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Fix:** ● [M-001](#m-001) — Parameterize SQL queries
 
-**Classification:** Injection · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
+**Classification:** Injection · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
 
 ### 🟠 High (1)
 
@@ -727,7 +727,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Fix:** ◕ [M-003](#m-003) — Remove DomSanitizer bypasses
 
-**Classification:** Cross-Site Scripting (XSS) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
+**Classification:** Cross-Site Scripting (XSS) · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
 
 ---
 
@@ -853,7 +853,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [CWE-306](https://cwe.mitre.org/data/definitions/306.html) · [CWE-327](https://cwe.mitre.org/data/definitions/327.html) · [CWE-611](https://cwe.mitre.org/data/definitions/611.html) · [CWE-918](https://cwe.mitre.org/data/definitions/918.html)
 
-**Typical OWASP Top 10:** A01:2021, A03:2021, A07:2021
+**Typical OWASP Top 10:** A01:2025, A05:2025, A07:2025
 
 <a id="vektor-internet-user"></a>
 ### Internet User
@@ -867,7 +867,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-434](https://cwe.mitre.org/data/definitions/434.html) · [CWE-611](https://cwe.mitre.org/data/definitions/611.html) · [CWE-918](https://cwe.mitre.org/data/definitions/918.html) · [CWE-352](https://cwe.mitre.org/data/definitions/352.html) · [CWE-287](https://cwe.mitre.org/data/definitions/287.html)
 
-**Typical OWASP Top 10:** A01:2021, A04:2021, A05:2021, A10:2021
+**Typical OWASP Top 10:** A01:2025, A06:2025, A02:2025
 
 <a id="vektor-internet-priv-user"></a>
 ### Internet Priv User
@@ -881,7 +881,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-862](https://cwe.mitre.org/data/definitions/862.html) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [CWE-94](https://cwe.mitre.org/data/definitions/94.html)
 
-**Typical OWASP Top 10:** A01:2021
+**Typical OWASP Top 10:** A01:2025
 
 <a id="vektor-victim-required"></a>
 ### Victim-Required
@@ -895,7 +895,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [CWE-352](https://cwe.mitre.org/data/definitions/352.html) · [CWE-601](https://cwe.mitre.org/data/definitions/601.html) · [CWE-1021](https://cwe.mitre.org/data/definitions/1021.html)
 
-**Typical OWASP Top 10:** A01:2021, A03:2021
+**Typical OWASP Top 10:** A01:2025, A05:2025
 
 <a id="vektor-build-time"></a>
 ### Build-Time
@@ -909,7 +909,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-506](https://cwe.mitre.org/data/definitions/506.html) · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [CWE-1039](https://cwe.mitre.org/data/definitions/1039.html) · [CWE-1104](https://cwe.mitre.org/data/definitions/1104.html)
 
-**Typical OWASP Top 10:** A08:2021
+**Typical OWASP Top 10:** A08:2025
 
 <a id="vektor-repo-read"></a>
 ### Repo-Read
@@ -923,7 +923,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-798](https://cwe.mitre.org/data/definitions/798.html) · [CWE-312](https://cwe.mitre.org/data/definitions/312.html) · [CWE-540](https://cwe.mitre.org/data/definitions/540.html)
 
-**Typical OWASP Top 10:** A02:2021, A07:2021
+**Typical OWASP Top 10:** A04:2025, A07:2025
 
 <a id="vektor-n-a"></a>
 ### n/a

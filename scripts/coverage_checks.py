@@ -8,7 +8,7 @@ coverage gaps that the orchestrator injects as `source: coverage-gap`
 threats during Phase 9 merge — no LLM judgement involved.
 
 Checks covered:
-  A  OWASP Top 10 (2021)  — every OWASP 2021 category must have ≥ 1 threat.
+  A  OWASP Top 10 (2025)  — every OWASP 2025 category must have ≥ 1 threat.
      Missing → one gap-threat per missing category, STRIDE and default-risk
      pre-set from the category metadata in data/owasp-top10-cwes.yaml.
   D  Cross-repo boundary  — every declared/discovered cross-repo dependency
@@ -77,7 +77,7 @@ def _load_owasp_mapping(path: Path | None = None) -> list[dict[str, Any]]:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or "categories" not in data:
         raise ValueError(f"{path}: missing 'categories' top-level key")
-    if data.get("version") != 1:
+    if data.get("version") not in (1, 2):
         raise ValueError(f"{path}: unsupported version {data.get('version')!r}")
     return data["categories"]
 
@@ -110,7 +110,7 @@ def check_owasp_top10(
     threats: list[dict[str, Any]],
     mapping: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Return a report of OWASP 2021 categories lacking coverage."""
+    """Return a report of OWASP 2025 categories lacking coverage."""
     mapping = mapping or _load_owasp_mapping()
 
     # Collect CWEs present in any threat (with or without duplicates — we only

@@ -3,7 +3,7 @@ Tests for scripts/coverage_checks.py — Sprint 2 Item #6.
 
 Covers:
   - OWASP Top 10 coverage (Check A): set-membership of CWEs in threats[]
-    against the OWASP 2021 category→CWE mapping in
+    against the OWASP 2025 category→CWE mapping in
     data/owasp-top10-cwes.yaml.
   - Cross-repo boundary coverage (Check D): parse
     .threat-modeling-context.md for dependencies with threat_model=missing,
@@ -47,13 +47,13 @@ class TestOwaspMappingFile:
 
     def test_schema_shape(self):
         data = yaml.safe_load(OWASP_YAML.read_text(encoding="utf-8"))
-        assert data.get("version") == 1
+        assert data.get("version") == 2
         cats = data["categories"]
-        assert len(cats) == 10, "OWASP 2021 defines exactly 10 categories"
+        assert len(cats) == 10, "OWASP 2025 defines exactly 10 categories"
         for cat in cats:
             for key in ("id", "name", "stride", "default_risk", "cwes"):
                 assert key in cat, f"category {cat.get('id')!r} missing {key}"
-            assert cat["id"].endswith(":2021")
+            assert cat["id"].endswith(":2025")
             assert cat["stride"] in {
                 "Spoofing",
                 "Tampering",
@@ -69,20 +69,33 @@ class TestOwaspMappingFile:
     def test_has_all_10_categories(self):
         data = yaml.safe_load(OWASP_YAML.read_text(encoding="utf-8"))
         ids = {c["id"] for c in data["categories"]}
-        expected = {f"A{i:02d}:2021" for i in range(1, 11)}
+        expected = {f"A{i:02d}:2025" for i in range(1, 11)}
         assert ids == expected
 
-    def test_cwe_89_sql_injection_in_a03(self):
+    def test_cwe_89_sql_injection_in_injection_category(self):
         """Regression guard: CWE-89 is the canonical injection CWE and
-        must live in A03:2021."""
+        must live in the Injection category (A05:2025, re-lettered from
+        A03:2021)."""
         data = yaml.safe_load(OWASP_YAML.read_text(encoding="utf-8"))
-        a03 = next(c for c in data["categories"] if c["id"] == "A03:2021")
-        assert 89 in a03["cwes"]
+        a05 = next(c for c in data["categories"] if c["id"] == "A05:2025")
+        assert a05["name"] == "Injection"
+        assert 89 in a05["cwes"]
 
-    def test_cwe_918_ssrf_in_a10(self):
+    def test_cwe_918_ssrf_folded_into_broken_access_control(self):
+        """OWASP 2025 rolled SSRF (CWE-918) into A01 Broken Access Control;
+        there is no standalone SSRF category any more."""
         data = yaml.safe_load(OWASP_YAML.read_text(encoding="utf-8"))
-        a10 = next(c for c in data["categories"] if c["id"] == "A10:2021")
-        assert 918 in a10["cwes"]
+        a01 = next(c for c in data["categories"] if c["id"] == "A01:2025")
+        assert 918 in a01["cwes"]
+
+    def test_a10_is_mishandling_exceptional_conditions(self):
+        """OWASP 2025 A10 is the new Mishandling of Exceptional Conditions
+        category (24 CWEs), not SSRF."""
+        data = yaml.safe_load(OWASP_YAML.read_text(encoding="utf-8"))
+        a10 = next(c for c in data["categories"] if c["id"] == "A10:2025")
+        assert a10["name"] == "Mishandling of Exceptional Conditions"
+        assert 703 in a10["cwes"]
+        assert 918 not in a10["cwes"]
 
 
 class TestOwaspMappingLoading:
@@ -115,7 +128,7 @@ class TestOwaspMappingLoading:
             coverage_checks._load_owasp_mapping(mapping)
 
     def test_load_owasp_mapping_rejects_unsupported_version(self, tmp_path):
-        mapping = _write_yaml(tmp_path / "owasp.yaml", {"version": 2, "categories": []})
+        mapping = _write_yaml(tmp_path / "owasp.yaml", {"version": 99, "categories": []})
 
         with pytest.raises(ValueError, match="unsupported version"):
             coverage_checks._load_owasp_mapping(mapping)
@@ -163,16 +176,16 @@ class TestCheckOwasp:
     def test_one_threat_per_cat_all_covered(self):
         """A representative CWE from every category → zero gaps."""
         threats = [
-            {"cwe": "CWE-284"},  # A01 (Access Control)
-            {"cwe": "CWE-327"},  # A02 (Crypto)
-            {"cwe": "CWE-89"},  # A03 (Injection)
-            {"cwe": "CWE-434"},  # A04 (Insecure Design)
-            {"cwe": "CWE-611"},  # A05 (Misconfig)
-            {"cwe": "CWE-937"},  # A06 (Vuln Components)
-            {"cwe": "CWE-287"},  # A07 (Auth)
-            {"cwe": "CWE-502"},  # A08 (Deserialization)
-            {"cwe": "CWE-778"},  # A09 (Logging)
-            {"cwe": "CWE-918"},  # A10 (SSRF)
+            {"cwe": "CWE-284"},  # A01 (Broken Access Control)
+            {"cwe": "CWE-611"},  # A02 (Security Misconfiguration)
+            {"cwe": "CWE-1104"},  # A03 (Software Supply Chain Failures)
+            {"cwe": "CWE-327"},  # A04 (Cryptographic Failures)
+            {"cwe": "CWE-89"},  # A05 (Injection)
+            {"cwe": "CWE-434"},  # A06 (Insecure Design)
+            {"cwe": "CWE-287"},  # A07 (Authentication Failures)
+            {"cwe": "CWE-502"},  # A08 (Software or Data Integrity Failures)
+            {"cwe": "CWE-778"},  # A09 (Security Logging & Alerting Failures)
+            {"cwe": "CWE-703"},  # A10 (Mishandling of Exceptional Conditions)
         ]
         rep = coverage_checks.check_owasp_top10(threats)
         assert rep["missing_count"] == 0
@@ -183,8 +196,8 @@ class TestCheckOwasp:
         rep = coverage_checks.check_owasp_top10(threats)
         covered_ids = {c["id"] for c in rep["covered"]}
         missing_ids = {c["id"] for c in rep["missing"]}
-        assert "A03:2021" in covered_ids
-        assert "A07:2021" in covered_ids
+        assert "A05:2025" in covered_ids
+        assert "A07:2025" in covered_ids
         assert covered_ids.isdisjoint(missing_ids)
         assert len(missing_ids) == 8
 
@@ -216,8 +229,8 @@ class TestCheckOwasp:
     def test_duplicate_cwe_same_category_counts_once(self):
         threats = [{"cwe": "CWE-89"}, {"cwe": "CWE-89"}, {"cwe": "CWE-89"}]
         rep = coverage_checks.check_owasp_top10(threats)
-        a03 = next(c for c in rep["covered"] if c["id"] == "A03:2021")
-        assert a03["covered_by_cwes"] == [89]
+        a05 = next(c for c in rep["covered"] if c["id"] == "A05:2025")
+        assert a05["covered_by_cwes"] == [89]
 
 
 # ---------------------------------------------------------------------------
@@ -651,7 +664,7 @@ class TestCLI:
         assert r.returncode == 1
 
     def test_cli_returns_1_when_owasp_mapping_is_invalid(self, tmp_path, monkeypatch, capsys):
-        mapping = _write_yaml(tmp_path / "owasp.yaml", {"version": 2, "categories": []})
+        mapping = _write_yaml(tmp_path / "owasp.yaml", {"version": 99, "categories": []})
         monkeypatch.setenv("OWASP_TOP10_YAML", str(mapping))
 
         rc = coverage_checks._main(["owasp", "--output-dir", str(tmp_path)])

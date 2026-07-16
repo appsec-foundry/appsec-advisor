@@ -366,6 +366,46 @@ class TestAiExposure:
         assert "T-045" in {f["ref"] for f in by_id["LLM06"]["findings"]}
         assert "LLM01" not in by_id
 
+    def test_no_asi_id_without_agentic_surface(self):
+        """A plain LLM call-and-return (no tools/memory/multi-agent/autonomy in
+        any threat or component) must NOT be tagged with an Agentic-Top-10 id —
+        the LLM→ASI crosswalk is gated on a real agentic surface."""
+        out = pf.gen_ai_exposure(self._LLM_YAML)
+        data = json.loads(out)
+        assert all("owasp_asi_id" not in r for r in data["ai_risks"])
+
+    def test_asi_crosswalk_on_agentic_surface(self):
+        """When a threat evidences an agentic surface (here: tool-calling /
+        excessive agency), the deterministic backstop tags the crosswalked
+        Agentic-Top-10 id alongside the LLM id (LLM06 → ASI02)."""
+        d = {
+            "components": [{"id": "llm-chatbot", "name": "AI Chatbot"}],
+            "threats": [
+                {
+                    "id": "T-045",
+                    "title": "LLM Tool-Calling Guardrail Bypass — routes/chat.ts:184",
+                    "component": "llm-chatbot",
+                    "risk": "High",
+                    "evidence_summary": "chat.ts:181-185 invokes a tool with model-supplied args, no allow-list.",
+                    "impact_description": "Excessive agency: the model can call a coupon-minting tool autonomously.",
+                },
+            ],
+        }
+        out = pf.gen_ai_exposure(d)
+        data = json.loads(out)
+        by_id = {r["owasp_llm_id"]: r for r in data["ai_risks"]}
+        assert "LLM06" in by_id
+        assert by_id["LLM06"].get("owasp_asi_id") == "ASI02"
+
+    def test_ai_exposure_schema_declares_asi_enum(self):
+        """The ai-exposure fragment schema must accept owasp_asi_id ASI01..ASI10
+        (contract guard: producer above emits it, schema must permit it)."""
+        schema = json.loads(
+            (REPO_ROOT / "schemas" / "fragments" / "ai-exposure.schema.json").read_text(encoding="utf-8")
+        )
+        enum = schema["properties"]["ai_risks"]["items"]["properties"]["owasp_asi_id"]["enum"]
+        assert enum == [f"ASI{n:02d}" for n in range(1, 11)]
+
 
 class TestCriticalAttackTree:
     """Deterministic ms-critical-attack-tree.json generator

@@ -470,6 +470,10 @@ Typical fix areas by STRIDE:
 
 Read `shared/owasp-llm-top10.md` for the full threat table, grep patterns, and fix patterns. Apply as an additional lens on top of standard STRIDE. Same quality bar.
 
+### OWASP Agentic Top 10 (ASI) — conditional (only for an agentic surface)
+
+When `KNOWN_LLM_PATTERNS` shows an **agentic** signal — an `agent-framework` / `tool-use` subcategory, a multi-agent SDK (`crewai`, `autogen`), or an LLM wired to tools, persistent memory, retrieval, or other agents — also read `shared/owasp-asi-top10.md` and apply the OWASP Top 10 for Agentic Applications (2026) lens. Same quality bar. **Do not duplicate:** most agentic risk is the agentic framing of an LLM finding you already recorded — use the crosswalk in that file to tag it (e.g. an LLM06 Excessive Agency finding is also `ASI02`), and only author a *new* threat for the genuinely agent-specific classes (`ASI03` identity/privilege, `ASI07` inter-agent transport, `ASI10` autonomy bounds) when a real multi-agent / tool-wielding surface is present. A plain LLM call-and-return has no agentic surface — skip this lens.
+
 ### Client-side / SPA — conditional (only for frontend components)
 
 When `COMPONENT_ID ∈ {frontend, spa, web-app, client}` or `COMPONENT_DESCRIPTION` indicates a browser-based app, read `shared/spa-threats.md` for the 11 client-side vectors. Same quality bar.

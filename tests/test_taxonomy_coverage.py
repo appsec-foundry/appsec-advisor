@@ -85,10 +85,10 @@ def test_stride_fallback_covers_all_stride_verbs():
 
 def test_category_taxonomy_has_required_fields(category_taxonomy):
     """Every TH-NN entry must carry title, description, cwe_pillar and
-    owasp_top10_2021 — these back the §8.A summary table columns."""
+    owasp_top10_2025 — these back the §8.A summary table columns."""
     bad = []
     for cid, c in category_taxonomy.items():
-        for field in ("title", "description", "cwe_pillar", "owasp_top10_2021"):
+        for field in ("title", "description", "cwe_pillar", "owasp_top10_2025"):
             if not c.get(field):
                 bad.append(f"{cid}.{field} missing")
     assert not bad, "\n".join(bad)
