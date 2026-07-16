@@ -24,7 +24,8 @@ All notable changes to this project are documented here.
 - Scanner findings now get full remediation steps instead of failing the mitigation check.
 - Abuse-case verification skips expensive web-auth checks on weak matches, and chains cut off mid-way are marked provisional instead of "viable".
 - IAC-005 no longer fires an npm `--ignore-scripts` finding on non-JavaScript images (e.g. Java/Maven).
-- Large repos and cut-off runs report more clearly what happened, and retries don't rebuild the whole context.
+- Cut-off runs now say what happened, and tell an API stall apart from a lost session. Retries reuse the existing context instead of rebuilding it.
+- Long runs keep their place when the context window is compacted.
 
 ## 0.4.0-beta (2026-07-07)
 
