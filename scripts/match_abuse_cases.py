@@ -422,6 +422,24 @@ _BLOCKED = "blocked"
 _INCONCLUSIVE = "inconclusive"
 
 
+def _is_untouched_preseed_step(step: dict) -> bool:
+    """True when a single step is an untouched write-first pre-seed.
+
+    Mirrors ``verify_abuse_cases._is_untouched_preseed_step`` (the source of
+    truth for the predicate) so the chain-verdict computation stays a pure
+    function of ``step_verdicts`` without cross-importing that CLI module. A step
+    still ``inconclusive`` with no non-empty ``reason`` and no non-empty evidence
+    ``excerpt`` is one the verifier never re-wrote — the turn ceiling hit before
+    it recorded a finding. Keep this in sync with the verify-side definition.
+    """
+    if (step.get("verdict") or "") != "inconclusive":
+        return False
+    if (step.get("reason") or "").strip():
+        return False
+    excerpt = ((step.get("evidence") or {}).get("excerpt") or "").strip()
+    return not excerpt
+
+
 def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     """Compute the chain verdict from per-step verifier verdicts.
 
@@ -452,6 +470,18 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     if all(v == _BLOCKED for v in verdicts):
         return "mitigated"
     if any(v == _INCONCLUSIVE for v in verdicts):
+        return "inconclusive"
+    # A step left as an untouched write-first pre-seed (inconclusive, no reason,
+    # no excerpt) was never actually verified — e.g. a mid-chain turn-ceiling
+    # cut-off. Such a chain must not positively finalize as fully_viable /
+    # partially_blocked even when the untouched step is NON-required: the
+    # required-only scan above silently drops it otherwise, so an identical pair
+    # of chains diverges purely on the matcher's `required` flag (2026-07-16
+    # juice-shop: AC-T-003 step 2 required=False untouched → wrongly fully_viable
+    # while AC-T-002 step 2 required=True untouched → inconclusive). Genuinely
+    # reasoned inconclusive steps on non-required legs are NOT caught here (they
+    # carry a reason) — the attack can still be viable through the required path.
+    if any(_is_untouched_preseed_step(s) for s in step_verdicts):
         return "inconclusive"
     confirmed = [v == _CONFIRMED for v in verdicts]
     if all(confirmed):

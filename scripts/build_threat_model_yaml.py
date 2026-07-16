@@ -1051,6 +1051,49 @@ def prune_dangling_mitigation_threat_ids(threats: list[dict], mitigations: list[
     return mitigations, warnings
 
 
+def prune_dangling_weakness_instances(
+    threats: list[dict], weaknesses: list[dict]
+) -> tuple[list[dict], list[str]]:
+    """Drop ``weakness.instances[]`` entries that reference no surviving threat.
+
+    ``merge_threats.build_weakness_register`` builds the register from the FULL
+    pre-drop threat set, so an instance names whatever T-ID the merge stage
+    assigned. ``build_threats`` then drops threats below the severity floor
+    *without renumbering* — the register goes sparse (e.g. T-067 → T-075) but the
+    weakness ``instances[]`` still name the dropped ids. The composer renders each
+    instance as a finding link ``[F-NNN](#f-nnn)``; a dropped instance therefore
+    becomes a titleless phantom link plus a stale positional anchor, and inflates
+    the md finding count so ``qa_checks.yaml_md_consistency`` trips (2026-07-16
+    juice-shop: W-006 kept T-068 after it was floored out).
+
+    This is the deterministic reconciliation point — the caller invokes it once
+    the final surviving ``threats`` set is known. Only ``instances[]`` (the
+    confirmed-exploitable legs) are pruned; ``observable_backing`` is left intact
+    because its practice / absent-control evidence intentionally references sites
+    that are not standalone threats. Returns ``(weaknesses, warnings)``; mutates
+    in place.
+    """
+    valid_tids = {t.get("id") for t in threats if isinstance(t, dict) and t.get("id")}
+
+    def _inst_id(i: object) -> object:
+        return i.get("id") if isinstance(i, dict) else i
+
+    warnings: list[str] = []
+    for w in weaknesses:
+        insts = w.get("instances") or []
+        kept = [i for i in insts if _inst_id(i) in valid_tids]
+        if len(kept) != len(insts):
+            dropped = [_inst_id(i) for i in insts if _inst_id(i) not in valid_tids]
+            warnings.append(
+                f"weakness {w.get('id')}: dropped {len(dropped)} dangling instance(s) "
+                f"{dropped} (threat below severity floor / not in register)"
+            )
+            w["instances"] = kept
+            if "instance_count" in w:
+                w["instance_count"] = len(kept)
+    return weaknesses, warnings
+
+
 def dedupe_mitigation_controls(threats: list[dict], mitigations: list[dict]) -> tuple[list[dict], list[dict]]:
     """Collapse mitigations that express the SAME control (identical
     ``_mitigation_fp`` — location-stripped, lowercased title) into one shared
@@ -2107,6 +2150,13 @@ def main() -> int:
     # runs → key omitted.
     weaknesses = merged.get("weaknesses") or []
     if weaknesses:
+        # Prune instances that reference threats dropped below the severity floor.
+        # build_threats drops without renumbering, so a stale instance would render
+        # as a titleless [F-NNN] phantom link + inflate the md finding count
+        # (yaml_md_consistency trip — 2026-07-16 juice-shop W-006→T-068).
+        weaknesses, weakness_prune_warnings = prune_dangling_weakness_instances(threats, weaknesses)
+        for w in weakness_prune_warnings:
+            sys.stderr.write(f"  {w}\n")
         doc["weaknesses"] = weaknesses
     if threat_hypotheses and not weaknesses:
         # P1.3c: when the weakness register exists, unpromoted design signals are

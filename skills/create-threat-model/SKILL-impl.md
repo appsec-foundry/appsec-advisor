@@ -2235,7 +2235,31 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
    done
    ```
 
-   For each `$cid` in `$STUB_COMPONENTS`, re-dispatch the single `appsec-stride-analyzer` **once** (foreground, `run_in_background: false`) with the same prompt as the original dispatch. If the retry still produces a stub or fails validation, log `STRIDE_STUB_RETRY_FAILED` and proceed without that component (`merge_threats.py` tolerates missing components). Do NOT re-dispatch more than once per component — a second exhaustion signals the component is too large for the current turn budget, and Analyst-B's merge step will carry forward an empty threat set rather than blocking. Dispatch all stub re-runs **simultaneously in one message** when there are multiple stubs.
+   For each `$cid` in `$STUB_COMPONENTS`, re-dispatch the single `appsec-stride-analyzer` **once** (foreground, `run_in_background: false`) with the same prompt as the original dispatch. Do NOT re-dispatch more than once per component — a second exhaustion signals the component is too large for the current turn budget, and Analyst-B's merge step will carry forward an empty threat set rather than blocking. Dispatch all stub re-runs **simultaneously in one message** when there are multiple stubs.
+
+   **Judge recovery from disk, not from the Agent return (deterministic post-retry gate).** After the retry Agent call(s) return, re-read each retried `.stride-<cid>.json` from disk with the SAME stub predicate used above and only THEN decide the outcome. Do **not** infer the verdict from the Agent return value: when a retry session is interrupted mid-run (parent turn-ceiling cut-off), it returns empty even though the analyzer wrote a full `.stride-<cid>.json`, and the component is also re-dispatched again by Analyst-B's Phase-9 merge — so a return-based verdict logs `STRIDE_STUB_RETRY_FAILED` while the file on disk already carries real threats (observed 2026-07-16 juice-shop: auth-service/data-persistence/frontend-spa logged RETRY_FAILED yet ended with 12/12/9 real threats). Judge STILL-a-stub from the on-disk file:
+
+   ```bash
+   for cid in $STUB_COMPONENTS; do
+     f="$OUTPUT_DIR/.stride-$cid.json"
+     STILL_STUB=$(python3 -c "
+   import json, sys
+   try:
+     d = json.load(open('$f'))
+     threats = d.get('threats')
+     print('yes' if (not threats or d.get('partial', False)) else 'no')
+   except Exception:
+     print('yes')
+   " 2>/dev/null)
+     if [ "$STILL_STUB" = "yes" ]; then
+       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  WARN   skill  STRIDE_STUB_RETRY_FAILED   component=$cid — still a stub on disk after retry; Analyst-B merge will attempt final recovery" >> "$OUTPUT_DIR/.agent-run.log"
+     else
+       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  INFO   skill  STRIDE_STUB_RETRY_OK   component=$cid — real threats present on disk after retry" >> "$OUTPUT_DIR/.agent-run.log"
+     fi
+   done
+   ```
+
+   `merge_threats.py` tolerates a genuinely-missing component, so a true still-stub is non-blocking; the point of the on-disk re-read is that `STRIDE_STUB_RETRY_FAILED` now reflects reality instead of an interrupted-return artifact. A component that only Analyst-B recovers is correctly logged `STRIDE_STUB_RETRY_FAILED` here (it IS a stub at this instant) but its later real threats flow into the merge normally — the wording no longer claims the component was dropped.
 
    3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis & Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 

@@ -543,6 +543,35 @@ def test_finalize_missing_verdict_defaults_inconclusive():
     assert mac.finalize_verdict(cm, []) == "inconclusive"
 
 
+def test_finalize_non_required_untouched_preseed_caps_at_inconclusive():
+    # Regression (2026-07-16 juice-shop AC-T-003): a step left as an untouched
+    # write-first pre-seed (inconclusive, no reason, no excerpt) on a NON-required
+    # leg was silently dropped by the required-only scan, so the chain wrongly
+    # finalized fully_viable — while the identical AC-T-002 with a REQUIRED step 2
+    # correctly read inconclusive. The verdict must be a pure function of the step
+    # verdicts: an unverified step caps the chain at inconclusive regardless of the
+    # matcher's `required` flag.
+    cm = _cm([{"step": 1, "required": True}, {"step": 2, "required": False}])
+    sv = [
+        {"step": 1, "verdict": "confirmed", "reason": "no ownership check"},
+        {"step": 2, "verdict": "inconclusive"},  # untouched pre-seed: no reason/excerpt
+    ]
+    assert mac.finalize_verdict(cm, sv) == "inconclusive"
+
+
+def test_finalize_non_required_reasoned_inconclusive_stays_viable():
+    # Precision guard: a GENUINELY inconclusive non-required step (verifier examined
+    # it and recorded a reason) must NOT downgrade the chain — the attack is still
+    # viable through the required path. Only untouched (never-verified) pre-seeds
+    # trigger the inconclusive cap above.
+    cm = _cm([{"step": 1, "required": True}, {"step": 2, "required": False}])
+    sv = [
+        {"step": 1, "verdict": "confirmed"},
+        {"step": 2, "verdict": "inconclusive", "reason": "control present but bypass unclear"},
+    ]
+    assert mac.finalize_verdict(cm, sv) == "fully_viable"
+
+
 # ---------------------------------------------------------------------------
 # cmd_match — org-profile + resolver-error paths
 # ---------------------------------------------------------------------------
