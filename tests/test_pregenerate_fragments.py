@@ -659,7 +659,7 @@ class TestAttackSurface:
 
 
 # ---------------------------------------------------------------------------
-# M3.3 / D1 — §2 + §7 substance enrichments
+# M3.3 / D1 — §2 + §6 substance enrichments
 # ---------------------------------------------------------------------------
 
 
@@ -753,11 +753,11 @@ class TestArchitectureDataFlows:
 # column on the §2.4 trust-boundary table is no longer rendered — §2.4 is
 # now a compact technology-stack mermaid diagram (Application Tier / Data
 # Tier subgraphs) without per-boundary enforcement strings. Trust boundary
-# detail moved to §1.x infobox metadata + §7.x control catalogue.
+# detail moved to §1.x infobox metadata + §6.x control catalogue.
 
 
 class TestSecurityArchitectureCWEMapping:
-    """§7 v2 must surface threats by contract CWE routing when no controls are cataloged."""
+    """§6 v2 must surface threats by contract CWE routing when no controls are cataloged."""
 
     @staticmethod
     def _h3_section(md: str, start: str, end: str) -> str:
@@ -770,7 +770,7 @@ class TestSecurityArchitectureCWEMapping:
             "meta": {"project": {"name": "x"}},
             "components": [{"id": "c1", "name": "C1", "paths": ["a"]}],
             "security_controls": [
-                # Auth control present so §7.2 is the only cataloged-control section.
+                # Auth control present so §6.2 is the only cataloged-control section.
                 {
                     "control": "Password-Based Authentication",
                     "domain": "Identity and Authentication Controls",
@@ -792,7 +792,7 @@ class TestSecurityArchitectureCWEMapping:
             },
         ]
         md = pf.gen_security_architecture(self._data(threats))
-        sec_7_10 = self._h3_section(md, "7.10", "7.11")
+        sec_7_10 = self._h3_section(md, "6.10", "6.11")
         assert "F-100" in sec_7_10
 
     def test_query_construction_threats_surface_in_7_5_via_cwe(self):
@@ -800,7 +800,7 @@ class TestSecurityArchitectureCWEMapping:
             {"id": "T-200", "cwe": "CWE-89", "title": "SQL injection", "scenario": "...", "risk": "High"},
         ]
         md = pf.gen_security_architecture(self._data(threats))
-        sec_7_5 = self._h3_section(md, "7.5", "7.6")
+        sec_7_5 = self._h3_section(md, "6.5", "6.6")
         assert "F-200" in sec_7_5
 
     def test_unrelated_threat_does_not_match_7_12(self):
@@ -815,7 +815,7 @@ class TestSecurityArchitectureCWEMapping:
             },
         ]
         md = pf.gen_security_architecture(self._data(threats))
-        sec_7_12 = self._h3_section(md, "7.12", "7.13")
+        sec_7_12 = self._h3_section(md, "6.12", "6.13")
         assert "F-300" not in sec_7_12, "F-300 has nothing to do with real-time controls"
 
 
@@ -1045,7 +1045,7 @@ class TestTechnologyArchitectureDiagram:
         # Contract v2 uses the compact technology-stack mermaid diagram with
         # Application Tier / Data Tier subgraphs. The per-boundary table
         # (`| public | Public Internet | ... |`) was retired in 2026-05 —
-        # trust-boundary detail now lives in the §1.x infobox + §7.x catalogue.
+        # trust-boundary detail now lives in the §1.x infobox + §6.x catalogue.
         assert 'subgraph APP["Application Tier"]' in sec_2_4
         assert 'subgraph DATA["Data Tier"]' in sec_2_4
 
@@ -1462,40 +1462,40 @@ class TestD15RuntimeColumn:
 class TestSecurityArchitecture:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        assert md.startswith("## 7. Security Architecture\n")
+        assert md.startswith("## 6. Security Architecture\n")
 
     def test_has_all_13_v2_subsections(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
         for heading, _hint, _tier in pf._V2_SUBSECTIONS:
             assert f"### {heading}" in md, f"Missing ### {heading}"
-        assert "### 7.14 " not in md
+        assert "### 6.14 " not in md
 
     def test_crypto_secrets_live_in_79(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        assert "### 7.9 Cryptography Secrets and Data Protection" in md
+        assert "### 6.9 Cryptography Secrets and Data Protection" in md
 
     def test_defense_in_depth_is_713(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        assert "### 7.13 Defense-in-Depth Summary" in md
+        assert "### 6.13 Defense-in-Depth Summary" in md
 
     def test_identity_subsection_includes_matched_control(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        identity_section = re.search(r"### 7\.2 .+?(?=### 7\.3 )", md, re.DOTALL)
+        identity_section = re.search(r"### 6\.2 .+?(?=### 6\.3 )", md, re.DOTALL)
         assert identity_section is not None
         assert "Password-Based Authentication" in identity_section.group(0)
 
     def test_identity_section_has_subcontrol_block(self, minimal_yaml_data):
-        """§7.2 decomposes discovered authentication mechanisms into H4 blocks."""
+        """§6.2 decomposes discovered authentication mechanisms into H4 blocks."""
         md = pf.gen_security_architecture(minimal_yaml_data)
-        identity_section = re.search(r"### 7\.2 .+?(?=### 7\.3 )", md, re.DOTALL)
+        identity_section = re.search(r"### 6\.2 .+?(?=### 6\.3 )", md, re.DOTALL)
         assert identity_section is not None
         body = identity_section.group(0)
-        assert re.search(r"^#### 7\.2\.\d+\s+Password-Based Authentication\s*$", body, re.MULTILINE)
+        assert re.search(r"^#### 6\.2\.\d+\s+Password-Based Authentication\s*$", body, re.MULTILINE)
         assert "**Security assessment**" in body
         assert "**Relevant findings**" in body
 
     def test_empty_control_catalog_keeps_required_auth_session_flow_scaffolds(self):
-        """v2 still emits §7.2/§7.3 flow anchors when the catalog is empty.
+        """v2 still emits §6.2/§6.3 flow anchors when the catalog is empty.
 
         The Composer enforces schema_v2.domain_required_patterns for these
         sections, so the pregenerator must provide a fillable scaffold instead
@@ -1507,42 +1507,42 @@ class TestSecurityArchitecture:
                 "security_controls": [],
             }
         )
-        identity_section = re.search(r"### 7\.2 .+?(?=### 7\.3 )", md, re.DOTALL)
+        identity_section = re.search(r"### 6\.2 .+?(?=### 6\.3 )", md, re.DOTALL)
         assert identity_section is not None
         identity_body = identity_section.group(0)
-        assert "#### 7.2.1 Password Login" in identity_body
+        assert "#### 6.2.1 Password Login" in identity_body
         assert "sequenceDiagram" in identity_body
 
-        session_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
+        session_section = re.search(r"### 6\.3 .+?(?=### 6\.4 )", md, re.DOTALL)
         assert session_section is not None
         session_body = session_section.group(0)
-        assert "#### 7.3.1 JWT Session Issuance and Verification" in session_body
+        assert "#### 6.3.1 JWT Session Issuance and Verification" in session_body
         assert "sequenceDiagram" in session_body
 
     def test_section_73_with_non_flow_controls_still_gets_diagram(self):
-        """Regression (2026-06-16): §7.3 populated with storage/cookie/revocation
+        """Regression (2026-06-16): §6.3 populated with storage/cookie/revocation
         controls (non-flow-like names) took the per-subcontrol path whose diagram
         is gated on flow-like naming, so no sequenceDiagram landed and
-        compose --strict failed the §7.3 domain_required_pattern. The
+        compose --strict failed the §6.3 domain_required_pattern. The
         section-scoped guarantee must inject one regardless of control naming."""
         md = pf.gen_security_architecture(
             {
                 "components": [],
                 "security_controls": [
                     {
-                        "domain": "7.3 Session and Token Controls",
+                        "domain": "6.3 Session and Token Controls",
                         "control": "JWT storage",
                         "effectiveness": "Unsafe",
                         "cwe": "CWE-922",
                     },
                     {
-                        "domain": "7.3 Session and Token Controls",
+                        "domain": "6.3 Session and Token Controls",
                         "control": "Token revocation",
                         "effectiveness": "Missing",
                         "cwe": "CWE-613",
                     },
                     {
-                        "domain": "7.3 Session and Token Controls",
+                        "domain": "6.3 Session and Token Controls",
                         "control": "Cookie attributes",
                         "effectiveness": "Weak",
                         "cwe": "CWE-1004",
@@ -1550,7 +1550,7 @@ class TestSecurityArchitecture:
                 ],
             }
         )
-        session_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
+        session_section = re.search(r"### 6\.3 .+?(?=### 6\.4 )", md, re.DOTALL)
         assert session_section is not None
         assert "sequenceDiagram" in session_section.group(0)
 
@@ -1693,7 +1693,7 @@ class TestOutOfScope:
 
 
 # ---------------------------------------------------------------------------
-# Tier classification (helper used by §2 + §7)
+# Tier classification (helper used by §2 + §6)
 # ---------------------------------------------------------------------------
 
 
@@ -1757,7 +1757,7 @@ class TestCli:
         # Once narrative-filled, security-architecture.md is preserved too →
         # a subsequent non-force run skips ALL fragments.
         frag = output_dir / ".fragments" / "security-architecture.md"
-        frag.write_text("### 7.2 Identity\nfilled, no placeholders\n")
+        frag.write_text("### 6.2 Identity\nfilled, no placeholders\n")
         result2 = _run_cli(str(output_dir))
         assert result2.returncode == 0
         assert f"skipped {len(pf.GENERATORS)}" in result2.stdout
@@ -1879,18 +1879,18 @@ class TestCli:
         UNFILLED security-architecture.md scaffold must regenerate it from the
         CURRENT yaml — otherwise a scaffold written early (Analyst-A, before
         emit_auth_coverage backfills auth mechanisms) survives stale into Stage 2
-        and §7.2/§7.3 lose the new mechanisms' flow blocks. A narrative-FILLED
+        and §6.2/§6.3 lose the new mechanisms' flow blocks. A narrative-FILLED
         fragment is still preserved (separate test below)."""
         frag = output_dir / ".fragments" / "security-architecture.md"
-        # 1. Early scaffold (no §7.2 auth-mechanism controls yet).
+        # 1. Early scaffold (no §6.2 auth-mechanism controls yet).
         _run_cli(str(output_dir), "--only", "security-architecture.md")
         assert "NARRATIVE_PLACEHOLDER" in frag.read_text()
         assert "Password-Based Login" not in frag.read_text()
-        # 2. emit_auth_coverage-style backfill: add §7.2 mechanism control.
+        # 2. emit_auth_coverage-style backfill: add §6.2 mechanism control.
         ydata = yaml.safe_load((output_dir / "threat-model.yaml").read_text())
         ydata.setdefault("security_controls", []).append(
             {
-                "domain": "7.2 Identity and Authentication Controls",
+                "domain": "6.2 Identity and Authentication Controls",
                 "control": "Password-Based Login",
                 "kind": "mechanism",
                 "effectiveness": "Unsafe",
@@ -1908,7 +1908,7 @@ class TestCli:
         non-force pregen (no NARRATIVE_PLACEHOLDER markers → preserve)."""
         frag = output_dir / ".fragments" / "security-architecture.md"
         _run_cli(str(output_dir), "--only", "security-architecture.md")
-        frag.write_text("### 7.2 Identity\nFILLED-SENTINEL — no placeholders\n")
+        frag.write_text("### 6.2 Identity\nFILLED-SENTINEL — no placeholders\n")
         result = _run_cli(str(output_dir), "--only", "security-architecture.md")
         assert result.returncode == 0
         assert "FILLED-SENTINEL" in frag.read_text()
@@ -1939,8 +1939,8 @@ class TestCli:
 
 
 # ---------------------------------------------------------------------------
-# Section 7.2 — Threat Hypotheses Requiring Validation
-# (arch.md §Renderer-Rules + Section 7.2 block)
+# Section 6.2 — Threat Hypotheses Requiring Validation
+# (arch.md §Renderer-Rules + Section 6.2 block)
 # ---------------------------------------------------------------------------
 
 
@@ -2002,9 +2002,9 @@ class TestSection72ThreatHypothesesTable:
 
 
 class TestSecurityArchitectureV2:
-    """§7 v2 generator — verdict semantics (Unsafe vs Missing), the verdict
+    """§6 v2 generator — verdict semantics (Unsafe vs Missing), the verdict
     legend, per-sub-control Status badges, and grouped password lifecycle.
-    Added 2026-05 with the §7 verdict/structure redesign."""
+    Added 2026-05 with the §6 verdict/structure redesign."""
 
     @staticmethod
     def _data():
@@ -2070,7 +2070,7 @@ class TestSecurityArchitectureV2:
         # A Missing category that HAS a catalogued (absent) control names it as
         # "required controls not in place" — not the misleading "no controls
         # catalogued", which must be reserved for genuinely empty categories
-        # (2026-06-02 §7.1 fix).
+        # (2026-06-02 §6.1 fix).
         assert "required controls not in place" in csp, csp
         assert "no controls catalogued" not in csp.lower(), csp
         # A category with NO catalogued control at all still reads "No controls
@@ -2091,8 +2091,8 @@ class TestSecurityArchitectureV2:
     def test_grouped_password_lifecycle_bullets(self):
         md = pf.gen_security_architecture_v2(self._data())
         # Split on the H3 with a trailing space so the needle does NOT also
-        # match the H4 `#### 7.2.1 …` (which contains the substring "### 7.2").
-        seg = md.split("\n### 7.2 ")[1].split("\n### 7.3 ")[0]
+        # match the H4 `#### 6.2.1 …` (which contains the substring "### 6.2").
+        seg = md.split("\n### 6.2 ")[1].split("\n### 6.3 ")[0]
         assert "Password-Based Authentication" in seg
         # the lifecycle stages render as bullets, NOT as peer H4s
         assert any(l.startswith("- **Login** — 🔴 Unsafe") for l in seg.splitlines())
@@ -2102,18 +2102,18 @@ class TestSecurityArchitectureV2:
 
     @staticmethod
     def _section_containing(md: str, needle: str) -> str:
-        """Return the `### 7.x` block (header→next H3/H2) that contains needle.
+        """Return the `### 6.x` block (header→next H3/H2) that contains needle.
 
-        Skips §7.1 — the Security Control Overview table now names controls in
+        Skips §6.1 — the Security Control Overview table now names controls in
         its 'Main reason' cells, so a control name appears there too; tests want
-        the control's OWN §7.x block, not the overview row."""
+        the control's OWN §6.x block, not the overview row."""
         import re as _re
 
-        blocks = _re.split(r"(?m)^(?=### 7\.\d+ )", md)
+        blocks = _re.split(r"(?m)^(?=### 6\.\d+ )", md)
         for b in blocks:
-            if b.startswith("### 7.") and not b.startswith("### 7.1 ") and needle in b:
+            if b.startswith("### 6.") and not b.startswith("### 6.1 ") and needle in b:
                 return b.split("\n## ")[0]
-        raise AssertionError(f"no §7 block contains {needle!r}")
+        raise AssertionError(f"no §6 block contains {needle!r}")
 
     @staticmethod
     def _covered_labels(section: str) -> list:
@@ -2133,7 +2133,7 @@ class TestSecurityArchitectureV2:
         (Missing + no findings + no implementation) must NOT appear in the
         `**Controls covered:**` line — otherwise it is a dangling link the
         control_subsection_coverage gate flags and the re-render loop cannot
-        self-heal (juice-shop 2026-06-01 §7.4/§7.10)."""
+        self-heal (juice-shop 2026-06-01 §6.4/§6.10)."""
         data = {
             "components": [],
             "threats": [{"id": "T-008", "cwe": "CWE-352", "title": "CSRF"}],
@@ -2164,7 +2164,7 @@ class TestSecurityArchitectureV2:
         assert "Role-Based Access Control" in titles
 
     def test_controls_covered_dropped_when_all_suppressed(self):
-        """When every control in a §7.x section is suppressed, the
+        """When every control in a §6.x section is suppressed, the
         `**Controls covered:**` line is removed entirely (no dangling links);
         the suppressed-controls note still lists them for the reader."""
         data = {
@@ -2182,37 +2182,37 @@ class TestSecurityArchitectureV2:
 
 
 class TestV2SectionRouting:
-    """`_v2_canonical_section_for_control` routes controls to §7 sections by
+    """`_v2_canonical_section_for_control` routes controls to §6 sections by
     domain. Regression: hyphenated hints (`file-parser`) never matched the
     space-form canonical domain Stage 1 writes ("File Parser and Outbound
     Request Controls"), so a control whose NAME also lacked a hint token was
-    dropped from §7 entirely (juice-shop 2026-06-01 §7.10)."""
+    dropped from §6 entirely (juice-shop 2026-06-01 §6.10)."""
 
     def test_canonical_domain_routes_even_without_hint_in_name(self):
-        # "File Upload Validation" carries no §7.10 hint token in its name,
-        # but its domain IS the canonical §7.10 title → must route to §7.10.
+        # "File Upload Validation" carries no §6.10 hint token in its name,
+        # but its domain IS the canonical §6.10 title → must route to §6.10.
         c = {"control": "File Upload Validation", "domain": "File Parser and Outbound Request Controls"}
-        assert pf._v2_canonical_section_for_control(c) == "7.10 File Parser and Outbound Request Controls"
+        assert pf._v2_canonical_section_for_control(c) == "6.10 File Parser and Outbound Request Controls"
 
     def test_data_access_domain_does_not_collide_with_authorization(self):
-        # Guard against the substring trap: §7.4 hint "access-control" must NOT
-        # steal a §7.5 control whose domain ends "...Data Access Controls".
+        # Guard against the substring trap: §6.4 hint "access-control" must NOT
+        # steal a §6.5 control whose domain ends "...Data Access Controls".
         c = {"control": "SQL Parameterization (Sequelize ORM)", "domain": "Query Construction and Data Access Controls"}
-        assert pf._v2_canonical_section_for_control(c) == "7.5 Query Construction and Data Access Controls"
+        assert pf._v2_canonical_section_for_control(c) == "6.5 Query Construction and Data Access Controls"
 
     def test_hint_fallback_still_works_for_partial_domain(self):
         # Non-canonical / shorthand domain still routes via the hint fallback.
         c = {"control": "SSRF guard", "domain": "ssrf"}
-        assert pf._v2_canonical_section_for_control(c) == "7.10 File Parser and Outbound Request Controls"
+        assert pf._v2_canonical_section_for_control(c) == "6.10 File Parser and Outbound Request Controls"
 
 
 # ---------------------------------------------------------------------------
-# §7.2 Authentication Mechanisms inventory (2026-05-31, deterministic)
+# §6.2 Authentication Mechanisms inventory (2026-05-31, deterministic)
 # ---------------------------------------------------------------------------
 
 
 def _auth_yaml():
-    """A yaml fixture exercising mechanisms across the §7.2/§7.3/§7.9 domains."""
+    """A yaml fixture exercising mechanisms across the §6.2/§6.3/§6.9 domains."""
     return {
         "meta": {"open_user_registration": True},
         "security_controls": [
@@ -2276,10 +2276,10 @@ def test_auth_inventory_absent_go_to_note():
 
 def test_auth_inventory_section_pointers():
     block = "\n".join(pf._build_auth_mechanism_inventory(_auth_yaml()))
-    # JWT assessed under §7.3, hashing under §7.9, registration under §7.2.
-    assert "[§7.3](#73-session-and-token-controls)" in block
-    assert "[§7.9](#79-cryptography-secrets-and-data-protection)" in block
-    assert "[§7.2](#72-identity-and-authentication-controls)" in block
+    # JWT assessed under §6.3, hashing under §6.9, registration under §6.2.
+    assert "[§6.3](#63-session-and-token-controls)" in block
+    assert "[§6.9](#69-cryptography-secrets-and-data-protection)" in block
+    assert "[§6.2](#62-identity-and-authentication-controls)" in block
 
 
 def test_auth_inventory_status_from_effectiveness():
@@ -2311,7 +2311,7 @@ def test_auth_inventory_is_frozen_marked_and_single_titles():
     # ID left it 'leer betitelt', 2026-06-02). The link must show `— <title>`.
     assert block.count("[F-001](#f-001)") == 1
     assert re.search(r"\[F-001\]\(#f-001\) — \S", block), (
-        "§7.2 inventory finding link must carry a title, not a bare ID"
+        "§6.2 inventory finding link must carry a title, not a bare ID"
     )
 
 
@@ -2433,7 +2433,7 @@ def test_system_overview_no_selection_falls_back_to_plain_scope():
 # Target the large uncovered blocks: legacy boundary-driven §2.4 mermaid,
 # filesystem ghost-nodes, layer tables (per-layer split), the v2 control
 # emitters (grouped / subcontrol / legacy), heading verdicts, and the
-# §7.2 auth-mechanism inventory.
+# §6.2 auth-mechanism inventory.
 # ---------------------------------------------------------------------------
 
 
@@ -2630,10 +2630,10 @@ class TestRenderLayerTables:
 
 class TestControlVerdictForHeading:
     def test_empty_when_no_control_no_threat(self):
-        assert pf._control_verdict_for_heading("7.2 X", {}, []) == ""
+        assert pf._control_verdict_for_heading("6.2 X", {}, []) == ""
 
     def test_status_and_severity_combined(self):
-        heading = "7.2 Identity and Authentication Controls"
+        heading = "6.2 Identity and Authentication Controls"
         threats_by_section = {heading: [{"severity": "critical"}, {"severity": "low"}]}
         controls = [{"domain": "Identity and Authentication Controls", "effectiveness": "missing"}]
         out = pf._control_verdict_for_heading(heading, threats_by_section, controls)
@@ -2641,14 +2641,14 @@ class TestControlVerdictForHeading:
         assert "🔴" in out and "Critical" in out
 
     def test_threats_without_mapped_control_default_weak(self):
-        heading = "7.5 Data Controls"
+        heading = "6.5 Data Controls"
         threats_by_section = {heading: [{"risk": "high"}]}
         out = pf._control_verdict_for_heading(heading, threats_by_section, [])
         assert "Weak" in out
         assert "🟠" in out and "High" in out
 
     def test_status_only_when_no_threats(self):
-        heading = "7.9 Crypto"
+        heading = "6.9 Crypto"
         controls = [{"domain": "Crypto", "effectiveness": "partial"}]
         out = pf._control_verdict_for_heading(heading, {}, controls)
         assert out == " — Partial"
@@ -2681,7 +2681,7 @@ class TestV2LifecycleBullets:
             },
             {"title": "Storage", "effectiveness": "weak"},
         ]
-        out = pf._v2_lifecycle_bullets(subs, [], "7.2 Auth")
+        out = pf._v2_lifecycle_bullets(subs, [], "6.2 Auth")
         assert any(l.startswith("- **Login** — 🔴 Unsafe.") for l in out)
         # note truncated to first clause + period
         assert any("raw SQL." in l for l in out)
@@ -2706,9 +2706,9 @@ class TestEmitV2GroupedControl:
             {"title": "Login", "effectiveness": "unsafe", "relevant_findings": ["T-001"]},
             {"title": "Storage", "effectiveness": "unsafe", "relevant_findings": [{"id": "T-002"}]},
         ]
-        pf._emit_v2_grouped_control(lines, c, subs, [], "7.2 Identity", section_id="7.2", idx=1)
+        pf._emit_v2_grouped_control(lines, c, subs, [], "6.2 Identity", section_id="6.2", idx=1)
         joined = "\n".join(lines)
-        assert "#### 7.2.1 Token-Based" not in joined  # name is the family, not friendly-mapped here
+        assert "#### 6.2.1 Token-Based" not in joined  # name is the family, not friendly-mapped here
         assert "**Security assessment**" in joined
         assert "**Relevant findings**" in joined
         assert "```mermaid" in joined
@@ -2719,7 +2719,7 @@ class TestEmitV2GroupedControl:
         c = {"control": "Password-Based Authentication", "effectiveness": "missing"}
         subs = [{"title": "Login", "effectiveness": "missing"}]
         threats = [{"id": "T-005", "cwe": "CWE-287", "title": "bypass"}]
-        pf._emit_v2_grouped_control(lines, c, subs, threats, "7.2 Identity and Authentication Controls")
+        pf._emit_v2_grouped_control(lines, c, subs, threats, "6.2 Identity and Authentication Controls")
         joined = "\n".join(lines)
         # bare heading (no section_id/idx)
         assert joined.startswith("#### ")
@@ -2731,7 +2731,7 @@ class TestEmitV2GroupedControl:
         lines: list[str] = []
         c = {"control": "Some Control", "effectiveness": "weak"}
         subs = [{"title": "Stage", "effectiveness": "weak"}]
-        pf._emit_v2_grouped_control(lines, c, subs, [], "7.6 Misc")
+        pf._emit_v2_grouped_control(lines, c, subs, [], "6.6 Misc")
         joined = "\n".join(lines)
         assert "No dedicated finding routed in this assessment." in joined
 
@@ -2750,9 +2750,9 @@ class TestEmitV2SubcontrolBlock:
             "code_language": "ts",
             "relevant_findings": [{"id": "T-001", "rationale": "alg confusion"}, "T-002"],
         }
-        pf._emit_v2_subcontrol_block(lines, sub, [], "7.3 Session", section_id="7.3", idx=2)
+        pf._emit_v2_subcontrol_block(lines, sub, [], "6.3 Session", section_id="6.3", idx=2)
         joined = "\n".join(lines)
-        assert "#### 7.3.2 Token-Based Session Authentication (JWT)" in joined
+        assert "#### 6.3.2 Token-Based Session Authentication (JWT)" in joined
         assert '<a id="' in joined
         assert "```mermaid" in joined
         assert "```ts" in joined
@@ -2762,7 +2762,7 @@ class TestEmitV2SubcontrolBlock:
     def test_flow_type_diagram_placeholder(self):
         lines: list[str] = []
         sub = {"title": "Login", "type": "flow"}
-        pf._emit_v2_subcontrol_block(lines, sub, [], "7.2 Identity and Authentication Controls")
+        pf._emit_v2_subcontrol_block(lines, sub, [], "6.2 Identity and Authentication Controls")
         joined = "\n".join(lines)
         assert joined.startswith("#### Login")
         # missing impl/assessment + flow diagram placeholder
@@ -2771,14 +2771,14 @@ class TestEmitV2SubcontrolBlock:
     def test_string_relevant_findings_and_cwe_fallback(self):
         lines: list[str] = []
         sub = {"title": "Validation", "effectiveness": "weak", "relevant_findings": "T-007"}
-        pf._emit_v2_subcontrol_block(lines, sub, [], "7.6 Input")
+        pf._emit_v2_subcontrol_block(lines, sub, [], "6.6 Input")
         joined = "\n".join(lines)
         assert "[F-007](#f-007)" in joined
 
     def test_no_findings_fallback_line(self):
         lines: list[str] = []
         sub = {"title": "X", "effectiveness": "adequate", "assessment": "ok"}
-        pf._emit_v2_subcontrol_block(lines, sub, [], "7.11 Logging")
+        pf._emit_v2_subcontrol_block(lines, sub, [], "6.11 Logging")
         joined = "\n".join(lines)
         assert "No dedicated finding routed in this assessment." in joined
 
@@ -2787,7 +2787,7 @@ class TestEmitV2SubcontrolLegacy:
     def test_suppressed_missing_no_threats(self):
         lines: list[str] = []
         c = {"effectiveness": "missing"}
-        emitted = pf._emit_v2_subcontrol_legacy(lines, c, "CSRF Protection", [], "7.4 Authorization")
+        emitted = pf._emit_v2_subcontrol_legacy(lines, c, "CSRF Protection", [], "6.4 Authorization")
         assert emitted is False
         assert lines == []
 
@@ -2795,11 +2795,11 @@ class TestEmitV2SubcontrolLegacy:
         lines: list[str] = []
         c = {"effectiveness": "weak", "linked_threats": ["T-003"], "implementation": "Uses helmet."}
         emitted = pf._emit_v2_subcontrol_legacy(
-            lines, c, "Login", "irrelevant", "7.2 Identity", section_id="7.2", idx=1
+            lines, c, "Login", "irrelevant", "6.2 Identity", section_id="6.2", idx=1
         )
         assert emitted is True
         joined = "\n".join(lines)
-        assert "#### 7.2.1 Login" in joined
+        assert "#### 6.2.1 Login" in joined
         assert "Uses helmet." in joined
         assert "[F-003](#f-003)" in joined
         # flow-like name (login) → sequenceDiagram placeholder + code-excerpt placeholder
@@ -2809,7 +2809,7 @@ class TestEmitV2SubcontrolLegacy:
         lines: list[str] = []
         c = {"effectiveness": "missing"}
         threats = [{"id": "T-008", "cwe": "CWE-862", "title": "missing authz"}]
-        emitted = pf._emit_v2_subcontrol_legacy(lines, c, "Generic Control", threats, "7.4 Authorization Controls")
+        emitted = pf._emit_v2_subcontrol_legacy(lines, c, "Generic Control", threats, "6.4 Authorization Controls")
         assert emitted is True
         joined = "\n".join(lines)
         assert "NARRATIVE_PLACEHOLDER" in joined  # impl + assessment placeholders
@@ -2956,18 +2956,18 @@ class TestV2GroupedAndSubcontrolViaGenerator:
             ],
         }
         md = pf.gen_security_architecture_v2(data)
-        assert "#### 7.2.1" in md
-        assert "#### 7.2.2" in md
+        assert "#### 6.2.1" in md
+        assert "#### 6.2.2" in md
 
     def test_quick_depth_skips_empty_sections(self):
         data = {"components": [], "threats": [], "security_controls": []}
         md = pf.gen_security_architecture_v2(data, depth="quick")
         # still emits the chapter heading + overview
-        assert md.startswith("## 7. Security Architecture")
+        assert md.startswith("## 6. Security Architecture")
 
 
 class TestOverviewVerdictBranches:
-    """Exercise the §7.1 overview verdict/reason branches: partial, adequate,
+    """Exercise the §6.1 overview verdict/reason branches: partial, adequate,
     weak-no-controls."""
 
     def test_partial_verdict_row(self):
@@ -2997,7 +2997,7 @@ class TestOverviewVerdictBranches:
         assert "no routed findings" in row
 
     def test_weak_no_controls_routed_finding(self):
-        # A finding routes to §7.4 (CWE-862 authz) but no control catalogued there.
+        # A finding routes to §6.4 (CWE-862 authz) but no control catalogued there.
         data = {
             "components": [],
             "threats": [{"id": "T-1", "cwe": "CWE-862", "title": "BOLA"}],
@@ -3060,7 +3060,7 @@ class TestClassifyTierBoundary:
 
 
 # ---------------------------------------------------------------------------
-# RC-2 (2026-06-21 juice-shop): a §7.x section with routed findings but NO
+# RC-2 (2026-06-21 juice-shop): a §6.x section with routed findings but NO
 # catalogued controls must ship a `**Controls covered:**` line that matches its
 # fallback #### heading, so check_control_subsection_coverage passes WITHOUT an
 # LLM repair pass. Previously the empty-controls branch emitted a free
@@ -3081,7 +3081,7 @@ def _load_qa():
 
 class TestControlCoverageSparseFallback:
     def _yaml(self):
-        # CWE-352 routes to §7.8 "Browser and Cross-Origin Controls".
+        # CWE-352 routes to §6.8 "Browser and Cross-Origin Controls".
         # Empty security_controls[] forces the empty-controls fallback path.
         return {
             "meta": {"project": {"name": "T", "description": "d"}},
@@ -3097,12 +3097,12 @@ class TestControlCoverageSparseFallback:
 
     def test_78_fallback_emits_matching_controls_covered(self):
         md = pf.gen_security_architecture_v2(self._yaml(), "standard")
-        assert "### 7.8 Browser and Cross-Origin Controls" in md
-        sec = md.split("### 7.8", 1)[1].split("\n### ", 1)[0]
-        assert "**Controls covered:**" in sec, "§7.8 fallback must keep a Controls-covered line"
+        assert "### 6.8 Browser and Cross-Origin Controls" in md
+        sec = md.split("### 6.8", 1)[1].split("\n### ", 1)[0]
+        assert "**Controls covered:**" in sec, "§6.8 fallback must keep a Controls-covered line"
         # The free placeholder that baited the LLM into inventing links is gone.
         assert "NARRATIVE_PLACEHOLDER: list concrete subcontrols" not in sec
-        assert "####" in sec, "§7.8 fallback must emit at least one #### heading"
+        assert "####" in sec, "§6.8 fallback must emit at least one #### heading"
 
     def test_78_passes_real_control_coverage_gate(self, tmp_path):
         qa = _load_qa()
@@ -3110,5 +3110,5 @@ class TestControlCoverageSparseFallback:
         p = tmp_path / "threat-model.md"
         p.write_text(md, encoding="utf-8")
         report = qa.check_control_subsection_coverage(p)
-        flagged = [i for i in report.issues if "7.8" in i]
-        assert not flagged, f"§7.8 still trips control_subsection_coverage: {flagged}"
+        flagged = [i for i in report.issues if "6.8" in i]
+        assert not flagged, f"§6.8 still trips control_subsection_coverage: {flagged}"

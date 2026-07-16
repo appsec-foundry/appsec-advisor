@@ -932,10 +932,10 @@ The threat register lists every confirmed STRIDE finding with its evidence, curr
 **Consistency invariants (QA-enforced):**
 
 1. Every Risk cell in the sub-section tables MUST match the Likelihood/Impact matrix above — no exceptions without an explicit `architectural_violation: true` escalation note in the threat row
-2. The counts in the "Risk Distribution" line MUST sum to the **Total** and MUST equal the row counts in the four sub-section headings (`### 7.1 Critical (<N>)` …)
+2. The counts in the "Risk Distribution" line MUST sum to the **Total** and MUST equal the row counts in the four sub-section headings (`### 6.1 Critical (<N>)` …)
 3. The counts in the "STRIDE Coverage" line MUST sum to the **Total** — one threat has exactly one primary STRIDE category; never split a threat across two categories
 
-### 7.1 Critical (<N>)
+### 6.1 Critical (<N>)
 
 These findings combine high exploitability with maximum impact. Every entry here is referenced by T-NNN from the `## Critical Attack Tree` block (placed directly after the Management Summary) and is the source of the P1 rollout actions in the Management Summary's Immediate Actions table. Section 7.1 is the authoritative per-finding source — the Attack Tree block links back here, never duplicates this content.
 
@@ -1398,7 +1398,7 @@ The template is ~4 k tokens. Load it in the same Bash call that reads `.triage-f
 - 🔴/🟡/🟢 severity cue in `### Verdict` + red HTML blockquote with worst-case bullets (F-NNN links) — no separate `### ⚠ Worst Case Scenarios` heading.
 - `### Top Findings` is a 7-column table (not bullets): `#`, `Criticality`, `Finding`, `Component`, `Threat`, `Vektor`, `Primary Mitigations`. Max 15–20 rows; every Vektor cell is a link to Appendix A.
 - Do not emit legacy Management Summary subsections: `### Top Critical Findings`, `### Critical Findings`, `### Recommended Priority Actions`, `### Key Strengths`, or `### Overall Security Rating`. Content that used to live there is replaced by `### Top Findings`, `## Critical Attack Tree`, `#### Prioritized Mitigations`, and `### Operational Strengths`.
-- `### Architecture Assessment` uses a 3-column table (`Defect` / `Description` / `Key Findings`) with a closing §7 reference line.
+- `### Architecture Assessment` uses a 3-column table (`Defect` / `Description` / `Key Findings`) with a closing §6 reference line.
 - `### Mitigations` has two sub-tables (`#### Prioritized` + `#### Follow-up`), both 5 columns: `ID`, `Mitigation`, `Component`, `Addresses`, `Effort`.
 - `### Operational Strengths` is a mandatory 5-column table (5–8 rows min): `Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`.
 - Sub-section headings MUST NOT be numbered (`### 1.1 Verdict` is a generation defect — QA auto-strips the prefix).
@@ -1474,7 +1474,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_sca_practice.py" \
   --output-dir "$OUTPUT_DIR" \
   --asset-tier "$ASSET_TIER" \
   >> "$OUTPUT_DIR/.agent-run.log" 2>&1 \
-  || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  emit_sca_practice failed — §7.11 SCA-practice rows missing this run" >> "$OUTPUT_DIR/.agent-run.log"
+  || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  emit_sca_practice failed — §6.11 SCA-practice rows missing this run" >> "$OUTPUT_DIR/.agent-run.log"
 
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_known_bad_libs.py" \
   --repo-root  "$REPO_ROOT" \
@@ -1487,8 +1487,8 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  AGENT_D
 ```
 
 Outputs written by these emitters:
-- `$OUTPUT_DIR/.dep-update-activity.json` — passive `git log` cadence signal (active | sporadic | inactive | unknown) plus optional `gh pr list` count when the GitHub CLI is available. Drives the §7.11 "Automated dependency updates" lift.
-- `$OUTPUT_DIR/.security-controls.json` (extended) — three §7.11 control rows (Automated SCA scanning, Automated dependency updates, Lockfile hygiene), each rated `Adequate | Partial | Missing`.
+- `$OUTPUT_DIR/.dep-update-activity.json` — passive `git log` cadence signal (active | sporadic | inactive | unknown) plus optional `gh pr list` count when the GitHub CLI is available. Drives the §6.11 "Automated dependency updates" lift.
+- `$OUTPUT_DIR/.security-controls.json` (extended) — three §6.11 control rows (Automated SCA scanning, Automated dependency updates, Lockfile hygiene), each rated `Adequate | Partial | Missing`.
 - `$OUTPUT_DIR/.sca-practice-findings.json` — MF-NNN candidates when any of the three control rows is `Partial` / `Missing`. Severity tier-driven via `data/sca-practice-severity.yaml`.
 - `$OUTPUT_DIR/.known-bad-libs-findings.json` — MF-NNN candidates for any dependency matched against `data/known-bad-libs.yaml`. Severity capped by asset tier.
 

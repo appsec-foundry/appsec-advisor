@@ -36,9 +36,9 @@ enabling reuse. Passwords have no such structure. Showing 4 characters of an
 ✅ Correct:
 
 ```
-**§7.9** — Hardcoded JWT signing key in `lib/insecurity.ts:18` (`L8T1****`).
-**§7.2** — Default admin password in `data/seed-users.ts:4` (`**** (8 chars)`).
-**§7.12** — Stripe live secret in `config/payments.yaml:12` (`sk_live_****`).
+**§6.9** — Hardcoded JWT signing key in `lib/insecurity.ts:18` (`L8T1****`).
+**§6.2** — Default admin password in `data/seed-users.ts:4` (`**** (8 chars)`).
+**§6.12** — Stripe live secret in `config/payments.yaml:12` (`sk_live_****`).
 ```
 
 ❌ Wrong (will be blocked by the per-run QA gate):

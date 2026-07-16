@@ -68,7 +68,7 @@ invariants:
     fix_hint: "§8 rendered only boilerplate — check threat register rendering"
 
 # Sections that MUST always be present in a rendered report regardless of depth.
-# Depth-suppressed sections (§3, §7) and conditional sections (§9 when no abuse
+# Depth-suppressed sections (§3, §6) and conditional sections (§9 when no abuse
 # cases) are intentionally NOT listed — their absence is governed by the section
 # contract's condition gates, not by completeness.
 required_sections:

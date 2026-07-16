@@ -82,13 +82,13 @@ def test_infobox_tags_string_is_split_into_list(tmp_path: Path) -> None:
 
 
 def test_toc_emits_numbering_gap_note(tmp_path: Path) -> None:
-    """§6 is now the Weakness Register (2026-07-14), gated on has_weakness_register.
-    This fixture has no weaknesses, so §6 is absent and the TOC still names the
+    """§7 is the Weakness Register (2026-07-15 reorder), gated on has_weakness_register.
+    This fixture has no weaknesses, so §7 is absent and the TOC still names the
     gap explicitly — as "not present in this report" (no longer "retired")."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     assert "Section numbering is non-contiguous" in rendered
-    assert "§6 is not present in this report" in rendered
+    assert "§7 is not present in this report" in rendered
 
 
 def test_architecture_diagrams_are_regenerated_at_the_composition_boundary(tmp_path: Path) -> None:
@@ -753,32 +753,32 @@ def test_operational_strengths_gap_stacks_sample_findings(tmp_path: Path) -> Non
 
 
 def test_no_dangling_section7_crossref_when_section7_omitted(tmp_path: Path) -> None:
-    """RCA 2026-06-11: at --quick depth §7 (Security Architecture) is omitted,
+    """RCA 2026-06-11: at --quick depth §6 (Security Architecture) is omitted,
     but the MS 'Operational Strengths' intro (and the empty-state banner) emitted
-    a `[§7](#7-security-architecture)` link unconditionally → a dangling anchor
+    a `[§6](#6-security-architecture)` link unconditionally → a dangling anchor
     (qa_checks has no section-anchor target validation to catch it). When
-    render_security_architecture is false, NO `#7-security-architecture` cross-ref
+    render_security_architecture is false, NO `#6-security-architecture` cross-ref
     may survive anywhere in the rendered document."""
     out = _prepare_output_dir(tmp_path)
     ymlp = out / "threat-model.yaml"
     data = yaml.safe_load(ymlp.read_text())
-    data.setdefault("meta", {})["assessment_depth"] = "quick"  # → §7 omitted (no rich prior)
+    data.setdefault("meta", {})["assessment_depth"] = "quick"  # → §6 omitted (no rich prior)
     ymlp.write_text(yaml.safe_dump(data, sort_keys=False))
     rendered, _ = compose.render(CONTRACT, out)
-    assert "## 7. Security Architecture" not in rendered, "§7 should be omitted at quick depth"
-    assert "#7-security-architecture" not in rendered, "dangling §7 anchor leaked into the render while §7 is omitted"
+    assert "## 6. Security Architecture" not in rendered, "§6 should be omitted at quick depth"
+    assert "#6-security-architecture" not in rendered, "dangling §6 anchor leaked into the render while §6 is omitted"
     assert "### Operational Strengths" in rendered  # the MS block itself still renders
 
 
 def test_section7_crossref_target_exists_when_emitted(tmp_path: Path) -> None:
-    """Invariant (positive control): whenever a `#7-security-architecture`
-    cross-ref IS emitted (standard/thorough depth, §7 present), its heading
+    """Invariant (positive control): whenever a `#6-security-architecture`
+    cross-ref IS emitted (standard/thorough depth, §6 present), its heading
     anchor target must also be present — i.e. the link never dangles."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    if "#7-security-architecture" in rendered:
-        assert "## 7. Security Architecture" in rendered, (
-            "§7 cross-ref emitted but the §7 heading/anchor is missing — dangling link"
+    if "#6-security-architecture" in rendered:
+        assert "## 6. Security Architecture" in rendered, (
+            "§6 cross-ref emitted but the §6 heading/anchor is missing — dangling link"
         )
 
 
@@ -1494,7 +1494,7 @@ def test_normalize_visible_threat_ids() -> None:
     assert f("    alt Current state — T-003") == "    alt Current state — F-003"
     # Link text with a prefix (anchor stays lowercase but resolves via dual anchor).
     assert f("[§8 T-001](#t-001)") == "[§8 F-001](#t-001)"
-    # Mixed text/anchor (LLM §7 drift) — bare pass fixes the text.
+    # Mixed text/anchor (LLM §6 drift) — bare pass fixes the text.
     assert f("[T-003](#f-003)") == "[F-003](#f-003)"
     # AC-T-NNN abuse-case ids are NOT touched.
     assert f("[AC-T-005](#ac-t-005)") == "[AC-T-005](#ac-t-005)"
@@ -2384,7 +2384,7 @@ class TestEscapeDollarOperators:
 
 # ---------------------------------------------------------------------------
 # Enrich Linked-ID cells — stacking + label enrichment for markdown-fragment
-# tables (Assets, Attack Surface, Trust Boundaries, §7.x control tables).
+# tables (Assets, Attack Surface, Trust Boundaries, §6.x control tables).
 # ---------------------------------------------------------------------------
 
 
@@ -2797,7 +2797,7 @@ class TestPreRenderRepairPlan:
     def _err(self, section_id: str = "security_architecture") -> compose.FragmentError:
         return compose.FragmentError(
             section_id,
-            "required subsection missing: '### 7.8 Real-time / WebSocket'",
+            "required subsection missing: '### 6.8 Real-time / WebSocket'",
         )
 
     def test_attempt_increments_across_successive_failures(self, tmp_path: Path) -> None:
@@ -2838,12 +2838,12 @@ class TestPreRenderRepairPlan:
         action = plan["actions"][0]
         assert action["section_id"] == "security_architecture"
         assert ".fragments/security-architecture.md" in action["fragments_to_rewrite"]
-        assert action["expected_heading"] == "### 7.8 Real-time / WebSocket"
-        # Remediation must point at the missing heading (`7.8 Real-time /
+        assert action["expected_heading"] == "### 6.8 Real-time / WebSocket"
+        # Remediation must point at the missing heading (`6.8 Real-time /
         # WebSocket`) and warn against the two known drift patterns: the
         # 21-section intermediate scaffold and the 14-section v1 layout.
         rem = action["remediation"]
-        assert "7.8" in rem
+        assert "6.8" in rem
         assert "21-section" in rem and "14-section" in rem
 
 
@@ -2946,29 +2946,29 @@ class TestComposeRetryCounter:
 
 
 # ---------------------------------------------------------------------------
-# F-NNN stability gate for verbatim §7 preservation in quick mode.
+# F-NNN stability gate for verbatim §6 preservation in quick mode.
 # ---------------------------------------------------------------------------
 
 
 class TestVerbatimFnnnStabilityGate:
     """Guard against silent F-NNN cross-reference corruption when a
-    quick-after-thorough run carries the prior §7 forward verbatim.
+    quick-after-thorough run carries the prior §6 forward verbatim.
 
     `merge_threats._assign_t_ids` reassigns T-IDs every run from a
     deterministic sort key (severity, CWE, file, line, title). A re-sort
     can move a given F-NNN slot to a different threat. The gate
     `_verbatim_fnnn_refs_match` validates the F-NNN refs cited inside the
-    extracted §7 against the current threat register; on any drift the
-    caller drops the verbatim and skips §7 rather than render wrong links.
+    extracted §6 against the current threat register; on any drift the
+    caller drops the verbatim and skips §6 rather than render wrong links.
     """
 
     @staticmethod
     def _prior_md_with_threats(rows: list[tuple[str, str]]) -> str:
-        """Return a minimal prior threat-model.md whose §7 cites every F-NNN
+        """Return a minimal prior threat-model.md whose §6 cites every F-NNN
         in ``rows`` and whose §8 register declares each F-NNN with the
         given title. ``rows`` is ``[(digits, title), ...]``."""
         section7_refs = ", ".join(f"[F-{d}](#f-{d})" for d, _ in rows)
-        section7 = f"## 7. Security Architecture\n\nBackground prose referencing {section7_refs}.\n"
+        section7 = f"## 6. Security Architecture\n\nBackground prose referencing {section7_refs}.\n"
         section8_rows = "\n".join(
             f'| <a id="t-{d}"></a><a id="f-{d}"></a>F-{d} | {title} | Tampering | C-01 — Service | High | 7.1 | A01 | M-001 | — |'
             for d, title in rows
@@ -2984,7 +2984,7 @@ class TestVerbatimFnnnStabilityGate:
     def test_returns_true_when_titles_unchanged(self) -> None:
         rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
         prior_md = self._prior_md_with_threats(rows)
-        extracted = compose._extract_section_verbatim(prior_md, top_level_number=7)
+        extracted = compose._extract_section_verbatim(prior_md, top_level_number=6)
         current = [
             {"t_id": "T-001", "title": "SQL Injection in Login"},
             {"t_id": "T-002", "title": "Stored XSS in Feedback"},
@@ -2994,11 +2994,11 @@ class TestVerbatimFnnnStabilityGate:
     def test_returns_false_when_fnnn_now_points_to_different_threat(self) -> None:
         """The reflow scenario: prior had F-001=SQLi, F-002=XSS; current run
         re-sorted them so F-001=XSS now refers to a different finding. The
-        verbatim §7 prose still says 'F-001 — SQL Injection' but the link
+        verbatim §6 prose still says 'F-001 — SQL Injection' but the link
         target now resolves to XSS — must reject."""
         rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
         prior_md = self._prior_md_with_threats(rows)
-        extracted = compose._extract_section_verbatim(prior_md, top_level_number=7)
+        extracted = compose._extract_section_verbatim(prior_md, top_level_number=6)
         current = [
             {"t_id": "T-001", "title": "Stored XSS in Feedback"},
             {"t_id": "T-002", "title": "SQL Injection in Login"},
@@ -3006,31 +3006,31 @@ class TestVerbatimFnnnStabilityGate:
         assert compose._verbatim_fnnn_refs_match(extracted, prior_md, current) is False
 
     def test_returns_false_when_referenced_fnnn_resolved(self) -> None:
-        """Prior §7 cited F-002, but F-002 was resolved and is no longer in
+        """Prior §6 cited F-002, but F-002 was resolved and is no longer in
         the current register — verbatim preservation would emit a dead link."""
         rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
         prior_md = self._prior_md_with_threats(rows)
-        extracted = compose._extract_section_verbatim(prior_md, top_level_number=7)
+        extracted = compose._extract_section_verbatim(prior_md, top_level_number=6)
         current = [
             {"t_id": "T-001", "title": "SQL Injection in Login"},
         ]
         assert compose._verbatim_fnnn_refs_match(extracted, prior_md, current) is False
 
     def test_returns_true_when_section_cites_no_fnnn(self) -> None:
-        """A §7 with no F-NNN refs at all has nothing to validate — the
+        """A §6 with no F-NNN refs at all has nothing to validate — the
         gate must not block preservation in that case."""
         prior_md = (
-            "## 7. Security Architecture\n\n"
+            "## 6. Security Architecture\n\n"
             "General defense-in-depth narrative without any F-NNN citation.\n"
             "\n## 8. Findings Register\n\n(empty)\n"
         )
-        extracted = compose._extract_section_verbatim(prior_md, top_level_number=7)
+        extracted = compose._extract_section_verbatim(prior_md, top_level_number=6)
         current = [{"t_id": "T-001", "title": "Anything"}]
         assert compose._verbatim_fnnn_refs_match(extracted, prior_md, current) is True
 
     def test_resolve_returns_empty_when_reflow_detected(self, tmp_path: Path) -> None:
         """End-to-end: `_resolve_security_arch_override` must return "" (skip
-        §7) — not the verbatim text — when the prior md and current threats
+        §6) — not the verbatim text — when the prior md and current threats
         disagree on which threat F-NNN points to."""
         out = tmp_path / "output"
         out.mkdir()
@@ -3041,17 +3041,17 @@ class TestVerbatimFnnnStabilityGate:
         rows = [("001", "SQL Injection in Login"), ("002", "Stored XSS in Feedback")]
         (out / "threat-model.md").write_text(self._prior_md_with_threats(rows), encoding="utf-8")
         # Reflowed: F-001 now points to a different threat than the prior md
-        # claimed. The verbatim §7 is unsafe and must be dropped.
+        # claimed. The verbatim §6 is unsafe and must be dropped.
         current_threats = [
             {"t_id": "T-001", "title": "Stored XSS in Feedback"},
             {"t_id": "T-002", "title": "SQL Injection in Login"},
         ]
         result = compose._resolve_security_arch_override(out, "quick", current_threats)
-        assert result == "", f"expected verbatim §7 dropped on reflow, got: {result!r}"
+        assert result == "", f"expected verbatim §6 dropped on reflow, got: {result!r}"
 
     def test_resolve_returns_verbatim_when_stable(self, tmp_path: Path) -> None:
         """End-to-end: `_resolve_security_arch_override` must return the
-        verbatim §7 text when titles haven't drifted, preserving the prior
+        verbatim §6 text when titles haven't drifted, preserving the prior
         thorough-mode narrative on the quick re-run."""
         out = tmp_path / "output"
         out.mkdir()
@@ -3066,8 +3066,8 @@ class TestVerbatimFnnnStabilityGate:
             {"t_id": "T-002", "title": "Stored XSS in Feedback"},
         ]
         result = compose._resolve_security_arch_override(out, "quick", current_threats)
-        assert result is not None and result != "", f"expected verbatim §7 preserved when stable, got: {result!r}"
-        assert result.startswith("## 7. Security Architecture")
+        assert result is not None and result != "", f"expected verbatim §6 preserved when stable, got: {result!r}"
+        assert result.startswith("## 6. Security Architecture")
 
 
 # ---------------------------------------------------------------------------
@@ -3229,7 +3229,7 @@ class TestFormatIdListScalarString:
 
 
 # ---------------------------------------------------------------------------
-# §7 readability + table-width post-processors (2026-05-30 user request).
+# §6 readability + table-width post-processors (2026-05-30 user request).
 # ---------------------------------------------------------------------------
 
 
@@ -3330,8 +3330,8 @@ def test_normalize_table_widths_skips_code_fences() -> None:
 
 def test_section7_number_and_bulletize() -> None:
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.4 Authorization Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.4 Authorization Controls\n\n"
         "**Controls covered:** [Route auth](#route-auth), [Object auth](#object-auth)\n\n"
         '<a id="route-auth"></a>\n'
         "#### Route auth\n\nbody\n\n"
@@ -3341,57 +3341,57 @@ def test_section7_number_and_bulletize() -> None:
         "#### M-001 — not renumbered\n"
     )
     out = compose._section7_number_and_bulletize(md)
-    assert "#### 7.4.1 Route auth" in out
-    assert "#### 7.4.2 Object auth" in out
-    # §8 heading outside the §7 region is untouched.
+    assert "#### 6.4.1 Route auth" in out
+    assert "#### 6.4.2 Object auth" in out
+    # §8 heading outside the §6 region is untouched.
     assert "#### M-001 — not renumbered" in out
     # Controls covered became a bullet list, each link prefixed with its number.
-    assert "- [7.4.1 Route auth](#route-auth)" in out
-    assert "- [7.4.2 Object auth](#object-auth)" in out
+    assert "- [6.4.1 Route auth](#route-auth)" in out
+    assert "- [6.4.2 Object auth](#object-auth)" in out
     # Idempotent — second pass does not double-number headings or links.
     out2 = compose._section7_number_and_bulletize(out)
-    assert "7.4.1.1" not in out2
-    assert "7.4.1 7.4.1" not in out2
-    assert "- [7.4.1 Route auth](#route-auth)" in out2
+    assert "6.4.1.1" not in out2
+    assert "6.4.1 6.4.1" not in out2
+    assert "- [6.4.1 Route auth](#route-auth)" in out2
 
 
 def test_section7_unnumbered_opener_before_authored_number_no_duplicate() -> None:
-    # The exact §7.6 bug: normalize injects an UN-numbered "Validation Approach"
-    # opener AHEAD of the fragment's already-numbered "7.6.1 Input Validation…".
+    # The exact §6.6 bug: normalize injects an UN-numbered "Validation Approach"
+    # opener AHEAD of the fragment's already-numbered "6.6.1 Input Validation…".
     # Pass 2 must strip the stale number and re-assign sequentially so the two
-    # H4s do not both render as 7.6.1.
+    # H4s do not both render as 6.6.1.
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.6 Input Boundary Validation Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.6 Input Boundary Validation Controls\n\n"
         "#### Validation Approach\n\nbody\n\n"
-        "#### 7.6.1 Input Validation and Sanitization\n\nbody\n\n"
-        "#### 7.6.2 Server-Side Code Evaluation\n\nbody\n\n"
+        "#### 6.6.1 Input Validation and Sanitization\n\nbody\n\n"
+        "#### 6.6.2 Server-Side Code Evaluation\n\nbody\n\n"
         "## 8. Findings Register\n"
     )
     out = compose._section7_number_and_bulletize(md)
-    assert "#### 7.6.1 Validation Approach" in out
-    assert "#### 7.6.2 Input Validation and Sanitization" in out
-    assert "#### 7.6.3 Server-Side Code Evaluation" in out
-    assert out.count("#### 7.6.1 ") == 1  # no duplicate number
+    assert "#### 6.6.1 Validation Approach" in out
+    assert "#### 6.6.2 Input Validation and Sanitization" in out
+    assert "#### 6.6.3 Server-Side Code Evaluation" in out
+    assert out.count("#### 6.6.1 ") == 1  # no duplicate number
     # Idempotent.
     out2 = compose._section7_number_and_bulletize(out)
     assert out2 == out
 
 
 def test_section7_overview_links_get_section_number() -> None:
-    """§7.1 overview-table category links are prefixed with their 7.X number."""
+    """§6.1 overview-table category links are prefixed with their 7.X number."""
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.1 Security Control Overview\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.1 Security Control Overview\n\n"
         "| Control category | Verdict | Main reason |\n"
         "|---|---|---|\n"
-        "| [Authorization Controls](#74-authorization-controls) | 🟠 Weak | gaps |\n\n"
-        "### 7.4 Authorization Controls\n\n"
+        "| [Authorization Controls](#64-authorization-controls) | 🟠 Weak | gaps |\n\n"
+        "### 6.4 Authorization Controls\n\n"
         "#### Route auth\n\nbody\n\n"
         "## 8. Findings Register\n"
     )
     out = compose._section7_number_and_bulletize(md)
-    assert "[7.4 Authorization Controls](#74-authorization-controls)" in out
+    assert "[6.4 Authorization Controls](#64-authorization-controls)" in out
 
 
 class _StubLabelCtx:
@@ -3405,9 +3405,9 @@ class _StubLabelCtx:
 def test_section7_inline_findings_id_only() -> None:
     ctx = _StubLabelCtx({"F-019": "Client side route guard bypass", "F-014": "BOLA user data export"})
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.4 Authorization Controls\n\n"
-        "#### 7.4.1 Route auth\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.4 Authorization Controls\n\n"
+        "#### 6.4.1 Route auth\n\n"
         "**Security assessment**\n\n"
         "Bypassed by calling the API directly ([F-019](#f-019) (Client side route guard bypass)). "
         "Also see F-014 here.\n\n"
@@ -4322,7 +4322,7 @@ def test_render_figure1_svg_skill_config_false_is_file_reference(tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
-# §3 required-pattern gate (zero-Critical reports) + §7 domain-pattern
+# §3 required-pattern gate (zero-Critical reports) + §6 domain-pattern
 # applicability gating (non-applicable controls, e.g. no WebSockets).
 # ---------------------------------------------------------------------------
 
@@ -4384,7 +4384,7 @@ def test_domain_required_pattern_skipped_when_subsection_absent(tmp_path: Path) 
     """A non-applicable control (e.g. no WebSocket flow) whose `### N.x`
     subsection is simply absent must NOT trip its `domain_required_patterns`.
     Enforcement only fires when the subsection heading is present — this is how
-    §7 lets a control be 'Not applicable' without raising a contract error."""
+    §6 lets a control be 'Not applicable' without raising a contract error."""
     frag_dir = tmp_path / ".fragments"
     frag_dir.mkdir()
     (frag_dir / "demo.md").write_text(
@@ -4647,7 +4647,7 @@ def test_section7_title_relevant_findings_titles_bare_bullet_links():
         }
     )
     md = (
-        "## 7. Security Architecture\n\n"
+        "## 6. Security Architecture\n\n"
         "**Relevant findings**\n\n"
         "- 🔴 [F-002](#f-002) — Even when TOTP gates issuance, this gap bypasses 2FA.\n"
         "- 🟠 [F-017](#f-017) — No rate limit on the login step.\n\n"
@@ -4656,10 +4656,10 @@ def test_section7_title_relevant_findings_titles_bare_bullet_links():
         "See [F-002](#f-002) elsewhere.\n"
     )
     out = compose._section7_title_relevant_findings(ctx, md)
-    # §7 bullet links gain the short register title, rationale preserved.
+    # §6 bullet links gain the short register title, rationale preserved.
     assert "- 🔴 [F-002 — Insecure JWT Verification](#f-002) — Even when TOTP" in out
     assert "- 🟠 [F-017 — Missing Rate Limiting On Login](#f-017) — No rate limit" in out
-    # §8 (outside §7) is untouched.
+    # §8 (outside §6) is untouched.
     assert "See [F-002](#f-002) elsewhere." in out
     # Idempotent — a second pass changes nothing.
     assert compose._section7_title_relevant_findings(ctx, out) == out

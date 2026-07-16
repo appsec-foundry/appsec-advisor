@@ -1525,7 +1525,7 @@ def _resolve_security_arch_override(
     except OSError:
         return ""
 
-    extracted = _extract_section_verbatim(prior_md, top_level_number=7)
+    extracted = _extract_section_verbatim(prior_md, top_level_number=6)
     if not extracted:
         return ""  # prior MD didn't actually carry §7 — skip
 
@@ -1936,23 +1936,23 @@ _SECTION7_DEAD_LINK_PATTERNS: tuple[re.Pattern[str], ...] = (
     # operational-strengths.md.j2 truncation footnote.
     re.compile(
         r"\n*_\+\d+ additional controls — see "
-        r"\[Section 7\]\(#7-security-architecture\)\._\s*\n",
+        r"\[Section 6\]\(#6-security-architecture\)\._\s*\n",
         re.MULTILINE,
     ),
     # operational-strengths.md.j2 introductory sentence — full sentence form
-    # (with both "filtered view of" and "lives in Section 7" trailers).
+    # (with both "filtered view of" and "lives in Section 6" trailers).
     re.compile(
         r" This table is a filtered view of "
-        r"\[Section 7\]\(#7-security-architecture\)"
+        r"\[Section 6\]\(#6-security-architecture\)"
         r" — rows with effectiveness ≥ Weak\."
-        r"(?: The full catalog, including ❌ Missing controls, lives in Section 7\.)?",
+        r"(?: The full catalog, including ❌ Missing controls, lives in Section 6\.)?",
     ),
 )
 
 
 def _strip_section7_crossrefs(md: str) -> str:
-    """Remove dead `(#7-security-architecture)` cross-references from MS
-    templates when §7 was skipped at compose-time.
+    """Remove dead `(#6-security-architecture)` cross-references from MS
+    templates when §6 Security Architecture was skipped at compose-time.
 
     This is intentionally conservative — only the three exact sentences the
     Jinja templates emit are matched. Anything else is left intact so the
@@ -2270,7 +2270,7 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
     prov = _carried_provenance(ctx.output_dir)
     if prov:
         _SECTION_LABELS = {
-            "security_architecture": "§7 Security Architecture",
+            "security_architecture": "§6 Security Architecture",
             "ai_exposure_ms": "AI/LLM Exposure callout",
             "abuse_cases": "§9 Abuse Cases",
         }
@@ -2306,7 +2306,7 @@ def _render_skipped_sections_placeholder(ctx: RenderContext, env: jinja2.Environ
     if not ctx.eval_context.get("is_quick_depth"):
         return ""
     return (
-        "_§6 Use Cases and §7 Security Architecture are omitted at "
+        "_§6 Security Architecture is omitted at "
         "`--quick` depth. Re-run with `--standard` (≈ +30 min) or "
         "`--thorough` (≈ +90 min) to render the per-domain analysis._\n"
     )
@@ -2568,18 +2568,18 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
     if _nums:
         _missing = [n for n in range(_nums[0], _nums[-1] + 1) if n not in _nums]
         if _missing:
-            # Distinguish PERMANENTLY retired sections (§6 Use Cases, removed
-            # 2026-05) from sections merely DEPTH-SUPPRESSED on this run (§3
-            # Attack Walkthroughs and §7 Security Architecture are skipped at
-            # --quick and return at standard/thorough). Lumping them all as
-            # "retired in a prior revision" wrongly tells the reader recoverable
-            # content is gone forever and masks the depth-downgrade behaviour.
-            # §6 is now the Weakness Register (2026-07-14), no longer retired. It
-            # is gated on has_weakness_register; when absent (no weaknesses found)
-            # it reads as "not present in this report" (the `other` bucket) rather
-            # than "retired".
+            # Distinguish PERMANENTLY retired sections from sections merely
+            # DEPTH-SUPPRESSED on this run (§3 Attack Walkthroughs and §6
+            # Security Architecture are skipped at --quick and return at
+            # standard/thorough). Lumping them all as "retired in a prior
+            # revision" wrongly tells the reader recoverable content is gone
+            # forever and masks the depth-downgrade behaviour.
+            # §7 is the Weakness Register (2026-07-15 reorder), gated on
+            # has_weakness_register; when absent (no weaknesses found) it reads
+            # as "not present in this report" (the `other` bucket) rather than
+            # "retired".
             _RETIRED: set[int] = set()  # nothing permanently retired from the contract
-            _DEPTH_SUPPRESSED = {3, 7}  # §3, §7 absent at quick, re-introduced deeper
+            _DEPTH_SUPPRESSED = {3, 6}  # §3, §6 absent at quick, re-introduced deeper
             retired = [n for n in _missing if n in _RETIRED]
             suppressed = [n for n in _missing if n in _DEPTH_SUPPRESSED]
             other = [n for n in _missing if n not in _RETIRED and n not in _DEPTH_SUPPRESSED]
@@ -8172,12 +8172,13 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     # empty table. The banner names how many clusters were demoted so
     # the reader knows the section isn't silently broken.
     # ---------------------------------------------------------------------
-    # §7 is omitted at quick depth (render_security_architecture=false); never
-    # emit a [§7](#7-security-architecture) cross-ref there or it dangles
+    # §6 Security Architecture is omitted at quick depth
+    # (render_security_architecture=false); never emit a
+    # [§6](#6-security-architecture) cross-ref there or it dangles
     # (qa_checks has no section-anchor target validation to catch it).
     section7_present = bool(ctx.eval_context.get("render_security_architecture", True))
     sec7_clause = (
-        "See [§7 Security Architecture](#7-security-architecture) for the full per-control assessment and "
+        "See [§6 Security Architecture](#6-security-architecture) for the full per-control assessment and "
         if section7_present
         else "See "
     )
@@ -8197,7 +8198,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
         elif section7_present:
             empty_banner = (
                 "_No defensive cluster currently rates above Weak. See "
-                "[§7 Security Architecture](#7-security-architecture) for "
+                "[§6 Security Architecture](#6-security-architecture) for "
                 "the full per-control assessment._"
             )
         else:
@@ -9387,7 +9388,7 @@ def _render_ms_top_weaknesses(ctx: RenderContext) -> str:
     out.append(
         "The systemic root-cause problems behind the findings — the classes to fix, "
         "not just individual bugs. Each links to the full [Weakness Register]"
-        "(#6-weakness-register) with its findings and remediation."
+        "(#7-weakness-register) with its findings and remediation."
     )
     out.append("")
     for w in top:
@@ -10332,12 +10333,13 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
 
 
 def _section7_region_bounds(md_lines: list[str]) -> tuple[int, int]:
-    """Return (start, end) line indices of the §7 Security Architecture chapter
-    (start inclusive at the `## 7.` heading, end exclusive at the next `## `).
-    Returns (-1, -1) when §7 is absent."""
+    """Return (start, end) line indices of the §6 Security Architecture chapter
+    (start inclusive at the `## 6.` heading, end exclusive at the next `## `).
+    Returns (-1, -1) when the chapter is absent. (Named `section7` for history;
+    the chapter is §6 since the 2026-07-15 reorder.)"""
     start = -1
     for i, ln in enumerate(md_lines):
-        if re.match(r"^##\s+7\.\s+Security Architecture\b", ln):
+        if re.match(r"^##\s+6\.\s+Security Architecture\b", ln):
             start = i
             break
     if start < 0:
@@ -10351,11 +10353,11 @@ def _section7_region_bounds(md_lines: list[str]) -> tuple[int, int]:
 
 
 def _section7_number_and_bulletize(md: str) -> str:
-    """§7 readability (2026-05-30 user request):
-      * number each H4 control sub-control as `7.X.N <name>` (the QA gates
+    """§6 Security Architecture readability (2026-05-30 user request):
+      * number each H4 control sub-control as `6.X.N <name>` (the QA gates
         already strip the numeric prefix before matching, so this is safe);
       * render the `**Controls covered:**` line as a bullet list.
-    Scoped strictly to the §7 chapter so `#### M-001` (§9) etc. are untouched.
+    Scoped strictly to the §6 chapter so `#### M-001` (§10) etc. are untouched.
     Idempotent — already-numbered headings are left as-is."""
     lines = md.split("\n")
     start, end = _section7_region_bounds(lines)
@@ -10391,7 +10393,7 @@ def _section7_number_and_bulletize(md: str) -> str:
         if am and line.strip().startswith("<a"):
             pending_anchors.append(am.group(1))
             continue
-        m3 = re.match(r"^###\s+(7\.\d+)\b\s*(.*)$", line)
+        m3 = re.match(r"^###\s+(6\.\d+)\b\s*(.*)$", line)
         if m3:
             cur_section = m3.group(1)
             section_slug_num[_gh_slug(f"{m3.group(1)} {m3.group(2)}".strip())] = m3.group(1)
@@ -10442,7 +10444,7 @@ def _section7_number_and_bulletize(md: str) -> str:
             result.append(line)
             continue
         if not in_fence:
-            m3 = re.match(r"^###\s+(7\.\d+)\b", line)
+            m3 = re.match(r"^###\s+(6\.\d+)\b", line)
             if m3:
                 cur_section = m3.group(1)
                 h4_n = 0
@@ -10477,9 +10479,9 @@ def _section7_number_and_bulletize(md: str) -> str:
             if mb and cur_section:
                 result.append(f"{mb.group(1)}- {_prefix_link(mb.group(2))}")
                 continue
-            # §7.1 overview table rows — prefix the category link with its 7.X
-            # section number (`[7.2 Identity and Authentication Controls](#…)`).
-            if cur_section == "7.1" and line.lstrip().startswith("| ["):
+            # §6.1 overview table rows — prefix the category link with its 6.X
+            # section number (`[6.2 Identity and Authentication Controls](#…)`).
+            if cur_section == "6.1" and line.lstrip().startswith("| ["):
                 line = re.sub(
                     r"\[[^\]]+\]\(#[0-9][0-9a-z-]+\)",
                     lambda m: _prefix_link(m.group(0)),
@@ -15192,7 +15194,7 @@ def _get_weakness_antipatterns(ctx: RenderContext) -> dict[str, list[dict]]:
 
 
 def _render_systemic_weaknesses(ctx: RenderContext) -> str:
-    """Render the Weakness Register (2026-07-14 redesign): an index table
+    """Render the Weakness Register (2026-07-14 redesign): a bullet index
     followed by one card per systemic root-cause weakness, structured like the
     Findings Register (index + per-item cards, bullet-listed evidence).
 
@@ -15231,30 +15233,35 @@ def _render_systemic_weaknesses(ctx: RenderContext) -> str:
 
     # Explicit `weakness-register` alias so existing `#weakness-register` links
     # (MS Security-Principles / Verdict) resolve alongside the numbered
-    # `#6-weakness-register` heading auto-slug.
-    out: list[str] = ['<a id="weakness-register"></a>', "## 6. Weakness Register", ""]
+    # `#7-weakness-register` heading auto-slug.
+    out: list[str] = ['<a id="weakness-register"></a>', "## 7. Weakness Register", ""]
     out.append(
-        "The systemic root-cause control gaps behind the findings. Each weakness "
-        "aggregates the concrete findings that prove it (listed in the Findings "
-        "Register, which links back here via each finding's **Weakness** field), "
-        "the components it spans, and its remediation. A weakness may also rest on "
-        "observed unsafe practice or an absent architectural control without a "
-        "confirmed exploit — only confirmed findings carry CVSS."
+        "Systemic control gaps behind the findings, ordered by severity "
+        "(W-001 = most severe). Each weakness names the missing, home-grown, or "
+        "misused control, the findings that evidence it, the components it spans, "
+        "and its remediation. A weakness may also rest on observed unsafe practice "
+        "or an absent architectural control with no confirmed exploit — only "
+        "confirmed findings carry a CVSS score."
     )
     out.append("")
 
-    # -- Index (at-a-glance), mirroring the Findings Register --------------------
-    out.append("| Weakness | Severity | Basis | Findings | Components |")
-    out.append("|----------|----------|-------|----------|------------|")
+    # -- Index (at-a-glance) — a bullet jump-list, mirroring the Findings Register
+    # (severity · linked id — title · basis · finding/component counts).
     for w in ordered:
         wid = (w.get("id") or "").strip()
         title = (w.get("title") or "Weakness").strip()
         sev = (w.get("severity") or "").strip()
-        sev_disp = f"{ctx.severity_emoji(sev.lower())} {sev}".strip()
+        sev_disp = f"{ctx.severity_emoji(sev.lower())} **{sev}**".strip() if sev else ""
         basis = (w.get("severity_basis") or "").strip() or "—"
         fids = _weakness_finding_ids(w)
         comps = w.get("affected_components") or []
-        out.append(f"| [{wid}](#{wid.lower()}) — {title} | {sev_disp} | {basis} | {len(fids)} | {len(comps)} |")
+        nf, nc = len(fids), len(comps)
+        meta = (
+            f"{basis} · {nf} finding{'s' if nf != 1 else ''} · "
+            f"{nc} component{'s' if nc != 1 else ''}"
+        )
+        lead = f"{sev_disp} · " if sev_disp else ""
+        out.append(f"- {lead}[{wid}](#{wid.lower()}) — {title} · {meta}")
     out.append("")
 
     # -- Per-weakness cards ------------------------------------------------------

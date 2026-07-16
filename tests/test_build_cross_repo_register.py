@@ -5,7 +5,7 @@ Covers:
   - merge precedence (declared > submodule > sibling > recon)
   - sibling discovery: TM found vs missing, cap at max_siblings
   - submodule discovery via .gitmodules
-  - recon Section 7.25 parser (table + bullet style)
+  - recon Section 6.25 parser (table + bullet style)
   - schema validation of the produced register
   - declared deduplication (a recon-discovered name that is already declared
     must not appear twice)

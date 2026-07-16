@@ -1,8 +1,8 @@
 """Coverage band 2 for scripts/qa_checks.py (~lines 2971-5400).
 
-Targets §7 clarity checks, the §5/§4 fixed-layout HTML table emitter,
+Targets §6 clarity checks, the §5/§4 fixed-layout HTML table emitter,
 cmd_autofix / cmd_all, heading hygiene, TOC closure, mermaid syntax,
-infobox completeness, and the v2 contract-driven §7 control checks.
+infobox completeness, and the v2 contract-driven §6 control checks.
 
 These call functions directly with tmp_path fixtures and assert on
 report.ok / report.issues / report.warnings. No pipeline run.
@@ -37,9 +37,9 @@ def _md(tmp_path: Path, content: str) -> Path:
     return f
 
 
-# A §7 section must start with `## 7. ` and end at `## 8. ` (or 9./1x.).
+# A §6 section must start with `## 7. ` and end at `## 8. ` (or 9./1x.).
 def _wrap_sec7(body: str, *, before: str = "", after: str = "## 8. Findings\n\nx\n") -> str:
-    return f"{before}## 7. Security Architecture\n\n{body}\n\n{after}"
+    return f"{before}## 6. Security Architecture\n\n{body}\n\n{after}"
 
 
 # ---------------------------------------------------------------------------
@@ -52,15 +52,15 @@ def test_extract_section7_absent():
 
 
 def test_extract_section7_to_eof():
-    text = "# T\n\n## 7. Security Architecture\n\nbody line\n"
+    text = "# T\n\n## 6. Security Architecture\n\nbody line\n"
     sec, start_line = qa._extract_section7(text)
-    assert sec.startswith("## 7. Security Architecture")
+    assert sec.startswith("## 6. Security Architecture")
     assert "body line" in sec
     assert start_line == 3
 
 
 def test_extract_section7_bounded_by_section8():
-    text = "## 7. Security Architecture\n\nfoo\n\n## 8. Next\n\nbar\n"
+    text = "## 6. Security Architecture\n\nfoo\n\n## 8. Next\n\nbar\n"
     sec, _ = qa._extract_section7(text)
     assert "foo" in sec
     assert "bar" not in sec
@@ -81,18 +81,18 @@ def test_narrative_placeholders_no_section(tmp_path):
     p = _md(tmp_path, "# T\n\nno sec7\n")
     r = qa.check_section7_narrative_placeholders(p)
     assert r.ok == 1
-    assert any("§7 not found" in w for w in r.warnings)
+    assert any("§6 not found" in w for w in r.warnings)
 
 
 def test_narrative_placeholders_clean(tmp_path):
-    p = _md(tmp_path, _wrap_sec7("### 7.1 Overview\n\nAll filled in.\n"))
+    p = _md(tmp_path, _wrap_sec7("### 6.1 Overview\n\nAll filled in.\n"))
     r = qa.check_section7_narrative_placeholders(p)
     assert r.ok == 1
     assert not r.issues
 
 
 def test_narrative_placeholders_detected(tmp_path):
-    body = "### 7.1 Overview\n\nNARRATIVE_PLACEHOLDER\n\nNARRATIVE_PLACEHOLDER\n"
+    body = "### 6.1 Overview\n\nNARRATIVE_PLACEHOLDER\n\nNARRATIVE_PLACEHOLDER\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_narrative_placeholders(p)
     assert r.ok == 0
@@ -101,7 +101,7 @@ def test_narrative_placeholders_detected(tmp_path):
 
 
 def test_narrative_placeholders_many_truncated(tmp_path):
-    body = "### 7.1 O\n\n" + "\n".join(["NARRATIVE_PLACEHOLDER"] * 10)
+    body = "### 6.1 O\n\n" + "\n".join(["NARRATIVE_PLACEHOLDER"] * 10)
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_narrative_placeholders(p)
     assert r.ok == 0
@@ -114,7 +114,7 @@ def test_narrative_placeholders_many_truncated(tmp_path):
 
 
 def test_walk_h4_blocks_boundaries():
-    section = "## 7. X\n\n### 7.1 A\n\n#### First\nbody1\n\n#### Second\nbody2\n\n### 7.2 B\ntail\n"
+    section = "## 7. X\n\n### 6.1 A\n\n#### First\nbody1\n\n#### Second\nbody2\n\n### 6.2 B\ntail\n"
     blocks = qa._walk_h4_blocks(section)
     titles = [b[0] for b in blocks]
     assert titles == ["First", "Second"]
@@ -145,14 +145,14 @@ def test_h4_positive_intro_no_section(tmp_path):
 
 
 def test_h4_positive_intro_clean(tmp_path):
-    body = f"### 7.2 Auth\n\n#### Login\n**Status:** 🟢 Safe — fine\n\n{_LONG_INTRO}\n\n**Security assessment**\n\nok\n"
+    body = f"### 6.2 Auth\n\n#### Login\n**Status:** 🟢 Safe — fine\n\n{_LONG_INTRO}\n\n**Security assessment**\n\nok\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_h4_positive_intro(p)
     assert r.ok == 1, r.issues
 
 
 def test_h4_positive_intro_missing(tmp_path):
-    body = "### 7.2 Auth\n\n#### Login\n**Security assessment**\n\ngap\n"
+    body = "### 6.2 Auth\n\n#### Login\n**Security assessment**\n\ngap\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_h4_positive_intro(p)
     assert r.ok == 0
@@ -160,7 +160,7 @@ def test_h4_positive_intro_missing(tmp_path):
 
 
 def test_h4_positive_intro_too_short(tmp_path):
-    body = "### 7.2 Auth\n\n#### Login\nShort intro here.\n\n**Security assessment**\n"
+    body = "### 6.2 Auth\n\n#### Login\nShort intro here.\n\n**Security assessment**\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_h4_positive_intro(p)
     assert r.ok == 0
@@ -169,7 +169,7 @@ def test_h4_positive_intro_too_short(tmp_path):
 
 def test_h4_positive_intro_negative_opener(tmp_path):
     body = (
-        "### 7.2 Auth\n\n#### Login\n"
+        "### 6.2 Auth\n\n#### Login\n"
         "No authentication mechanism exists anywhere in this codebase and that "
         "is a serious omission that the team must address before release date.\n\n"
         "**Security assessment**\n"
@@ -182,7 +182,7 @@ def test_h4_positive_intro_negative_opener(tmp_path):
 
 def test_h4_positive_intro_skips_anti_pattern_and_comment(tmp_path):
     body = (
-        "### 7.2 Auth\n\n#### Login\n"
+        "### 6.2 Auth\n\n#### Login\n"
         "**Status:** 🟢 Safe — ok\n"
         "⚠ **Anti-pattern:** none\n"
         "<!-- a comment -->\n"
@@ -210,14 +210,14 @@ def test_h4_status_no_section(tmp_path):
 
 
 def test_h4_status_present(tmp_path):
-    body = "### 7.2 A\n\n#### Login\n**Status:** 🟢 Safe — ok\n\nprose\n"
+    body = "### 6.2 A\n\n#### Login\n**Status:** 🟢 Safe — ok\n\nprose\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_h4_status(p)
     assert not r.warnings
 
 
 def test_h4_status_missing_warns(tmp_path):
-    body = "### 7.2 A\n\n#### Login\nprose with no status badge here\n"
+    body = "### 6.2 A\n\n#### Login\nprose with no status badge here\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_h4_status(p)
     assert any("missing" in w for w in r.warnings)
@@ -241,14 +241,14 @@ def test_fence_intro_no_section(tmp_path):
 
 
 def test_fence_intro_clean(tmp_path):
-    body = "### 7.2 Auth\n\nThe vulnerable code shows:\n\n```ts\nconst x = 1;\n```\n"
+    body = "### 6.2 Auth\n\nThe vulnerable code shows:\n\n```ts\nconst x = 1;\n```\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_fence_intro_sentence(p)
     assert r.ok == 1, r.issues
 
 
 def test_fence_intro_no_colon(tmp_path):
-    body = "### 7.2 Auth\n\nThis is prose without a colon\n\n```ts\nx\n```\n"
+    body = "### 6.2 Auth\n\nThis is prose without a colon\n\n```ts\nx\n```\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_fence_intro_sentence(p)
     assert r.ok == 0
@@ -256,7 +256,7 @@ def test_fence_intro_no_colon(tmp_path):
 
 
 def test_fence_intro_structural_marker(tmp_path):
-    body = "### 7.2 Auth\n\n**Security assessment**\n\n```ts\nx\n```\n"
+    body = "### 6.2 Auth\n\n**Security assessment**\n\n```ts\nx\n```\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_fence_intro_sentence(p)
     assert r.ok == 0
@@ -264,8 +264,8 @@ def test_fence_intro_structural_marker(tmp_path):
 
 
 def test_fence_intro_no_preceding_line(tmp_path):
-    # Fence is the very first content under 7.2 — j < 0 branch.
-    body = "### 7.2 Auth\n```ts\nx\n```\n"
+    # Fence is the very first content under 6.2 — j < 0 branch.
+    body = "### 6.2 Auth\n```ts\nx\n```\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_fence_intro_sentence(p)
     # The H3 heading is the preceding line → structural-marker issue path.
@@ -289,14 +289,14 @@ def test_finding_link_dup_no_section(tmp_path):
 
 
 def test_finding_link_dup_clean(tmp_path):
-    body = "### 7.2 A\n\n- [F-009](#f-009) — Persistent XSS in comment field\n"
+    body = "### 6.2 A\n\n- [F-009](#f-009) — Persistent XSS in comment field\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_finding_link_duplicate(p)
     assert r.ok == 1
 
 
 def test_finding_link_dup_detected(tmp_path):
-    body = "### 7.2 A\n\n- [F-009](#f-009) — Persistent XSS Flaw — Persistent XSS Flaw\n"
+    body = "### 6.2 A\n\n- [F-009](#f-009) — Persistent XSS Flaw — Persistent XSS Flaw\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_finding_link_duplicate(p)
     assert r.ok == 0
@@ -362,7 +362,7 @@ def test_finding_ref_semantic_no_section(tmp_path):
 
 
 def test_finding_ref_semantic_no_yaml(tmp_path):
-    p = _md(tmp_path, _wrap_sec7("### 7.2 A\n\n- [F-001](#f-001) — something\n"))
+    p = _md(tmp_path, _wrap_sec7("### 6.2 A\n\n- [F-001](#f-001) — something\n"))
     r = qa.check_section7_finding_reference_semantic(p)
     # No sibling yaml → label index empty → skipped warning.
     assert r.ok == 1
@@ -375,7 +375,7 @@ def test_finding_ref_semantic_drift_warns(tmp_path):
         encoding="utf-8",
     )
     body = (
-        "### 7.2 A\n\n"
+        "### 6.2 A\n\n"
         "- [F-001](#f-001) — Algorithm confusion permits forging signature "
         "bearer credentials repeatedly silently\n"
     )
@@ -520,7 +520,7 @@ def test_emit_as_html_table_prose_col_strips_br():
 def test_cmd_autofix_returns_zero(tmp_path, capsys):
     p = _md(
         tmp_path,
-        "# Threat Model\n\n## 7. Security Architecture\n\nbody\n\n## 8. X\n\ny\n",
+        "# Threat Model\n\n## 6. Security Architecture\n\nbody\n\n## 8. X\n\ny\n",
     )
     rc = qa.cmd_autofix(p, tmp_path)
     assert rc == 0
@@ -543,7 +543,7 @@ def test_cmd_autofix_converts_as_table(tmp_path, capsys):
 
 
 def test_cmd_all_clean_returns_zero(tmp_path, capsys):
-    md = "# Threat Model\n\n## 7. Security Architecture\n\n### 7.1 Overview\n\nAll good.\n\n## 8. Findings\n\nnothing\n"
+    md = "# Threat Model\n\n## 6. Security Architecture\n\n### 6.1 Overview\n\nAll good.\n\n## 8. Findings\n\nnothing\n"
     p = _md(tmp_path, md)
     rc = qa.cmd_all(p, tmp_path)
     assert rc in (0, 1)
@@ -923,8 +923,8 @@ def test_infobox_sparse(tmp_path):
 
 
 def test_extract_section_body_found_and_bounded():
-    text = "### 7.2 A\nbody A\n### 7.3 B\nbody B\n"
-    body = qa._extract_section_body(text, r"^###\s+7\.2\s+A\b")
+    text = "### 6.2 A\nbody A\n### 6.3 B\nbody B\n"
+    body = qa._extract_section_body(text, r"^###\s+6\.2\s+A\b")
     assert "body A" in body
     assert "body B" not in body
 
@@ -960,18 +960,18 @@ def test_parse_domain_controls_table():
 
 
 def test_auth_method_decomposition_no_iam_section(tmp_path):
-    # Default contract declares the rule; doc lacks §7.2 → clean no-op.
-    p = _md(tmp_path, "# T\n\n## 7. Security Architecture\n\nno iam\n\n## 8. X\n\ny\n")
+    # Default contract declares the rule; doc lacks §6.2 → clean no-op.
+    p = _md(tmp_path, "# T\n\n## 6. Security Architecture\n\nno iam\n\n## 8. X\n\ny\n")
     r = qa.check_auth_method_decomposition(p)
     assert r.ok == 1
 
 
 def test_auth_method_decomposition_v2_runs(tmp_path):
-    # A §7.2 with a forbidden attack-shaped heading should surface an issue
+    # A §6.2 with a forbidden attack-shaped heading should surface an issue
     # (or at least run the v2 structural path without crashing).
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "#### alg:none Bypass Flow\n\n"
         "body\n\n"
         "## 8. Findings\n\nx\n"
@@ -988,8 +988,8 @@ def test_auth_method_decomposition_v2_runs(tmp_path):
 
 def test_control_subsection_coverage_not_applicable_stub(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "_Not applicable — no auth surface._\n\n"
         "## 8. X\n\ny\n"
     )
@@ -1001,8 +1001,8 @@ def test_control_subsection_coverage_not_applicable_stub(tmp_path):
 
 def test_control_subsection_coverage_missing_subsections(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "Some prose but no H4 subsections.\n\n"
         "## 8. X\n\ny\n"
     )
@@ -1013,8 +1013,8 @@ def test_control_subsection_coverage_missing_subsections(tmp_path):
 
 def test_control_subsection_coverage_missing_labels_and_controls_line(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "#### JWT Authentication\n\n"
         "body without required labels\n\n"
         "## 8. X\n\ny\n"
@@ -1028,8 +1028,8 @@ def test_control_subsection_coverage_missing_labels_and_controls_line(tmp_path):
 
 def test_control_subsection_coverage_link_mismatch(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "**Controls covered:** [Nonexistent Control](#x)\n\n"
         "#### JWT Authentication\n\n"
         "**Security assessment**\n\nok\n\n"
@@ -1043,8 +1043,8 @@ def test_control_subsection_coverage_link_mismatch(tmp_path):
 
 def test_control_subsection_coverage_clean(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "**Controls covered:** [JWT Authentication](#jwt)\n\n"
         "#### JWT Authentication\n\n"
         "**Security assessment**\n\nok\n\n"
@@ -1065,8 +1065,8 @@ def test_control_subsection_coverage_clean(tmp_path):
 
 def test_relevant_findings_clean(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "#### JWT\n\n"
         "**Relevant findings**\n\n"
         "- [F-001](#f-001) - rationale\n\n"
@@ -1079,8 +1079,8 @@ def test_relevant_findings_clean(tmp_path):
 
 def test_relevant_findings_colon_forbidden(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "#### JWT\n\n"
         "**Relevant findings:**\n\n"
         "- [F-001](#f-001) - r\n\n"
@@ -1093,8 +1093,8 @@ def test_relevant_findings_colon_forbidden(tmp_path):
 
 def test_relevant_findings_inline_forbidden(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "#### JWT\n\n"
         "**Relevant findings** [F-001](#f-001), [F-002](#f-002)\n\n"
         "## 8. X\n\ny\n"
@@ -1106,8 +1106,8 @@ def test_relevant_findings_inline_forbidden(tmp_path):
 
 def test_relevant_findings_not_a_bullet(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "#### JWT\n\n"
         "**Relevant findings**\n\n"
         "This is a paragraph, not a bullet.\n\n"
@@ -1120,8 +1120,8 @@ def test_relevant_findings_not_a_bullet(tmp_path):
 
 def test_relevant_findings_no_bullet_list_at_all(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "#### JWT\n\n"
         "**Relevant findings**\n"
     )
@@ -1138,8 +1138,8 @@ def test_relevant_findings_no_bullet_list_at_all(tmp_path):
 
 def test_validation_approach_first_clean(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.6 Input Boundary Validation Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.6 Input Boundary Validation Controls\n\n"
         "#### Validation Approach\n\nWe centralize schema validation.\n\n"
         "#### File Upload Parser\n\ndetails\n\n"
         "## 8. X\n\ny\n"
@@ -1151,8 +1151,8 @@ def test_validation_approach_first_clean(tmp_path):
 
 def test_validation_approach_first_violation(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.6 Input Boundary Validation Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.6 Input Boundary Validation Controls\n\n"
         "#### File Upload Parser\n\ndetails first, wrong order\n\n"
         "## 8. X\n\ny\n"
     )
@@ -1163,8 +1163,8 @@ def test_validation_approach_first_violation(tmp_path):
 
 def test_validation_approach_first_not_applicable(tmp_path):
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.6 Input Boundary Validation Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.6 Input Boundary Validation Controls\n\n"
         "_Not applicable — no input boundaries._\n\n"
         "## 8. X\n\ny\n"
     )
@@ -1175,7 +1175,7 @@ def test_validation_approach_first_not_applicable(tmp_path):
 
 
 def test_validation_approach_first_missing_section(tmp_path):
-    md = "## 7. Security Architecture\n\nno 7.6 here\n\n## 8. X\n\ny\n"
+    md = "## 6. Security Architecture\n\nno 6.6 here\n\n## 8. X\n\ny\n"
     p = _md(tmp_path, md)
     r = qa.check_validation_approach_first(p)
     assert r.ok == 1
@@ -1194,7 +1194,7 @@ def _v1_contract(tmp_path: Path) -> Path:
         "sections:\n"
         "  security_architecture:\n"
         "    domain_required_rules:\n"
-        "      '7.3 Identity & Access Management':\n"
+        "      '6.3 Identity & Access Management':\n"
         "        - rule: auth_method_decomposition\n"
         "          table_column: Control\n"
         "          heading_level: 4\n"
@@ -1208,8 +1208,8 @@ def _v1_contract(tmp_path: Path) -> Path:
 def test_auth_v1_no_table(tmp_path):
     contract = _v1_contract(tmp_path)
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.3 Identity & Access Management\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.3 Identity & Access Management\n\n"
         "prose, no control table at all\n\n"
         "## 8. X\n\ny\n"
     )
@@ -1221,8 +1221,8 @@ def test_auth_v1_no_table(tmp_path):
 def test_auth_v1_table_but_no_subsections(tmp_path):
     contract = _v1_contract(tmp_path)
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.3 Identity & Access Management\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.3 Identity & Access Management\n\n"
         "| Control | Linked Threats |\n"
         "| --- | --- |\n"
         "| Password Login | T-001 |\n\n"
@@ -1236,8 +1236,8 @@ def test_auth_v1_table_but_no_subsections(tmp_path):
 def test_auth_v1_full_match_clean(tmp_path):
     contract = _v1_contract(tmp_path)
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.3 Identity & Access Management\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.3 Identity & Access Management\n\n"
         "| Control | Linked Threats |\n"
         "| --- | --- |\n"
         "| Password Login | T-001 |\n\n"
@@ -1254,8 +1254,8 @@ def test_auth_v1_full_match_clean(tmp_path):
 def test_auth_v1_missing_diagram_and_trailer(tmp_path):
     contract = _v1_contract(tmp_path)
     md = (
-        "## 7. Security Architecture\n\n"
-        "### 7.3 Identity & Access Management\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.3 Identity & Access Management\n\n"
         "| Control | Linked Threats |\n"
         "| --- | --- |\n"
         "| Password Login | T-001 |\n\n"
@@ -1350,7 +1350,7 @@ def test_cmd_autofix_annotates_refs(tmp_path, capsys):
 
 
 def test_cmd_all_strips_heading_attr_and_runs(tmp_path, capsys):
-    md = "# Title {#anchor x=y}\n\n## 7. Security Architecture\n\n### 7.1 O\n\nok\n\n## 8. X\n\ny\n"
+    md = "# Title {#anchor x=y}\n\n## 6. Security Architecture\n\n### 6.1 O\n\nok\n\n## 8. X\n\ny\n"
     p = _md(tmp_path, md)
     rc = qa.cmd_all(p, tmp_path)
     assert rc in (0, 1)
@@ -1378,7 +1378,7 @@ def test_mermaid_subgraph_extra_end(tmp_path):
 
 
 def test_mermaid_participant_unquoted_paren(tmp_path):
-    # Not in §7, sequenceDiagram, alias has unquoted paren → rule (2).
+    # Not in §6, sequenceDiagram, alias has unquoted paren → rule (2).
     md = "```mermaid\nsequenceDiagram\n  participant U as User (admin)\n```\n"
     p = _md(tmp_path, md)
     r = qa.check_mermaid_syntax(p)

@@ -95,7 +95,7 @@ def test_label_as_code_unwrap_keeps_non_allowlisted():
 
 
 def test_controls_covered_section_with_no_subsections_left_alone():
-    text = "### 7.1 Identity\n**Controls covered:** [Old](#old)\n"
+    text = "### 6.1 Identity\n**Controls covered:** [Old](#old)\n"
     out, n = prose._rewrite_controls_covered_anchors(text)
     # No #### subsections in the section -> sections[sec] empty -> skipped.
     assert n == 0
@@ -106,7 +106,7 @@ def test_controls_covered_section_with_no_subsections_left_alone():
 
 
 def test_controls_covered_bullet_anchor_rename_refreshed():
-    text = "### 7.2 Access\n#### Role checks\nBody.\n**Controls covered:**\n- [Stale label](#stale-anchor)\n"
+    text = "### 6.2 Access\n#### Role checks\nBody.\n**Controls covered:**\n- [Stale label](#stale-anchor)\n"
     out, n = prose._rewrite_controls_covered_anchors(text)
     assert "- [Role checks](#role-checks)" in out
     assert n >= 1

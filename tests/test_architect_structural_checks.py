@@ -855,17 +855,17 @@ class TestActorCoverage:
 
 
 _CLEAN_SEC7 = """
-### 7.1 Security Control Overview
+### 6.1 Security Control Overview
 
 | Control category | Verdict | Main reason |
 |---|---|---|
 | Authentication | Unsafe | raw SQL |
 
-### 7.2 Identity and Authentication Controls
+### 6.2 Identity and Authentication Controls
 
 **Controls covered:** [Password-Based Authentication](#x)
 
-#### 7.2.1 Password-Based Authentication
+#### 6.2.1 Password-Based Authentication
 
 **Status:** 🔴 Missing - raw SQL login.
 
@@ -882,15 +882,15 @@ The login query interpolates input.
 
 
 def _sec7_doc(body: str) -> str:
-    head = "# Threat Model\n\n## 7. Security Architecture\n\n"
+    head = "# Threat Model\n\n## 6. Security Architecture\n\n"
     tail = "\n\n## 8. Threat Register\n\nrows\n"
     return head + body.strip() + tail
 
 
 class TestSec7QualityBar:
     def _full_clean(self) -> str:
-        # 7.1 + 7.2 + 7.3..7.13 stub headings so the heading-set check passes.
-        extra = "\n".join(f"### 7.{n} Section {n}\n\nprose\n" for n in range(3, 14))
+        # 6.1 + 6.2 + 6.3..6.13 stub headings so the heading-set check passes.
+        extra = "\n".join(f"### 6.{n} Section {n}\n\nprose\n" for n in range(3, 14))
         return _sec7_doc(_CLEAN_SEC7 + "\n" + extra)
 
     def test_clean_sec7_no_findings(self, out_dir):
@@ -900,15 +900,15 @@ class TestSec7QualityBar:
         assert r["findings"] == [], [f["kind"] for f in r["findings"]]
 
     def test_missing_heading_flagged(self, out_dir):
-        # Drop 7.13 → heading-set violation.
-        body = _CLEAN_SEC7 + "\n" + "\n".join(f"### 7.{n} Section {n}\n\nprose\n" for n in range(3, 13))
+        # Drop 6.13 → heading-set violation.
+        body = _CLEAN_SEC7 + "\n" + "\n".join(f"### 6.{n} Section {n}\n\nprose\n" for n in range(3, 13))
         _write_text(out_dir / "threat-model.md", _sec7_doc(body))
         r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
         assert any(f["kind"] == "sec7_v2_heading_set" for f in r["findings"])
 
     def test_h4_missing_status_flagged(self, out_dir):
         bad = _CLEAN_SEC7.replace("**Status:** 🔴 Missing - raw SQL login.\n\n", "")
-        body = bad + "\n" + "\n".join(f"### 7.{n} S{n}\n\np\n" for n in range(3, 14))
+        body = bad + "\n" + "\n".join(f"### 6.{n} S{n}\n\np\n" for n in range(3, 14))
         _write_text(out_dir / "threat-model.md", _sec7_doc(body))
         r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
         assert any(f["kind"] == "section7_h4_status" for f in r["findings"])
@@ -922,7 +922,7 @@ class TestSec7QualityBar:
         colon = _CLEAN_SEC7.replace("**Security assessment**", "**Security assessment:**")
         # sanity: the fixture really does use the colon form now
         assert "**Security assessment:**" in colon
-        body = colon + "\n" + "\n".join(f"### 7.{n} S{n}\n\np\n" for n in range(3, 14))
+        body = colon + "\n" + "\n".join(f"### 6.{n} S{n}\n\np\n" for n in range(3, 14))
         _write_text(out_dir / "threat-model.md", _sec7_doc(body))
         r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
         assert not any(f["kind"] == "sec7_v2_h4_labels" for f in r["findings"]), [f["kind"] for f in r["findings"]]
@@ -931,7 +931,7 @@ class TestSec7QualityBar:
         body = (
             _CLEAN_SEC7
             + "\n**Findings in this flow:** F-001\n\n"
-            + "\n".join(f"### 7.{n} S{n}\n\np\n" for n in range(3, 14))
+            + "\n".join(f"### 6.{n} S{n}\n\np\n" for n in range(3, 14))
         )
         _write_text(out_dir / "threat-model.md", _sec7_doc(body))
         r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")

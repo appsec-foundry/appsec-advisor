@@ -489,15 +489,15 @@ class TestTocChildrenForSection:
         ctx = _mk_ctx(tmp_path)
         frag = ctx.fragments_dir / "sec.md"
         frag.write_text(
-            "## 7. Security Architecture\n\n### 7.1 Validation\n\nbody\n",
+            "## 6. Security Architecture\n\n### 6.1 Validation\n\nbody\n",
             encoding="utf-8",
         )
         sec = {
             "fragment": "sec.md",
             "required_subsections": [
                 "management_summary",  # string → skipped
-                {"title": "7.1 Validation"},
-                {"title": "7.9 Tier-B Thing", "tier": "b"},  # absent in frag → dropped
+                {"title": "6.1 Validation"},
+                {"title": "6.9 Tier-B Thing", "tier": "b"},  # absent in frag → dropped
             ],
         }
         children = compose._toc_children_for_section(ctx, "security_architecture", sec)
@@ -509,15 +509,15 @@ class TestTocChildrenForSection:
         ctx = _mk_ctx(tmp_path)
         frag = ctx.fragments_dir / "sec.md"
         frag.write_text(
-            "## 7. Security Architecture\n\n"
-            "### 7.13 Defense-in-Depth (cross-cutting)\n\nbody\n"
-            "### 7.99 Unmatched Heading\n\nbody\n",
+            "## 6. Security Architecture\n\n"
+            "### 6.13 Defense-in-Depth (cross-cutting)\n\nbody\n"
+            "### 6.99 Unmatched Heading\n\nbody\n",
             encoding="utf-8",
         )
         sec = {
             "fragment": "sec.md",
             "required_subsection_patterns": [
-                {"level": 3, "pattern": r"7\.13 Defense-in-Depth"},
+                {"level": 3, "pattern": r"6\.13 Defense-in-Depth"},
             ],
         }
         children = compose._toc_children_for_section(ctx, "security_architecture", sec)

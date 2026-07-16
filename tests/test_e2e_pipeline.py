@@ -107,7 +107,7 @@ CORE_HEADINGS = [
     "## 3. Attack Walkthroughs",
     "## 4. Assets",
     "## 5. Attack Surface",
-    "## 7. Security Architecture",
+    "## 6. Security Architecture",
     "## 8. Findings Register",
     "## 9. Abuse Cases",
     "## 10. Mitigation Register",
@@ -713,7 +713,7 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
     assert warnings == [], f"unexpected compose warnings: {warnings}"
     # Weaknesses are a first-class register (renamed + repositioned before the
     # Findings Register in the 2026-07-14 redesign), not a §8 class roll-up.
-    assert "## 6. Weakness Register" in rendered
+    assert "## 7. Weakness Register" in rendered
     assert "W-001 — Database query safety" in rendered
     assert "SQL built by concatenation; no parametrized layer." in rendered
     assert "**Confirmed findings:**" in rendered
@@ -732,7 +732,7 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
         "Top Weaknesses table must render inside the Management Summary"
     )
     assert "[Weakness Register](#weakness-register)" in rendered
-    assert rendered.index("### Top Weaknesses") < rendered.index("## 6. Weakness Register")
+    assert rendered.index("### Top Weaknesses") < rendered.index("## 7. Weakness Register")
     # Findings and systemic weaknesses are reported as separate evidence types.
     assert "**Assessment evidence:**" in rendered
     assert "confirmed-exploitable finding(s)" in rendered

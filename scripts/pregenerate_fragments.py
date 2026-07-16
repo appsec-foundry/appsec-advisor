@@ -101,7 +101,7 @@ def _load_posture_actor_labels_for_pregen() -> dict:
 
 # ---------------------------------------------------------------------------
 # Tier classification — components are mapped into Client / Application /
-# Data tiers using a heuristic on id/name/paths. Used by §2 diagrams and §7.
+# Data tiers using a heuristic on id/name/paths. Used by §2 diagrams and §6.
 # ---------------------------------------------------------------------------
 
 _TIER_HINTS = {
@@ -2919,7 +2919,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# §6 Use Cases generator removed 2026-05. The numbering gap (§5 → §7) is
+# §6 Use Cases generator removed 2026-05. The numbering gap (§5 → §6) is
 # intentional. Restoration would also need to revert the corresponding
 # block in data/sections-contract.yaml and the dispatcher entry in
 # scripts/compose_threat_model.py (FRAGMENT_PATHS / sections registry).
@@ -3433,7 +3433,7 @@ _PREGEN_CWE_CLASS_NAMES = {
 
 
 def _normalize_security_controls(raw: list) -> list[dict]:
-    """Coerce ``security_controls`` to dictionaries for §7 rendering."""
+    """Coerce ``security_controls`` to dictionaries for §6 rendering."""
     out: list[dict] = []
     for c in raw or []:
         if isinstance(c, dict):
@@ -3456,100 +3456,100 @@ def _normalize_security_controls(raw: list) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Schema v2 — 13-section §7 control-category layout
+# Schema v2 — 13-section §6 control-category layout
 # ---------------------------------------------------------------------------
 
 _V2_SUBSECTIONS: tuple[tuple[str, str, str], ...] = (
     # (heading, narrative_hint_for_llm, tier). Tier is retained for backward
     # compatibility with older composer logic; current v2 emits every section.
     (
-        "7.1 Security Control Overview",
+        "6.1 Security Control Overview",
         "Overview matrix: Control category, Verdict, Main reason. No control IDs and no finding-ID columns.",
         "a",
     ),
     (
-        "7.2 Identity and Authentication Controls",
+        "6.2 Identity and Authentication Controls",
         "Registration, password login, OAuth/OIDC adapters, MFA/TOTP, JWT issuance "
         "and verification, password reset/change.",
         "a",
     ),
     (
-        "7.3 Session and Token Controls",
+        "6.3 Session and Token Controls",
         "Browser token storage, request propagation, token lifetime, revocation, cookie/session boundary.",
         "a",
     ),
     (
-        "7.4 Authorization Controls",
+        "6.4 Authorization Controls",
         "Route middleware, role checks, object-level authorization, client-side guards versus server-side enforcement.",
         "a",
     ),
     (
-        "7.5 Query Construction and Data Access Controls",
+        "6.5 Query Construction and Data Access Controls",
         "SQL/NoSQL query construction, ORM usage, parameter binding, selector and object ownership boundaries.",
         "a",
     ),
     (
-        "7.6 Input Boundary Validation Controls",
+        "6.6 Input Boundary Validation Controls",
         "Request schemas, parser limits, upload constraints, URL/path validation, business-rule boundaries.",
         "a",
     ),
     (
-        "7.7 Output Encoding and Rendering Controls",
+        "6.7 Output Encoding and Rendering Controls",
         "Template escaping, DOM sinks, sanitizer bypasses, HTML rendering contexts.",
         "a",
     ),
     (
-        "7.8 Browser and Cross-Origin Controls",
+        "6.8 Browser and Cross-Origin Controls",
         "CSP, CORS, CSRF, Helmet/header hardening, browser-side request policy.",
         "a",
     ),
     (
-        "7.9 Cryptography Secrets and Data Protection",
+        "6.9 Cryptography Secrets and Data Protection",
         "Signing keys, HMAC/cookie secrets, password storage, data-at-rest protection.",
         "a",
     ),
     (
-        "7.10 File Parser and Outbound Request Controls",
+        "6.10 File Parser and Outbound Request Controls",
         "Uploads, archives, XML parsing, unsafe interpreters, SSRF, redirects, static or management-surface exposure.",
         "a",
     ),
     (
-        "7.11 Operations Runtime and Supply Chain Controls",
+        "6.11 Operations Runtime and Supply Chain Controls",
         "Audit logging, runtime/container hardening, dependency determinism, CI "
         "workflow permissions, package-install controls.",
         "a",
     ),
     (
-        "7.12 Real-time and Not Applicable Controls",
+        "6.12 Real-time and Not Applicable Controls",
         "WebSocket/real-time channels plus compact absent-domain statements.",
         "a",
     ),
-    ("7.13 Defense-in-Depth Summary", "Cross-cutting summary of layered controls and residual architecture risk.", "a"),
+    ("6.13 Defense-in-Depth Summary", "Cross-cutting summary of layered controls and residual architecture risk.", "a"),
 )
 
 
-# M5b — Default H4 mechanism name per §7.X. Used by the fallback branch
+# M5b — Default H4 mechanism name per §6.X. Used by the fallback branch
 # in `gen_security_architecture_v2` when a section has no catalogued
 # security_controls[] but DOES carry routed findings. Names match the
 # reference threat-model.md so generated reports converge on the same
 # vocabulary. The pregenerator falls back to a heading-derived noun phrase
 # (`heading.split(" ", 1)[1]`) when a section is not listed here.
 _V2_DEFAULT_MECHANISM: dict[str, str] = {
-    "7.2 Identity and Authentication Controls": "Identity and Authentication Mechanisms",
-    "7.3 Session and Token Controls": "Browser Token Storage and Request Propagation",
-    "7.4 Authorization Controls": "Route and Object Authorization",
-    "7.5 Query Construction and Data Access Controls": "Query Construction",
-    "7.6 Input Boundary Validation Controls": "Validation Approach",
-    "7.7 Output Encoding and Rendering Controls": "Output Encoding and Client-Side Rendering",
-    "7.8 Browser and Cross-Origin Controls": "Browser Security Headers and CORS/CSRF Posture",
-    "7.9 Cryptography Secrets and Data Protection": "Secret Management and Data Protection",
-    "7.10 File Parser and Outbound Request Controls": "File Parser and Outbound Request Handling",
-    "7.11 Operations Runtime and Supply Chain Controls": "Logging, Runtime and Supply Chain Posture",
-    "7.12 Real-time and Not Applicable Controls": "Real-time WebSocket Channel",
+    "6.2 Identity and Authentication Controls": "Identity and Authentication Mechanisms",
+    "6.3 Session and Token Controls": "Browser Token Storage and Request Propagation",
+    "6.4 Authorization Controls": "Route and Object Authorization",
+    "6.5 Query Construction and Data Access Controls": "Query Construction",
+    "6.6 Input Boundary Validation Controls": "Validation Approach",
+    "6.7 Output Encoding and Rendering Controls": "Output Encoding and Client-Side Rendering",
+    "6.8 Browser and Cross-Origin Controls": "Browser Security Headers and CORS/CSRF Posture",
+    "6.9 Cryptography Secrets and Data Protection": "Secret Management and Data Protection",
+    "6.10 File Parser and Outbound Request Controls": "File Parser and Outbound Request Handling",
+    "6.11 Operations Runtime and Supply Chain Controls": "Logging, Runtime and Supply Chain Posture",
+    "6.12 Real-time and Not Applicable Controls": "Real-time WebSocket Channel",
 }
 
 
-# §7.6 general validation-approach heading detector. Mirrors the contract's
+# §6.6 general validation-approach heading detector. Mirrors the contract's
 # `validation_approach_first.approach_heading_patterns` so the pregenerator
 # does not double-inject when Stage-1 already supplied an approach-named row.
 _V2_APPROACH_FIRST_RE = re.compile(
@@ -3560,93 +3560,93 @@ _V2_APPROACH_FIRST_RE = re.compile(
 )
 
 
-# CWE → §7.X routing table — mirrors sections-contract.yaml schema_v2
+# CWE → §6.X routing table — mirrors sections-contract.yaml schema_v2
 # finding_routing. Kept here as a static map so the pregenerator does not
 # need to parse the YAML contract.
 _V2_CWE_ROUTING: dict[str, str] = {
-    "CWE-287": "7.2 Identity and Authentication Controls",
-    "CWE-307": "7.2 Identity and Authentication Controls",
-    "CWE-294": "7.2 Identity and Authentication Controls",
-    "CWE-345": "7.2 Identity and Authentication Controls",
-    "CWE-347": "7.2 Identity and Authentication Controls",
-    "CWE-620": "7.2 Identity and Authentication Controls",
-    "CWE-640": "7.2 Identity and Authentication Controls",
-    "CWE-916": "7.2 Identity and Authentication Controls",
-    "CWE-922": "7.3 Session and Token Controls",
-    "CWE-384": "7.3 Session and Token Controls",
-    "CWE-613": "7.3 Session and Token Controls",
-    "CWE-1004": "7.3 Session and Token Controls",
-    "CWE-285": "7.4 Authorization Controls",
-    "CWE-639": "7.4 Authorization Controls",
-    "CWE-269": "7.4 Authorization Controls",
-    "CWE-862": "7.4 Authorization Controls",
-    "CWE-863": "7.4 Authorization Controls",
-    "CWE-732": "7.4 Authorization Controls",
-    "CWE-352-authz": "7.4 Authorization Controls",
-    "CWE-602": "7.4 Authorization Controls",
-    "CWE-915": "7.4 Authorization Controls",
-    "CWE-89": "7.5 Query Construction and Data Access Controls",
-    "CWE-943": "7.5 Query Construction and Data Access Controls",
-    "CWE-20": "7.6 Input Boundary Validation Controls",
-    "CWE-1284": "7.6 Input Boundary Validation Controls",
-    "CWE-1287": "7.6 Input Boundary Validation Controls",
-    "CWE-400": "7.6 Input Boundary Validation Controls",
-    "CWE-79": "7.7 Output Encoding and Rendering Controls",
-    "CWE-80": "7.7 Output Encoding and Rendering Controls",
-    "CWE-87": "7.7 Output Encoding and Rendering Controls",
-    "CWE-116": "7.7 Output Encoding and Rendering Controls",
-    "CWE-1021": "7.8 Browser and Cross-Origin Controls",
-    "CWE-942": "7.8 Browser and Cross-Origin Controls",
-    "CWE-693": "7.8 Browser and Cross-Origin Controls",
-    "CWE-358": "7.8 Browser and Cross-Origin Controls",
-    "CWE-352": "7.8 Browser and Cross-Origin Controls",
-    "CWE-321": "7.9 Cryptography Secrets and Data Protection",
-    "CWE-798": "7.9 Cryptography Secrets and Data Protection",
-    "CWE-327": "7.9 Cryptography Secrets and Data Protection",
-    "CWE-326": "7.9 Cryptography Secrets and Data Protection",
-    "CWE-329": "7.9 Cryptography Secrets and Data Protection",
-    "CWE-330": "7.9 Cryptography Secrets and Data Protection",
-    "CWE-312": "7.9 Cryptography Secrets and Data Protection",
-    "CWE-538": "7.9 Cryptography Secrets and Data Protection",
-    "CWE-759": "7.9 Cryptography Secrets and Data Protection",
-    "CWE-611": "7.10 File Parser and Outbound Request Controls",
-    "CWE-22": "7.10 File Parser and Outbound Request Controls",
-    "CWE-23": "7.10 File Parser and Outbound Request Controls",
-    "CWE-409": "7.10 File Parser and Outbound Request Controls",
-    "CWE-776": "7.10 File Parser and Outbound Request Controls",
-    "CWE-94": "7.10 File Parser and Outbound Request Controls",
-    "CWE-95": "7.10 File Parser and Outbound Request Controls",
-    "CWE-918": "7.10 File Parser and Outbound Request Controls",
-    "CWE-601": "7.10 File Parser and Outbound Request Controls",
-    "CWE-441": "7.10 File Parser and Outbound Request Controls",
-    "CWE-548": "7.10 File Parser and Outbound Request Controls",
-    "CWE-552": "7.10 File Parser and Outbound Request Controls",
-    "CWE-749": "7.10 File Parser and Outbound Request Controls",
-    "CWE-200": "7.10 File Parser and Outbound Request Controls",
-    "CWE-117": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-223": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-209": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-532": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-778": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-1104": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-1395": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-937": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-829": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-250": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-15": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-260": "7.11 Operations Runtime and Supply Chain Controls",
-    "CWE-1385": "7.12 Real-time and Not Applicable Controls",
+    "CWE-287": "6.2 Identity and Authentication Controls",
+    "CWE-307": "6.2 Identity and Authentication Controls",
+    "CWE-294": "6.2 Identity and Authentication Controls",
+    "CWE-345": "6.2 Identity and Authentication Controls",
+    "CWE-347": "6.2 Identity and Authentication Controls",
+    "CWE-620": "6.2 Identity and Authentication Controls",
+    "CWE-640": "6.2 Identity and Authentication Controls",
+    "CWE-916": "6.2 Identity and Authentication Controls",
+    "CWE-922": "6.3 Session and Token Controls",
+    "CWE-384": "6.3 Session and Token Controls",
+    "CWE-613": "6.3 Session and Token Controls",
+    "CWE-1004": "6.3 Session and Token Controls",
+    "CWE-285": "6.4 Authorization Controls",
+    "CWE-639": "6.4 Authorization Controls",
+    "CWE-269": "6.4 Authorization Controls",
+    "CWE-862": "6.4 Authorization Controls",
+    "CWE-863": "6.4 Authorization Controls",
+    "CWE-732": "6.4 Authorization Controls",
+    "CWE-352-authz": "6.4 Authorization Controls",
+    "CWE-602": "6.4 Authorization Controls",
+    "CWE-915": "6.4 Authorization Controls",
+    "CWE-89": "6.5 Query Construction and Data Access Controls",
+    "CWE-943": "6.5 Query Construction and Data Access Controls",
+    "CWE-20": "6.6 Input Boundary Validation Controls",
+    "CWE-1284": "6.6 Input Boundary Validation Controls",
+    "CWE-1287": "6.6 Input Boundary Validation Controls",
+    "CWE-400": "6.6 Input Boundary Validation Controls",
+    "CWE-79": "6.7 Output Encoding and Rendering Controls",
+    "CWE-80": "6.7 Output Encoding and Rendering Controls",
+    "CWE-87": "6.7 Output Encoding and Rendering Controls",
+    "CWE-116": "6.7 Output Encoding and Rendering Controls",
+    "CWE-1021": "6.8 Browser and Cross-Origin Controls",
+    "CWE-942": "6.8 Browser and Cross-Origin Controls",
+    "CWE-693": "6.8 Browser and Cross-Origin Controls",
+    "CWE-358": "6.8 Browser and Cross-Origin Controls",
+    "CWE-352": "6.8 Browser and Cross-Origin Controls",
+    "CWE-321": "6.9 Cryptography Secrets and Data Protection",
+    "CWE-798": "6.9 Cryptography Secrets and Data Protection",
+    "CWE-327": "6.9 Cryptography Secrets and Data Protection",
+    "CWE-326": "6.9 Cryptography Secrets and Data Protection",
+    "CWE-329": "6.9 Cryptography Secrets and Data Protection",
+    "CWE-330": "6.9 Cryptography Secrets and Data Protection",
+    "CWE-312": "6.9 Cryptography Secrets and Data Protection",
+    "CWE-538": "6.9 Cryptography Secrets and Data Protection",
+    "CWE-759": "6.9 Cryptography Secrets and Data Protection",
+    "CWE-611": "6.10 File Parser and Outbound Request Controls",
+    "CWE-22": "6.10 File Parser and Outbound Request Controls",
+    "CWE-23": "6.10 File Parser and Outbound Request Controls",
+    "CWE-409": "6.10 File Parser and Outbound Request Controls",
+    "CWE-776": "6.10 File Parser and Outbound Request Controls",
+    "CWE-94": "6.10 File Parser and Outbound Request Controls",
+    "CWE-95": "6.10 File Parser and Outbound Request Controls",
+    "CWE-918": "6.10 File Parser and Outbound Request Controls",
+    "CWE-601": "6.10 File Parser and Outbound Request Controls",
+    "CWE-441": "6.10 File Parser and Outbound Request Controls",
+    "CWE-548": "6.10 File Parser and Outbound Request Controls",
+    "CWE-552": "6.10 File Parser and Outbound Request Controls",
+    "CWE-749": "6.10 File Parser and Outbound Request Controls",
+    "CWE-200": "6.10 File Parser and Outbound Request Controls",
+    "CWE-117": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-223": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-209": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-532": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-778": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-1104": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-1395": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-937": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-829": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-250": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-15": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-260": "6.11 Operations Runtime and Supply Chain Controls",
+    "CWE-1385": "6.12 Real-time and Not Applicable Controls",
 }
 
 
 def _render_threat_hypotheses_table(yaml_data: dict) -> list[str]:
-    """Render the §7.2 validation table for unpromoted architecture hypotheses."""
+    """Render the §6.2 validation table for unpromoted architecture hypotheses."""
     hypotheses = yaml_data.get("threat_hypotheses") or []
     unpromoted = [h for h in hypotheses if isinstance(h, dict) and not h.get("promoted_threat_id")]
     if not unpromoted:
         return []
 
-    # Emit the explicit name-slug anchor the §7.2 "Controls covered" bullet
+    # Emit the explicit name-slug anchor the §6.2 "Controls covered" bullet
     # links to. Real controls get this <a id> from _emit_v2_grouped_control;
     # this pseudo-control heading previously had none, so its Controls-covered
     # bullet `[Threat Hypotheses Requiring Validation](#threat-hypotheses-requiring-validation)`
@@ -3719,7 +3719,7 @@ def _control_verdict_for_heading(
     threats_by_section: dict[str, list[dict]],
     controls: list[dict],
 ) -> str:
-    """Compose the trailing " — <Verdict>" suffix for a §7.X heading.
+    """Compose the trailing " — <Verdict>" suffix for a §6.X heading.
 
     Reads `security_controls[].effectiveness` for any control whose `domain`
     matches the section heading, picks the worst-case status, and pairs it
@@ -3766,13 +3766,13 @@ def _control_verdict_for_heading(
 
 
 def _v2_slug(title: str) -> str:
-    """Anchor slug used by the v2 §7 scaffold.
+    """Anchor slug used by the v2 §6 scaffold.
 
     Delegates to `scripts/_slug.py::github_slug` so the pregenerator,
     composer, and qa_checks emit byte-identical slugs. The previous
     inline `[^a-z0-9]+` collapse silently produced different slugs than
     the GitHub renderer for headings containing `&`, `@`, `+`, `(`, `)`,
-    which was the proximate cause of the §7 `#h4-*` TOC drift bug.
+    which was the proximate cause of the §6 `#h4-*` TOC drift bug.
     """
     from _slug import github_slug as _gh
 
@@ -3783,10 +3783,10 @@ def _v2_slug(title: str) -> str:
 _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
     # 2026-05 R-6/R-7 fix — hints sharpened so they are mutually exclusive
     # when matched against `control.domain`. Previously "auth" appeared in
-    # §7.2 and matched both `authentication` and `authorization` domains,
-    # leaking authorization controls into §7.2. Likewise "management" in
-    # §7.10 matched "secrets-management" leaking secrets controls into §7.10.
-    "7.2 Identity and Authentication Controls": (
+    # §6.2 and matched both `authentication` and `authorization` domains,
+    # leaking authorization controls into §6.2. Likewise "management" in
+    # §6.10 matched "secrets-management" leaking secrets controls into §6.10.
+    "6.2 Identity and Authentication Controls": (
         "identity",
         "iam",
         "authentication",
@@ -3801,28 +3801,28 @@ _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
         "2fa",
         "registration",
     ),
-    "7.3 Session and Token Controls": (
+    "6.3 Session and Token Controls": (
         "session",
         "token-storage",
         "cookie",
         "localstorage",
         "browser-storage",
     ),
-    "7.4 Authorization Controls": (
+    "6.4 Authorization Controls": (
         "authorization",
         "access-control",
         "rbac",
         "object-level",
         "ownership",
     ),
-    "7.5 Query Construction and Data Access Controls": (
+    "6.5 Query Construction and Data Access Controls": (
         "query",
         "sql",
         "nosql",
         "orm",
         "data-access",
     ),
-    "7.6 Input Boundary Validation Controls": (
+    "6.6 Input Boundary Validation Controls": (
         "input-validation",
         "schema-validation",
         "upload-validation",
@@ -3830,14 +3830,14 @@ _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
         "parser-limit",
         "rate-limiting",
     ),
-    "7.7 Output Encoding and Rendering Controls": (
+    "6.7 Output Encoding and Rendering Controls": (
         "output-encoding",
         "render",
         "xss",
         "sanit",
         "dom-sanit",
     ),
-    "7.8 Browser and Cross-Origin Controls": (
+    "6.8 Browser and Cross-Origin Controls": (
         "browser",
         "csp",
         "cors",
@@ -3846,7 +3846,7 @@ _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
         "security-headers",
         "cors-csrf",
     ),
-    "7.9 Cryptography Secrets and Data Protection": (
+    "6.9 Cryptography Secrets and Data Protection": (
         "crypto",
         "cryptography",
         "secret-manag",
@@ -3859,7 +3859,7 @@ _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
         "encryption",
         "data-protection",
     ),
-    "7.10 File Parser and Outbound Request Controls": (
+    "6.10 File Parser and Outbound Request Controls": (
         "file-security",
         "file-parser",
         "xml-parser",
@@ -3867,7 +3867,7 @@ _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
         "ssrf",
         "redirect-allow",
     ),
-    "7.11 Operations Runtime and Supply Chain Controls": (
+    "6.11 Operations Runtime and Supply Chain Controls": (
         "audit",
         "logging-monitor",
         "logging-monitoring",
@@ -3877,7 +3877,7 @@ _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
         "supply-chain",
         "ci-cd",
     ),
-    "7.12 Real-time and Not Applicable Controls": (
+    "6.12 Real-time and Not Applicable Controls": (
         "websocket",
         "real-time",
         "socket.io",
@@ -3893,18 +3893,18 @@ _V2_HEADING_ORDER: tuple[str, ...] = tuple(h for h, _ in (_V2_CONTROL_HINTS.item
 
 
 def _v2_canonical_section_for_control(c: dict) -> str:
-    """Return the SINGLE canonical §7 heading a control belongs to.
+    """Return the SINGLE canonical §6 heading a control belongs to.
 
     2026-05 R-6/R-7 fix: hint matching is non-exclusive (e.g. a control with
-    `domain=secrets-management` matched both §7.9 (`secret`) and §7.10
+    `domain=secrets-management` matched both §6.9 (`secret`) and §6.10
     (`management`), so the same H4 block was emitted in two sections — with
     identical `<a id="…">` anchors → duplicate-anchor warnings, controls
-    duplicated across §7 categories, and inconsistent verdict-counting).
+    duplicated across §6 categories, and inconsistent verdict-counting).
 
     Resolution priority:
       1. Explicit ``section`` / ``v2_section`` field on the control.
       2. Match against the control's ``domain`` field FIRST (specific —
-         "cryptography" cleanly resolves to §7.9, not §7.2 via "password"
+         "cryptography" cleanly resolves to §6.9, not §6.2 via "password"
          leakage). Domain is the Stage-1-authored canonical taxonomy slot.
       3. Fall back to the broader haystack (control/name/implementation)
          only when domain matched nothing — preserves backward-compat for
@@ -3917,7 +3917,7 @@ def _v2_canonical_section_for_control(c: dict) -> str:
         return explicit
     domain = (c.get("domain") or "").strip().lower()
     if domain:
-        # Exact canonical-title match FIRST. Stage 1 writes the §7 section's
+        # Exact canonical-title match FIRST. Stage 1 writes the §6 section's
         # human-readable title verbatim as the control's domain (e.g. "File
         # Parser and Outbound Request Controls"); match it against each
         # heading minus its "7.X " number prefix. This is collision-free,
@@ -3925,9 +3925,9 @@ def _v2_canonical_section_for_control(c: dict) -> str:
         # tokens like `file-parser` / `upload-validation` that never match a
         # space-form domain, so a control whose NAME also carries no hint
         # token (e.g. "File Upload Validation") used to route to NO section
-        # and was dropped from §7 entirely (juice-shop 2026-06-01 §7.10 "no
-        # #### found"). It also avoids the substring trap where the §7.4 hint
-        # `access-control` matches the §7.5 domain "...Data Access Controls".
+        # and was dropped from §6 entirely (juice-shop 2026-06-01 §6.10 "no
+        # #### found"). It also avoids the substring trap where the §6.4 hint
+        # `access-control` matches the §6.5 domain "...Data Access Controls".
         for heading in _V2_HEADING_ORDER:
             title = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip().lower()
             if title and title == domain:
@@ -3949,11 +3949,11 @@ def _v2_canonical_section_for_control(c: dict) -> str:
 
 
 def _v2_controls_for_heading(controls: list[dict], heading: str) -> list[dict]:
-    """Return the subset of controls whose canonical §7 section is ``heading``.
+    """Return the subset of controls whose canonical §6 section is ``heading``.
 
     Each control resolves to AT MOST one heading via
     ``_v2_canonical_section_for_control``; this guarantees that the same
-    sub-control title never appears in two different §7 categories.
+    sub-control title never appears in two different §6 categories.
     """
     if heading not in _V2_CONTROL_HINTS:
         return []
@@ -4000,7 +4000,7 @@ _FRIENDLY_SUBCONTROL_TITLE: dict[str, str] = {
     "Container Hardening": "Container Runtime Hardening",
     "Secret Management": "Secret and Key Management",
     "Input Validation": "Request Input Validation",
-    # 2026-05 (user-request point 4): align §7 H4 titles with OWASP ASVS
+    # 2026-05 (user-request point 4): align §6 H4 titles with OWASP ASVS
     # vocabulary so that "JWT authentication" reads as the token-mechanism
     # it actually is, and "Route-level auth middleware" disambiguates as
     # Authorization (the Z) rather than Authentication. Each replacement
@@ -4026,7 +4026,7 @@ _FRIENDLY_SUBCONTROL_TITLE: dict[str, str] = {
 
 
 def _friendly_subcontrol_title(name: str) -> str:
-    """Return a more reader-friendly version of a §7 H4 subcontrol title.
+    """Return a more reader-friendly version of a §6 H4 subcontrol title.
 
     Two transforms, both renderer-side, never written to YAML:
       1. Strip trailing parenthetical tech-specifics like
@@ -4057,7 +4057,7 @@ _V2_STATUS_TOKENS = {
 
 
 def _v2_status_line(eff: str, note: str = "") -> str:
-    """Build the per-sub-control `**Status:**` badge line for §7 H4 blocks.
+    """Build the per-sub-control `**Status:**` badge line for §6 H4 blocks.
 
     The badge is the reader's at-a-glance verdict — it answers "is this
     sub-control a positive or a negative finding?" without making them read
@@ -4169,7 +4169,7 @@ def _emit_v2_grouped_control(
     # Per-flow diagram — the grouped block represents a multi-step auth flow
     # (e.g. the password login path). The schema_v2 auth_method_decomposition
     # gate (flow_methods_require_diagram) requires a `sequenceDiagram` on any
-    # §7.2 flow block, and "Password-Based Authentication" matches the
+    # §6.2 flow block, and "Password-Based Authentication" matches the
     # `password-based` flow token. Emit the diagram from Stage-1 data when
     # present, else a fill-me placeholder so the scaffold satisfies the gate.
     diag = (c.get("sequence_diagram") or "").strip()
@@ -4180,7 +4180,7 @@ def _emit_v2_grouped_control(
         lines.append(diag)
         lines.append("```")
         lines.append("")
-    elif heading.startswith("7.2 "):
+    elif heading.startswith("6.2 "):
         lines.append(
             "<!-- NARRATIVE_PLACEHOLDER: precede with one sentence ending in "
             "`:` then a positive-flow ```mermaid sequenceDiagram``` of the "
@@ -4235,7 +4235,7 @@ def _emit_v2_grouped_control(
 def _emit_v2_subcontrol_block(
     lines: list, sub: dict, threats: list, heading: str, section_id: str = "", idx: int = 0
 ) -> None:
-    """Emit one §7.x #### block from a `security_controls[].subcontrols[]` entry.
+    """Emit one §6.x #### block from a `security_controls[].subcontrols[]` entry.
 
     R9 / R12 — Reference-style block carries (in order):
       1. `#### <title>` heading using canonical industry terminology
@@ -4258,8 +4258,8 @@ def _emit_v2_subcontrol_block(
     original_title = (sub.get("title") or "Control").strip()
     title = _friendly_subcontrol_title(original_title)
     # Number the H4 as `7.X.N <title>` so deep links and PDF TOC outline
-    # mirror the §2.4 / §7.3 convention (the latter has had numbered H4 for
-    # IAM flow blocks since the schema-v2 contract; the rest of §7 was a
+    # mirror the §2.4 / §6.3 convention (the latter has had numbered H4 for
+    # IAM flow blocks since the schema-v2 contract; the rest of §6 was a
     # legacy gap). When section_id/idx are not provided (older call sites),
     # fall back to bare `#### <title>` so behaviour stays compatible.
     #
@@ -4362,7 +4362,7 @@ def _emit_v2_subcontrol_block(
         else:
             bullet_links.append(f"[{fid}](#{fid.lower()})")
     if not bullet_links:
-        # Heuristic fallback: route findings by CWE → §7.x → take top 3.
+        # Heuristic fallback: route findings by CWE → §6.x → take top 3.
         for link in _v2_finding_links(threats, heading, max_links=3):
             bullet_links.append(link)
     if bullet_links:
@@ -4375,7 +4375,7 @@ def _emit_v2_subcontrol_block(
 
 # Flow-like mechanism tokens — if the control name matches one of these,
 # the scaffold inserts a sequenceDiagram placeholder. Kept in sync with
-# `sections-contract.yaml → schema_v2.domain_required_rules → '7.2' →
+# `sections-contract.yaml → schema_v2.domain_required_rules → '6.2' →
 # auth_method_decomposition.method_whitelist` (R1).
 _FLOW_LIKE_TOKENS = frozenset(
     {
@@ -4418,21 +4418,21 @@ def _emit_v2_subcontrol_legacy(
 
     Pre-R9 Stage-1 outputs emit one row per control without subcontrol
     decomposition. We keep this fallback so older yaml inputs still
-    produce a valid §7 fragment. The block still benefits from the
+    produce a valid §6 fragment. The block still benefits from the
     expanded placeholder set (positive-case intro + sequenceDiagram for
     flow-like names + assessment + bullet findings) so the LLM has the
     same depth target as the subcontrol pathway.
 
     Returns ``True`` when an H4 block was emitted, ``False`` when the
     control was suppressed (effectiveness=Missing AND no linked threats —
-    nothing meaningful to anchor a paragraph to; the parent §7.x
+    nothing meaningful to anchor a paragraph to; the parent §6.x
     Assessment block can summarise the absence in one sentence).
     """
     # Fix 5 — suppress H4 when the control has nothing important to
     # explain. "Missing" effectiveness with zero linked threats means the
     # whole block would degrade into "this control is not implemented in
     # this codebase" filler. The controls table at the top of the parent
-    # §7.x section already lists the control as Missing; an additional
+    # §6.x section already lists the control as Missing; an additional
     # H4 below adds zero information.
     eff = (c.get("effectiveness") or "").strip().lower()
     linked = c.get("linked_threats") or []
@@ -4440,11 +4440,11 @@ def _emit_v2_subcontrol_legacy(
         linked = [linked]
     impl_text = (c.get("implementation") or "").strip()
     # A "Missing" control whose OWN linked_threats is empty is still worth an
-    # H4 when findings route to this §7 category via CWE: the reader needs to
+    # H4 when findings route to this §6 category via CWE: the reader needs to
     # see the absent control next to the findings it would have blocked, and
     # qa_checks.check_control_subsection_coverage requires a #### per populated
     # category (a category with catalogued controls but zero H4 trips the
-    # strict gate → the recurring §7 REPAIR_MODE loop). Only suppress when
+    # strict gate → the recurring §6 REPAIR_MODE loop). Only suppress when
     # there is genuinely nothing to anchor — no own links, no implementation
     # prose, AND no CWE-routed finding for this section.
     routed_here = _v2_finding_links(threats, heading, max_links=1)
@@ -4545,29 +4545,29 @@ def _emit_v2_subcontrol_legacy(
 
 
 # ---------------------------------------------------------------------------
-# §7.2 Authentication Mechanisms inventory (2026-05-31 — deterministic).
+# §6.2 Authentication Mechanisms inventory (2026-05-31 — deterministic).
 #
-# schema_v2 catalogues controls by domain — identity/login → §7.2,
-# session/token (JWT) → §7.3, password hashing → §7.9 — so the §7.2 section
+# schema_v2 catalogues controls by domain — identity/login → §6.2,
+# session/token (JWT) → §6.3, password hashing → §6.9 — so the §6.2 section
 # only ever decomposes the control(s) Stage-1 filed under the identity domain
-# (usually just "Password Login"). That made §7.2 read "thinned out": OAuth /
+# (usually just "Password Login"). That made §6.2 read "thinned out": OAuth /
 # JWT / MFA were either elsewhere or absent. This inventory is a DETERMINISTIC
-# table emitted at the top of §7.2 that reconstructs the COMPLETE authentication
+# table emitted at the top of §6.2 that reconstructs the COMPLETE authentication
 # surface from the yaml (controls + threats + meta) — status, where it is
-# assessed (§7.2/§7.3/§7.9), and linked findings — independent of the LLM
+# assessed (§6.2/§6.3/§6.9), and linked findings — independent of the LLM
 # scaffold-fill. Mechanisms checked but absent are named in a trailing note so
 # "no OAuth" is explicit, not silent. Built from data + frozen → an LLM author
 # cannot thin it out on a later run. That is the whole point.
 # ---------------------------------------------------------------------------
 
-# `section` = the §7 subsection where the mechanism's controls are catalogued
+# `section` = the §6 subsection where the mechanism's controls are catalogued
 # (drives the "Assessed in" link). `control_kw` / `threat_kw` are lowercase
 # substrings matched against control name+domain / threat title+cwe. `meta_flag`
 # marks the mechanism present from a meta boolean alone.
 _AUTH_MECHANISM_SPECS: list[dict] = [
     {
         "name": "User registration",
-        "section": "7.2",
+        "section": "6.2",
         "control_kw": ["registration", "sign-up", "signup"],
         "threat_kw": [
             "registration",
@@ -4582,7 +4582,7 @@ _AUTH_MECHANISM_SPECS: list[dict] = [
     },
     {
         "name": "Password login",
-        "section": "7.2",
+        "section": "6.2",
         "control_kw": ["password authentication", "password-based", "password login", "login"],
         "threat_kw": [
             "login authentication bypass",
@@ -4594,7 +4594,7 @@ _AUTH_MECHANISM_SPECS: list[dict] = [
     },
     {
         "name": "Password reset / change",
-        "section": "7.2",
+        "section": "6.2",
         "control_kw": ["password reset", "password change", "forgot password"],
         "threat_kw": [
             "password reset",
@@ -4608,40 +4608,40 @@ _AUTH_MECHANISM_SPECS: list[dict] = [
     },
     {
         "name": "Password storage (hashing)",
-        "section": "7.9",
+        "section": "6.9",
         "control_kw": ["password hashing", "credential storage", "hashing"],
         "threat_kw": ["md5", "password hash", "unsalted", "bcrypt", "scrypt", "argon2"],
     },
     {
         "name": "JWT / bearer-token session",
-        "section": "7.3",
+        "section": "6.3",
         "control_kw": ["jwt", "session token validation", "bearer", "token validation"],
         "threat_kw": ["jwt", "json web token", "bearer token", "alg:none", "algorithm confusion", "token forgery"],
     },
     {
         "name": "Session-token storage",
-        "section": "7.3",
+        "section": "6.3",
         "control_kw": ["session token storage", "token storage"],
         "threat_kw": ["localstorage", "local storage", "session theft", "token stored", "httponly"],
     },
     {
         "name": "Multi-factor authentication (TOTP / 2FA)",
-        "section": "7.2",
+        "section": "6.2",
         "control_kw": ["totp", "2fa", "mfa", "multi-factor", "multi factor", "two-factor", "two factor"],
         "threat_kw": ["totp", "2fa", "two-factor", "two factor", "mfa", "multi-factor", "one-time password"],
     },
     {
         "name": "OAuth / OIDC federated login",
-        "section": "7.2",
+        "section": "6.2",
         "control_kw": ["oauth", "oidc", "openid", "sso", "saml", "federated", "social login"],
         "threat_kw": ["oauth", "oidc", "openid", "saml", "single sign-on", "social login"],
     },
 ]
 
 _AUTH_INV_SECTION_TITLES = {
-    "7.2": "7.2 Identity and Authentication Controls",
-    "7.3": "7.3 Session and Token Controls",
-    "7.9": "7.9 Cryptography Secrets and Data Protection",
+    "6.2": "6.2 Identity and Authentication Controls",
+    "6.3": "6.3 Session and Token Controls",
+    "6.9": "6.9 Cryptography Secrets and Data Protection",
 }
 
 _AUTH_INV_EFFECTIVENESS_BADGE = {
@@ -4662,7 +4662,7 @@ def _auth_mech_finding_link(threat: dict) -> str | None:
     if not m:
         return None
     n = int(m.group(1))
-    # Carry the finding TITLE, not a bare ID — the §7.2 inventory is a table,
+    # Carry the finding TITLE, not a bare ID — the §6.2 inventory is a table,
     # so compose's prose-linkifier never enriches it, leaving "leer betitelt"
     # links (2026-06-02 user report). Per the no-bare-ID rule every F-ref must
     # show a short title. Use the finding's own title (already concise:
@@ -4673,7 +4673,7 @@ def _auth_mech_finding_link(threat: dict) -> str | None:
 
 
 def _build_auth_mechanism_inventory(yaml_data: dict) -> list[str]:
-    """Deterministic §7.2 'Authentication mechanisms' inventory block (markdown
+    """Deterministic §6.2 'Authentication mechanisms' inventory block (markdown
     lines). Returns [] when no auth mechanism is present at all."""
     threats = yaml_data.get("threats") or []
     controls = _normalize_security_controls(yaml_data.get("security_controls"))
@@ -4726,16 +4726,16 @@ def _build_auth_mechanism_inventory(yaml_data: dict) -> list[str]:
     if not rows:
         return []
 
-    sec73 = _v2_slug(_AUTH_INV_SECTION_TITLES["7.3"])
-    sec79 = _v2_slug(_AUTH_INV_SECTION_TITLES["7.9"])
+    sec73 = _v2_slug(_AUTH_INV_SECTION_TITLES["6.3"])
+    sec79 = _v2_slug(_AUTH_INV_SECTION_TITLES["6.9"])
     out: list[str] = []
-    out.append("<!-- §7.2 AUTH-MECHANISMS-FROZEN — deterministic inventory, pregenerator-owned. DO NOT EDIT. -->")
+    out.append("<!-- §6.2 AUTH-MECHANISMS-FROZEN — deterministic inventory, pregenerator-owned. DO NOT EDIT. -->")
     out.append(
         "**Authentication mechanisms (at a glance).** Every authentication mechanism "
         "detected on the application, its effective status, where it is assessed, and its "
         "linked findings. Controls are catalogued by domain, so JWT/session handling is "
-        f"assessed under [§7.3 Session and Token Controls](#{sec73}) and password hashing "
-        f"under [§7.9 Cryptography Secrets and Data Protection](#{sec79})."
+        f"assessed under [§6.3 Session and Token Controls](#{sec73}) and password hashing "
+        f"under [§6.9 Cryptography Secrets and Data Protection](#{sec79})."
     )
     out.append("")
     out.append("| Mechanism | Status | Assessed in | Findings |")
@@ -4746,20 +4746,20 @@ def _build_auth_mechanism_inventory(yaml_data: dict) -> list[str]:
     if absent:
         out.append("_Also checked, not detected on this codebase: " + ", ".join(absent) + "._")
         out.append("")
-    out.append("<!-- §7.2 AUTH-MECHANISMS-FROZEN END -->")
+    out.append("<!-- §6.2 AUTH-MECHANISMS-FROZEN END -->")
     out.append("")
     return out
 
 
 # Placeholder line for the `**Controls covered:**` link list inside
 # gen_security_architecture_v2. It is rewritten from the H4 headings actually
-# emitted in each §7.x block AFTER the subcontrol loop runs, so a suppressed
+# emitted in each §6.x block AFTER the subcontrol loop runs, so a suppressed
 # control can never leave a dangling link in the covered-list.
 _COVERED_SENTINEL = "<!-- __CONTROLS_COVERED_SENTINEL__ -->"
 
 
 def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> str:
-    """13-section §7 scaffold for the v2 security-architecture contract.
+    """13-section §6 scaffold for the v2 security-architecture contract.
 
     The scaffold follows the rendered v2 shape: a control-category overview,
     then one section per security-control category. Domain sections use
@@ -4788,7 +4788,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         if sec:
             threats_by_section.setdefault(sec, []).append(t)
 
-    lines = ["## 7. Security Architecture", ""]
+    lines = ["## 6. Security Architecture", ""]
     lines.append(
         "This chapter is organized by security-control category. The architecture "
         "section avoids artificial control IDs and finding-ID columns in overview "
@@ -4796,7 +4796,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     )
     lines.append("")
     lines.append(
-        f"_§7 schema v2 (13-section control-category layout). Cataloged "
+        f"_§6 schema v2 (13-section control-category layout). Cataloged "
         f"controls: {len(controls)} total — {n_adequate} adequate, "
         f"{n_partial} partial, {n_weak} weak, {n_unsafe} unsafe, "
         f"{n_missing} missing. Linked threats: {len(threats)}._"
@@ -4804,7 +4804,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     lines.append("")
     # Verdict legend — the two red verdicts are not interchangeable, and the
     # distinction tells the reader whether to FIX an existing control or ADD a
-    # new one. Emitted once, deterministically, so every §7 reader has the key.
+    # new one. Emitted once, deterministically, so every §6 reader has the key.
     lines.append(
         "**How to read the verdicts.** Every control category (and every "
         "sub-control below it) carries exactly one status. The two red "
@@ -4833,14 +4833,14 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     lines.append("")
 
     overview_rows = [h for h, _, _ in _V2_SUBSECTIONS[1:]]
-    lines.append("### 7.1 Security Control Overview")
+    lines.append("### 6.1 Security Control Overview")
     lines.append("")
-    # R5 / LOCKED — §7.1 is mechanically derived from security_controls[] +
+    # R5 / LOCKED — §6.1 is mechanically derived from security_controls[] +
     # threats_by_section[]. Pregenerator owns it; the LLM renderer MUST NOT
     # re-author this block. The HTML comment markers below are inspected by
     # the renderer prompt and by qa_checks.check_section_71_locked (when
     # active) to verify the block survived round-trips.
-    lines.append("<!-- §7.1 MECHANICAL-FROZEN — DO NOT EDIT (overview table is pregenerator-owned) -->")
+    lines.append("<!-- §6.1 MECHANICAL-FROZEN — DO NOT EDIT (overview table is pregenerator-owned) -->")
     lines.append("")
     lines.append("| Control category | Verdict | Main reason |")
     lines.append("|---|---|---|")
@@ -4866,9 +4866,9 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # routed finding count. The cell MUST NOT contain `lib@version`
         # strings, payload phrases (`alg:none`, `noent:true`,
         # `bypassSecurityTrustHtml`), or function-call literals — those
-        # belong in the §7.X prose, not in the overview row. The renderer
+        # belong in the §6.X prose, not in the overview row. The renderer
         # prompt repeats this rule under "No code in finding titles, Top-
-        # Findings cells, or §7.1 Main reason cells".
+        # Findings cells, or §6.1 Main reason cells".
         n_controls = len(matched_controls)
         n_routed = len(routed)
         control_names = [(c.get("name") or c.get("control") or "").strip() for c in matched_controls]
@@ -4888,7 +4888,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # catalogued control at all" — the old text said "no controls
             # catalogued" in BOTH cases, which read as an empty catalog even
             # when several required controls were listed as Missing
-            # (2026-06-02: §7.1 showed it on every category).
+            # (2026-06-02: §6.1 showed it on every category).
             if n_controls:
                 lead = f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; " if n_routed else ""
                 reason = f"{lead}required controls not in place{example_clause}."
@@ -4917,11 +4917,11 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             )
         else:
             reason = "No controls or findings routed to this category."
-        # Link text carries the section number (e.g. "7.2 Identity and
+        # Link text carries the section number (e.g. "6.2 Identity and
         # Authentication Controls") so the overview reads as a numbered map.
         lines.append(f"| [{h}](#{_v2_slug(h)}) | {verdict} | {reason} |")
     lines.append("")
-    lines.append("<!-- §7.1 MECHANICAL-FROZEN END -->")
+    lines.append("<!-- §6.1 MECHANICAL-FROZEN END -->")
     lines.append("")
 
     for heading, hint, _tier in _V2_SUBSECTIONS[1:]:
@@ -4931,8 +4931,8 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # sequenceDiagram guarantee at the end of the loop body.
         section_start = len(lines)
 
-        if heading.startswith("7.13 "):
-            # R7 — §7.13 is prose-only. Two paragraphs:
+        if heading.startswith("6.13 "):
+            # R7 — §6.13 is prose-only. Two paragraphs:
             #   (a) what individual controls exist + the strongest positive
             #       control if any (e.g. distroless runtime image)
             #   (b) which boundary repairs would restore layered defense
@@ -4945,26 +4945,26 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             )
             lines.append("")
             lines.append(
-                "<!-- §7.13 FORMAT — prose-only, NEVER a table. Two short paragraphs: (1) name the individual controls that exist and the strongest positive control if any (e.g. distroless runtime image, RS256 algorithm choice); (2) name which control-boundary repairs would restore layered defense (e.g. parameterized queries, runtime-injected secrets, strict JWT verification). Do NOT emit a Markdown table — `| header |` lines under §7.13 are a contract violation. Do NOT make speculative perimeter-absence claims (`No WAF`, `No firewall`, `No DAM`) — only positive evidence from the recon scan. -->"
+                "<!-- §6.13 FORMAT — prose-only, NEVER a table. Two short paragraphs: (1) name the individual controls that exist and the strongest positive control if any (e.g. distroless runtime image, RS256 algorithm choice); (2) name which control-boundary repairs would restore layered defense (e.g. parameterized queries, runtime-injected secrets, strict JWT verification). Do NOT emit a Markdown table — `| header |` lines under §6.13 are a contract violation. Do NOT make speculative perimeter-absence claims (`No WAF`, `No firewall`, `No DAM`) — only positive evidence from the recon scan. -->"
             )
             lines.append("")
             lines.append(f"<!-- NARRATIVE_PLACEHOLDER: §{heading} — {hint} (prose paragraphs only) -->")
             lines.append("")
             continue
 
-        # Fix 1 — §7.12 Not-Applicable stub. The section is reserved for
+        # Fix 1 — §6.12 Not-Applicable stub. The section is reserved for
         # real-time / WebSocket controls AND a catch-all for absent domains
         # (AI/LLM, GraphQL, gRPC) the report should explicitly acknowledge.
-        # When no findings route to §7.12 via the CWE mapping, the section
+        # When no findings route to §6.12 via the CWE mapping, the section
         # has nothing real to say — even if a control was mis-routed here
-        # (e.g. Container Hardening mapping to §7.12 instead of §7.11), it
+        # (e.g. Container Hardening mapping to §6.12 instead of §6.11), it
         # belongs in its primary domain section, not in a category about
         # real-time channels. Emit a single italic line and skip the rest
         # so the rendered report does not carry filler prose like "No
         # dedicated WebSocket security finding was derived". The mirror
-        # logic already exists for §7.8 / §7.9 in the v1 path at line
+        # logic already exists for §6.8 / §6.9 in the v1 path at line
         # ~3657; this is the v2 equivalent.
-        if heading.startswith("7.12 "):
+        if heading.startswith("6.12 "):
             domain_links = _v2_finding_links(threats, heading, max_links=1)
             if not domain_links:
                 # LOCKED marker is the renderer agent's signal to leave the
@@ -4973,7 +4973,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                 # socket.io in package.json), which defeats the whole point
                 # of collapsing this section to one line.
                 lines.append(
-                    "<!-- §7.12 LOCKED — mechanically derived from absence "
+                    "<!-- §6.12 LOCKED — mechanically derived from absence "
                     "of real-time findings. Renderer must not rewrite the "
                     "line below. -->"
                 )
@@ -4982,7 +4982,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                     "routed to this category, and no AI/LLM, GraphQL, or "
                     "gRPC surfaces detected by the recon scan. Controls "
                     "catalogued elsewhere (container hardening, dependency "
-                    "determinism) are covered in their primary §7 sections._"
+                    "determinism) are covered in their primary §6 sections._"
                 )
                 lines.append("")
                 continue
@@ -4994,12 +4994,12 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             (c.get("implementation") or "").strip() for c in section_controls if (c.get("implementation") or "").strip()
         ]
 
-        # §7.2 and §7.3 carry domain_required_patterns in schema_v2: each
+        # §6.2 and §6.3 carry domain_required_patterns in schema_v2: each
         # section must contain a `sequenceDiagram`. Minimal fixtures and sparse
         # Stage-1 outputs can legitimately have no catalog row yet, but the
         # scaffold must still give the renderer a structurally valid flow block
         # to fill instead of composing a fragment that fails before repair.
-        if heading.startswith("7.2 ") and not control_names:
+        if heading.startswith("6.2 ") and not control_names:
             section_controls = [
                 {
                     "control": "Password Login",
@@ -5010,7 +5010,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                 }
             ]
             control_names = ["Password Login"]
-        elif heading.startswith("7.3 ") and not control_names:
+        elif heading.startswith("6.3 ") and not control_names:
             section_controls = [
                 {
                     "control": "JWT Session Issuance and Verification",
@@ -5022,13 +5022,13 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             ]
             control_names = ["JWT Session Issuance and Verification"]
 
-        # §7.6 must OPEN with a general validation-approach block before the
+        # §6.6 must OPEN with a general validation-approach block before the
         # specific boundary sub-blocks (contract: validation_approach_first).
         # Inject a synthetic FIRST subcontrol so the scaffold satisfies the
         # gate deterministically and the renderer fills the strategy prose
         # instead of running against the gate. Skipped when Stage-1 already
-        # supplied an approach-named row as the first §7.6 control.
-        if heading.startswith("7.6 ") and not (control_names and _V2_APPROACH_FIRST_RE.search(control_names[0])):
+        # supplied an approach-named row as the first §6.6 control.
+        if heading.startswith("6.6 ") and not (control_names and _V2_APPROACH_FIRST_RE.search(control_names[0])):
             section_controls = [
                 {
                     "control": "Validation Approach",
@@ -5058,10 +5058,10 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # qa_checks.check_control_subsection_coverage flags ("links to X but
         # no matching #### X subsection exists") and that
         # apply_prose_fixes._rewrite_controls_covered_anchors cannot self-heal
-        # when the §7.x block ends up with ZERO H4s (it skips heading-less
+        # when the §6.x block ends up with ZERO H4s (it skips heading-less
         # blocks). We therefore emit a SENTINEL here and rewrite it AFTER the
         # H4 loop below from the headings actually emitted — so the line is
-        # correct by construction. (juice-shop 2026-06-01 §7.10 all-suppressed
+        # correct by construction. (juice-shop 2026-06-01 §6.10 all-suppressed
         # case + the enriched-path dangling-link repair loop.)
         covered_idx: int | None = None
         if control_names:
@@ -5071,14 +5071,14 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             covered_idx = len(lines)
             lines.append(_COVERED_SENTINEL)
         else:
-            # Empty security_controls[] for this §7.x. When findings ARE routed
+            # Empty security_controls[] for this §6.x. When findings ARE routed
             # (the case-(b) fallback below emits a single
             # `#### {section}.1 {default_mech}` block), emit a MECHANICAL, LOCKED
             # `**Controls covered:**` line linking to exactly that heading so the
             # link↔heading pair is consistent by construction. The old free-form
             # NARRATIVE_PLACEHOLDER here invited the renderer to invent control
             # links (CORS/CSRF/CSP) with no matching #### blocks, which trips
-            # qa_checks.check_control_subsection_coverage (§7.8 RC, 2026-06-21
+            # qa_checks.check_control_subsection_coverage (§6.8 RC, 2026-06-21
             # juice-shop run). When NO findings are routed (case a) the section
             # ships a `_Not applicable_` stub the gate skips, and at quick depth
             # the section is dropped entirely at the `quick_depth` guard below —
@@ -5116,10 +5116,10 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         lines.append(f"**Assessment:** <!-- NARRATIVE_PLACEHOLDER: §{heading} — {hint} -->")
         lines.append("")
 
-        # §7.2 — deterministic Authentication Mechanisms inventory at the top of
+        # §6.2 — deterministic Authentication Mechanisms inventory at the top of
         # the section so the COMPLETE auth surface (incl. mechanisms catalogued
-        # under §7.3/§7.9) is always rendered, independent of LLM scaffold-fill.
-        if heading.startswith("7.2 "):
+        # under §6.3/§6.9) is always rendered, independent of LLM scaffold-fill.
+        if heading.startswith("6.2 "):
             inv = _build_auth_mechanism_inventory(yaml_data)
             if inv:
                 lines.extend(inv)
@@ -5148,7 +5148,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             continue
 
         if control_names:
-            # Section-id for §7.X.N H4 numbering. `heading` is "7.X <Title>";
+            # Section-id for §6.X.N H4 numbering. `heading` is "7.X <Title>";
             # the first token gives the dotted section number used in the
             # H4 prefix `#### 7.X.N <subcontrol-title>`.
             section_id = heading.split(" ", 1)[0]
@@ -5223,7 +5223,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                         suppressed_names.append(name)
             if suppressed_names:
                 # Surface the suppressed control names as a single line so
-                # the user can see that the §7.x catalog item exists but
+                # the user can see that the §6.x catalog item exists but
                 # had no anchor-worthy detail.
                 joined = ", ".join(suppressed_names)
                 lines.append(
@@ -5257,10 +5257,10 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                     del lines[covered_idx - 1 : covered_idx + 2]
         else:
             # M5b — Replace the generic "#### Controls To Confirm" fallback.
-            # Reference §7 never carries an unnamed catch-all H4. Two cases:
+            # Reference §6 never carries an unnamed catch-all H4. Two cases:
             #   (a) no routed findings either → emit a single Not-applicable
             #       line and skip the H4 entirely (mirrors the reference's
-            #       compact §7.12 "absent domain" handling);
+            #       compact §6.12 "absent domain" handling);
             #   (b) findings routed but no security_controls[] catalogued →
             #       emit one H4 named after the section's principal mechanism
             #       so the reader sees what should have been there. The
@@ -5316,22 +5316,22 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             lines.append("")
 
         # Section-scoped sequenceDiagram guarantee (sections-contract.yaml
-        # domain_required_patterns: §7.2 AND §7.3 each MUST contain at least one
-        # `sequenceDiagram`). Flow-like §7.2 mechanisms and the §7.3 empty-control
-        # fallback usually emit one, but a §7.3 populated with storage/cookie/
+        # domain_required_patterns: §6.2 AND §6.3 each MUST contain at least one
+        # `sequenceDiagram`). Flow-like §6.2 mechanisms and the §6.3 empty-control
+        # fallback usually emit one, but a §6.3 populated with storage/cookie/
         # revocation-named controls (e.g. "JWT storage", "Token revocation")
         # takes the per-subcontrol path whose diagram is gated on flow-like
-        # naming, so no diagram lands and compose --strict fails the §7.3
+        # naming, so no diagram lands and compose --strict fails the §6.3
         # domain_required_pattern (juice-shop 2026-06-16). This catch-all injects
         # a positive-flow placeholder when the emitted section has no diagram —
         # the renderer fills it, and the literal token satisfies the deterministic
         # (no-enrich) path too. Section-scoped per the contract: a diagram
         # anywhere under the heading suffices.
-        if heading.startswith(("7.2 ", "7.3 ")) and "sequenceDiagram" not in "\n".join(lines[section_start:]):
+        if heading.startswith(("6.2 ", "6.3 ")) and "sequenceDiagram" not in "\n".join(lines[section_start:]):
             lines.append(
                 "<!-- NARRATIVE_PLACEHOLDER: precede with one sentence ending in "
                 "`:` then a positive-flow ```mermaid sequenceDiagram``` of the "
-                "primary flow for this section (for §7.3: JWT/session issuance → "
+                "primary flow for this section (for §6.3: JWT/session issuance → "
                 "browser storage → Bearer presentation → server verification). "
                 "One diagram for the section satisfies the requirement; per-stage "
                 "detail stays in the H4 sub-blocks above. -->"
@@ -5342,9 +5342,9 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
 
 
 def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
-    """Render the current §7 security-architecture scaffold.
+    """Render the current §6 security-architecture scaffold.
 
-    Schema v2 is the only supported §7 layout. Keep this public wrapper for
+    Schema v2 is the only supported §6 layout. Keep this public wrapper for
     tests and older integrations that import ``gen_security_architecture``.
     """
     return gen_security_architecture_v2(yaml_data, depth)
@@ -5830,7 +5830,7 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         choices=["", "quick", "standard", "thorough"],
         help="Assessment depth (default: read from .skill-config.json or 'standard'). "
-        "Quick depth strips NARRATIVE_PLACEHOLDERs from §7.4-§7.12 in "
+        "Quick depth strips NARRATIVE_PLACEHOLDERs from §6.4-§6.12 in "
         "security-architecture.md so the LLM has no expansion bait there.",
     )
     args = parser.parse_args(argv)
@@ -5897,9 +5897,9 @@ def main(argv: list[str] | None = None) -> int:
             # NARRATIVE_PLACEHOLDER markers) holds no LLM narrative to preserve.
             # Skipping it lets a scaffold generated EARLY (Analyst-A, Phase 1-8)
             # survive past later yaml mutations — notably emit_auth_coverage's
-            # auth-mechanism backfill — so §7.2/§7.3 never receive the new
+            # auth-mechanism backfill — so §6.2/§6.3 never receive the new
             # mechanisms' flow sub-blocks / sequenceDiagrams and compose --strict
-            # fails the §7.3 domain_required_pattern. Regenerate it from the
+            # fails the §6.3 domain_required_pattern. Regenerate it from the
             # CURRENT yaml in that case. A NARRATIVE-FILLED fragment (no
             # placeholders) is still skipped/preserved, exactly as before.
             if name == "security-architecture.md":

@@ -361,11 +361,11 @@ class TestEmitPreRenderRepairPlan:
         assert plan["status"] == "exhausted"
 
     def test_subsection_missing_remediation(self, tmp_path):
-        err = self._err(section_id="security_architecture", detail="required subsection missing: '7.8 Real-time'")
+        err = self._err(section_id="security_architecture", detail="required subsection missing: '6.8 Real-time'")
         compose._emit_pre_render_repair_plan(tmp_path, err)
         plan = json.loads((tmp_path / ".pre-render-repair-plan.json").read_text())
         assert plan["actions"][0]["type"] == "required_subsection_missing"
-        assert plan["actions"][0]["expected_heading"] == "7.8 Real-time"
+        assert plan["actions"][0]["expected_heading"] == "6.8 Real-time"
 
     def test_corrupt_prior_plan_resets(self, tmp_path):
         (tmp_path / ".pre-render-repair-plan.json").write_text("{ not json")
@@ -387,7 +387,7 @@ class TestDeletePreRenderRepairPlan:
 class TestFragmentErrorHint:
     def test_subsection_missing_hint(self):
         # Use a section that maps to fragments so target is non-empty.
-        err = compose.FragmentError("security_architecture", "required subsection missing: '7.8 Real-time'")
+        err = compose.FragmentError("security_architecture", "required subsection missing: '6.8 Real-time'")
         hint = compose._fragment_error_hint(err)
         # Either a targeted hint or empty depending on fragment map; assert no crash.
         assert isinstance(hint, str)
@@ -1256,13 +1256,13 @@ class TestSubsectionDriftHint:
         assert out == ""
 
     def test_aligned_no_drift(self):
-        md = "### 7.1 Auth\n### 7.2 Crypto\n"
-        section = {"required_subsections": [{"title": "7.1 Auth"}, {"title": "7.2 Crypto"}]}
+        md = "### 6.1 Auth\n### 6.2 Crypto\n"
+        section = {"required_subsections": [{"title": "6.1 Auth"}, {"title": "6.2 Crypto"}]}
         assert compose._subsection_drift_hint(md, section, 3) == ""
 
     def test_drift_reported(self):
-        md = "### 7.1 Auth\n### 7.3 Logging\n"
-        section = {"required_subsections": [{"title": "7.1 Auth"}, {"title": "7.2 Crypto"}]}
+        md = "### 6.1 Auth\n### 6.3 Logging\n"
+        section = {"required_subsections": [{"title": "6.1 Auth"}, {"title": "6.2 Crypto"}]}
         out = compose._subsection_drift_hint(md, section, 3)
         assert "present:" in out and "expected:" in out
 

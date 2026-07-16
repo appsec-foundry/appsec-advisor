@@ -83,27 +83,29 @@ document:
     - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
     - assets
     - attack_surface
-    # §6 Weakness Register (2026-07-14) — the standalone root-cause register now
-    # fills the slot left by the retired §6 Use Cases, so the document numbering
-    # is contiguous again (§5 → §6 → §7) and the cosmetic display-renumber pass is
-    # obsolete. A weakness is the systemic control gap; findings (§8) are its
-    # concrete instances, and §7 Security Architecture analyses the controls.
-    - { id: systemic_weaknesses, condition: "has_weakness_register" }
+    # §6 Security Architecture (2026-07-15 reorder) — the controls analysis now
+    # precedes the Weakness Register so the document reads controls → gaps →
+    # instances: §6 analyses which controls exist, §7 Weakness Register names the
+    # systemic gaps in them, and §8 Findings Register lists the concrete instances.
     #
-    # §7 carries a `render_security_architecture` condition (true by default).
+    # §6 carries a `render_security_architecture` condition (true by default).
     # Set to False at compose-time when current depth is `quick` AND no rich
-    # prior §7 from a standard/thorough run is preservable. Quick mode then
-    # skips §7 in both body and TOC; a subsequent standard run re-introduces
+    # prior §6 from a standard/thorough run is preservable. Quick mode then
+    # skips §6 in both body and TOC; a subsequent standard run re-introduces
     # the full per-domain analysis on the same repo.
     #
-    # §7 is a deep-only section preserved on downgrade — see the authoritative
+    # §6 is a deep-only section preserved on downgrade — see the authoritative
     # `preserve_on_downgrade:` block at the end of this file (substrate: md-slice).
     - { id: security_architecture, condition: "render_security_architecture" }
-    # When §7 is suppressed at quick depth, the document jumps from §5
-    # straight to §8 without explanation. The placeholder below renders
+    # When §6 is suppressed at quick depth, the document jumps from §5
+    # straight to §7 without explanation. The placeholder below renders
     # a single italic line so the reader sees the numbering gap is
-    # deliberate. Active only when §7 is suppressed.
+    # deliberate. Active only when §6 is suppressed.
     - { id: skipped_sections_placeholder, condition: "not render_security_architecture" }
+    # §7 Weakness Register — the standalone root-cause register. A weakness is the
+    # systemic control gap; findings (§8) are its concrete instances, and §6
+    # Security Architecture (above) analyses the controls it gaps.
+    - { id: systemic_weaknesses, condition: "has_weakness_register" }
     - { id: requirements_compliance, condition: "check_requirements" }
     - threat_register
     - abuse_cases
@@ -153,11 +155,11 @@ document:
         - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
         - assets
         - attack_surface
-        # §6 Weakness Register (2026-07-14) — fills the retired §6 slot so the
-        # numbering is contiguous; see the main `order:` block above.
-        - { id: systemic_weaknesses, condition: "has_weakness_register" }
+        # §6 Security Architecture / §7 Weakness Register (2026-07-15 reorder) —
+        # controls precede gaps; see the main `order:` block above.
         - { id: security_architecture, condition: "render_security_architecture" }
         - { id: skipped_sections_placeholder, condition: "not render_security_architecture" }
+        - { id: systemic_weaknesses, condition: "has_weakness_register" }
         - { id: requirements_compliance, condition: "check_requirements" }
         - threat_register
         - abuse_cases
@@ -377,9 +379,9 @@ sections:
   # control gap; its F-NNN links are the concrete instances/practice sites, and
   # each such finding carries a `Weakness:` back-link in §8 (2026-07-14 redesign).
   systemic_weaknesses:
-    heading: "## 6. Weakness Register"
+    heading: "## 7. Weakness Register"
     heading_numbered: true
-    anchor: "6-weakness-register"
+    anchor: "7-weakness-register"
     fragment_type: computed
     conditional: "has_weakness_register"
 
@@ -416,7 +418,7 @@ sections:
       - finding_refs                                # ≥2 F-NNN or T-NNN refs in blockquote
 
   # Architectural Anti-Patterns — optional MS callout naming the design-level
-  # defects the report articulates in §7 (e.g. "SPA without BFF",
+  # defects the report articulates in §6 (e.g. "SPA without BFF",
   # "JWT in localStorage"), so they are visible at executive level instead of
   # buried in per-control prose. LLM-authored OPTIONAL fragment: the
   # threat-renderer writes ms-anti-patterns.json only when ≥1 genuine
@@ -437,7 +439,7 @@ sections:
   # risks the report articulates via the OWASP LLM Top-10 lens (prompt injection,
   # excessive agency, model supply chain, …), so the fact the system embeds an
   # LLM/agent — and its headline risks — is visible at executive level instead of
-  # scattered across §7 control prose. LLM-authored OPTIONAL fragment: the
+  # scattered across §6 control prose. LLM-authored OPTIONAL fragment: the
   # threat-renderer writes ms-ai-exposure.json only when the system has an LLM/AI
   # surface (KNOWN_LLM_PATTERNS != none); absent → the section renders nothing
   # (gated by `has_llm_surface`), so a repo with no AI usage pays zero cost.
@@ -648,10 +650,10 @@ sections:
       rows:
         min: 1
         max: 8
-        truncation_footnote: "_+{overflow_count} additional control(s) catalogued in [Section 7](#7-security-architecture)._"
+        truncation_footnote: "_+{overflow_count} additional control(s) catalogued in [Section 6](#6-security-architecture)._"
     intro_conditional:
       condition: "verdict_severity in [yellow, red]"
-      template: "Despite the {{ intentionally_vulnerable_or_deficient }} design, the project implements several security-relevant controls. None fully mitigate a Critical finding, but each narrows part of the attack surface. This table is a filtered view of [Section 7](#7-security-architecture) — rows with effectiveness ≥ Weak."
+      template: "Despite the {{ intentionally_vulnerable_or_deficient }} design, the project implements several security-relevant controls. None fully mitigate a Critical finding, but each narrows part of the attack surface. This table is a filtered view of [Section 6](#6-security-architecture) — rows with effectiveness ≥ Weak."
     footer_template: "**Bottom line:** {{ bottom_line }}"
 
   # -------------------------------------------------------------------------
@@ -685,14 +687,14 @@ sections:
     fragment_type: markdown
     fragment: "architecture-diagrams.md"
     # Reference layout has exactly these four subsections, in this order.
-    # "Security Architecture Assessment" was removed — its content is now in §7.
+    # "Security Architecture Assessment" was removed — its content is now in §6.
     # "Data Flow Matrix" and "Trust Boundaries" are NOT canonical §2 sub-sections.
     required_subsections:
       - { level: 3, title: "2.1 System Context" }
       - { level: 3, title: "2.2 Container Architecture" }
       - { level: 3, title: "2.3 Components" }
       - { level: 3, title: "2.4 Technology Architecture" }
-    # These §2.x sub-section titles are forbidden — their content lives in §7.
+    # These §2.x sub-section titles are forbidden — their content lives in §6.
     forbidden_subsection_patterns:
       - "^2\\.5 Security Architecture Assessment"
       - "^2\\.\\d+ Data Flow Matrix"
@@ -707,7 +709,7 @@ sections:
     # earlier runs grew wide and unreadable: 5 subgraphs side-by-side, 10+
     # nodes, 80–120-char labels carrying tech name + version + defect-list.
     # That extra detail belongs in the §2.4.1–§2.4.4 layer tables and in
-    # §7/§8 — not in the diagram label. The rules below pin a compact
+    # §6/§8 — not in the diagram label. The rules below pin a compact
     # 4-tier layout (orientation: top-down) and are consumed by:
     #
     #   * scripts/pregenerate_fragments.py — generates scaffolds that
@@ -953,7 +955,7 @@ sections:
       - { level: 3, title_pattern: "^5\\.1 Unauthenticated Entry Points" }
       - { level: 3, title_pattern: "^5\\.2 Authenticated Entry Points" }
 
-  # §6 Use Cases removed (2026-05). The numbering gap (§5 → §7) is
+  # §6 Use Cases removed (2026-05). The numbering gap (§5 → §6) is
   # intentional. Re-introduction would require: (1) re-adding this section
   # block, (2) restoring `use_cases` to all `order:` lists above,
   # (3) reinstating `gen_use_cases` in scripts/pregenerate_fragments.py,
@@ -965,18 +967,18 @@ sections:
     heading_numbered: false
     fragment_type: computed
     # Renderer: _render_skipped_sections_placeholder.
-    # Active only when §7 is suppressed (quick depth without a rich prior
-    # §7 to preserve). Emits one italic explanation line so the §5 -> §8
+    # Active only when §6 is suppressed (quick depth without a rich prior
+    # §6 to preserve). Emits one italic explanation line so the §5 -> §8
     # numbering jump is visible to the reader as intentional.
 
   security_architecture:
-    heading: "## 7. Security Architecture"
+    heading: "## 6. Security Architecture"
     heading_numbered: true
     fragment_type: markdown
     fragment: "security-architecture.md"
     # M6 (2026-05) — The v1 15-section layout (7.1 Overview, 7.2 Key
     # Architectural Risks, 7.3 Identity & Access Management, …) was retired
-    # when schema_v2 became the single source of truth for §7. Both
+    # when schema_v2 became the single source of truth for §6. Both
     # `compose_threat_model.py:_section_required_subs` and
     # `qa_checks.py:_resolve_section_overlay` already prefer
     # `schema_v2.required_subsections` over a section-level
@@ -985,31 +987,31 @@ sections:
     # the top-level v1 list ensures there is exactly one authoritative
     # subsection set — drift between the two was the 2026-05 failure mode
     # that allowed legacy fragments to claim contract pass while the
-    # rendered §7 used v2 anchors.
+    # rendered §6 used v2 anchors.
 
-    # §7 clarity guards — enforced by dedicated runtime checks in
+    # §6 clarity guards — enforced by dedicated runtime checks in
     # scripts/qa_checks.py rather than as YAML patterns, because the
     # generic contract pattern matcher does not currently scan the
-    # rendered §7 body. The relevant checks (added 2026-05) are:
+    # rendered §6 body. The relevant checks (added 2026-05) are:
     #
     #   * `section7_narrative_placeholders` (M2) — fails when any
-    #     `<!-- NARRATIVE_PLACEHOLDER ... -->` token survives in §7.
+    #     `<!-- NARRATIVE_PLACEHOLDER ... -->` token survives in §6.
     #   * `section7_h4_positive_intro` (M7) — fails when an H4 control
     #     block lacks a ≥25-word positive intro paragraph before
     #     `**Security assessment**`, opens with `No `/`Missing`/…, or
     #     when the bare `#### Controls To Confirm` fallback H4 from the
     #     legacy pregenerator survives (it cannot satisfy the intro rule).
     #   * `section7_fence_intro_sentence` (M8) — fails when a code or
-    #     Mermaid fence in §7 is not preceded by one introducing sentence
+    #     Mermaid fence in §6 is not preceded by one introducing sentence
     #     ending in `:`.
     #   * `section7_finding_link_duplicate` (M5c) — fails when a finding
-    #     bullet under §7 carries the finding title twice.
+    #     bullet under §6 carries the finding title twice.
     #
     # See `docs/security/.section7-gap-analysis.md` for the rationale.
     #
     # ------------------------------------------------------------------
-    # Schema v2 — current 13-section §7 control-category architecture.
-    # This is the only supported §7 contract. The renderer, pre-generator,
+    # Schema v2 — current 13-section §6 control-category architecture.
+    # This is the only supported §6 contract. The renderer, pre-generator,
     # composer, and qa_checks consult this block for required headings,
     # finding routing, and domain-specific rules.
     #
@@ -1020,82 +1022,82 @@ sections:
     # ------------------------------------------------------------------
     schema_v2:
       required_subsections:
-        - { level: 3, title: "7.1 Security Control Overview" }
-        - { level: 3, title: "7.2 Identity and Authentication Controls" }
-        - { level: 3, title: "7.3 Session and Token Controls" }
-        - { level: 3, title: "7.4 Authorization Controls" }
-        - { level: 3, title: "7.5 Query Construction and Data Access Controls" }
-        - { level: 3, title: "7.6 Input Boundary Validation Controls" }
-        - { level: 3, title: "7.7 Output Encoding and Rendering Controls" }
-        - { level: 3, title: "7.8 Browser and Cross-Origin Controls" }
-        - { level: 3, title: "7.9 Cryptography Secrets and Data Protection" }
-        - { level: 3, title: "7.10 File Parser and Outbound Request Controls" }
-        - { level: 3, title: "7.11 Operations Runtime and Supply Chain Controls" }
-        - { level: 3, title: "7.12 Real-time and Not Applicable Controls" }
-        - { level: 3, title: "7.13 Defense-in-Depth Summary" }
+        - { level: 3, title: "6.1 Security Control Overview" }
+        - { level: 3, title: "6.2 Identity and Authentication Controls" }
+        - { level: 3, title: "6.3 Session and Token Controls" }
+        - { level: 3, title: "6.4 Authorization Controls" }
+        - { level: 3, title: "6.5 Query Construction and Data Access Controls" }
+        - { level: 3, title: "6.6 Input Boundary Validation Controls" }
+        - { level: 3, title: "6.7 Output Encoding and Rendering Controls" }
+        - { level: 3, title: "6.8 Browser and Cross-Origin Controls" }
+        - { level: 3, title: "6.9 Cryptography Secrets and Data Protection" }
+        - { level: 3, title: "6.10 File Parser and Outbound Request Controls" }
+        - { level: 3, title: "6.11 Operations Runtime and Supply Chain Controls" }
+        - { level: 3, title: "6.12 Real-time and Not Applicable Controls" }
+        - { level: 3, title: "6.13 Defense-in-Depth Summary" }
 
-      # Canonical finding → §7.x mapping. Each entry routes findings by
+      # Canonical finding → §6.x mapping. Each entry routes findings by
       # CWE (preferred), cluster_id (from weakness-classes.yaml), or
       # explicit category (when set on the threat). The renderer uses
       # this to know where to PRIMARILY list a finding; cross-references
       # in other sections are still allowed but the primary listing is
       # deterministic. qa_checks.py:check_v2_finding_mapping enforces it.
       finding_routing:
-        "7.2 Identity and Authentication Controls":
+        "6.2 Identity and Authentication Controls":
           cwes: [CWE-287, CWE-307, CWE-294, CWE-345, CWE-347, CWE-620, CWE-640, CWE-916]
           clusters: [broken_auth]
-        "7.3 Session and Token Controls":
+        "6.3 Session and Token Controls":
           cwes: [CWE-922, CWE-384, CWE-613, CWE-1004]
           clusters: []
-        "7.4 Authorization Controls":
+        "6.4 Authorization Controls":
           cwes: [CWE-285, CWE-639, CWE-269, CWE-862, CWE-863, CWE-732, CWE-352, CWE-602, CWE-915]
           clusters: [missing_authz]
-        "7.5 Query Construction and Data Access Controls":
+        "6.5 Query Construction and Data Access Controls":
           cwes: [CWE-89, CWE-943]
           clusters: []
-        "7.6 Input Boundary Validation Controls":
+        "6.6 Input Boundary Validation Controls":
           cwes: [CWE-20, CWE-1284, CWE-1287, CWE-400]
           clusters: []
-        "7.7 Output Encoding and Rendering Controls":
+        "6.7 Output Encoding and Rendering Controls":
           cwes: [CWE-79, CWE-80, CWE-87, CWE-116]
           clusters: [output_xss_csp]
-        "7.8 Browser and Cross-Origin Controls":
+        "6.8 Browser and Cross-Origin Controls":
           cwes: [CWE-1021, CWE-942, CWE-693, CWE-358, CWE-352]
           clusters: []
-        "7.9 Cryptography Secrets and Data Protection":
+        "6.9 Cryptography Secrets and Data Protection":
           cwes: [CWE-321, CWE-798, CWE-327, CWE-326, CWE-329, CWE-330, CWE-312, CWE-538, CWE-759]
           clusters: [weak_crypto]
-        "7.10 File Parser and Outbound Request Controls":
+        "6.10 File Parser and Outbound Request Controls":
           cwes: [CWE-611, CWE-22, CWE-23, CWE-409, CWE-776, CWE-94, CWE-95, CWE-918, CWE-601, CWE-441, CWE-548, CWE-552, CWE-749, CWE-200]
           clusters: [server_side_exposure]
-        "7.11 Operations Runtime and Supply Chain Controls":
+        "6.11 Operations Runtime and Supply Chain Controls":
           cwes: [CWE-117, CWE-223, CWE-209, CWE-532, CWE-778, CWE-1104, CWE-1395, CWE-937, CWE-829, CWE-250, CWE-732, CWE-15, CWE-260]
           clusters: [outdated_deps]
           library_token_match: true
-        "7.12 Real-time and Not Applicable Controls":
+        "6.12 Real-time and Not Applicable Controls":
           cwes: []
           clusters: []
           recon_triggers: ["socket.io", "websocket"]
 
       cross_cutting:
-        - "7.13 Defense-in-Depth Summary"
+        - "6.13 Defense-in-Depth Summary"
 
-      # §7.2 (authentication flows) and §7.3 (session-token lifecycle) MUST
+      # §6.2 (authentication flows) and §6.3 (session-token lifecycle) MUST
       # each carry at least one `sequenceDiagram` — the auth/session flow is
       # the architecture view the report is built around, and its repeated
-      # absence in v2 output was the dominant §7 complaint (2026-05-30 user
+      # absence in v2 output was the dominant §6 complaint (2026-05-30 user
       # report). Section-scoped (at least one diagram anywhere under the
       # heading), so pure-primitive sub-controls still need none.
       domain_required_patterns:
-        "7.2 Identity and Authentication Controls":
+        "6.2 Identity and Authentication Controls":
           - "sequenceDiagram"
-        "7.3 Session and Token Controls":
+        "6.3 Session and Token Controls":
           - "sequenceDiagram"
 
       domain_required_rules:
-        "7.2 Identity and Authentication Controls":
+        "6.2 Identity and Authentication Controls":
           - rule: "recon_iam_bridge"
-            section_title: "7.2 Identity and Authentication Controls"
+            section_title: "6.2 Identity and Authentication Controls"
             recon_signal_patterns:
               - "totpSecret"
               - "routes/2fa"
@@ -1108,7 +1110,7 @@ sections:
               - "mfa"
             enforcement: "error"
           # R1 — auth_method_decomposition (ported from v1).
-          # §7.2 must decompose into one #### per discovered auth mechanism
+          # §6.2 must decompose into one #### per discovered auth mechanism
           # (User Registration, Password-Based Login, OAuth/OIDC, SAML SSO,
           # TOTP Enrollment/Verification, JWT Issuance/Verification, Password
           # Reset, Password Change, mTLS, Webhook HMAC, …). Headings using
@@ -1126,7 +1128,7 @@ sections:
               - "intro_before_security_assessment"
             # Per-flow-method diagram enforcement (migrated 2026-05-31 from the
             # v1 auth_method_decomposition rule, where every #### flow block
-            # carried its own sequenceDiagram). A §7.2 #### block whose heading
+            # carried its own sequenceDiagram). A §6.2 #### block whose heading
             # names a FLOW mechanism — one where identity is established through
             # a multi-step exchange (password login, OAuth/OIDC, SAML, TOTP/MFA
             # enrollment & verification, passkey/WebAuthn, mTLS handshake,
@@ -1184,7 +1186,7 @@ sections:
               # "Social Login" is the user-facing name for an OAuth/OIDC social
               # provider mechanism. emit_auth_coverage.py writes the control as
               # "Social Login (OAuth / OIDC)"; the renderer legitimately
-              # simplifies the §7.2 heading to "Social Login", dropping the
+              # simplifies the §6.2 heading to "Social Login", dropping the
               # parenthetical that carries the oauth/oidc token. Whitelist the
               # plain form so the simplification does not trip the gate and
               # force a fragment-fixer repair on every run.
@@ -1204,8 +1206,8 @@ sections:
               - "session"
               # NOTE (2026-05 reconciliation): JWT operations (issuance /
               # verification / protected-route middleware) are SESSION-TOKEN
-              # PRIMITIVES and belong in §7.3 Session and Token Controls, NOT
-              # as §7.2 authentication mechanisms — mirrors
+              # PRIMITIVES and belong in §6.3 Session and Token Controls, NOT
+              # as §6.2 authentication mechanisms — mirrors
               # data/architectural-controls.yaml (domain SessionMgmt) and the
               # Phase-8 catalog rule. They are intentionally NOT whitelisted
               # here, and the forbidden_heading_patterns below reject them.
@@ -1234,25 +1236,25 @@ sections:
               - "(?i)^#?#?#?#?\\s*express-jwt\\s*$"
               - "(?i)^#?#?#?#?\\s*jsonwebtoken\\s*$"
               # Vulnerability-class headings — describe exploits, not controls.
-              # Belong in §3 Attack Walkthroughs, not §7.2.
+              # Belong in §3 Attack Walkthroughs, not §6.2.
               - "(?i)^#?#?#?#?\\s*authentication bypass( prevention)?\\s*$"
               - "(?i)^#?#?#?#?\\s*credential storage\\s*$"
               - "(?i)^#?#?#?#?\\s*password hashing\\s*$"   # primitive, not mechanism
               - "(?i)^#?#?#?#?\\s*login\\s+rate[\\s-]*limiting\\s*$"  # primitive, not mechanism
-              # JWT is a §7.3 session-token primitive, not a §7.2 mechanism.
+              # JWT is a §6.3 session-token primitive, not a §6.2 mechanism.
               - "(?i)^#?#?#?#?\\s*jwt\\s+bearer\\s+authentication\\s*$"
               - "(?i)^#?#?#?#?\\s*jwt\\s+authentication\\s*$"
               - "(?i)^#?#?#?#?\\s*jwt\\s+(issuance|verification|validation|signing)\\s*$"
-              # Token issuance/verification (any token format) is a §7.3
-              # session-token-lifecycle control, NOT a §7.2 auth mechanism —
+              # Token issuance/verification (any token format) is a §6.3
+              # session-token-lifecycle control, NOT a §6.2 auth mechanism —
               # catches "JWT/Bearer Token Issuance", "Bearer Token Issuance",
               # "Token Issuance" (2026-06-02: rename to a real mechanism such
-              # as Social Login / OAuth, or move the block to §7.3).
+              # as Social Login / OAuth, or move the block to §6.3).
               - "(?i)^#?#?#?#?\\s*(jwt[\\s/]*)?bearer\\s+token\\s+(issuance|verification|validation|signing)\\s*$"
               - "(?i)^#?#?#?#?\\s*token\\s+(issuance|verification|validation|signing)\\s*$"
               - "(?i)\\b(bypass flow|forgery flow|hijack flow|attack flow|exploit flow)\\b"
               - "(?i)alg[:=]none"
-            # Structural / meta §7.2 sub-headings that are deterministically
+            # Structural / meta §6.2 sub-headings that are deterministically
             # emitted by the pregenerator and are intentionally NOT
             # authentication mechanisms — exempt them from the
             # "not a recognized authentication mechanism" gate. Without this,
@@ -1260,7 +1262,7 @@ sections:
             # "#### Threat Hypotheses Requiring Validation" (asserted present by
             # tests) which the gate then rejected on every run, forcing a
             # fragment-fixer repair iteration. Matched case-insensitively after
-            # the numeric "7.2.N" prefix is stripped, by normalized-token-subset
+            # the numeric "6.2.N" prefix is stripped, by normalized-token-subset
             # (same tokeniser as method_whitelist).
             structural_heading_exemptions:
               - "threat hypotheses requiring validation"
@@ -1268,17 +1270,17 @@ sections:
         "all_control_sections":
           - rule: "control_subsection_coverage"
             section_titles:
-              - "7.2 Identity and Authentication Controls"
-              - "7.3 Session and Token Controls"
-              - "7.4 Authorization Controls"
-              - "7.5 Query Construction and Data Access Controls"
-              - "7.6 Input Boundary Validation Controls"
-              - "7.7 Output Encoding and Rendering Controls"
-              - "7.8 Browser and Cross-Origin Controls"
-              - "7.9 Cryptography Secrets and Data Protection"
-              - "7.10 File Parser and Outbound Request Controls"
-              - "7.11 Operations Runtime and Supply Chain Controls"
-              - "7.12 Real-time and Not Applicable Controls"
+              - "6.2 Identity and Authentication Controls"
+              - "6.3 Session and Token Controls"
+              - "6.4 Authorization Controls"
+              - "6.5 Query Construction and Data Access Controls"
+              - "6.6 Input Boundary Validation Controls"
+              - "6.7 Output Encoding and Rendering Controls"
+              - "6.8 Browser and Cross-Origin Controls"
+              - "6.9 Cryptography Secrets and Data Protection"
+              - "6.10 File Parser and Outbound Request Controls"
+              - "6.11 Operations Runtime and Supply Chain Controls"
+              - "6.12 Real-time and Not Applicable Controls"
             controls_covered_label: "Controls covered"
             heading_level: 4
             required_subsection_labels:
@@ -1287,34 +1289,34 @@ sections:
             enforcement: "error"
           - rule: "relevant_findings_bullet_list"
             section_titles:
-              - "7.2 Identity and Authentication Controls"
-              - "7.3 Session and Token Controls"
-              - "7.4 Authorization Controls"
-              - "7.5 Query Construction and Data Access Controls"
-              - "7.6 Input Boundary Validation Controls"
-              - "7.7 Output Encoding and Rendering Controls"
-              - "7.8 Browser and Cross-Origin Controls"
-              - "7.9 Cryptography Secrets and Data Protection"
-              - "7.10 File Parser and Outbound Request Controls"
-              - "7.11 Operations Runtime and Supply Chain Controls"
-              - "7.12 Real-time and Not Applicable Controls"
+              - "6.2 Identity and Authentication Controls"
+              - "6.3 Session and Token Controls"
+              - "6.4 Authorization Controls"
+              - "6.5 Query Construction and Data Access Controls"
+              - "6.6 Input Boundary Validation Controls"
+              - "6.7 Output Encoding and Rendering Controls"
+              - "6.8 Browser and Cross-Origin Controls"
+              - "6.9 Cryptography Secrets and Data Protection"
+              - "6.10 File Parser and Outbound Request Controls"
+              - "6.11 Operations Runtime and Supply Chain Controls"
+              - "6.12 Real-time and Not Applicable Controls"
             heading_level: 4
             label: "Relevant findings"
             enforcement: "error"
-        # §7.6 Input Boundary Validation — the section must OPEN with a general
+        # §6.6 Input Boundary Validation — the section must OPEN with a general
         # validation-approach H4 (the architectural stance: is there a central
         # schema/validation layer, or is validation scattered per-endpoint?)
         # BEFORE drilling into specific parsers/uploads/business-rule checks.
         # An architect describes the strategy first, then the boundary details.
-        # The rule fires only on the FIRST #### under §7.6, so the agent stays
+        # The rule fires only on the FIRST #### under §6.6, so the agent stays
         # free to add as many specific boundary sub-blocks afterwards as the
         # codebase warrants.
-        "7.6 Input Boundary Validation Controls":
+        "6.6 Input Boundary Validation Controls":
           - rule: "validation_approach_first"
-            section_title: "7.6 Input Boundary Validation Controls"
+            section_title: "6.6 Input Boundary Validation Controls"
             heading_level: 4
             # The first #### heading must match one of these (case-insensitive,
-            # numeric `7.6.N ` prefix tolerated). Vocabulary mirrors the
+            # numeric `6.6.N ` prefix tolerated). Vocabulary mirrors the
             # scaffold's injected general-approach block + the authoring prompt.
             approach_heading_patterns:
               - "(?i)validation approach"
@@ -1333,23 +1335,23 @@ sections:
           - rule: "finding_range_homogeneous"
             enforcement: "warning"
           - rule: "dependency_cross_ref"
-            section_title: "7.11 Operations Runtime and Supply Chain Controls"
+            section_title: "6.11 Operations Runtime and Supply Chain Controls"
             enforcement: "warning"
           - rule: "na_against_recon"
-            section_title: "7.12 Real-time and Not Applicable Controls"
+            section_title: "6.12 Real-time and Not Applicable Controls"
             enforcement: "warning"
-        # R7 — §7.13 is prose-only. Markdown tables are a contract violation
+        # R7 — §6.13 is prose-only. Markdown tables are a contract violation
         # because they invite speculative perimeter-absence claims and break
         # the reference-style "two-paragraph cross-cutting summary" shape.
-        "7.13 Defense-in-Depth Summary":
+        "6.13 Defense-in-Depth Summary":
           - rule: "forbidden_constructs"
             forbidden_constructs:
               - "markdown_table"
             enforcement: "error"
           # Patch-management posture derivation (since 2026-05). When the
-          # three §7.11 SCA-practice control rows are present (Automated
+          # three §6.11 SCA-practice control rows are present (Automated
           # SCA scanning / Automated dependency updates / Lockfile
-          # hygiene), §7.13 MUST surface a single "patch management
+          # hygiene), §6.13 MUST surface a single "patch management
           # posture" line whose effectiveness is the worst (lowest
           # ranking) of the three control rows. Order:
           #   Adequate > Partial > Missing > Weak
@@ -1376,9 +1378,9 @@ sections:
       # MUST NOT be primary-listed here. Surfaces the "F-010 under XSS"
       # mis-categorisation arch3.md §4 calls out.
       forbidden_categories:
-        "7.7 Output Encoding and Rendering Controls":
+        "6.7 Output Encoding and Rendering Controls":
           forbidden_cwes: [CWE-942, CWE-1021, CWE-922]
-        "7.5 Query Construction and Data Access Controls":
+        "6.5 Query Construction and Data Access Controls":
           forbidden_cwes: [CWE-620]
 
     note: |
@@ -1530,7 +1532,7 @@ invariants:
 # THE single source of truth for which deep-only sections survive a shallower
 # re-run (e.g. standard → quick). Read by scripts/preserve_lib.py; consumed by
 # snapshot_preserved_sections.py (capture), restore_preserved_sections.py
-# (restore + provenance) and compose_threat_model.py (§7 verbatim carry). Adding
+# (restore + provenance) and compose_threat_model.py (§6 verbatim carry). Adding
 # a section to preserve is an edit here — no code change.
 #
 #   substrate: fragment   → the section renders from a .fragments/<file>; the

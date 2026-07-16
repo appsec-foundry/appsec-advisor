@@ -585,13 +585,13 @@ def test_contract_required_subsection_pattern_match(tmp_path: Path):
         "document:\n  order:\n    - sec\n"
         "sections:\n"
         "  sec:\n"
-        "    heading: '## 7. Security Architecture'\n"
+        "    heading: '## 6. Security Architecture'\n"
         "    required_subsections:\n"
         "      - level: 3\n"
-        "        pattern: '7\\.2 .*Identity.*'\n",
+        "        pattern: '6\\.2 .*Identity.*'\n",
         encoding="utf-8",
     )
-    md = _md(tmp_path, "## 7. Security Architecture\n### 7.2 Identity Controls\nbody\n")
+    md = _md(tmp_path, "## 6. Security Architecture\n### 6.2 Identity Controls\nbody\n")
     report = qa.check_contract(md, contract)
     assert not any("required subsection missing" in i for i in report.issues)
 
@@ -603,13 +603,13 @@ def test_contract_required_subsection_invalid_pattern(tmp_path: Path):
         "document:\n  order:\n    - sec\n"
         "sections:\n"
         "  sec:\n"
-        "    heading: '## 7. Security Architecture'\n"
+        "    heading: '## 6. Security Architecture'\n"
         "    required_subsections:\n"
         "      - level: 3\n"
         "        pattern: '(unclosed'\n",
         encoding="utf-8",
     )
-    md = _md(tmp_path, "## 7. Security Architecture\nbody\n")
+    md = _md(tmp_path, "## 6. Security Architecture\nbody\n")
     report = qa.check_contract(md, contract)
     assert any("invalid required_subsection pattern" in i for i in report.issues)
 
@@ -621,7 +621,7 @@ def test_contract_required_subsection_order_violation(tmp_path: Path):
         "document:\n  order:\n    - sec\n"
         "sections:\n"
         "  sec:\n"
-        "    heading: '## 7. Security Architecture'\n"
+        "    heading: '## 6. Security Architecture'\n"
         "    required_subsections:\n"
         "      - level: 3\n        title: 'Alpha Sub'\n"
         "      - level: 3\n        title: 'Beta Sub'\n",
@@ -630,7 +630,7 @@ def test_contract_required_subsection_order_violation(tmp_path: Path):
     # Beta before Alpha -> subsection order violation.
     md = _md(
         tmp_path,
-        "## 7. Security Architecture\n### Beta Sub\nb\n### Alpha Sub\na\n",
+        "## 6. Security Architecture\n### Beta Sub\nb\n### Alpha Sub\na\n",
     )
     report = qa.check_contract(md, contract)
     assert any("required subsection order violation" in i for i in report.issues)
@@ -878,13 +878,13 @@ def test_build_repair_plan_required_subsection_missing(tmp_path: Path):
         "document:\n  order:\n    - sec7\n"
         "sections:\n"
         "  sec7:\n"
-        "    heading: '## 7. Security Architecture'\n"
+        "    heading: '## 6. Security Architecture'\n"
         "    required_subsections:\n"
         "      - level: 3\n"
         "        title: 'Mandatory Sub'\n",
         encoding="utf-8",
     )
-    md = _md(tmp_path, "## 7. Security Architecture\nbody without the sub\n")
+    md = _md(tmp_path, "## 6. Security Architecture\nbody without the sub\n")
     plan, _ = qa.build_repair_plan(md, tmp_path, contract)
     assert any(a["type"] == "missing_required_subsection" for a in plan["actions"])
 

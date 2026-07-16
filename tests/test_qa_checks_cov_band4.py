@@ -173,7 +173,7 @@ def test_finalize_auth_report_error_keeps():
 # ===========================================================================
 
 _SEC7_GENERIC = """\
-### 7.5 Input Validation
+### 6.5 Input Validation
 
 An attacker could abuse this. Various endpoints exist in the codebase.
 Something might be exploited and could potentially be a problem.
@@ -183,11 +183,11 @@ Something might be exploited and could potentially be a problem.
 def test_check_generic_phrases_escalates(tmp_path):
     f = _md(tmp_path, _SEC7_GENERIC)
     rep = qa.check_generic_phrases(f)
-    assert rep.issues  # >=3 hits in one §7.x -> error
+    assert rep.issues  # >=3 hits in one §6.x -> error
 
 
 def test_check_generic_phrases_clean(tmp_path):
-    f = _md(tmp_path, "### 7.1 Boundary\n\nThe login route at app.ts:10 rejects.\n")
+    f = _md(tmp_path, "### 6.1 Boundary\n\nThe login route at app.ts:10 rejects.\n")
     rep = qa.check_generic_phrases(f)
     assert rep.ok == 1
 
@@ -195,61 +195,61 @@ def test_check_generic_phrases_clean(tmp_path):
 def test_check_rhetorical_severity_hits(tmp_path):
     f = _md(
         tmp_path,
-        "### 7.2 Auth\n\nThis is trivial for a junior pentester and catastrophic.\n",
+        "### 6.2 Auth\n\nThis is trivial for a junior pentester and catastrophic.\n",
     )
     rep = qa.check_rhetorical_severity(f)
     assert rep.issues
 
 
 def test_check_rhetorical_severity_clean(tmp_path):
-    f = _md(tmp_path, "### 7.2 Auth\n\nThe server returns 500 on malformed JWT.\n")
+    f = _md(tmp_path, "### 6.2 Auth\n\nThe server returns 500 on malformed JWT.\n")
     rep = qa.check_rhetorical_severity(f)
     assert rep.ok == 1
 
 
 def test_check_section_opener_restates_heading_banned(tmp_path):
-    content = "## 7. Security Architecture\n\nThis section evaluates the controls.\n"
+    content = "## 6. Security Architecture\n\nThis section evaluates the controls.\n"
     f = _md(tmp_path, content)
     rep = qa.check_section_opener_restates_heading(f)
     assert rep.issues
 
 
 def test_check_section_opener_overlap_warning(tmp_path):
-    content = "### 7.2 Identity Authentication Controls\n\nIdentity authentication controls protect users.\n"
+    content = "### 6.2 Identity Authentication Controls\n\nIdentity authentication controls protect users.\n"
     f = _md(tmp_path, content)
     rep = qa.check_section_opener_restates_heading(f)
     assert rep.warnings or rep.issues
 
 
 def test_check_section_opener_clean(tmp_path):
-    content = "## 7. Security Architecture\n\nThe app uses bcrypt with cost 12 at auth.ts:9.\n"
+    content = "## 6. Security Architecture\n\nThe app uses bcrypt with cost 12 at auth.ts:9.\n"
     f = _md(tmp_path, content)
     rep = qa.check_section_opener_restates_heading(f)
     assert rep.ok == 1
 
 
 def test_check_ai_padding_phrases_escalates(tmp_path):
-    content = "### 7.3 Crypto\n\nIt is worth noting this. Furthermore, in summary, more.\n"
+    content = "### 6.3 Crypto\n\nIt is worth noting this. Furthermore, in summary, more.\n"
     f = _md(tmp_path, content)
     rep = qa.check_ai_padding_phrases(f)
     assert rep.issues
 
 
 def test_check_ai_padding_phrases_clean(tmp_path):
-    f = _md(tmp_path, "### 7.3 Crypto\n\nKeys rotate every 90 days.\n")
+    f = _md(tmp_path, "### 6.3 Crypto\n\nKeys rotate every 90 days.\n")
     rep = qa.check_ai_padding_phrases(f)
     assert rep.ok == 1
 
 
 def test_check_section_713_no_table_flags(tmp_path):
-    content = "### 7.13 Defense-in-Depth Summary\n\n| Layer | Control |\n| --- | --- |\n| A | B |\n"
+    content = "### 6.13 Defense-in-Depth Summary\n\n| Layer | Control |\n| --- | --- |\n| A | B |\n"
     f = _md(tmp_path, content)
     rep = qa.check_section_713_no_table(f)
     assert rep.issues
 
 
 def test_check_section_713_no_table_prose_ok(tmp_path):
-    content = "### 7.13 Defense-in-Depth Summary\n\nProse only paragraph describing controls.\n"
+    content = "### 6.13 Defense-in-Depth Summary\n\nProse only paragraph describing controls.\n"
     f = _md(tmp_path, content)
     rep = qa.check_section_713_no_table(f)
     assert rep.ok == 1
@@ -274,7 +274,7 @@ def test_subcontrol_naming_no_section72(tmp_path):
 
 def test_subcontrol_naming_with_section72(tmp_path):
     content = (
-        "### 7.2 Identity and Authentication Controls\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
         "#### OAuth Login Adapter\n\nstuff\n\n"
         "#### Password Hashing\n\nstuff\n\n"
         "## 8. Findings\n"
@@ -297,7 +297,7 @@ def test_dependency_cross_ref_no_yaml(tmp_path):
 
 
 def test_dependency_cross_ref_dep_scan_missing_ref(tmp_path):
-    f = _md(tmp_path, "### 7.11 Operations Runtime and Supply Chain Controls\n\nNothing referenced here.\n")
+    f = _md(tmp_path, "### 6.11 Operations Runtime and Supply Chain Controls\n\nNothing referenced here.\n")
     (tmp_path / "threat-model.yaml").write_text(
         "threats:\n  - id: T-005\n    source: dep-scan\n    title: outdated express\n",
         encoding="utf-8",
@@ -309,7 +309,7 @@ def test_dependency_cross_ref_dep_scan_missing_ref(tmp_path):
 def test_dependency_cross_ref_referenced_ok(tmp_path):
     f = _md(
         tmp_path,
-        "### 7.11 Operations Runtime and Supply Chain Controls\n\nSee [F-005](#f-005).\n",
+        "### 6.11 Operations Runtime and Supply Chain Controls\n\nSee [F-005](#f-005).\n",
     )
     (tmp_path / "threat-model.yaml").write_text(
         "threats:\n  - id: T-005\n    source: dep-scan\n    title: x\n",
@@ -330,7 +330,7 @@ def test_dependency_cross_ref_section_missing(tmp_path):
 
 
 def test_dependency_cross_ref_library_token(tmp_path):
-    f = _md(tmp_path, "### 7.11 Supply Chain\n\nnothing\n")
+    f = _md(tmp_path, "### 6.11 Supply Chain\n\nnothing\n")
     (tmp_path / "threat-model.yaml").write_text(
         'threats:\n  - id: T-014\n    cwe: CWE-0\n    title: "uses express-jwt 0.6 sandbox"\n',
         encoding="utf-8",
@@ -345,20 +345,20 @@ def test_dependency_cross_ref_library_token(tmp_path):
 
 
 def test_na_against_recon_no_recon(tmp_path):
-    f = _md(tmp_path, "### 7.8 WebSocket\n\n_Not applicable_\n")
+    f = _md(tmp_path, "### 6.8 WebSocket\n\n_Not applicable_\n")
     rep = qa.check_na_against_recon(f, tmp_path)
     assert rep.ok == 1
 
 
 def test_na_against_recon_flags(tmp_path):
-    f = _md(tmp_path, "### 7.8 WebSocket Realtime\n\n_Not applicable - no X detected_\n")
+    f = _md(tmp_path, "### 6.8 WebSocket Realtime\n\n_Not applicable - no X detected_\n")
     (tmp_path / ".recon-summary.md").write_text("Uses socket.io for websocket comms\n", encoding="utf-8")
     rep = qa.check_na_against_recon(f, tmp_path)
     assert rep.warnings
 
 
 def test_na_against_recon_clean(tmp_path):
-    f = _md(tmp_path, "### 7.8 WebSocket\n\n_Not applicable - no X detected_\n")
+    f = _md(tmp_path, "### 6.8 WebSocket\n\n_Not applicable - no X detected_\n")
     (tmp_path / ".recon-summary.md").write_text("plain rest api only\n", encoding="utf-8")
     rep = qa.check_na_against_recon(f, tmp_path)
     assert rep.ok == 1
@@ -670,9 +670,9 @@ _MINIMAL_MD = """\
 
 Short.
 
-## 7. Security Architecture
+## 6. Security Architecture
 
-### 7.1 Boundary Controls
+### 6.1 Boundary Controls
 
 The login route at app.ts:10 validates input.
 

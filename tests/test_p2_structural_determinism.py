@@ -10,9 +10,9 @@ Covers three orthogonal regressions:
          overwritten with the yaml-aligned canonical version.
 
     A5 — `gen_security_architecture(yaml_data, depth)` strips
-         `<!-- NARRATIVE_PLACEHOLDER -->` comments from §7.4-§7.12 at
-         quick depth so the LLM has no expansion bait there. §7.1, §7.2,
-         §7.3 (with per-auth-method flow blocks), §7.13, §7.14 keep their
+         `<!-- NARRATIVE_PLACEHOLDER -->` comments from §6.4-§6.12 at
+         quick depth so the LLM has no expansion bait there. §6.1, §6.2,
+         §6.3 (with per-auth-method flow blocks), §6.13, §6.14 keep their
          placeholders since those are the high-value sections.
 
     A2 — `check_chain_tid_consistency` flags §3.1 chain-overview node
@@ -162,13 +162,13 @@ class TestForceOnlyOverwritesDriftedFragment:
 
 
 # ---------------------------------------------------------------------------
-# A5 — depth-aware §7 placeholder stripping
+# A5 — depth-aware §6 placeholder stripping
 # ---------------------------------------------------------------------------
 
 
 class TestSecurityArchitectureDepthAware:
     """`gen_security_architecture(yaml_data, depth)` emits fewer
-    NARRATIVE_PLACEHOLDERs at quick depth while preserving the v2 §7 headings."""
+    NARRATIVE_PLACEHOLDERs at quick depth while preserving the v2 §6 headings."""
 
     def test_quick_strips_more_placeholders_than_standard(self):
         ydata = _minimal_yaml()
@@ -177,29 +177,29 @@ class TestSecurityArchitectureDepthAware:
         n_std = std.count("NARRATIVE_PLACEHOLDER")
         n_quick = quick.count("NARRATIVE_PLACEHOLDER")
         assert n_quick < n_std, f"quick must strip placeholders vs standard (quick={n_quick}, standard={n_std})"
-        assert "### 7.1 Security Control Overview" in quick
-        assert "### 7.13 Defense-in-Depth Summary" in quick
-        assert "NARRATIVE_PLACEHOLDER: §7.13 Defense-in-Depth Summary" in quick
+        assert "### 6.1 Security Control Overview" in quick
+        assert "### 6.13 Defense-in-Depth Summary" in quick
+        assert "NARRATIVE_PLACEHOLDER: §6.13 Defense-in-Depth Summary" in quick
 
     def test_quick_strips_uncontrolled_fallback_h4s(self):
         """Quick depth keeps required H3s but drops fallback H4 expansion for routed findings."""
         ydata = _minimal_yaml()
         quick = pregen.gen_security_architecture(ydata, depth="quick")
-        assert "### 7.5 Query Construction and Data Access Controls" in quick
-        assert "#### 7.5.1 Database Query Construction" not in quick
+        assert "### 6.5 Query Construction and Data Access Controls" in quick
+        assert "#### 6.5.1 Database Query Construction" not in quick
 
     def test_standard_keeps_all_placeholders(self):
         """Sanity — standard depth retains the full set so the LLM has the
         expansion targets it expects at non-quick runs."""
         ydata = _minimal_yaml()
         std = pregen.gen_security_architecture(ydata, depth="standard")
-        for n in ("7.4", "7.5", "7.6", "7.7", "7.10", "7.11"):
+        for n in ("6.4", "6.5", "6.6", "6.7", "6.10", "6.11"):
             assert f"NARRATIVE_PLACEHOLDER: §{n}" in std
-        assert "### 7.12 Real-time and Not Applicable Controls" in std
-        assert "§7.12 LOCKED" in std
+        assert "### 6.12 Real-time and Not Applicable Controls" in std
+        assert "§6.12 LOCKED" in std
 
     def test_required_headings_emit_at_both_depths(self):
-        """The contract requires §7.1-§7.13 headings to exist
+        """The contract requires §6.1-§6.13 headings to exist
         regardless of depth. Quick mode strips placeholders but MUST NOT
         strip the heading itself or the contract gate fails."""
         ydata = _minimal_yaml()
@@ -207,7 +207,7 @@ class TestSecurityArchitectureDepthAware:
             text = pregen.gen_security_architecture(ydata, depth=depth)
             for heading, _hint, _tier in pregen._V2_SUBSECTIONS:
                 assert f"### {heading}" in text, f"depth={depth}: {heading} heading must emit"
-            assert "### 7.14 " not in text
+            assert "### 6.14 " not in text
 
 
 class TestPregenerateMainResolvesDepth:
@@ -226,7 +226,7 @@ class TestPregenerateMainResolvesDepth:
         rc = pregen.main([str(out), "--force", "--only", "security-architecture.md", "--depth", "quick"])
         assert rc == 0
         text = (out / ".fragments" / "security-architecture.md").read_text()
-        assert "#### 7.5.1 Database Query Construction" not in text  # stripped at quick
+        assert "#### 6.5.1 Database Query Construction" not in text  # stripped at quick
 
     def test_falls_back_to_skill_config(self, tmp_path: Path):
         out = tmp_path / "out"
@@ -238,7 +238,7 @@ class TestPregenerateMainResolvesDepth:
         rc = pregen.main([str(out), "--force", "--only", "security-architecture.md"])
         assert rc == 0
         text = (out / ".fragments" / "security-architecture.md").read_text()
-        assert "#### 7.5.1 Database Query Construction" not in text  # quick from config
+        assert "#### 6.5.1 Database Query Construction" not in text  # quick from config
 
     def test_defaults_to_standard_when_neither_set(self, tmp_path: Path):
         out = tmp_path / "out"
@@ -249,8 +249,8 @@ class TestPregenerateMainResolvesDepth:
         rc = pregen.main([str(out), "--force", "--only", "security-architecture.md"])
         assert rc == 0
         text = (out / ".fragments" / "security-architecture.md").read_text()
-        # Standard depth keeps the §7.5 routed-finding fallback block.
-        assert "#### 7.5.1 Database Query Construction" in text
+        # Standard depth keeps the §6.5 routed-finding fallback block.
+        assert "#### 6.5.1 Database Query Construction" in text
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +414,7 @@ class TestP2EndToEndSmoke:
         frag = out / ".fragments"
         frag.mkdir()
         (frag / "security-architecture.md").write_text(
-            "## 7. Security Architecture\n\nLLM-authored narrative, MUST survive.\n",
+            "## 6. Security Architecture\n\nLLM-authored narrative, MUST survive.\n",
             encoding="utf-8",
         )
 

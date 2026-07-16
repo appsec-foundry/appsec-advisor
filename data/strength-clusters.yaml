@@ -123,7 +123,7 @@ clusters:
 #   * A cluster is rendered only when it has at least one member with
 #     effectiveness ∈ {adequate, partial, weak}. Pure-`missing` clusters
 #     never appear in the Operational Strengths table — those gaps are
-#     surfaced in §7 (Security Architecture).
+#     surfaced in §6 (Security Architecture).
 #   * Clusters are ordered top-to-bottom by:
 #       1. has_adequate_member ? 0 : 1
 #       2. has_partial_member  ? 0 : 1

@@ -19,5 +19,5 @@ Used by `appsec-architect-reviewer`. Controls which of the 13 checks run at each
 | 11 — Design Decision Impact | — | skip | run | run |
 | 12 — Remediation Synergy / ROI | det* | skip | run | run |
 | 13 — Config/IaC Review | det | skip | run (if artefact exists) | run (if artefact exists) |
-| 14 — §7 Quality Bar | det* | skip | run (post-render) | run (post-render) |
+| 14 — §6 Quality Bar | det* | skip | run (post-render) | run (post-render) |
 | 15 — Actor Coverage | det* | skip | run (if actor layer) | run (if actor layer) |

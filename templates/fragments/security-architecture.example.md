@@ -1,5 +1,5 @@
 <!--
-  security-architecture.example.md — STYLE ANCHOR for §7 H4 control blocks.
+  security-architecture.example.md — STYLE ANCHOR for §6 H4 control blocks.
 
   Purpose
   -------
@@ -10,7 +10,7 @@
   here. The blocks below are taken from the proven reference threat model
   for OWASP Juice Shop and represent the quality bar.
 
-  Mandatory structure for every H4 control block (§7.2-§7.12)
+  Mandatory structure for every H4 control block (§6.2-§6.12)
   ----------------------------------------------------------
   1. `#### <Mechanism Name>` — name a real mechanism (e.g. "JWT Issuance",
      "Password Reset", "Query Construction"), NOT a taxonomy bucket
@@ -36,7 +36,7 @@
      like `[F-001]…[F-005]`.
 
   Both Mermaid and code are OPTIONAL clarity aids. A pure-prose block
-  is valid and common (see §7.8 Browser Security Headers in the
+  is valid and common (see §6.8 Browser Security Headers in the
   reference). The mandatory elements are the intro paragraph, the
   assessment, and the findings bullet list.
 -->

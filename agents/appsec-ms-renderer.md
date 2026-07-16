@@ -24,7 +24,7 @@ Before authoring, read `agents/shared/prose-style.md` and `agents/shared/prose-s
 
 ## Focused contract loading
 
-The authoritative Management Summary authoring contract remains in the legacy full renderer so full/recovery dispatches retain one source of truth. Read **only lines 128–389** of `agents/appsec-threat-renderer.md`; do not load its §7 or compose/QA sections. Those lines define every fragment you own, their schemas, the compactness gate, and the conditional authoring rules.
+The authoritative Management Summary authoring contract remains in the legacy full renderer so full/recovery dispatches retain one source of truth. Read **only lines 128–389** of `agents/appsec-threat-renderer.md`; do not load its §6 or compose/QA sections. Those lines define every fragment you own, their schemas, the compactness gate, and the conditional authoring rules.
 
 ## Execution
 

@@ -177,7 +177,7 @@ If `.recon-summary.md` is missing **after the recon-scanner agent has already re
 
 ### Step 1c — Cross-repo register update (recon Category 25 merge)
 
-After `.recon-summary.md` is on disk, rebuild the cross-repo register so it merges Recon's code-grep-discovered SCM/SaaS deps (Section 7.25) with the declared and sibling/submodule entries that Phase 1 already captured. This single source feeds the STRIDE dispatcher slice, `coverage_checks.check_cross_repo`, and Phase 11 §5/§7 rendering.
+After `.recon-summary.md` is on disk, rebuild the cross-repo register so it merges Recon's code-grep-discovered SCM/SaaS deps (Section 7.25) with the declared and sibling/submodule entries that Phase 1 already captured. This single source feeds the STRIDE dispatcher slice, `coverage_checks.check_cross_repo`, and Phase 11 §5/§6 rendering.
 
 Always run the rebuild — the script is idempotent and writes an empty register cleanly when no inputs are present. `--declared-json` is optional; the builder ignores the flag when the file does not exist (typical when context-resolver did not run, e.g. some incremental fast paths).
 

@@ -638,19 +638,19 @@ class TestLinkifyBareCwes:
 
 class TestLinkifySectionRefs:
     def test_links_section(self):
-        md = "## 7 Security\n\nSee §7 above.\n"
+        md = "## 6 Security\n\nSee §6 above.\n"
         out = compose._linkify_section_refs(md)
-        assert "[§7](#" in out
+        assert "[§6](#" in out
 
     def test_no_headings_noop(self):
-        md = "See §7 here."
+        md = "See §6 here."
         assert compose._linkify_section_refs(md) == md
 
     def test_heading_itself_not_linkified(self):
-        md = "## 7 Security §7\n"
+        md = "## 7 Security §6\n"
         out = compose._linkify_section_refs(md)
         # heading line must not get a link inserted
-        assert out.splitlines()[0] == "## 7 Security §7"
+        assert out.splitlines()[0] == "## 7 Security §6"
 
 
 class TestNormalizeEmdashes:
@@ -1272,7 +1272,7 @@ class TestStripSection7Crossrefs:
 
 class TestAnchorFromHeading:
     def test_slugifies(self):
-        out = compose._anchor_from_heading("## 7.3 Security Architecture")
+        out = compose._anchor_from_heading("## 6.3 Security Architecture")
         assert out and " " not in out
         assert out == out.lower()
 
@@ -2727,7 +2727,7 @@ class TestSystemicWeaknessesRender:
         )
         block = compose._render_systemic_weaknesses(ctx)
         # 2026-07-14: numbered heading + index table + bullet cards.
-        assert "## 6. Weakness Register" in block
+        assert "## 7. Weakness Register" in block
         assert "### W-001 — no parametrized layer" in block
         assert "design weakness · confirmed" in block
         assert "[F-001](#f-001)" in block and "[F-002](#f-002)" in block

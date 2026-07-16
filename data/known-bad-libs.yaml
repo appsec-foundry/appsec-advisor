@@ -2,7 +2,7 @@
 #
 # Curated track-record list of dependencies whose architectural choice
 # warrants review regardless of which specific CVE is currently outstanding.
-# Consumed by scripts/emit_known_bad_libs.py and routed to §7.11 as
+# Consumed by scripts/emit_known_bad_libs.py and routed to §6.11 as
 # MF-NNN architectural meta-findings (NOT CVE-shaped threats — this file
 # is intentionally NOT a vulnerability feed).
 #
@@ -29,7 +29,7 @@
 
 version: 1
 
-# Categories — used by §7.11 rendering and downstream filtering. New
+# Categories — used by §6.11 rendering and downstream filtering. New
 # categories should be added intentionally with a documented rationale.
 categories:
   - abandoned_with_known_cves

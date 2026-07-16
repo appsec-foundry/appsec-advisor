@@ -1,25 +1,25 @@
-## 7. Security Architecture
+## 6. Security Architecture
 
-This chapter is organized by security-control category. The frozen fixture keeps the prose compact so the deterministic replay exercises the current v2 contract without depending on legacy §7 headings.
+This chapter is organized by security-control category. The frozen fixture keeps the prose compact so the deterministic replay exercises the current v2 contract without depending on legacy §6 headings.
 
-### 7.1 Security Control Overview
+### 6.1 Security Control Overview
 
 | Control category | Verdict | Main reason |
 |---|---|---|
-| [7.2 Identity and Authentication Controls](#72-identity-and-authentication-controls) | Weak | Password login and OAuth exist, but token issuance depends on weak key handling. |
-| [7.3 Session and Token Controls](#73-session-and-token-controls) | Weak | Browser-held JWTs lack strong lifecycle controls. |
-| [7.4 Authorization Controls](#74-authorization-controls) | Weak | Client-side route behavior is not enough server-side authorization evidence. |
-| [7.5 Query Construction and Data Access Controls](#75-query-construction-and-data-access-controls) | Unsafe | Raw SQL is reachable from login and search paths. |
-| [7.6 Input Boundary Validation Controls](#76-input-boundary-validation-controls) | Partial | Validation is route-local rather than centralized. |
-| [7.7 Output Encoding and Rendering Controls](#77-output-encoding-and-rendering-controls) | Weak | Angular escaping exists, but trusted-HTML bypasses remain. |
-| [7.8 Browser and Cross-Origin Controls](#78-browser-and-cross-origin-controls) | Partial | Browser policy controls are limited. |
-| [7.9 Cryptography Secrets and Data Protection](#79-cryptography-secrets-and-data-protection) | Unsafe | Signing keys are committed to source. |
-| [7.10 File Parser and Outbound Request Controls](#710-file-parser-and-outbound-request-controls) | Not applicable | No parser or outbound-request finding is routed in this fixture. |
-| [7.11 Operations Runtime and Supply Chain Controls](#711-operations-runtime-and-supply-chain-controls) | Partial | Dependency posture remains incomplete. |
-| [7.12 Real-time and Not Applicable Controls](#712-real-time-and-not-applicable-controls) | Not applicable | No real-time, AI, GraphQL, or gRPC surface is represented. |
-| [7.13 Defense-in-Depth Summary](#713-defense-in-depth-summary) | Weak | Controls are concentrated in one application layer. |
+| [6.2 Identity and Authentication Controls](#62-identity-and-authentication-controls) | Weak | Password login and OAuth exist, but token issuance depends on weak key handling. |
+| [6.3 Session and Token Controls](#63-session-and-token-controls) | Weak | Browser-held JWTs lack strong lifecycle controls. |
+| [6.4 Authorization Controls](#64-authorization-controls) | Weak | Client-side route behavior is not enough server-side authorization evidence. |
+| [6.5 Query Construction and Data Access Controls](#65-query-construction-and-data-access-controls) | Unsafe | Raw SQL is reachable from login and search paths. |
+| [6.6 Input Boundary Validation Controls](#66-input-boundary-validation-controls) | Partial | Validation is route-local rather than centralized. |
+| [6.7 Output Encoding and Rendering Controls](#67-output-encoding-and-rendering-controls) | Weak | Angular escaping exists, but trusted-HTML bypasses remain. |
+| [6.8 Browser and Cross-Origin Controls](#68-browser-and-cross-origin-controls) | Partial | Browser policy controls are limited. |
+| [6.9 Cryptography Secrets and Data Protection](#69-cryptography-secrets-and-data-protection) | Unsafe | Signing keys are committed to source. |
+| [6.10 File Parser and Outbound Request Controls](#610-file-parser-and-outbound-request-controls) | Not applicable | No parser or outbound-request finding is routed in this fixture. |
+| [6.11 Operations Runtime and Supply Chain Controls](#611-operations-runtime-and-supply-chain-controls) | Partial | Dependency posture remains incomplete. |
+| [6.12 Real-time and Not Applicable Controls](#612-real-time-and-not-applicable-controls) | Not applicable | No real-time, AI, GraphQL, or gRPC surface is represented. |
+| [6.13 Defense-in-Depth Summary](#613-defense-in-depth-summary) | Weak | Controls are concentrated in one application layer. |
 
-### 7.2 Identity and Authentication Controls
+### 6.2 Identity and Authentication Controls
 
 **Verdict:** Weak
 
@@ -71,7 +71,7 @@ The legacy implicit flow exposes bearer material to browser URL handling and doe
 
 - T-001 OAuth token exposure.
 
-### 7.3 Session and Token Controls
+### 6.3 Session and Token Controls
 
 **Verdict:** Weak
 
@@ -104,7 +104,7 @@ The session token remains valid without a clear revocation control, and local br
 
 - T-003 signing-key exposure affects token trust.
 
-### 7.4 Authorization Controls
+### 6.4 Authorization Controls
 
 **Verdict:** Weak
 
@@ -127,7 +127,7 @@ The fixture keeps most authorization evidence close to the client and does not e
 
 - No dedicated authorization finding routed in this assessment.
 
-### 7.5 Query Construction and Data Access Controls
+### 6.5 Query Construction and Data Access Controls
 
 **Verdict:** Unsafe
 
@@ -150,7 +150,7 @@ The ORM is present, but raw SQL construction remains on authentication and produ
 
 - T-001 raw SQL injection path.
 
-### 7.6 Input Boundary Validation Controls
+### 6.6 Input Boundary Validation Controls
 
 **Verdict:** Partial
 
@@ -173,7 +173,7 @@ The fixture shows per-route checks, but no centralized schema strategy that woul
 
 - No dedicated validation finding routed in this assessment.
 
-### 7.7 Output Encoding and Rendering Controls
+### 6.7 Output Encoding and Rendering Controls
 
 **Verdict:** Weak
 
@@ -196,7 +196,7 @@ Framework escaping is present, but trusted-HTML bypasses undercut that protectio
 
 - T-002 stored content rendering path.
 
-### 7.8 Browser and Cross-Origin Controls
+### 6.8 Browser and Cross-Origin Controls
 
 **Verdict:** Partial
 
@@ -219,7 +219,7 @@ The browser policy is present only in limited form and does not compensate for r
 
 - No dedicated browser-policy finding routed in this assessment.
 
-### 7.9 Cryptography Secrets and Data Protection
+### 6.9 Cryptography Secrets and Data Protection
 
 **Verdict:** Unsafe
 
@@ -242,13 +242,13 @@ The RSA key material is part of the fixture source, so anyone with repository re
 
 - T-003 hardcoded RSA private key.
 
-### 7.10 File Parser and Outbound Request Controls
+### 6.10 File Parser and Outbound Request Controls
 
 **Verdict:** Not applicable
 
 _Not applicable for this fixture - no file-parser or outbound-request finding is routed to this category._
 
-### 7.11 Operations Runtime and Supply Chain Controls
+### 6.11 Operations Runtime and Supply Chain Controls
 
 **Verdict:** Partial
 
@@ -271,13 +271,13 @@ Dependabot coverage helps, but the fixture still carries critically outdated dep
 
 - T-010 outdated dependency posture.
 
-### 7.12 Real-time and Not Applicable Controls
+### 6.12 Real-time and Not Applicable Controls
 
 **Verdict:** Not applicable
 
 _Not applicable - no real-time / WebSocket findings routed to this category, and no AI/LLM, GraphQL, or gRPC surface is represented in this fixture._
 
-### 7.13 Defense-in-Depth Summary
+### 6.13 Defense-in-Depth Summary
 
 **Verdict:** Weak
 

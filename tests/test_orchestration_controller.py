@@ -527,7 +527,7 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
     # The LLM-authored fragments the renderer would have produced.
     (frag / "ms-verdict.json").write_text("{}", encoding="utf-8")
-    (frag / "security-architecture.md").write_text("## 7. Security Architecture\n", encoding="utf-8")
+    (frag / "security-architecture.md").write_text("## 6. Security Architecture\n", encoding="utf-8")
 
     md = output / "threat-model.md"
     commands = []

@@ -6,11 +6,11 @@
 > it exhibited, the human-style rewrite, and the rule that follows.
 >
 > Loaded by the renderer and finalization agents before authoring
-> `ms-verdict.json`, `ms-architecture-assessment.json`, **and the §7
+> `ms-verdict.json`, `ms-architecture-assessment.json`, **and the §6
 > Security Architecture control narratives** (H4 intro paragraphs and
 > `**Security assessment**` blocks) — Claude Sonnet imitates worked
 > examples more reliably than it follows abstract rules. Pairs A–E
-> target Management-Summary fields; Pairs F–G target §7 control prose.
+> target Management-Summary fields; Pairs F–G target §6 control prose.
 >
 > When a new AI-tell shows up in a real run, add it here as a pair —
 > not as a new rule in `prose-style.md`. Rules without examples drift;
@@ -113,7 +113,7 @@ Already pretty good — concrete, has the file path, punchline at the end. But:
 
 ### BEFORE (61 words, 2 sentences)
 
-> Despite the structurally deficient design, the project carries a baseline of categorical strengths. The table below groups individual controls into broad-stroke clusters (full per-control breakdown in [Section 7](#7-security-architecture)). Only clusters that genuinely rate as a strength (Adequate or Partial) appear here - clusters demoted to Weak by open Critical/High findings in their defensive remit are excluded from this section and live in [§7](#7-security-architecture) instead.
+> Despite the structurally deficient design, the project carries a baseline of categorical strengths. The table below groups individual controls into broad-stroke clusters (full per-control breakdown in [Section 7](#6-security-architecture)). Only clusters that genuinely rate as a strength (Adequate or Partial) appear here - clusters demoted to Weak by open Critical/High findings in their defensive remit are excluded from this section and live in [§6](#6-security-architecture) instead.
 
 ### Diagnose
 - "Despite the structurally deficient design" — formal contrastive opener
@@ -124,7 +124,7 @@ Already pretty good — concrete, has the file path, punchline at the end. But:
 
 ### AFTER (44 words, 3 sentences)
 
-> Not everything is broken. The clusters below list controls that actually work (Adequate or Partial). Anything weakened by an open Critical/High finding moved to [§7](#7-security-architecture) instead — appearing here would be misleading.
+> Not everything is broken. The clusters below list controls that actually work (Adequate or Partial). Anything weakened by an open Critical/High finding moved to [§6](#6-security-architecture) instead — appearing here would be misleading.
 
 ### Rule
 15. **Drop meta-narration**: no "the table below shows…" — the table shows itself
@@ -134,14 +134,14 @@ Already pretty good — concrete, has the file path, punchline at the end. But:
 
 ---
 
-## Pair F — §7 H4 Control Intro (`security-architecture.md` H4 positive-case intro)
+## Pair F — §6 H4 Control Intro (`security-architecture.md` H4 positive-case intro)
 
 ### BEFORE (40 words, 1 sentence, AI-flavored)
 
 > The application uses Sequelize as an ORM layer to query SQLite, with the intention that user-supplied values are passed as bound parameters rather than concatenated into query strings, preventing query structure from being altered by attacker-controlled input.
 
 ### Diagnose
-- Opener "The application uses …" — formulaic subject stem; 9 of 13 §7 intros in the same report start this way
+- Opener "The application uses …" — formulaic subject stem; 9 of 13 §6 intros in the same report start this way
 - "with the intention that … rather than … " — the textbook purpose of the control class, not what THIS app does
 - "preventing query structure from being altered by attacker-controlled input" — the same purpose again, paraphrased
 - A single 40-word sentence; the concrete fact (which routes bypass the ORM) is missing entirely
@@ -157,7 +157,7 @@ Already pretty good — concrete, has the file path, punchline at the end. But:
 
 ---
 
-## Pair G — §7 Security-Assessment Block (`security-architecture.md` `**Security assessment**`)
+## Pair G — §6 Security-Assessment Block (`security-architecture.md` `**Security assessment**`)
 
 ### BEFORE (1 dense paragraph, 2 welded-together weaknesses)
 
@@ -198,7 +198,7 @@ Meta-clichés: `it is worth noting`, `it should be noted`, `it is important to n
 
 Generic closing cadences: `X is Y across the Z`, `X requires Y at the A, B, and C layers`, `X are prerequisites for any Y`
 
-Formulaic opener stems (max. 1× per §7.X section): `The application <verb>s …`, `The system …`, `The server …`, `The framework …` — instead, begin with a route/file/library/component
+Formulaic opener stems (max. 1× per §6.X section): `The application <verb>s …`, `The system …`, `The server …`, `The framework …` — instead, begin with a route/file/library/component
 
 Purpose-padding clauses (always cut): `with the intention that …`, `with the expectation that …`, `is expected to …`, `is intended to …`, `preventing X from being Y`, `so that <generic purpose>`
 
@@ -252,7 +252,7 @@ Five questions to ask about each prose field you just wrote:
 
 ## Pair G — MS Verdict bullet ALTITUDE (`ms-verdict.json::bullets[].body`)
 
-The Verdict is the one block the **product owner / project lead** reads. Bullets must state the *business consequence* and the *class* of weakness. The `refs` field is audit provenance only; engineers find the detail in §8/§7. Config-level detail (config keys, library versions, CVE numbers, file:line, framework symbols, ports) belongs there, never here.
+The Verdict is the one block the **product owner / project lead** reads. Bullets must state the *business consequence* and the *class* of weakness. The `refs` field is audit provenance only; engineers find the detail in §8/§6. Config-level detail (config keys, library versions, CVE numbers, file:line, framework symbols, ports) belongs there, never here.
 
 ### BEFORE (engineer altitude — wrong for the Verdict)
 
@@ -274,5 +274,5 @@ The Verdict is the one block the **product owner / project lead** reads. Bullets
 ### Regel
 1. **Lead with the business outcome** ("anyone can use the app without signing in"), not the mechanism.
 2. **Describe the missing control as a class** ("no authentication layer", "skips several standard practices"), not a config key.
-3. **No config keys / versions / CVE / file:line / framework symbols / security acronyms** in `body` — the technical detail belongs in §7 and §8.
-4. **A pure config-line ("missing httpOnly") is not a Verdict bullet** — fold it into a broader "hardened session handling" class or leave it to §7.
+3. **No config keys / versions / CVE / file:line / framework symbols / security acronyms** in `body` — the technical detail belongs in §6 and §8.
+4. **A pure config-line ("missing httpOnly") is not a Verdict bullet** — fold it into a broader "hardened session handling" class or leave it to §6.

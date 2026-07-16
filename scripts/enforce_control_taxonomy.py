@@ -7,7 +7,7 @@ Two related Stage-1 drift modes addressed:
   RC-1  Control NAME is non-canonical. Stage 1 sometimes writes algorithm
         names or token-format-only strings into ``security_controls[].control``
         (e.g. ``"JWT RS256 Authentication"`` instead of the canonical
-        ``"JWT Bearer Authentication"``). The §7.2 QA gate
+        ``"JWT Bearer Authentication"``). The §6.2 QA gate
         ``check_subcontrol_naming_canonical`` later flags this — but only
         after Stage 2 has composed the document around the bad name and
         downstream cross-references have hard-coded the bad anchor. Fixing
@@ -15,10 +15,10 @@ Two related Stage-1 drift modes addressed:
         the entire cascade.
 
   RC-6  Control DOMAIN is mis-assigned. Stage 1 sometimes places a control
-        whose name belongs to §7.2 IAM (e.g. ``"Rate limiting on password
-        reset + 2FA"``) into the §7.12 "Real-time and Not Applicable
-        Controls" bucket. The §7.1 overview-table row then claims
-        ``1 adequate control(s)`` in §7.12 while the §7.12 body says
+        whose name belongs to §6.2 IAM (e.g. ``"Rate limiting on password
+        reset + 2FA"``) into the §6.12 "Real-time and Not Applicable
+        Controls" bucket. The §6.1 overview-table row then claims
+        ``1 adequate control(s)`` in §6.12 while the §6.12 body says
         ``Not applicable``. Re-routing to the domain whose ``method_whitelist``
         the control name tokenises into fixes the inconsistency.
 
@@ -57,14 +57,14 @@ from event_log import format_line
 # data/architectural-controls.yaml or data/sections-contract.yaml's
 # method_whitelist. New entries are additive.
 _NAME_REWRITE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    # JWT is a SESSION-TOKEN primitive, not a §7.2 authentication mechanism
+    # JWT is a SESSION-TOKEN primitive, not a §6.2 authentication mechanism
     # (see data/architectural-controls.yaml: "JWT Authentication" is an alias
-    # of "Session Token Validation (JWT Based)", domain SessionMgmt → §7.3).
+    # of "Session Token Validation (JWT Based)", domain SessionMgmt → §6.3).
     # All JWT-format / JWT-"authentication" shapes therefore canonicalise to a
-    # SessionMgmt lifecycle primitive — NOT to a §7.2 mechanism string. This
+    # SessionMgmt lifecycle primitive — NOT to a §6.2 mechanism string. This
     # keeps enforce_control_taxonomy consistent with the Phase-8 catalog rule
     # and the auth_method_decomposition contract gate, both of which reject a
-    # JWT/token-format heading under §7.2 (2026-05 reconciliation).
+    # JWT/token-format heading under §6.2 (2026-05 reconciliation).
     #   "JWT RS256 Authentication" → per-request bearer-token validation.
     (
         re.compile(r"^jwt\s+(rs|hs|es|ps)\d{3}\s+authentication$", re.IGNORECASE),
@@ -82,17 +82,17 @@ _NAME_REWRITE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^jwt\s*-?\s*rs\d{3}$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
     (re.compile(r"^jwt\s+library$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
     # Bare "JWT Bearer Authentication" / "JWT Authentication" left over from an
-    # older catalog: also a validation primitive, not a §7.2 mechanism.
+    # older catalog: also a validation primitive, not a §6.2 mechanism.
     (re.compile(r"^jwt\s+bearer\s+authentication$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
     (re.compile(r"^jwt\s+authentication$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
     # Token-LIFECYCLE shapes without an explicit alg (the RS/HS/ES/PS-qualified
     # forms are handled above). Stage 1 emits bare "JWT Token Issuance",
     # "JWT Issuance", "JWT Token Signing", "JWT Token Verification/Validation"
-    # and parks them in §7.2 IAM. They are session-token primitives, not §7.2
+    # and parks them in §6.2 IAM. They are session-token primitives, not §6.2
     # mechanisms — canonicalise to the SessionMgmt lifecycle name so the
-    # session_primitive_reroute (`^session token`) moves them to §7.3 and the
+    # session_primitive_reroute (`^session token`) moves them to §6.3 and the
     # scaffold emits a contract-clean heading instead of the forbidden
-    # `#### 7.2.N JWT Token Issuance` (juice-shop 2026-06 §7.2 REPAIR trigger).
+    # `#### 6.2.N JWT Token Issuance` (juice-shop 2026-06 §6.2 REPAIR trigger).
     (
         re.compile(r"^jwt(\s+token)?\s+(issuance|generation)(\s+and\s+(verification|validation))?$", re.IGNORECASE),
         "Session Token Issuance (JWT Based)",
@@ -115,14 +115,14 @@ def _canonicalize_name(name: str) -> str | None:
         return None
     # Stage 1 routinely appends a `(library / tech)` qualifier to the control
     # name (e.g. ``JWT Authentication (express-jwt + jsonwebtoken)``,
-    # ``Multi-Factor Authentication (TOTP via otplib)``). The §7.2 scaffold
+    # ``Multi-Factor Authentication (TOTP via otplib)``). The §6.2 scaffold
     # renders the heading from `_friendly_subcontrol_title`, which STRIPS that
     # qualifier — so the heading the auth_method_decomposition gate sees is the
     # bare mechanism (``JWT Authentication``). The anchored rewrite rules below
     # must therefore match against the same qualifier-stripped form, otherwise a
     # real-world name like ``JWT Authentication (express-jwt + jsonwebtoken)``
-    # slips past every rule and the scaffold emits a forbidden §7.2 heading
-    # (juice-shop 2026-06-01 §7.2 repair loop).
+    # slips past every rule and the scaffold emits a forbidden §6.2 heading
+    # (juice-shop 2026-06-01 §6.2 repair loop).
     core = re.sub(r"\s*\([^)]*\)\s*$", "", stripped).strip()
     for pattern, canonical in _NAME_REWRITE_RULES:
         if pattern.match(core):
@@ -136,18 +136,18 @@ def _canonicalize_name(name: str) -> str | None:
 # Domain re-routing (RC-6)
 # ---------------------------------------------------------------------------
 #
-# Each §7.X section has a method_whitelist in sections-contract.yaml. We
+# Each §6.X section has a method_whitelist in sections-contract.yaml. We
 # build an inverse index (token → canonical domain string) from a curated
 # subset that covers the cases observed in production drift. The mapping
 # uses the domain STRING that ends up in security_controls[].domain — the
-# §7.X title minus the leading "7.X ".
+# §6.X title minus the leading "7.X ".
 #
 # Token semantics: case-insensitive; multi-word tokens require ALL words
 # present in the control name's token set. Single-word tokens match any
 # control whose token set contains them.
 
 _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
-    # §7.2 IAM — authentication mechanisms + auth-flow rate limiting
+    # §6.2 IAM — authentication mechanisms + auth-flow rate limiting
     (("password", "login"), "Identity and Authentication Controls"),
     (("user", "registration"), "Identity and Authentication Controls"),
     (("oauth",), "Identity and Authentication Controls"),
@@ -170,13 +170,13 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("mutual", "tls"), "Identity and Authentication Controls"),
     (("api", "key"), "Identity and Authentication Controls"),
     (("hmac",), "Identity and Authentication Controls"),
-    # §7.3 Session and Token Controls — token lifecycle + JWT.
-    # JWT is a session-token primitive, NOT a §7.2 authentication mechanism
+    # §6.3 Session and Token Controls — token lifecycle + JWT.
+    # JWT is a session-token primitive, NOT a §6.2 authentication mechanism
     # (data/architectural-controls.yaml: JWT sign/validate → domain SessionMgmt).
     # Any control whose name carries a bare "jwt" token therefore routes to
-    # §7.3, consistent with the Phase-8 catalog rule and the
+    # §6.3, consistent with the Phase-8 catalog rule and the
     # auth_method_decomposition gate which reject JWT/token-format headings
-    # under §7.2 (2026-05 reconciliation).
+    # under §6.2 (2026-05 reconciliation).
     (("session", "token"), "Session and Token Controls"),
     (("token", "storage"), "Session and Token Controls"),
     (("token", "revocation"), "Session and Token Controls"),
@@ -187,48 +187,48 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("session", "token", "signing"), "Session and Token Controls"),
     (("session", "token", "validation"), "Session and Token Controls"),
     (("jwt",), "Session and Token Controls"),
-    # §7.4 Authorization
+    # §6.4 Authorization
     (("role", "based", "access"), "Authorization Controls"),
     (("rbac",), "Authorization Controls"),
     (("abac",), "Authorization Controls"),
     (("authorization", "middleware"), "Authorization Controls"),
     (("isauthorized",), "Authorization Controls"),
-    # §7.5 Query Construction / Data Access
+    # §6.5 Query Construction / Data Access
     (("sequelize",), "Query Construction and Data Access Controls"),
     (("orm",), "Query Construction and Data Access Controls"),
     (("parameterized",), "Query Construction and Data Access Controls"),
     (("prepared", "statement"), "Query Construction and Data Access Controls"),
-    # §7.6 Input Boundary Validation
+    # §6.6 Input Boundary Validation
     (("input", "validation"), "Input Boundary Validation Controls"),
     (("schema", "validation"), "Input Boundary Validation Controls"),
     (("joi",), "Input Boundary Validation Controls"),
     (("zod",), "Input Boundary Validation Controls"),
-    # §7.7 Output Encoding
+    # §6.7 Output Encoding
     (("output", "encoding"), "Output Encoding and Rendering Controls"),
     (("html", "sanitization"), "Output Encoding and Rendering Controls"),
     (("dompurify",), "Output Encoding and Rendering Controls"),
-    # §7.8 Browser / Cross-Origin
+    # §6.8 Browser / Cross-Origin
     (("cors",), "Browser and Cross-Origin Controls"),
     (("csp",), "Browser and Cross-Origin Controls"),
     (("content", "security", "policy"), "Browser and Cross-Origin Controls"),
     (("helmet",), "Browser and Cross-Origin Controls"),
     (("frameguard",), "Browser and Cross-Origin Controls"),
-    # §7.9 Cryptography / Secrets / Data Protection
+    # §6.9 Cryptography / Secrets / Data Protection
     (("encryption",), "Cryptography Secrets and Data Protection"),
     (("secret", "management"), "Cryptography Secrets and Data Protection"),
     (("kms",), "Cryptography Secrets and Data Protection"),
     # Password hashing is a credential-STORAGE / crypto-primitive control, not a
-    # §7.2 authentication MECHANISM. schema_v2 splits it into §7.9 (the §7.2
+    # §6.2 authentication MECHANISM. schema_v2 splits it into §6.9 (the §6.2
     # auth_method_decomposition gate hard-forbids a `#### Password Hashing`
     # heading — it must be folded as a bullet, never a peer mechanism). Stage 1
-    # routinely parks a standalone "Password Hashing" control in §7.2 IAM;
-    # route it to §7.9 so the scaffold emits a contract-clean heading.
+    # routinely parks a standalone "Password Hashing" control in §6.2 IAM;
+    # route it to §6.9 so the scaffold emits a contract-clean heading.
     (("password", "hashing"), "Cryptography Secrets and Data Protection"),
     (("password", "storage"), "Cryptography Secrets and Data Protection"),
-    # §7.10 File Parser / Outbound
+    # §6.10 File Parser / Outbound
     (("file", "upload"), "File Parser and Outbound Request Controls"),
     (("ssrf",), "File Parser and Outbound Request Controls"),
-    # §7.11 Operations / Supply Chain
+    # §6.11 Operations / Supply Chain
     (("distroless",), "Operations Runtime and Supply Chain Controls"),
     (("codeql",), "Operations Runtime and Supply Chain Controls"),
     (("dependabot",), "Operations Runtime and Supply Chain Controls"),
@@ -243,7 +243,7 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("dependency", "updates"), "Operations Runtime and Supply Chain Controls"),
     (("lockfile",), "Operations Runtime and Supply Chain Controls"),
     (("library", "track", "record"), "Operations Runtime and Supply Chain Controls"),
-    # §7.12 Real-time / Not Applicable — ONLY when explicitly real-time
+    # §6.12 Real-time / Not Applicable — ONLY when explicitly real-time
     (("websocket",), "Real-time and Not Applicable Controls"),
     (("socket", "io"), "Real-time and Not Applicable Controls"),
     (("realtime",), "Real-time and Not Applicable Controls"),
@@ -317,7 +317,7 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
             # Only re-route AWAY from "Real-time and Not Applicable Controls"
             # or when the current domain has no relationship to the inferred
             # one. We intentionally do NOT shuffle controls between adjacent
-            # IAM-flavour buckets (§7.2 IAM vs §7.3 Session) — those are
+            # IAM-flavour buckets (§6.2 IAM vs §6.3 Session) — those are
             # legitimately ambiguous and the LLM's choice is often the
             # preferable narrative grouping.
             #
@@ -325,36 +325,36 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
             #   (a) current == "Real-time and Not Applicable Controls" and
             #       the control name has any token match anywhere else.
             #       This is the SC-011 / juice-shop 2026-05 case where Stage 1
-            #       parked auth-rate-limit in §7.12.
+            #       parked auth-rate-limit in §6.12.
             #   (b) current matches NO known domain string AND inferred is a
-            #       known §7.X title — recovers from typo / shorthand domains.
+            #       known §6.X title — recovers from typo / shorthand domains.
             # Normalise the current domain by stripping/adding the trailing
-            # " Controls" suffix — Stage 1 sometimes writes the §7 short
+            # " Controls" suffix — Stage 1 sometimes writes the §6 short
             # form ("Identity and Authentication") and we treat that as
             # equivalent to the canonical form ("Identity and Authentication
-            # Controls"). The §7 title list lives in sections-contract.yaml.
+            # Controls"). The §6 title list lives in sections-contract.yaml.
             known_domain_strings = {d for _, d in _DOMAIN_TOKEN_INDEX}
             current_norm = current_domain
             # Targeted exception to the "don't shuffle IAM↔Session" rule: a
             # control whose canonical name is an UNAMBIGUOUS session-token
-            # primitive ("Session Token …") belongs in §7.3 even when Stage 1
-            # parked it in §7.2 IAM. This is the JWT-reconciliation path — the
-            # name is no longer ambiguous once canonicalised, so the LLM's §7.2
+            # primitive ("Session Token …") belongs in §6.3 even when Stage 1
+            # parked it in §6.2 IAM. This is the JWT-reconciliation path — the
+            # name is no longer ambiguous once canonicalised, so the LLM's §6.2
             # placement is simply wrong, not a defensible narrative choice.
             # Computed BEFORE suffix-normalisation so a short-form IAM domain
             # ("Identity and Authentication") on a session-token control
-            # re-routes to §7.3 in a SINGLE pass (idempotency — otherwise pass 1
+            # re-routes to §6.3 in a SINGLE pass (idempotency — otherwise pass 1
             # would only suffix-normalise and pass 2 would re-route).
             #
             # ANY control carrying a bare "jwt" token also re-routes, even when
             # the name was NOT canonicalised to "Session Token …" (e.g. Stage 1
             # emits "JWT signing key management" / "JWT Issuance and Verification"
             # — neither matches a _canonicalize_name rule, so they kept their
-            # §7.2 IAM domain and tripped the auth_method_decomposition gate on
-            # the juice-shop 2026-06-03 run). JWT is definitionally a §7.3
-            # session-token primitive: the §7.2 method_whitelist excludes it and
+            # §6.2 IAM domain and tripped the auth_method_decomposition gate on
+            # the juice-shop 2026-06-03 run). JWT is definitionally a §6.3
+            # session-token primitive: the §6.2 method_whitelist excludes it and
             # the forbidden_heading_patterns reject every "#### …JWT…" heading,
-            # so a §7.2 placement is never defensible regardless of the exact
+            # so a §6.2 placement is never defensible regardless of the exact
             # name. Token-based (not regex-based) so it survives arbitrary noun
             # suffixes like "key management" / "issuance" / "verification".
             _ctl_name = (c.get("control") or "").strip()
@@ -363,11 +363,11 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
             )
             # Targeted exception #2 (same rationale as session_primitive_reroute):
             # a standalone password-hashing/storage control is an UNAMBIGUOUS
-            # crypto-storage primitive that schema_v2 places in §7.9, and the
-            # §7.2 auth_method_decomposition gate hard-forbids it as a §7.2
-            # heading. So a §7.2 IAM placement by Stage 1 is simply wrong, not a
-            # defensible narrative grouping — re-route it to §7.9 even though
-            # §7.2 IAM is a "known" domain.
+            # crypto-storage primitive that schema_v2 places in §6.9, and the
+            # §6.2 auth_method_decomposition gate hard-forbids it as a §6.2
+            # heading. So a §6.2 IAM placement by Stage 1 is simply wrong, not a
+            # defensible narrative grouping — re-route it to §6.9 even though
+            # §6.2 IAM is a "known" domain.
             crypto_primitive_reroute = (
                 inferred == "Cryptography Secrets and Data Protection"
                 and re.match(
@@ -383,10 +383,10 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                 and not current_norm.endswith(" Controls")
             ):
                 if (current_norm + " Controls") in known_domain_strings:
-                    # Stage 1 wrote a short form of a known §7 domain. Treat
+                    # Stage 1 wrote a short form of a known §6 domain. Treat
                     # this as a stylistic (not semantic) drift — normalise
                     # the suffix in place but do not re-route to a different
-                    # §7 section.
+                    # §6 section.
                     c["domain"] = current_norm + " Controls"
                     domain_changes.append(
                         {

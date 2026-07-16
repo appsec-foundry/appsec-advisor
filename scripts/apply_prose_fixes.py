@@ -24,10 +24,10 @@ Fix classes applied (each is idempotent):
    ``qa_checks.py:check_unfounded_perimeter_claims``.
 
 5. ``controls_covered_anchor_rewrite`` — for every ``**Controls covered:**``
-   line under a ``### 7.x`` section, recompute the link targets from the
+   line under a ``### 6.x`` section, recompute the link targets from the
    ``#### ...`` subsection headings actually present in the rendered MD.
    This closes the LLM-rename slug-drift class entirely (was the source
-   of all 60 §7.x ``toc_closure`` / ``control_subsection_coverage`` issues
+   of all 60 §6.x ``toc_closure`` / ``control_subsection_coverage`` issues
    in the 2026-05 juice-shop run).
 
 6. ``threat_title_path_normalization`` — rewrite the path-token tail of every
@@ -623,15 +623,15 @@ def _apply_perimeter_claim_strip(line: str) -> tuple[str, int]:
 
 
 def _rewrite_controls_covered_anchors(text: str) -> tuple[str, int]:
-    """Recompute every `**Controls covered:**` link target under §7.x.
+    """Recompute every `**Controls covered:**` link target under §6.x.
     Slugs are derived from the actual `#### ...` subsection headings
-    inside the same `### 7.x` block, so any LLM rename of a subsection
+    inside the same `### 6.x` block, so any LLM rename of a subsection
     no longer breaks the link mapping."""
     lines = text.split("\n")
     # Build per-section list of (heading_text, slug).
     sections: dict[str, list[tuple[str, str]]] = {}
     current_sec: str | None = None
-    sec_header_re = re.compile(r"^###\s+(7\.\d+)\s+(.+?)\s*$")
+    sec_header_re = re.compile(r"^###\s+(6\.\d+)\s+(.+?)\s*$")
     sub_header_re = re.compile(r"^####\s+(.+?)\s*$")
     for ln in lines:
         m3 = sec_header_re.match(ln)
@@ -651,8 +651,8 @@ def _rewrite_controls_covered_anchors(text: str) -> tuple[str, int]:
             # actually render — NOT github_slug (the collapsed form). They
             # diverge for any subsection heading carrying ` / `, ` & `, ` — `
             # (e.g. `7.2.3 OAuth / Google Social Login` → GitHub
-            # `#723-oauth--google-social-login`, github_slug
-            # `#723-oauth-google-social-login`), so the Controls-covered bullet
+            # `#623-oauth--google-social-login`, github_slug
+            # `#623-oauth-google-social-login`), so the Controls-covered bullet
             # dangled for every such control. toc_closure verifies with
             # render_slug, so this makes them agree; non-divergent headings are
             # byte-identical under both functions (juice-shop 2026-07-02).
@@ -683,7 +683,7 @@ def _rewrite_controls_covered_anchors(text: str) -> tuple[str, int]:
         # `**Controls covered:**` link line into a header-only line followed by a
         # `- [name](#slug)` list. When that bullet layout is present, the LIST is
         # the canonical rendering — re-inlining the links onto the header here
-        # produced the §7 double-listing the user reported (the inline `· `-joined
+        # produced the §6 double-listing the user reported (the inline `· `-joined
         # links AND the bullet list both showing the same sub-controls). So in
         # the bulletized form we keep the header bare and only refresh the bullet
         # anchors for heading-rename drift; we never re-add inline links.

@@ -355,9 +355,9 @@ def test_required_subsections_entries_are_well_formed(contract):
 
 
 # ---------------------------------------------------------------------------
-# §7 schema v2 drift resolution (2026-05-31).
+# §6 schema v2 drift resolution (2026-05-31).
 # The strong per-auth-method enforcement (per-#### sequenceDiagram) was
-# migrated onto the active schema_v2 rule, and §7.6 gained an approach-first
+# migrated onto the active schema_v2 rule, and §6.6 gained an approach-first
 # rule. These lock that contract shape so the drift cannot silently reopen.
 # ---------------------------------------------------------------------------
 
@@ -367,7 +367,7 @@ def _v2_rules(contract: dict) -> dict:
 
 
 def test_v2_auth_method_decomposition_requires_flow_diagram(contract):
-    rules = _v2_rules(contract)["7.2 Identity and Authentication Controls"]
+    rules = _v2_rules(contract)["6.2 Identity and Authentication Controls"]
     auth = next(r for r in rules if r.get("rule") == "auth_method_decomposition")
     assert auth.get("flow_methods_require_diagram") is True
     assert auth.get("flow_diagram_token") == "sequenceDiagram"
@@ -379,8 +379,8 @@ def test_v2_auth_method_decomposition_requires_flow_diagram(contract):
 
 def test_v2_section76_has_validation_approach_first(contract):
     rules = _v2_rules(contract)
-    key = "7.6 Input Boundary Validation Controls"
-    assert key in rules, "§7.6 validation_approach_first rule key missing"
+    key = "6.6 Input Boundary Validation Controls"
+    assert key in rules, "§6.6 validation_approach_first rule key missing"
     rule = next(r for r in rules[key] if r.get("rule") == "validation_approach_first")
     assert rule.get("enforcement") == "error"
     assert rule.get("approach_heading_patterns"), "no approach_heading_patterns declared"

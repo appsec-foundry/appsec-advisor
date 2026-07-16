@@ -24,7 +24,7 @@ Before authoring, read `agents/shared/prose-style.md` and `agents/shared/prose-s
 
 ## Focused contract loading
 
-The authoritative security-architecture authoring contract is deliberately kept in the legacy full renderer so full/recovery dispatches retain one source of truth. Read **only lines 390–715** of `agents/appsec-threat-renderer.md`; do not load its Management Summary or compose/QA sections. Those lines define the §7 scaffold-fill protocol, required control coverage, prose quality bar, and Mermaid rules.
+The authoritative security-architecture authoring contract is deliberately kept in the legacy full renderer so full/recovery dispatches retain one source of truth. Read **only lines 390–715** of `agents/appsec-threat-renderer.md`; do not load its Management Summary or compose/QA sections. Those lines define the §6 scaffold-fill protocol, required control coverage, prose quality bar, and Mermaid rules.
 
 ## Execution
 

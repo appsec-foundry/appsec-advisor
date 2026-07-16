@@ -249,7 +249,7 @@ checks:
   # in the repo (the GitHub App reads config from a central location).
   # Detection is therefore best-effort — file absence is a "warning"
   # severity, not "missing". emit_sca_practice.py also surfaces this as
-  # the §7.11 "Automated dependency updates" control row.
+  # the §6.11 "Automated dependency updates" control row.
 
   - id: IAC-033
     name: "Renovate config present (file-mode detection)"

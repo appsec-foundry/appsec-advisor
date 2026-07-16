@@ -222,24 +222,20 @@ def test_marker_lifecycle_section_is_single_source(skill_impl_text, heading):
     )
 
 
-def test_display_renumber_is_wired_and_persists_section6(skill_impl_text):
-    """The ONE sanctioned last-mile mutator is `renumber_sections_display.py`:
-    it relabels §7→§6 so the persisted `threat-model.md` (and every derived
-    deliverable) shows contiguous §1–§10. The §7 document is preserved as a
-    mirror at `.appsec-cache/threat-model.canonical7.md` for the next run's §7
-    carry-forward + qa_checks contract matching — but the primary
-    `threat-model.md` is NOT restored to §7 (it stays §6, the reader-facing form).
+def test_no_display_renumber_pass_native_contiguous_numbering(skill_impl_text):
+    """Numbering is native-contiguous since the 2026-07-15 reorder (§6 Security
+    Architecture, §7 Weakness Register, §8 Findings, …). The old display-only
+    last-mile mutator `renumber_sections_display.py` and its
+    `.appsec-cache/threat-model.canonical7.md` mirror were removed — the contract
+    now owns contiguous numbering, so no post-QA renumber pass is wired.
 
-    No OTHER post-QA report mutator may be wired (they would silently change the
-    QA-clean report content), and the gray-ramp presentation remains owned by
-    `qa_checks.py autofix`."""
-    # The display renumber IS wired, and the §7 mirror is kept under .appsec-cache/.
-    assert "renumber_sections_display.py" in skill_impl_text
-    assert ".appsec-cache/threat-model.canonical7.md" in skill_impl_text
-    # The persisted threat-model.md must NOT be restored back to §7 (the old
-    # design). If a restore reappears, the reader-facing file would revert to §7.
-    assert 'mv -f "$OUTPUT_DIR/.threat-model.canonical7.md" "$OUTPUT_DIR/threat-model.md"' not in skill_impl_text
-    # No other content-mutating post-QA passes.
+    No content-mutating post-QA report mutator may be wired (they would silently
+    change the QA-clean report content), and the gray-ramp presentation remains
+    owned by `qa_checks.py autofix`."""
+    # The obsolete display-renumber pass and its §7 mirror must NOT be wired.
+    assert "renumber_sections_display.py" not in skill_impl_text
+    assert "threat-model.canonical7.md" not in skill_impl_text
+    # No content-mutating post-QA passes.
     assert "style_priority_circles.py" not in skill_impl_text
     assert "`qa_checks.py autofix` owns the final presentation-only gray ramp" in skill_impl_text
 

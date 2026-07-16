@@ -189,7 +189,7 @@ class TestOpReplaceString:
     def test_whitespace_mismatch_fuzzy_hits(self):
         # Fragment has a <br/> + collapsed spaces where the plan's `find`
         # used single literal spaces — exact match fails, fuzzy match wins.
-        # This is the §7.1 crypto-row scenario (rendered MD vs fragment source).
+        # This is the §6.1 crypto-row scenario (rendered MD vs fragment source).
         text = "| [Crypto](#79-x)<br/>  row anchor |"
         out = acr._op_replace_string(
             text,
@@ -436,16 +436,16 @@ class TestCli:
 
 class TestHeadingRenameCascade:
     """RC-2 — H4 rename must cascade to all mechanical references:
-    anchor tag, `**Controls covered:**` link, §7.1 overview-table row."""
+    anchor tag, `**Controls covered:**` link, §6.1 overview-table row."""
 
     _FRAGMENT = (
-        "### 7.1 Security Control Overview\n"
+        "### 6.1 Security Control Overview\n"
         "\n"
         "| Control category | Verdict | Main reason |\n"
         "|---|---|---|\n"
         "| [IAM](#72-iam) | 🟠 Weak | catalogued (e.g. JWT RS256 Authentication). |\n"
         "\n"
-        "### 7.2 Identity and Authentication Controls\n"
+        "### 6.2 Identity and Authentication Controls\n"
         "\n"
         "**Controls covered:** [JWT RS256 Authentication](#jwt-rs256-authentication).\n"
         "\n"
@@ -453,7 +453,7 @@ class TestHeadingRenameCascade:
         "\n"
         '<a id="jwt-rs256-authentication"></a>\n'
         "\n"
-        "#### 7.2.1 JWT RS256 Authentication\n"
+        "#### 6.2.1 JWT RS256 Authentication\n"
         "\n"
         "**Security assessment**\n"
         "\n"
@@ -485,14 +485,14 @@ class TestHeadingRenameCascade:
         assert rc == 0
         result = frag.read_text()
         # 1. H4 heading renamed
-        assert "#### 7.2.1 JWT Bearer Authentication" in result
+        assert "#### 6.2.1 JWT Bearer Authentication" in result
         assert "JWT RS256 Authentication" not in result.split("**Implemented controls:**")[0]
         # 2. anchor tag updated
         assert '<a id="jwt-bearer-authentication"></a>' in result
         assert '<a id="jwt-rs256-authentication"></a>' not in result
         # 3. `**Controls covered:**` link cascade
         assert "[JWT Bearer Authentication](#jwt-bearer-authentication)" in result
-        # 4. §7.1 overview-table row mention
+        # 4. §6.1 overview-table row mention
         assert "(e.g. JWT Bearer Authentication)" in result
         # narrative prose unchanged — RS256 in `**Implemented controls:**` is
         # a real algorithm name, not a mechanism heading.
@@ -531,7 +531,7 @@ class TestHeadingRenameCascade:
     def test_cascade_missing_heading_raises(self, tmp_path):
         out = _setup_output_dir(tmp_path)
         # Fragment has no `#### N.M.X JWT RS256 Authentication` heading.
-        _write_fragment(out, "security-architecture.md", "### 7.2 IAM\n\nSome prose without the target heading.\n")
+        _write_fragment(out, "security-architecture.md", "### 6.2 IAM\n\nSome prose without the target heading.\n")
         (out / ".qa-content-repair-plan.json").write_text(json.dumps(self._make_plan()))
         rc = acr.main([str(out)])
         # action skipped → exit code 1

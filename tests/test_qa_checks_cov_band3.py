@@ -141,7 +141,7 @@ def test_auth_v2_no_subsections_noop():
         heading_level=4,
         method_whitelist=["password"],
         forbidden_heading_patterns=[],
-        section_label="7.2 Auth",
+        section_label="6.2 Auth",
     )
     assert rep.ok == 1
     assert rep.issues == []
@@ -149,56 +149,56 @@ def test_auth_v2_no_subsections_noop():
 
 def test_auth_v2_invalid_forbidden_pattern():
     rep = qa.Report("x")
-    body = "#### 7.2.1 Password Login\nbody\n"
+    body = "#### 6.2.1 Password Login\nbody\n"
     qa._run_auth_v2_structural_checks(
         report=rep,
         iam_body=body,
         heading_level=4,
         method_whitelist=["password login"],
         forbidden_heading_patterns=["(unclosed"],
-        section_label="7.2 Auth",
+        section_label="6.2 Auth",
     )
     assert any("invalid `forbidden_heading_patterns`" in i for i in rep.issues)
 
 
 def test_auth_v2_forbidden_pattern_match():
     rep = qa.Report("x")
-    body = "#### 7.2.2 Password Hashing\nbody\n"
+    body = "#### 6.2.2 Password Hashing\nbody\n"
     qa._run_auth_v2_structural_checks(
         report=rep,
         iam_body=body,
         heading_level=4,
         method_whitelist=["password login"],
         forbidden_heading_patterns=[r"Password Hashing"],
-        section_label="7.2 Auth",
+        section_label="6.2 Auth",
     )
     assert any("forbidden" in i.lower() for i in rep.issues)
 
 
 def test_auth_v2_not_recognized_mechanism():
     rep = qa.Report("x")
-    body = "#### 7.2.3 Some Random Thing\nbody\n"
+    body = "#### 6.2.3 Some Random Thing\nbody\n"
     qa._run_auth_v2_structural_checks(
         report=rep,
         iam_body=body,
         heading_level=4,
         method_whitelist=["password login", "oauth"],
         forbidden_heading_patterns=[],
-        section_label="7.2 Auth",
+        section_label="6.2 Auth",
     )
     assert any("not a recognized authentication" in i for i in rep.issues)
 
 
 def test_auth_v2_flow_method_requires_diagram():
     rep = qa.Report("x")
-    body = "#### 7.2.1 Password Login\nbody without diagram\n"
+    body = "#### 6.2.1 Password Login\nbody without diagram\n"
     qa._run_auth_v2_structural_checks(
         report=rep,
         iam_body=body,
         heading_level=4,
         method_whitelist=["password login"],
         forbidden_heading_patterns=[],
-        section_label="7.2 Auth",
+        section_label="6.2 Auth",
         flow_methods_require_diagram=True,
         flow_method_tokens=["password login"],
         flow_diagram_token="sequenceDiagram",
@@ -208,14 +208,14 @@ def test_auth_v2_flow_method_requires_diagram():
 
 def test_auth_v2_flow_method_with_diagram_ok():
     rep = qa.Report("x")
-    body = "#### 7.2.1 Password Login\n```mermaid\nsequenceDiagram\n```\n"
+    body = "#### 6.2.1 Password Login\n```mermaid\nsequenceDiagram\n```\n"
     qa._run_auth_v2_structural_checks(
         report=rep,
         iam_body=body,
         heading_level=4,
         method_whitelist=["password login"],
         forbidden_heading_patterns=[],
-        section_label="7.2 Auth",
+        section_label="6.2 Auth",
         flow_methods_require_diagram=True,
         flow_method_tokens=["password login"],
     )
@@ -229,7 +229,7 @@ def test_auth_v2_flow_method_with_diagram_ok():
 
 def test_auth_structural_forbidden_attack_shape():
     rep = qa.Report("x")
-    subs = {"7.3.1 JWT Forgery Flow": "body"}
+    subs = {"6.3.1 JWT Forgery Flow": "body"}
     qa._run_auth_structural_checks(
         report=rep,
         subsections=subs,
@@ -244,7 +244,7 @@ def test_auth_structural_forbidden_attack_shape():
 
 def test_auth_structural_invalid_forbidden_pattern():
     rep = qa.Report("x")
-    subs = {"7.3.1 Login": "body"}
+    subs = {"6.3.1 Login": "body"}
     qa._run_auth_structural_checks(
         report=rep,
         subsections=subs,
@@ -259,7 +259,7 @@ def test_auth_structural_invalid_forbidden_pattern():
 
 def test_auth_structural_heading_pattern_mismatch():
     rep = qa.Report("x")
-    subs = {"7.3.1 Wrong": "body"}
+    subs = {"6.3.1 Wrong": "body"}
     qa._run_auth_structural_checks(
         report=rep,
         subsections=subs,
@@ -273,7 +273,7 @@ def test_auth_structural_heading_pattern_mismatch():
 
 def test_auth_structural_invalid_heading_pattern():
     rep = qa.Report("x")
-    subs = {"7.3.1 Login Flow": "body"}
+    subs = {"6.3.1 Login Flow": "body"}
     qa._run_auth_structural_checks(
         report=rep,
         subsections=subs,
@@ -287,7 +287,7 @@ def test_auth_structural_invalid_heading_pattern():
 
 def test_auth_structural_missing_trailer():
     rep = qa.Report("x")
-    subs = {"7.3.1 Login Flow": "no trailer"}
+    subs = {"6.3.1 Login Flow": "no trailer"}
     qa._run_auth_structural_checks(
         report=rep,
         subsections=subs,
@@ -301,7 +301,7 @@ def test_auth_structural_missing_trailer():
 
 def test_auth_structural_required_body_elem_missing_and_sentinels():
     rep = qa.Report("x")
-    subs = {"7.3.1 Login Flow": "body without needle"}
+    subs = {"6.3.1 Login Flow": "body without needle"}
     qa._run_auth_structural_checks(
         report=rep,
         subsections=subs,
@@ -943,7 +943,7 @@ sections:
       "Identity & Access":
         - rule: recon_iam_bridge
           enforcement: error
-          section_title: "7.2 Identity & Access"
+          section_title: "6.2 Identity & Access"
           recon_signal_patterns: ["totpSecret", "routes/2fa"]
           required_iam_tokens: ["totp", "2fa", "mfa"]
 """
@@ -973,7 +973,7 @@ def test_recon_iam_bridge_signal_missing_token_error(tmp_path):
     md = _md(
         tmp_path,
         """\
-        ### 7.2 Identity & Access
+        ### 6.2 Identity & Access
 
         Password login only, no second factor here.
 
@@ -990,7 +990,7 @@ def test_recon_iam_bridge_signal_with_token_ok(tmp_path):
     md = _md(
         tmp_path,
         """\
-        ### 7.2 Identity & Access
+        ### 6.2 Identity & Access
 
         The app supports TOTP-based 2FA via otplib.
 
@@ -1005,7 +1005,7 @@ def test_recon_iam_bridge_signal_with_token_ok(tmp_path):
 
 def test_recon_iam_bridge_warning_enforcement(tmp_path):
     contract = _BRIDGE_CONTRACT.replace("enforcement: error", "enforcement: warning")
-    md = _md(tmp_path, "### 7.2 Identity & Access\n\nno factor\n\n## 8. End\n")
+    md = _md(tmp_path, "### 6.2 Identity & Access\n\nno factor\n\n## 8. End\n")
     (tmp_path / ".recon-summary.md").write_text("totpSecret\n")
     c = _contract(tmp_path, contract)
     rep = qa.check_recon_iam_bridge(md, tmp_path, c)
@@ -1014,7 +1014,7 @@ def test_recon_iam_bridge_warning_enforcement(tmp_path):
 
 
 def test_recon_iam_bridge_no_signal_skips(tmp_path):
-    md = _md(tmp_path, "### 7.2 Identity & Access\n\nno factor\n\n## 8. End\n")
+    md = _md(tmp_path, "### 6.2 Identity & Access\n\nno factor\n\n## 8. End\n")
     (tmp_path / ".recon-summary.md").write_text("nothing relevant\n")
     c = _contract(tmp_path, _BRIDGE_CONTRACT)
     rep = qa.check_recon_iam_bridge(md, tmp_path, c)
@@ -1047,7 +1047,7 @@ def test_falls_short_flags_dense_paragraph(tmp_path):
     md = _md(
         tmp_path,
         """\
-        ### 7.1 Foo
+        ### 6.1 Foo
 
         **Where it falls short.** The issues [F-001], [F-002] and [F-003] all matter here.
 
@@ -1064,7 +1064,7 @@ def test_falls_short_bullets_ok(tmp_path):
     md = _md(
         tmp_path,
         """\
-        ### 7.1 Foo
+        ### 6.1 Foo
 
         **Where it falls short.**
 
@@ -1117,7 +1117,7 @@ def test_paragraph_density_flags(tmp_path):
     md = _md(
         tmp_path,
         """\
-        ### 7.1 Foo
+        ### 6.1 Foo
 
         The findings [F-001], [M-002] and [T-003] together create exposure here.
 
@@ -1133,7 +1133,7 @@ def test_paragraph_density_bullets_and_tables_ok(tmp_path):
     md = _md(
         tmp_path,
         """\
-        ### 7.1 Foo
+        ### 6.1 Foo
 
         | a | b |
         | [F-001] | [F-002] [F-003] |
@@ -1152,7 +1152,7 @@ def test_paragraph_density_error_enforcement(tmp_path):
     contract = _PD_CONTRACT.replace("enforcement: warning", "enforcement: error")
     md = _md(
         tmp_path,
-        "### 7.1 Foo\n\nThe trio [F-001], [F-002], [F-003] combine here.\n\n## 8. End\n",
+        "### 6.1 Foo\n\nThe trio [F-001], [F-002], [F-003] combine here.\n\n## 8. End\n",
     )
     c = _contract(tmp_path, contract)
     rep = qa.check_paragraph_density(md, c)
@@ -1281,10 +1281,10 @@ def test_first_prose_line():
 
 
 def test_iter_sec7_bodies():
-    text = "### 7.1 Foo\nbody1\n### 7.2 Bar\nbody2\n## 8. End\n"
+    text = "### 6.1 Foo\nbody1\n### 6.2 Bar\nbody2\n## 8. End\n"
     out = list(qa._iter_sec7_bodies(text))
-    assert out[0][0] == "7.1" and "body1" in out[0][2]
-    assert out[1][0] == "7.2" and "body2" in out[1][2]
+    assert out[0][0] == "6.1" and "body1" in out[0][2]
+    assert out[1][0] == "6.2" and "body2" in out[1][2]
     assert "End" not in out[1][2]
 
 
@@ -1292,7 +1292,7 @@ def test_architectural_prose_definitional_and_banned(tmp_path):
     md = _md(
         tmp_path,
         """\
-        ### 7.1 Authentication
+        ### 6.1 Authentication
 
         Authentication is the process by which users prove identity. This is a
         comprehensive security posture for the system.
@@ -1310,7 +1310,7 @@ def test_architectural_prose_formulaic_openers(tmp_path):
     blocks = "\n\n".join(
         f"#### {i} Control\n\nThe application handles request number {i} carefully.\n" for i in range(3)
     )
-    md = _md(tmp_path, "### 7.1 Foo\n\n" + blocks + "\n## 8. End\n")
+    md = _md(tmp_path, "### 6.1 Foo\n\n" + blocks + "\n## 8. End\n")
     rep = qa.check_architectural_prose(md)
     assert any("formulaic" in w for w in rep.warnings)
 
@@ -1319,7 +1319,7 @@ def test_architectural_prose_clean(tmp_path):
     md = _md(
         tmp_path,
         """\
-        ### 7.1 Authentication
+        ### 6.1 Authentication
 
         The login query at routes/login.ts uses Sequelize parameterization.
 
@@ -1653,7 +1653,7 @@ def test_paragraph_density_excludes_falls_short(tmp_path):
     md = _md(
         tmp_path,
         """\
-        ### 7.1 Foo
+        ### 6.1 Foo
 
         **Where it falls short.** The trio [F-001], [F-002], [F-003] all here.
 

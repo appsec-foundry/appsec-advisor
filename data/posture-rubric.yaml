@@ -4,7 +4,7 @@
 # Fuses, per security principle (architectural_theme), the weakness register +
 # confirmed findings + implementation strategy into a scored VIOLATED / WEAK /
 # ADEQUATE verdict. The rubric is versioned + calibrated (not inline magic
-# numbers) per proposal §7.4. Consumed by scripts/build_posture_verdict.py.
+# numbers) per proposal §6.4. Consumed by scripts/build_posture_verdict.py.
 
 version: 1
 

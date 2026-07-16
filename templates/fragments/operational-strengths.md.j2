@@ -10,7 +10,7 @@
     intentionally excluded — a control that is bypassed by Critical/High
     findings in its own remit is not an operational strength and surfacing
     it under this heading was semantically wrong. The demoted clusters
-    remain in §7 Security Architecture where the section name matches.
+    remain in §6 Security Architecture where the section name matches.
 
     When the filter wipes the table entirely (every cluster demoted), the
     renderer passes an `empty_banner` italic-paragraph in lieu of an empty
@@ -34,7 +34,7 @@
 {% if rows -%}
 {% if show_intro -%}
 {% if section7_present -%}
-Operational controls rated Adequate or Partial — grouped into broad clusters (full per-control breakdown in [§7](#7-security-architecture)). Clusters demoted to Weak by open Critical/High findings appear in [§7](#7-security-architecture) instead, not here.
+Operational controls rated Adequate or Partial — grouped into broad clusters (full per-control breakdown in [§6](#6-security-architecture)). Clusters demoted to Weak by open Critical/High findings appear in [§6](#6-security-architecture) instead, not here.
 {%- else -%}
 Operational controls rated Adequate or Partial — grouped into broad clusters. Clusters demoted to Weak by open Critical/High findings are excluded here.
 {%- endif %}
@@ -47,7 +47,7 @@ Operational controls rated Adequate or Partial — grouped into broad clusters. 
 
 {% if overflow_count > 0 -%}
 {% if section7_present -%}
-_+{{ overflow_count }} additional control(s) catalogued in [Section 7](#7-security-architecture)._
+_+{{ overflow_count }} additional control(s) catalogued in [Section 6](#6-security-architecture)._
 {%- else -%}
 _+{{ overflow_count }} additional control(s) catalogued in `threat-model.yaml → security_controls[]`._
 {%- endif %}

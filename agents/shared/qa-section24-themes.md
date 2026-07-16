@@ -1,6 +1,6 @@
 # QA Section 2.4 — Security Architecture Assessment
 
-Referenced by `appsec-qa-reviewer` Check 7b. The deterministic helpers `check_contract` (section presence + heading order), `check_paragraph_density` (prose length), `check_diagram_compactness` (node count + label width + threat-traceability), and the §7 narrative checks own the bulk of validation. This file documents only the residual semantic rules.
+Referenced by `appsec-qa-reviewer` Check 7b. The deterministic helpers `check_contract` (section presence + heading order), `check_paragraph_density` (prose length), `check_diagram_compactness` (node count + label width + threat-traceability), and the §6 narrative checks own the bulk of validation. This file documents only the residual semantic rules.
 
 ## Canonical layout — nine numbered H4 sub-sections
 
