@@ -15,9 +15,15 @@ Six of the eight REQUIRED_FRAGMENTS are pure structural projections of
 (``use-cases.md`` was retired in 2026-05; the §6 numbering gap is intentional.)
 
 Pre-generating these takes 6 LLM Write tool-calls off the orchestrator's
-Phase-11 budget. The remaining REQUIRED_FRAGMENTS are LLM-authored:
+Phase-11 budget. The remaining REQUIRED_FRAGMENTS are normally LLM-authored
+by the Stage-2 renderer, but three of them now carry a deterministic
+backstop generator here so a renderer cutoff cannot leave a MANDATORY
+fragment missing (idempotent — a richer LLM version already on disk wins):
 
-  8. ``ms-verdict.json``          — qualitative verdict
+  +  ``ms-verdict.json``          — Management-Summary verdict (mandatory; compose
+                                    HARD-fails without it → gen_verdict is its floor)
+  +  ``ms-ai-exposure.json``      — AI/LLM Exposure callout (self-gates: no LLM surface → none)
+  +  ``ms-critical-attack-tree.json`` — Critical Attack Tree (self-gates: <2 Criticals → none)
   +  ``attack-walkthroughs.md``   — narrative sequence diagrams
 
 Idempotency
@@ -5820,6 +5826,210 @@ def gen_critical_attack_tree(yaml_data: dict):
 
 
 # ---------------------------------------------------------------------------
+# Management Summary Verdict (`ms-verdict.json`)
+# ---------------------------------------------------------------------------
+# Root cause it fixes (juice-shop 2026-07-16): ms-verdict.json is the ONLY
+# MANDATORY Management-Summary fragment without a deterministic backstop — unlike
+# its siblings ms-ai-exposure.json and ms-critical-attack-tree.json, which both
+# got gen_* generators to remove the Stage-2-renderer dependency. It is also the
+# most fragile: compose HARD-fails (`RENDER_FAILED: ms-verdict.json not found`)
+# when it is absent, whereas the siblings self-gate to "render nothing". So a
+# single abnormal MS-renderer cutoff (observed: SESSION_STOP stop_reason=unknown
+# mid-exploration, before the agent's first Write) left the fragment missing and
+# forced a full renderer re-dispatch. This backstop derives a schema-valid
+# verdict from threat-model.yaml so compose always has a floor. Idempotent (no
+# --force): a richer LLM-authored verdict already on disk is preserved — this
+# only fires when the fragment is genuinely missing.
+#
+# The prose is deliberately generic and technology-free: verdict.schema.json
+# forbids finding IDs (`[FT]-\d{3,4}`) in opening/bullets_intro/closing/titles/
+# bodies and its field descriptions forbid acronyms, CWE numbers, file paths,
+# and attack-class names. A deterministic generator cannot match the LLM's
+# per-repo eloquence, so it aims only for a valid, honest floor.
+
+# Posture → (opening, closing) templates. Management-altitude prose only.
+_VERDICT_OPENING = {
+    "red": (
+        "Not production-ready: this assessment confirmed weaknesses that let "
+        "attackers reach customer data and core application functions without the "
+        "safeguards a live system requires. The scenarios below summarise the most "
+        "serious business exposures."
+    ),
+    "yellow": (
+        "Production-ready with reservations: the assessment found weaknesses that "
+        "should be resolved before launch, though none hand an attacker unrestricted "
+        "access on their own. The scenarios below outline the main business risks to "
+        "address."
+    ),
+    "green": (
+        "Production-ready: the assessment found no weakness that gives an attacker "
+        "meaningful access to customer data or core functions. The scenarios below "
+        "note residual risks worth monitoring."
+    ),
+}
+_VERDICT_CLOSING = {
+    "red": (
+        "Prioritising the fixes behind the scenarios above will close the most "
+        "dangerous exposures before they can be used against customers."
+    ),
+    "yellow": (
+        "Resolving the items above before launch will bring the application to a "
+        "solid security baseline."
+    ),
+    "green": (
+        "Maintaining the current controls and monitoring the residual risks will "
+        "keep the application on a sound footing."
+    ),
+}
+
+# STRIDE class → (business-outcome title, business-outcome body). Deliberately
+# generic and technology-free so the deterministic fallback stays within the
+# verdict schema's management-language constraints. Canonical STRIDE order.
+_VERDICT_STRIDE_SCENARIOS: list[tuple[tuple[str, ...], str, str]] = [
+    (
+        ("spoof",),
+        "Accounts accessed by impostors",
+        "An attacker can impersonate legitimate customers or staff and act with "
+        "their permissions, because the application does not reliably confirm who "
+        "is making a request.",
+    ),
+    (
+        ("tamper", "inject"),
+        "Business data read or altered",
+        "Crafted input can read or change records a user should not be able to "
+        "touch, putting the accuracy and confidentiality of stored data at risk.",
+    ),
+    (
+        ("repudiat",),
+        "Malicious actions cannot be traced",
+        "Important events are not reliably recorded, so harmful or mistaken actions "
+        "cannot be attributed or investigated after the fact.",
+    ),
+    (
+        ("information", "disclos", "info"),
+        "Confidential information exposed",
+        "Sensitive data such as customer records or internal secrets can be read by "
+        "people who should not have access to it.",
+    ),
+    (
+        ("denial", "dos", "availab"),
+        "Service taken offline",
+        "An attacker can disrupt or exhaust the service so that legitimate customers "
+        "are unable to use it.",
+    ),
+    (
+        ("elevation", "privilege", "eop", "rce", "execution"),
+        "Full system takeover",
+        "An attacker can gain administrator-level control or run their own commands "
+        "on the server, taking command of the application and the data it holds.",
+    ),
+]
+_VERDICT_GENERIC_SCENARIO = (
+    "Protections bypassed",
+    "Weaknesses let an attacker sidestep protections the application relies on to "
+    "keep customer data and core functions safe.",
+)
+_VERDICT_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+
+def _verdict_scenario_for_stride(stride: str) -> tuple[str, str]:
+    """Map a threat's STRIDE class to its (title, body) business scenario. Falls
+    back to a generic scenario for unknown/missing STRIDE."""
+    s = (stride or "").strip().lower()
+    for needles, title, body in _VERDICT_STRIDE_SCENARIOS:
+        if any(n in s for n in needles):
+            return title, body
+    return _VERDICT_GENERIC_SCENARIO
+
+
+def gen_verdict(yaml_data: dict):
+    """Deterministically emit a schema-valid ms-verdict.json floor.
+
+    Posture (severity) is a conservative reading of the risk distribution: any
+    Critical → red, else any High → yellow, else green. Bullets are one
+    business-language scenario per STRIDE class present, ordered by the severity
+    of the finding that first surfaced the class (so the exec summary reads
+    worst-first). Returns ``None`` only when no citable finding exists (a
+    degenerate model where the verdict has nothing to reference); compose's own
+    empty-model handling then applies.
+    """
+    threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict) and t.get("id")]
+    if not threats:
+        return None
+
+    def _sev(t: dict) -> str:
+        return str(t.get("risk") or t.get("severity") or "").strip().lower()
+
+    sevs = {_sev(t) for t in threats}
+    if "critical" in sevs:
+        severity = "red"
+    elif "high" in sevs:
+        severity = "yellow"
+    else:
+        severity = "green"
+
+    # Severity-then-numeric-id ordering so the highest-impact scenario leads.
+    def _id_key(t: dict) -> tuple:
+        m = re.search(r"(\d+)", str(t.get("id") or ""))
+        return (_VERDICT_SEV_RANK.get(_sev(t), 5), int(m.group(1)) if m else 1_000_000, str(t.get("id")))
+
+    ranked = sorted(threats, key=_id_key)
+
+    # Group by scenario (dict preserves first-seen = severity order). Each bullet
+    # collects up to 5 supporting refs (schema maxItems).
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for t in ranked:
+        tid = str(t.get("id") or "").strip()
+        if not re.match(r"^[FT]-\d{3,4}$", tid):
+            continue
+        scenario = _verdict_scenario_for_stride(t.get("stride"))
+        refs = grouped.setdefault(scenario, [])
+        if tid not in refs and len(refs) < 5:
+            refs.append(tid)
+
+    bullets: list[dict] = []
+    for (title, body), refs in grouped.items():
+        if not refs:
+            continue
+        bullets.append({"title": title, "body": body, "refs": refs})
+        if len(bullets) >= 6:  # schema max 8; keep the exec summary tight
+            break
+
+    # Schema requires >= 2 bullets. If only one scenario surfaced, synthesise a
+    # distinct second bullet from the top citable finding so the floor is valid.
+    if len(bullets) < 2:
+        top_ref = next(
+            (str(t.get("id")).strip() for t in ranked if re.match(r"^[FT]-\d{3,4}$", str(t.get("id") or "").strip())),
+            None,
+        )
+        if top_ref is None:
+            return None  # no citable finding → cannot build a valid verdict
+        if not bullets:
+            gt, gb = _VERDICT_GENERIC_SCENARIO
+            bullets.append({"title": gt, "body": gb, "refs": [top_ref]})
+        bullets.append(
+            {
+                "title": "Layered defences missing",
+                "body": (
+                    "Several safeguards a live system depends on are absent or "
+                    "ineffective, leaving customer data and core functions exposed "
+                    "if a single control is bypassed."
+                ),
+                "refs": [top_ref],
+            }
+        )
+
+    payload = {
+        "severity": severity,
+        "opening": _VERDICT_OPENING[severity],
+        "bullets_intro": "The most serious business exposures identified, in order of impact:",
+        "bullets": bullets[:8],
+        "closing": _VERDICT_CLOSING[severity],
+    }
+    return json.dumps(payload, indent=2) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -5846,6 +6056,13 @@ GENERATORS = {
     # removes the Stage-2 renderer dependency that left the MANDATORY section
     # empty at quick depth (compose soft-warn vs section_integrity hard-fail).
     "ms-critical-attack-tree.json": gen_critical_attack_tree,
+    # ms-verdict.json — deterministic Management-Summary verdict FLOOR. Unlike
+    # its two siblings above this fragment is MANDATORY and compose HARD-fails
+    # without it, so an abnormal MS-renderer cutoff before the first Write used
+    # to force a full re-dispatch. Idempotent (no --force): a richer LLM verdict
+    # already on disk is preserved; this only fills a genuine gap. Returns None
+    # only for a threat-free model (nothing to reference).
+    "ms-verdict.json": gen_verdict,
     # Kept for one release as a deprecated transitional artifact — the
     # legacy renderer prompt has a fallback path that reads it. Removed in
     # the release after the deterministic flip lands.

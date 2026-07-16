@@ -508,6 +508,114 @@ class TestCriticalAttackTree:
         assert caps == ["CAP_TAMPER", "CAP_INFO", "CAP_EOP"]
 
 
+class TestVerdict:
+    """Deterministic ms-verdict.json FLOOR generator (gen_verdict). Root-cause
+    fix for the juice-shop 2026-07-16 gap: ms-verdict.json is the only MANDATORY
+    Management-Summary fragment with no deterministic backstop, and compose
+    HARD-fails without it — so an abnormal MS-renderer cutoff (SESSION_STOP
+    stop_reason=unknown before its first Write) forced a full re-dispatch.
+    """
+
+    _YAML = {
+        "threats": [
+            {"id": "T-001", "title": "SQL Injection — routes/login.ts:34", "risk": "Critical", "stride": "Tampering"},
+            {"id": "T-002", "title": "JWT in localStorage — interceptor.ts:13", "risk": "Critical", "stride": "Information Disclosure"},
+            {"id": "T-003", "title": "RCE — routes/b2bOrder.ts:23", "risk": "Critical", "stride": "Elevation of Privilege"},
+            {"id": "T-004", "title": "Weak login — routes/login.ts:9", "risk": "High", "stride": "Spoofing"},
+            {"id": "T-005", "title": "No audit log — server.ts:1", "risk": "Medium", "stride": "Repudiation"},
+        ]
+    }
+
+    def _schema(self):
+        return json.loads(
+            (REPO_ROOT / "schemas" / "fragments" / "verdict.schema.json").read_text(encoding="utf-8")
+        )
+
+    def test_output_is_schema_valid(self):
+        import jsonschema
+
+        data = json.loads(pf.gen_verdict(self._YAML))
+        jsonschema.validate(data, self._schema())
+
+    def test_red_posture_when_critical_present(self):
+        data = json.loads(pf.gen_verdict(self._YAML))
+        assert data["severity"] == "red"
+        assert data["opening"].startswith("Not production-ready")
+
+    def test_yellow_posture_when_high_no_critical(self):
+        y = {"threats": [
+            {"id": "T-001", "title": "A — a.ts:1", "risk": "High", "stride": "Spoofing"},
+            {"id": "T-002", "title": "B — b.ts:1", "risk": "Medium", "stride": "Tampering"},
+        ]}
+        data = json.loads(pf.gen_verdict(y))
+        assert data["severity"] == "yellow"
+
+    def test_green_posture_when_no_high_or_critical(self):
+        y = {"threats": [
+            {"id": "T-001", "title": "A — a.ts:1", "risk": "Medium", "stride": "Tampering"},
+            {"id": "T-002", "title": "B — b.ts:1", "risk": "Low", "stride": "Spoofing"},
+        ]}
+        data = json.loads(pf.gen_verdict(y))
+        assert data["severity"] == "green"
+
+    def test_bullets_carry_valid_refs_grouped_by_stride(self):
+        data = json.loads(pf.gen_verdict(self._YAML))
+        # 5 threats across 5 distinct STRIDE classes → 5 scenario bullets.
+        assert len(data["bullets"]) == 5
+        seen_refs = set()
+        for b in data["bullets"]:
+            assert 1 <= len(b["refs"]) <= 5
+            for r in b["refs"]:
+                assert re.match(r"^[FT]-\d{3,4}$", r)
+                seen_refs.add(r)
+        assert {"T-001", "T-002", "T-003", "T-004", "T-005"} <= seen_refs
+
+    def test_worst_severity_scenario_leads(self):
+        # A Critical Tampering finding must surface its scenario before a Medium.
+        data = json.loads(pf.gen_verdict(self._YAML))
+        assert data["bullets"][0]["title"] == "Business data read or altered"
+
+    def test_synthesises_second_bullet_when_single_scenario(self):
+        # One finding → one STRIDE scenario, but the schema needs >=2 bullets.
+        y = {"threats": [{"id": "T-001", "title": "X — a.ts:1", "risk": "Critical", "stride": "Tampering"}]}
+        import jsonschema
+
+        data = json.loads(pf.gen_verdict(y))
+        jsonschema.validate(data, self._schema())
+        assert len(data["bullets"]) == 2
+
+    def test_returns_none_for_threatless_model(self):
+        assert pf.gen_verdict({"threats": []}) is None
+        assert pf.gen_verdict({}) is None
+
+    def test_idempotent_preserves_llm_version(self, tmp_path):
+        # The driver must never overwrite an existing (LLM-authored) verdict.
+        (tmp_path / "threat-model.yaml").write_text(
+            yaml.safe_dump(self._YAML), encoding="utf-8"
+        )
+        frags = tmp_path / ".fragments"
+        frags.mkdir()
+        sentinel = '{"severity":"red","opening":"SENTINEL","bullets":[]}'
+        (frags / "ms-verdict.json").write_text(sentinel, encoding="utf-8")
+        subprocess.run(
+            [sys.executable, str(SCRIPT), str(tmp_path), "--only", "ms-verdict.json"],
+            check=True, capture_output=True, text=True,
+        )
+        assert (frags / "ms-verdict.json").read_text(encoding="utf-8") == sentinel
+
+    def test_backstop_fills_missing_fragment(self, tmp_path):
+        (tmp_path / "threat-model.yaml").write_text(
+            yaml.safe_dump(self._YAML), encoding="utf-8"
+        )
+        (tmp_path / ".fragments").mkdir()
+        subprocess.run(
+            [sys.executable, str(SCRIPT), str(tmp_path), "--only", "ms-verdict.json"],
+            check=True, capture_output=True, text=True,
+        )
+        data = json.loads((tmp_path / ".fragments" / "ms-verdict.json").read_text(encoding="utf-8"))
+        assert data["severity"] == "red"
+
+
 class TestAttackSurface:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
         md = pf.gen_attack_surface(minimal_yaml_data)
@@ -1775,10 +1883,11 @@ class TestCli:
         assert frag_dir.is_dir()
         for name in pf.GENERATORS:
             # Conditional generators are written ONLY when their gate fires,
-            # which the minimal fixture does not trip:
+            # which the minimal (threat-free) fixture does not trip:
             #   • ms-ai-exposure.json     — needs an LLM/AI surface
             #   • ms-critical-attack-tree.json — needs ≥2 Critical findings
-            if name in ("ms-ai-exposure.json", "ms-critical-attack-tree.json"):
+            #   • ms-verdict.json         — needs ≥1 citable threat (fixture has none)
+            if name in ("ms-ai-exposure.json", "ms-critical-attack-tree.json", "ms-verdict.json"):
                 assert not (frag_dir / name).exists(), f"{name} must not be written when its gate is not tripped"
                 continue
             assert (frag_dir / name).is_file(), f"{name} not written"
@@ -1811,10 +1920,10 @@ class TestCli:
         result = _run_cli(str(output_dir), "--force")
         assert result.returncode == 0
         # The conditional generators (ms-ai-exposure.json — no LLM surface;
-        # ms-critical-attack-tree.json — <2 Criticals) are not part of the
-        # written set even with --force, because their gate is not tripped by
-        # the minimal fixture.
-        conditional = {"ms-ai-exposure.json", "ms-critical-attack-tree.json"}
+        # ms-critical-attack-tree.json — <2 Criticals; ms-verdict.json — no
+        # citable threat) are not part of the written set even with --force,
+        # because their gate is not tripped by the minimal (threat-free) fixture.
+        conditional = {"ms-ai-exposure.json", "ms-critical-attack-tree.json", "ms-verdict.json"}
         unconditional = [n for n in pf.GENERATORS if n not in conditional]
         expected = f"wrote {len(unconditional)}"
         assert expected in result.stdout

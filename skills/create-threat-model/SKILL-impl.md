@@ -2914,6 +2914,17 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    if [ "$SKIP_QA" != "true" ] && [ "$DRY_RUN" != "true" ] && [ "$PR_MODE" != "true" ]; then
        COMPOSE_MERMAID_ARG="--defer-mermaid-validation"
    fi
+   # ms-verdict.json floor (juice-shop 2026-07-16). The MS renderer (Agent M)
+   # authors the rich verdict, but a mid-run cutoff (observed: SESSION_STOP
+   # stop_reason=unknown while it was still exploring, before its first Write)
+   # leaves this MANDATORY fragment missing and compose HARD-fails with
+   # `RENDER_FAILED: ms-verdict.json not found` — which previously forced a full
+   # renderer re-dispatch. Generate a deterministic, schema-valid floor now,
+   # AFTER both renderers returned (so a rich LLM verdict is never pre-empted)
+   # and BEFORE compose. Idempotent (no --force): skips when Agent M already
+   # wrote it, so the normal path is byte-unchanged.
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
+       --only ms-verdict.json || true
    COMPOSE_RC=0
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
        --output-dir "$OUTPUT_DIR" --strict $COMPOSE_MERMAID_ARG || COMPOSE_RC=$?
@@ -3417,6 +3428,20 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
 # preserved.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --only ms-critical-attack-tree.json \
+    || true
+# ms-verdict.json — deterministic Management-Summary verdict FLOOR, IDEMPOTENT
+# (no --force). Unlike its two siblings above, this fragment is MANDATORY and
+# compose HARD-fails (`RENDER_FAILED: ms-verdict.json not found`) without it, so
+# an abnormal MS-renderer cutoff before its first Write used to force a full
+# re-dispatch (juice-shop 2026-07-16). The Stage-2 parallel path already floors
+# this before its skill-level compose; running it again here covers the
+# single-dispatch recovery + mandatory-finalize recompose paths (which reach the
+# gate without the Stage-2 skill-level compose block). The generator derives a
+# schema-valid verdict from threat-model.yaml (posture + business-language
+# scenarios grouped by STRIDE); a renderer-authored richer version already on
+# disk is preserved.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
+    --only ms-verdict.json \
     || true
 # §9 Abuse Cases — deterministic render from the Phase-10b verdicts. No-ops
 # (and removes any stale fragment) when no abuse case applied, so compose then
