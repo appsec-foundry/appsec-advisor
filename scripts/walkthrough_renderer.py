@@ -213,6 +213,31 @@ def _short_title(title: str, limit: int = 70) -> str:
     return truncated + "…"
 
 
+# Implementation-mechanism tail the analyst appends after "via/using/through"
+# ("via eval", "via libxmljs2 external entity resolution", "via notevil"). Kept
+# OUT of the §3 heading — the concrete feature is re-attached by
+# _attack_target_label and the impl belongs on the **Source:** line / §8 row.
+_VIA_IMPL_TAIL_RE = re.compile(r"\s+(?:via|using|through)\s+.*$", re.IGNORECASE)
+# A trailing bare file token left in a title with no separator
+# ("… role Field Writable via POST /api/Users server.ts:483"). Requires an
+# extension AND a ``:line`` so ordinary trailing words ("Node.js", "localStorage")
+# are never mistaken for a path.
+_TRAILING_FILE_RE = re.compile(r"\s*\S*\.[A-Za-z]{1,6}:\d+\s*$")
+
+
+def _strip_fileref_parens(text: str) -> str:
+    """Drop a trailing FILE-like parenthetical from a title
+    (``(Dockerfile:13)``, ``(login.component.ts:101)``, ``(routes/x.ts:62)``).
+
+    Only fires when the parens carry an extension or a ``:line`` — so descriptive
+    parentheticals that name no file (``(privileged field accepted)``) survive.
+    Scanner/IaC/SCA findings put the location in parens instead of the contract
+    em-dash tail, so ``_weakness_class``'s em-dash split alone left them in the
+    heading (2026-07 user report: inconsistent ``(Dockerfile:13)`` in §3 titles).
+    """
+    return re.sub(r"\s*\([^()]*(?:\.[A-Za-z0-9]+|:\d+)[^()]*\)\s*$", "", (text or "")).strip()
+
+
 def _weakness_class(title: str) -> str:
     """The weakness-class portion of a finding title.
 
@@ -232,7 +257,42 @@ def _weakness_class(title: str) -> str:
     # Strip trailing " on:<line>" artefacts that leak into the weakness class when
     # the title was authored as "… 'secret' on:6 — file:6" before normalization.
     cls = re.sub(r"\s+on:\d+\s*$", "", cls).strip()
+    # Scanner/IaC findings carry the location in parens rather than the em-dash
+    # tail; strip that too so no §3 title shows a raw file (2026-07 user request).
+    cls = _strip_fileref_parens(cls)
     return cls
+
+
+def _attack_class(threat: dict) -> str:
+    """The attacker-framed weakness clause for the §3 heading.
+
+    Sources the analyst's ORIGINAL wording from ``_title_source`` (the
+    pre-normalization form ``scripts/emit_clean_finding_titles.py`` stashes),
+    falling back to the normalized ``title``. Unlike ``_weakness_class`` — which
+    the §6/§8 register uses and which reduces to the bare weakness class — this
+    KEEPS the attack framing the analyst authored ("SQL Injection Authentication
+    Bypass", "Hardcoded RSA Private Key Enables Universal JWT Forgery"). §3 is the
+    one section that documents attacks, so it surfaces that framing where it
+    exists and degrades to the plain weakness class where the analyst didn't
+    author one (T-006 "Insecure JWT Verification"): never worse than the register
+    title, strictly richer where the source is.
+
+    The ``via <impl>`` tail and any file token (em-dash tail, paren fileref, bare
+    ``file.ext:line``) are stripped — the concrete feature is re-attached by
+    ``_attack_target_label`` and impl/file live on the **Source:** line, not the
+    heading. No em-dash survives, so the §3 anchor stays renderer-stable exactly
+    as ``_weakness_class`` guarantees.
+    """
+    raw = (threat.get("_title_source") or threat.get("title") or "").strip()
+    # The stored em-dash always precedes a file token (finding-title contract);
+    # _title_source rarely carries one, but the title fallback does.
+    cls = re.split(r"\s+—\s+", raw, maxsplit=1)[0].strip()
+    cls = _VIA_IMPL_TAIL_RE.sub("", cls).strip()
+    cls = _strip_fileref_parens(cls)
+    cls = _TRAILING_FILE_RE.sub("", cls).strip()
+    cls = re.sub(r"\s+on:\d+\s*$", "", cls).strip()
+    cls = re.sub(r"\s{2,}", " ", cls).strip(" -—–:,.")
+    return cls or _weakness_class(threat.get("title") or "")
 
 
 _TARGET_LABEL_WORD_RE = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?=[A-Z]|$)")
@@ -1225,49 +1285,50 @@ def _render_walkthrough_block(
     # heading-format contract): NO T-NNN prefix, ≤80 chars (check_heading_hygiene
     # warns >80, errors >100). The T-NNN appears once in the **Source:** line
     # below — wrapping it into the heading inflates the line and trips the gate.
-    # Format is "<Weakness> in <Feature>" (juice-shop 2026-07-03 user request):
-    # concise, feature-scoped, reader-legible, and consistent with §7 finding
-    # titles ("SQL Injection in Login"). The earlier "<Weakness> Attack against
-    # <broad component zone>" form was flagged as sperrig/unklar; the connector
-    # is neutral "in" rather than "against" because the left side is a WEAKNESS
-    # class (a noun phrase by contract, e.g. "Insecure Direct Object Reference"),
-    # not an attack — "against" would over-claim it as one. The target names the
-    # concrete FEATURE (login, search), not the zone, and keeps same-weakness
-    # findings in different files distinct. The `— file:line`
-    # tail from the finding title stays OUT of the heading (see _weakness_class):
-    # it carries no info the **Source:** line lacks and its em-dash made the
-    # GitHub heading anchor diverge from the composer's link target.
-    # Truncate the WEAKNESS class, not the combined string — some weakness
-    # classes are long verb-phrases ("Mass assignment privileged field
-    # accepted from request") that would otherwise eat the budget and leave
-    # "… Attack against Back…" (target cut mid-word). The target is always
-    # short (a curated component name or a 1-4 word file label) and is the
-    # part that actually differentiates same-weakness headings, so it must
-    # survive intact; the weakness class tolerates abbreviation.
-    # Heading composition (2026-07-05 user request): NEVER ellipsis-truncate the
-    # weakness class. The earlier form gave the weakness only `78 - len(" in " +
-    # target)` chars, so a long weakness class + a long component-zone target
-    # (e.g. "JWT Role Claim Accepted Without Server-Side Verification" in
-    # "Authentication and Identity Module") produced "…Server-…", which is both
-    # ugly AND anchor-breaking: the trailing "-…" makes github_slug ("server-")
-    # and github_render_slug ("server--") diverge, orphaning the §3 ToC link.
-    # New rule, in preference order — pick the first that fits HEADING_BUDGET:
-    #   1. "<weakness> in <target>"  (feature-scoped, e.g. "SQL Injection in Login")
-    #   2. "<weakness>"              (drop the target rather than clip the weakness;
-    #                                the "3.N" prefix keeps the anchor unique and
-    #                                the **Source:** line already names the file)
-    #   3. clipped weakness          (last resort — a weakness class >78 chars,
-    #                                which the finding-title contract makes rare)
+    # Format is "<Attack> in <Feature>" (2026-07-16 user request): §3 is the
+    # "Attack Walkthroughs" section, so its headings carry the attacker-framed
+    # clause the analyst originally authored ("SQL Injection Authentication
+    # Bypass in Login"), NOT the bare weakness class the §6/§8 register shows.
+    # The framing is sourced from `_attack_class` (threat._title_source, the
+    # pre-normalization original stashed by emit_clean_finding_titles), falling
+    # back to the plain weakness class where the analyst authored no attack
+    # framing (T-006 "Insecure JWT Verification") — never worse than the register
+    # title, strictly richer where a source exists. The register itself stays
+    # weakness-class-only by deliberate contract (schema forbidden-substrings +
+    # normalizer): this change is §3-local and does NOT touch it.
+    # The connector is the neutral "in"; the target names the concrete FEATURE
+    # (login, search), not the broad zone, and keeps same-weakness findings in
+    # different files distinct. The `— file:line` / `(file:line)` tail and the
+    # `via <impl>` clause stay OUT of the heading (see _attack_class): they carry
+    # no info the **Source:** line lacks and the em-dash made the GitHub heading
+    # anchor diverge from the composer's link target.
+    # Truncate the ATTACK clause, not the combined string — some clauses are long
+    # verb-phrases that would otherwise eat the budget and leave a target cut
+    # mid-word. The target is always short (a curated component name or a 1-4 word
+    # file label) and differentiates same-weakness headings, so it survives
+    # intact; the attack clause tolerates abbreviation.
+    # NEVER ellipsis-truncate mid-combined (2026-07-05): a trailing "-…" makes
+    # github_slug and github_render_slug diverge, orphaning the §3 ToC link.
+    # Preference order — pick the first that fits HEADING_BUDGET:
+    #   1. "<attack> in <target>"  (feature-scoped, e.g. "SQL Injection Authentication Bypass in Login")
+    #   2. "<attack>"              (drop the target rather than clip the attack clause;
+    #                              the "3.N" prefix keeps the anchor unique and
+    #                              the **Source:** line already names the file)
+    #   3. clipped attack clause   (last resort — a clause >78 chars)
     _HEADING_BUDGET = 78
     _target = _attack_target_label(threat, yaml_data)
-    _weakness = _weakness_class(title)
-    _combined = f"{_weakness} in {_target}"
+    _attack = _attack_class(threat)
+    # Skip the " in <feature>" suffix when the attack clause already carries a
+    # prepositional "in" ("JWT Stored in localStorage") — appending the feature
+    # would read as an awkward double-"in" ("… in localStorage in Login"). The
+    # clause already localizes the attack; \bin\b avoids matching "Injection".
+    _combined = _attack if re.search(r"\bin\b", _attack, re.IGNORECASE) else f"{_attack} in {_target}"
     if len(_combined) <= _HEADING_BUDGET:
         _heading_text = _combined
-    elif len(_weakness) <= _HEADING_BUDGET:
-        _heading_text = _weakness
+    elif len(_attack) <= _HEADING_BUDGET:
+        _heading_text = _attack
     else:
-        _heading_text = _short_title(_weakness, _HEADING_BUDGET)
+        _heading_text = _short_title(_attack, _HEADING_BUDGET)
     heading = f"### 3.{walkthrough_index} {_heading_text}"
 
     lines: list[str] = []
