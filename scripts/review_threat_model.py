@@ -725,13 +725,14 @@ def _fix_subline(r: dict) -> str:
 
 
 def _screen_fix_start(recommended: list[dict], find_by_key: dict[str, dict]) -> str:
-    """The 'Recommended to fix first' view — recommended[] grouped by what each
-    fix hardens. Empty string when nothing is both cheap and low-risk (the skill
-    then falls back to Fix — pick specific; it never invents a recommendation)."""
+    """The 'Fix these first' view — recommended[] grouped by what each fix hardens
+    (highest-value, lowest-risk to start with; not the *only* fixes that matter).
+    Empty string when nothing is both cheap and low-risk (the skill then falls back
+    to the pick list; it never invents a recommendation)."""
     rows = _mit_rows(recommended, find_by_key)
     if not rows:
         return ""
-    out = [f"🛠 **Recommended to fix first** — cheap, low-risk, high-impact   {_RAMP_LEGEND}", ""]
+    out = [f"🛠 **Fix these first** — cheap, low-risk, high-impact; the rest still matter, just later   {_RAMP_LEGEND}", ""]
     for cat, rs in _group_fix_rows(rows):
         out.append(f"**Fix {cat}** — {len(rs)}")
         for r in rs:

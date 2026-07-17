@@ -956,7 +956,7 @@ def test_screen_landing_omits_requirements_row_without_custom_reqs(tmp_path):
 def test_screen_fix_start_groups_by_category_worst_first(tmp_path):
     _, s = _screens(tmp_path)
     fs = s["fix_start"]
-    assert fs.startswith("🛠 **Recommended to fix first**")
+    assert fs.startswith("🛠 **Fix these first**")
     # both P1(Injection-header? no) grouped by the hardened category; both covered are Critical
     assert "**Fix Broken Authentication** — 1" in fs
     assert "**Fix Injection** — 1" in fs

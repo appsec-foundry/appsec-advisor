@@ -1,13 +1,15 @@
 ---
 name: review-threat-model
-description: User-facing triage of an existing threat model — an overview-first console over an already-generated threat-model.yaml (backlog by priority, severity mix, worst-case scenarios), then one of two modes: Fix or accept findings now (apply the code fix for findings you pick — or accept the risk instead — one at a time for review) or Build a remediation plan (decide mitigate / accept-risk per finding and emit a remediation-plan.md, no code changes). Runs later and completely independently of create-threat-model; reads the model, never regenerates or re-scores it. Not an artifact-quality check (that is eval-threat-model).
+description: User-facing triage of an existing threat model — an overview-first console over an already-generated threat-model.yaml (backlog by priority, severity mix, worst-case scenarios), then one of three modes: Just look around (browse the findings read-only — by severity, security aspect, requirement, control posture — no decisions or changes), Fix or accept findings now (apply the code fix for findings you pick — or accept the risk instead — one at a time for review), or Build a remediation plan (decide mitigate / accept-risk per finding and emit a remediation-plan.md, no code changes). Runs later and completely independently of create-threat-model; reads the model, never regenerates or re-scores it. Not an artifact-quality check (that is eval-threat-model).
 ---
 
 You help a user work through the findings of a threat model that already exists,
-in one of two modes they choose up front: **Fix or accept findings now**
-(**implement** the fix for findings they select — or accept the risk instead —
-one at a time, for review) or **Build a remediation plan** (decide fix / accept
-per finding → `remediation-plan.md`, no code changes).
+in one of three modes they choose up front: **Just look around** (browse the
+findings read-only — overall and by security aspect such as authentication or
+access control — making no decisions and no changes), **Fix or accept findings
+now** (**implement** the fix for findings they select — or accept the risk
+instead — one at a time, for review), or **Build a remediation plan** (decide
+fix / accept per finding → `remediation-plan.md`, no code changes).
 
 **Consumer guarantee (about the *threat model*)** — never violated:
 - It **reads** `threat-model.yaml` — it never recomputes severity, re-authors
@@ -56,13 +58,16 @@ FLAGS
 WHAT IT DOES
   * Opens a triage console: a landing screen (backlog by priority + severity mix
     + the top "worst case if nothing changes" scenarios), then a menu.
-  * You first choose a mode: "Fix or accept findings now" (apply the code fix for
-    findings you pick — or accept the risk instead — one at a time for review, no
-    plan) or "Build a remediation plan" (decide fix / accept per finding →
+  * You first choose a mode: "Just look around" (browse the findings read-only —
+    by severity, security aspect, requirement, or control posture — no decisions,
+    no changes), "Fix or accept findings now" (apply the code fix for findings you
+    pick — or accept the risk instead — one at a time for review, no plan), or
+    "Build a remediation plan" (decide fix / accept per finding →
     remediation-plan.md, never changes code).
-  * Both modes find and select findings the same way — a recommended "fix first"
-    set (shown with criticality, type and file:line), a pick list, or browse by
-    severity / type / requirement / unmitigated; posture ratings orient Plan mode.
+  * The two action modes find and select findings the same way — a recommended
+    "fix first" set (shown with criticality, type and file:line), a pick list, or
+    browse by severity / type / requirement / unmitigated; posture ratings orient
+    Plan and look-around modes.
   * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`
     or `M-003..M-009`). In Plan mode the selection is decided (mark to fix /
     accept-risk); in Fix mode it is fixed in code. accept-risk requires a
@@ -228,24 +233,29 @@ lines; echo the block as-is (that is the whole latency win). The worst-case rows
 double as a fast entry into triage — each row's `mitigation_id` (from
 `worst_case[]`) is a ready-made selection once a mode is chosen. After the landing,
 go to the **mode choice** (Step 4b); the fast path is then "pick a mode → act on
-the recommended set", which each mode shows first. Do **not** apply any decision or
+the fix-first set", which each mode shows first. Do **not** apply any decision or
 code change before the user has chosen a mode.
 
 ## Step 4b — Choose the mode (after the landing, before any menu)
 
-The skill does two different jobs; ask which one **first**, so everything after is
-unambiguous. One `AskUserQuestion`, two options:
+Ask which job **first**, so everything after is unambiguous. One `AskUserQuestion`,
+three options — offer **Just look around** first so a user who only wants to
+understand the findings never has to commit to acting:
 
-1. **Fix or accept findings now** — work through the findings you pick one at a
+1. **Just look around** — browse the findings read-only, overall and by aspect
+   (authentication, access control, …). **No decisions, no changes.**
+2. **Fix or accept findings now** — work through the findings you pick one at a
    time: apply the code fix, or accept the risk instead. **No plan.**
-2. **Build a remediation plan** — decide per finding (fix / accept), produce
+3. **Build a remediation plan** — decide per finding (fix / accept), produce
    `remediation-plan.md`. **Never changes code.**
 
-Both modes **find and select** findings the same way (the pre-rendered
-"Selecting findings" screens below); they differ only in what the selection
-**does** — *decide* (Mode 5A) vs. *change code* (Mode 5B). Run the chosen mode's
-loop. The user may type a free-text intent at any time ("accept all Low", "fix the
-auth ones") — honour it in-mode. They can stop whenever they want.
+The two **action** modes (5A, 5B) **find and select** findings the same way (the
+pre-rendered "Selecting findings" screens below); they differ only in what the
+selection **does** — *decide* (Mode 5A) vs. *change code* (Mode 5B). **Just look
+around** (Mode 5C) uses the same browse lenses but never acts on the selection.
+Run the chosen mode's loop. The user may type a free-text intent at any time
+("accept all Low", "fix the auth ones", "show me the access-control findings") —
+honour it in the current mode; they can switch modes or stop whenever they want.
 
 ## Step 5A — Mode: Build a remediation plan (decide → plan, no code)
 
@@ -253,7 +263,9 @@ A menu loop that records decisions. On entry and after each action, first print
 the recommendation (`screens.fix_start`, see **Selecting findings**), then ask with
 `AskUserQuestion` — put `Decided: X/<total>` in the prompt:
 
-1. **Decide on the recommended set** — act on the `recommended[]` fixes just shown
+1. **Decide these first** — the fix-first set just shown (highest-value, low-risk;
+   a starting point, not the only findings that need deciding) — act on the
+   `recommended[]` fixes
 2. **Browse & select** — by severity / type / requirement / unmitigated (see **Look around**)
 3. **Security posture** — control ratings *(only when `control_posture` is non-empty)*
 4. **Done — write plan & exit**
@@ -277,7 +289,8 @@ Applies to the named selection — record the decision only, never touch code:
 A menu loop that changes code. On entry and after each fix, first print
 `screens.fix_start`, then ask — put `Fixed: X` in the prompt:
 
-1. **Fix the recommended set** — implement the `recommended[]` fixes shown
+1. **Fix these first** — implement the fix-first set shown (highest-value, low-risk;
+   the place to start, not the only findings worth fixing) — the `recommended[]` fixes
 2. **Browse & pick** — by severity / type / requirement / unmitigated
 3. **Done — finish** — point the user at `git diff`
 
@@ -287,12 +300,43 @@ user would rather not fix can be accepted inline via the loop's **Accept instead
 (Entered from the Mode-5A bridge with a set preselected, skip the menu and go
 straight to the Fix loop on that set.)
 
-## Selecting findings (shared by both modes)
+## Step 5C — Mode: Just look around (read-only overview)
 
-Both modes surface and select findings with the same pre-rendered screens — the
-mode only changes the terminal action. Never re-compose these; echo them.
+A read-only browse loop — **no decisions, no code, nothing written**. It exists so
+the user can understand the findings (overall and by security aspect — e.g.
+authentication, access control) before committing to a mode. On entry and after
+each view, ask with `AskUserQuestion` which lens to open, offering only the ones
+that apply, in this order:
 
-### Recommended set — print `screens.fix_start` **verbatim**
+1. **By severity** — the severity-ranked finding table (`screens.browse_severity`)
+2. **By type** — findings grouped by security aspect (authentication, access
+   control, injection, …); drill into one aspect to list its findings
+3. **By requirement** — *(only when `verdict.requirements.integrated` is true)*
+4. **Unmitigated** — findings with no proposed fix *(only when `verdict.uncovered > 0`)*
+5. **Security posture** — the model's control ratings by domain *(only when
+   `control_posture` is non-empty)*
+6. **Act on these / Done** — leave read-only mode
+
+Route each choice to the matching lens in **Look around** and print its screen
+**verbatim**. The user may drill into a specific finding by `id` to see its detail
+(severity, component, `location`, type, whether it has a mitigation) — read from
+`findings[]`, never re-scored. Do **not** name a selection to act on, and do **not**
+write anything (no sidecar, no plan, no code) — this mode only *shows*.
+
+When the user wants to act, offer the **bridge** with one `AskUserQuestion`: switch
+to **Fix or accept findings now** (Mode 5B) or **Build a remediation plan**
+(Mode 5A) — carrying the findings they were just looking at (e.g. the aspect they
+drilled into) over as a suggested starting selection — or **Done** to exit. (For a
+read-only overview outside the console, `/appsec-advisor:show-threat-model` is the
+standalone equivalent.)
+
+## Selecting findings (shared by the action modes)
+
+Both action modes surface and select findings with the same pre-rendered screens —
+the mode only changes the terminal action. (The look-around Mode 5C reuses the
+browse lenses below but never selects-to-act.) Never re-compose these; echo them.
+
+### Fix-first set — print `screens.fix_start` **verbatim**
 The script already computed and formatted it from `recommended[]` (concrete
 `fix`es, `Low` effort, removing a Critical/High finding) — bucketed by what each
 fix hardens (`**Fix <category_name>** — <n>` groups, worst-severity-first), each
@@ -305,7 +349,7 @@ pick list instead; never invent a recommendation.
 ### Pick list — print `screens.fix_list` **verbatim**
 The same category
 groups as the recommendation, each item a **continuously numbered** line
-(number, priority-ramp glyph, id, band, trimmed title, `★` when recommended)
+(number, priority-ramp glyph, id, band, trimmed title, `★` when in the fix-first set)
 with the covered finding on an indented severity-dot sub-line showing its
 `location` (`file:line`, or a bare `file` / component when the payload has no
 line — the script never fabricates one). It defaults to P1 + P2 and ends with a
@@ -333,12 +377,13 @@ action (Mode 5A) or the **Fix loop** (Step 5b, Mode 5B). Do not reprint the list
 between picks.
 
 ### Look around — browse & posture (shared)
-The non-fixing lenses, used by both modes to find findings to act on. Ask which
-lens with `AskUserQuestion`, offering only the ones that apply and letting the user
-type `back` to return: the **Browse** lenses below, plus **Security posture**
-(Mode 5A only) when `control_posture` is non-empty. Route to the matching lens,
-then run the mode's terminal action on the selection; posture is read-only and
-never triaged.
+The non-fixing lenses — used by the action modes to find findings to act on, and by
+the look-around Mode 5C to just view them. Ask which lens with `AskUserQuestion`,
+offering only the ones that apply and letting the user type `back` to return: the
+**Browse** lenses below, plus **Security posture** (Mode 5A and the look-around
+Mode 5C) when `control_posture` is non-empty. Route to the matching lens, then run
+the action mode's terminal action on the selection (the look-around Mode 5C never
+acts — it only views); posture is read-only and never triaged.
 
 **Browse lenses** — offer only the ones that apply, in this order: **By
 severity**, **By type**, **By requirement** (only when
@@ -357,10 +402,12 @@ severity**, **By type**, **By requirement** (only when
   its `keys` as findings.
 - **Unmitigated** — print the findings whose `has_mitigation` is false. These
   have no proposed fix — they most need a human decision.
-Name the selection (see **Naming the selection**), then run the mode's terminal
-action.
+Name the selection (see **Naming the selection**), then run the action mode's
+terminal action. (In the look-around Mode 5C there is no terminal action — just
+view the findings, then pick another lens or leave.)
 
-**Security posture lens** (Mode 5A only; only when `control_posture` is non-empty)
+**Security posture lens** (Mode 5A and the look-around Mode 5C; only when
+`control_posture` is non-empty)
 Print `screens.posture` **verbatim** — the model's own control ratings, worst-first,
 one row per domain: `<domain> — <worst_effectiveness> (<total> controls: <mix>)`.
 Domains carry canonical display names, so **Authentication** and **Authorization**
