@@ -58,11 +58,11 @@ Use `--no-mermaid` to export PDF or HTML without rendered diagrams. To enable st
 
 ## Example report: OWASP Juice Shop
 
-The [OWASP Juice Shop example](../examples/threat-modeler/threat-model-juice-shop-thorough.md) shows a complete thorough assessment with evidence links, abuse cases, and attack paths.
+The [OWASP Juice Shop example](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.md) shows a complete thorough assessment with evidence links, abuse cases, and attack paths.
 
 Example security posture diagram from the report:
 
-![Threat Model Juice Shop Thorough](../examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
+![Threat Model Juice Shop Thorough](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.figure1.svg)
 
 ## What it checks
 
@@ -174,9 +174,9 @@ These OWASP Juice Shop runs anchor on three measured points — **quick** ($18.0
 
 | Mode | Best fit | Review depth | API cost (USD) and time |
 |---|---|---|---|
-| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | $18.03 and 68 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick.md)) |
-| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $33.21 and ~130 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard.md)) |
-| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | $48.01 and ~138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough.md)) |
+| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | $18.03 and 68 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick-v0.5.md)) |
+| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $33.21 and ~130 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.md)) |
+| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | $48.01 and ~138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.md)) |
 
 > [!NOTE]
 > Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
