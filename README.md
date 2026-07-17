@@ -122,15 +122,15 @@ This re-analyzes only the components that changed (an alias for `create-threat-m
 
 For assessment depth, cost controls, focused scans, actor configuration, and repo-local and cross-repo context, see [docs/threat-modeler.md](docs/threat-modeler.md).
 
-### 4. Optional: Triage the findings into a plan
+### 4. Triage the findings into a plan
 
-The report ranks findings by severity, but deciding what to fix now — and what to accept or defer — is a judgement call. Run the triage helper against an existing report, at any later point and independently of the assessment:
+The assessment ranks findings by severity, but deciding what to fix now — and what to accept or defer — is a judgement call. Triaging the report into a decided plan is the recommended next step (though you can also stop at the report). Run the triage helper against it at any later point, independently of the assessment:
 
 ```text
 /appsec-advisor:review-threat-model
 ```
 
-It walks the findings with you (fix / accept-risk / defer, with an owner and target), keeps your decisions in a sidecar that survives the next re-scan, and writes a `remediation-plan.md`. It only reads the model — it never regenerates or re-scores it.
+It opens a triage console — a one-screen verdict (backlog by priority, severity mix, and the worst-case scenarios if nothing changes) — then lets you drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with an owner and target) on a whole selection at once. Your decisions live in a sidecar that survives the next re-scan, and it writes a `remediation-plan.md`. It only reads the model — it never regenerates or re-scores it.
 
 ### 5. Optional: Publish the threat model
 

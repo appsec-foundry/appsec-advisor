@@ -256,7 +256,7 @@ priority or severity — it is a badge/lens, not a re-score.
 3. **Accept risk** requires a rationale — ask once for a single reason that
    applies to the whole selection; write it to every selected key. Never persist
    an accept-risk with an empty rationale.
-4. **Fix / Defer** take an optional owner + target sprint — offer once, capture
+4. **Mitigate / Defer** take an optional owner + target sprint — offer once, capture
    only if volunteered.
 5. Persist (Step 6), then return to the menu.
 
