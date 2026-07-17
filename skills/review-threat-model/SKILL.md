@@ -1,19 +1,23 @@
 ---
 name: review-threat-model
-description: User-facing triage of an existing threat model — open an overview-first console over an already-generated threat-model.yaml (backlog by priority, severity mix, worst-case scenarios), then bulk-decide mitigate / accept-risk / defer (with owner and target) on a selection of findings or mitigations, and emit a remediation-plan.md. Runs later and completely independently of create-threat-model; reads the model, never regenerates or re-scores it. Not an artifact-quality check (that is eval-threat-model).
+description: User-facing triage of an existing threat model — open an overview-first console over an already-generated threat-model.yaml (backlog by priority, severity mix, worst-case scenarios), then bulk-decide mitigate / accept-risk / defer (with owner and target) on a selection of findings or mitigations, and emit a remediation-plan.md. On explicit request it also implements the fixes for the findings you select — one at a time, for review. Runs later and completely independently of create-threat-model; reads the model, never regenerates or re-scores it. Not an artifact-quality check (that is eval-threat-model).
 ---
 
-You help a user **triage** the findings of a threat model that already exists.
-This skill is a **Consumer**, never a Producer:
+You help a user **triage** the findings of a threat model that already exists —
+and, on explicit request, **implement** the fixes for the findings they select.
 
-- It **reads** `threat-model.yaml` — it does **not** analyze code, spawn agents,
-  recompute severity, or re-author mitigations.
-- Triage decisions live **only** in a sidecar (`<repo>/.appsec-triage/triage.yaml`),
-  **never** written back into `threat-model.yaml` (the pipeline overwrites that
-  on re-scan).
-- The sidecar and the plan live under `<repo>/.appsec-triage/`, a namespace the
-  generation pipeline never touches — so this skill changes nothing about the
+**Consumer guarantee (about the *threat model*)** — never violated:
+- It **reads** `threat-model.yaml` — it never recomputes severity, re-authors
+  mitigations, regenerates, or writes back to it (the pipeline owns that).
+- Triage decisions live **only** in a sidecar (`<repo>/.appsec-triage/triage.yaml`);
+  the sidecar and the plan live under `<repo>/.appsec-triage/`, a namespace the
+  generation pipeline never touches — triage changes nothing about the
   create-threat-model workflow.
+
+**Code changes (about the *target repo's source*)** happen **only** through the
+explicit **Implement** action (Step 5b): for findings the user has selected, one
+at a time, with the user reviewing each change. The triage/console flow itself
+never edits source, and you never touch code the user did not select.
 
 The deterministic work (verdict roll-up, rank, group, merge, render) lives in
 `scripts/review_threat_model.py`. Your job is the interactive layer: run an
@@ -54,10 +58,13 @@ WHAT IT DOES
     [req: …] badge and a By-requirement lens (never for the OWASP baseline).
   * Persists your decisions to <repo>/.appsec-triage/triage.yaml (survives re-scan).
   * Renders a grouped remediation-plan.md with the model's remediation steps.
+  * On request ("Mitigate + implement now"), applies the code changes for the
+    findings you select — one at a time, for review — based on their remediation.
 
 DOES NOT
-  * Analyze code, regenerate, or re-score the model (use create-threat-model).
+  * Regenerate or re-score the threat model (use create-threat-model).
   * Judge the model's quality (use eval-threat-model).
+  * Bulk-apply code changes blindly, commit, or touch findings you did not select.
 
 RELATED
   /appsec-advisor:show-threat-model     Read-only overview by severity
@@ -280,19 +287,61 @@ gates it (the list is empty in those cases). Never fold requirements into
 priority or severity — it is a badge/lens, not a re-score.
 
 ### Select & act (shared)
-1. Ask the user which items to act on — **free text**, e.g. `T-001..T-005, T-012`,
-   `M-003..M-009`, a comma list, `all`, or (in a band/area/requirement view)
-   `all shown`. Resolve `T-NNN`/`M-NNN` tokens to finding `key`s via the payload
-   (`id`↔`key`; a mitigation resolves to its `covered_keys`); ignore unknown
-   tokens but tell the user which you dropped.
+1. Ask the **scope** with `AskUserQuestion` — how much of the current view to act
+   on (always state the count `<n>` so a large scope is a considered choice):
+   - **All shown (<n>)** — the whole view at once. In a band / Quick-wins /
+     mitigation view this is the union of the shown mitigations' `covered_keys`;
+     in a finding view it is every listed finding. This is the one-click bulk
+     path — a developer clearing all Quick wins picks this.
+   - **Select specific** — then ask for a **free-text** subset, e.g.
+     `T-001..T-005, T-012`, `M-003..M-009`, or a comma list. Resolve `T-NNN` /
+     `M-NNN` tokens to finding `key`s via the payload (`id`↔`key`; a mitigation
+     resolves to its `covered_keys`); ignore unknown tokens but say which you
+     dropped.
+   - **Back** — return to the menu without acting.
 2. Ask the action with `AskUserQuestion`: **Mitigate (fix)** / **Accept risk** /
-   **Defer**.
+   **Defer** / **Mitigate + implement now**. It applies to the whole scope from
+   step 1 — so **All shown → Mitigate** is the "mark every shown finding to fix"
+   one-two-click a developer wants; **Accept risk** / **Defer** bulk-triage the
+   view the other ways; **Mitigate + implement now** additionally applies the
+   code changes (Step 5b).
 3. **Accept risk** requires a rationale — ask once for a single reason that
    applies to the whole selection; write it to every selected key. Never persist
    an accept-risk with an empty rationale.
 4. **Mitigate / Defer** take an optional owner + target sprint — offer once, capture
    only if volunteered.
-5. Persist (Step 6), then return to the menu.
+5. Persist (Step 6). If the action was **Mitigate + implement now**, run Step 5b
+   for the selection before returning to the menu; otherwise return to the menu.
+
+Mitigate/Accept/Defer record the triage **decision** only (they feed
+`triage.yaml` and `remediation-plan.md`); code changes happen solely via Step 5b.
+
+## Step 5b — Implement selected fixes (code changes)
+
+Reached only from **Mitigate + implement now** (or when the user explicitly asks
+to implement a selection). This is the one place the skill edits the target
+repo's source. Work through the selected findings **one at a time**, never as a
+blind bulk apply:
+
+1. For each selected finding (resolve mitigations to their `covered_keys`), read
+   its remediation detail from `threat-model.yaml` — the `remediation.steps` and
+   `affected_files` on the threat (and the covering mitigation). These are the
+   **only** basis for the change; do not invent unrelated edits or touch files
+   the finding does not name.
+2. Show the user what you will change (file + intended edit) and apply it with
+   Edit. Keep the change minimal and scoped to the finding. If the remediation is
+   ambiguous or needs a decision, ask rather than guess; the user may **skip** a
+   finding or **stop** the loop at any point.
+3. After each applied finding, record its decision as `fix` in the sidecar
+   (Step 6) so the plan and triage state stay consistent. Note which findings you
+   implemented vs skipped.
+4. When done, suggest verifying — run the project's tests or the `verify` flow if
+   present — and point the user at `git diff` to review. Do **not** commit; leave
+   that to the user. Then return to the menu.
+
+Guardrails: only findings the user selected; one at a time with review; changes
+traceable to the finding's own remediation; the threat model itself is never
+edited (Consumer guarantee holds — you change source, not `threat-model.yaml`).
 
 ## Step 6 — Persist decisions to the sidecar
 
