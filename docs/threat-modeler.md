@@ -368,7 +368,7 @@ Use these commands after an assessment or to recover an interrupted run.
 | Command | Purpose |
 |---|---|
 | `/appsec-advisor:update-threat-model` | Incrementally update an existing threat model — alias for `create-threat-model --incremental`, re-analyzing only changed components. Aborts with guidance when no model exists yet (never bootstraps a first full scan). An explicit `--full`/`--rebuild`/`--rerender`/`--resume` is honored instead. |
-| `/appsec-advisor:review-threat-model` | Triage the findings of an existing report — decide fix / accept-risk / defer per finding (with owner and target), then write a prioritised `remediation-plan.md`. Runs independently of the assessment and only reads the model. |
+| `/appsec-advisor:review-threat-model` | Open a triage console over an existing report — a one-screen verdict (severity mix, hottest areas and components, mitigation coverage), then drill into top findings, top mitigations, or a security domain and bulk-decide fix / accept-risk / defer (with owner and target) on a whole selection at once; writes a prioritised `remediation-plan.md`. Runs independently of the assessment and only reads the model. |
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |
 | `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, HTML, SARIF, or pentest tasks without model calls. |
 | `/appsec-advisor:threat-model-health` | Check whether the current threat model is fresh, stale, missing, or blocked by run debris. |

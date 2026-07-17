@@ -15,9 +15,13 @@ This skill is a **Consumer**, never a Producer:
   generation pipeline never touches — so this skill changes nothing about the
   create-threat-model workflow.
 
-The deterministic work (rank, merge, render) lives in
-`scripts/review_threat_model.py`. Your job is the interactive layer: capture the
-user's decisions and hand them to that script. Do **not** hand-write the plan.
+The deterministic work (verdict roll-up, rank, group, merge, render) lives in
+`scripts/review_threat_model.py`. Your job is the interactive layer: run an
+**overview-first triage console** — show the user where they stand, let them
+drill into top findings / top mitigations / a security domain, act on a
+free-text selection (bulk), and hand the decisions to that script. Do **not**
+hand-write the plan and do **not** re-score or invent severities/areas — every
+number you show comes from the `console` payload.
 
 ## `--help` — inline help (early exit)
 
@@ -36,9 +40,15 @@ FLAGS
                     (default: <repo>/.appsec-triage/remediation-plan.md)
 
 WHAT IT DOES
-  * Ranks findings by effective severity, merged with any prior triage.
-  * Walks untriaged findings and asks you: fix / accept-risk / defer
-    (accept-risk requires a rationale; fix/defer take an optional owner + target).
+  * Opens a triage console: a one-screen verdict (severity mix, hottest areas
+    and components, mitigation coverage), then a menu.
+  * Menu: Quick-triage (Critical+High -> fix) · Top findings · Top mitigations ·
+    By area (authentication, injection, access control, …) · Write plan & exit.
+  * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`)
+    and pick one action for the whole selection: mitigate / accept-risk / defer.
+    Acting on a mitigation triages every finding it covers at once.
+  * accept-risk requires a rationale (one shared reason for a bulk selection);
+    fix/defer take an optional owner + target.
   * Persists your decisions to <repo>/.appsec-triage/triage.yaml (survives re-scan).
   * Renders a grouped remediation-plan.md with the model's remediation steps.
 
@@ -87,48 +97,103 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
 fi
 ```
 
-## Step 3 — Reconcile the model against prior triage
+## Step 3 — Load the console payload
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" reconcile \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" console \
     --output-dir "$OUTPUT_DIR" --triage "$TRIAGE"
 ```
 
 Exit `1` means no model was found — tell the user to run
-`/appsec-advisor:create-threat-model` first, then stop. Otherwise parse the JSON:
-`findings[]` are severity-ranked and carry a `decision` (`untriaged` when never
-triaged), and `stale[]` lists prior decisions whose finding is gone.
+`/appsec-advisor:create-threat-model` first, then stop. Otherwise parse the JSON
+**once** and keep it in context for the whole session — it is the single source
+for every screen below. Do not re-run `console` on each loop; the static data
+(findings, mitigations, areas) does not change, only your decisions do.
 
-If there are **no** `untriaged` findings, skip Step 4 — the user is just
-re-rendering. Go to Step 5.
+Payload shape (all read from the model — never recompute):
+- `verdict` — `by_severity`, `unrated`, `components`, `top_components`,
+  `top_areas`, `weaknesses`, `with_mitigation`, `p1_mitigations`, `triaged`.
+- `findings[]` — severity-ranked; each has `key` (stable `local_id`), `id`
+  (`T-NNN`), `title`, `component`, `severity`, `category_name`, `has_mitigation`,
+  `decision` (`untriaged` until triaged).
+- `mitigations[]` — ranked by priority then leverage; each has `id` (`M-NNN`),
+  `title`, `priority`, `severity`, `coverage`, and `covered_keys` (the finding
+  `key`s it resolves).
+- `areas[]` — findings grouped by security domain; each has `category_name`,
+  `total`, `critical`, `high`, and `keys`.
+- `stale[]` — prior decisions whose finding is gone from the model.
 
-## Step 4 — Walk the untriaged findings (interactive)
+## Step 4 — Show the verdict (one screen)
 
-Triage **severity bucket by severity bucket**, Critical first, then High,
-Medium, Low. Within a bucket, ask per finding using `AskUserQuestion` — batch up
-to 4 findings per call, one question each:
+Print a compact briefing from `verdict` — do not editorialize, these are the
+model's numbers:
 
-- Question: `[<id>] <title>  (<severity> · <component>)` — decision?
-- Options: **Fix**, **Accept risk**, **Defer**. (The user can pick "Other" to
-  add a free-text note, e.g. an owner or sprint.)
+```
+<project> · generated <generated> · <total> findings
+Posture: <C> Critical · <H> High · <M> Medium (<unrated> unrated) · <components> components · <weaknesses> design weaknesses
+Hottest areas: <a1> (<n>) · <a2> (<n>) · <a3> (<n>)
+Hottest components: <c1> (<n>) · <c2> (<n>) · <c3> (<n>)
+Coverage: <with_mitigation>/<total> findings have a proposed mitigation · <p1_mitigations>× P1
+Triage: <triaged>/<total> decided
+```
 
-Rules:
-- **Accept risk requires a rationale** — if chosen without a note, ask a short
-  follow-up for the reason. Do not persist an accept-risk with an empty rationale.
-- For **Fix** / **Defer**, an owner and target sprint are optional; capture them
-  only if the user volunteers them (via "Other" or a follow-up you offer once).
-- Stop early whenever the user says they are done; findings left untriaged
-  simply stay `untriaged` in the plan.
+If `triaged == 0`, offer the express lane before the menu with one
+`AskUserQuestion`: "Mark all Critical + High findings as **fix** now and only
+walk the rest?" — options **Yes, fix them** / **No, let me navigate**. On yes,
+apply `fix` to every Critical/High finding (Step 6 write), then go to the menu.
 
-Keep it calm and fast — this is a review, not an interrogation. Do not editorialize
-the severity; it is the model's, read verbatim.
+## Step 5 — The menu loop
 
-## Step 5 — Persist decisions to the sidecar
+Ask with `AskUserQuestion` (one question, four options):
 
-Merge the newly captured decisions **into** the existing sidecar (do not drop
-prior entries). Write `$TRIAGE` with the Write tool in this exact shape, keyed by
-each finding's `key` (from the reconcile JSON — this is `local_id`, stable across
-re-scans):
+1. **Top findings** — severity-ranked
+2. **Top mitigations** — by priority & leverage
+3. **By area** — pick a security domain
+4. **Write plan & exit**
+
+After each action, redisplay the menu with an updated `Triage: X/<total>`
+counter. The user may also type a free-text intent at any time ("accept all
+Low", "fix the auth ones") — honour it directly, then return to the menu. The
+user can stop whenever they want; untriaged findings simply stay untriaged.
+
+### View: Top findings
+Print an untriaged-first, severity-ranked table (skip already-decided unless the
+user asks to see all). One row per finding:
+`T-NNN · <severity> · <component> · <category_name> · <title>  [<decision if any>]`.
+Then run **Select & act** (below).
+
+### View: Top mitigations
+Print the `mitigations[]` table:
+`M-NNN · <priority> · <severity> · covers <coverage> · <title>`.
+Selecting a mitigation and choosing an action applies that action to **all** its
+`covered_keys` at once — say so explicitly (e.g. "M-012 → fix 5 findings"). Then
+run **Select & act**, treating `covered_keys` as the selection.
+
+### View: By area
+Print `areas[]` as a numbered list:
+`N. <category_name> — <total> findings (<critical> Critical, <high> High)`.
+Ask the user which area (by number or name, free text). Then print that area's
+findings (its `keys`, formatted as in Top findings) and run **Select & act**.
+
+### Select & act (shared)
+1. Ask the user which items to act on — **free text**, e.g. `T-001..T-005, T-012`,
+   a comma list, `all`, or (in an area/mitigation view) `all shown`. Resolve
+   tokens to finding `key`s via the `id`↔`key` map from the payload; ignore
+   unknown tokens but tell the user which you dropped.
+2. Ask the action with `AskUserQuestion`: **Mitigate (fix)** / **Accept risk** /
+   **Defer**.
+3. **Accept risk** requires a rationale — ask once for a single reason that
+   applies to the whole selection; write it to every selected key. Never persist
+   an accept-risk with an empty rationale.
+4. **Fix / Defer** take an optional owner + target sprint — offer once, capture
+   only if volunteered.
+5. Persist (Step 6), then return to the menu.
+
+## Step 6 — Persist decisions to the sidecar
+
+Merge captured decisions **into** the existing sidecar (never drop prior
+entries). Write `$TRIAGE` with the Write tool, keyed by each finding's `key`
+(the stable `local_id`):
 
 ```yaml
 version: 1
@@ -140,11 +205,12 @@ findings:
     target_sprint: "<optional>"
 ```
 
-Only include fields you actually captured. Never write a `decision` value other
-than `fix`, `accept-risk`, or `defer` (the renderer coerces anything else to
-untriaged). Preserve any keys already present that you did not re-triage.
+Only include fields you actually captured. Never write a `decision` other than
+`fix`, `accept-risk`, or `defer` (the renderer coerces anything else to
+untriaged). Preserve keys already present that you did not re-triage. After
+writing, update your in-context `triaged` count for the menu counter.
 
-## Step 6 — Render the plan
+## Step 7 — Render the plan (menu option 4 / when the user is done)
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" render \
@@ -153,8 +219,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" render \
 
 The script writes `remediation-plan.md` deterministically (findings grouped by
 decision, severity-ranked, with the model's remediation steps). Print the plan
-path and a one-line triage summary (counts per decision from the reconcile JSON).
-Do not paste the whole plan; point the user to the file.
+path and a one-line triage summary (counts per decision). Do not paste the whole
+plan; point the user to the file.
 
 If `stale[]` was non-empty, mention it once: some prior decisions reference
 findings no longer in the model (fixed, merged, or renumbered) and are listed at

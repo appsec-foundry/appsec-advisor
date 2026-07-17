@@ -2,22 +2,25 @@
 
 All notable changes to this project are documented here.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
 ## 0.5.0-beta (Unreleased)
 
 ### Added
 
-- New skill to triage a finished threat model: `/appsec-advisor:review-threat-model` walks the findings with you — fix, accept, or defer each one, with an owner and target — and writes a prioritised `remediation-plan.md`. It runs later and on its own, without re-scanning or changing anything the assessment produced; your decisions are kept in a sidecar that survives the next re-scan. The completion summary now points to it as a next step.
-- New Weakness Register: systemic and design-level weaknesses now get their own chapter. Findings are grouped by how strong the evidence is and by how a control is built (home-grown, misused, or missing), linked back to the findings behind them, and summarised as a security-principles verdict in the Management Summary. It also flags supply-chain risks (GitHub Actions on mutable tags/branches) and secrets committed to source. Broad CWE families no longer collapse unrelated issues into one.
+- `/appsec-advisor:review-threat-model` is now a guided triage console: a short risk verdict, then work through findings by top risk, fix, or area and decide fix / accept / defer in bulk. Writes a prioritised `remediation-plan.md` and remembers your decisions across re-scans.
+- Weakness Register: systemic and design-level weaknesses get their own chapter, grouped by evidence strength and by how a control is built (home-grown, misused, or missing), and summarised as a security-principles verdict. Flags supply-chain risks (mutable GitHub Actions refs) and committed secrets; broad CWE families no longer merge unrelated issues.
 - Access-control, crypto, and mass-assignment scanners now cover Java, Python, Go, PHP, C#/.NET, Ruby/Rails, and mobile — not just JavaScript/TypeScript.
 - Headless runs can use a Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), so CI works without an API key.
 - Abuse cases can be picked from repo signals, path patterns, or a source probe, and gated on verified chains. A confirmed probe can turn into a regular finding.
 - Figure 1 shows missing architecture tiers as transparent placeholders instead of leaving them out.
 - MCP servers from an org profile are shipped in the packaged plugin.
-- Org profiles can package the requirements gate policy per preset (`requirements.gate`: `mode`, `gate_on`, `priority_floor`), so a CI preset makes `verify-requirements` and `audit-security-requirements` gate by default. A per-run `--gate` / `--gate-on` / `--priority-floor` still overrides it.
-- Org profiles can define their own Security Coach steering rules — a baseline and custom topics (triggers → guidance + requirement IDs) that add to or replace the built-in ones — without forking the plugin.
-- Org profiles can package run policy: a per-preset CI severity gate (`guardrails.fail_on`) and an org-wide remote-fetch allowlist (`policy.url_allowlist`). The allowlist now also covers the requirements-catalog fetch, which previously bypassed the SSRF guard; internal catalog hosts stay reachable when listed.
-- Org profiles can bundle their own Claude Code hooks (`hooks`), so one internal plugin ships a company's event handlers alongside everything else. The packager merges them into the built `hooks.json` and records each in `package-surface.json` (org-owned) for audit; the smoke test verifies them, and package policy can exclude one by id. Org hooks run at the event layer only — they never touch findings, severity, or schemas.
-- OWASP Top 10 for Agentic Applications (2026, ASI) coverage: on an agentic surface (LLM wired to tools, memory, or other agents) the analyzer adds an Agentic-Top-10 lens and the AI/LLM Exposure callout tags each risk with a linked `ASIxx` badge.
+- Org profiles can package the requirements gate policy per preset (`requirements.gate`), so a CI preset gates on requirements by default. Per-run `--gate` / `--gate-on` / `--priority-floor` still overrides.
+- Org profiles can define custom Security Coach steering rules (a baseline plus topics) without forking the plugin.
+- Org profiles can package run policy: a per-preset CI severity gate (`guardrails.fail_on`) and an org-wide remote-fetch allowlist (`policy.url_allowlist`), which now also covers the previously-unguarded requirements-catalog fetch.
+- Org profiles can bundle their own Claude Code hooks, merged into the built `hooks.json` and recorded for audit. Org hooks run at the event layer only — never touching findings, severity, or schemas.
+- OWASP Top 10 for Agentic Applications (2026): on an agentic surface (LLM wired to tools, memory, or other agents), adds an Agentic-Top-10 lens and tags each AI/LLM risk with a linked `ASIxx` badge.
 
 ### Changed
 

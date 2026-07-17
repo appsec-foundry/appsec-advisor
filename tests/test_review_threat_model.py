@@ -177,3 +177,148 @@ def test_corrupt_sidecar_exits_2(tmp_path):
     with pytest.raises(SystemExit) as ei:
         rtm.reconcile(out, sidecar)
     assert ei.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# Console view — verdict + areas + mitigations (deterministic reads)
+# ---------------------------------------------------------------------------
+
+CONSOLE_THREATS = [
+    {
+        "id": "T-001",
+        "local_id": "auth-006",
+        "title": "Hardcoded secret",
+        "component": "auth",
+        "effective_severity": "Critical",
+        "threat_category_id": "TH-02",
+        "mitigation_ids": ["M-001"],
+    },
+    {
+        "id": "T-002",
+        "local_id": "auth-007",
+        "title": "Session in localStorage",
+        "component": "auth",
+        "effective_severity": "High",
+        "threat_category_id": "TH-02",
+        "mitigation_ids": ["M-001"],
+    },
+    {
+        "id": "T-003",
+        "local_id": "api-004",
+        "title": "SQL injection",
+        "component": "api",
+        "effective_severity": "Critical",
+        "threat_category_id": "TH-01",
+        "mitigation_ids": ["M-002"],
+    },
+    {
+        "id": "T-004",
+        "local_id": "api-009",
+        "title": "Verbose error",
+        "component": "api",
+        "effective_severity": "Medium",
+        # no threat_category_id -> collapses into Uncategorized area
+    },
+]
+
+CONSOLE_MITIGATIONS = [
+    {
+        "id": "M-001",
+        "title": "Adopt BFF",
+        "priority": "P1",
+        "severity": "Critical",
+        "kind": "fix",
+        "threat_ids": ["T-001", "T-002"],
+    },
+    {
+        "id": "M-002",
+        "title": "Parameterize queries",
+        "priority": "P2",
+        "severity": "Critical",
+        "kind": "fix",
+        "threat_ids": ["T-003"],
+    },
+]
+
+CATEGORY_NAMES = {"TH-01": "Injection", "TH-02": "Broken Authentication"}
+
+
+def _write_full_model(output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "meta": {"project": "demo", "generated": "2026-07-17T00:00:00Z"},
+        "threats": CONSOLE_THREATS,
+        "mitigations": CONSOLE_MITIGATIONS,
+        "weaknesses": [{"id": "W-001"}, {"id": "W-002"}],
+    }
+    (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+
+def test_reconcile_enriches_category_name(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_full_model(out)
+    view = rtm.reconcile(out, tmp_path / "triage.yaml", category_names=CATEGORY_NAMES)
+    by_key = {f["key"]: f for f in view["findings"]}
+    assert by_key["auth-006"]["category_id"] == "TH-02"
+    assert by_key["auth-006"]["category_name"] == "Broken Authentication"
+    # unknown / missing category -> empty name, never a crash
+    assert by_key["api-009"]["category_id"] == ""
+    assert by_key["api-009"]["category_name"] == ""
+
+
+def test_build_mitigations_ranks_and_fans_out_coverage():
+    model = {"mitigations": CONSOLE_MITIGATIONS}
+    key_by_tid = {"T-001": "auth-006", "T-002": "auth-007", "T-003": "api-004"}
+    mits = rtm.build_mitigations(model, key_by_tid)
+    # P1 before P2
+    assert [m["id"] for m in mits] == ["M-001", "M-002"]
+    m1 = mits[0]
+    # threat_ids (global) fan out to finding keys (local_id)
+    assert m1["coverage"] == 2
+    assert set(m1["covered_keys"]) == {"auth-006", "auth-007"}
+
+
+def test_build_areas_groups_and_ranks_by_blast():
+    findings = [
+        {"key": "auth-006", "severity": "Critical", "category_id": "TH-02", "category_name": "Broken Authentication"},
+        {"key": "auth-007", "severity": "High", "category_id": "TH-02", "category_name": "Broken Authentication"},
+        {"key": "api-004", "severity": "Critical", "category_id": "TH-01", "category_name": "Injection"},
+        {"key": "api-009", "severity": "Medium", "category_id": "", "category_name": ""},
+    ]
+    areas = rtm.build_areas(findings)
+    names = [a["category_name"] for a in areas]
+    # Broken Authentication (1 Crit + 1 High) ranks above Injection (1 Crit only)
+    assert names[0] == "Broken Authentication"
+    assert names[1] == "Injection"
+    # uncategorized collapses into a trailing bucket labelled Uncategorized
+    assert names[-1] == "Uncategorized"
+    ba = areas[0]
+    assert ba["total"] == 2 and ba["critical"] == 1 and ba["high"] == 1
+
+
+def test_console_composes_verdict_and_views(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_full_model(out)
+    tax = tmp_path / "tax.yaml"
+    tax.write_text(
+        yaml.safe_dump(
+            {"categories": [{"id": "TH-01", "name": "Injection"}, {"id": "TH-02", "name": "Broken Authentication"}]}
+        ),
+        encoding="utf-8",
+    )
+    payload = rtm.console(out, tmp_path / "triage.yaml", taxonomy_path=tax)
+    v = payload["verdict"]
+    assert v["by_severity"] == {"Critical": 2, "High": 1, "Medium": 1}
+    assert v["weaknesses"] == 2
+    assert v["with_mitigation"] == 3  # T-004 has no mitigation_ids
+    assert v["p1_mitigations"] == 1
+    assert v["triaged"] == 0
+    assert ("Broken Authentication", 2) in v["top_areas"]
+    # composed sub-views present and non-empty
+    assert len(payload["mitigations"]) == 2
+    assert len(payload["areas"]) == 3  # TH-02, TH-01, Uncategorized
+    assert payload["mitigations"][0]["covered_keys"] == ["auth-006", "auth-007"]
+
+
+def test_load_category_names_missing_taxonomy_is_empty(tmp_path):
+    assert rtm._load_category_names(tmp_path / "does-not-exist.yaml") == {}

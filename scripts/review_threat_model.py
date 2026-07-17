@@ -8,6 +8,9 @@ pipeline. This module is the deterministic half:
   * ``reconcile`` reads the committed ``threat-model.yaml`` and the user's
     triage sidecar, joins them by a stable finding key, and emits a ranked
     JSON view (consumed by the skill to drive the interactive triage loop).
+  * ``console`` extends that view with a posture verdict, priority-ranked
+    mitigations (with the findings each covers), and findings grouped by
+    security domain — one payload that powers the skill's triage console.
   * ``render`` turns the sidecar + model into a ``remediation-plan.md``.
 
 Design boundaries (why this is a Consumer, never a Producer):
@@ -30,6 +33,7 @@ network, no LLM.
 
 Usage:
     review_threat_model.py reconcile --output-dir PATH --triage PATH
+    review_threat_model.py console   --output-dir PATH --triage PATH
     review_threat_model.py render    --output-dir PATH --triage PATH --plan PATH
 
 Exit codes:
@@ -41,6 +45,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import sys
 from pathlib import Path
@@ -48,6 +53,12 @@ from pathlib import Path
 import yaml
 
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
+_PRIORITY_ORDER = {"P1": 0, "P2": 1, "P3": 2}
+
+# Human-readable threat-domain names ("Broken Authentication", "Injection", …)
+# live in the generation pipeline's taxonomy. Read-only lookup; the console view
+# uses it to group findings by area. Falls back gracefully if absent.
+_TAXONOMY_PATH = Path(__file__).resolve().parent.parent / "data" / "threat-category-taxonomy.yaml"
 
 # Triage decisions the sidecar may carry. Anything else is coerced to
 # "untriaged" so a hand-edited sidecar can never route a finding into a
@@ -106,6 +117,28 @@ def _norm_decision(value: object) -> str:
     return v if v in _DECISIONS else "untriaged"
 
 
+def _load_category_names(path: Path | None = None) -> dict[str, str]:
+    """Map ``threat_category_id`` (TH-NN) -> human domain name. Read-only, best
+    effort: a missing or malformed taxonomy yields an empty map (the console
+    then shows the raw code), never an error."""
+    p = path or _TAXONOMY_PATH
+    try:
+        doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    cats = doc.get("categories") if isinstance(doc, dict) else None
+    out: dict[str, str] = {}
+    if isinstance(cats, list):
+        for c in cats:
+            if not isinstance(c, dict):
+                continue
+            cid = str(c.get("id") or "").strip()
+            name = str(c.get("name") or c.get("title") or "").strip()
+            if cid:
+                out[cid] = name or cid
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Load
 # ---------------------------------------------------------------------------
@@ -147,10 +180,11 @@ def _load_sidecar(sidecar_path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def reconcile(output_dir: Path, sidecar_path: Path) -> dict:
+def reconcile(output_dir: Path, sidecar_path: Path, category_names: dict[str, str] | None = None) -> dict:
     model = _load_model(output_dir)
     threats = model.get("threats") or []
     triage = _load_sidecar(sidecar_path)
+    cat_names = category_names or {}
 
     seen_keys: set[str] = set()
     findings: list[dict] = []
@@ -162,6 +196,7 @@ def reconcile(output_dir: Path, sidecar_path: Path) -> dict:
             continue
         seen_keys.add(key)
         entry = triage.get(key) if isinstance(triage.get(key), dict) else {}
+        cid = str(t.get("threat_category_id") or "").strip()
         findings.append(
             {
                 "key": key,
@@ -170,6 +205,8 @@ def reconcile(output_dir: Path, sidecar_path: Path) -> dict:
                 "component": str(t.get("component") or t.get("component_name") or "").strip(),
                 "severity": _sev_label(t),
                 "effort": _effort(t),
+                "category_id": cid,
+                "category_name": cat_names.get(cid, "") if cid else "",
                 "has_mitigation": bool(t.get("mitigation_ids")),
                 "decision": _norm_decision(entry.get("decision")),
                 "rationale": str(entry.get("rationale") or "").strip(),
@@ -208,6 +245,127 @@ def reconcile(output_dir: Path, sidecar_path: Path) -> dict:
         "findings": findings,
         "stale": stale,
     }
+
+
+# ---------------------------------------------------------------------------
+# Console view (verdict + top findings + top mitigations + areas)
+#
+# Everything below is a deterministic *read* of the model, joined with the
+# reconcile view. It powers the interactive triage console in the skill: one
+# JSON payload the skill formats into a briefing and drill-down menus. No
+# severity or remediation text is computed here — only rolled up.
+# ---------------------------------------------------------------------------
+
+
+def build_mitigations(model: dict, key_by_tid: dict[str, str]) -> list[dict]:
+    """Mitigations ranked by priority then leverage (how many findings each
+    covers). ``covered_keys`` fans a mitigation's ``threat_ids`` (global T-NNN)
+    back to finding keys (local_id) so acting on a mitigation can triage every
+    finding it resolves in one shot."""
+    out: list[dict] = []
+    for m in model.get("mitigations") or []:
+        if not isinstance(m, dict):
+            continue
+        mid = str(m.get("id") or "").strip()
+        if not mid:
+            continue
+        tids = [str(x).strip() for x in (m.get("threat_ids") or []) if str(x).strip()]
+        covered = [key_by_tid[t] for t in tids if t in key_by_tid]
+        rem = m.get("remediation")
+        effort = (rem.get("effort") if isinstance(rem, dict) else None) or m.get("effort")
+        out.append(
+            {
+                "id": mid,
+                "title": str(m.get("title") or "").strip(),
+                "priority": str(m.get("priority") or "").strip(),
+                "severity": _sev_label(m) or str(m.get("severity") or "").strip(),
+                "kind": str(m.get("kind") or "").strip(),
+                "effort": str(effort or "").strip(),
+                "threat_ids": tids,
+                "covered_keys": covered,
+                "coverage": len(covered),
+            }
+        )
+    out.sort(key=lambda x: (_PRIORITY_ORDER.get(x["priority"], 9), -x["coverage"], x["id"]))
+    return out
+
+
+def build_areas(findings: list[dict]) -> list[dict]:
+    """Group findings by threat domain (``category_name``). Ranked by blast:
+    Critical count, then High, then total. Uncategorized findings collapse into
+    a trailing bucket."""
+    groups: dict[str, dict] = {}
+    for f in findings:
+        cid = f.get("category_id") or ""
+        gkey = cid or "__uncat__"
+        g = groups.get(gkey)
+        if g is None:
+            g = groups[gkey] = {
+                "category_id": cid,
+                "category_name": f.get("category_name") or (cid if cid else "Uncategorized"),
+                "keys": [],
+                "by_severity": collections.Counter(),
+            }
+        g["keys"].append(f["key"])
+        g["by_severity"][f["severity"] or "Unrated"] += 1
+    areas: list[dict] = []
+    for g in groups.values():
+        sev = g["by_severity"]
+        areas.append(
+            {
+                "category_id": g["category_id"],
+                "category_name": g["category_name"],
+                "keys": g["keys"],
+                "total": len(g["keys"]),
+                "critical": sev.get("Critical", 0),
+                "high": sev.get("High", 0),
+                "by_severity": dict(sev),
+            }
+        )
+    areas.sort(key=lambda a: (-a["critical"], -a["high"], -a["total"], a["category_name"]))
+    return areas
+
+
+def build_verdict(model: dict, findings: list[dict], mitigations: list[dict]) -> dict:
+    """Deterministic posture roll-up of the analyst's own numbers — never a
+    re-score. Severity mix, hottest areas/components, mitigation coverage,
+    design-weakness count, and triage progress."""
+    sev = collections.Counter(f["severity"] or "Unrated" for f in findings)
+    comps = collections.Counter(f["component"] for f in findings if f["component"])
+    area_ct = collections.Counter((f["category_name"] or f["category_id"]) for f in findings if f.get("category_id"))
+    with_mit = sum(1 for f in findings if f["has_mitigation"])
+    triaged = sum(1 for f in findings if f["decision"] != "untriaged")
+    return {
+        "by_severity": {s: sev.get(s, 0) for s in ("Critical", "High", "Medium", "Low", "Informational") if sev.get(s)},
+        "unrated": sev.get("Unrated", 0),
+        "components": len(comps),
+        "top_components": comps.most_common(3),
+        "top_areas": area_ct.most_common(3),
+        "weaknesses": len(model.get("weaknesses") or []),
+        "with_mitigation": with_mit,
+        "p1_mitigations": sum(1 for m in mitigations if m["priority"] == "P1"),
+        "triaged": triaged,
+    }
+
+
+def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = None) -> dict:
+    """One payload for the interactive console: the reconcile view plus ranked
+    mitigations, area groupings, and the posture verdict."""
+    cat_names = _load_category_names(taxonomy_path)
+    view = reconcile(output_dir, sidecar_path, category_names=cat_names)
+    model = _load_model(output_dir)
+    key_by_tid: dict[str, str] = {}
+    for t in model.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        tid = str(t.get("id") or "").strip()
+        key = _finding_key(t)
+        if tid and key:
+            key_by_tid[tid] = key
+    mitigations = build_mitigations(model, key_by_tid)
+    areas = build_areas(view["findings"])
+    verdict = build_verdict(model, view["findings"], mitigations)
+    return {**view, "mitigations": mitigations, "areas": areas, "verdict": verdict}
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +466,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--output-dir", type=Path, required=True, help="Directory holding threat-model.yaml.")
     r.add_argument("--triage", type=Path, required=True, help="Path to the triage sidecar (may not exist yet).")
 
+    c = sub.add_parser("console", help="Emit the full console payload: verdict + findings + mitigations + areas.")
+    c.add_argument("--output-dir", type=Path, required=True, help="Directory holding threat-model.yaml.")
+    c.add_argument("--triage", type=Path, required=True, help="Path to the triage sidecar (may not exist yet).")
+
     p = sub.add_parser("render", help="Render remediation-plan.md from the sidecar + model.")
     p.add_argument("--output-dir", type=Path, required=True, help="Directory holding threat-model.yaml.")
     p.add_argument("--triage", type=Path, required=True, help="Path to the triage sidecar.")
@@ -317,6 +479,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if ns.cmd == "reconcile":
         view = reconcile(ns.output_dir, ns.triage)
+        print(json.dumps(view, indent=2))
+        return 0
+
+    if ns.cmd == "console":
+        view = console(ns.output_dir, ns.triage)
         print(json.dumps(view, indent=2))
         return 0
 
