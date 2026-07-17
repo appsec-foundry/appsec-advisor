@@ -235,19 +235,24 @@ stay untriaged.
 ### View: Remediation backlog (default spine)
 Print `mitigations[]` grouped into P1 / P2 / P3 bands (they arrive already
 sorted: priority, then fix-before-investigate, then leverage). One row each:
-`M-NNN · <kind> · covers <coverage> · <covered_severities> · <title>`.
-Then ask which cut to act on with `AskUserQuestion`: **P1** / **P2** / **P3** /
-**Quick wins** (offer only bands that exist; add **Quick wins** when
-`verdict.quick_wins > 0`; "all shown" is available as free text). Print the
-chosen cut and run **Select & act**, treating each chosen mitigation's
-`covered_keys` as the selection. When a mitigation's `coverage > 1`, state the
-fan-out explicitly ("M-012 → fix 5 findings"); when it covers one finding, say
-so plainly ("M-012 → fix T-007").
+`M-NNN · <kind> · covers <coverage> · <covered_severities> · <title>`. Mark the
+Quick-win rows (those in `quick_wins[]` — low-effort, Critical/High-covering)
+with a `★`, and print the count once (`Quick wins: <verdict.quick_wins> ★`).
 
-**Quick wins** prints `quick_wins[]` — low-effort mitigations that resolve a
-Critical/High finding (the value/effort sweet spot), ranked by leverage:
-`M-NNN · Low effort · covers <coverage> · <covered_severities> · <title>`. Same
-Select & act on their `covered_keys`.
+Then go **straight to Select & act** over the whole backlog — do **not** force a
+band choice first. The user picks whatever they want: specific mitigations
+across any band (`M-003, M-015`), a range (`M-003..M-009`), a band shorthand
+(`all P1`, `all P2`), `quick wins`, or `all shown`. A mitigation resolves to its
+`covered_keys`; when `coverage > 1` state the fan-out ("M-012 → fix 5 findings"),
+else say it plainly ("M-012 → fix T-007").
+
+This is where "select the P1/P2 fixes individually, or do them all at once"
+lives: to cherry-pick, type the specific `M-NNN`s; to take a whole band, type
+`all P1` / `all P2`. Either way, choose **Mitigate + implement now** as the
+action and Step 5b applies the code changes for that selection, one at a time.
+(There is no tick-box list — `AskUserQuestion` caps at four options, so a
+selection larger than a handful is typed, not clicked; typing is also how you
+mix bands or ranges in one go.)
 
 ### View: Browse by lens
 Ask which lens with `AskUserQuestion` — offer only the ones that apply, in this
@@ -287,24 +292,22 @@ gates it (the list is empty in those cases). Never fold requirements into
 priority or severity — it is a badge/lens, not a re-score.
 
 ### Select & act (shared)
-1. Ask the **scope** with `AskUserQuestion` — how much of the current view to act
-   on (always state the count `<n>` so a large scope is a considered choice):
-   - **All shown (<n>)** — the whole view at once. In a band / Quick-wins /
-     mitigation view this is the union of the shown mitigations' `covered_keys`;
-     in a finding view it is every listed finding. This is the one-click bulk
-     path — a developer clearing all Quick wins picks this.
-   - **Select specific** — then ask for a **free-text** subset, e.g.
-     `T-001..T-005, T-012`, `M-003..M-009`, or a comma list. Resolve `T-NNN` /
-     `M-NNN` tokens to finding `key`s via the payload (`id`↔`key`; a mitigation
-     resolves to its `covered_keys`); ignore unknown tokens but say which you
-     dropped.
-   - **Back** — return to the menu without acting.
+1. Ask **what to act on** with a single `AskUserQuestion` — buttons **All shown
+   (<n>)** and **Back**, and tell the user they can instead **type** a selection.
+   No forced "select specific" detour: the user either clicks *All shown*, clicks
+   *Back*, or types their picks directly (AskUserQuestion always accepts typed
+   input). Accepted typed forms — resolved against the payload, unknown tokens
+   dropped with a note:
+   - specific ids across any band/view: `M-003, M-015` or `T-001, T-012`
+   - a range: `M-003..M-009`, `T-001..T-005`
+   - a band or cut shorthand: `all P1`, `all P2`, `quick wins`
+   - `all shown` (same as the button)
+   A mitigation resolves to its `covered_keys`; findings resolve by `id`↔`key`.
+   State the count `<n>` for *All shown* so a large scope is a considered choice.
 2. Ask the action with `AskUserQuestion`: **Mitigate (fix)** / **Accept risk** /
-   **Defer** / **Mitigate + implement now**. It applies to the whole scope from
-   step 1 — so **All shown → Mitigate** is the "mark every shown finding to fix"
-   one-two-click a developer wants; **Accept risk** / **Defer** bulk-triage the
-   view the other ways; **Mitigate + implement now** additionally applies the
-   code changes (Step 5b).
+   **Defer** / **Mitigate + implement now**. It applies to the whole selection —
+   **Accept risk** / **Defer** bulk-triage it; **Mitigate + implement now**
+   additionally applies the code changes (Step 5b).
 3. **Accept risk** requires a rationale — ask once for a single reason that
    applies to the whole selection; write it to every selected key. Never persist
    an accept-risk with an empty rationale.
