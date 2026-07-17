@@ -35,6 +35,8 @@ WHAT IT SHOWS
   * Freshness: is the model still current, or has security-relevant code changed?
     (same change detection that drives the incremental-scan decision)
   * Findings by severity (Critical / High / Medium / Low)
+  * Remediation backlog by mitigation priority (P1 / P2 / P3) and how many
+    findings have a proposed mitigation vs. are uncovered
   * Top Critical threats (or all threats with --all)
   * Mitigation and control counts, plus the rendered report path
 

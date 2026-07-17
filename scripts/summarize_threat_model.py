@@ -3,9 +3,10 @@
 
 Powers ``/appsec-advisor:show-threat-model``. Read-only: it parses the
 committed semantic model and prints a compact at-a-glance summary —
-project + scan identity, severity breakdown, top-Critical findings,
-mitigation/control counts, and the report path. No LLM judgement, no
-network, no writes; output is byte-stable for a given input.
+project + scan identity, severity breakdown, remediation backlog by
+priority + mitigation coverage, top-Critical findings, mitigation/control
+counts, and the report path. No LLM judgement, no network, no writes;
+output is byte-stable for a given input.
 
 Freshness is NOT computed here. The skill obtains the freshness verdict
 from ``threat_model_health.py --json`` (which wraps
@@ -98,6 +99,31 @@ def _severity_counts(threats: list) -> dict:
     return counts
 
 
+_PRIORITY_BANDS = ("P1", "P2", "P3")
+
+
+def _backlog_by_priority(mitigations: list) -> dict:
+    """Remediation backlog sized by mitigation priority — the same P1→P2→P3 spine
+    the review-threat-model triage console uses, but severity-independent so it
+    never contradicts the risk-based severity histogram above it."""
+    counts = {p: 0 for p in _PRIORITY_BANDS}
+    for m in mitigations:
+        if not isinstance(m, dict):
+            continue
+        p = str(m.get("priority") or "").strip().upper()
+        if p in counts:
+            counts[p] += 1
+    return counts
+
+
+def _coverage(threats: list) -> dict:
+    """How many findings the model proposes a mitigation for (keyed on
+    ``mitigation_ids`` — the same signal review-threat-model uses). Uncovered
+    findings have no proposed fix and most need a human decision."""
+    with_m = sum(1 for t in threats if t.get("mitigation_ids"))
+    return {"with_mitigation": with_m, "uncovered": len(threats) - with_m}
+
+
 def build_summary(data: dict, output_dir: Path) -> dict:
     """Reduce raw YAML to the structured summary the renderer consumes."""
     meta = data.get("meta") or {}
@@ -133,6 +159,8 @@ def build_summary(data: dict, output_dir: Path) -> dict:
             "controls": len(controls),
         },
         "severity_counts": counts,
+        "backlog": _backlog_by_priority(mitigations),
+        "coverage": _coverage(threats),
         "criticals": [
             {
                 "id": _threat_id(t),
@@ -254,6 +282,16 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
             buf.append("")
 
     buf.append(f"Mitigations {totals['mitigations']} defined · Controls {totals['controls']} in place")
+    backlog = summary.get("backlog") or {}
+    if sum(backlog.values()):
+        bands = " · ".join(f"{backlog[p]}× {p}" for p in ("P1", "P2", "P3") if backlog.get(p))
+        buf.append(f"Backlog    {bands}")
+    cov = summary.get("coverage") or {}
+    if totals["threats"]:
+        buf.append(
+            f"Coverage   {cov.get('with_mitigation', 0)}/{totals['threats']} findings have a mitigation"
+            f" · {cov.get('uncovered', 0)} without"
+        )
     buf.append(f"Report     {summary['report']}")
     return "\n".join(buf) + "\n"
 

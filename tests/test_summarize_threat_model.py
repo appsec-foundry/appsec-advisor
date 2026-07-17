@@ -107,6 +107,47 @@ def test_severity_counts_and_totals(tmp_path):
     }
 
 
+def test_backlog_and_coverage(tmp_path):
+    import yaml
+
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: Critical, mitigation_ids: [M-001]}
+          - {t_id: T-002, risk: High, mitigation_ids: [M-002]}
+          - {t_id: T-003, risk: Medium}
+        mitigations:
+          - {id: M-001, priority: P1}
+          - {id: M-002, priority: P2}
+          - {id: M-003, priority: P2}
+          - {id: M-004}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    assert summary["backlog"] == {"P1": 1, "P2": 2, "P3": 0}
+    # two of three findings carry mitigation_ids
+    assert summary["coverage"] == {"with_mitigation": 2, "uncovered": 1}
+
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Backlog    1× P1 · 2× P2" in out
+    assert "Coverage   2/3 findings have a mitigation · 1 without" in out
+
+
+def test_backlog_line_omitted_when_no_priorities(tmp_path):
+    import yaml
+
+    # SAMPLE mitigations carry no priority -> backlog all zero -> no Backlog line
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    assert summary["backlog"] == {"P1": 0, "P2": 0, "P3": 0}
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Backlog" not in out
+    # coverage still renders: SAMPLE threats carry no mitigation_ids
+    assert "Coverage   0/4 findings have a mitigation · 4 without" in out
+
+
 def test_criticals_only_and_sorted(tmp_path):
     import yaml
 
