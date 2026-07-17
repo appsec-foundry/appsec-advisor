@@ -500,6 +500,58 @@ def test_build_quick_wins_low_effort_high_impact():
     # M-003 excluded (High effort), M-004 (only Medium), M-005 (no effort)
 
 
+def test_build_recommended_fix_first():
+    mits = [
+        # ideal: fix + Low + covers Critical -> top
+        {
+            "id": "M-001",
+            "priority": "P1",
+            "kind": "fix",
+            "effort": "Low",
+            "coverage": 1,
+            "covered_severities": {"Critical": 1},
+        },
+        # fix + Low + High -> included, ranks below the Critical one
+        {
+            "id": "M-002",
+            "priority": "P2",
+            "kind": "fix",
+            "effort": "Low",
+            "coverage": 2,
+            "covered_severities": {"High": 2},
+        },
+        # low-effort High but kind=investigate -> excluded (needs analysis first)
+        {
+            "id": "M-003",
+            "priority": "P2",
+            "kind": "investigate",
+            "effort": "Low",
+            "coverage": 1,
+            "covered_severities": {"High": 1},
+        },
+        # fix but High effort -> excluded (not cheap)
+        {
+            "id": "M-004",
+            "priority": "P2",
+            "kind": "fix",
+            "effort": "High",
+            "coverage": 1,
+            "covered_severities": {"High": 1},
+        },
+        # fix + Low but only Medium -> excluded (not worth-it enough)
+        {
+            "id": "M-005",
+            "priority": "P3",
+            "kind": "fix",
+            "effort": "Low",
+            "coverage": 1,
+            "covered_severities": {"Medium": 1},
+        },
+    ]
+    rec = rtm.build_recommended(mits)
+    assert [m["id"] for m in rec] == ["M-001", "M-002"]  # Critical before High
+
+
 def test_build_control_posture_groups_and_ranks_worst_first():
     model = {
         "security_controls": [

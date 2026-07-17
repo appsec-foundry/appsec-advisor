@@ -46,10 +46,10 @@ FLAGS
 WHAT IT DOES
   * Opens a triage console: a landing screen (backlog by priority + severity mix
     + the top "worst case if nothing changes" scenarios), then a menu.
-  * Menu spine is the Remediation backlog — a terse, priority-ordered P1/P2 list
-    (Quick wins marked ★); you pick the specific fixes to act on by number/id.
-    Also: Browse by lens (severity / area / requirement / uncovered), Security
-    posture by domain, Write plan.
+  * Menu spine is Fix findings: it leads with a recommended "fix first" set
+    (cheap, low-risk, high-impact) you can act on in one step, or you pick a
+    specific fix by number/id. Also: Browse by lens (severity / area / requirement
+    / uncovered), Security posture by domain, Write plan.
   * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`
     or `M-003..M-009`) and pick one action for the whole selection: mitigate /
     accept-risk / defer. Acting on a mitigation triages every finding it covers.
@@ -145,9 +145,14 @@ Payload shape (all read from the model — never recompute):
 - `requirements[]` — findings grouped by violated custom requirement (empty
   unless integrated); each has `requirement_id`, `url`, `total`, `critical`,
   `high`, and `keys`.
+- `recommended[]` — the "fix first" set: concrete `fix`-kind mitigations that are
+  `Low` effort and cover a Critical/High finding (high value, low cost, low
+  implementation risk), worst-severity first; a subset of `mitigations[]` (same
+  fields). `verdict.recommended` is the count. This is what the Fix-findings view
+  leads with.
 - `quick_wins[]` — low-effort mitigations that cover at least one Critical/High
-  finding (value/effort sweet spot), ranked by leverage; a subset of
-  `mitigations[]` (same fields). `verdict.quick_wins` is the count.
+  finding (value/effort sweet spot, any kind), ranked by leverage; a subset of
+  `mitigations[]`. `verdict.quick_wins` is the count.
 - `control_posture[]` — security controls grouped by `domain`, worst-first by
   effectiveness; each has `domain`, `worst_effectiveness`
   (`Missing`/`Weak`/`Partial`/`Adequate`), `total`, `by_effectiveness`, and
@@ -172,7 +177,7 @@ First the verdict from `verdict` (omit the Requirements line unless
 
 ```
 <project> · generated <generated> · <total> findings · <triaged>/<total> triaged
-Backlog: <P1>× P1 · <P2>× P2 · <P3>× P3   (<uncovered> findings have no mitigation)
+Fixes: <P1>× P1 · <P2>× P2 · <P3>× P3   (<uncovered> findings have no mitigation)
 Severity: <C> Critical · <H> High · <M> Medium (<unrated> unrated) · <weaknesses> design weaknesses
 Requirements: <findings_violating> findings violate <requirement_count> custom requirements
 Hottest areas: <a1> (<n>) · <a2> (<n>) · <a3> (<n>)
@@ -216,31 +221,54 @@ hidden.
 
 ## Step 5 — The menu loop
 
-The spine is the **remediation backlog by priority** (P1 → P2 → P3): the plan
-you emit *is* a prioritized backlog, so walking it that way keeps the flow and
-the artifact aligned. Severity and area are alternate lenses, not the default.
+The spine is **Fix findings** — this is where a developer actually remediates.
+Lead with a recommendation (what to fix first), and always let them pick a
+specific fix instead. Severity and area are alternate lenses.
 
 Ask with `AskUserQuestion` (one question, four options):
 
-1. **Remediation backlog** — a terse P1/P2 list; pick the specific fixes to act on
+1. **Fix findings** — a recommended "fix first" set, or pick a specific fix
 2. **Browse by lens** — severity · area · requirement · uncovered
 3. **Security posture by domain** — control ratings *(only if `control_posture` is non-empty)*
 4. **Write plan & exit**
 
 After each action, redisplay the menu with an updated `Triage: X/<total>`
 counter. The user may also type a free-text intent at any time ("accept all
-Low", "fix the auth ones", "show quick wins") — honour it directly, then return
-to the menu. The user can stop whenever they want; untriaged findings simply
-stay untriaged.
+Low", "fix the auth ones") — honour it directly, then return to the menu. The
+user can stop whenever they want; untriaged findings simply stay untriaged.
 
-### View: Remediation backlog (default spine)
-Keep the display **terse** — a long, multi-field dump of every mitigation is slow
-to render and is what makes the view feel sluggish. Print a compact **numbered
-list**, one short line per item, and by default show only the actionable bands
-**P1 + P2** (already priority-sorted). Note the P3 count and include it only if
-the developer asks (`show P3`). One row = number, id, band, `★` if it is a Quick
-win, and a trimmed title — nothing else (no kind / coverage / covered_severities
-inline; the developer can ask about a specific item):
+### View: Fix findings (recommend-first)
+Do not dump the whole list. **Lead with the recommendation** from `recommended[]`
+— the "fix first" set the payload already computed (mitigations that are
+concrete `fix`es, `Low` effort, and remove a Critical/High finding = high value,
+low cost, low implementation risk). Print it compactly, worst-severity first,
+with the *why*:
+
+```
+Recommended to fix first — cheap, low-risk, high-impact:
+  M-015 (P1) <short title>  — resolves T-001 (Critical)
+  M-010 (P2) <short title>  — resolves T-014 (High)
+  …
+```
+
+Then offer, with `AskUserQuestion`:
+
+1. **Fix the recommended set (<n>)** — take the `recommended[]` mitigations as the
+   selection and go to **Select & act** (the developer then picks the action,
+   e.g. *Mitigate + implement now*). This is the guided "just tell me where to
+   start" path.
+2. **Pick a specific fix** — print the terse list (below) and let the developer
+   name the exact items they want.
+3. **Show all fixes** — same terse list, including P3.
+4. **Back**.
+
+If `recommended[]` is empty (nothing is both cheap and low-risk), say so plainly
+and go straight to the pick list — never invent a recommendation.
+
+**The terse list** (options 2/3): a compact **numbered** list, one short line
+each — number, id, band, `★` if it is in `recommended[]`, trimmed title. Nothing
+else inline (no kind/coverage/severities — that bloats it and is slow to render).
+Default to P1 + P2; add P3 only on request (`show P3`).
 
 ```
  1. M-015 (P1) <short title> ★
@@ -249,19 +277,11 @@ inline; the developer can ask about a specific item):
  … (+8 P3 — type `show P3` to include)
 ```
 
-Then ask **which specific items the developer wants to act on** — a hand-picked
-selection, never an assumed "fix everything":
-
-> "Which do you want to act on? Type the numbers or ids — e.g. `1, 3, 7` or
-> `M-003, M-015` (ranges like `2..5` work too)."
-
-Resolve the picked numbers/ids to finding `key`s (a mitigation → its
-`covered_keys`); drop unknown tokens with a note. Act **only** on what the
-developer named — `all` / `all P1` work only if they explicitly type them; never
-default to a bulk sweep. Then run **Select & act** on that selection. Do not
-reprint the whole list between selections — if it is already on screen, just ask
-for the next picks. When a mitigation's `coverage > 1`, state the fan-out
-("M-015 → fix 3 findings"); else say it plainly ("M-015 → fix T-001").
+The developer names the specific items (`1, 3, 7` / `M-003, M-015` / range
+`2..5`); resolve to `covered_keys`, drop unknown tokens with a note, and run
+**Select & act**. Act only on what they named — never an assumed bulk sweep. Do
+not reprint the list between picks. When a mitigation's `coverage > 1` state the
+fan-out ("M-015 → fix 3 findings"); else say it plainly ("M-015 → fix T-001").
 
 ### View: Browse by lens
 Ask which lens with `AskUserQuestion` — offer only the ones that apply, in this

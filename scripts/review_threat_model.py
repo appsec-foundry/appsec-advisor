@@ -545,6 +545,31 @@ def _normalize_domain(raw: str) -> str:
     return r[: -len(" Controls")].strip() if low.endswith("controls") else r
 
 
+def build_recommended(mitigations: list[dict], limit: int = 5) -> list[dict]:
+    """The proactive "fix first" recommendation — what the tool leads with so a
+    developer is told where to start instead of scanning the whole backlog.
+
+    A recommended fix is: actionable now (``kind == fix`` — a concrete change, not
+    an investigate/review that needs analysis first = low implementation risk),
+    cheap (``effort == Low``), and worth it (covers a Critical or High finding).
+    Ranked by the worst severity it removes, then leverage, then priority; capped.
+    Expects mitigations enriched with ``covered_severities`` (console does it)."""
+
+    def _worst_rank(m: dict) -> int:
+        cs = m.get("covered_severities") or {}
+        return min((_SEVERITY_ORDER.get(s, 9) for s in cs), default=9)
+
+    out = [
+        m
+        for m in mitigations
+        if str(m.get("kind") or "").strip().lower() == "fix"
+        and str(m.get("effort") or "").strip().lower() == "low"
+        and ((m.get("covered_severities") or {}).get("Critical") or (m.get("covered_severities") or {}).get("High"))
+    ]
+    out.sort(key=lambda m: (_worst_rank(m), -m["coverage"], _PRIORITY_ORDER.get(m["priority"], 9), m["id"]))
+    return out[:limit]
+
+
 def build_control_posture(model: dict) -> list[dict]:
     """Security controls grouped by (normalised) domain with their effectiveness
     rating and assessment — read from ``security_controls[]``. Ranked worst-first
@@ -630,6 +655,7 @@ def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = N
     requirement_groups = build_requirement_groups(view["findings"], reqs["url_by_id"]) if reqs["integrated"] else []
     worst_case = build_worst_case(model, view["findings"], mitigations)
     quick_wins = build_quick_wins(mitigations)
+    recommended = build_recommended(mitigations)
     control_posture = build_control_posture(model)
     verdict = build_verdict(model, view["findings"], mitigations)
     verdict["requirements"] = {
@@ -638,6 +664,7 @@ def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = N
         "requirement_count": len({r for f in view["findings"] for r in f.get("requirements") or []}),
     }
     verdict["quick_wins"] = len(quick_wins)
+    verdict["recommended"] = len(recommended)
     return {
         **view,
         "mitigations": mitigations,
@@ -645,6 +672,7 @@ def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = N
         "requirements": requirement_groups,
         "worst_case": worst_case,
         "quick_wins": quick_wins,
+        "recommended": recommended,
         "control_posture": control_posture,
         "verdict": verdict,
     }
