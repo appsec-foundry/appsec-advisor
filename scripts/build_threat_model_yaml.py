@@ -1051,9 +1051,7 @@ def prune_dangling_mitigation_threat_ids(threats: list[dict], mitigations: list[
     return mitigations, warnings
 
 
-def prune_dangling_weakness_instances(
-    threats: list[dict], weaknesses: list[dict]
-) -> tuple[list[dict], list[str]]:
+def prune_dangling_weakness_instances(threats: list[dict], weaknesses: list[dict]) -> tuple[list[dict], list[str]]:
     """Drop ``weakness.instances[]`` entries that reference no surviving threat.
 
     ``merge_threats.build_weakness_register`` builds the register from the FULL

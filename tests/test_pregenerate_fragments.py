@@ -519,17 +519,25 @@ class TestVerdict:
     _YAML = {
         "threats": [
             {"id": "T-001", "title": "SQL Injection — routes/login.ts:34", "risk": "Critical", "stride": "Tampering"},
-            {"id": "T-002", "title": "JWT in localStorage — interceptor.ts:13", "risk": "Critical", "stride": "Information Disclosure"},
-            {"id": "T-003", "title": "RCE — routes/b2bOrder.ts:23", "risk": "Critical", "stride": "Elevation of Privilege"},
+            {
+                "id": "T-002",
+                "title": "JWT in localStorage — interceptor.ts:13",
+                "risk": "Critical",
+                "stride": "Information Disclosure",
+            },
+            {
+                "id": "T-003",
+                "title": "RCE — routes/b2bOrder.ts:23",
+                "risk": "Critical",
+                "stride": "Elevation of Privilege",
+            },
             {"id": "T-004", "title": "Weak login — routes/login.ts:9", "risk": "High", "stride": "Spoofing"},
             {"id": "T-005", "title": "No audit log — server.ts:1", "risk": "Medium", "stride": "Repudiation"},
         ]
     }
 
     def _schema(self):
-        return json.loads(
-            (REPO_ROOT / "schemas" / "fragments" / "verdict.schema.json").read_text(encoding="utf-8")
-        )
+        return json.loads((REPO_ROOT / "schemas" / "fragments" / "verdict.schema.json").read_text(encoding="utf-8"))
 
     def test_output_is_schema_valid(self):
         import jsonschema
@@ -543,18 +551,22 @@ class TestVerdict:
         assert data["opening"].startswith("Not production-ready")
 
     def test_yellow_posture_when_high_no_critical(self):
-        y = {"threats": [
-            {"id": "T-001", "title": "A — a.ts:1", "risk": "High", "stride": "Spoofing"},
-            {"id": "T-002", "title": "B — b.ts:1", "risk": "Medium", "stride": "Tampering"},
-        ]}
+        y = {
+            "threats": [
+                {"id": "T-001", "title": "A — a.ts:1", "risk": "High", "stride": "Spoofing"},
+                {"id": "T-002", "title": "B — b.ts:1", "risk": "Medium", "stride": "Tampering"},
+            ]
+        }
         data = json.loads(pf.gen_verdict(y))
         assert data["severity"] == "yellow"
 
     def test_green_posture_when_no_high_or_critical(self):
-        y = {"threats": [
-            {"id": "T-001", "title": "A — a.ts:1", "risk": "Medium", "stride": "Tampering"},
-            {"id": "T-002", "title": "B — b.ts:1", "risk": "Low", "stride": "Spoofing"},
-        ]}
+        y = {
+            "threats": [
+                {"id": "T-001", "title": "A — a.ts:1", "risk": "Medium", "stride": "Tampering"},
+                {"id": "T-002", "title": "B — b.ts:1", "risk": "Low", "stride": "Spoofing"},
+            ]
+        }
         data = json.loads(pf.gen_verdict(y))
         assert data["severity"] == "green"
 
@@ -590,27 +602,27 @@ class TestVerdict:
 
     def test_idempotent_preserves_llm_version(self, tmp_path):
         # The driver must never overwrite an existing (LLM-authored) verdict.
-        (tmp_path / "threat-model.yaml").write_text(
-            yaml.safe_dump(self._YAML), encoding="utf-8"
-        )
+        (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(self._YAML), encoding="utf-8")
         frags = tmp_path / ".fragments"
         frags.mkdir()
         sentinel = '{"severity":"red","opening":"SENTINEL","bullets":[]}'
         (frags / "ms-verdict.json").write_text(sentinel, encoding="utf-8")
         subprocess.run(
             [sys.executable, str(SCRIPT), str(tmp_path), "--only", "ms-verdict.json"],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         )
         assert (frags / "ms-verdict.json").read_text(encoding="utf-8") == sentinel
 
     def test_backstop_fills_missing_fragment(self, tmp_path):
-        (tmp_path / "threat-model.yaml").write_text(
-            yaml.safe_dump(self._YAML), encoding="utf-8"
-        )
+        (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(self._YAML), encoding="utf-8")
         (tmp_path / ".fragments").mkdir()
         subprocess.run(
             [sys.executable, str(SCRIPT), str(tmp_path), "--only", "ms-verdict.json"],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         )
         data = json.loads((tmp_path / ".fragments" / "ms-verdict.json").read_text(encoding="utf-8"))
         assert data["severity"] == "red"

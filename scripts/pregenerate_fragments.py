@@ -5872,10 +5872,7 @@ _VERDICT_CLOSING = {
         "Prioritising the fixes behind the scenarios above will close the most "
         "dangerous exposures before they can be used against customers."
     ),
-    "yellow": (
-        "Resolving the items above before launch will bring the application to a "
-        "solid security baseline."
-    ),
+    "yellow": ("Resolving the items above before launch will bring the application to a solid security baseline."),
     "green": (
         "Maintaining the current controls and monitoring the residual risks will "
         "keep the application on a sound footing."
@@ -5914,8 +5911,7 @@ _VERDICT_STRIDE_SCENARIOS: list[tuple[tuple[str, ...], str, str]] = [
     (
         ("denial", "dos", "availab"),
         "Service taken offline",
-        "An attacker can disrupt or exhaust the service so that legitimate customers "
-        "are unable to use it.",
+        "An attacker can disrupt or exhaust the service so that legitimate customers are unable to use it.",
     ),
     (
         ("elevation", "privilege", "eop", "rce", "execution"),

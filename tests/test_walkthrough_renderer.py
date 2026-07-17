@@ -637,9 +637,7 @@ def test_attack_class_strips_via_impl_and_file_tokens():
     # The `via <impl>` tail and any file token are dropped — the concrete
     # feature is re-attached by _attack_target_label; impl/file live on Source.
     assert renderer._attack_class({"_title_source": "UNION SQL Injection via Product Search"}) == "UNION SQL Injection"
-    assert (
-        renderer._attack_class({"_title_source": "XXE via libxmljs2 external entity resolution on Upload"}) == "XXE"
-    )
+    assert renderer._attack_class({"_title_source": "XXE via libxmljs2 external entity resolution on Upload"}) == "XXE"
     assert (
         renderer._attack_class({"_title_source": "Server-Side Template Injection via eval (routes/userProfile.ts:62)"})
         == "Server-Side Template Injection"
