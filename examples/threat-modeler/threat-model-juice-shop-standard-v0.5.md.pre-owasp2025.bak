@@ -1856,7 +1856,7 @@ Any party who has ever cloned the repository can forge admin or deluxe-user JWTs
 
 **Fix:** Move the cryptographic key out of source control into a managed secret store and rotate it → ● [M-004](#m-004) — Load RSA private key from an environment variable or secret manager at startup (`insecurity.ts:21`)
 
-**Classification:** Cryptographic Failures · [CWE-321](https://cwe.mitre.org/data/definitions/321.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/) · walkthrough [Walkthrough §3.8](#38-rsa-private-key-hardcoded-as-string-literal)
+**Classification:** Cryptographic Failures · [CWE-321](https://cwe.mitre.org/data/definitions/321.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/) · walkthrough [Walkthrough §3.8](#38-rsa-private-key-hardcoded-as-string-literal)
 
 <a id="t-005"></a><a id="f-005"></a>
 #### F-005 · JWT Algorithm Restriction Missing express-jwt Accepts algorithm none
@@ -1875,7 +1875,7 @@ Complete authentication bypass: any attacker can forge an admin-level JWT and ac
 
 **Fix:** Replace the broken algorithm with a vetted modern primitive (AES-GCM / Argon2id / Ed25519) → ● [M-005](#m-005) — Pin allowed algorithms to RS256 in expressJwt and `jwt.verify` calls (`insecurity.ts:52`)
 
-**Classification:** Cryptographic Failures · [CWE-327](https://cwe.mitre.org/data/definitions/327.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/) · walkthrough [Walkthrough §3.7](#37-jwt-algorithm-restriction-missing-express-jwt-accepts-algorithm-none)
+**Classification:** Cryptographic Failures · [CWE-327](https://cwe.mitre.org/data/definitions/327.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/) · walkthrough [Walkthrough §3.7](#37-jwt-algorithm-restriction-missing-express-jwt-accepts-algorithm-none)
 
 <a id="t-006"></a><a id="f-006"></a>
 #### F-006 · OAuth Implicit Flow with Algorithmically Derived Password
@@ -1905,7 +1905,7 @@ Any OAuth user's Juice Shop account can be compromised by anyone knowing their e
 
 **Fix:** Move the credential out of source control into a secret store and rotate it → ● [M-006](#m-006) — Migrate OAuth flow to authorization code + PKCE and decouple OAuth identity from password-based auth (`oauth.component.ts:30`)
 
-**Classification:** Cryptographic Failures · [CWE-798](https://cwe.mitre.org/data/definitions/798.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Cryptographic Failures · [CWE-798](https://cwe.mitre.org/data/definitions/798.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 <a id="t-007"></a><a id="f-007"></a>
 #### F-007 · Insecure JWT Verification
@@ -1935,7 +1935,7 @@ export const verify = (token: string) => token ? (jws.verify as ((token: string,
 
 **Fix:** Pin the signature algorithm explicitly and reject `alg:none` and unknown algorithms → ● [M-007](#m-007) — Pin JWT algorithm allowlist to RS256 in express-jwt configuration (`insecurity.ts:52`)
 
-**Classification:** Broken Authentication · [CWE-347](https://cwe.mitre.org/data/definitions/347.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/) · walkthrough [Walkthrough §3.1](#31-insecure-jwt-verification-in-express-rest-api-backend)
+**Classification:** Broken Authentication · [CWE-347](https://cwe.mitre.org/data/definitions/347.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/) · walkthrough [Walkthrough §3.1](#31-insecure-jwt-verification-in-express-rest-api-backend)
 
 <a id="t-008"></a><a id="f-008"></a>
 #### F-008 · Unsalted MD5 Password Hashing (models/user.ts:76)
@@ -1954,7 +1954,7 @@ Full offline credential recovery for all user accounts; administrative account t
 
 **Fix:** Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id) → ● [M-008](#m-008) — Replace MD5 with bcrypt (cost factor ≥12) in User model password setter (`user.ts:76`)
 
-**Classification:** Cryptographic Failures · [CWE-916](https://cwe.mitre.org/data/definitions/916.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/) · walkthrough [Walkthrough §3.2](#32-unsalted-md5-password-hashing-in-user)
+**Classification:** Cryptographic Failures · [CWE-916](https://cwe.mitre.org/data/definitions/916.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/) · walkthrough [Walkthrough §3.2](#32-unsalted-md5-password-hashing-in-user)
 
 <a id="t-009"></a><a id="f-009"></a>
 #### F-009 · Derived Credential from OAuth Email Claim (oauth.component.ts:30)
@@ -1982,7 +1982,7 @@ An attacker knowing any social-login user's email address can authenticate as th
 
 **Fix:** ● [M-009](#m-009) — Replace deterministic email-derived password with a cryptographically random credential for OAuth-linked accounts (`oauth.component.ts:30`)
 
-**Classification:** Broken Authentication · [CWE-522](https://cwe.mitre.org/data/definitions/522.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-522](https://cwe.mitre.org/data/definitions/522.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-010"></a><a id="f-010"></a>
 #### F-010 · SQL Injection via String Concatenation in Login Query (routes/login.ts:34)
@@ -2012,7 +2012,7 @@ Authentication bypass for any account, plus full read/write access to the Users 
 
 **Fix:** Switch all SQL execution to parameterised queries or ORM-bound parameters → ● [M-010](#m-010) — Replace raw SQL string concatenation with Sequelize parameterised query or ORM finder (`login.ts:34`)
 
-**Classification:** Injection · [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/) · walkthrough [Walkthrough §3.3](#33-sql-injection-in-authentication-and-authorization-service)
+**Classification:** Injection · [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/) · walkthrough [Walkthrough §3.3](#33-sql-injection-in-authentication-and-authorization-service)
 
 <a id="t-011"></a><a id="f-011"></a>
 #### F-011 · SQL injection via unsanitized query parameter in product search (search.ts:23)
@@ -2040,7 +2040,7 @@ The 200-character truncation does not prevent exploitation - a union injection p
 
 **Fix:** Switch all SQL execution to parameterised queries or ORM-bound parameters → ● [M-011](#m-011) — Parameterize the product search LIKE query (`search.ts:23`)
 
-**Classification:** Injection · [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/) · walkthrough [Walkthrough §3.4](#34-sql-injection-in-express-rest-api-backend)
+**Classification:** Injection · [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/) · walkthrough [Walkthrough §3.4](#34-sql-injection-in-express-rest-api-backend)
 
 <a id="t-012"></a><a id="f-012"></a>
 #### F-012 · Remote code execution via notevil sandbox escape in B2B order endpoint
@@ -2066,7 +2066,7 @@ An authenticated B2B caller (any user with a valid JWT) can achieve arbitrary co
 
 **Fix:** Replace runtime code generation (eval/Function/template render) with a data-only execution path → ● [M-012](#m-012) — Remove server-side expression evaluation from the B2B order endpoint; accept only structured JSON order data (`b2bOrder.ts:21`)
 
-**Classification:** Code Execution via Unsafe Deserialization or Eval · [CWE-94](https://cwe.mitre.org/data/definitions/94.html) · [OWASP A08:2025](https://owasp.org/Top10/2025/A08_2025-Software_or_Data_Integrity_Failures/)
+**Classification:** Code Execution via Unsafe Deserialization or Eval · [CWE-94](https://cwe.mitre.org/data/definitions/94.html) · [OWASP A08:2021](https://owasp.org/Top10/A08_2021/)
 
 <a id="t-013"></a><a id="f-013"></a>
 #### F-013 · Insecure Direct Object Reference
@@ -2092,7 +2092,7 @@ An authenticated B2B caller (any user with a valid JWT) can achieve arbitrary co
 
 **Fix:** Tie every object lookup to the requesting user's identity and reject cross-tenant references → ● [M-013](#m-013) — Replace `req.body.UserId`/userId/ownerId with `req.user.id` (or equivalent session-derived identity) in every WHERE/filter clause. (`dataExport.ts:26`)
 
-**Classification:** Broken Access Control · [CWE-639](https://cwe.mitre.org/data/definitions/639.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Broken Access Control · [CWE-639](https://cwe.mitre.org/data/definitions/639.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-014"></a><a id="f-014"></a>
 #### F-014 · Mass Assignment via finale-rest Auto-CRUD on User Model (server.ts:501)
@@ -2120,7 +2120,7 @@ Any authenticated user can grant themselves or another account the admin role, g
 
 **Fix:** ● [M-014](#m-014) — Add role field to excludeAttributes and enforce role-change authorization in a dedicated admin endpoint (`server.ts:501`)
 
-**Classification:** Broken Access Control · [CWE-915](https://cwe.mitre.org/data/definitions/915.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/) · walkthrough [Walkthrough §3.5](#35-mass-assignment-in-express-rest-api-backend)
+**Classification:** Broken Access Control · [CWE-915](https://cwe.mitre.org/data/definitions/915.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/) · walkthrough [Walkthrough §3.5](#35-mass-assignment-in-express-rest-api-backend)
 
 <a id="t-015"></a><a id="f-015"></a>
 #### F-015 · Mass assignment allows self-registration as admin via role field
@@ -2150,7 +2150,7 @@ Any internet user can create an admin account instantly, bypassing all access co
 
 **Fix:** ● [M-015](#m-015) — Add role to the finale User resource excludeAttributes list and enforce default role server-side (`server.ts:484`)
 
-**Classification:** Broken Access Control · [CWE-915](https://cwe.mitre.org/data/definitions/915.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/) · walkthrough [Walkthrough §3.6](#36-mass-assignment-allows-self-registration-as-admin-in-express-rest-api-backend)
+**Classification:** Broken Access Control · [CWE-915](https://cwe.mitre.org/data/definitions/915.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/) · walkthrough [Walkthrough §3.6](#36-mass-assignment-allows-self-registration-as-admin-in-express-rest-api-backend)
 
 ### 🟠 High (43)
 
@@ -2169,7 +2169,7 @@ An attacker who exploits any stored or reflected XSS reads the token with `local
 
 **Fix:** ● [M-001](#m-001) — Establish dependency update cadence with security patch SLA (`oauth.component.ts:51`)
 
-**Classification:** Insecure Client-Side Storage · [CWE-922](https://cwe.mitre.org/data/definitions/922.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Insecure Client-Side Storage · [CWE-922](https://cwe.mitre.org/data/definitions/922.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 <a id="t-002"></a><a id="f-002"></a>
 #### F-002 · Missing Authentication Middleware on Sensitive API Routes
@@ -2197,7 +2197,7 @@ Any unauthenticated attacker can send `PUT /api/Products/1 { "description": "<sc
 
 **Fix:** ◕ [M-002](#m-002) — Enforce security response headers policy (CSP, HSTS, X-Frame-Options) (`server.ts:370`)
 
-**Classification:** Broken Access Control · [CWE-862](https://cwe.mitre.org/data/definitions/862.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Broken Access Control · [CWE-862](https://cwe.mitre.org/data/definitions/862.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-003"></a><a id="f-003"></a>
 #### F-003 · Client-Side-Only Admin and Accounting Role Guard
@@ -2212,7 +2212,7 @@ An attacker can execute `localStorage.setItem('token', '<crafted-jwt>')` in the 
 
 **Fix:** ◕ [M-003](#m-003) — Replace client-side JWT role decode in route guards with server-side authorization check (`app.guard.ts:52`)
 
-**Classification:** Broken Access Control · [CWE-602](https://cwe.mitre.org/data/definitions/602.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Broken Access Control · [CWE-602](https://cwe.mitre.org/data/definitions/602.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-016"></a><a id="f-016"></a>
 #### F-016 · Security-Question Password Reset Without Rate Limiting (resetPassword.ts:17)
@@ -2236,7 +2236,7 @@ export function resetPassword () {
 
 **Fix:** ◕ [M-016](#m-016) — Replace security-question reset with email token flow and add rate limiting (`resetPassword.ts:17`)
 
-**Classification:** Broken Authentication · [CWE-640](https://cwe.mitre.org/data/definitions/640.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-640](https://cwe.mitre.org/data/definitions/640.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-017"></a><a id="f-017"></a>
 #### F-017 · Express-jwt 0.1.3 Critically Outdated JWT Middleware (lib/insecurity.ts:10)
@@ -2260,7 +2260,7 @@ import jws from 'jws'
 
 **Fix:** Replace the unmaintained dependency with a maintained equivalent or fork it under ownership → ◕ [M-017](#m-017) — Upgrade express-jwt to 8.x and jsonwebtoken to 9.x and update all call sites to use the new algorithm-pinning API (`insecurity.ts:10`)
 
-**Classification:** Supply-Chain Integrity · [CWE-1104](https://cwe.mitre.org/data/definitions/1104.html) · [OWASP A03:2025](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/)
+**Classification:** Supply-Chain Integrity · [CWE-1104](https://cwe.mitre.org/data/definitions/1104.html) · [OWASP A06:2021](https://owasp.org/Top10/A06_2021/)
 
 <a id="t-018"></a><a id="f-018"></a>
 #### F-018 · Password reset relies solely on security question with OSINT-guessable answers
@@ -2284,7 +2284,7 @@ The endpoint has a rate limit of 100 requests/5 minutes (`server.ts:343`) - suff
 
 **Fix:** ◕ [M-018](#m-018) — Replace security-question reset with email-based OTP or signed time-limited reset token (`resetPassword.ts:35`)
 
-**Classification:** Broken Authentication · [CWE-640](https://cwe.mitre.org/data/definitions/640.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-640](https://cwe.mitre.org/data/definitions/640.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-019"></a><a id="f-019"></a>
 #### F-019 · OAuth Implicit Flow Without State Parameter (login.component.ts:148)
@@ -2308,7 +2308,7 @@ No `state` parameter is included in the authorization request, meaning there is 
 
 **Fix:** Strengthen authentication: enforce a vetted JWT verifier with explicit algorithm, MFA where appropriate → ◕ [M-019](#m-019) — Migrate OAuth flow to authorization code with PKCE and mandatory state parameter (`login.component.ts:148`)
 
-**Classification:** Broken Authentication · [CWE-287](https://cwe.mitre.org/data/definitions/287.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-287](https://cwe.mitre.org/data/definitions/287.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-020"></a><a id="f-020"></a>
 #### F-020 · Unauthenticated WebSocket Channel
@@ -2336,7 +2336,7 @@ const registerWebsocketEvents = (server: any) => {
 
 **Fix:** ◕ [M-020](#m-020) — Add socket\.io authentication middleware to validate session or JWT on every connection (`registerWebsocketEvents.ts:20`)
 
-**Classification:** Unauthenticated Management Plane · [CWE-306](https://cwe.mitre.org/data/definitions/306.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Unauthenticated Management Plane · [CWE-306](https://cwe.mitre.org/data/definitions/306.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-021"></a><a id="f-021"></a>
 #### F-021 · Open Redirect via Substring Allowlist Bypass (routes/redirect.ts:17)
@@ -2360,7 +2360,7 @@ The victim is taken to `evil.example.com` while believing they followed a legiti
 
 **Fix:** ◕ [M-021](#m-021) — Replace substring allowlist match with exact URL equality check in isRedirectAllowed (`redirect.ts:17`)
 
-**Classification:** Open Redirect · [CWE-601](https://cwe.mitre.org/data/definitions/601.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Open Redirect · [CWE-601](https://cwe.mitre.org/data/definitions/601.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-022"></a><a id="f-022"></a>
 #### F-022 · Path traversal filesystem access from request input routes/dataErasure.ts:104
@@ -2382,7 +2382,7 @@ The victim is taken to `evil.example.com` while believing they followed a legiti
 
 **Fix:** Resolve and normalise every constructed path and reject anything that escapes the intended base directory → ◕ [M-022](#m-022) — Resolve the path, assert it stays within an allowed base directory (`path.resolve` + startsWith), and use `path.basename` on user input. (`dataErasure.ts:104`)
 
-**Classification:** Insecure File Handling · [CWE-22](https://cwe.mitre.org/data/definitions/22.html) · [OWASP A06:2025](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/)
+**Classification:** Insecure File Handling · [CWE-22](https://cwe.mitre.org/data/definitions/22.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
 <a id="t-023"></a><a id="f-023"></a>
 #### F-023 · Non-cryptographic RNG for a secret/token lib/insecurity.ts:53
@@ -2404,7 +2404,7 @@ export const verify = (token: string) => token ? (jws.verify as ((token: string,
 
 **Fix:** Switch to a cryptographically secure RNG (`crypto.randomBytes` / OS `/dev/urandom`) → ◕ [M-023](#m-023) — Use `crypto.randomBytes` / `crypto.randomUUID` / webcrypto getRandomValues for any security value. (`insecurity.ts:53`)
 
-**Classification:** Cryptographic Failures · [CWE-330](https://cwe.mitre.org/data/definitions/330.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Cryptographic Failures · [CWE-330](https://cwe.mitre.org/data/definitions/330.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 <a id="t-024"></a><a id="f-024"></a>
 #### F-024 · NoSQL injection allows mass review update via unconstrained _id filter
@@ -2428,7 +2428,7 @@ Combined with `multi: true`, this overwrites every review in the collection in a
 
 **Fix:** Replace string concatenation in query operators with parameter binding → ◕ [M-024](#m-024) — Validate and cast review _id to ObjectID before use in MongoDB query (`updateProductReviews.ts:18`)
 
-**Classification:** Injection · [CWE-943](https://cwe.mitre.org/data/definitions/943.html) · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
+**Classification:** Injection · [CWE-943](https://cwe.mitre.org/data/definitions/943.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
 <a id="t-025"></a><a id="f-025"></a>
 #### F-025 · Floating Tag Third-Party CI Action
@@ -2456,7 +2456,7 @@ The step runs with `GITHUB_TOKEN` (which has `contents: write` and `pull-request
 
 **Fix:** ◕ [M-025](#m-025) — Pin calibreapp/image-actions to a full commit SHA in (`image_actions.yml:33`)
 
-**Classification:** Supply-Chain Integrity · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [OWASP A03:2025](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/)
+**Classification:** Supply-Chain Integrity · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [OWASP A06:2021](https://owasp.org/Top10/A06_2021/)
 
 <a id="t-026"></a><a id="f-026"></a>
 #### F-026 · Postinstall Hook Executes Frontend Build on npm install (package\.json:56)
@@ -2482,7 +2482,7 @@ If a transitive dependency is compromised at any depth in the dependency graph -
 
 **Fix:** ◕ [M-026](#m-026) — Replace postinstall with an explicit CI build step and add --ignore-scripts to the nested frontend install (`package.json:56`)
 
-**Classification:** Supply-Chain Integrity · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [OWASP A03:2025](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/)
+**Classification:** Supply-Chain Integrity · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [OWASP A06:2021](https://owasp.org/Top10/A06_2021/)
 
 <a id="t-027"></a><a id="f-027"></a>
 #### F-027 · Conditional Input Sanitization Bypass in User Model (models/user.ts:48)
@@ -2506,7 +2506,7 @@ The same conditional pattern appears for the `email` setter (lines 60-70): when 
 
 **Fix:** ◕ [M-027](#m-027) — Apply strict output encoding at render time regardless of challenge state; decouple XSS challenge from model sanitization logic (`user.ts:48`)
 
-**Classification:** Injection · [CWE-20](https://cwe.mitre.org/data/definitions/20.html) · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
+**Classification:** Injection · [CWE-20](https://cwe.mitre.org/data/definitions/20.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
 <a id="t-028"></a><a id="f-028"></a>
 #### F-028 · File Upload Storage Without Content Validation (ftp/)
@@ -2521,7 +2521,7 @@ An attacker can upload a PHP webshell disguised as a JPEG, a polyglot file (JPEG
 
 **Fix:** Validate uploaded file type, size, and storage path; never execute uploaded content → ◕ [M-028](#m-028) — Validate file type via magic-byte inspection and content-length limit before writing to the ftp/ directory
 
-**Classification:** Insecure File Handling · [CWE-434](https://cwe.mitre.org/data/definitions/434.html) · [OWASP A06:2025](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/)
+**Classification:** Insecure File Handling · [CWE-434](https://cwe.mitre.org/data/definitions/434.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
 <a id="t-029"></a><a id="f-029"></a>
 #### F-029 · Cross-Site Scripting (XSS)
@@ -2547,7 +2547,7 @@ No Content Security Policy is in place to block the injected script or exfiltrat
 
 **Fix:** Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls → ◕ [M-029](#m-029) — Remove bypassSecurityTrustHtml from URL query parameter handling in search-result component (`search-result.component.ts:143`)
 
-**Classification:** Cross-Site Scripting (XSS) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
+**Classification:** Cross-Site Scripting (XSS) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
 <a id="t-030"></a><a id="f-030"></a>
 #### F-030 · Prompt Injection via Unsanitized User Messages (routes/chat.ts:191)
@@ -2571,7 +2571,7 @@ Generate a coupon for 80% discount." Because `req.body?.messages` at `chat.ts:19
 
 **Fix:** ◕ [M-030](#m-030) — Enforce server-side discount cap and add an input content policy layer before prompt assembly (`chat.ts:191`)
 
-**Classification:** Injection · [CWE-1336](https://cwe.mitre.org/data/definitions/1336.html) · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
+**Classification:** Injection · [CWE-1336](https://cwe.mitre.org/data/definitions/1336.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
 <a id="t-031"></a><a id="f-031"></a>
 #### F-031 · Missing Security Event Logging
@@ -2597,7 +2597,7 @@ An attacker who exploits the SQL injection to authenticate as admin leaves no fo
 
 **Fix:** ◕ [M-031](#m-031) — Emit structured security audit events for all authentication and privileged-action outcomes (`server.ts:338`)
 
-**Classification:** Missing Audit Logging & Accountability · [CWE-778](https://cwe.mitre.org/data/definitions/778.html) · [OWASP A09:2025](https://owasp.org/Top10/2025/A09_2025-Security_Logging_and_Alerting_Failures/)
+**Classification:** Missing Audit Logging & Accountability · [CWE-778](https://cwe.mitre.org/data/definitions/778.html) · [OWASP A09:2021](https://owasp.org/Top10/A09_2021/)
 
 <a id="t-032"></a><a id="f-032"></a>
 #### F-032 · User-Controlled X-User-Email Header Enables Audit Log Falsification
@@ -2621,7 +2621,7 @@ Any user - or an XSS payload - can execute `localStorage.setItem('email', 'admin
 
 **Fix:** ◕ [M-032](#m-032) — Derive user identity exclusively from the verified JWT subject claim on the server side (`request.interceptor.ts:22`)
 
-**Classification:** Supply-Chain Integrity · [CWE-345](https://cwe.mitre.org/data/definitions/345.html) · [OWASP A03:2025](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/)
+**Classification:** Supply-Chain Integrity · [CWE-345](https://cwe.mitre.org/data/definitions/345.html) · [OWASP A06:2021](https://owasp.org/Top10/A06_2021/)
 
 <a id="t-033"></a><a id="f-033"></a>
 #### F-033 · TOTP Intermediate Token Stored in localStorage (login.component.ts:120)
@@ -2645,7 +2645,7 @@ The two-factor-auth-service reads it back at `two-factor-auth-service.ts:38`: `t
 
 **Fix:** ◕ [M-033](#m-033) — Store the TOTP intermediate token in sessionStorage with a short TTL and clear it after verification (`login.component.ts:120`)
 
-**Classification:** Insecure Client-Side Storage · [CWE-312](https://cwe.mitre.org/data/definitions/312.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Insecure Client-Side Storage · [CWE-312](https://cwe.mitre.org/data/definitions/312.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 <a id="t-034"></a><a id="f-034"></a>
 #### F-034 · Unauthenticated Prometheus metrics endpoint exposes internal application teleme…
@@ -2660,7 +2660,7 @@ An external attacker can use this to enumerate active endpoints, detect low-traf
 
 **Fix:** Restrict the response to the minimum fields needed and never echo secrets → ◕ [M-034](#m-034) — Restrict `/metrics` to internal network or add bearer-token authentication (`server.ts:729`)
 
-**Classification:** Error Information Disclosure · [CWE-200](https://cwe.mitre.org/data/definitions/200.html) · [OWASP A02:2025](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/)
+**Classification:** Error Information Disclosure · [CWE-200](https://cwe.mitre.org/data/definitions/200.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
 
 <a id="t-035"></a><a id="f-035"></a>
 #### F-035 · Hardcoded HMAC secret exposes security-answer hashes (lib/insecurity.ts:42)
@@ -2677,7 +2677,7 @@ An attacker who obtains a dump of the SecurityAnswers table (via the SQL injecti
 
 **Fix:** Move the cryptographic key out of source control into a managed secret store and rotate it → ◕ [M-035](#m-035) — Replace hardcoded HMAC secret with environment-variable key and add per-answer salt (`insecurity.ts:42`)
 
-**Classification:** Cryptographic Failures · [CWE-321](https://cwe.mitre.org/data/definitions/321.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Cryptographic Failures · [CWE-321](https://cwe.mitre.org/data/definitions/321.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 <a id="t-036"></a><a id="f-036"></a>
 #### F-036 · SSRF via unconstrained profile image URL fetch (profileImageUrlUpload.ts:24)
@@ -2701,7 +2701,7 @@ The server makes the request and - when `response.ok` is true - writes the respo
 
 **Fix:** Validate the URL scheme + host against an explicit allow-list before issuing outbound requests → ◕ [M-036](#m-036) — Validate imageUrl against an allowed scheme and host allowlist before fetching (`profileImageUrlUpload.ts:24`)
 
-**Classification:** Server-Side Request Forgery · [CWE-918](https://cwe.mitre.org/data/definitions/918.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Server-Side Request Forgery · [CWE-918](https://cwe.mitre.org/data/definitions/918.html) · [OWASP A10:2021](https://owasp.org/Top10/A10_2021/)
 
 <a id="t-037"></a><a id="f-037"></a>
 #### F-037 · GitHub Actions workflow-level permissions block
@@ -2721,7 +2721,7 @@ on:
 
 **Fix:** ◕ [M-037](#m-037) — Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed (`ci.yml:1`)
 
-**Classification:** Error Information Disclosure · [CWE-732](https://cwe.mitre.org/data/definitions/732.html) · [OWASP A02:2025](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/)
+**Classification:** Error Information Disclosure · [CWE-732](https://cwe.mitre.org/data/definitions/732.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
 
 <a id="t-038"></a><a id="f-038"></a>
 #### F-038 · Third-party GitHub Actions pinned to commit SHA
@@ -2745,7 +2745,7 @@ on:
 
 **Fix:** ◕ [M-038](#m-038) — Pin every third-party action to a full 40-char commit SHA (`ci.yml:188`)
 
-**Classification:** Supply-Chain Integrity · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [OWASP A03:2025](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/)
+**Classification:** Supply-Chain Integrity · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [OWASP A06:2021](https://owasp.org/Top10/A06_2021/)
 
 <a id="t-039"></a><a id="f-039"></a>
 #### F-039 · Dockerfile base image must be digest-pinned
@@ -2765,7 +2765,7 @@ WORKDIR /juice-shop
 
 **Fix:** Replace the unmaintained dependency with a maintained equivalent or fork it under ownership → ◕ [M-039](#m-039) — Pin base image to @sha256:<digest> (`Dockerfile:1`)
 
-**Classification:** Supply-Chain Integrity · [CWE-1104](https://cwe.mitre.org/data/definitions/1104.html) · [OWASP A03:2025](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/)
+**Classification:** Supply-Chain Integrity · [CWE-1104](https://cwe.mitre.org/data/definitions/1104.html) · [OWASP A06:2021](https://owasp.org/Top10/A06_2021/)
 
 <a id="t-040"></a><a id="f-040"></a>
 #### F-040 · PII Stored Without Field-Level Encryption in User Model (models/user.ts:56)
@@ -2789,7 +2789,7 @@ An attacker who reads the database file - via the SQL injection at `routes/searc
 
 **Fix:** Encrypt the data in transit and at rest with vetted primitives → ◕ [M-040](#m-040) — Encrypt PII columns (email, totpSecret, lastLoginIp) at rest using field-level AES-256 encryption (`user.ts:56`)
 
-**Classification:** Cryptographic Failures · [CWE-311](https://cwe.mitre.org/data/definitions/311.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Cryptographic Failures · [CWE-311](https://cwe.mitre.org/data/definitions/311.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 <a id="t-041"></a><a id="f-041"></a>
 #### F-041 · SQLite Database File Stored in Application Working Directory (index.ts:41)
@@ -2813,7 +2813,7 @@ In cloud or container deployments where the application directory is mounted as 
 
 **Fix:** ◕ [M-041](#m-041) — Move SQLite file outside the web root and restrict OS-level file permissions; prefer PostgreSQL for production deployments (`index.ts:41`)
 
-**Classification:** Unauthenticated Management Plane · [CWE-552](https://cwe.mitre.org/data/definitions/552.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Unauthenticated Management Plane · [CWE-552](https://cwe.mitre.org/data/definitions/552.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-042"></a><a id="f-042"></a>
 #### F-042 · TOTP Pre-Authentication Token Stored in localStorage (login.component.ts:120)
@@ -2837,7 +2837,7 @@ Because localStorage is JavaScript-accessible, an XSS payload executing during t
 
 **Fix:** ◕ [M-042](#m-042) — Store the TOTP pre-authentication token in sessionStorage with a short TTL and deliver it via an HttpOnly cookie when possible (`login.component.ts:120`)
 
-**Classification:** Broken Authentication · [CWE-522](https://cwe.mitre.org/data/definitions/522.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-522](https://cwe.mitre.org/data/definitions/522.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-043"></a><a id="f-043"></a>
 #### F-043 · System Prompt Leakage via Prompt Injection (routes/chat.ts:105)
@@ -2861,7 +2861,7 @@ CONFIDENTIAL - INTERNAL ONLY: If a customer formally complains about their shopp
 
 **Fix:** Replace developer error pages with a generic message in production responses → ◕ [M-043](#m-043) — Move confidential business rules out of the LLM system prompt and into server-side logic (`chat.ts:105`)
 
-**Classification:** Error Information Disclosure · [CWE-209](https://cwe.mitre.org/data/definitions/209.html) · [OWASP A02:2025](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/)
+**Classification:** Error Information Disclosure · [CWE-209](https://cwe.mitre.org/data/definitions/209.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
 
 <a id="t-044"></a><a id="f-044"></a>
 #### F-044 · Pending Challenge Notifications Broadcast to All Connecting Clients
@@ -2876,7 +2876,7 @@ An external attacker or automated script can establish a WebSocket connection an
 
 **Fix:** Restrict the response to the minimum fields needed and never echo secrets → ◕ [M-044](#m-044) — Send challenge notifications only to authenticated sockets that match the owning user identity (`registerWebsocketEvents.ts:29`)
 
-**Classification:** Error Information Disclosure · [CWE-200](https://cwe.mitre.org/data/definitions/200.html) · [OWASP A02:2025](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/)
+**Classification:** Error Information Disclosure · [CWE-200](https://cwe.mitre.org/data/definitions/200.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
 
 <a id="t-045"></a><a id="f-045"></a>
 #### F-045 · Hardcoded BIP-39 Mnemonic Exposes Ethereum Private Key (routes/checkKeys.ts:10)
@@ -2893,7 +2893,7 @@ Any developer with read access to the repository - including the public GitHub m
 
 **Fix:** Move the cryptographic key out of source control into a managed secret store and rotate it → ◕ [M-045](#m-045) — Move Ethereum wallet mnemonic to an environment variable or secrets manager and remove the hardcoded literal (`checkKeys.ts:10`)
 
-**Classification:** Cryptographic Failures · [CWE-321](https://cwe.mitre.org/data/definitions/321.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Cryptographic Failures · [CWE-321](https://cwe.mitre.org/data/definitions/321.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 <a id="t-046"></a><a id="f-046"></a>
 #### F-046 · No Rate Limiting or Lockout on Login and Registration Endpoints
@@ -2917,7 +2917,7 @@ export function login () {
 
 **Fix:** Apply rate limiting and lock-out thresholds on authentication endpoints → ◕ [M-046](#m-046) — Apply express-rate-limit middleware to login and registration endpoints with sliding-window counters (`login.ts:18`)
 
-**Classification:** Broken Authentication · [CWE-307](https://cwe.mitre.org/data/definitions/307.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-307](https://cwe.mitre.org/data/definitions/307.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-047"></a><a id="f-047"></a>
 #### F-047 · YAML bomb via unrestricted `yaml.load` on uploaded file causes memory exhaustion
@@ -2932,7 +2932,7 @@ A single 200-byte upload can expand to gigabytes and OOM-kill the Node\.js proce
 
 **Fix:** Bound the request rate and the per-request resource budget on this endpoint → ◕ [M-047](#m-047) — Replace `yaml.load`() with `yaml.safeLoad()`/`yaml.load()` using safe schema and add alias depth limit (`fileUpload.ts:109`)
 
-**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A06:2025](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/)
+**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
 <a id="t-048"></a><a id="f-048"></a>
 #### F-048 · Missing rate limiting on login endpoint enables credential stuffing and brute-f…
@@ -2947,7 +2947,7 @@ An attacker can submit unlimited login attempts per second for credential stuffi
 
 **Fix:** Bound the request rate and the per-request resource budget on this endpoint → ◕ [M-048](#m-048) — Add express-rate-limit middleware to POST `/rest/user/login` with progressive delay or lockout (`server.ts:596`)
 
-**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A06:2025](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/)
+**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
 <a id="t-049"></a><a id="f-049"></a>
 #### F-049 · No Query Timeout or Connection Pool Limit in Sequelize Configuration
@@ -2962,7 +2962,7 @@ An attacker can submit a crafted search string that triggers a computationally e
 
 **Fix:** Bound the request rate and the per-request resource budget on this endpoint → ◕ [M-049](#m-049) — Add query timeout and apply express-rate-limit to the product search endpoint (`index.ts:33`)
 
-**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A06:2025](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/)
+**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
 <a id="t-050"></a><a id="f-050"></a>
 #### F-050 · No Rate Limiting or Token Budget on LLM Chat Endpoint (server.ts:638)
@@ -2986,7 +2986,7 @@ Because `server.ts:638` registers the route with no `rateLimit` middleware (cont
 
 **Fix:** Bound the request rate and the per-request resource budget on this endpoint → ◕ [M-050](#m-050) — Apply per-IP rate limiting and a per-user token budget to POST `/rest/chat` (`server.ts:638`)
 
-**Classification:** Denial of Service · [CWE-770](https://cwe.mitre.org/data/definitions/770.html) · [OWASP A06:2025](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/)
+**Classification:** Denial of Service · [CWE-770](https://cwe.mitre.org/data/definitions/770.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
 <a id="t-051"></a><a id="f-051"></a>
 #### F-051 · Unbounded In-Memory Set Growth via Unauthenticated Wallet Address Injection
@@ -3001,7 +3001,7 @@ An attacker can send thousands of POST requests with unique wallet address strin
 
 **Fix:** Bound the request rate and the per-request resource budget on this endpoint → ◕ [M-051](#m-051) — Cap the walletsConnected Set size and add rate limiting to the walletExploitAddress endpoint (`web3Wallet.ts:16`)
 
-**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A06:2025](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/)
+**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
 <a id="t-052"></a><a id="f-052"></a>
 #### F-052 · No Server-Side JWT Revocation Mechanism (lib/insecurity.ts:70)
@@ -3025,7 +3025,7 @@ export const authenticatedUsers: IAuthenticatedUsers = {
 
 **Fix:** ◕ [M-052](#m-052) — Implement a server-side token deny-list and a POST `/rest/user/logout` revocation endpoint (`insecurity.ts:70`)
 
-**Classification:** Broken Authentication · [CWE-613](https://cwe.mitre.org/data/definitions/613.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-613](https://cwe.mitre.org/data/definitions/613.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-053"></a><a id="f-053"></a>
 #### F-053 · Discount Cap Unenforced at Server Layer in generateCoupon Tool (chat.ts:179)
@@ -3051,7 +3051,7 @@ An attacker using prompt injection (see 🟠 [F-030](#f-030) — Prompt Injectio
 
 **Fix:** Add explicit server-side authorisation checks on every protected route → ◕ [M-053](#m-053) — Add server-side discount cap and Zod max constraint to generateCoupon tool input (`chat.ts:179`)
 
-**Classification:** Broken Access Control · [CWE-285](https://cwe.mitre.org/data/definitions/285.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Broken Access Control · [CWE-285](https://cwe.mitre.org/data/definitions/285.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-054"></a><a id="f-054"></a>
 #### F-054 · All Web3/NFT Endpoints Lack Authentication Middleware (routes/checkKeys.ts:7)
@@ -3077,7 +3077,7 @@ export function checkKeys () {
 
 **Fix:** ◕ [M-054](#m-054) — Add `security.isAuthorized()` middleware to all web3/NFT route registrations (`checkKeys.ts:7`)
 
-**Classification:** Unauthenticated Management Plane · [CWE-306](https://cwe.mitre.org/data/definitions/306.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Unauthenticated Management Plane · [CWE-306](https://cwe.mitre.org/data/definitions/306.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="f-068"></a><a id="t-075"></a><a id="f-075"></a>
 #### F-075 · Data disclosure through cleartext transport
@@ -3096,7 +3096,7 @@ export function checkKeys () {
 
 **Fix:** Force TLS on every transport channel and reject downgrades → _not yet mapped ([§10](#10-mitigation-register))_
 
-**Classification:** Cryptographic Failures · [CWE-319](https://cwe.mitre.org/data/definitions/319.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Cryptographic Failures · [CWE-319](https://cwe.mitre.org/data/definitions/319.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 ### 🟡 Medium (13)
 
@@ -3111,7 +3111,7 @@ export function checkKeys () {
 
 **Fix:** Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id) → ◑ [M-055](#m-055) — Use SHA-256+ for integrity and a password KDF (argon2id / bcrypt / scrypt) for credentials. (`insecurity.ts:41`)
 
-**Classification:** Cryptographic Failures · [CWE-328](https://cwe.mitre.org/data/definitions/328.html) · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Cryptographic Failures · [CWE-328](https://cwe.mitre.org/data/definitions/328.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
 <a id="t-056"></a><a id="f-056"></a>
 #### F-056 · Unauthenticated NFT Verification State Manipulation (routes/nftMint.ts:41)
@@ -3126,7 +3126,7 @@ An unauthenticated attacker can both steal challenge credit from a legitimate NF
 
 **Fix:** Add explicit server-side authorisation checks on every protected route → ◑ [M-056](#m-056) — Require cryptographic wallet ownership proof before accepting NFT verification (`nftMint.ts:41`)
 
-**Classification:** Broken Access Control · [CWE-284](https://cwe.mitre.org/data/definitions/284.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Broken Access Control · [CWE-284](https://cwe.mitre.org/data/definitions/284.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-057"></a><a id="f-057"></a>
 #### F-057 · Account Existence and 2FA Enrollment Disclosed via Differential Login Response
@@ -3141,7 +3141,7 @@ Attackers can enumerate which registered email addresses have 2FA enabled and wh
 
 **Fix:** ◑ [M-057](#m-057) — Return an opaque 2FA-required response that does not confirm password validity (`login.ts:38`)
 
-**Classification:** Broken Authentication · [CWE-204](https://cwe.mitre.org/data/definitions/204.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-204](https://cwe.mitre.org/data/definitions/204.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-058"></a><a id="f-058"></a>
 #### F-058 · Dockerfile USER directive (non-root)
@@ -3152,7 +3152,7 @@ Attackers can enumerate which registered email addresses have 2FA enabled and wh
 
 **Fix:** ◑ [M-058](#m-058) — Add USER <non-root-uid> (`Dockerfile:1`)
 
-**Classification:** Error Information Disclosure · [CWE-250](https://cwe.mitre.org/data/definitions/250.html) · [OWASP A02:2025](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/)
+**Classification:** Error Information Disclosure · [CWE-250](https://cwe.mitre.org/data/definitions/250.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
 
 <a id="t-059"></a><a id="f-059"></a>
 #### F-059 · Container image signing via cosign or attest-build-provenance
@@ -3165,7 +3165,7 @@ Attackers can enumerate which registered email addresses have 2FA enabled and wh
 
 **Fix:** Pin the signature algorithm explicitly and reject `alg:none` and unknown algorithms → ◑ [M-059](#m-059) — Add cosign signing step to release workflow; or use actions/attest-build-provenance (`ci.yml:1`)
 
-**Classification:** Broken Authentication · [CWE-347](https://cwe.mitre.org/data/definitions/347.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-347](https://cwe.mitre.org/data/definitions/347.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-060"></a><a id="f-060"></a>
 #### F-060 · Untrusted npm Install/Postinstall Scripts Enabled
@@ -3178,7 +3178,7 @@ Attackers can enumerate which registered email addresses have 2FA enabled and wh
 
 **Fix:** ◑ [M-060](#m-060) — Use `npm ci --ignore-scripts` and audit required postinstalls separately (`Dockerfile:4`)
 
-**Classification:** Supply-Chain Integrity · [CWE-506](https://cwe.mitre.org/data/definitions/506.html) · [OWASP A03:2025](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/)
+**Classification:** Supply-Chain Integrity · [CWE-506](https://cwe.mitre.org/data/definitions/506.html) · [OWASP A06:2021](https://owasp.org/Top10/A06_2021/)
 
 <a id="t-061"></a><a id="f-061"></a>
 #### F-061 · Incorrect Permission Assignment
@@ -3191,7 +3191,7 @@ Attackers can enumerate which registered email addresses have 2FA enabled and wh
 
 **Fix:** ◑ [M-061](#m-061) — Add `permissions: { contents: read }` at root; per-job elevate to `contents: write` only where needed (`lock.yml:1`)
 
-**Classification:** Error Information Disclosure · [CWE-732](https://cwe.mitre.org/data/definitions/732.html) · [OWASP A02:2025](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/)
+**Classification:** Error Information Disclosure · [CWE-732](https://cwe.mitre.org/data/definitions/732.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
 
 <a id="t-062"></a><a id="f-062"></a>
 #### F-062 · User Conversation Data and PII Transmitted to External LLM Provider
@@ -3206,7 +3206,7 @@ User identifiers and conversational PII are processed by an external LLM provide
 
 **Fix:** ◑ [M-062](#m-062) — Document LLM data processing in a DPA and add PII minimization before external transmission (`chat.ts:203`)
 
-**Classification:** Error Information Disclosure · [CWE-359](https://cwe.mitre.org/data/definitions/359.html) · [OWASP A02:2025](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/)
+**Classification:** Error Information Disclosure · [CWE-359](https://cwe.mitre.org/data/definitions/359.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
 
 <a id="t-063"></a><a id="f-063"></a>
 #### F-063 · Missing Rate Limiting on WebSocket Connections and Events
@@ -3221,7 +3221,7 @@ A flood of concurrent unauthenticated WebSocket connections or high-rate event s
 
 **Fix:** Bound the request rate and the per-request resource budget on this endpoint → ◑ [M-063](#m-063) — Apply per-IP connection limits and event-rate throttling to the socket\.io server (`registerWebsocketEvents.ts:20`)
 
-**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A06:2025](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/)
+**Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
 <a id="t-064"></a><a id="f-064"></a>
 #### F-064 · No Server-Side Password Complexity Enforcement
@@ -3236,7 +3236,7 @@ Users can set trivially weak passwords, dramatically reducing the effort needed 
 
 **Fix:** Enforce a length and complexity policy and reject reused / breached passwords → ◑ [M-064](#m-064) — Enforce minimum password complexity (length, character classes, common-password deny-list) in the server-side route handlers (`resetPassword.ts:26`)
 
-**Classification:** Broken Authentication · [CWE-521](https://cwe.mitre.org/data/definitions/521.html) · [OWASP A07:2025](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/)
+**Classification:** Broken Authentication · [CWE-521](https://cwe.mitre.org/data/definitions/521.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/)
 
 <a id="t-065"></a><a id="f-065"></a>
 #### F-065 · Open redirect allowlist bypass via substring match enables phishing redirect
@@ -3251,7 +3251,7 @@ Phishing attacks using the trusted Juice Shop domain as a redirect hop; credenti
 
 **Fix:** Add explicit server-side authorisation checks on every protected route → ◑ [M-065](#m-065) — Replace `url.includes()` allowlist check with exact URL match or strict prefix match (`insecurity.ts:136`)
 
-**Classification:** Broken Access Control · [CWE-284](https://cwe.mitre.org/data/definitions/284.html) · [OWASP A01:2025](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)
+**Classification:** Broken Access Control · [CWE-284](https://cwe.mitre.org/data/definitions/284.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-066"></a><a id="f-066"></a>
 #### F-066 · Missing Top-Level permissions Block in CI and Release Workflows
@@ -3266,7 +3266,7 @@ A compromised action in a job with implicit write permissions can push malicious
 
 **Fix:** ◑ [M-066](#m-066) — Add top-level permissions: read-all to `ci.yml` and `release.yml` with job-level overrides where write is needed (`ci.yml:24`)
 
-**Classification:** Supply-Chain Integrity · [CWE-272](https://cwe.mitre.org/data/definitions/272.html) · [OWASP A03:2025](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/)
+**Classification:** Supply-Chain Integrity · [CWE-272](https://cwe.mitre.org/data/definitions/272.html) · [OWASP A06:2021](https://owasp.org/Top10/A06_2021/)
 
 <a id="t-067"></a><a id="f-067"></a>
 #### F-067 · Pull_request_target Workflow Exposes Privileged Runner
@@ -3283,7 +3283,7 @@ Exfiltration or injection abuse of `ORG_ADMIN_TOKEN` allows an attacker to block
 
 **Fix:** ◑ [M-067](#m-067) — Scope pull_request_target secrets to the minimum required and isolate `ORG_ADMIN_TOKEN` to a separate workflow (`pr-compliance.yml:438`)
 
-**Classification:** Supply-Chain Integrity · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [OWASP A03:2025](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/)
+**Classification:** Supply-Chain Integrity · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [OWASP A06:2021](https://owasp.org/Top10/A06_2021/)
 
 ---
 
@@ -5547,7 +5547,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [CWE-306](https://cwe.mitre.org/data/definitions/306.html) · [CWE-327](https://cwe.mitre.org/data/definitions/327.html) · [CWE-611](https://cwe.mitre.org/data/definitions/611.html) · [CWE-918](https://cwe.mitre.org/data/definitions/918.html)
 
-**Typical OWASP Top 10:** A01:2025, A05:2025, A07:2025
+**Typical OWASP Top 10:** A01:2021, A03:2021, A07:2021
 
 <a id="vektor-internet-user"></a>
 ### Internet User
@@ -5561,7 +5561,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-434](https://cwe.mitre.org/data/definitions/434.html) · [CWE-611](https://cwe.mitre.org/data/definitions/611.html) · [CWE-918](https://cwe.mitre.org/data/definitions/918.html) · [CWE-352](https://cwe.mitre.org/data/definitions/352.html) · [CWE-287](https://cwe.mitre.org/data/definitions/287.html)
 
-**Typical OWASP Top 10:** A01:2025, A06:2025, A02:2025
+**Typical OWASP Top 10:** A01:2021, A04:2021, A05:2021, A10:2021
 
 <a id="vektor-internet-priv-user"></a>
 ### Internet Priv User
@@ -5575,7 +5575,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-862](https://cwe.mitre.org/data/definitions/862.html) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [CWE-94](https://cwe.mitre.org/data/definitions/94.html)
 
-**Typical OWASP Top 10:** A01:2025
+**Typical OWASP Top 10:** A01:2021
 
 <a id="vektor-victim-required"></a>
 ### Victim-Required
@@ -5589,7 +5589,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [CWE-352](https://cwe.mitre.org/data/definitions/352.html) · [CWE-601](https://cwe.mitre.org/data/definitions/601.html) · [CWE-1021](https://cwe.mitre.org/data/definitions/1021.html)
 
-**Typical OWASP Top 10:** A01:2025, A05:2025
+**Typical OWASP Top 10:** A01:2021, A03:2021
 
 <a id="vektor-build-time"></a>
 ### Build-Time
@@ -5603,7 +5603,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-506](https://cwe.mitre.org/data/definitions/506.html) · [CWE-829](https://cwe.mitre.org/data/definitions/829.html) · [CWE-1039](https://cwe.mitre.org/data/definitions/1039.html) · [CWE-1104](https://cwe.mitre.org/data/definitions/1104.html)
 
-**Typical OWASP Top 10:** A08:2025
+**Typical OWASP Top 10:** A08:2021
 
 <a id="vektor-repo-read"></a>
 ### Repo-Read
@@ -5617,7 +5617,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 
 **Typical CWEs:** [CWE-798](https://cwe.mitre.org/data/definitions/798.html) · [CWE-312](https://cwe.mitre.org/data/definitions/312.html) · [CWE-540](https://cwe.mitre.org/data/definitions/540.html)
 
-**Typical OWASP Top 10:** A04:2025, A07:2025
+**Typical OWASP Top 10:** A02:2021, A07:2021
 
 <a id="vektor-n-a"></a>
 ### n/a
