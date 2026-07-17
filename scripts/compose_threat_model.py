@@ -96,6 +96,18 @@ from _manifest_readers import (
 # mutating the shared warned-CWE set.
 from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
 from pregenerate_fragments import gen_architecture_diagrams
+from reclassify_components import (  # phantom-component backstop (see _resolve_phantom_component)
+    _build_matcher as _rc_build_matcher,
+)
+from reclassify_components import (
+    _component_for as _rc_component_for,
+)
+from reclassify_components import (
+    _evidence_files as _rc_evidence_files,
+)
+from reclassify_components import (
+    _primary_component_id as _rc_primary_component_id,
+)
 from weakness_classifier import MULTI_MATCH_WARNED as _MULTI_MATCH_WARNED  # noqa: F401
 from weakness_classifier import classify_threat as _wc_classify_threat
 from weakness_classifier import load_weakness_classes as _wc_load_weakness_classes
@@ -16594,6 +16606,33 @@ def _drop_asset_id_column(md: str) -> str:
     return "\n".join(lines)
 
 
+def _resolve_phantom_component(threat: dict, components: list) -> str:
+    """Resolve a threat whose ``component``/``component_id`` matches no registered
+    component (a *phantom* — typically the hardcoded ``backend-api`` default that
+    ``merge_threats._guess_component_from_path`` emits for source-scan findings
+    that bypassed the Stage-1 reclassify pass) to a REAL component id, so the
+    §3/§8 Component link targets a live ``#c-NN`` anchor instead of dangling at
+    ``#backend-api`` / ``#c-00``.
+
+    This is the composition-time backstop for the gap where the phantom-component
+    gate (``reclassify_components.py``) did not run before compose — e.g. the
+    compact runtime with ``ARCHITECT_REVIEW=false``, where the gate is nested
+    under the skipped Stage-4 slice. It mirrors ``reclassify_components``: prefer
+    the component whose path glob claims the evidence file, else the primary
+    application component. Returns ``""`` when nothing can be resolved (no
+    registered components) so the caller leaves the value untouched.
+    """
+    if not isinstance(components, list) or not components:
+        return ""
+    matchers = [m for m in (_rc_build_matcher(c) for c in components if isinstance(c, dict)) if m[1]]
+    files = _rc_evidence_files(threat)
+    for f in files:
+        hits = _rc_component_for(f, matchers)
+        if len(hits) == 1:
+            return hits[0]
+    return _rc_primary_component_id(components)
+
+
 def _render_assets(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """§4 Assets — LLM-authored fragment passthrough with the stray ``ID``
     column stripped deterministically (see :func:`_drop_asset_id_column`)."""
@@ -16806,6 +16845,17 @@ def render(
                     if isinstance(c, dict) and (c.get("name") or "").strip() == raw:
                         t["component_id"] = c.get("id") or ""
                         break
+            # Phantom backstop — `raw` matched no registered component id or
+            # name (e.g. merge_threats' `backend-api` default on a source-scan
+            # finding). Resolve it to a real component so its Component link
+            # does not dangle at `#backend-api` / `#c-00`. Only fires for
+            # genuinely-unresolved ids; anything already matched above is
+            # untouched.
+            if not t.get("component_id"):
+                phantom_fix = _resolve_phantom_component(t, _components)
+                if phantom_fix:
+                    t["component"] = phantom_fix
+                    t["component_id"] = phantom_fix
         # `mitigation_ids` → canonical `mitigations` slot used by renderer.
         if not (t.get("mitigations") or []):
             inline = t.get("mitigation_ids") or []
