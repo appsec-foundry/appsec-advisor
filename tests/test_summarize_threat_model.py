@@ -198,6 +198,32 @@ def test_backlog_and_coverage(tmp_path):
     assert "Coverage   2/3 findings have a mitigation · 1 without" in out
 
 
+def test_control_posture_summary(tmp_path):
+    import yaml
+
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: High}
+        security_controls:
+          - {domain: Authorization, control: RBAC, effectiveness: Missing}
+          - {domain: Crypto, control: TLS, effectiveness: Adequate}
+          - {domain: Crypto, control: Secrets, effectiveness: Weak}
+          - {domain: Logging, control: Audit, effectiveness: Partial}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    posture = summary["control_posture"]
+    assert posture["effectiveness_counts"] == {"Missing": 1, "Adequate": 1, "Weak": 1, "Partial": 1}
+    # weakest-first domains whose weakest control is Missing/Weak
+    assert posture["weak_domains"] == ["Authorization", "Crypto"]
+
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Controls   4 assessed · Missing 1 · Weak 1 · Partial 1 · Adequate 1" in out
+    assert "Weakest    Authorization · Crypto" in out
+
+
 def test_backlog_line_omitted_when_no_priorities(tmp_path):
     import yaml
 

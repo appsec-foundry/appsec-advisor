@@ -486,6 +486,74 @@ def test_requirements_suppressed_when_check_disabled(tmp_path):
     assert all(f["requirements"] == [] for f in payload["findings"])
 
 
+def test_build_quick_wins_low_effort_high_impact():
+    mits = [
+        {"id": "M-001", "priority": "P2", "effort": "Low", "coverage": 2, "covered_severities": {"High": 2}},
+        {"id": "M-002", "priority": "P1", "effort": "Low", "coverage": 1, "covered_severities": {"Critical": 1}},
+        {"id": "M-003", "priority": "P2", "effort": "High", "coverage": 5, "covered_severities": {"High": 5}},
+        {"id": "M-004", "priority": "P3", "effort": "Low", "coverage": 3, "covered_severities": {"Medium": 3}},
+        {"id": "M-005", "priority": "P2", "effort": "", "coverage": 1, "covered_severities": {"High": 1}},
+    ]
+    qw = rtm.build_quick_wins(mits)
+    # only Low-effort AND covering a Critical/High; ranked by coverage desc
+    assert [m["id"] for m in qw] == ["M-001", "M-002"]
+    # M-003 excluded (High effort), M-004 (only Medium), M-005 (no effort)
+
+
+def test_build_control_posture_groups_and_ranks_worst_first():
+    model = {
+        "security_controls": [
+            {"domain": "Cryptography", "control": "TLS", "effectiveness": "Adequate", "assessment": "ok"},
+            {"domain": "Cryptography", "control": "Secrets", "effectiveness": "Weak", "assessment": "hardcoded"},
+            {"domain": "Authorization", "control": "RBAC", "effectiveness": "Missing", "assessment": "none"},
+            {"domain": "", "control": "orphan"},  # no domain -> skipped
+        ]
+    }
+    posture = rtm.build_control_posture(model)
+    # Authorization (Missing) ranks worst-first; a domain's weakest control drives its rank
+    assert [d["domain"] for d in posture] == ["Authorization", "Cryptography"]
+    assert posture[0]["worst_effectiveness"] == "Missing"
+    crypto = posture[1]
+    assert crypto["worst_effectiveness"] == "Weak" and crypto["total"] == 2
+    assert crypto["by_effectiveness"] == {"Adequate": 1, "Weak": 1}
+
+
+def test_console_exposes_quick_wins_and_posture(tmp_path):
+    out = tmp_path / "docs" / "security"
+    output_dir = out
+    output_dir.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "meta": {"project": "demo", "generated": "2026-07-17T00:00:00Z"},
+        "threats": CONSOLE_THREATS,
+        "mitigations": [
+            {
+                "id": "M-001",
+                "priority": "P1",
+                "kind": "fix",
+                "threat_ids": ["T-001", "T-002"],
+                "remediation": {"effort": "Low"},
+            },
+            {
+                "id": "M-002",
+                "priority": "P2",
+                "kind": "fix",
+                "threat_ids": ["T-003"],
+                "remediation": {"effort": "High"},
+            },
+        ],
+        "security_controls": [
+            {"domain": "Authorization", "control": "RBAC", "effectiveness": "Missing", "assessment": "none"},
+        ],
+    }
+    (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+    payload = rtm.console(output_dir, tmp_path / "triage.yaml")
+    # M-001 is Low effort and covers a Critical (T-001) -> quick win; M-002 is High effort -> not
+    assert [m["id"] for m in payload["quick_wins"]] == ["M-001"]
+    assert payload["verdict"]["quick_wins"] == 1
+    assert [d["domain"] for d in payload["control_posture"]] == ["Authorization"]
+    assert payload["control_posture"][0]["worst_effectiveness"] == "Missing"
+
+
 def test_build_requirement_groups_ranks_by_blast():
     findings = [
         {"key": "a-1", "severity": "Critical", "requirements": ["R-1"]},

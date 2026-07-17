@@ -39,11 +39,13 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import sys
 from pathlib import Path
 
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
+_EFFECTIVENESS_ORDER = {"Missing": 0, "Weak": 1, "Partial": 2, "Adequate": 3}
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +178,27 @@ def _worst_case(threats: list, mitigations: list, critical_findings: list | None
     return out[:limit]
 
 
+def _control_posture(controls: list) -> dict:
+    """Compact control-effectiveness roll-up for the overview: overall counts,
+    plus the domains whose weakest control is Missing/Weak. Read verbatim from
+    security_controls[] — a rating, never a re-score. Mirrors the per-domain
+    ranking in review_threat_model.build_control_posture."""
+    eff_counts: collections.Counter = collections.Counter()
+    worst_by_domain: dict = {}
+    for c in controls:
+        if not isinstance(c, dict):
+            continue
+        eff = str(c.get("effectiveness") or "").strip()
+        eff_counts[eff or "Unknown"] += 1
+        domain = str(c.get("domain") or "").strip()
+        if domain:
+            rank = _EFFECTIVENESS_ORDER.get(eff, 9)
+            if domain not in worst_by_domain or rank < worst_by_domain[domain]:
+                worst_by_domain[domain] = rank
+    weak = sorted((d for d, r in worst_by_domain.items() if r <= 1), key=lambda d: (worst_by_domain[d], d))
+    return {"effectiveness_counts": dict(eff_counts), "weak_domains": weak}
+
+
 def build_summary(data: dict, output_dir: Path) -> dict:
     """Reduce raw YAML to the structured summary the renderer consumes."""
     meta = data.get("meta") or {}
@@ -213,6 +236,7 @@ def build_summary(data: dict, output_dir: Path) -> dict:
         "severity_counts": counts,
         "backlog": _backlog_by_priority(mitigations),
         "coverage": _coverage(threats),
+        "control_posture": _control_posture(controls),
         "worst_case": _worst_case(threats, mitigations, data.get("critical_findings")),
         "criticals": [
             {
@@ -356,6 +380,15 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
             f"Coverage   {cov.get('with_mitigation', 0)}/{totals['threats']} findings have a mitigation"
             f" · {cov.get('uncovered', 0)} without"
         )
+    posture = summary.get("control_posture") or {}
+    ec = posture.get("effectiveness_counts") or {}
+    if ec:
+        bits = " · ".join(f"{k} {ec[k]}" for k in ("Missing", "Weak", "Partial", "Adequate") if ec.get(k))
+        if bits:
+            buf.append(f"Controls   {sum(ec.values())} assessed · {bits}")
+        weak = posture.get("weak_domains") or []
+        if weak:
+            buf.append(f"Weakest    {' · '.join(weak[:4])}")
     buf.append(f"Report     {summary['report']}")
     return "\n".join(buf) + "\n"
 

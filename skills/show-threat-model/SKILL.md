@@ -40,6 +40,8 @@ WHAT IT SHOWS
   * The top "worst case if nothing changes" scenarios (from the model's
     curated critical findings, with the covering mitigation)
   * Top Critical threats (or all threats with --all)
+  * Control posture: effectiveness mix (Missing / Weak / Partial / Adequate)
+    and the weakest control domains
   * Mitigation and control counts, plus the rendered report path
 
 RELATED

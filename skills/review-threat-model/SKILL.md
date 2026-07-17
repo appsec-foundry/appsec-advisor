@@ -42,8 +42,9 @@ FLAGS
 WHAT IT DOES
   * Opens a triage console: a landing screen (backlog by priority + severity mix
     + the top "worst case if nothing changes" scenarios), then a menu.
-  * Menu spine is the Remediation backlog (P1 -> P2 -> P3). Also: Browse by lens
-    (severity / area / requirement), Findings without a mitigation, Write plan.
+  * Menu spine is the Remediation backlog (P1 -> P2 -> P3, plus Quick wins —
+    low-effort fixes covering a Critical/High). Also: Browse by lens (severity /
+    area / requirement / uncovered), Security posture by domain, Write plan.
   * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`
     or `M-003..M-009`) and pick one action for the whole selection: mitigate /
     accept-risk / defer. Acting on a mitigation triages every finding it covers.
@@ -136,6 +137,15 @@ Payload shape (all read from the model — never recompute):
 - `requirements[]` — findings grouped by violated custom requirement (empty
   unless integrated); each has `requirement_id`, `url`, `total`, `critical`,
   `high`, and `keys`.
+- `quick_wins[]` — low-effort mitigations that cover at least one Critical/High
+  finding (value/effort sweet spot), ranked by leverage; a subset of
+  `mitigations[]` (same fields). `verdict.quick_wins` is the count.
+- `control_posture[]` — security controls grouped by `domain`, worst-first by
+  effectiveness; each has `domain`, `worst_effectiveness`
+  (`Missing`/`Weak`/`Partial`/`Adequate`), `total`, `by_effectiveness`, and
+  `controls[]` (`control`, `effectiveness`, `kind`, `assessment`). Read verbatim
+  from the model — a rating, never a re-score. Empty if the model has no
+  `security_controls`.
 - `stale[]` — prior decisions whose finding is gone from the model.
 
 ## Step 4 — Show the landing screen (verdict + worst case)
@@ -177,9 +187,12 @@ Let `<band>` be that band and `<n>` the number of findings its mitigations
 cover (the union of their `covered_keys`). Ask with one `AskUserQuestion`:
 "Fix the **<band>** findings now (the `<n>` findings the `<band>`-priority
 mitigations cover) and walk the rest?" — options **Yes, fix the <band>s** /
-**No, let me navigate**. On yes, apply `fix` to every finding in that union
-(Step 6 write), then go to the menu. Always state `<n>` in the prompt so a large
-band (e.g. many P2s) is a considered choice, not a blind sweep.
+(**Quick wins (<q>)** when `verdict.quick_wins > 0`) / **No, let me navigate**.
+On **Yes**, apply `fix` to every finding in that union (Step 6 write). On
+**Quick wins**, apply `fix` to the union of the `quick_wins[]` mitigations'
+`covered_keys` instead — the low-effort, high-impact set. Then go to the menu.
+Always state the counts in the prompt so a large band (e.g. many P2s) is a
+considered choice, not a blind sweep.
 
 Why the top priority band and not a Critical+High sweep: priority is the model's
 own "do this first" call — it already folds in severity, kind and effort — so it
@@ -193,34 +206,41 @@ The spine is the **remediation backlog by priority** (P1 → P2 → P3): the pla
 you emit *is* a prioritized backlog, so walking it that way keeps the flow and
 the artifact aligned. Severity and area are alternate lenses, not the default.
 
-Ask with `AskUserQuestion` (one question). List the **Findings without a
-mitigation** option **only when `verdict.uncovered > 0`** (otherwise it is a
-dead slot — drop it and the menu is three options):
+Ask with `AskUserQuestion` (one question, four options):
 
-1. **Remediation backlog** — by priority (P1 → P2 → P3)
-2. **Browse by lens** — severity · area · requirement
-3. **Findings without a mitigation** *(only if `uncovered > 0`)*
+1. **Remediation backlog** — by priority (P1 → P2 → P3), plus Quick wins
+2. **Browse by lens** — severity · area · requirement · uncovered
+3. **Security posture by domain** — control ratings *(only if `control_posture` is non-empty)*
 4. **Write plan & exit**
 
 After each action, redisplay the menu with an updated `Triage: X/<total>`
 counter. The user may also type a free-text intent at any time ("accept all
-Low", "fix the auth ones") — honour it directly, then return to the menu. The
-user can stop whenever they want; untriaged findings simply stay untriaged.
+Low", "fix the auth ones", "show quick wins") — honour it directly, then return
+to the menu. The user can stop whenever they want; untriaged findings simply
+stay untriaged.
 
 ### View: Remediation backlog (default spine)
 Print `mitigations[]` grouped into P1 / P2 / P3 bands (they arrive already
 sorted: priority, then fix-before-investigate, then leverage). One row each:
 `M-NNN · <kind> · covers <coverage> · <covered_severities> · <title>`.
-Then ask which band to act on with `AskUserQuestion`: **P1** / **P2** / **P3** /
-**All shown** (offer only bands that exist). Print that band and run **Select &
-act**, treating each chosen mitigation's `covered_keys` as the selection.
-When a mitigation's `coverage > 1`, state the fan-out explicitly ("M-012 → fix 5
-findings"); when it covers one finding, say so plainly ("M-012 → fix T-007").
+Then ask which cut to act on with `AskUserQuestion`: **P1** / **P2** / **P3** /
+**Quick wins** (offer only bands that exist; add **Quick wins** when
+`verdict.quick_wins > 0`; "all shown" is available as free text). Print the
+chosen cut and run **Select & act**, treating each chosen mitigation's
+`covered_keys` as the selection. When a mitigation's `coverage > 1`, state the
+fan-out explicitly ("M-012 → fix 5 findings"); when it covers one finding, say
+so plainly ("M-012 → fix T-007").
+
+**Quick wins** prints `quick_wins[]` — low-effort mitigations that resolve a
+Critical/High finding (the value/effort sweet spot), ranked by leverage:
+`M-NNN · Low effort · covers <coverage> · <covered_severities> · <title>`. Same
+Select & act on their `covered_keys`.
 
 ### View: Browse by lens
-Ask which lens with `AskUserQuestion` — **By severity** / **By area** /
-**By requirement** / **Back**. List **By requirement** **only when
-`verdict.requirements.integrated` is true**; otherwise offer three options.
+Ask which lens with `AskUserQuestion` — offer only the ones that apply, in this
+order, and let the user type `back` to return: **By severity**, **By area**,
+**By requirement** (only when `verdict.requirements.integrated` is true),
+**Without a mitigation** (only when `verdict.uncovered > 0`).
 - **By severity** — print an untriaged-first, severity-ranked finding table
   (skip already-decided unless the user asks to see all):
   `T-NNN · <severity> · <component> · <category_name> · <title> [req: …] [<decision>]`.
@@ -230,12 +250,20 @@ Ask which lens with `AskUserQuestion` — **By severity** / **By area** /
 - **By requirement** — print `requirements[]` numbered:
   `N. <requirement_id> — <total> findings (<critical> Critical, <high> High)`.
   Ask which requirement, then print its `keys` as findings.
+- **Without a mitigation** — print the findings whose `has_mitigation` is false.
+  These have no proposed fix — they most need a human decision.
 Then run **Select & act**.
 
-### View: Findings without a mitigation
-Print the findings whose `has_mitigation` is false, formatted as in By severity.
-These have no proposed fix — they most need a human decision. Run **Select &
-act**.
+### View: Security posture by domain
+Print `control_posture[]` — the model's own control ratings, worst-first, one
+row per domain: `<domain> — <worst_effectiveness> (<total> controls: <mix>)`.
+On request, drill into a domain to show its `controls[]` (`control` ·
+`effectiveness` · `assessment`). This is a **read-only rating** the analyst
+recorded — display it, never recompute or triage it, and do **not** invent a
+score. It orients the user ("authorization is Missing, crypto is Weak"); to act
+on the findings behind a weak domain, point them to the matching **By area**
+lens. (The control `domain` vocabulary and the finding `category_name`
+vocabulary differ and share no key, so do not fabricate a join between them.)
 
 ### Requirements badge (all finding rows)
 When (and only when) `verdict.requirements.integrated` is true, append the

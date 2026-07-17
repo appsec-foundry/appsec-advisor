@@ -57,6 +57,8 @@ _PRIORITY_ORDER = {"P1": 0, "P2": 1, "P3": 2}
 # Within a priority band, actionable fixes rank above items still needing a look
 # (investigate/review) so the backlog surfaces do-now work first.
 _KIND_ORDER = {"fix": 0, "investigate": 1, "review": 2}
+# Security-control effectiveness, worst-first — drives the posture-by-domain rank.
+_EFFECTIVENESS_ORDER = {"Missing": 0, "Weak": 1, "Partial": 2, "Adequate": 3}
 
 # Human-readable threat-domain names ("Broken Authentication", "Injection", …)
 # live in the generation pipeline's taxonomy. Read-only lookup; the console view
@@ -511,6 +513,65 @@ def build_worst_case(model: dict, findings: list[dict], mitigations: list[dict],
     return out[:limit]
 
 
+def build_quick_wins(mitigations: list[dict]) -> list[dict]:
+    """Low-effort mitigations that resolve at least one Critical/High finding —
+    the value/effort sweet spot. Ranked by leverage (coverage), then priority.
+    Expects mitigations already enriched with ``covered_severities`` (console
+    does this). Mitigations with no ``effort`` are excluded — unknown ≠ quick."""
+    out = [
+        m
+        for m in mitigations
+        if str(m.get("effort") or "").strip().lower() == "low"
+        and (m.get("covered_severities", {}).get("Critical") or m.get("covered_severities", {}).get("High"))
+    ]
+    out.sort(key=lambda m: (-m["coverage"], _PRIORITY_ORDER.get(m["priority"], 9), m["id"]))
+    return out
+
+
+def build_control_posture(model: dict) -> list[dict]:
+    """Security controls grouped by domain with their effectiveness rating and
+    assessment — read verbatim from ``security_controls[]``. Ranked worst-first
+    (Missing → Weak → Partial → Adequate) by the weakest control in each domain.
+    A read-only posture roll-up, never a re-score."""
+    groups: dict[str, dict] = {}
+    for c in model.get("security_controls") or []:
+        if not isinstance(c, dict):
+            continue
+        domain = str(c.get("domain") or "").strip()
+        if not domain:
+            continue
+        g = groups.get(domain)
+        if g is None:
+            g = groups[domain] = {"domain": domain, "controls": [], "by_effectiveness": collections.Counter()}
+        eff = str(c.get("effectiveness") or "").strip()
+        g["controls"].append(
+            {
+                "control": str(c.get("control") or "").strip(),
+                "effectiveness": eff,
+                "kind": str(c.get("kind") or "").strip(),
+                "assessment": str(c.get("assessment") or "").strip(),
+            }
+        )
+        g["by_effectiveness"][eff or "Unknown"] += 1
+    out: list[dict] = []
+    for g in groups.values():
+        worst = min((_EFFECTIVENESS_ORDER.get(c["effectiveness"], 9) for c in g["controls"]), default=9)
+        # Label the domain by its weakest control (the rating the user acts on).
+        worst_label = next((k for k, v in _EFFECTIVENESS_ORDER.items() if v == worst), "Unknown")
+        out.append(
+            {
+                "domain": g["domain"],
+                "controls": g["controls"],
+                "total": len(g["controls"]),
+                "by_effectiveness": dict(g["by_effectiveness"]),
+                "worst_effectiveness": worst_label,
+                "_worst_rank": worst,
+            }
+        )
+    out.sort(key=lambda d: (d["_worst_rank"], -d["total"], d["domain"]))
+    return out
+
+
 def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = None) -> dict:
     """One payload for the interactive console: the reconcile view plus ranked
     mitigations, area groupings, worst-case scenarios, the requirements lens
@@ -548,18 +609,23 @@ def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = N
     areas = build_areas(view["findings"])
     requirement_groups = build_requirement_groups(view["findings"], reqs["url_by_id"]) if reqs["integrated"] else []
     worst_case = build_worst_case(model, view["findings"], mitigations)
+    quick_wins = build_quick_wins(mitigations)
+    control_posture = build_control_posture(model)
     verdict = build_verdict(model, view["findings"], mitigations)
     verdict["requirements"] = {
         "integrated": reqs["integrated"],
         "findings_violating": sum(1 for f in view["findings"] if f.get("requirements")),
         "requirement_count": len({r for f in view["findings"] for r in f.get("requirements") or []}),
     }
+    verdict["quick_wins"] = len(quick_wins)
     return {
         **view,
         "mitigations": mitigations,
         "areas": areas,
         "requirements": requirement_groups,
         "worst_case": worst_case,
+        "quick_wins": quick_wins,
+        "control_posture": control_posture,
         "verdict": verdict,
     }
 
