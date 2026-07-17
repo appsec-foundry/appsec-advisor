@@ -12,6 +12,10 @@ All notable changes to this project are documented here.
 - Abuse cases can be picked from repo signals, path patterns, or a source probe, and gated on verified chains. A confirmed probe can turn into a regular finding.
 - Figure 1 shows missing architecture tiers as transparent placeholders instead of leaving them out.
 - MCP servers from an org profile are shipped in the packaged plugin.
+- Org profiles can package the requirements gate policy per preset (`requirements.gate`: `mode`, `gate_on`, `priority_floor`), so a CI preset makes `verify-requirements` and `audit-security-requirements` gate by default. A per-run `--gate` / `--gate-on` / `--priority-floor` still overrides it.
+- Org profiles can define their own Security Coach steering rules — a baseline and custom topics (triggers → guidance + requirement IDs) that add to or replace the built-in ones — without forking the plugin.
+- Org profiles can package run policy: a per-preset CI severity gate (`guardrails.fail_on`) and an org-wide remote-fetch allowlist (`policy.url_allowlist`). The allowlist now also covers the requirements-catalog fetch, which previously bypassed the SSRF guard; internal catalog hosts stay reachable when listed.
+- Org profiles can bundle their own Claude Code hooks (`hooks`), so one internal plugin ships a company's event handlers alongside everything else. The packager merges them into the built `hooks.json` and records each in `package-surface.json` (org-owned) for audit; the smoke test verifies them, and package policy can exclude one by id. Org hooks run at the event layer only — they never touch findings, severity, or schemas.
 - OWASP Top 10 for Agentic Applications (2026, ASI) coverage: on an agentic surface (LLM wired to tools, memory, or other agents) the analyzer adds an Agentic-Top-10 lens and the AI/LLM Exposure callout tags each risk with a linked `ASIxx` badge.
 
 ### Changed

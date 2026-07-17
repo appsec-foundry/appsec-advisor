@@ -171,6 +171,10 @@ The audit is advisory by default. `--gate` exits non-zero when an in-scope requi
 /appsec-advisor:audit-security-requirements --gate --gate-on partial --priority-floor SHOULD
 ```
 
+An org-profile preset can package these defaults via its `requirements.gate`
+block, so a CI preset gates without passing `--gate` each run; a command-line flag
+still overrides it. See [CI gates](org-profiles.md#ci-gates).
+
 ## Shared source with the threat model
 
 `/appsec-advisor:create-threat-model` uses the same catalog. Its findings link violations and mitigations to the matching requirement IDs. Configure the catalog once for both commands.

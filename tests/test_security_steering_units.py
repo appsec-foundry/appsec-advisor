@@ -436,6 +436,52 @@ def test_emit_prints_and_exits(capsys):
 
 
 # ---------------------------------------------------------------------------
+# _load_config — org-defined steering topics merge in from the profile
+# ---------------------------------------------------------------------------
+
+
+def _write_effective_coach(tmp_path, monkeypatch, coach):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".org-profile-effective.json").write_text(
+        json.dumps({"org_profile": {"active": True}, "security_coach": coach})
+    )
+    monkeypatch.setenv("OUTPUT_DIR", str(out))
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(REPO_ROOT))  # load built-in topics
+    monkeypatch.chdir(tmp_path)  # no cwd docs/security effective file
+
+
+def test_org_topics_merge_with_defaults(tmp_path, monkeypatch):
+    _write_effective_coach(
+        tmp_path,
+        monkeypatch,
+        {"topics": {"payments": {"triggers": ["payout"], "guidance": "g", "requirements": []}}},
+    )
+    cfg = ss._load_config()
+    assert "payments" in cfg["topics"]  # org topic added
+    assert "auth" in cfg["topics"]  # built-in topic still present
+
+
+def test_org_topics_replace_defaults_when_inheritance_off(tmp_path, monkeypatch):
+    _write_effective_coach(
+        tmp_path,
+        monkeypatch,
+        {
+            "inherit_default_topics": False,
+            "topics": {"payments": {"triggers": ["payout"]}},
+        },
+    )
+    cfg = ss._load_config()
+    assert set(cfg["topics"]) == {"payments"}  # built-ins dropped
+
+
+def test_org_baseline_overrides_default(tmp_path, monkeypatch):
+    _write_effective_coach(tmp_path, monkeypatch, {"baseline": "Acme secure defaults."})
+    cfg = ss._load_config()
+    assert cfg["baseline"] == "Acme secure defaults."
+
+
+# ---------------------------------------------------------------------------
 # Top-level body: non-dict stdin payload (line 431) — needs a subprocess
 # because the module body runs on import.
 # ---------------------------------------------------------------------------

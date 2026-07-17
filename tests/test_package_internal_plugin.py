@@ -530,6 +530,70 @@ def test_apply_hook_policy_skips_malformed_entries(tmp_path):
     assert result["events"] == ["E2"]
 
 
+def _make_build_with_org_hook(root):
+    root.mkdir(parents=True)
+    hooks = root / "hooks"
+    hooks.mkdir()
+    (hooks / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [{"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"}]}]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    op = root / "org-profile"
+    (op / "hooks").mkdir(parents=True)
+    (op / "hooks" / "guard.py").write_text("print('{}')\n", encoding="utf-8")
+    (op / "org-profile.yaml").write_text(
+        "hooks:\n"
+        "  block-risky-bash:\n"
+        "    event: PreToolUse\n"
+        "    matcher: Bash\n"
+        "    command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_apply_hook_policy_merges_org_hook(tmp_path):
+    build = _make_build_with_org_hook(tmp_path / "build")
+    result = pkg.apply_hook_policy(build, {})
+    assert {
+        "id": "block-risky-bash",
+        "event": "PreToolUse",
+        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py",
+    } in result["org"]
+    cmds = json.dumps(json.loads((build / "hooks" / "hooks.json").read_text()))
+    assert "org-profile/hooks/guard.py" in cmds  # org hook merged in
+    assert "agent_logger" in cmds  # upstream hook kept
+
+
+def test_apply_hook_policy_excludes_org_hook(tmp_path):
+    build = _make_build_with_org_hook(tmp_path / "build")
+    result = pkg.apply_hook_policy(build, {"hooks": {"exclude": ["block-risky-bash"]}})
+    assert result["org"] == []
+    assert "block-risky-bash" in result["removed"]
+    cmds = json.dumps(json.loads((build / "hooks" / "hooks.json").read_text()))
+    assert "org-profile/hooks/guard.py" not in cmds
+
+
+def test_org_hook_recorded_in_surface_and_passes_smoke(tmp_path):
+    # End-to-end seam: merge -> surface manifest -> smoke verification, the part
+    # the plan flagged as risky (org hook id carried through all three layers).
+    build = _make_build_with_org_hook(tmp_path / "build")
+    pkg.apply_package_surface_policy(build, {"plugin_surface": {}}, None)
+    manifest = json.loads((build / ".claude-plugin" / "package-surface.json").read_text())
+    org = manifest["hooks"]["org"]
+    assert org and org[0]["id"] == "block-risky-bash" and org[0]["event"] == "PreToolUse"
+
+    import smoke_test_package as smk
+
+    smk.check_surface_manifest(build)  # the same artifact must pass the smoke check
+
+
 # ---------------------------------------------------------------------------
 # write_surface_manifest
 # ---------------------------------------------------------------------------

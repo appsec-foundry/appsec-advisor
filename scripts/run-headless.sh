@@ -947,6 +947,12 @@ if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT
         --stage post-qa ${KEEP_RUNTIME_FILES_FLAG:-} 2>/dev/null || true
 fi
 
+# Seed the fail-on level from the active org profile when no --fail-on was
+# passed: guardrails.fail_on rides in .org-profile-effective.json. CLI wins.
+if [ -z "$FAIL_ON" ] && [ -f "$OUTPUT_PATH/.org-profile-effective.json" ]; then
+    FAIL_ON="$(python3 -c "import json,sys;print((json.load(open(sys.argv[1])).get('defaults') or {}).get('fail_on') or '')" "$OUTPUT_PATH/.org-profile-effective.json" 2>/dev/null || true)"
+fi
+
 # ── PR Gate: --fail-on <level> ──────────────────────────────────────
 # When set, translate the run's semantic outcome (new threats introduced by
 # the delta) into a CI-friendly exit code. We read the Change Summary from

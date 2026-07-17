@@ -364,8 +364,26 @@ def apply_skill_policy(build: Path, surface: dict) -> dict:
     return {"included": sorted(keep), "removed": removed}
 
 
+def _org_profile_hooks(build: Path) -> dict:
+    """Hook definitions declared in the packaged org profile (top-level `hooks`).
+
+    Returns a {id: {event, command, matcher?}} mapping, or {} when the profile
+    has none. The org profile is already overlaid into build/org-profile here."""
+    profile_path = build / "org-profile" / "org-profile.yaml"
+    if not profile_path.is_file():
+        return {}
+    data = _load_yaml_or_json(profile_path)
+    hooks = data.get("hooks")
+    return hooks if isinstance(hooks, dict) else {}
+
+
 def apply_hook_policy(build: Path, surface: dict) -> dict:
-    available = _available_hook_ids(build)
+    org_hooks = _org_profile_hooks(build)
+    # Org hook ids join the upstream ids in the keep-set resolution, so
+    # plugin_surface.hooks (include/exclude) gates org hooks too. Declared org
+    # hooks are included by default.
+    upstream_available = _available_hook_ids(build)
+    available = upstream_available | set(org_hooks)
     keep = _resolve_keep_set(surface.get("hooks"), available, "hooks")
     removed = sorted(available - keep)
 
@@ -394,6 +412,22 @@ def apply_hook_policy(build: Path, surface: dict) -> dict:
         if kept_entries:
             filtered_events[event] = kept_entries
 
+    # Merge kept org hooks into the built hooks.json under their declared event.
+    org_kept: list[dict] = []
+    for hook_id in sorted(keep):
+        cfg = org_hooks.get(hook_id)
+        if not isinstance(cfg, dict):
+            continue
+        event = cfg.get("event")
+        command = cfg.get("command")
+        if not event or not command:
+            continue
+        outer: dict = {"hooks": [{"type": "command", "command": command}]}
+        if cfg.get("matcher"):
+            outer["matcher"] = cfg["matcher"]
+        filtered_events.setdefault(event, []).append(outer)
+        org_kept.append({"id": hook_id, "event": event, "command": command})
+
     if hooks_path.parent.exists():
         hooks_path.write_text(
             json.dumps({"hooks": filtered_events}, indent=2) + "\n",
@@ -406,9 +440,12 @@ def apply_hook_policy(build: Path, surface: dict) -> dict:
             keywords_path.unlink()
 
     return {
-        "included": sorted(keep),
+        # Upstream hooks only — org hooks are tracked separately under "org"
+        # (they are not discoverable via the /scripts/ id derivation).
+        "included": sorted(upstream_available & keep),
         "removed": removed,
         "events": sorted(filtered_events),
+        "org": org_kept,
     }
 
 

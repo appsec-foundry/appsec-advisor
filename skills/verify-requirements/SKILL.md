@@ -41,6 +41,9 @@ FLAGS
   --gate-on <fail|partial> What gates: `fail` (default) or `fail`+`partial`.
   --priority-floor <p>     Lowest priority that may gate: MUST (default),
                            SHOULD, or MAY.
+                           The --gate / --gate-on / --priority-floor defaults can
+                           be preset in the active org profile (preset
+                           requirements.gate); an explicit flag here overrides it.
   --base <ref>             Diff against <ref> (git diff <ref>...HEAD).
                            Default: merge-base with the upstream default branch.
   --staged                 Diff staged changes only (git diff --cached) — for
@@ -74,6 +77,12 @@ Parse arguments after the skill name:
 - `--gate` — set `gate_mode = true` (default false / advisory)
 - `--gate-on <fail|partial>` — set `gate_on` (default `fail`)
 - `--priority-floor <MUST|SHOULD|MAY>` — set `priority_floor` (default `MUST`)
+
+For each of these three gate knobs, also remember whether the user passed the
+flag **explicitly** this run (`gate_mode_set`, `gate_on_set`,
+`priority_floor_set`). The active preset may supply defaults for them (Step 2b),
+but an explicit CLI flag always wins — precedence is **CLI > preset > built-in
+default (advisory / fail / MUST)**.
 - `--base <ref>` — set `base_ref`
 - `--staged` — set `staged = true` (mutually exclusive with `--base`; if both given, hard-fail)
 - `--requirements <src>` — set `requirements_url_override`
@@ -156,6 +165,33 @@ requirements (when configured) or the bundled best-practices baseline. Its
 top-level `source:` field records which (the requirement-id scheme is whatever
 the catalog defines — no fixed prefix is assumed), so the output can be honest
 about what your change was checked against.
+
+## Step 2b — Seed the gate policy from the active preset
+
+The resolver wrote `$OUTPUT_DIR/.org-profile-effective.json` in Step 2. If an org
+profile is active and its selected preset carries a
+`requirements.gate` block, use it as the **default** for any gate knob the user
+did **not** set explicitly on the CLI. Precedence is **CLI > preset > built-in
+default** — so a flag the user passed this run is never overwritten.
+
+```bash
+EFFECTIVE="$OUTPUT_DIR/.org-profile-effective.json"
+if [ -f "$EFFECTIVE" ]; then
+  read PRESET_GATE_MODE PRESET_GATE_ON PRESET_FLOOR < <(python3 - "$EFFECTIVE" <<'PY'
+import json, sys
+d = (json.load(open(sys.argv[1])).get("defaults") or {}).get("requirements_gate") or {}
+print(d.get("mode") or "", d.get("gate_on") or "", d.get("priority_floor") or "")
+PY
+)
+  # Seed only when the user did NOT pass the corresponding flag this run.
+  [ "$GATE_MODE_SET" != "true" ] && [ "$PRESET_GATE_MODE" = "enforce" ] && GATE_MODE=true
+  [ "$GATE_ON_SET" != "true" ]   && [ -n "$PRESET_GATE_ON" ]  && GATE_ON="$PRESET_GATE_ON"
+  [ "$PRIORITY_FLOOR_SET" != "true" ] && [ -n "$PRESET_FLOOR" ] && PRIORITY_FLOOR="$PRESET_FLOOR"
+fi
+```
+
+When a preset supplied any of these (and the user did not override it), note it
+once in the console — e.g. `Gate policy from preset <name>: enforce · gate-on=partial · floor=SHOULD` — so the effective policy is never a surprise. Omit the line entirely when no preset gate is in effect.
 
 ## Step 3 — Build the diff sidecar
 

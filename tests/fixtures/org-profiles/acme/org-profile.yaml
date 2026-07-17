@@ -8,6 +8,9 @@ organization:
 compatibility:
   core: ">=0.0 <999.0"
 
+policy:
+  url_allowlist: [security.acme.example, raw.githubusercontent.com]
+
 default_preset: ci-standard
 
 requirements:
@@ -41,11 +44,22 @@ llm_context:
 security_coach:
   enabled_by_default: true
   max_requirements_per_topic: 3
+  topics:
+    payments:
+      triggers: [payment, payout, settlement, refund]
+      guidance: Payment flows must post to the ledger idempotently and enforce dual approval on refunds.
+      requirements: [SEC-PAY-IDEMPOTENT, SEC-PAY-DUAL-APPROVAL]
 
 actors:
   inherit_defaults: true
   disable: []
   add: actors/*.yaml
+
+hooks:
+  block-risky-bash:
+    event: PreToolUse
+    matcher: Bash
+    command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py
 
 skill_toggles:
   create-threat-model: true
@@ -97,6 +111,10 @@ presets:
       scan_manifest: false
     requirements:
       enabled: true
+      gate:
+        mode: enforce
+        gate_on: partial
+        priority_floor: SHOULD
     quality:
       qa_review: auto
       architecture_enrichment: auto
@@ -108,6 +126,7 @@ presets:
       max_resumes: 1
       tracing: true
       verbose_report: false
+      fail_on: high
 
   release-review:
     base_mode: thorough

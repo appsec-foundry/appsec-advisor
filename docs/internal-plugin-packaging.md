@@ -152,6 +152,9 @@ compatibility:
 
 default_preset: ci-standard
 
+policy:
+  url_allowlist: [security.acme.example]   # restrict remote fetches to your hosts
+
 requirements:
   source:
     requirements_yaml_url: "https://security.acme.example/appsec-requirements.yaml"
@@ -180,9 +183,14 @@ presets:
       sarif: true
     requirements:
       enabled: true
+      gate:                     # package the CI gate policy so devs don't pass flags
+        mode: enforce           # gate by default (like --gate); advisory otherwise
+        gate_on: fail
+        priority_floor: MUST
     guardrails:
       max_wall_time: 1h
       max_cost_usd: 20
+      fail_on: high             # headless run exits non-zero on new High+ threats
 
   release-review:
     base_mode: thorough
@@ -196,6 +204,10 @@ presets:
       max_wall_time: 3h
       max_cost_usd: 80
 ```
+
+The `requirements.gate` block makes `verify-requirements` and
+`audit-security-requirements` gate by your default, so developers don't pass
+`--gate` themselves. See [CI gates](org-profiles.md#ci-gates).
 
 Add the referenced context file:
 
@@ -211,7 +223,7 @@ Custom actors are optional. If you keep `actors.add: actors/*.yaml`, actor files
 
 ```yaml
 actors:
-  - id: ACT-E-1
+  - id: ACT-E-01
     label: acme-privileged-contractor
     access: [internal-network, ci-cd-secrets, staging-env]
     capabilities:
@@ -277,6 +289,27 @@ plugin_surface:
 ```
 
 The included/removed servers are recorded in `package-surface.json` alongside skills and hooks, and the smoke test verifies them against the packaged `.mcp.json`.
+
+### Optional - Bundle your own hooks
+
+An org can ship its own Claude Code hooks in the plugin, so one central artifact carries everything. Declare them in the org profile and drop the scripts under `org-profile/hooks/`:
+
+```yaml
+# org-profile/org-profile.yaml
+hooks:
+  block-risky-bash:
+    event: PreToolUse
+    matcher: Bash                                   # PreToolUse / PostToolUse only
+    command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py
+```
+
+The packager merges each declared hook into the built `hooks/hooks.json` and records it in `package-surface.json` under `hooks.org` (separate from the upstream `security-coach` / `agent-logger`), so the artifact stays auditable. The smoke test then checks that every listed org hook is present in `hooks.json` and its script is packaged. `plugin_surface.hooks` can exclude an org hook by id, the same as an upstream one.
+
+Rules:
+
+- The `command` must reference a script under the profile directory via `${CLAUDE_PLUGIN_ROOT}/org-profile/...`; the script must exist and its id must not reuse `security-coach` or `agent-logger`.
+- Org hooks run at Claude Code's event layer — they can add context or block a tool call, but they cannot reach the analysis pipeline. Findings, severity, and schemas stay core-owned.
+- The hook code is yours: it ships in your artifact and runs on your developers' machines, like a bundled MCP stdio server. Only bundle scripts you trust.
 
 ## Step 3 - Build and validate
 

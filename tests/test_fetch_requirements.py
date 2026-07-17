@@ -133,6 +133,29 @@ def test_cli_remote_url_unreachable_aborts(tmp_path):
     assert "fail_mode=fail_closed" in r.stderr
 
 
+def test_cli_remote_url_blocked_by_url_allowlist(tmp_path):
+    """A url_allowlist that excludes the host blocks the requirements fetch (exit 2)."""
+    cache = tmp_path / "cache.yaml"
+    with _http_server(b"categories:\n  - id: SEC-REMOTE\n") as url:
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--output-dir",
+                str(tmp_path),
+                "--requirements",
+                url,
+                "--cache-path",
+                str(cache),
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "APPSEC_URL_ALLOWLIST": "security.acme.example"},
+        )
+    assert r.returncode == 2
+    assert "not in APPSEC_URL_ALLOWLIST" in (r.stderr + r.stdout)
+
+
 def test_cli_empty_local_file_aborts(tmp_path):
     """An empty source loads but has no content -> exit 2 (no silent pass)."""
     f = tmp_path / "empty.yaml"

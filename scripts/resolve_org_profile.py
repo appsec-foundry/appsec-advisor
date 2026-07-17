@@ -169,6 +169,21 @@ def _expand_output_template(template: str | None, repo_path: Path | None, preset
     return out
 
 
+def _flatten_requirements_gate(requirements: dict) -> dict | None:
+    """Surface the preset's requirements gate policy as a small dict, or None
+    when the preset carries no ``gate`` block (so the requirements skills fall
+    back to their built-in defaults advisory/fail/MUST). Values are defaults
+    only — the per-run CLI flags override them (CLI > preset > built-in)."""
+    gate = requirements.get("gate") or {}
+    if not gate:
+        return None
+    return {
+        "mode": gate.get("mode"),
+        "gate_on": gate.get("gate_on"),
+        "priority_floor": gate.get("priority_floor"),
+    }
+
+
 def flatten_preset(
     profile: dict,
     preset_name: str,
@@ -215,6 +230,7 @@ def flatten_preset(
         "incremental": scan.get("incremental"),
         "scan_manifest": scan.get("scan_manifest"),
         "check_requirements": requirements.get("enabled"),
+        "requirements_gate": _flatten_requirements_gate(requirements),
         "qa_review": quality.get("qa_review"),
         "architecture_enrichment": quality.get("architecture_enrichment"),
         "architect_review": quality.get("architect_review"),
@@ -226,6 +242,7 @@ def flatten_preset(
         "max_resumes": guardrails.get("max_resumes"),
         "tracing": guardrails.get("tracing"),
         "verbose_report": guardrails.get("verbose_report"),
+        "fail_on": guardrails.get("fail_on"),
     }
     return defaults, errors
 
@@ -373,6 +390,11 @@ def resolve(
     # ceiling is org-wide by design, hence profile-level rather than per-preset.
     policy = profile.get("policy") or {}
     defaults["disable_opus"] = bool(policy.get("disable_opus"))
+    # Org-wide remote-fetch allowlist (SSRF posture). Surfaced into defaults so
+    # it rides into .org-profile-effective.json; scripts/_url_guard.py reads it
+    # from there and enforces it on every remote fetch.
+    if isinstance(policy.get("url_allowlist"), list) and policy["url_allowlist"]:
+        defaults["url_allowlist"] = [str(h).strip().lower() for h in policy["url_allowlist"] if str(h).strip()]
 
     # Profile-level cover branding (org-wide, not preset-scoped). Only set keys
     # that the profile actually carries so resolve_config can distinguish
