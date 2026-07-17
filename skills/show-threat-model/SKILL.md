@@ -37,6 +37,8 @@ WHAT IT SHOWS
   * Findings by severity (Critical / High / Medium / Low)
   * Remediation backlog by mitigation priority (P1 / P2 / P3) and how many
     findings have a proposed mitigation vs. are uncovered
+  * The top "worst case if nothing changes" scenarios (from the model's
+    curated critical findings, with the covering mitigation)
   * Top Critical threats (or all threats with --all)
   * Mitigation and control counts, plus the rendered report path
 

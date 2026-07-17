@@ -4,9 +4,10 @@
 Powers ``/appsec-advisor:show-threat-model``. Read-only: it parses the
 committed semantic model and prints a compact at-a-glance summary —
 project + scan identity, severity breakdown, remediation backlog by
-priority + mitigation coverage, top-Critical findings, mitigation/control
-counts, and the report path. No LLM judgement, no network, no writes;
-output is byte-stable for a given input.
+priority + mitigation coverage, the top "worst case if nothing changes"
+scenarios, top-Critical findings, mitigation/control counts, and the report
+path. No LLM judgement, no network, no writes; output is byte-stable for a
+given input.
 
 Freshness is NOT computed here. The skill obtains the freshness verdict
 from ``threat_model_health.py --json`` (which wraps
@@ -129,6 +130,52 @@ def _coverage(threats: list) -> dict:
     return {"with_mitigation": with_m, "uncovered": len(threats) - with_m}
 
 
+def _worst_case(threats: list, mitigations: list, critical_findings: list | None, limit: int = 3) -> list:
+    """The few concrete "if you do nothing" scenarios — mirrors
+    ``review_threat_model.build_worst_case``: read verbatim from the model's
+    curated ``critical_findings[]`` (``threat_id`` + one-line ``summary`` +
+    covering ``mitigation_id``), joined to severity / component / mitigation
+    priority, severity-ranked and capped. Falls back to the top Critical/High
+    threats' titles when the model curated none. Never authors text."""
+    by_id = {_threat_id(t): t for t in threats if _threat_id(t)}
+    mit_by_id = {str(m.get("id")).strip(): m for m in mitigations if isinstance(m, dict) and m.get("id")}
+    out: list = []
+    for c in critical_findings or []:
+        if not isinstance(c, dict):
+            continue
+        tid = str(c.get("threat_id") or "").strip()
+        t = by_id.get(tid)
+        if not t:
+            continue
+        m = mit_by_id.get(str(c.get("mitigation_id") or "").strip())
+        out.append(
+            {
+                "id": tid,
+                "severity": _severity_label(t),
+                "component": (t.get("component") or "").strip(),
+                "summary": str(c.get("summary") or "").strip() or _threat_title(t),
+                "mitigation_id": str(m.get("id")).strip() if m else "",
+                "priority": (str(m.get("priority") or "").strip() if m else ""),
+            }
+        )
+    if not out:  # no curated worst-case — degrade to the top Critical/High findings
+        for t in threats:
+            if _SEVERITY_ORDER.get(_severity_label(t), 9) > 1:
+                continue
+            out.append(
+                {
+                    "id": _threat_id(t),
+                    "severity": _severity_label(t),
+                    "component": (t.get("component") or "").strip(),
+                    "summary": _threat_title(t),
+                    "mitigation_id": "",
+                    "priority": "",
+                }
+            )
+    out.sort(key=lambda w: (_SEVERITY_ORDER.get(w["severity"], 9), w["id"]))
+    return out[:limit]
+
+
 def build_summary(data: dict, output_dir: Path) -> dict:
     """Reduce raw YAML to the structured summary the renderer consumes."""
     meta = data.get("meta") or {}
@@ -166,6 +213,7 @@ def build_summary(data: dict, output_dir: Path) -> dict:
         "severity_counts": counts,
         "backlog": _backlog_by_priority(mitigations),
         "coverage": _coverage(threats),
+        "worst_case": _worst_case(threats, mitigations, data.get("critical_findings")),
         "criticals": [
             {
                 "id": _threat_id(t),
@@ -258,6 +306,17 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
 
     if freshness is not None:
         buf.extend(render_status_line(freshness))
+        buf.append("")
+
+    worst = summary.get("worst_case") or []
+    if worst:
+        buf.append("Worst case if nothing changes")
+        for w in worst:
+            line = f"  ⚠ {w['id']:<7} {w['severity']} · {w['component']} · {w['summary']}"
+            if w["mitigation_id"]:
+                tail = f"{w['mitigation_id']} ({w['priority']})" if w["priority"] else w["mitigation_id"]
+                line += f"   → {tail}"
+            buf.append(line)
         buf.append("")
 
     buf.append(f"Findings   {totals['threats']} threats across {totals['components']} components")

@@ -127,6 +127,50 @@ def test_severity_uses_effective_severity_precedence(tmp_path):
     assert summary["criticals"] == []
 
 
+def test_worst_case_from_curated_critical_findings(tmp_path):
+    import yaml
+
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, effective_severity: Critical, component: auth, title: secret}
+          - {t_id: T-002, effective_severity: High, component: api, title: sqli}
+        mitigations:
+          - {id: M-001, priority: P1}
+          - {id: M-002, priority: P2}
+        critical_findings:
+          - {threat_id: T-002, summary: attacker dumps users table, mitigation_id: M-002}
+          - {threat_id: T-001, summary: full account takeover, mitigation_id: M-001}
+          - {threat_id: T-404, summary: gone, mitigation_id: M-000}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    wc = summary["worst_case"]
+    # unresolved threat dropped; Critical before High
+    assert [w["id"] for w in wc] == ["T-001", "T-002"]
+    assert wc[0]["summary"] == "full account takeover"  # verbatim
+    assert wc[0]["mitigation_id"] == "M-001" and wc[0]["priority"] == "P1"
+
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Worst case if nothing changes" in out
+    assert "full account takeover" in out
+    assert "→ M-001 (P1)" in out
+
+
+def test_worst_case_falls_back_to_top_severity(tmp_path):
+    import yaml
+
+    # no critical_findings -> degrade to top Critical/High threats
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    wc = summary["worst_case"]
+    assert all(w["severity"] in ("Critical", "High") for w in wc)
+    assert all(w["mitigation_id"] == "" for w in wc)  # no curated mitigation link
+    assert "T-004" not in {w["id"] for w in wc}  # the Medium finding
+
+
 def test_backlog_and_coverage(tmp_path):
     import yaml
 
@@ -222,7 +266,9 @@ def test_render_text_compact(tmp_path):
     out = stm.render_text(summary, None, show_all=False)
     assert "Threat Model — Demo App (1.2.3)" in out
     assert "Top Critical (2)" in out
-    assert "T-001" in out and "T-002" not in out  # High not shown in compact
+    # compact mode does not expand the full by-severity grouping (that is --all)
+    assert "High (1)" not in out
+    assert "Medium (1)" not in out
     assert "depth standard (full)" in out
 
 
