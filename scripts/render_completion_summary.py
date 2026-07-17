@@ -772,7 +772,7 @@ def build_next_steps(
     if sum(sev.values()):
         lines.append(
             "Triage the findings into a prioritised remediation plan — verdict, then bulk-decide "
-            "fix/accept/defer: /appsec-advisor:review-threat-model"
+            "mitigate/accept/defer: /appsec-advisor:review-threat-model"
         )
 
     # Architect review — only surface the dot-file when it contains actionable defects.
