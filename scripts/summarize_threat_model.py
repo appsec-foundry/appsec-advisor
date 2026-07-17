@@ -344,6 +344,11 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
         buf.append("")
 
     buf.append(f"Findings   {totals['threats']} threats across {totals['components']} components")
+    if totals["threats"] == 0:
+        buf.append("           no findings recorded — run /appsec-advisor:create-threat-model to (re)scan")
+        buf.append("")
+        buf.append(f"Report     {summary['report']}")
+        return "\n".join(buf) + "\n"
     peak = max(counts.values()) if counts else 0
     for sev in ("Critical", "High", "Medium", "Low", "Informational"):
         n = counts.get(sev, 0)
@@ -433,21 +438,24 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _emit_no_model(output_dir: Path, as_json: bool) -> None:
+    """Uniform 'no usable model' response — used for a missing file and for a
+    present-but-empty one (an empty YAML is not a usable model). Points the user
+    at create-threat-model rather than showing an empty overview."""
+    if as_json:
+        print(json.dumps({"verdict": "NO_MODEL", "output_dir": str(output_dir)}, indent=2, sort_keys=True))
+    else:
+        print(f"No threat model found at {output_dir / 'threat-model.yaml'}.")
+        print("Run /appsec-advisor:create-threat-model to generate one.")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     output_dir = Path(args.output_dir).resolve()
     yaml_path = output_dir / "threat-model.yaml"
 
     if not yaml_path.is_file():
-        msg = {
-            "verdict": "NO_MODEL",
-            "output_dir": str(output_dir),
-        }
-        if args.json:
-            print(json.dumps(msg, indent=2, sort_keys=True))
-        else:
-            print(f"No threat model found at {yaml_path}.")
-            print("Run /appsec-advisor:create-threat-model to generate one.")
+        _emit_no_model(output_dir, args.json)
         return 1
 
     try:
@@ -457,6 +465,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 — surface any parse failure as exit 2
         print(f"Error: could not parse {yaml_path}: {exc}", file=sys.stderr)
         return 2
+    if data is None:  # present but empty file — no usable model, treat as missing
+        _emit_no_model(output_dir, args.json)
+        return 1
     if not isinstance(data, dict):
         print(f"Error: {yaml_path} is not a mapping.", file=sys.stderr)
         return 2

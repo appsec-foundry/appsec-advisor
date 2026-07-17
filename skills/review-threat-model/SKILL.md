@@ -153,6 +153,12 @@ Payload shape (all read from the model — never recompute):
 This prints immediately on invocation — the user sees where they stand before
 any menu. Do not editorialize; every number/line comes from the payload.
 
+**Empty model guard.** If `total == 0` (the model exists but has no findings —
+e.g. a stub or a threats-less file), do **not** show the landing or the menu.
+Tell the user the threat model has no findings yet and to (re-)run
+`/appsec-advisor:create-threat-model` to scan, then stop. (A *missing* model is
+already handled at Step 3 by the `console` exit `1`.)
+
 First the verdict from `verdict` (omit the Requirements line unless
 `verdict.requirements.integrated` is true):
 

@@ -370,6 +370,30 @@ def test_cli_health_json_via_stdin(tmp_path):
     assert "✓ FRESH" in res.stdout
 
 
+def test_cli_empty_file_treated_as_no_model(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "threat-model.yaml").write_text("", encoding="utf-8")
+    res = _run(["--output-dir", str(tmp_path)])
+    assert res.returncode == 1
+    assert "No threat model found" in res.stdout
+    resj = _run(["--output-dir", str(tmp_path), "--json"])
+    assert resj.returncode == 1
+    assert json.loads(resj.stdout)["verdict"] == "NO_MODEL"
+
+
+def test_render_zero_findings_points_to_create(tmp_path):
+    import yaml
+
+    _write_model(tmp_path, "meta: {project: {name: Clean}}\nthreats: []\n")
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Findings   0 threats" in out
+    assert "create-threat-model to (re)scan" in out
+    # no noise blocks when there is nothing to summarize
+    assert "Critical" not in out and "Backlog" not in out
+
+
 def test_cli_unparseable_yaml_exit_2(tmp_path):
     (tmp_path).mkdir(parents=True, exist_ok=True)
     (tmp_path / "threat-model.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
