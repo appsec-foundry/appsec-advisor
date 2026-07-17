@@ -52,6 +52,12 @@ from pathlib import Path
 
 import yaml
 
+# CSafeLoader (libyaml) parses a large threat-model.yaml (~360 KB) in ~70 ms vs
+# ~800 ms for the pure-Python SafeLoader — an ~11× win on the dominant cost of
+# loading the console payload. Falls back to SafeLoader where libyaml is absent.
+# Same convention as compose_threat_model.py / qa_checks.py.
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
 _PRIORITY_ORDER = {"P1": 0, "P2": 1, "P3": 2}
 # Within a priority band, actionable fixes rank above items still needing a look
@@ -59,6 +65,12 @@ _PRIORITY_ORDER = {"P1": 0, "P2": 1, "P3": 2}
 _KIND_ORDER = {"fix": 0, "investigate": 1, "review": 2}
 # Security-control effectiveness, worst-first — drives the posture-by-domain rank.
 _EFFECTIVENESS_ORDER = {"Missing": 0, "Weak": 1, "Partial": 2, "Adequate": 3}
+# Valid STRIDE categories for a docs/known-threats.yaml entry (mirrors
+# known-threats.schema.yaml). Used when promoting an accept-risk decision: a
+# threat whose `stride` is not one of these can't form a schema-valid entry.
+_STRIDE_ENUM = frozenset(
+    {"Spoofing", "Tampering", "Repudiation", "Information Disclosure", "Denial of Service", "Elevation of Privilege"}
+)
 
 # Human-readable threat-domain names ("Broken Authentication", "Injection", …)
 # live in the generation pipeline's taxonomy. Read-only lookup; the console view
@@ -169,7 +181,7 @@ def _load_category_names(path: Path | None = None) -> dict[str, str]:
     then shows the raw code), never an error."""
     p = path or _TAXONOMY_PATH
     try:
-        doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        doc = yaml.load(p.read_text(encoding="utf-8"), Loader=_YAML_LOADER) or {}
     except (OSError, yaml.YAMLError):
         return {}
     cats = doc.get("categories") if isinstance(doc, dict) else None
@@ -196,7 +208,7 @@ def _load_model(output_dir: Path) -> dict:
         print(f"No threat model found at {model_path}", file=sys.stderr)
         raise SystemExit(1)
     try:
-        data = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
+        data = yaml.load(model_path.read_text(encoding="utf-8"), Loader=_YAML_LOADER) or {}
     except yaml.YAMLError as e:
         print(f"Could not parse {model_path}: {e}", file=sys.stderr)
         raise SystemExit(2)
@@ -213,7 +225,7 @@ def _load_sidecar(sidecar_path: Path) -> dict:
     if not sidecar_path.is_file():
         return {}
     try:
-        doc = yaml.safe_load(sidecar_path.read_text(encoding="utf-8")) or {}
+        doc = yaml.load(sidecar_path.read_text(encoding="utf-8"), Loader=_YAML_LOADER) or {}
     except yaml.YAMLError as e:
         print(f"Could not parse triage sidecar {sidecar_path}: {e}", file=sys.stderr)
         raise SystemExit(2)
@@ -241,7 +253,7 @@ def _load_requirements(output_dir: Path, meta: dict) -> dict:
         return empty
     path = output_dir / ".requirements.yaml"
     try:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        doc = yaml.load(path.read_text(encoding="utf-8"), Loader=_YAML_LOADER) or {}
     except (OSError, yaml.YAMLError):
         return empty
     if not isinstance(doc, dict):
@@ -634,6 +646,8 @@ def build_control_posture(model: dict) -> list[dict]:
             }
         )
     out.sort(key=lambda d: (d["_worst_rank"], -d["total"], d["domain"]))
+    for g in out:
+        g.pop("_worst_rank", None)  # internal sort key — never part of the payload
     return out
 
 
@@ -784,6 +798,139 @@ def render(output_dir: Path, sidecar_path: Path, plan_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Promote accepted risks into docs/known-threats.yaml
+#
+# The ONE place this consumer writes outside its own .appsec-triage/ namespace,
+# and only on the skill's explicit, opt-in request. It never touches the
+# generated threat-model.yaml — it writes the create-threat-model *input* channel
+# (docs/known-threats.yaml). A `status: accepted` entry there is re-read on every
+# scan: the STRIDE analyzer skips it (not re-raised) and the orchestrator surfaces
+# it in meta.accepted_risks[] (verified in appsec-stride-analyzer.md / build_*).
+# ---------------------------------------------------------------------------
+
+
+def _known_threat_description(threat: dict) -> str:
+    """Best available prose for a known-threats `description` (required, non-empty)."""
+    for k in ("scenario", "impact_description", "evidence_summary", "impact"):
+        v = str(threat.get(k) or "").strip()
+        if v:
+            return v
+    return _title(threat) or "(no description recorded)"
+
+
+def _build_known_threat_entry(threat: dict, rationale: str) -> dict | None:
+    """Synthesize a schema-valid ``docs/known-threats.yaml`` entry
+    (``status: accepted``) from a generated threat the user accepted the risk on.
+    Returns ``None`` when the threat lacks a mappable STRIDE category or a stable
+    key — i.e. cannot form a valid entry (skip, never emit invalid input)."""
+    key = _finding_key(threat)
+    stride = str(threat.get("stride") or "").strip()
+    if not key or stride not in _STRIDE_ENUM:
+        return None
+    entry: dict = {
+        "id": key,  # component-scoped local_id — stable across re-scans
+        "title": _title(threat) or key,
+        "stride": stride,
+        "component": str(threat.get("component") or threat.get("component_name") or "").strip() or "unknown",
+        "severity": _sev_label(threat) or "Medium",
+        "status": "accepted",
+        "description": _known_threat_description(threat),
+        "accepted_risk": (rationale or "").strip() or "Risk accepted during triage.",
+    }
+    loc = _primary_location(threat)
+    if loc:
+        entry["evidence"] = loc
+    mit = str(threat.get("mitigation_title") or "").strip()
+    if mit:
+        entry["mitigation_ref"] = mit
+    return entry
+
+
+def _validate_known_threats_doc(doc: dict) -> tuple[bool, list[str]]:
+    """Validate a known-threats document with the pipeline's own validator so
+    promoted entries clear the same bar as team-authored input. Best-effort: if
+    the validator can't be imported in this environment, don't block the write
+    (entries are schema-valid by construction)."""
+    try:
+        import validate_intermediate as _vi
+    except Exception:  # pragma: no cover - environment guard
+        return True, []
+    return _vi.validate_known_threats(doc)
+
+
+def promote_accepted(output_dir: Path, sidecar_path: Path, known_threats_path: Path) -> dict:
+    """Merge every ``accept-risk`` triage decision into ``known_threats_path`` as a
+    ``status: accepted`` entry. Preserves team-authored entries and any extra keys,
+    dedups by entry ``id`` (updates an existing entry in place rather than
+    duplicating). Validates before writing and fails loudly on invalid output.
+    Never writes ``threat-model.yaml``. Returns a summary dict."""
+    model = _load_model(output_dir)
+    sidecar = _load_sidecar(sidecar_path)
+    threats_by_key = {
+        _finding_key(t): t for t in (model.get("threats") or []) if isinstance(t, dict) and _finding_key(t)
+    }
+
+    new_entries: list[dict] = []
+    skipped: list[str] = []  # accepted but stale (gone from model) or unmappable
+    for key, dec in sidecar.items():
+        if not isinstance(dec, dict) or _norm_decision(dec.get("decision")) != "accept-risk":
+            continue
+        threat = threats_by_key.get(key)
+        entry = _build_known_threat_entry(threat, str(dec.get("rationale") or "")) if threat else None
+        if entry is None:
+            skipped.append(str(key))
+            continue
+        new_entries.append(entry)
+
+    # Nothing to promote and no file to preserve — don't litter an empty file.
+    if not new_entries and not known_threats_path.is_file():
+        return {"path": str(known_threats_path), "added": 0, "updated": 0, "skipped": skipped, "total": 0}
+
+    # Load + merge, preserving existing content.
+    if known_threats_path.is_file():
+        doc = yaml.load(known_threats_path.read_text(encoding="utf-8"), Loader=_YAML_LOADER) or {}
+        if not isinstance(doc, dict):
+            print(f"Existing {known_threats_path} is not a mapping — refusing to overwrite.", file=sys.stderr)
+            raise SystemExit(2)
+    else:
+        doc = {}
+    existing = doc.get("threats")
+    threats_list = list(existing) if isinstance(existing, list) else []
+    by_id = {str(e.get("id")): i for i, e in enumerate(threats_list) if isinstance(e, dict) and e.get("id")}
+
+    added = updated = 0
+    for entry in new_entries:
+        idx = by_id.get(entry["id"])
+        if idx is None:
+            threats_list.append(entry)
+            by_id[entry["id"]] = len(threats_list) - 1
+            added += 1
+        else:  # flip to accepted + refresh, but keep any extra team keys on the entry
+            threats_list[idx] = {**threats_list[idx], **entry}
+            updated += 1
+    doc["threats"] = threats_list
+
+    ok, errors = _validate_known_threats_doc(doc)
+    if not ok:
+        print("Refusing to write invalid known-threats.yaml:", file=sys.stderr)
+        for e in errors[:10]:
+            print(f"  - {e}", file=sys.stderr)
+        raise SystemExit(2)
+
+    known_threats_path.parent.mkdir(parents=True, exist_ok=True)
+    known_threats_path.write_text(
+        yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, width=100), encoding="utf-8"
+    )
+    return {
+        "path": str(known_threats_path),
+        "added": added,
+        "updated": updated,
+        "skipped": skipped,
+        "total": len(threats_list),
+    }
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -805,6 +952,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--triage", type=Path, required=True, help="Path to the triage sidecar.")
     p.add_argument("--plan", type=Path, required=True, help="Path to write remediation-plan.md.")
 
+    pa = sub.add_parser(
+        "promote-accepted",
+        help="Merge accept-risk decisions into docs/known-threats.yaml as status: accepted entries.",
+    )
+    pa.add_argument("--output-dir", type=Path, required=True, help="Directory holding threat-model.yaml.")
+    pa.add_argument("--triage", type=Path, required=True, help="Path to the triage sidecar.")
+    pa.add_argument(
+        "--known-threats", type=Path, required=True, help="Path to write/merge docs/known-threats.yaml."
+    )
+
     ns = ap.parse_args(argv)
 
     if ns.cmd == "reconcile":
@@ -814,12 +971,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if ns.cmd == "console":
         view = console(ns.output_dir, ns.triage)
-        print(json.dumps(view, indent=2))
+        # Compact: the console payload is machine data the skill parses and keeps
+        # in context for every view — indent-whitespace is pure token overhead.
+        print(json.dumps(view, separators=(",", ":")))
         return 0
 
     if ns.cmd == "render":
         out = render(ns.output_dir, ns.triage, ns.plan)
         print(str(out))
+        return 0
+
+    if ns.cmd == "promote-accepted":
+        summary = promote_accepted(ns.output_dir, ns.triage, ns.known_threats)
+        print(json.dumps(summary))
         return 0
 
     return 2

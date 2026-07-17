@@ -13,6 +13,13 @@ and, on explicit request, **implement** the fixes for the findings they select.
   the sidecar and the plan live under `<repo>/.appsec-triage/`, a namespace the
   generation pipeline never touches — triage changes nothing about the
   create-threat-model workflow.
+- **One explicit, opt-in exception (Step 6b):** on the user's request, `accept-risk`
+  decisions may be promoted into `<repo>/docs/known-threats.yaml` as `status:
+  accepted` entries. That file is a create-threat-model **input** (re-read each
+  scan), *not* the generated model — so the accepted threat is skipped (not
+  re-raised) on the next scan and surfaced as an accepted risk. This still never
+  writes `threat-model.yaml`, never runs automatically, and preserves any
+  team-authored entries in that file.
 
 **Code changes (about the *target repo's source*)** happen **only** through the
 explicit **Implement** action (Step 5b): for findings the user has selected, one
@@ -46,11 +53,12 @@ FLAGS
 WHAT IT DOES
   * Opens a triage console: a landing screen (backlog by priority + severity mix
     + the top "worst case if nothing changes" scenarios), then a menu.
-  * Menu spine is Fix findings: it leads with a recommended "fix first" set
-    (cheap, low-risk, high-impact) — each shown with criticality, type and
-    file:line — that you act on in one step, or you pick a specific fix by
-    number/id. Also: Browse findings (by severity / type / requirement /
-    unmitigated), Security posture (control ratings), Save plan & exit.
+  * Menu spine is fixing — two of the four slots are fix paths: "Fix — start
+    here" leads with a recommended "fix first" set (cheap, low-risk, high-impact,
+    each shown with criticality, type and file:line) you act on in one step;
+    "Fix — pick specific" lists the fixes so you name the exact ones by number/id.
+    Also: Look around (browse by severity / type / requirement / unmitigated, plus
+    security-posture control ratings), and Done — write plan & exit.
   * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`
     or `M-003..M-009`) and pick one action for the whole selection: mitigate /
     accept-risk / defer. Acting on a mitigation triages every finding it covers.
@@ -168,35 +176,59 @@ Payload shape (all read from the model — never recompute):
 This prints immediately on invocation — the user sees where they stand before
 any menu. Do not editorialize; every number/line comes from the payload.
 
+**Glyph conventions (mirror the rendered report — two distinct axes).** The
+plugin annotates findings and measures differently on purpose; the triage
+console reuses the *same* visual language so it stays consistent with
+`threat-model.md`:
+
+- **Findings** (`T-NNN`) — a **severity colour dot**: 🔴 Critical · 🟠 High ·
+  🟡 Medium · 🟢 Low · ⚪ unrated. Colour is the risk axis; use it wherever a
+  finding's severity is shown.
+- **Measures / mitigations** (`M-NNN`) — a **monochrome priority fill-ramp**
+  whose grey tone encodes rollout priority (dark→light): ● P1 · ◕ P2 · ◑ P3 ·
+  ○ P4. This matches the report's measure annotation (`_PRIO_RAMP_TBL` in
+  `compose_threat_model.py`) — measures are **never** coloured by severity; the
+  ramp glyph is their marker.
+
+Never invent other glyphs or colours, and never colour a measure — a measure's
+axis is priority (the ramp), a finding's axis is severity (the colour dot).
+
 **Empty model guard.** If `total == 0` (the model exists but has no findings —
 e.g. a stub or a threats-less file), do **not** show the landing or the menu.
 Tell the user the threat model has no findings yet and to (re-)run
 `/appsec-advisor:create-threat-model` to scan, then stop. (A *missing* model is
 already handled at Step 3 by the `console` exit `1`.)
 
-First the verdict from `verdict` (omit the Requirements line unless
-`verdict.requirements.integrated` is true):
+First the verdict from `verdict` — a bold title line, then aligned stat rows
+(omit the Requirements row unless `verdict.requirements.integrated` is true).
+Render it exactly like this (the labels are bold, the severity counts carry
+their glyph):
 
 ```
-<project> · generated <generated> · <total> findings · <triaged>/<total> triaged
-Fixes: <P1>× P1 · <P2>× P2 · <P3>× P3   (<uncovered> findings have no mitigation)
-Severity: <C> Critical · <H> High · <M> Medium (<unrated> unrated) · <weaknesses> design weaknesses
-Requirements: <findings_violating> findings violate <requirement_count> custom requirements
-Hottest areas: <a1> (<n>) · <a2> (<n>) · <a3> (<n>)
+**<project>** · generated <generated> · **<total> findings** · <triaged>/<total> triaged
+
+  **Backlog**    <P1>× P1 · <P2>× P2 · <P3>× P3   ·   <uncovered> without a fix
+  **Severity**   🔴 <C> Critical · 🟠 <H> High · 🟡 <M> Medium · ⚪ <unrated> unrated · 🧩 <weaknesses> design weaknesses
+  **Requirements**  <findings_violating> findings violate <requirement_count> custom requirements
+  **Hot areas**  <a1> (<n>) · <a2> (<n>) · <a3> (<n>)
 ```
 
 Then the worst-case block from `worst_case[]` (skip the whole block only if it
-is empty). One line each, verbatim `summary`, no scenario/walkthrough dumps:
+is empty) as a bold header + one bullet each, verbatim `summary`, severity
+glyph up front, no scenario/walkthrough dumps:
 
 ```
-Worst case if nothing changes:
-  ⚠ [<id>] <severity> · <component> · <summary>   → <mitigation_id> (<priority>)
+**⚠ Worst case if nothing changes**
+
+  🔴 **[<id>]** <component> — <summary>   → fix with <ramp> <mitigation_id>
 ```
 
-Drop the `→ <mitigation_id> (<priority>)` tail for any row whose `mitigation_id`
-is empty. These lines double as a fast entry into triage — the user may act on
-them directly (their `mitigation_id`s are a ready-made selection for **Select &
-act**).
+The `[<id>]` is a finding, so use the row's **severity colour dot** (🔴/🟠/…) in
+place of the 🔴 above; the fix reference is a **measure**, so use its **priority
+ramp** glyph (`●◕◑○`) for `<ramp>` — not a `(P1)` text tag. Drop the
+`→ fix with …` tail for any row whose `mitigation_id` is empty. These lines
+double as a fast entry into triage — the user may act on them directly (their
+`mitigation_id`s are a ready-made selection for **Select & act**).
 
 If `triaged == 0`, offer the express lane before the menu, targeting the
 **top non-empty priority band** — P1 if `verdict.by_priority` has a non-zero
@@ -227,40 +259,60 @@ The spine is **Fix findings** — this is where a developer actually remediates.
 Lead with a recommendation (what to fix first), and always let them pick a
 specific fix instead. Severity and area are alternate lenses.
 
-Ask with `AskUserQuestion` (one question, four options). Keep the labels plain —
-one action, two ways to look around, one exit:
+Ask with `AskUserQuestion` (one question, four options). The spine is fixing, so
+**two of the four are fix paths**; one is the look-around lens, one is the finish:
 
-1. **Fix findings** — a recommended "fix first" set, or pick a specific fix
-2. **Browse findings** — list them by severity, type, requirement, or unmitigated
-3. **Security posture** — how well each area is defended (control ratings) *(only if `control_posture` is non-empty)*
-4. **Save plan & exit** — write `remediation-plan.md` and finish
+1. **Fix — start here** — show the recommended "fix first" set and act on it
+2. **Fix — pick specific** — list the fixes and name the exact ones to act on
+3. **Look around** — browse findings (by severity / type / requirement /
+   unmitigated) and, when `control_posture` is non-empty, the security-posture
+   control ratings
+4. **Done — write plan & exit** — render `remediation-plan.md` and finish. Your
+   triage decisions are **already saved** to the sidecar after every action, so
+   this step only produces the deliverable — it is not what keeps your work.
 
 After each action, redisplay the menu with an updated `Triage: X/<total>`
 counter. The user may also type a free-text intent at any time ("accept all
 Low", "fix the auth ones") — honour it directly, then return to the menu. The
 user can stop whenever they want; untriaged findings simply stay untriaged.
 
-### View: Fix findings (recommend-first)
+### View: Fix — start here (menu option 1)
 Do not dump the whole list. **Lead with the recommendation** from `recommended[]`
 — the "fix first" set the payload already computed (mitigations that are
 concrete `fix`es, `Low` effort, and remove a Critical/High finding = high value,
-low cost, low implementation risk). Print it compactly, worst-severity first,
-with the *why*:
+low cost, low implementation risk).
+
+**Group by what each fix hardens.** Bucket the mitigations by the
+`category_name` of the finding they resolve (a `fix` covers one finding; if it
+covers several, use the worst-severity one). Print one bold group header per
+category — `**Fix <category_name>** — <n>` — then its fixes, worst-severity
+first; order the groups worst-severity-first too. This turns the flat list into
+"here's the auth work, here's the injection work" so the developer can attack a
+theme at a time. Lead each **measure** line with its **priority ramp** glyph
+(`●◕◑○`, the report's convention), and put the covered **finding** on an indented
+sub-line prefixed with its **severity colour dot** — the category is already the
+header, so don't repeat the type per row:
 
 ```
-Recommended to fix first — cheap, low-risk, high-impact:
-  M-015 (P1) <short title>
-     fixes [T-001] Critical · <type> · <location>
-  M-010 (P2) <short title>
-     fixes [T-014] High · <type> · <location>
+🛠 **Recommended to fix first** — cheap, low-risk, high-impact   (● P1 · ◕ P2 · ◑ P3 · ○ P4)
+
+**Fix Broken Authentication** — 2
+  ● M-003 (P1) <short title>
+        └ 🔴 T-003 · authentication/LegacyJwtVerifier.java:15
+  ● M-005 (P1) <short title>
+        └ 🔴 T-005 · authentication/LegacySqliteUserStore.java:64
+
+**Fix Injection** — 2
+  ● M-006 (P1) <short title>
+        └ 🔴 T-006 · inputvalidation/OrderLookupDao.java:22
   …
 ```
 
-For each fix, show the finding it resolves with **criticality · type · location**
-so the developer has the context to decide — `severity`, then the vulnerability
-type (`category_name` when present, else `cwe`), then `location` (the `file:line`
-from the payload). This richer detail is affordable here because the recommended
-set is small; keep the browse list (below) terse.
+The ramp glyph is the mitigation's `priority`; keep the `(P1)` text too (console
+users pick by band, e.g. "all P1"). The sub-line dot is the covered finding's
+`severity`, then its `id` + `location` (`file:line` from the payload). This
+grouped, richer detail is affordable because the recommended set is small; keep
+the browse list (below) terse.
 
 Then offer, with `AskUserQuestion`:
 
@@ -268,55 +320,80 @@ Then offer, with `AskUserQuestion`:
    selection and go to **Select & act** (the developer then picks the action,
    e.g. *Mitigate + implement now*). This is the guided "just tell me where to
    start" path.
-2. **Pick a specific fix** — print the terse list (below) and let the developer
-   name the exact items they want.
-3. **Show all fixes** — same terse list, including P3.
-4. **Back**.
+2. **Pick a specific fix instead** — switch to **Fix — pick specific** (the terse
+   list below).
+3. **Back**.
 
 If `recommended[]` is empty (nothing is both cheap and low-risk), say so plainly
-and go straight to the pick list — never invent a recommendation.
+and switch straight to **Fix — pick specific** — never invent a recommendation.
 
-**The terse list** (options 2/3): a compact **numbered** list, one short line
-each — number, id, band, `★` if it is in `recommended[]`, trimmed title. Nothing
-else inline (no kind/coverage/severities — that bloats it and is slow to render).
-Default to P1 + P2; add P3 only on request (`show P3`).
+### View: Fix — pick specific (menu option 2)
+Reached from the menu, or from "pick a specific fix instead" above.
+
+**The terse list**: the same **category groups** as the recommendation (bold
+`**<category_name>**` header per bucket, worst-severity-first). Each item is a
+numbered line — number, **priority ramp** glyph (`●◕◑○`), id, band, trimmed
+title, `★` if it is in `recommended[]` — with the covered finding on an indented
+sub-line prefixed with its **severity colour dot**, exactly like the recommended
+view. **Always show the covered finding's `location`** (for a multi-cover fix use
+the worst-severity finding and append `+N`). It is `file:line` for code findings,
+but a `file` alone for dependency findings (e.g. `package-lock.json` — no
+meaningful line) and a component name for design-level findings (e.g. `JWT
+Service` — no file); show whatever the payload gives and **never fabricate a line
+number**. No kind/coverage/severities inline. **Number continuously across
+groups** so a pick like `3` stays unambiguous. Default to P1 + P2; add P3 only on
+request (`show P3`).
 
 ```
- 1. M-015 (P1) <short title> ★
- 2. M-010 (P2) <short title> ★
- 3. M-003 (P2) <short title>
+(● P1 · ◕ P2 · ◑ P3 · ○ P4)
+**Broken Authentication**
+  1. ● M-003 (P1) <short title> ★
+        └ 🔴 T-003 · authentication/LegacyJwtVerifier.java:15
+  2. ● M-004 (P1) <short title>
+        └ 🔴 T-004 · authentication/TokenIssuer.java:22
+**Injection**
+  3. ● M-006 (P1) <short title> ★
+        └ 🔴 T-006 · inputvalidation/OrderLookupDao.java:22
  … (+8 P3 — type `show P3` to include)
 ```
 
 The developer names the specific items (`1, 3, 7` / `M-003, M-015` / range
 `2..5`); resolve to `covered_keys`, drop unknown tokens with a note. Before
 acting, **echo the picked findings** with **criticality · type · location** (as
-in the recommendation) so they confirm what they are about to fix — e.g.
-`[T-003] High · Injection · scripts/run-headless.sh:526`. Then run **Select &
+in the recommendation) so they confirm what they are about to fix — lead with
+the severity glyph — e.g.
+`🟠 [T-003] High · Injection · scripts/run-headless.sh:526`. Then run **Select &
 act**. Act only on what they named — never an assumed bulk sweep. Do not reprint
 the full list between picks. When a mitigation's `coverage > 1` state the fan-out
 ("M-015 → fix 3 findings"); else say it plainly ("M-015 → fix T-001").
 
-### View: Browse findings
-Ask how to list them with `AskUserQuestion` — offer only the ones that apply, in
-this order, and let the user type `back` to return: **By severity**, **By type**,
-**By requirement** (only when `verdict.requirements.integrated` is true),
-**Unmitigated** (only when `verdict.uncovered > 0`).
+### View: Look around (menu option 3)
+The non-fixing lenses, folded behind one menu slot. Ask which lens with
+`AskUserQuestion`, offering only the ones that apply and letting the user type
+`back` to return: the **Browse** lenses below, plus **Security posture** when
+`control_posture` is non-empty. Route to the matching lens, then (for Browse
+lenses) run **Select & act**; posture is read-only and never triaged.
+
+**Browse lenses** — offer only the ones that apply, in this order: **By
+severity**, **By type**, **By requirement** (only when
+`verdict.requirements.integrated` is true), **Unmitigated** (only when
+`verdict.uncovered > 0`).
 - **By severity** — print an untriaged-first, severity-ranked finding table
-  (skip already-decided unless the user asks to see all):
-  `T-NNN · <severity> · <type> · <location> · <title> [req: …] [<decision>]`
+  (skip already-decided unless the user asks to see all); lead each row with the
+  severity glyph:
+  `<glyph> T-NNN · <severity> · <type> · <location> · <title> [req: …] [<decision>]`
   (type = `category_name` else `cwe`).
 - **By type** — print `areas[]` numbered:
-  `N. <category_name> — <total> findings (<critical> Critical, <high> High)`.
+  `N. <category_name> — <total> findings (🔴 <critical> · 🟠 <high>)`.
   Ask which area (number or name), then print its `keys` as findings.
 - **By requirement** — print `requirements[]` numbered:
-  `N. <requirement_id> — <total> findings (<critical> Critical, <high> High)`.
+  `N. <requirement_id> — <total> findings (🔴 <critical> · 🟠 <high>)`.
   Ask which requirement, then print its `keys` as findings.
 - **Unmitigated** — print the findings whose `has_mitigation` is false. These
   have no proposed fix — they most need a human decision.
 Then run **Select & act**.
 
-### View: Security posture
+**Security posture lens** (under Look around; only when `control_posture` is non-empty)
 Print `control_posture[]` — the model's own control ratings, worst-first, one
 row per domain: `<domain> — <worst_effectiveness> (<total> controls: <mix>)`.
 Domains carry canonical display names, so **Authentication** and **Authorization**
@@ -358,7 +435,9 @@ priority or severity — it is a badge/lens, not a re-score.
 4. **Mitigate / Defer** take an optional owner + target sprint — offer once, capture
    only if volunteered.
 5. Persist (Step 6). If the action was **Mitigate + implement now**, run Step 5b
-   for the selection before returning to the menu; otherwise return to the menu.
+   for the selection before returning to the menu. If the action was **Accept
+   risk**, offer the optional promotion to `docs/known-threats.yaml` (Step 6b)
+   before returning; otherwise return to the menu.
 
 Mitigate/Accept/Defer record the triage **decision** only (they feed
 `triage.yaml` and `remediation-plan.md`); code changes happen solely via Step 5b.
@@ -411,17 +490,23 @@ Only include fields you actually captured. Never write a `decision` other than
 untriaged). Preserve keys already present that you did not re-triage. After
 writing, update your in-context `triaged` count for the menu counter.
 
-## Step 7 — Save the plan (menu "Save plan & exit" / when the user is done)
+## Step 7 — Write the plan (menu "Done — write plan & exit" / when the user is done)
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" render \
     --output-dir "$OUTPUT_DIR" --triage "$TRIAGE" --plan "$PLAN"
 ```
 
-The script writes `remediation-plan.md` deterministically (findings grouped by
-decision, severity-ranked, with the model's remediation steps). Print the plan
-path and a one-line triage summary (counts per decision). Do not paste the whole
-plan; point the user to the file.
+The script writes `remediation-plan.md` deterministically: **every** finding is
+grouped by its current triage decision — **To Fix** and **Deferred** (each with
+the model's remediation steps), **Accepted Risk** (with the rationale), and
+**Untriaged — decision still needed** (anything not yet decided is listed here,
+never dropped) — severity-ranked within each bucket, plus a Stale section for
+decisions whose finding left the model. It is a snapshot of the sidecar at this
+moment (decisions from this and prior sessions). When you describe this option to
+the user, say concretely what the plan contains — not a vague "from current
+decisions". Print the plan path and a one-line triage summary (counts per
+decision). Do not paste the whole plan; point the user to the file.
 
 If `stale[]` was non-empty, mention it once: some prior decisions reference
 findings no longer in the model (fixed, merged, or renumbered) and are listed at
