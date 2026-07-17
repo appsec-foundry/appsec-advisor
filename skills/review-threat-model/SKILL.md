@@ -48,7 +48,7 @@ WHAT IT DOES
     or `M-003..M-009`) and pick one action for the whole selection: mitigate /
     accept-risk / defer. Acting on a mitigation triages every finding it covers.
   * accept-risk requires a rationale (one shared reason for a bulk selection);
-    fix/defer take an optional owner + target.
+    mitigate/defer take an optional owner + target.
   * When explicit custom requirements were integrated, finding rows carry a
     [req: …] badge and a By-requirement lens (never for the OWASP baseline).
   * Persists your decisions to <repo>/.appsec-triage/triage.yaml (survives re-scan).
@@ -167,19 +167,25 @@ is empty. These lines double as a fast entry into triage — the user may act on
 them directly (their `mitigation_id`s are a ready-made selection for **Select &
 act**).
 
-If `triaged == 0` **and there are P1 mitigations** (`verdict.by_priority` has a
-non-zero `P1`), offer the express lane before the menu with one
-`AskUserQuestion`: "Fix the **P1** findings now (the <n> findings the
-top-priority mitigations cover) and walk the rest?" — options **Yes, fix the
-P1s** / **No, let me navigate**. On yes, apply `fix` to every finding in the
-union of the P1 mitigations' `covered_keys` (Step 6 write), then go to the menu.
+If `triaged == 0`, offer the express lane before the menu, targeting the
+**top non-empty priority band** — P1 if `verdict.by_priority` has a non-zero
+`P1`, else P2. (Never P3: the express lane is the "clear the urgent thing fast"
+shortcut, and P3 is deferred-tier work — if only P3 mitigations exist, or none
+carry a priority, **skip the offer** and go straight to the menu.)
 
-Why P1 and not a Critical+High sweep: P1 is the model's own top-priority call —
-it already folds in severity, kind and effort — and it is a small, reviewable
-set, so it avoids blind-fixing a large pile of High findings sight-unseen. Any
-high-severity finding that no P1 mitigation covers still appears in the landing
-screen's worst-case block, so it is never hidden. If there are no P1
-mitigations, skip the offer and go straight to the menu.
+Let `<band>` be that band and `<n>` the number of findings its mitigations
+cover (the union of their `covered_keys`). Ask with one `AskUserQuestion`:
+"Fix the **<band>** findings now (the `<n>` findings the `<band>`-priority
+mitigations cover) and walk the rest?" — options **Yes, fix the <band>s** /
+**No, let me navigate**. On yes, apply `fix` to every finding in that union
+(Step 6 write), then go to the menu. Always state `<n>` in the prompt so a large
+band (e.g. many P2s) is a considered choice, not a blind sweep.
+
+Why the top priority band and not a Critical+High sweep: priority is the model's
+own "do this first" call — it already folds in severity, kind and effort — so it
+stays consistent with the backlog spine. Any high-severity finding the band does
+not cover still appears in the landing screen's worst-case block, so it is never
+hidden.
 
 ## Step 5 — The menu loop
 
