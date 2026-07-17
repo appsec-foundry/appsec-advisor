@@ -554,6 +554,38 @@ def test_console_exposes_quick_wins_and_posture(tmp_path):
     assert payload["control_posture"][0]["worst_effectiveness"] == "Missing"
 
 
+def test_normalize_domain_auth_and_authz():
+    assert rtm._normalize_domain("Authorization Controls") == "Authorization"
+    assert rtm._normalize_domain("Broken Access Control") == "Authorization"
+    assert rtm._normalize_domain("Identity and Authentication Controls") == "Authentication"
+    assert rtm._normalize_domain("Identity and Authentication") == "Authentication"
+    # non-auth: just trims a trailing " Controls"
+    assert rtm._normalize_domain("Session and Token Controls") == "Session and Token"
+    assert (
+        rtm._normalize_domain("Cryptography Secrets and Data Protection") == "Cryptography Secrets and Data Protection"
+    )
+
+
+def test_control_posture_normalizes_and_merges_auth_domains():
+    model = {
+        "security_controls": [
+            {"domain": "Identity and Authentication Controls", "control": "login", "effectiveness": "Missing"},
+            {"domain": "Identity and Authentication", "control": "mfa", "effectiveness": "Weak"},
+            {"domain": "Authorization Controls", "control": "rbac", "effectiveness": "Missing"},
+            {"domain": "Session and Token Controls", "control": "sess", "effectiveness": "Partial"},
+        ]
+    }
+    posture = rtm.build_control_posture(model)
+    domains = [d["domain"] for d in posture]
+    assert "Authentication" in domains and "Authorization" in domains
+    # the two Identity/Authentication label variants fold into ONE domain
+    auth = next(d for d in posture if d["domain"] == "Authentication")
+    assert auth["total"] == 2
+    assert auth["worst_effectiveness"] == "Missing"
+    # non-auth domain kept (trimmed)
+    assert "Session and Token" in domains
+
+
 def test_build_requirement_groups_ranks_by_blast():
     findings = [
         {"key": "a-1", "severity": "Critical", "requirements": ["R-1"]},

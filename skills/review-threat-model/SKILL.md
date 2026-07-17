@@ -284,8 +284,11 @@ Then run **Select & act**.
 ### View: Security posture by domain
 Print `control_posture[]` — the model's own control ratings, worst-first, one
 row per domain: `<domain> — <worst_effectiveness> (<total> controls: <mix>)`.
-On request, drill into a domain to show its `controls[]` (`control` ·
-`effectiveness` · `assessment`). This is a **read-only rating** the analyst
+Domains carry canonical display names, so **Authentication** and **Authorization**
+always appear as such (the payload already folds the model's verbose control-domain
+labels — e.g. "Identity and Authentication Controls" — into these). On request,
+drill into a domain to show its `controls[]` (`control` · `effectiveness` ·
+`assessment`). This is a **read-only rating** the analyst
 recorded — display it, never recompute or triage it, and do **not** invent a
 score. It orients the user ("authorization is Missing, crypto is Weak"); to act
 on the findings behind a weak domain, point them to the matching **By area**

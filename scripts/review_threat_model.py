@@ -528,18 +528,38 @@ def build_quick_wins(mitigations: list[dict]) -> list[dict]:
     return out
 
 
+def _normalize_domain(raw: str) -> str:
+    """Clean display name for a control domain. Targeted normalisation so the
+    security aspects a reviewer expects — above all Authentication and
+    Authorization — appear under stable canonical names and their label variants
+    ("Identity and Authentication", "Identity and Authentication Controls") fold
+    into one domain. A display alias only: it never invents a domain, only
+    renames/merges the model's own ``security_controls[].domain`` strings; other
+    domains just lose a trailing " Controls" for brevity."""
+    r = raw.strip()
+    low = r.lower()
+    if "authorization" in low or "access control" in low:
+        return "Authorization"
+    if "authentication" in low or "identity" in low:
+        return "Authentication"
+    return r[: -len(" Controls")].strip() if low.endswith("controls") else r
+
+
 def build_control_posture(model: dict) -> list[dict]:
-    """Security controls grouped by domain with their effectiveness rating and
-    assessment — read verbatim from ``security_controls[]``. Ranked worst-first
+    """Security controls grouped by (normalised) domain with their effectiveness
+    rating and assessment — read from ``security_controls[]``. Ranked worst-first
     (Missing → Weak → Partial → Adequate) by the weakest control in each domain.
-    A read-only posture roll-up, never a re-score."""
+    Domains carry canonical display names (``_normalize_domain``) so Authentication
+    and Authorization are always shown as such. A read-only posture roll-up,
+    never a re-score."""
     groups: dict[str, dict] = {}
     for c in model.get("security_controls") or []:
         if not isinstance(c, dict):
             continue
-        domain = str(c.get("domain") or "").strip()
-        if not domain:
+        raw_domain = str(c.get("domain") or "").strip()
+        if not raw_domain:
             continue
+        domain = _normalize_domain(raw_domain)
         g = groups.get(domain)
         if g is None:
             g = groups[domain] = {"domain": domain, "controls": [], "by_effectiveness": collections.Counter()}

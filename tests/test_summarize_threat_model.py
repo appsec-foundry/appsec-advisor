@@ -224,6 +224,26 @@ def test_control_posture_summary(tmp_path):
     assert "Weakest    Authorization · Crypto" in out
 
 
+def test_control_posture_normalizes_domain_names(tmp_path):
+    import yaml
+
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: High}
+        security_controls:
+          - {domain: Identity and Authentication Controls, control: login, effectiveness: Missing}
+          - {domain: Authorization Controls, control: rbac, effectiveness: Weak}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    # verbose control labels surface under canonical Authentication / Authorization
+    assert summary["control_posture"]["weak_domains"] == ["Authentication", "Authorization"]
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Weakest    Authentication · Authorization" in out
+
+
 def test_backlog_line_omitted_when_no_priorities(tmp_path):
     import yaml
 

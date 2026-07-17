@@ -178,11 +178,24 @@ def _worst_case(threats: list, mitigations: list, critical_findings: list | None
     return out[:limit]
 
 
+def _normalize_domain(raw: str) -> str:
+    """Clean display name for a control domain — mirrors
+    review_threat_model._normalize_domain so Authentication / Authorization show
+    under stable canonical names (and their label variants merge) here too."""
+    r = raw.strip()
+    low = r.lower()
+    if "authorization" in low or "access control" in low:
+        return "Authorization"
+    if "authentication" in low or "identity" in low:
+        return "Authentication"
+    return r[: -len(" Controls")].strip() if low.endswith("controls") else r
+
+
 def _control_posture(controls: list) -> dict:
     """Compact control-effectiveness roll-up for the overview: overall counts,
     plus the domains whose weakest control is Missing/Weak. Read verbatim from
     security_controls[] — a rating, never a re-score. Mirrors the per-domain
-    ranking in review_threat_model.build_control_posture."""
+    ranking in review_threat_model.build_control_posture (incl. domain naming)."""
     eff_counts: collections.Counter = collections.Counter()
     worst_by_domain: dict = {}
     for c in controls:
@@ -190,7 +203,7 @@ def _control_posture(controls: list) -> dict:
             continue
         eff = str(c.get("effectiveness") or "").strip()
         eff_counts[eff or "Unknown"] += 1
-        domain = str(c.get("domain") or "").strip()
+        domain = _normalize_domain(str(c.get("domain") or "").strip())
         if domain:
             rank = _EFFECTIVENESS_ORDER.get(eff, 9)
             if domain not in worst_by_domain or rank < worst_by_domain[domain]:
