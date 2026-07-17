@@ -117,6 +117,24 @@ def _remediation_steps(threat: dict) -> list[str]:
     return []
 
 
+def _primary_location(threat: dict) -> str:
+    """Best available source location for a finding, as ``file:line`` (or just
+    ``file``). Prefers the first ``evidence[].file`` (populated far more often
+    than ``affected_files``), then ``affected_files[0]``, then the logical
+    ``component`` as a last resort so a row is never location-less."""
+    ev = threat.get("evidence")
+    if isinstance(ev, list):
+        for e in ev:
+            if isinstance(e, dict) and str(e.get("file") or "").strip():
+                f = str(e["file"]).strip()
+                line = e.get("line")
+                return f"{f}:{line}" if line not in (None, "", 0) else f
+    af = threat.get("affected_files")
+    if isinstance(af, list) and af and str(af[0]).strip():
+        return str(af[0]).strip()
+    return str(threat.get("component") or threat.get("component_name") or "").strip()
+
+
 def _norm_decision(value: object) -> str:
     v = str(value or "").strip().lower()
     return v if v in _DECISIONS else "untriaged"
@@ -277,6 +295,8 @@ def reconcile(output_dir: Path, sidecar_path: Path, category_names: dict[str, st
                 "component": str(t.get("component") or t.get("component_name") or "").strip(),
                 "severity": _sev_label(t),
                 "effort": _effort(t),
+                "cwe": str(t.get("cwe") or "").strip(),
+                "location": _primary_location(t),
                 "category_id": cid,
                 "category_name": cat_names.get(cid, "") if cid else "",
                 "has_mitigation": bool(t.get("mitigation_ids")),

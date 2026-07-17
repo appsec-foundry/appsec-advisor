@@ -47,9 +47,10 @@ WHAT IT DOES
   * Opens a triage console: a landing screen (backlog by priority + severity mix
     + the top "worst case if nothing changes" scenarios), then a menu.
   * Menu spine is Fix findings: it leads with a recommended "fix first" set
-    (cheap, low-risk, high-impact) you can act on in one step, or you pick a
-    specific fix by number/id. Also: Browse by lens (severity / area / requirement
-    / uncovered), Security posture by domain, Write plan.
+    (cheap, low-risk, high-impact) — each shown with criticality, type and
+    file:line — that you act on in one step, or you pick a specific fix by
+    number/id. Also: Browse findings (by severity / type / requirement /
+    unmitigated), Security posture (control ratings), Save plan & exit.
   * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`
     or `M-003..M-009`) and pick one action for the whole selection: mitigate /
     accept-risk / defer. Acting on a mitigation triages every finding it covers.
@@ -133,9 +134,10 @@ Payload shape (all read from the model — never recompute):
   from the model's curated `critical_findings`; each has `id` (`T-NNN`),
   `severity`, `component`, `summary`, `mitigation_id`, `priority`.
 - `findings[]` — severity-ranked; each has `key` (stable `local_id`), `id`
-  (`T-NNN`), `title`, `component`, `severity`, `category_name`, `has_mitigation`,
-  `requirements` (custom requirement IDs it violates — empty unless integrated),
-  `decision` (`untriaged` until triaged).
+  (`T-NNN`), `title`, `component`, `severity`, `cwe`, `location` (best
+  `file:line`, from evidence → affected_files → component), `category_name`,
+  `has_mitigation`, `requirements` (custom requirement IDs it violates — empty
+  unless integrated), `decision` (`untriaged` until triaged).
 - `mitigations[]` — ranked by priority, then kind (fix before investigate/review),
   then leverage; each has `id` (`M-NNN`), `title`, `priority`, `severity`, `kind`,
   `coverage`, `covered_keys` (the finding `key`s it resolves), and
@@ -225,12 +227,13 @@ The spine is **Fix findings** — this is where a developer actually remediates.
 Lead with a recommendation (what to fix first), and always let them pick a
 specific fix instead. Severity and area are alternate lenses.
 
-Ask with `AskUserQuestion` (one question, four options):
+Ask with `AskUserQuestion` (one question, four options). Keep the labels plain —
+one action, two ways to look around, one exit:
 
 1. **Fix findings** — a recommended "fix first" set, or pick a specific fix
-2. **Browse by lens** — severity · area · requirement · uncovered
-3. **Security posture by domain** — control ratings *(only if `control_posture` is non-empty)*
-4. **Write plan & exit**
+2. **Browse findings** — list them by severity, type, requirement, or unmitigated
+3. **Security posture** — how well each area is defended (control ratings) *(only if `control_posture` is non-empty)*
+4. **Save plan & exit** — write `remediation-plan.md` and finish
 
 After each action, redisplay the menu with an updated `Triage: X/<total>`
 counter. The user may also type a free-text intent at any time ("accept all
@@ -246,10 +249,18 @@ with the *why*:
 
 ```
 Recommended to fix first — cheap, low-risk, high-impact:
-  M-015 (P1) <short title>  — resolves T-001 (Critical)
-  M-010 (P2) <short title>  — resolves T-014 (High)
+  M-015 (P1) <short title>
+     fixes [T-001] Critical · <type> · <location>
+  M-010 (P2) <short title>
+     fixes [T-014] High · <type> · <location>
   …
 ```
+
+For each fix, show the finding it resolves with **criticality · type · location**
+so the developer has the context to decide — `severity`, then the vulnerability
+type (`category_name` when present, else `cwe`), then `location` (the `file:line`
+from the payload). This richer detail is affordable here because the recommended
+set is small; keep the browse list (below) terse.
 
 Then offer, with `AskUserQuestion`:
 
@@ -278,30 +289,34 @@ Default to P1 + P2; add P3 only on request (`show P3`).
 ```
 
 The developer names the specific items (`1, 3, 7` / `M-003, M-015` / range
-`2..5`); resolve to `covered_keys`, drop unknown tokens with a note, and run
-**Select & act**. Act only on what they named — never an assumed bulk sweep. Do
-not reprint the list between picks. When a mitigation's `coverage > 1` state the
-fan-out ("M-015 → fix 3 findings"); else say it plainly ("M-015 → fix T-001").
+`2..5`); resolve to `covered_keys`, drop unknown tokens with a note. Before
+acting, **echo the picked findings** with **criticality · type · location** (as
+in the recommendation) so they confirm what they are about to fix — e.g.
+`[T-003] High · Injection · scripts/run-headless.sh:526`. Then run **Select &
+act**. Act only on what they named — never an assumed bulk sweep. Do not reprint
+the full list between picks. When a mitigation's `coverage > 1` state the fan-out
+("M-015 → fix 3 findings"); else say it plainly ("M-015 → fix T-001").
 
-### View: Browse by lens
-Ask which lens with `AskUserQuestion` — offer only the ones that apply, in this
-order, and let the user type `back` to return: **By severity**, **By area**,
+### View: Browse findings
+Ask how to list them with `AskUserQuestion` — offer only the ones that apply, in
+this order, and let the user type `back` to return: **By severity**, **By type**,
 **By requirement** (only when `verdict.requirements.integrated` is true),
-**Without a mitigation** (only when `verdict.uncovered > 0`).
+**Unmitigated** (only when `verdict.uncovered > 0`).
 - **By severity** — print an untriaged-first, severity-ranked finding table
   (skip already-decided unless the user asks to see all):
-  `T-NNN · <severity> · <component> · <category_name> · <title> [req: …] [<decision>]`.
-- **By area** — print `areas[]` numbered:
+  `T-NNN · <severity> · <type> · <location> · <title> [req: …] [<decision>]`
+  (type = `category_name` else `cwe`).
+- **By type** — print `areas[]` numbered:
   `N. <category_name> — <total> findings (<critical> Critical, <high> High)`.
   Ask which area (number or name), then print its `keys` as findings.
 - **By requirement** — print `requirements[]` numbered:
   `N. <requirement_id> — <total> findings (<critical> Critical, <high> High)`.
   Ask which requirement, then print its `keys` as findings.
-- **Without a mitigation** — print the findings whose `has_mitigation` is false.
-  These have no proposed fix — they most need a human decision.
+- **Unmitigated** — print the findings whose `has_mitigation` is false. These
+  have no proposed fix — they most need a human decision.
 Then run **Select & act**.
 
-### View: Security posture by domain
+### View: Security posture
 Print `control_posture[]` — the model's own control ratings, worst-first, one
 row per domain: `<domain> — <worst_effectiveness> (<total> controls: <mix>)`.
 Domains carry canonical display names, so **Authentication** and **Authorization**
@@ -311,7 +326,7 @@ drill into a domain to show its `controls[]` (`control` · `effectiveness` ·
 `assessment`). This is a **read-only rating** the analyst
 recorded — display it, never recompute or triage it, and do **not** invent a
 score. It orients the user ("authorization is Missing, crypto is Weak"); to act
-on the findings behind a weak domain, point them to the matching **By area**
+on the findings behind a weak domain, point them to the matching **By type**
 lens. (The control `domain` vocabulary and the finding `category_name`
 vocabulary differ and share no key, so do not fabricate a join between them.)
 
@@ -396,7 +411,7 @@ Only include fields you actually captured. Never write a `decision` other than
 untriaged). Preserve keys already present that you did not re-triage. After
 writing, update your in-context `triaged` count for the menu counter.
 
-## Step 7 — Render the plan (menu option 4 / when the user is done)
+## Step 7 — Save the plan (menu "Save plan & exit" / when the user is done)
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" render \

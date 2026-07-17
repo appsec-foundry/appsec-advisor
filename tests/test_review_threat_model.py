@@ -63,6 +63,38 @@ THREATS = [
 ]
 
 
+def test_primary_location_prefers_evidence_file():
+    # evidence file:line wins over the mostly-empty affected_files and component
+    t = {"component": "ci", "evidence": [{"file": ".github/workflows/tests.yml", "line": 19}]}
+    assert rtm._primary_location(t) == ".github/workflows/tests.yml:19"
+    # affected_files is the next best source
+    assert rtm._primary_location({"component": "api", "affected_files": ["src/db.py"]}) == "src/db.py"
+    # component is the last-resort so a row is never location-less
+    assert rtm._primary_location({"component": "auth"}) == "auth"
+
+
+def test_reconcile_exposes_cwe_and_location(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_model(
+        out,
+        [
+            {
+                "id": "T-001",
+                "local_id": "ci-1",
+                "title": "Supply chain",
+                "component": "ci",
+                "effective_severity": "Critical",
+                "cwe": "CWE-829",
+                "evidence": [{"file": ".github/workflows/tests.yml", "line": 19}],
+            }
+        ],
+    )
+    view = rtm.reconcile(out, tmp_path / "triage.yaml")
+    f = view["findings"][0]
+    assert f["cwe"] == "CWE-829"
+    assert f["location"] == ".github/workflows/tests.yml:19"
+
+
 def test_reconcile_ranks_and_marks_untriaged(tmp_path):
     out = tmp_path / "docs" / "security"
     _write_model(out, THREATS)
