@@ -110,6 +110,10 @@ required:
     reason: "review-threat-model skill writes the user's triage sidecar (triage.yaml) and remediation-plan.md under a repo-root namespace kept separate from OUTPUT_DIR so pipeline cleanup / diagnostic-bundle never touch it (reads are covered by Read(${REPO_ROOT}/**))"
     category: file
 
+  - entry: "Write(${REPO_ROOT}/docs/known-threats.yaml)"
+    reason: "review-threat-model skill's explicit, opt-in 'promote accepted risks' action (Step 6b) merges accept-risk decisions into docs/known-threats.yaml as status: accepted entries via `review_threat_model.py promote-accepted`. This is a create-threat-model INPUT (re-read each scan; accepted entries are skipped by the STRIDE analyzer, not re-raised), never the generated threat-model.yaml. Only reached on explicit user confirmation; team-authored entries are preserved and the file is schema-validated before write."
+    category: file
+
   - entry: "Edit(${REPO_ROOT}/**)"
     reason: "review-threat-model skill's explicit 'Mitigate + implement now' action (Step 5b) applies the remediation code changes for the findings the user selects — one at a time, for review, scoped to each finding's affected_files. Only reached on explicit user request; the triage/console flow never edits source, and the threat model itself is never modified (Consumer guarantee)."
     category: file

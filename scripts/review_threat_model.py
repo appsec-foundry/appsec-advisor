@@ -651,10 +651,232 @@ def build_control_posture(model: dict) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Pre-rendered console screens (deterministic display blocks)
+#
+# The skill prints these verbatim instead of re-composing each menu from the
+# structured arrays. Moving the formatting here keeps the glyph contract, the
+# category grouping and the continuous numbering deterministic (no LLM drift),
+# and turns the per-screen latency the user feels into an echo rather than a
+# fresh compose. The structured arrays stay in the payload — the skill still
+# uses them to resolve id/number/range picks and free-text intents; these
+# screens are DISPLAY ONLY and never author severity/priority (they read the
+# same rolled-up numbers as every other view).
+# ---------------------------------------------------------------------------
+
+# Two distinct axes, mirroring threat-model.md (see the skill's "Glyph
+# conventions"): a finding carries a severity COLOUR dot; a measure carries a
+# monochrome priority fill-RAMP. Never colour a measure, never ramp a finding.
+_SEV_DOT = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
+_PRIO_RAMP = {"P1": "●", "P2": "◕", "P3": "◑", "P4": "○"}
+_RAMP_LEGEND = "(● P1 · ◕ P2 · ◑ P3 · ○ P4)"
+
+
+def _sev_dot(sev: str) -> str:
+    return _SEV_DOT.get(sev, "⚪")  # unrated / Informational / unknown -> hollow
+
+
+def _ramp(prio: str) -> str:
+    return _PRIO_RAMP.get(prio, "○")
+
+
+def _short(title: str, width: int = 64) -> str:
+    t = " ".join((title or "").split())
+    return t if len(t) <= width else t[: width - 1].rstrip() + "…"
+
+
+def _mit_rows(mitigations: list[dict], find_by_key: dict[str, dict]) -> list[dict]:
+    """Attach each mitigation's representative covered finding (its worst-severity
+    one) plus the display category, for the grouped fix views. Skips mitigations
+    covering no finding present in the model — there is nothing to show or act on."""
+    rows: list[dict] = []
+    for m in mitigations:
+        covered = [find_by_key[k] for k in m["covered_keys"] if k in find_by_key]
+        if not covered:
+            continue
+        rep = min(covered, key=lambda f: _SEVERITY_ORDER.get(f["severity"], 9))
+        rows.append(
+            {
+                "mit": m,
+                "rep": rep,
+                "extra": len(covered) - 1,
+                "category": rep.get("category_name") or "Uncategorized",
+                "worst_rank": _SEVERITY_ORDER.get(rep["severity"], 9),
+            }
+        )
+    return rows
+
+
+def _group_fix_rows(rows: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Bucket fix rows by the category they harden, worst-severity-first both
+    within a group and across groups (mirrors the skill's Fix views)."""
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(r["category"], []).append(r)
+    for rs in groups.values():
+        rs.sort(key=lambda r: (r["worst_rank"], _PRIORITY_ORDER.get(r["mit"]["priority"], 9), r["mit"]["id"]))
+    return sorted(groups.items(), key=lambda kv: (min(r["worst_rank"] for r in kv[1]), -len(kv[1]), kv[0]))
+
+
+def _fix_subline(r: dict) -> str:
+    rep = r["rep"]
+    extra = f" +{r['extra']}" if r["extra"] else ""
+    return f"        └ {_sev_dot(rep['severity'])} {rep['id']} · {rep['location']}{extra}"
+
+
+def _screen_fix_start(recommended: list[dict], find_by_key: dict[str, dict]) -> str:
+    """The 'Recommended to fix first' view — recommended[] grouped by what each
+    fix hardens. Empty string when nothing is both cheap and low-risk (the skill
+    then falls back to Fix — pick specific; it never invents a recommendation)."""
+    rows = _mit_rows(recommended, find_by_key)
+    if not rows:
+        return ""
+    out = [f"🛠 **Recommended to fix first** — cheap, low-risk, high-impact   {_RAMP_LEGEND}", ""]
+    for cat, rs in _group_fix_rows(rows):
+        out.append(f"**Fix {cat}** — {len(rs)}")
+        for r in rs:
+            m = r["mit"]
+            out.append(f"  {_ramp(m['priority'])} {m['id']} ({m['priority']}) {_short(m['title'])}")
+            out.append(_fix_subline(r))
+        out.append("")
+    return "\n".join(out).rstrip()
+
+
+def _screen_fix_list(
+    mitigations: list[dict], find_by_key: dict[str, dict], recommended_ids: set[str], include_p3: bool
+) -> str:
+    """The 'Fix — pick specific' view: the same category groups, numbered
+    CONTINUOUSLY across groups so a pick like `3` is unambiguous. Defaults to
+    P1+P2 with a trailing hint for the hidden P3s; ``include_p3`` renders all."""
+    rows = _mit_rows(mitigations, find_by_key)
+    shown = rows if include_p3 else [r for r in rows if r["mit"]["priority"] != "P3"]
+    hidden_p3 = 0 if include_p3 else sum(1 for r in rows if r["mit"]["priority"] == "P3")
+    if not shown:
+        return ""
+    out = [_RAMP_LEGEND]
+    n = 0
+    for cat, rs in _group_fix_rows(shown):
+        out.append(f"**{cat}**")
+        for r in rs:
+            n += 1
+            m = r["mit"]
+            star = " ★" if m["id"] in recommended_ids else ""
+            out.append(f"  {n}. {_ramp(m['priority'])} {m['id']} ({m['priority']}) {_short(m['title'])}{star}")
+            out.append(_fix_subline(r))
+    if hidden_p3:
+        out.append(f" … (+{hidden_p3} P3 — type `show P3` to include)")
+    return "\n".join(out)
+
+
+def _screen_browse_severity(findings: list[dict], integrated: bool) -> str:
+    """The By-severity finding table: untriaged-first, then severity-ranked."""
+    ordered = sorted(
+        findings, key=lambda f: (f["decision"] != "untriaged", _SEVERITY_ORDER.get(f["severity"], 9), f["id"])
+    )
+    lines: list[str] = []
+    for f in ordered:
+        typ = f.get("category_name") or f.get("cwe") or "—"
+        req = f" [req: {', '.join(f['requirements'])}]" if integrated and f.get("requirements") else ""
+        dec = f" [{f['decision']}]" if f["decision"] != "untriaged" else ""
+        lines.append(
+            f"{_sev_dot(f['severity'])} {f['id']} · {f['severity'] or 'unrated'} · {typ} · "
+            f"{f['location']} · {_short(f['title'], 80)}{req}{dec}"
+        )
+    return "\n".join(lines)
+
+
+def _screen_group_table(groups: list[dict], id_field: str) -> str:
+    """Numbered blast-ranked group table shared by By-type and By-requirement."""
+    return "\n".join(
+        f"{i}. {g[id_field]} — {g['total']} findings (🔴 {g['critical']} · 🟠 {g['high']})"
+        for i, g in enumerate(groups, 1)
+    )
+
+
+def _screen_posture(control_posture: list[dict]) -> str:
+    """The read-only Security-posture lens: one row per domain, worst-first."""
+    if not control_posture:
+        return ""
+    order = ["Missing", "Weak", "Partial", "Adequate"]
+    lines: list[str] = []
+    for d in control_posture:
+        be = d["by_effectiveness"]
+        bits = [f"{be[k]} {k}" for k in order if be.get(k)]
+        bits += [f"{v} {k}" for k, v in be.items() if k not in order and v]  # any non-standard label
+        lines.append(f"{d['domain']} — {d['worst_effectiveness']} ({d['total']} controls: {', '.join(bits)})")
+    return "\n".join(lines)
+
+
+def _screen_landing(payload: dict) -> str:
+    """The landing screen: verdict stat rows + the worst-case block, glyphs baked
+    in. Shown on invocation before any menu (skill Step 4)."""
+    v = payload["verdict"]
+    total, triaged = payload["total"], v["triaged"]
+    project = payload["project"] or "(unnamed)"
+    generated = payload["generated"] or "unknown"
+    lines = [f"**{project}** · generated {generated} · **{total} findings** · {triaged}/{total} triaged", ""]
+
+    bp = v.get("by_priority", {})
+    backlog = " · ".join(f"{bp.get(p, 0)}× {p}" for p in ("P1", "P2", "P3"))
+    lines.append(f"  **Backlog**    {backlog}   ·   {v['uncovered']} without a fix")
+
+    bs = v.get("by_severity", {})
+    sev_bits = [f"{_sev_dot(s)} {bs[s]} {s}" for s in ("Critical", "High", "Medium", "Low") if bs.get(s)]
+    if v.get("unrated"):
+        sev_bits.append(f"⚪ {v['unrated']} unrated")
+    if v.get("weaknesses"):
+        sev_bits.append(f"🧩 {v['weaknesses']} design weaknesses")
+    if sev_bits:
+        lines.append("  **Severity**   " + " · ".join(sev_bits))
+
+    reqs = v.get("requirements", {})
+    if reqs.get("integrated"):
+        lines.append(
+            f"  **Requirements**  {reqs['findings_violating']} findings violate "
+            f"{reqs['requirement_count']} custom requirements"
+        )
+
+    top_areas = v.get("top_areas") or []
+    if top_areas:
+        lines.append("  **Hot areas**  " + " · ".join(f"{name} ({n})" for name, n in top_areas))
+
+    worst = payload.get("worst_case") or []
+    if worst:
+        lines += ["", "**⚠ Worst case if nothing changes**", ""]
+        for w in worst:
+            tail = f"   → fix with {_ramp(w['priority'])} {w['mitigation_id']}" if w.get("mitigation_id") else ""
+            lines.append(f"  {_sev_dot(w['severity'])} **[{w['id']}]** {w['component']} — {w['summary']}{tail}")
+    return "\n".join(lines)
+
+
+def build_screens(payload: dict) -> dict:
+    """Ready-to-print text blocks for every heavy console screen. The skill echoes
+    these verbatim; it keeps the structured arrays only for pick-resolution and
+    free-text intents. Empty string means "nothing to show" (the skill decides
+    whether to offer the screen at all — e.g. posture only when non-empty)."""
+    find_by_key = {f["key"]: f for f in payload["findings"]}
+    recommended = payload["recommended"]
+    recommended_ids = {m["id"] for m in recommended}
+    integrated = bool(payload["verdict"].get("requirements", {}).get("integrated"))
+    return {
+        "landing": _screen_landing(payload),
+        "fix_start": _screen_fix_start(recommended, find_by_key),
+        "fix_list": _screen_fix_list(payload["mitigations"], find_by_key, recommended_ids, include_p3=False),
+        "fix_list_full": _screen_fix_list(payload["mitigations"], find_by_key, recommended_ids, include_p3=True),
+        "browse_severity": _screen_browse_severity(payload["findings"], integrated),
+        "browse_type": _screen_group_table(payload["areas"], "category_name"),
+        "browse_requirement": _screen_group_table(payload["requirements"], "requirement_id")
+        if payload["requirements"]
+        else "",
+        "posture": _screen_posture(payload["control_posture"]),
+    }
+
+
 def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = None) -> dict:
     """One payload for the interactive console: the reconcile view plus ranked
     mitigations, area groupings, worst-case scenarios, the requirements lens
-    (custom requirements only), and the posture verdict."""
+    (custom requirements only), the posture verdict, and pre-rendered display
+    ``screens`` the skill prints verbatim (see ``build_screens``)."""
     cat_names = _load_category_names(taxonomy_path)
     view = reconcile(output_dir, sidecar_path, category_names=cat_names)
     model = _load_model(output_dir)
@@ -699,7 +921,7 @@ def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = N
     }
     verdict["quick_wins"] = len(quick_wins)
     verdict["recommended"] = len(recommended)
-    return {
+    payload = {
         **view,
         "mitigations": mitigations,
         "areas": areas,
@@ -710,6 +932,8 @@ def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = N
         "control_posture": control_posture,
         "verdict": verdict,
     }
+    payload["screens"] = build_screens(payload)
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -918,9 +1142,7 @@ def promote_accepted(output_dir: Path, sidecar_path: Path, known_threats_path: P
         raise SystemExit(2)
 
     known_threats_path.parent.mkdir(parents=True, exist_ok=True)
-    known_threats_path.write_text(
-        yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, width=100), encoding="utf-8"
-    )
+    known_threats_path.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, width=100), encoding="utf-8")
     return {
         "path": str(known_threats_path),
         "added": added,
@@ -958,9 +1180,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     pa.add_argument("--output-dir", type=Path, required=True, help="Directory holding threat-model.yaml.")
     pa.add_argument("--triage", type=Path, required=True, help="Path to the triage sidecar.")
-    pa.add_argument(
-        "--known-threats", type=Path, required=True, help="Path to write/merge docs/known-threats.yaml."
-    )
+    pa.add_argument("--known-threats", type=Path, required=True, help="Path to write/merge docs/known-threats.yaml.")
 
     ns = ap.parse_args(argv)
 

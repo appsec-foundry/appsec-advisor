@@ -680,3 +680,363 @@ def test_build_requirement_groups_ranks_by_blast():
     # R-1 (1 Critical) ranks above R-2 (no Critical)
     assert [g["requirement_id"] for g in groups] == ["R-1", "R-2"]
     assert groups[0]["total"] == 2 and groups[0]["critical"] == 1
+
+
+# ---------------------------------------------------------------------------
+# promote-accepted → docs/known-threats.yaml (opt-in Step 6b)
+# ---------------------------------------------------------------------------
+
+_KT_THREATS = [
+    {
+        "id": "T-001",
+        "local_id": "auth-006",
+        "title": "SQL injection in login",
+        "component": "auth",
+        "stride": "Spoofing",
+        "effective_severity": "Critical",
+        "scenario": "Attacker posts ' OR 1=1-- and logs in as admin.",
+        "evidence": [{"file": "routes/login.ts", "line": 34}],
+        "mitigation_title": "Use parameterized queries",
+    },
+    {
+        "id": "T-002",
+        "local_id": "web-003",
+        "title": "Missing rate limiting",
+        "component": "web",
+        "stride": "Denial of Service",
+        "risk": "High",
+        "impact_description": "Brute force possible.",
+    },
+    {
+        "id": "T-003",
+        "local_id": "api-009",
+        "title": "Unmappable STRIDE",
+        "component": "api",
+        "stride": "Nonsense",  # not in the enum -> cannot form a valid entry
+        "effective_severity": "Medium",
+    },
+]
+
+
+def _read_yaml(p: Path) -> dict:
+    return yaml.safe_load(p.read_text(encoding="utf-8"))
+
+
+def test_build_known_threat_entry_shape():
+    e = rtm._build_known_threat_entry(_KT_THREATS[0], "Accepted for release.")
+    assert e["id"] == "auth-006"  # stable local_id, never the renumbering T-001
+    assert e["stride"] == "Spoofing"
+    assert e["severity"] == "Critical"
+    assert e["status"] == "accepted"
+    assert e["accepted_risk"] == "Accepted for release."
+    assert e["evidence"] == "routes/login.ts:34"
+    assert e["mitigation_ref"] == "Use parameterized queries"
+    assert e["description"]  # non-empty (from scenario)
+
+
+def test_build_known_threat_entry_rejects_unmappable_stride():
+    assert rtm._build_known_threat_entry(_KT_THREATS[2], "x") is None
+
+
+def test_build_known_threat_entry_defaults_rationale_and_severity():
+    t = {"local_id": "x-1", "title": "t", "component": "c", "stride": "Tampering"}
+    e = rtm._build_known_threat_entry(t, "")
+    assert e["severity"] == "Medium"  # no derivable severity -> safe default
+    assert e["accepted_risk"] == "Risk accepted during triage."
+
+
+def test_promote_accepted_writes_valid_known_threats(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_model(out, _KT_THREATS)
+    sc = tmp_path / ".appsec-triage" / "triage.yaml"
+    _write_sidecar(
+        sc,
+        {
+            "auth-006": {"decision": "accept-risk", "rationale": "Compensating control."},
+            "web-003": {"decision": "accept-risk", "rationale": "Low traffic service."},
+            "api-009": {"decision": "fix"},  # not accepted -> ignored
+        },
+    )
+    kt = tmp_path / "docs" / "known-threats.yaml"
+    summary = rtm.promote_accepted(out, sc, kt)
+    assert summary["added"] == 2 and summary["updated"] == 0 and summary["skipped"] == []
+    doc = _read_yaml(kt)
+    assert {t["id"] for t in doc["threats"]} == {"auth-006", "web-003"}
+    assert all(t["status"] == "accepted" for t in doc["threats"])
+    import validate_intermediate as vi  # the pipeline's own validator
+
+    assert vi.validate_known_threats(doc)[0]
+
+
+def test_promote_accepted_merges_preserves_and_dedups(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_model(out, _KT_THREATS)
+    sc = tmp_path / ".appsec-triage" / "triage.yaml"
+    _write_sidecar(sc, {"auth-006": {"decision": "accept-risk", "rationale": "r1"}})
+    kt = tmp_path / "docs" / "known-threats.yaml"
+    kt.parent.mkdir(parents=True, exist_ok=True)
+    kt.write_text(
+        yaml.safe_dump(
+            {
+                "owner_team": "sec",  # extra top-level key must survive
+                "threats": [
+                    {
+                        "id": "TEAM-1",
+                        "title": "team known",
+                        "stride": "Repudiation",
+                        "component": "x",
+                        "severity": "Low",
+                        "status": "accepted",
+                        "description": "d",
+                        "custom": "keep-me",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    rtm.promote_accepted(out, sc, kt)  # first pass: appends auth-006
+    summary = rtm.promote_accepted(out, sc, kt)  # second pass: updates, no dup
+    assert summary["added"] == 0 and summary["updated"] == 1
+    doc = _read_yaml(kt)
+    assert [t["id"] for t in doc["threats"]] == ["TEAM-1", "auth-006"]  # order + team entry kept
+    assert doc["owner_team"] == "sec"
+    team = next(t for t in doc["threats"] if t["id"] == "TEAM-1")
+    assert team["custom"] == "keep-me"  # team's extra field untouched
+
+
+def test_promote_accepted_skips_stale_and_noops_without_file(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_model(out, _KT_THREATS)
+    sc = tmp_path / ".appsec-triage" / "triage.yaml"
+    _write_sidecar(sc, {"ghost-1": {"decision": "accept-risk", "rationale": "gone"}})
+    kt = tmp_path / "docs" / "known-threats.yaml"
+    summary = rtm.promote_accepted(out, sc, kt)
+    assert summary["skipped"] == ["ghost-1"] and summary["added"] == 0
+    assert not kt.exists()  # nothing mappable + no existing file -> no empty file written
+
+
+def test_promote_accepted_never_touches_model(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_model(out, _KT_THREATS)
+    before = (out / "threat-model.yaml").read_text()
+    sc = tmp_path / ".appsec-triage" / "triage.yaml"
+    _write_sidecar(sc, {"auth-006": {"decision": "accept-risk", "rationale": "r"}})
+    rtm.promote_accepted(out, sc, tmp_path / "docs" / "known-threats.yaml")
+    assert (out / "threat-model.yaml").read_text() == before  # Consumer guarantee
+
+
+# ---------------------------------------------------------------------------
+# Pre-rendered console screens — the deterministic display blocks the skill
+# echoes verbatim instead of re-composing each menu (glyph contract, category
+# grouping and continuous numbering baked in here, not left to the LLM).
+# ---------------------------------------------------------------------------
+
+
+def _write_screen_model(output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "meta": {"project": "demo", "generated": "2026-07-17T00:00:00Z"},
+        "threats": [
+            {
+                "id": "T-001",
+                "local_id": "auth-1",
+                "title": "Insecure JWT verification",
+                "component": "auth",
+                "effective_severity": "Critical",
+                "threat_category_id": "TH-02",
+                "mitigation_ids": ["M-001"],
+                "evidence": [{"file": "lib/insecurity.ts", "line": 52}],
+            },
+            {
+                "id": "T-002",
+                "local_id": "api-1",
+                "title": "SQL injection in login",
+                "component": "api",
+                "effective_severity": "Critical",
+                "threat_category_id": "TH-01",
+                "mitigation_ids": ["M-002"],
+                "evidence": [{"file": "routes/login.ts", "line": 34}],
+            },
+            {
+                "id": "T-003",
+                "local_id": "api-2",
+                "title": "Verbose error leak",
+                "component": "api",
+                "effective_severity": "Medium",
+                "threat_category_id": "TH-01",
+                "mitigation_ids": ["M-003"],
+                "evidence": [{"file": "routes/err.ts", "line": 9}],
+            },
+        ],
+        "mitigations": [
+            {  # P1 fix, Low, covers Critical -> recommended
+                "id": "M-001",
+                "title": "Verify JWT signature and algorithm",
+                "priority": "P1",
+                "kind": "fix",
+                "threat_ids": ["T-001"],
+                "remediation": {"effort": "Low"},
+            },
+            {  # P2 fix, Low, covers Critical -> recommended
+                "id": "M-002",
+                "title": "Parameterize database queries",
+                "priority": "P2",
+                "kind": "fix",
+                "threat_ids": ["T-002"],
+                "remediation": {"effort": "Low"},
+            },
+            {  # P3 review -> hidden in fix_list default, not recommended
+                "id": "M-003",
+                "title": "Investigate error handling",
+                "priority": "P3",
+                "kind": "review",
+                "threat_ids": ["T-003"],
+                "remediation": {"effort": "Low"},
+            },
+        ],
+        "critical_findings": [
+            {"threat_id": "T-001", "summary": "Anyone can forge an admin token", "mitigation_id": "M-001"},
+        ],
+        "security_controls": [
+            {"domain": "Authorization", "control": "RBAC", "effectiveness": "Missing", "assessment": "none"},
+        ],
+        "weaknesses": [{"id": "W-001"}],
+    }
+    (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+
+def _screens(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_screen_model(out)
+    tax = tmp_path / "tax.yaml"
+    tax.write_text(
+        yaml.safe_dump(
+            {"categories": [{"id": "TH-01", "name": "Injection"}, {"id": "TH-02", "name": "Broken Authentication"}]}
+        ),
+        encoding="utf-8",
+    )
+    payload = rtm.console(out, tmp_path / "triage.yaml", taxonomy_path=tax)
+    return payload, payload["screens"]
+
+
+def test_console_payload_carries_prerendered_screens(tmp_path):
+    _, s = _screens(tmp_path)
+    assert set(s) == {
+        "landing",
+        "fix_start",
+        "fix_list",
+        "fix_list_full",
+        "browse_severity",
+        "browse_type",
+        "browse_requirement",
+        "posture",
+    }
+    assert all(isinstance(v, str) for v in s.values())
+
+
+def test_screen_landing_has_verdict_rows_and_single_worst_case_header(tmp_path):
+    _, s = _screens(tmp_path)
+    land = s["landing"]
+    assert land.startswith("**demo** · generated 2026-07-17T00:00:00Z · **3 findings** · 0/3 triaged")
+    assert "**Backlog**    1× P1 · 1× P2 · 1× P3   ·   0 without a fix" in land
+    assert "🔴 2 Critical · 🟡 1 Medium" in land  # severity dots, only non-zero bands
+    assert "🧩 1 design weaknesses" in land
+    # worst-case block header appears exactly once (regression: it once repeated per row)
+    assert land.count("**⚠ Worst case if nothing changes**") == 1
+    # finding uses a severity dot, the fix reference uses the priority ramp
+    assert "🔴 **[T-001]** auth — Anyone can forge an admin token   → fix with ● M-001" in land
+
+
+def test_screen_landing_omits_requirements_row_without_custom_reqs(tmp_path):
+    _, s = _screens(tmp_path)
+    assert "**Requirements**" not in s["landing"]  # gated to integrated custom requirements
+
+
+def test_screen_fix_start_groups_by_category_worst_first(tmp_path):
+    _, s = _screens(tmp_path)
+    fs = s["fix_start"]
+    assert fs.startswith("🛠 **Recommended to fix first**")
+    # both P1(Injection-header? no) grouped by the hardened category; both covered are Critical
+    assert "**Fix Broken Authentication** — 1" in fs
+    assert "**Fix Injection** — 1" in fs
+    # measure led by ramp glyph; covered finding on a severity-dot sub-line with file:line
+    assert "● M-001 (P1) Verify JWT signature and algorithm" in fs
+    assert "└ 🔴 T-001 · lib/insecurity.ts:52" in fs
+    # P3 review is NOT cheap-and-low-risk -> never recommended
+    assert "M-003" not in fs
+
+
+def test_screen_fix_start_empty_when_no_recommendation(tmp_path):
+    # a model whose only fix is High effort -> recommended[] empty -> screen is ""
+    out = tmp_path / "docs" / "security"
+    out.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "meta": {"project": "d", "generated": "g"},
+        "threats": [
+            {"id": "T-1", "local_id": "a-1", "title": "x", "effective_severity": "High", "mitigation_ids": ["M-1"]}
+        ],
+        "mitigations": [
+            {
+                "id": "M-1",
+                "title": "big",
+                "priority": "P2",
+                "kind": "fix",
+                "threat_ids": ["T-1"],
+                "remediation": {"effort": "High"},
+            }
+        ],
+    }
+    (out / "threat-model.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+    s = rtm.console(out, tmp_path / "triage.yaml")["screens"]
+    assert s["fix_start"] == ""
+
+
+def test_screen_fix_list_numbers_continuously_and_hides_p3(tmp_path):
+    _, s = _screens(tmp_path)
+    fl = s["fix_list"]
+    # continuous numbering across category groups: 1 then 2, no reset
+    assert "  1. " in fl and "  2. " in fl and "  3. " not in fl
+    # recommended fixes carry a star
+    assert "★" in fl
+    # P3 hidden by default, surfaced via a hint line
+    assert "M-003" not in fl
+    assert "(+1 P3 — type `show P3` to include)" in fl
+    # the full variant includes the P3 band and numbers it (Injection group leads —
+    # 2 findings vs Broken Auth's 1 — so M-002=1, M-003=2, M-001=3)
+    assert "M-003" in s["fix_list_full"]
+    assert "  2. ◑ M-003 (P3)" in s["fix_list_full"]
+
+
+def test_screen_browse_and_posture_gating(tmp_path):
+    payload, s = _screens(tmp_path)
+    # by-type numbered blast table, ranked by blast (Injection has 2 findings)
+    assert "1. Injection — 2 findings (🔴 1 · 🟠 0)" in s["browse_type"]
+    assert "2. Broken Authentication — 1 findings (🔴 1 · 🟠 0)" in s["browse_type"]
+    # posture present (controls exist); no custom requirements -> browse_requirement empty
+    assert s["browse_requirement"] == ""
+    assert "Authorization — Missing (1 controls: 1 Missing)" in s["posture"]
+    # by-severity leads each row with the severity dot, untriaged first
+    first = s["browse_severity"].splitlines()[0]
+    assert first.startswith("🔴 T-001") or first.startswith("🔴 T-002")
+
+
+def test_screen_posture_empty_without_controls(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_full_model(out)  # no security_controls
+    s = rtm.console(out, tmp_path / "triage.yaml")["screens"]
+    assert s["posture"] == ""
+
+
+def test_screens_are_byte_stable(tmp_path):
+    # same (model, sidecar) -> identical screens (no wall-clock / ordering drift)
+    _, a = _screens(tmp_path / "run-a")
+    _, b = _screens(tmp_path / "run-b")
+    assert a == b
+
+
+def test_glyph_helpers_map_axes():
+    assert rtm._sev_dot("Critical") == "🔴" and rtm._sev_dot("High") == "🟠"
+    assert rtm._sev_dot("nonsense") == "⚪"  # unrated / unknown -> hollow
+    assert rtm._ramp("P1") == "●" and rtm._ramp("P4") == "○"
+    assert rtm._ramp("") == "○"  # default fill
