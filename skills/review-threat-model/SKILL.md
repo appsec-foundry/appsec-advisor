@@ -46,9 +46,10 @@ FLAGS
 WHAT IT DOES
   * Opens a triage console: a landing screen (backlog by priority + severity mix
     + the top "worst case if nothing changes" scenarios), then a menu.
-  * Menu spine is the Remediation backlog (P1 -> P2 -> P3, plus Quick wins —
-    low-effort fixes covering a Critical/High). Also: Browse by lens (severity /
-    area / requirement / uncovered), Security posture by domain, Write plan.
+  * Menu spine is the Remediation backlog with selection cuts to act on —
+    Fix first (Criticals) · Quick wins (low-effort, high-impact) · P1 · P2 —
+    then all-at-once or individual within the cut. Also: Browse by lens (severity
+    / area / requirement / uncovered), Security posture by domain, Write plan.
   * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`
     or `M-003..M-009`) and pick one action for the whole selection: mitigate /
     accept-risk / defer. Acting on a mitigation triages every finding it covers.
@@ -221,7 +222,7 @@ the artifact aligned. Severity and area are alternate lenses, not the default.
 
 Ask with `AskUserQuestion` (one question, four options):
 
-1. **Remediation backlog** — by priority (P1 → P2 → P3), plus Quick wins
+1. **Remediation backlog** — cuts to act on: Fix first · Quick wins · P1 · P2
 2. **Browse by lens** — severity · area · requirement · uncovered
 3. **Security posture by domain** — control ratings *(only if `control_posture` is non-empty)*
 4. **Write plan & exit**
@@ -239,20 +240,28 @@ sorted: priority, then fix-before-investigate, then leverage). One row each:
 Quick-win rows (those in `quick_wins[]` — low-effort, Critical/High-covering)
 with a `★`, and print the count once (`Quick wins: <verdict.quick_wins> ★`).
 
-Then go **straight to Select & act** over the whole backlog — do **not** force a
-band choice first. The user picks whatever they want: specific mitigations
-across any band (`M-003, M-015`), a range (`M-003..M-009`), a band shorthand
-(`all P1`, `all P2`), `quick wins`, or `all shown`. A mitigation resolves to its
-`covered_keys`; when `coverage > 1` state the fan-out ("M-012 → fix 5 findings"),
-else say it plainly ("M-012 → fix T-007").
+Then offer a **selection submenu** with `AskUserQuestion` — curated cuts to act
+on (list only the non-empty ones; the user can still **type** any custom
+selection instead, e.g. `all P3`, `M-003, M-015`, a range, or `all shown`):
 
-This is where "select the P1/P2 fixes individually, or do them all at once"
-lives: to cherry-pick, type the specific `M-NNN`s; to take a whole band, type
-`all P1` / `all P2`. Either way, choose **Mitigate + implement now** as the
-action and Step 5b applies the code changes for that selection, one at a time.
-(There is no tick-box list — `AskUserQuestion` caps at four options, so a
-selection larger than a handful is typed, not clicked; typing is also how you
-mix bands or ranges in one go.)
+- **Fix first** — the Critical-severity findings (the crown jewels; distinct
+  from P1, which is the top *mitigation-priority* band — a Critical can sit in a
+  lower band). Resolves to the `findings[]` whose `severity` is `Critical`.
+- **Quick wins** — the `quick_wins[]` set (low-effort, Critical/High-covering).
+- **P1** — the P1 band. **P2** — the P2 band.
+
+Resolve the chosen cut to finding `key`s (Quick wins / P1 / P2 → the union of
+those mitigations' `covered_keys`; Fix first → the Critical findings' keys),
+print that cut's rows, then run **Select & act** on it — where the user takes
+**all** of the cut or picks **individual** items. When a mitigation's
+`coverage > 1`, state the fan-out ("M-012 → fix 5 findings"); else say it plainly
+("M-012 → fix T-007").
+
+So "P1/P2 (or Quick wins / Fix first) — all at once or individually" is: pick the
+cut here, then in Select & act choose **All shown** or type the specific ids, and
+choose **Mitigate + implement now** to apply the code changes (Step 5b, one at a
+time). There is no tick-box list — `AskUserQuestion` caps at four options, so
+individual picking beyond a handful is typed, not clicked.
 
 ### View: Browse by lens
 Ask which lens with `AskUserQuestion` — offer only the ones that apply, in this
