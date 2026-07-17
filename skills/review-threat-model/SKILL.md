@@ -1,6 +1,6 @@
 ---
 name: review-threat-model
-description: User-facing triage of an existing threat model — walk the findings in an already-generated threat-model.yaml, decide fix / accept-risk / defer per finding (with owner and target), and emit a remediation-plan.md. Runs later and completely independently of create-threat-model; reads the model, never regenerates or re-scores it. Not an artifact-quality check (that is eval-threat-model).
+description: User-facing triage of an existing threat model — open an overview-first console over an already-generated threat-model.yaml (backlog by priority, severity mix, worst-case scenarios), then bulk-decide mitigate / accept-risk / defer (with owner and target) on a selection of findings or mitigations, and emit a remediation-plan.md. Runs later and completely independently of create-threat-model; reads the model, never regenerates or re-scores it. Not an artifact-quality check (that is eval-threat-model).
 ---
 
 You help a user **triage** the findings of a threat model that already exists.
@@ -167,12 +167,19 @@ is empty. These lines double as a fast entry into triage — the user may act on
 them directly (their `mitigation_id`s are a ready-made selection for **Select &
 act**).
 
-If `triaged == 0`, offer the express lane before the menu with one
-`AskUserQuestion`: "Mark all Critical + High findings as **fix** now and only
-walk the rest?" — options **Yes, fix them** / **No, let me navigate**. On yes,
-apply `fix` to every Critical/High finding (Step 6 write), then go to the menu.
-(The express lane stays severity-based on purpose — it is the broad "clear the
-obvious" sweep; priority drives navigation, not this sweep.)
+If `triaged == 0` **and there are P1 mitigations** (`verdict.by_priority` has a
+non-zero `P1`), offer the express lane before the menu with one
+`AskUserQuestion`: "Fix the **P1** findings now (the <n> findings the
+top-priority mitigations cover) and walk the rest?" — options **Yes, fix the
+P1s** / **No, let me navigate**. On yes, apply `fix` to every finding in the
+union of the P1 mitigations' `covered_keys` (Step 6 write), then go to the menu.
+
+Why P1 and not a Critical+High sweep: P1 is the model's own top-priority call —
+it already folds in severity, kind and effort — and it is a small, reviewable
+set, so it avoids blind-fixing a large pile of High findings sight-unseen. Any
+high-severity finding that no P1 mitigation covers still appears in the landing
+screen's worst-case block, so it is never hidden. If there are no P1
+mitigations, skip the offer and go straight to the menu.
 
 ## Step 5 — The menu loop
 
