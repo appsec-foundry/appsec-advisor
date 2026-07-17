@@ -51,10 +51,15 @@ _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Information
 
 
 def _severity_label(threat: dict | None) -> str:
-    """Canonical severity for a threat; mirrors render_completion_summary."""
+    """Canonical severity for a threat, using the composer's
+    ``effective_severity → risk → severity`` precedence (documented in
+    ``build_threat_model_yaml.py``). ``effective_severity`` is the capped /
+    triage-adjusted value the rendered report and review-threat-model rank by,
+    so ``show`` reflects the same numbers the model actually presents rather
+    than the raw ``risk``."""
     if not threat:
         return ""
-    raw = (threat.get("severity") or threat.get("risk") or "").strip()
+    raw = (threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "").strip()
     label = raw[:1].upper() + raw[1:].lower() if raw else ""
     return label if label in _SEVERITY_ORDER else raw
 

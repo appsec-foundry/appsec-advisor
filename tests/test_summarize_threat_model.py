@@ -107,6 +107,26 @@ def test_severity_counts_and_totals(tmp_path):
     }
 
 
+def test_severity_uses_effective_severity_precedence(tmp_path):
+    import yaml
+
+    # effective_severity is the capped/canonical value the report ranks by; it
+    # must win over a differing raw `risk` (composer precedence).
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, effective_severity: High, risk: Critical, title: capped down}
+          - {t_id: T-002, risk: Medium, title: risk fallback only}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    assert summary["severity_counts"]["High"] == 1  # effective_severity wins
+    assert summary["severity_counts"]["Critical"] == 0
+    assert summary["severity_counts"]["Medium"] == 1  # risk used when no effective_severity
+    assert summary["criticals"] == []
+
+
 def test_backlog_and_coverage(tmp_path):
     import yaml
 
