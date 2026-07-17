@@ -322,3 +322,177 @@ def test_console_composes_verdict_and_views(tmp_path):
 
 def test_load_category_names_missing_taxonomy_is_empty(tmp_path):
     assert rtm._load_category_names(tmp_path / "does-not-exist.yaml") == {}
+
+
+# ---------------------------------------------------------------------------
+# Priority backlog spine — kind ordering, backlog/uncovered verdict
+# ---------------------------------------------------------------------------
+
+
+def test_build_mitigations_orders_fix_before_investigate_within_band():
+    model = {
+        "mitigations": [
+            {"id": "M-050", "title": "look into it", "priority": "P2", "kind": "investigate", "threat_ids": ["T-1"]},
+            {"id": "M-051", "title": "fix it", "priority": "P2", "kind": "fix", "threat_ids": ["T-2"]},
+        ]
+    }
+    key_by_tid = {"T-1": "a-1", "T-2": "a-2"}
+    mits = rtm.build_mitigations(model, key_by_tid)
+    # same P2 band -> actionable fix ranks above investigate
+    assert [m["id"] for m in mits] == ["M-051", "M-050"]
+
+
+def test_verdict_reports_backlog_by_priority_and_uncovered(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_full_model(out)  # T-004 has no mitigation_ids -> 1 uncovered
+    payload = rtm.console(out, tmp_path / "triage.yaml")
+    v = payload["verdict"]
+    assert v["by_priority"] == {"P1": 1, "P2": 1}
+    assert v["uncovered"] == 1
+    # mitigations carry the severity mix of the findings they cover
+    m1 = payload["mitigations"][0]
+    assert m1["id"] == "M-001"
+    assert m1["covered_severities"] == {"Critical": 1, "High": 1}
+
+
+# ---------------------------------------------------------------------------
+# Worst-case scenarios (read verbatim from critical_findings)
+# ---------------------------------------------------------------------------
+
+
+def test_build_worst_case_joins_curated_critical_findings(tmp_path):
+    out = tmp_path / "docs" / "security"
+    output_dir = out
+    output_dir.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "meta": {"project": "demo", "generated": "2026-07-17T00:00:00Z"},
+        "threats": CONSOLE_THREATS,
+        "mitigations": CONSOLE_MITIGATIONS,
+        "critical_findings": [
+            {"threat_id": "T-003", "summary": "attacker dumps the users table", "mitigation_id": "M-002"},
+            {"threat_id": "T-001", "summary": "secret leaks, full account takeover", "mitigation_id": "M-001"},
+            {"threat_id": "T-999", "summary": "gone finding — must be skipped", "mitigation_id": "M-000"},
+        ],
+    }
+    (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+    payload = rtm.console(output_dir, tmp_path / "triage.yaml")
+    wc = payload["worst_case"]
+    # unresolved threat_id dropped; two Criticals, severity-ranked by id
+    assert [w["id"] for w in wc] == ["T-001", "T-003"]
+    first = wc[0]
+    assert first["summary"] == "secret leaks, full account takeover"  # verbatim
+    assert first["mitigation_id"] == "M-001" and first["priority"] == "P1"
+    assert first["severity"] == "Critical" and first["component"] == "auth"
+
+
+def test_build_worst_case_falls_back_to_top_severity_findings(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_full_model(out)  # no critical_findings key
+    payload = rtm.console(out, tmp_path / "triage.yaml")
+    wc = payload["worst_case"]
+    # degrade to Critical/High findings only, capped at 3, Medium excluded
+    assert all(w["severity"] in ("Critical", "High") for w in wc)
+    assert "T-004" not in {w["id"] for w in wc}  # the Medium finding
+    assert all(w["mitigation_id"] == "" for w in wc)  # no curated mitigation link
+
+
+# ---------------------------------------------------------------------------
+# Requirements badge/lens — explicit custom requirements only
+# ---------------------------------------------------------------------------
+
+_CUSTOM_THREATS = [
+    {
+        "id": "T-001",
+        "local_id": "auth-006",
+        "title": "Weak password policy",
+        "component": "auth",
+        "effective_severity": "High",
+        "mitigation_ids": ["M-001"],
+        "violated_requirements": ["ASR-12"],
+    },
+    {
+        "id": "T-002",
+        "local_id": "api-004",
+        "title": "No audit log",
+        "component": "api",
+        "effective_severity": "Medium",
+        "requirement_id": "ASR-12",  # single-id form also folds in
+    },
+    {
+        "id": "T-003",
+        "local_id": "web-002",
+        "title": "Unrelated finding",
+        "component": "web",
+        "effective_severity": "Low",
+    },
+]
+
+
+def _write_reqs_model(output_dir: Path, requirements_source: str | None, check: bool = True) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "meta": {"project": "demo", "generated": "2026-07-17T00:00:00Z", "check_requirements": check},
+        "threats": _CUSTOM_THREATS,
+        "mitigations": [{"id": "M-001", "priority": "P2", "kind": "fix", "threat_ids": ["T-001"]}],
+    }
+    (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+    if requirements_source is not None:
+        reqs = {
+            "source": requirements_source,
+            "categories": [{"id": "C1", "requirements": [{"id": "ASR-12", "url": "https://asr/12"}]}],
+        }
+        (output_dir / ".requirements.yaml").write_text(yaml.safe_dump(reqs), encoding="utf-8")
+
+
+def test_requirements_badge_for_explicit_custom_source(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_reqs_model(out, requirements_source="harvested")
+    payload = rtm.console(out, tmp_path / "triage.yaml")
+    by_key = {f["key"]: f for f in payload["findings"]}
+    assert by_key["auth-006"]["requirements"] == ["ASR-12"]
+    assert by_key["api-004"]["requirements"] == ["ASR-12"]  # single requirement_id folded
+    assert by_key["web-002"]["requirements"] == []
+    v = payload["verdict"]["requirements"]
+    assert v == {"integrated": True, "findings_violating": 2, "requirement_count": 1}
+    # requirement lens groups both findings under ASR-12 with its url
+    rg = payload["requirements"]
+    assert len(rg) == 1
+    assert rg[0]["requirement_id"] == "ASR-12" and rg[0]["total"] == 2
+    assert rg[0]["url"] == "https://asr/12"
+
+
+def test_requirements_suppressed_for_bundled_baseline(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_reqs_model(out, requirements_source="bundled-bestpractices")
+    payload = rtm.console(out, tmp_path / "triage.yaml")
+    assert all(f["requirements"] == [] for f in payload["findings"])
+    assert payload["verdict"]["requirements"]["integrated"] is False
+    assert payload["requirements"] == []
+
+
+def test_requirements_suppressed_for_skipped_stub(tmp_path):
+    out = tmp_path / "docs" / "security"
+    _write_reqs_model(out, requirements_source="skipped")
+    payload = rtm.console(out, tmp_path / "triage.yaml")
+    assert payload["verdict"]["requirements"]["integrated"] is False
+
+
+def test_requirements_suppressed_when_check_disabled(tmp_path):
+    out = tmp_path / "docs" / "security"
+    # a real custom source is present, but the run did NOT request the check
+    _write_reqs_model(out, requirements_source="harvested", check=False)
+    payload = rtm.console(out, tmp_path / "triage.yaml")
+    assert payload["verdict"]["requirements"]["integrated"] is False
+    assert all(f["requirements"] == [] for f in payload["findings"])
+
+
+def test_build_requirement_groups_ranks_by_blast():
+    findings = [
+        {"key": "a-1", "severity": "Critical", "requirements": ["R-1"]},
+        {"key": "a-2", "severity": "High", "requirements": ["R-1", "R-2"]},
+        {"key": "a-3", "severity": "Low", "requirements": ["R-2"]},
+    ]
+    groups = rtm.build_requirement_groups(findings, {"R-1": "u1"})
+    # R-1 (1 Critical) ranks above R-2 (no Critical)
+    assert [g["requirement_id"] for g in groups] == ["R-1", "R-2"]
+    assert groups[0]["total"] == 2 and groups[0]["critical"] == 1

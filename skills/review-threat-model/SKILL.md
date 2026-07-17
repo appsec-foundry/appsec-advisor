@@ -40,15 +40,17 @@ FLAGS
                     (default: <repo>/.appsec-triage/remediation-plan.md)
 
 WHAT IT DOES
-  * Opens a triage console: a one-screen verdict (severity mix, hottest areas
-    and components, mitigation coverage), then a menu.
-  * Menu: Quick-triage (Critical+High -> fix) · Top findings · Top mitigations ·
-    By area (authentication, injection, access control, …) · Write plan & exit.
-  * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`)
-    and pick one action for the whole selection: mitigate / accept-risk / defer.
-    Acting on a mitigation triages every finding it covers at once.
+  * Opens a triage console: a landing screen (backlog by priority + severity mix
+    + the top "worst case if nothing changes" scenarios), then a menu.
+  * Menu spine is the Remediation backlog (P1 -> P2 -> P3). Also: Browse by lens
+    (severity / area / requirement), Findings without a mitigation, Write plan.
+  * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`
+    or `M-003..M-009`) and pick one action for the whole selection: mitigate /
+    accept-risk / defer. Acting on a mitigation triages every finding it covers.
   * accept-risk requires a rationale (one shared reason for a bulk selection);
     fix/defer take an optional owner + target.
+  * When explicit custom requirements were integrated, finding rows carry a
+    [req: …] badge and a By-requirement lens (never for the OWASP baseline).
   * Persists your decisions to <repo>/.appsec-triage/triage.yaml (survives re-scan).
   * Renders a grouped remediation-plan.md with the model's remediation steps.
 
@@ -112,43 +114,79 @@ for every screen below. Do not re-run `console` on each loop; the static data
 
 Payload shape (all read from the model — never recompute):
 - `verdict` — `by_severity`, `unrated`, `components`, `top_components`,
-  `top_areas`, `weaknesses`, `with_mitigation`, `p1_mitigations`, `triaged`.
+  `top_areas`, `weaknesses`, `with_mitigation`, `by_priority` (`{P1,P2,P3}`
+  mitigation counts — the backlog spine), `p1_mitigations`, `uncovered`
+  (findings with no proposed mitigation), `triaged`, and `requirements`
+  (`{integrated, findings_violating, requirement_count}` — `integrated` is
+  `false` unless explicit custom requirements were integrated; see the badge
+  rule in Step 5).
+- `worst_case[]` — up to 3 concrete "if you do nothing" scenarios, read verbatim
+  from the model's curated `critical_findings`; each has `id` (`T-NNN`),
+  `severity`, `component`, `summary`, `mitigation_id`, `priority`.
 - `findings[]` — severity-ranked; each has `key` (stable `local_id`), `id`
   (`T-NNN`), `title`, `component`, `severity`, `category_name`, `has_mitigation`,
+  `requirements` (custom requirement IDs it violates — empty unless integrated),
   `decision` (`untriaged` until triaged).
-- `mitigations[]` — ranked by priority then leverage; each has `id` (`M-NNN`),
-  `title`, `priority`, `severity`, `coverage`, and `covered_keys` (the finding
-  `key`s it resolves).
+- `mitigations[]` — ranked by priority, then kind (fix before investigate/review),
+  then leverage; each has `id` (`M-NNN`), `title`, `priority`, `severity`, `kind`,
+  `coverage`, `covered_keys` (the finding `key`s it resolves), and
+  `covered_severities` (their severity mix).
 - `areas[]` — findings grouped by security domain; each has `category_name`,
   `total`, `critical`, `high`, and `keys`.
+- `requirements[]` — findings grouped by violated custom requirement (empty
+  unless integrated); each has `requirement_id`, `url`, `total`, `critical`,
+  `high`, and `keys`.
 - `stale[]` — prior decisions whose finding is gone from the model.
 
-## Step 4 — Show the verdict (one screen)
+## Step 4 — Show the landing screen (verdict + worst case)
 
-Print a compact briefing from `verdict` — do not editorialize, these are the
-model's numbers:
+This prints immediately on invocation — the user sees where they stand before
+any menu. Do not editorialize; every number/line comes from the payload.
+
+First the verdict from `verdict` (omit the Requirements line unless
+`verdict.requirements.integrated` is true):
 
 ```
-<project> · generated <generated> · <total> findings
-Posture: <C> Critical · <H> High · <M> Medium (<unrated> unrated) · <components> components · <weaknesses> design weaknesses
+<project> · generated <generated> · <total> findings · <triaged>/<total> triaged
+Backlog: <P1>× P1 · <P2>× P2 · <P3>× P3   (<uncovered> findings have no mitigation)
+Severity: <C> Critical · <H> High · <M> Medium (<unrated> unrated) · <weaknesses> design weaknesses
+Requirements: <findings_violating> findings violate <requirement_count> custom requirements
 Hottest areas: <a1> (<n>) · <a2> (<n>) · <a3> (<n>)
-Hottest components: <c1> (<n>) · <c2> (<n>) · <c3> (<n>)
-Coverage: <with_mitigation>/<total> findings have a proposed mitigation · <p1_mitigations>× P1
-Triage: <triaged>/<total> decided
 ```
+
+Then the worst-case block from `worst_case[]` (skip the whole block only if it
+is empty). One line each, verbatim `summary`, no scenario/walkthrough dumps:
+
+```
+Worst case if nothing changes:
+  ⚠ [<id>] <severity> · <component> · <summary>   → <mitigation_id> (<priority>)
+```
+
+Drop the `→ <mitigation_id> (<priority>)` tail for any row whose `mitigation_id`
+is empty. These lines double as a fast entry into triage — the user may act on
+them directly (their `mitigation_id`s are a ready-made selection for **Select &
+act**).
 
 If `triaged == 0`, offer the express lane before the menu with one
 `AskUserQuestion`: "Mark all Critical + High findings as **fix** now and only
 walk the rest?" — options **Yes, fix them** / **No, let me navigate**. On yes,
 apply `fix` to every Critical/High finding (Step 6 write), then go to the menu.
+(The express lane stays severity-based on purpose — it is the broad "clear the
+obvious" sweep; priority drives navigation, not this sweep.)
 
 ## Step 5 — The menu loop
 
-Ask with `AskUserQuestion` (one question, four options):
+The spine is the **remediation backlog by priority** (P1 → P2 → P3): the plan
+you emit *is* a prioritized backlog, so walking it that way keeps the flow and
+the artifact aligned. Severity and area are alternate lenses, not the default.
 
-1. **Top findings** — severity-ranked
-2. **Top mitigations** — by priority & leverage
-3. **By area** — pick a security domain
+Ask with `AskUserQuestion` (one question). List the **Findings without a
+mitigation** option **only when `verdict.uncovered > 0`** (otherwise it is a
+dead slot — drop it and the menu is three options):
+
+1. **Remediation backlog** — by priority (P1 → P2 → P3)
+2. **Browse by lens** — severity · area · requirement
+3. **Findings without a mitigation** *(only if `uncovered > 0`)*
 4. **Write plan & exit**
 
 After each action, redisplay the menu with an updated `Triage: X/<total>`
@@ -156,30 +194,50 @@ counter. The user may also type a free-text intent at any time ("accept all
 Low", "fix the auth ones") — honour it directly, then return to the menu. The
 user can stop whenever they want; untriaged findings simply stay untriaged.
 
-### View: Top findings
-Print an untriaged-first, severity-ranked table (skip already-decided unless the
-user asks to see all). One row per finding:
-`T-NNN · <severity> · <component> · <category_name> · <title>  [<decision if any>]`.
-Then run **Select & act** (below).
+### View: Remediation backlog (default spine)
+Print `mitigations[]` grouped into P1 / P2 / P3 bands (they arrive already
+sorted: priority, then fix-before-investigate, then leverage). One row each:
+`M-NNN · <kind> · covers <coverage> · <covered_severities> · <title>`.
+Then ask which band to act on with `AskUserQuestion`: **P1** / **P2** / **P3** /
+**All shown** (offer only bands that exist). Print that band and run **Select &
+act**, treating each chosen mitigation's `covered_keys` as the selection.
+When a mitigation's `coverage > 1`, state the fan-out explicitly ("M-012 → fix 5
+findings"); when it covers one finding, say so plainly ("M-012 → fix T-007").
 
-### View: Top mitigations
-Print the `mitigations[]` table:
-`M-NNN · <priority> · <severity> · covers <coverage> · <title>`.
-Selecting a mitigation and choosing an action applies that action to **all** its
-`covered_keys` at once — say so explicitly (e.g. "M-012 → fix 5 findings"). Then
-run **Select & act**, treating `covered_keys` as the selection.
+### View: Browse by lens
+Ask which lens with `AskUserQuestion` — **By severity** / **By area** /
+**By requirement** / **Back**. List **By requirement** **only when
+`verdict.requirements.integrated` is true**; otherwise offer three options.
+- **By severity** — print an untriaged-first, severity-ranked finding table
+  (skip already-decided unless the user asks to see all):
+  `T-NNN · <severity> · <component> · <category_name> · <title> [req: …] [<decision>]`.
+- **By area** — print `areas[]` numbered:
+  `N. <category_name> — <total> findings (<critical> Critical, <high> High)`.
+  Ask which area (number or name), then print its `keys` as findings.
+- **By requirement** — print `requirements[]` numbered:
+  `N. <requirement_id> — <total> findings (<critical> Critical, <high> High)`.
+  Ask which requirement, then print its `keys` as findings.
+Then run **Select & act**.
 
-### View: By area
-Print `areas[]` as a numbered list:
-`N. <category_name> — <total> findings (<critical> Critical, <high> High)`.
-Ask the user which area (by number or name, free text). Then print that area's
-findings (its `keys`, formatted as in Top findings) and run **Select & act**.
+### View: Findings without a mitigation
+Print the findings whose `has_mitigation` is false, formatted as in By severity.
+These have no proposed fix — they most need a human decision. Run **Select &
+act**.
+
+### Requirements badge (all finding rows)
+When (and only when) `verdict.requirements.integrated` is true, append the
+finding's violated custom requirements to its row as `[req: R-12, R-19]` (from
+`findings[].requirements`; omit when empty). Never show this for the bundled
+best-practices baseline or a skipped requirements stub — the payload already
+gates it (the list is empty in those cases). Never fold requirements into
+priority or severity — it is a badge/lens, not a re-score.
 
 ### Select & act (shared)
 1. Ask the user which items to act on — **free text**, e.g. `T-001..T-005, T-012`,
-   a comma list, `all`, or (in an area/mitigation view) `all shown`. Resolve
-   tokens to finding `key`s via the `id`↔`key` map from the payload; ignore
-   unknown tokens but tell the user which you dropped.
+   `M-003..M-009`, a comma list, `all`, or (in a band/area/requirement view)
+   `all shown`. Resolve `T-NNN`/`M-NNN` tokens to finding `key`s via the payload
+   (`id`↔`key`; a mitigation resolves to its `covered_keys`); ignore unknown
+   tokens but tell the user which you dropped.
 2. Ask the action with `AskUserQuestion`: **Mitigate (fix)** / **Accept risk** /
    **Defer**.
 3. **Accept risk** requires a rationale — ask once for a single reason that

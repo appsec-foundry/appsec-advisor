@@ -54,6 +54,9 @@ import yaml
 
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
 _PRIORITY_ORDER = {"P1": 0, "P2": 1, "P3": 2}
+# Within a priority band, actionable fixes rank above items still needing a look
+# (investigate/review) so the backlog surfaces do-now work first.
+_KIND_ORDER = {"fix": 0, "investigate": 1, "review": 2}
 
 # Human-readable threat-domain names ("Broken Authentication", "Injection", …)
 # live in the generation pipeline's taxonomy. Read-only lookup; the console view
@@ -117,6 +120,29 @@ def _norm_decision(value: object) -> str:
     return v if v in _DECISIONS else "untriaged"
 
 
+def _violated_requirements(threat: dict) -> list[str]:
+    """Requirement IDs a threat evidences — the canonical ``violated_requirements``
+    array plus a single ``requirement_id``, order-preserving + de-duplicated.
+
+    Deliberately mirrors ONLY the threat-forward source used by the report's
+    traceability table, NOT the ``mitigation.fulfills_requirements`` reverse link
+    (``_build_requirements_mapping_rows`` in the pipeline). A triage badge needs
+    "does this finding break a custom requirement", not the authoritative
+    requirement→finding→mitigation mapping (which stays in the rendered report).
+    Filtering against the declared custom IDs happens in ``console``."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for rid in threat.get("violated_requirements") or []:
+        r = str(rid).strip()
+        if r and r not in seen:
+            seen.add(r)
+            out.append(r)
+    single = str(threat.get("requirement_id") or "").strip()
+    if single and single not in seen:
+        out.append(single)
+    return out
+
+
 def _load_category_names(path: Path | None = None) -> dict[str, str]:
     """Map ``threat_category_id`` (TH-NN) -> human domain name. Read-only, best
     effort: a missing or malformed taxonomy yields an empty map (the console
@@ -175,6 +201,50 @@ def _load_sidecar(sidecar_path: Path) -> dict:
     return findings if isinstance(findings, dict) else {}
 
 
+def _load_requirements(output_dir: Path, meta: dict) -> dict:
+    """Gate + declared custom requirement IDs for the requirements badge/lens.
+
+    The badge is shown ONLY for *explicit* custom requirements a team integrated
+    — never the bundled OWASP best-practices baseline, never a skipped stub, and
+    never when the requirements check was off for the run. Signals (all read-only):
+
+      * ``meta.check_requirements`` — the run activated the check.
+      * ``<output-dir>/.requirements.yaml`` ``source`` — ``skipped`` (stub) and
+        ``bundled-bestpractices`` (zero-config OWASP fallback) are both excluded;
+        anything else (company catalog / cache / URL) is a real custom source.
+      * non-empty ``categories`` — a source that actually declares requirements.
+
+    Returns ``{integrated, ids, url_by_id}``; ``integrated`` is False (and ids
+    empty) whenever any signal fails, so the caller shows no requirement signal."""
+    empty = {"integrated": False, "ids": set(), "url_by_id": {}}
+    if not bool(meta.get("check_requirements")):
+        return empty
+    path = output_dir / ".requirements.yaml"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return empty
+    if not isinstance(doc, dict):
+        return empty
+    source = str(doc.get("source") or "").strip().lower()
+    cats = doc.get("categories") or []
+    if source in ("skipped", "bundled-bestpractices") or not isinstance(cats, list) or not cats:
+        return empty
+    ids: set[str] = set()
+    url_by_id: dict[str, str] = {}
+    for cat in cats:
+        if not isinstance(cat, dict):
+            continue
+        for req in cat.get("requirements") or []:
+            if not isinstance(req, dict):
+                continue
+            rid = str(req.get("id") or "").strip()
+            if rid:
+                ids.add(rid)
+                url_by_id.setdefault(rid, str(req.get("url") or "").strip())
+    return {"integrated": bool(ids), "ids": ids, "url_by_id": url_by_id} if ids else empty
+
+
 # ---------------------------------------------------------------------------
 # Reconcile
 # ---------------------------------------------------------------------------
@@ -208,6 +278,7 @@ def reconcile(output_dir: Path, sidecar_path: Path, category_names: dict[str, st
                 "category_id": cid,
                 "category_name": cat_names.get(cid, "") if cid else "",
                 "has_mitigation": bool(t.get("mitigation_ids")),
+                "violated_requirements": _violated_requirements(t),
                 "decision": _norm_decision(entry.get("decision")),
                 "rationale": str(entry.get("rationale") or "").strip(),
                 "owner": str(entry.get("owner") or "").strip(),
@@ -286,7 +357,14 @@ def build_mitigations(model: dict, key_by_tid: dict[str, str]) -> list[dict]:
                 "coverage": len(covered),
             }
         )
-    out.sort(key=lambda x: (_PRIORITY_ORDER.get(x["priority"], 9), -x["coverage"], x["id"]))
+    out.sort(
+        key=lambda x: (
+            _PRIORITY_ORDER.get(x["priority"], 9),
+            _KIND_ORDER.get(x["kind"], 3),
+            -x["coverage"],
+            x["id"],
+        )
+    )
     return out
 
 
@@ -335,6 +413,7 @@ def build_verdict(model: dict, findings: list[dict], mitigations: list[dict]) ->
     area_ct = collections.Counter((f["category_name"] or f["category_id"]) for f in findings if f.get("category_id"))
     with_mit = sum(1 for f in findings if f["has_mitigation"])
     triaged = sum(1 for f in findings if f["decision"] != "untriaged")
+    prio = collections.Counter(m["priority"] for m in mitigations if m["priority"])
     return {
         "by_severity": {s: sev.get(s, 0) for s in ("Critical", "High", "Medium", "Low", "Informational") if sev.get(s)},
         "unrated": sev.get("Unrated", 0),
@@ -343,17 +422,112 @@ def build_verdict(model: dict, findings: list[dict], mitigations: list[dict]) ->
         "top_areas": area_ct.most_common(3),
         "weaknesses": len(model.get("weaknesses") or []),
         "with_mitigation": with_mit,
-        "p1_mitigations": sum(1 for m in mitigations if m["priority"] == "P1"),
+        # Remediation backlog by mitigation priority — the console's primary spine.
+        "by_priority": {p: prio.get(p, 0) for p in ("P1", "P2", "P3") if prio.get(p)},
+        "p1_mitigations": prio.get("P1", 0),
+        # Findings the model proposes no mitigation for — a distinct triage bucket
+        # (they cannot be reached by walking mitigations, so never let them vanish).
+        "uncovered": len(findings) - with_mit,
         "triaged": triaged,
     }
 
 
+def build_requirement_groups(findings: list[dict], url_by_id: dict[str, str] | None = None) -> list[dict]:
+    """Group findings by each custom requirement they violate (a finding may
+    appear under several). Ranked by blast (Critical, then High, then total).
+    Only meaningful when explicit custom requirements were integrated — the
+    caller passes findings already tagged with gate-filtered ``requirements``."""
+    url_by_id = url_by_id or {}
+    groups: dict[str, dict] = {}
+    for f in findings:
+        for rid in f.get("requirements") or []:
+            g = groups.get(rid)
+            if g is None:
+                g = groups[rid] = {"requirement_id": rid, "keys": [], "by_severity": collections.Counter()}
+            g["keys"].append(f["key"])
+            g["by_severity"][f["severity"] or "Unrated"] += 1
+    out: list[dict] = []
+    for g in groups.values():
+        sev = g["by_severity"]
+        out.append(
+            {
+                "requirement_id": g["requirement_id"],
+                "url": url_by_id.get(g["requirement_id"], ""),
+                "keys": g["keys"],
+                "total": len(g["keys"]),
+                "critical": sev.get("Critical", 0),
+                "high": sev.get("High", 0),
+                "by_severity": dict(sev),
+            }
+        )
+    out.sort(key=lambda a: (-a["critical"], -a["high"], -a["total"], a["requirement_id"]))
+    return out
+
+
+def build_worst_case(model: dict, findings: list[dict], mitigations: list[dict], limit: int = 3) -> list[dict]:
+    """The few concrete "if you do nothing" scenarios, read verbatim from the
+    model's own ``critical_findings[]`` (producer-curated: ``threat_id`` +
+    one-line ``summary`` + covering ``mitigation_id``). Joined to severity /
+    component / mitigation priority, severity-ranked, capped. Falls back to the
+    top Critical/High findings' titles when the model curated none. Never
+    authors text — ``summary`` is the producer's."""
+    find_by_id = {f["id"]: f for f in findings if f.get("id")}
+    mit_by_id = {m["id"]: m for m in mitigations if m.get("id")}
+    out: list[dict] = []
+    for c in model.get("critical_findings") or []:
+        if not isinstance(c, dict):
+            continue
+        tid = str(c.get("threat_id") or "").strip()
+        f = find_by_id.get(tid)
+        if not f:
+            continue
+        mid = str(c.get("mitigation_id") or "").strip()
+        m = mit_by_id.get(mid)
+        out.append(
+            {
+                "id": tid,
+                "severity": f["severity"],
+                "component": f["component"],
+                "summary": str(c.get("summary") or "").strip() or f["title"],
+                "mitigation_id": mid if m else "",
+                "priority": (m.get("priority") if m else "") or "",
+            }
+        )
+    if not out:  # no curated worst-case — degrade to the top Critical/High findings
+        for f in findings:
+            if _SEVERITY_ORDER.get(f["severity"], 9) > 1:
+                continue
+            out.append(
+                {
+                    "id": f["id"],
+                    "severity": f["severity"],
+                    "component": f["component"],
+                    "summary": f["title"],
+                    "mitigation_id": "",
+                    "priority": "",
+                }
+            )
+    out.sort(key=lambda w: (_SEVERITY_ORDER.get(w["severity"], 9), w["id"]))
+    return out[:limit]
+
+
 def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = None) -> dict:
     """One payload for the interactive console: the reconcile view plus ranked
-    mitigations, area groupings, and the posture verdict."""
+    mitigations, area groupings, worst-case scenarios, the requirements lens
+    (custom requirements only), and the posture verdict."""
     cat_names = _load_category_names(taxonomy_path)
     view = reconcile(output_dir, sidecar_path, category_names=cat_names)
     model = _load_model(output_dir)
+    meta = model.get("meta") if isinstance(model.get("meta"), dict) else {}
+    reqs = _load_requirements(output_dir, meta)
+
+    # Tag each finding with the *custom* requirements it violates (gate-filtered);
+    # empty for every finding unless explicit custom requirements were integrated.
+    for f in view["findings"]:
+        f["requirements"] = (
+            [r for r in f.get("violated_requirements") or [] if r in reqs["ids"]] if reqs["integrated"] else []
+        )
+
     key_by_tid: dict[str, str] = {}
     for t in model.get("threats") or []:
         if not isinstance(t, dict):
@@ -363,9 +537,31 @@ def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = N
         if tid and key:
             key_by_tid[tid] = key
     mitigations = build_mitigations(model, key_by_tid)
+
+    # Fan each mitigation's covered findings back to a severity mix for the backlog display.
+    sev_by_key = {f["key"]: f["severity"] for f in view["findings"]}
+    for m in mitigations:
+        counts = collections.Counter(sev_by_key.get(k, "") for k in m["covered_keys"])
+        counts.pop("", None)
+        m["covered_severities"] = dict(counts)
+
     areas = build_areas(view["findings"])
+    requirement_groups = build_requirement_groups(view["findings"], reqs["url_by_id"]) if reqs["integrated"] else []
+    worst_case = build_worst_case(model, view["findings"], mitigations)
     verdict = build_verdict(model, view["findings"], mitigations)
-    return {**view, "mitigations": mitigations, "areas": areas, "verdict": verdict}
+    verdict["requirements"] = {
+        "integrated": reqs["integrated"],
+        "findings_violating": sum(1 for f in view["findings"] if f.get("requirements")),
+        "requirement_count": len({r for f in view["findings"] for r in f.get("requirements") or []}),
+    }
+    return {
+        **view,
+        "mitigations": mitigations,
+        "areas": areas,
+        "requirements": requirement_groups,
+        "worst_case": worst_case,
+        "verdict": verdict,
+    }
 
 
 # ---------------------------------------------------------------------------
