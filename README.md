@@ -112,6 +112,14 @@ Open Claude Code in the repository you want to analyze and run:
 
 The threat modeler analyzes the current Git repository and writes output to `docs/security/`. Reports are git-ignored because they may contain vulnerability details.
 
+Once a model exists, keep it current after code changes with:
+
+```text
+/appsec-advisor:update-threat-model
+```
+
+This re-analyzes only the components that changed (an alias for `create-threat-model --incremental`) and aborts with guidance if no model exists yet, so an update never turns into an accidental first full scan.
+
 For assessment depth, cost controls, focused scans, actor configuration, and repo-local and cross-repo context, see [docs/threat-modeler.md](docs/threat-modeler.md).
 
 ### 4. Optional: Triage the findings into a plan

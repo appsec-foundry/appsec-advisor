@@ -1,0 +1,45 @@
+update-threat-model — incremental update of an existing threat model
+
+  Alias for:  create-threat-model --incremental
+
+  Re-analyzes only the components that changed since the last run and refreshes
+  the report, changelog, and exports in place. It is the fast, everyday path for
+  keeping an existing threat model current after code changes.
+
+DIFFERENCE FROM create-threat-model
+
+  create-threat-model with no mode flag BOOTSTRAPS: if no model exists yet it
+  runs a first full assessment. update-threat-model never does that — because it
+  forces --incremental, it ABORTS with a clear message when:
+
+    * no threat model exists       -> run  create-threat-model  first
+    * only a legacy threat-model.md -> run  create-threat-model  once to
+      exists (no threat-model.yaml)    bootstrap the structured baseline
+
+  This makes "update" mean update, never an accidental first full scan.
+
+MODE-FLAG PASS-THROUGH
+
+  If you pass an explicit mode flag, it is honored and --incremental is NOT
+  injected — this skill then behaves exactly like create-threat-model:
+
+    --full        re-analyze everything, preserve changelog history
+    --rebuild     wipe all prior output and start fresh
+    --rerender    re-render report + re-run QA from existing fragments
+    --resume      continue from the last saved checkpoint
+
+ALL OTHER OPTIONS
+
+  Identical to create-threat-model (--repo, --output, --yaml, --requirements,
+  --base, --pr-mode, --no-qa, --dry-run, exports, etc.). Run:
+
+    /appsec-advisor:create-threat-model --help
+
+  for the complete flag reference.
+
+EXAMPLES
+
+  /appsec-advisor:update-threat-model
+  /appsec-advisor:update-threat-model --output docs/security
+  /appsec-advisor:update-threat-model --repo ../other-service
+  /appsec-advisor:update-threat-model --full        # forces a full re-scan
