@@ -114,7 +114,17 @@ The threat modeler analyzes the current Git repository and writes output to `doc
 
 For assessment depth, cost controls, focused scans, actor configuration, and repo-local and cross-repo context, see [docs/threat-modeler.md](docs/threat-modeler.md).
 
-### 4. Optional: Publish the threat model
+### 4. Optional: Triage the findings into a plan
+
+The report ranks findings by severity, but deciding what to fix now — and what to accept or defer — is a judgement call. Run the triage helper against an existing report, at any later point and independently of the assessment:
+
+```text
+/appsec-advisor:review-threat-model
+```
+
+It walks the findings with you (fix / accept-risk / defer, with an owner and target), keeps your decisions in a sidecar that survives the next re-scan, and writes a `remediation-plan.md`. It only reads the model — it never regenerates or re-scores it.
+
+### 5. Optional: Publish the threat model
 
 Generated reports are not committed automatically. For a local review, you can stop after the assessment completes. If your team intentionally tracks reviewed threat models in git, run the publish helper:
 

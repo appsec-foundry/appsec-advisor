@@ -367,6 +367,7 @@ Use these commands after an assessment or to recover an interrupted run.
 
 | Command | Purpose |
 |---|---|
+| `/appsec-advisor:review-threat-model` | Triage the findings of an existing report — decide fix / accept-risk / defer per finding (with owner and target), then write a prioritised `remediation-plan.md`. Runs independently of the assessment and only reads the model. |
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |
 | `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, HTML, SARIF, or pentest tasks without model calls. |
 | `/appsec-advisor:threat-model-health` | Check whether the current threat model is fresh, stale, missing, or blocked by run debris. |

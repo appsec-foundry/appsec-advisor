@@ -1,90 +1,90 @@
-# Enterprise-Erweiterbarkeit — was geht, was sinnvoll wäre
+# Enterprise Extensibility — what's possible, what would make sense
 
-Analyse der Konfig-/Hook-/Extension-Fläche aus Unternehmenssicht. Kein Implementierungsauftrag — Grundlage für Priorisierung.
+Analysis of the config/hook/extension surface from an enterprise perspective. Not an implementation mandate — a basis for prioritization.
 
-## Leitprinzip: die Trust-Grenze
+## Guiding principle: the trust boundary
 
-Jede Erweiterung fällt in genau eine von drei Klassen. Die Klasse entscheidet, ob sie ins Plugin gehört:
+Every extension falls into exactly one of three classes. The class decides whether it belongs in the plugin:
 
-| Klasse | Beispiel | Gehört ins Plugin? |
+| Class | Example | Belongs in the plugin? |
 |---|---|---|
-| **Deklarative Daten** (Kriterien + Wirkung, kein Code) | Coach-Topics, Gate-Policy, Requirements-Quelle | **Ja** — validiert, auditierbar, kein Fork |
-| **Arbitrary Code** (org-Skript läuft auf Event) | eigener PreToolUse-Blocker als Shell | **Nein** — nativ via Claude-Code-Settings/managed |
-| **Kern-Semantik** (Severity, CVSS, Agent-Instruktionen) | eigene Severity-Regeln | **Nein, nie** — Kern, konservativ by design |
+| **Declarative data** (criteria + effect, no code) | coach topics, gate policy, requirements source | **Yes** — validated, auditable, no fork |
+| **Arbitrary code** (org script runs on an event) | custom PreToolUse blocker as a shell script | **No** — native via Claude Code settings/managed |
+| **Core semantics** (severity, CVSS, agent instructions) | custom severity rules | **No, never** — core, conservative by design |
 
-Alles unten wird an dieser Grenze gemessen.
+Everything below is measured against this boundary.
 
 ---
 
-## A. Was heute geht
+## A. What's possible today
 
-### Runtime-Config (`org-profile.yaml`) — kein Fork, validiert
+### Runtime config (`org-profile.yaml`) — no fork, validated
 - **Presets**: depth, outputs (SARIF/PDF/pentest), scan, quality (QA/architect/walkthroughs/enrichment), verification, guardrails (wall-time, cost-cap, resumes, tracing), **requirements.gate** (mode/gate_on/priority_floor)
-- **policy.disable_opus** (org-weite Modell-Decke)
-- **branding** (Cover: Titel/Kontakt/Logo)
-- **requirements**: Quelle-URL, create-threat-model default-active, standalone_audit-Toggle
-- **llm_context**: 1–20 Markdown-Kontextdateien (untrusted data)
-- **security_coach**: enabled_by_default, max_requirements_per_topic, **baseline**, **inherit_default_topics**, **topics** (Trigger → Guidance + Requirement-IDs)
-- **skill_toggles** (User-Skills soft-disablen)
+- **policy.disable_opus** (org-wide model ceiling)
+- **branding** (cover: title/contact/logo)
+- **requirements**: source URL, create-threat-model default-active, standalone_audit toggle
+- **llm_context**: 1–20 Markdown context files (untrusted data)
+- **security_coach**: enabled_by_default, max_requirements_per_topic, **baseline**, **inherit_default_topics**, **topics** (trigger → guidance + requirement IDs)
+- **skill_toggles** (soft-disable user skills)
 - **actors** (inherit/disable/add)
 - **abuse_cases** (inherit/disable/add)
-- **mcp.servers** (eigene SAST/SCA-Endpoints ins gepackte `.mcp.json`)
+- **mcp.servers** (custom SAST/SCA endpoints in the packaged `.mcp.json`)
 
-### Build-time (`package-policy.yaml`) — nur einschränken
-- `plugin_surface`: **skills / hooks / mcp_servers** include|exclude. Kann Hooks nur **entfernen**, nicht hinzufügen.
+### Build-time (`package-policy.yaml`) — restrict only
+- `plugin_surface`: **skills / hooks / mcp_servers** include|exclude. Can only **remove** hooks, not add them.
 
-### Nativ in Claude Code — außerhalb des Plugins
-- Beliebige Hooks via `.claude/settings.json` (Projekt) oder `/etc/claude-code/managed-settings.json` (org-weit). **Volle Hook-Flexibilität existiert hier bereits.**
+### Native in Claude Code — outside the plugin
+- Arbitrary hooks via `.claude/settings.json` (project) or `/etc/claude-code/managed-settings.json` (org-wide). **Full hook flexibility already exists here.**
 
-### Hook-spezifisch heute
-- **security-coach**: voll datengetrieben konfigurierbar (Topics/Baseline/Enabled/Cap). ✅
-- **agent-logger**: nur Env (`APPSEC_LOG_REDACT_PATHS`, `APPSEC_TRACING`) + `config.json` (`logging.max_log_bytes/verbose`). Nicht im org-profile, also nicht paketierbar.
-
----
-
-## B. Was NICHT geht (Lücken)
-
-1. **Eigenen Plugin-Hook / Event-Handler hinzufügen** — package-policy kann nur entfernen. (Bewusst — siehe Trust-Grenze.)
-2. **agent-logger als Policy** — Redaction, Retention, Log-Ziel sind Env/config.json, nicht org-profile. Compliance-relevant, aber nicht paketierbar.
-3. **Enforcement-Actions** — der Coach kann nur *raten* (Kontext injizieren), nicht *durchsetzen* (Prompt warnen/blocken).
-4. **Coach ist profile-level, nicht per-preset** — ein `ci`-Preset kann kein anderes Coaching haben als `release`. `resolve()` emittiert `security_coach` global.
-5. **Run-Policy nur in Env, nicht im Profil**: `APPSEC_FAIL_ON` (Severity→Exit), `APPSEC_URL_ALLOWLIST` (SSRF/Exfil-Guard bei Remote-Fetch), Modell-Routing (`APPSEC_*_MODEL`), Parallelität. Sind Policy-tauglich, aber nicht als Preset/Policy paketierbar.
+### Hook-specific today
+- **security-coach**: fully data-driven configurable (topics/baseline/enabled/cap). ✅
+- **agent-logger**: env only (`APPSEC_LOG_REDACT_PATHS`, `APPSEC_TRACING`) + `config.json` (`logging.max_log_bytes/verbose`). Not in the org-profile, hence not packageable.
 
 ---
 
-## C. Enterprise-Sicht: was ist sinnvoll
+## B. What's NOT possible (gaps)
 
-Ein Unternehmen will fünf Dinge: **Konsistenz** (jeder Dev, gleiche Regeln), **Compliance** (Audit-Trail, Redaction, Data-Residency), **Governance** (nicht abschaltbar), **Integration** (eigenes SAST/Ticketing), **niedrige Reibung** (CI ohne Per-Dev-Setup).
+1. **Adding a custom plugin hook / event handler** — package-policy can only remove. (Deliberate — see trust boundary.)
+2. **agent-logger as policy** — redaction, retention, log destination are env/config.json, not org-profile. Compliance-relevant, but not packageable.
+3. **Enforcement actions** — the coach can only *advise* (inject context), not *enforce* (warn/block a prompt).
+4. **Coach is profile-level, not per-preset** — a `ci` preset can't have different coaching than `release`. `resolve()` emits `security_coach` globally.
+5. **Run policy only in env, not in the profile**: `APPSEC_FAIL_ON` (severity→exit), `APPSEC_URL_ALLOWLIST` (SSRF/exfil guard on remote fetch), model routing (`APPSEC_*_MODEL`), parallelism. These are policy-worthy, but not packageable as a preset/policy.
 
-Bewertung nach Wert × Sicherheit:
+---
 
-| # | Erweiterung | Klasse | Enterprise-Wert | Status |
+## C. Enterprise view: what makes sense
+
+An enterprise wants five things: **consistency** (every dev, same rules), **compliance** (audit trail, redaction, data residency), **governance** (not switchable off), **integration** (own SAST/ticketing), **low friction** (CI without per-dev setup).
+
+Assessment by value × safety:
+
+| # | Extension | Class | Enterprise value | Status |
 |---|---|---|---|---|
-| 1 | Coach-Topics/Baseline (eigene secure-by-default-Guidance in Firmensprache, auf eigenen Katalog gemappt) | deklarativ | **hoch** | ✅ gebaut |
-| 2 | Requirements-Gate pro Preset (CI gated per Policy) | deklarativ | **hoch** | ✅ gebaut |
-| 3 | **Run-Policy ins Profil**: `guardrails.fail_on` + `policy.url_allowlist` | deklarativ | **hoch** | ✅ gebaut (Modell-Routing verworfen: Ordering-Falle > Nutzen; `disable_opus` deckt die Kern-Governance) |
-| 4 | **agent-logger als Policy**: `logging.redact_paths` + Retention | deklarativ | mittel | offen |
-| 5 | Per-Preset-Coach (Preset kann Coach an/aus + Topic-Subset) | deklarativ | mittel–niedrig | offen |
-| 6 | **Enforcement-Vokabel**: Coach-Topic `action: warn\|block` | deklarativ (feste Vokabel) | mittel (nur wenn Durchsetzen > Raten) | offen |
-| 7 | Beliebige org-Hooks im Plugin | Arbitrary Code | — | **bewusst nein** (nativ nutzen) |
-| 8 | Eigene Severity-/CVSS-Policy | Kern-Semantik | — | **nie** |
+| 1 | Coach topics/baseline (own secure-by-default guidance in company language, mapped to own catalog) | declarative | **high** | ✅ built |
+| 2 | Requirements gate per preset (CI gated by policy) | declarative | **high** | ✅ built |
+| 3 | **Run policy into the profile**: `guardrails.fail_on` + `policy.url_allowlist` | declarative | **high** | ✅ built (model routing dropped: ordering trap > benefit; `disable_opus` covers the core governance) |
+| 4 | **agent-logger as policy**: `logging.redact_paths` + retention | declarative | medium | open |
+| 5 | Per-preset coach (preset can toggle coach on/off + topic subset) | declarative | medium–low | open |
+| 6 | **Enforcement vocabulary**: coach topic `action: warn\|block` | declarative (fixed vocabulary) | medium (only if enforcing > advising) | open |
+| 7 | Arbitrary org hooks in the plugin | arbitrary code | — | **deliberately no** (use native) |
+| 8 | Custom severity/CVSS policy | core semantics | — | **never** |
 
-### Warum #3 der größte offene Hebel ist
-`fail_on`, `url_allowlist`, Modell-Routing sind **echte Sicherheits-/Kostenpolitik**, die heute nur als Env-Var existiert — also faktisch **nicht paketierbar** (der Packager kennt keine Env-Injection). Eine Org kann „blocke Findings ≥ High", „erlaube Remote-Fetch nur zu diesen Hosts", „nutze aus Data-Residency-Gründen nur Modell X" nicht ins gebrandete Plugin gießen. Das ist genau die Governance, für die Internal-Packaging existiert.
+### Why #3 is the biggest open lever
+`fail_on`, `url_allowlist`, model routing are **real security/cost policy** that today exists only as an env var — hence effectively **not packageable** (the packager knows nothing about env injection). An org can't bake "block findings ≥ High", "allow remote fetch only to these hosts", or "for data-residency reasons use only model X" into the branded plugin. That's exactly the governance internal packaging exists for.
 
-### Warum #6 mit Vorsicht
-Enforcement (Prompt blocken) ist ein realer Enterprise-Wunsch, aber intrusiv und leicht falsch kalibriert. Mit **fester Vokabel** (`inject`=heute / `warn` / `block`) bleibt es deklarativ und auditierbar — kein Arbitrary-Code. Nur bauen, wenn „raten" nachweislich nicht reicht.
+### Why #6 with caution
+Enforcement (blocking a prompt) is a real enterprise desire, but intrusive and easily miscalibrated. With a **fixed vocabulary** (`inject`=today / `warn` / `block`) it stays declarative and auditable — no arbitrary code. Only build it if "advising" demonstrably isn't enough.
 
 ---
 
-## D. Empfehlung / Reihenfolge
+## D. Recommendation / order
 
-1. **(erledigt)** Coach-Regeln + Gate-Policy.
-2. **#3 Run-Policy ins org-profile** — `guardrails.fail_on`, `policy.url_allowlist`, Modell-Routing. Höchster Governance-Wert, schließt die „Policy steckt in Env fest"-Lücke. Bidirektional wie das Gate (Schema + `resolve_config`/`resolve_org_profile` + `.env`-Emit + Tests).
-3. **#4 agent-logger-Compliance** — Redaction/Retention als Policy. Klein, Compliance-Wert.
-4. **#6 Enforcement-Vokabel** — nur bei echtem Bedarf.
+1. **(done)** Coach rules + gate policy.
+2. **#3 run policy into the org-profile** — `guardrails.fail_on`, `policy.url_allowlist`, model routing. Highest governance value, closes the "policy stuck in env" gap. Bidirectional like the gate (schema + `resolve_config`/`resolve_org_profile` + `.env` emit + tests).
+3. **#4 agent-logger compliance** — redaction/retention as policy. Small, compliance value.
+4. **#6 enforcement vocabulary** — only on real demand.
 
-Nicht bauen: #7 (nativ vorhanden), #8 (Kern).
+Don't build: #7 (natively available), #8 (core).
 
-### Ehrliche Gesamteinschätzung
-Die Config-Fläche ist bereits **groß**. Jede weitere Option kostet Doku + Test + kognitive Last. Der klar wertvollste offene Schritt ist **#3** — weil dort echte Policy in einer nicht-paketierbaren Ecke (Env) feststeckt. Der Rest ist inkrementell; #5 und #6 nur auf konkreten Bedarf, nicht auf Vorrat.
+### Honest overall assessment
+The config surface is already **large**. Every additional option costs docs + tests + cognitive load. The clearly most valuable open step is **#3** — because that's where real policy is stuck in a non-packageable corner (env). The rest is incremental; #5 and #6 only on concrete demand, not on spec.

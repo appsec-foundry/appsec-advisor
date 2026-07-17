@@ -446,6 +446,12 @@ class TestNextSteps:
         lines_without = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
         assert not any("Section 8" in l for l in lines_without)
 
+    def test_triage_hint_only_when_findings_present(self, tmp_path):
+        with_findings = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
+        assert any("review-threat-model" in l for l in with_findings)
+        clean = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
+        assert not any("review-threat-model" in l for l in clean)
+
     def test_architect_review_shown_when_file_exists(self, tmp_path):
         (tmp_path / ".architect-review.md").write_text("# review\n")
         lines = rcs.build_next_steps(

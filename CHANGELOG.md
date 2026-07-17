@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- New skill to triage a finished threat model: `/appsec-advisor:review-threat-model` walks the findings with you — fix, accept, or defer each one, with an owner and target — and writes a prioritised `remediation-plan.md`. It runs later and on its own, without re-scanning or changing anything the assessment produced; your decisions are kept in a sidecar that survives the next re-scan. The completion summary now points to it as a next step.
 - New Weakness Register: systemic and design-level weaknesses now get their own chapter. Findings are grouped by how strong the evidence is and by how a control is built (home-grown, misused, or missing), linked back to the findings behind them, and summarised as a security-principles verdict in the Management Summary. It also flags supply-chain risks (GitHub Actions on mutable tags/branches) and secrets committed to source. Broad CWE families no longer collapse unrelated issues into one.
 - Access-control, crypto, and mass-assignment scanners now cover Java, Python, Go, PHP, C#/.NET, Ruby/Rails, and mobile — not just JavaScript/TypeScript.
 - Headless runs can use a Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), so CI works without an API key.

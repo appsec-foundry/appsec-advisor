@@ -766,6 +766,12 @@ def build_next_steps(
         top = "Critical" if critical else "High"
         lines.append(f'Review {top} findings in Section 8 "Findings Register"')
 
+    # Triage — whenever the run surfaced findings, point at the consumer skill
+    # that turns them into a prioritised, owned remediation plan. Runs later and
+    # independently of this pipeline, so it fits any follow-up session.
+    if sum(sev.values()):
+        lines.append("Triage the findings into a prioritised remediation plan: /appsec-advisor:review-threat-model")
+
     # Architect review — only surface the dot-file when it contains actionable defects.
     # Advisory-only reviews (technical_defects=0, no repair plan) are internal
     # artefacts; everything important is already in threat-model.md.

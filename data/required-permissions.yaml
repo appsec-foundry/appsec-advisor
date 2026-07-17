@@ -106,6 +106,10 @@ required:
     reason: "eval_threat_model.py and appsec-eval-judge write the brief, candidate/verdict sidecars, and EVAL-REVIEW.md under the default eval output dir"
     category: file
 
+  - entry: "Write(${REPO_ROOT}/.appsec-triage/**)"
+    reason: "review-threat-model skill writes the user's triage sidecar (triage.yaml) and remediation-plan.md under a repo-root namespace kept separate from OUTPUT_DIR so pipeline cleanup / diagnostic-bundle never touch it (reads are covered by Read(${REPO_ROOT}/**))"
+    category: file
+
   # NOTE: The plugin writes ~30 dot-prefixed sidecar files and dot-directories
   # under OUTPUT_DIR (.recon-summary.md, .assets.json, .dispatch-context/**,
   # .qa-status.json, etc.). Claude Code's /** glob does NOT match dot-prefixed

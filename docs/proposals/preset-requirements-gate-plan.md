@@ -1,49 +1,49 @@
-# Implementierungsplan — Gate-Policy in `preset_requirements` paketierbar machen
+# Implementation plan — make gate policy packageable in `preset_requirements`
 
-**Ziel:** Eine Org soll die Requirements-Gate-Policy (`--gate` an/aus, `--gate-on`,
-`--priority-floor`) **pro Preset** im org-profile packen können, statt sie bei
-jedem CI-Lauf per CLI mitzugeben. Betrifft **beide** Requirements-Skills
+**Goal:** An org should be able to package the requirements gate policy (`--gate` on/off, `--gate-on`,
+`--priority-floor`) **per preset** in the org-profile, instead of passing it on every
+CI run via CLI. Affects **both** requirements skills
 (`verify-requirements` diff-scoped, `audit-security-requirements` full-repo).
 
-Status quo (verifiziert):
-- `schemas/org-profile.schema.yaml:394` `preset_requirements` kennt nur `enabled`.
-- Beide Skills parsen `gate_mode`/`gate_on`/`priority_floor` **nur aus CLI**,
-  Hard-Defaults `false` / `fail` / `MUST`
+Status quo (verified):
+- `schemas/org-profile.schema.yaml:394` `preset_requirements` only knows `enabled`.
+- Both skills parse `gate_mode`/`gate_on`/`priority_floor` **only from CLI**,
+  hard defaults `false` / `fail` / `MUST`
   (`skills/audit-security-requirements/SKILL.md` Step 1a,
   `skills/verify-requirements/SKILL.md:74-76`).
-- `scripts/requirements_gate.py:61-69` nimmt `--priority-floor`/`--gate-on` als Args,
-  Default `MUST`/`fail`.
-- `resolve_org_profile.flatten_preset()` (`:183-230`) surfaced heute aus dem
-  Requirements-Preset nur `check_requirements = requirements.enabled`.
-- `resolve_config._apply_org_profile` liest `defaults` selektiv per `.get()` und
-  reicht den Blob als `org_profile_defaults` durch → neuer Key ist für
-  `create-threat-model` **kein** Regressionsrisiko (verifiziert `:1851-1852`).
+- `scripts/requirements_gate.py:61-69` takes `--priority-floor`/`--gate-on` as args,
+  default `MUST`/`fail`.
+- `resolve_org_profile.flatten_preset()` (`:183-230`) today surfaces only
+  `check_requirements = requirements.enabled` from the requirements preset.
+- `resolve_config._apply_org_profile` reads `defaults` selectively via `.get()` and
+  passes the blob through as `org_profile_defaults` → the new key is **not** a
+  regression risk for `create-threat-model` (verified `:1851-1852`).
 
 ---
 
-## Design-Entscheidung (bitte bestätigen)
+## Design decision (please confirm)
 
-Zwei Semantiken für die gepackte Gate-Policy:
+Two semantics for the packaged gate policy:
 
-**A. Default-Seed (empfohlen, v1):** Preset liefert die *Default*-Werte; eine
-explizite CLI-Flag überschreibt sie weiterhin. Präzedenz
-`CLI > Preset > Hard-Default`. Einfach, spiegelt den Charakter von
-`gate_on`/`priority_floor` als Per-Run-Knöpfe, keine neue Sperr-Mechanik.
+**A. Default seed (recommended, v1):** Preset provides the *default* values; an
+explicit CLI flag still overrides them. Precedence
+`CLI > Preset > Hard default`. Simple, mirrors the character of
+`gate_on`/`priority_floor` as per-run knobs, no new locking mechanism.
 
-**B. Governance-Lock (später optional):** zusätzliches `enforce: true`, das —
-analog `policy.disable_opus` (OR-kombiniert, nicht abschaltbar) — den Gate
-**erzwingt**, sodass ein Entwickler ihn per CLI nicht deaktivieren kann.
+**B. Governance lock (optional, later):** an additional `enforce: true` that —
+analogous to `policy.disable_opus` (OR-combined, not disableable) — **forces** the
+gate so a developer cannot disable it via CLI.
 
-→ **Empfehlung: A jetzt umsetzen**, B als dokumentiertes Follow-up vermerken.
-Der Plan unten setzt A um.
+→ **Recommendation: implement A now**, note B as a documented follow-up.
+The plan below implements A.
 
 ---
 
-## Contract-Änderung (bidirektional: Producer + Schema + Consumer + Validation + Tests)
+## Contract change (bidirectional: producer + schema + consumer + validation + tests)
 
 ### 1. Schema — `schemas/org-profile.schema.yaml`
 
-`$defs/preset_requirements` (aktuell nur `enabled`) erweitern:
+Extend `$defs/preset_requirements` (currently only `enabled`):
 
 ```yaml
 preset_requirements:
@@ -68,15 +68,15 @@ preset_requirements:
           enum: [MUST, SHOULD, MAY]
 ```
 
-Keine Pflichtfelder → v1-Profile und Presets ohne `gate` bleiben unverändert
-(Verhalten: advisory/fail/MUST). Kein `api_version`-Bump nötig (rein additiv,
+No required fields → v1 profiles and presets without `gate` stay unchanged
+(behavior: advisory/fail/MUST). No `api_version` bump needed (purely additive,
 optional).
 
 ### 2. Producer — `scripts/resolve_org_profile.py`
 
-In `flatten_preset()` (nach `:217 check_requirements`) einen **nested** Block
-in `defaults` ergänzen — nur wenn das Preset ihn setzt, sonst `None`, damit die
-Skills auf ihre Hard-Defaults zurückfallen:
+In `flatten_preset()` (after `:217 check_requirements`) add a **nested** block
+to `defaults` — only when the preset sets it, otherwise `None`, so the
+skills fall back to their hard defaults:
 
 ```python
 _gate = (requirements.get("gate") or {})
@@ -87,20 +87,20 @@ defaults["requirements_gate"] = {
 } if _gate else None
 ```
 
-Der Key landet in `.org-profile-effective.json` unter `defaults.requirements_gate`.
-`create-threat-model` ignoriert ihn (nur `.get()` bekannter Keys).
+The key lands in `.org-profile-effective.json` under `defaults.requirements_gate`.
+`create-threat-model` ignores it (only `.get()` of known keys).
 
-### 3. Consumer — beide SKILL.md (Step 1a Gate-Resolution)
+### 3. Consumer — both SKILL.md (Step 1a gate resolution)
 
-Beide Skills emittieren bereits `.org-profile-effective.json` via
-`resolve_org_profile.py --emit-file` und kennen `$AUDIT_OUTPUT_DIR` /
-Output-Dir. **Nach** dem Emit und **vor** dem Gate-Aufruf die Preset-Defaults
-lesen und nur dort anwenden, wo die CLI-Flag **nicht** gesetzt wurde:
+Both skills already emit `.org-profile-effective.json` via
+`resolve_org_profile.py --emit-file` and know `$AUDIT_OUTPUT_DIR` /
+output dir. **After** the emit and **before** the gate call, read the preset
+defaults and apply them only where the CLI flag was **not** set:
 
 ```bash
 EFFECTIVE="$OUTPUT_DIR/.org-profile-effective.json"
 if [ -f "$EFFECTIVE" ]; then
-  # jeweils nur seed'en, wenn CLI-Flag nicht explizit übergeben wurde
+  # only seed each when the CLI flag was not explicitly passed
   read PRESET_GATE_MODE PRESET_GATE_ON PRESET_FLOOR < <(python3 - "$EFFECTIVE" <<'PY'
 import json,sys
 d=(json.load(open(sys.argv[1])).get("defaults") or {}).get("requirements_gate") or {}
@@ -113,68 +113,68 @@ PY
 fi
 ```
 
-Präzedenz-Regel im Prosa-Text beider Step-1a festhalten:
-**explizite CLI-Flag > aktives Preset > Hard-Default (advisory / fail / MUST)**.
-Die `*_SET`-Marker werden beim CLI-Parsen in Step 1a gesetzt (Prosa-Ergänzung:
-„merke dir, ob der Nutzer die Flag explizit übergeben hat").
+State the precedence rule in the prose of both Step 1a:
+**explicit CLI flag > active preset > hard default (advisory / fail / MUST)**.
+The `*_SET` markers are set during CLI parsing in Step 1a (prose addition:
+"remember whether the user passed the flag explicitly").
 
-Optional (empfohlen für Transparenz): im Startup-Banner eine Zeile
+Optional (recommended for transparency): show a line in the startup banner
 `Gate     : enforce · gate-on=partial · floor=SHOULD (from preset ci-standard)`
-zeigen, wenn ein Preset die Policy liefert — sonst weglassen.
+when a preset provides the policy — otherwise omit it.
 
-Gate-Aufruf selbst (`requirements_gate.py "${GATE_ARGS[@]}"`) bleibt unverändert;
-er bekommt die bereits aufgelösten Werte.
+The gate call itself (`requirements_gate.py "${GATE_ARGS[@]}"`) stays unchanged;
+it receives the already-resolved values.
 
 ---
 
-## Dokumentation („alles sauber dokumentieren")
+## Documentation ("document everything cleanly")
 
-1. **`docs/org-profiles.md`** — im `presets.<name>.requirements`-Abschnitt die
-   neuen `gate.{mode,gate_on,priority_floor}`-Felder dokumentieren, inkl.
-   Präzedenz (CLI überschreibt) und einem CI-Preset-Beispiel.
-2. **`docs/internal-plugin-packaging.md`** — im `ci-standard`-Preset-Beispiel
-   (aktuell `:181-186`) einen `gate:`-Block ergänzen und im Fließtext erwähnen,
-   dass die Gate-Policy jetzt paketierbar ist (bisher CLI-only).
-3. **`docs/security-requirements-audit-skill.md`** — Präzedenz-Kette um „aktives
-   Preset liefert Gate-Defaults" ergänzen.
-4. **Beide `SKILL.md` `--help`-Blöcke** — bei `--gate/--gate-on/--priority-floor`
-   notieren: „Default kann aus dem aktiven Preset stammen; die Flag überschreibt."
-5. **`AGENTS.md`** — Editing-Guidance-Tabelle prüfen; falls eine
-   org-profile-/requirements-Zeile existiert, auf die neue Gate-Fläche verweisen.
-6. **CHANGELOG / `check_release_meta.py`** — Eintrag „preset requirements gate
-   policy" (additiv, kein Breaking).
+1. **`docs/org-profiles.md`** — in the `presets.<name>.requirements` section,
+   document the new `gate.{mode,gate_on,priority_floor}` fields, including
+   precedence (CLI overrides) and a CI preset example.
+2. **`docs/internal-plugin-packaging.md`** — add a `gate:` block to the
+   `ci-standard` preset example (currently `:181-186`) and mention in prose
+   that the gate policy is now packageable (previously CLI-only).
+3. **`docs/security-requirements-audit-skill.md`** — extend the precedence chain
+   with "active preset provides gate defaults".
+4. **Both `SKILL.md` `--help` blocks** — note at `--gate/--gate-on/--priority-floor`:
+   "default can come from the active preset; the flag overrides it".
+5. **`AGENTS.md`** — check the Editing Guidance table; if an
+   org-profile/requirements row exists, point it at the new gate surface.
+6. **CHANGELOG / `check_release_meta.py`** — entry "preset requirements gate
+   policy" (additive, not breaking).
 
 ---
 
 ## Tests
 
-- **`tests/test_org_profile_schema.py`**: (a) Preset mit gültigem `gate`-Block
-  validiert; (b) ungültiges `gate_on: yes` / `priority_floor: HIGH` /
-  `mode: block` wird abgelehnt; (c) `additionalProperties` im gate-Block wird
-  abgelehnt.
-- **`tests/test_resolve_org_profile.py`**: `flatten_preset` surfaced
-  `defaults.requirements_gate` korrekt aus einem Preset; Preset ohne gate →
+- **`tests/test_org_profile_schema.py`**: (a) preset with a valid `gate` block
+  validates; (b) invalid `gate_on: yes` / `priority_floor: HIGH` /
+  `mode: block` is rejected; (c) `additionalProperties` in the gate block is
+  rejected.
+- **`tests/test_resolve_org_profile.py`**: `flatten_preset` surfaces
+  `defaults.requirements_gate` correctly from a preset; preset without gate →
   `requirements_gate is None`.
-- **`tests/fixtures/org-profiles/`**: eine Fixture mit CI-Preset (`enforce`,
-  `partial`, `SHOULD`) und einem Preset ohne gate.
-- **`tests/test_resolve_config_org_profile.py`**: Regressions-Guard —
-  `create-threat-model` bleibt unbeeinflusst vom neuen `defaults`-Key (grün).
-- Skills sind Prosa → keine Unit-Tests; Präzedenz wird über den
-  resolve/flatten-Layer abgedeckt. Bei Bedarf ein kleiner Integrationstest, der
-  aus einem Fixture-Profil das effective-JSON emittiert und den Gate-Block prüft.
+- **`tests/fixtures/org-profiles/`**: a fixture with a CI preset (`enforce`,
+  `partial`, `SHOULD`) and a preset without gate.
+- **`tests/test_resolve_config_org_profile.py`**: regression guard —
+  `create-threat-model` stays unaffected by the new `defaults` key (green).
+- Skills are prose → no unit tests; precedence is covered via the
+  resolve/flatten layer. If needed, a small integration test that emits the
+  effective JSON from a fixture profile and checks the gate block.
 
 ## `data/required-permissions.yaml`
 
-Kein neuer Bash-Command / Write-Target / Sub-Agent-Dispatch — die Skills rufen
-`resolve_org_profile.py`, `requirements_gate.py` etc. bereits auf. **Keine
-Änderung** (in der Umsetzung final gegenprüfen).
+No new Bash command / write target / sub-agent dispatch — the skills already call
+`resolve_org_profile.py`, `requirements_gate.py`, etc. **No
+change** (double-check during implementation).
 
-## Reihenfolge & Verify
+## Order & verify
 
-1. Schema erweitern → `tests/test_org_profile_schema.py` grün.
-2. `flatten_preset` + Fixture → `tests/test_resolve_org_profile.py` grün.
-3. Beide SKILL.md Step 1a + `--help` + Präzedenz-Prosa.
+1. Extend schema → `tests/test_org_profile_schema.py` green.
+2. `flatten_preset` + fixture → `tests/test_resolve_org_profile.py` green.
+3. Both SKILL.md Step 1a + `--help` + precedence prose.
 4. Docs 1–6.
-5. `test_resolve_config_org_profile.py` (Regression) + targeted subset + `make test` / `make lint`.
-6. Manueller Smoke: Fixture-Profil mit CI-Preset → `audit-security-requirements --status`
-   zeigt Gate-Banner; `--gate-on fail` auf der CLI überschreibt Preset-`partial`.
+5. `test_resolve_config_org_profile.py` (regression) + targeted subset + `make test` / `make lint`.
+6. Manual smoke: fixture profile with CI preset → `audit-security-requirements --status`
+   shows gate banner; `--gate-on fail` on the CLI overrides preset `partial`.

@@ -1,37 +1,37 @@
-# Umsetzungsplan — org-eigene Hooks über das Plugin ausrollen
+# Implementation plan — roll out org-owned hooks via the plugin
 
-> **Status: umgesetzt** (2026-07-17). Alle Punkte gebaut; Tests grün. Event-Satz
-> voll, org-Hooks included-by-default (exclude-bar). Details siehe CHANGELOG.
+> **Status: done** (2026-07-17). All items built; tests green. Event set
+> complete, org hooks included-by-default (exclude-able). See CHANGELOG for details.
 
 
-**Ziel:** Ein Unternehmen deklariert eigene Claude-Code-Hooks im org-profile; der
-Packager legt die Skripte + hooks.json-Einträge ins gebrandete Artefakt und
-protokolliert sie (org-owned) in `package-surface.json`. Ein zentrales Plugin
-enthält alles, volle Flexibilität — ohne die Auditierbarkeit zu opfern.
+**Goal:** A company declares its own Claude Code hooks in the org-profile; the
+packager places the scripts + hooks.json entries into the branded artifact and
+records them (org-owned) in `package-surface.json`. A central plugin bundles
+everything, full flexibility — without sacrificing auditability.
 
-**Muster:** 1:1 gespiegelt an `mcp.servers` (org-gelieferte ausführbare Fläche,
-`${CLAUDE_PLUGIN_ROOT}`-Pfade, im Surface-Manifest geführt, Smoke-Test-verifiziert).
-
----
-
-## Der Knackpunkt (zuerst, weil er das Design bestimmt)
-
-`package_internal_plugin.py:_hook_id()` **und** `smoke_test_package.py:_hook_id()`
-leiten die Hook-ID ausschließlich aus `/scripts/<name>` ab. Org-Hooks unter
-`/org-profile/<name>/hooks/` liefern dort `None` → sie sind unsichtbar für:
-- `apply_hook_policy` (behält `hook_id is None` bedingungslos, gated nie),
-- `write_surface_manifest` (nicht im Manifest),
-- den Smoke-Test (`_registered_hook_ids` + `check_surface_manifest`).
-
-**Konsequenz:** Org-Hook-IDs dürfen nicht aus dem Command abgeleitet werden,
-sondern kommen aus der **Deklaration** und werden explizit durch alle drei
-Schichten getragen. Das ist die Leitentscheidung des Plans.
+**Pattern:** mirrored 1:1 on `mcp.servers` (org-supplied executable surface,
+`${CLAUDE_PLUGIN_ROOT}` paths, tracked in the surface manifest, smoke-test-verified).
 
 ---
 
-## Deklaration (Schema)
+## The crux (first, because it drives the design)
 
-Profil-weiter `hooks:`-Block (nicht preset-scoped), Map `id → {event, command, matcher?}`:
+`package_internal_plugin.py:_hook_id()` **and** `smoke_test_package.py:_hook_id()`
+derive the hook ID solely from `/scripts/<name>`. Org hooks under
+`/org-profile/<name>/hooks/` return `None` there → they are invisible to:
+- `apply_hook_policy` (unconditionally keeps `hook_id is None`, never gates it),
+- `write_surface_manifest` (not in the manifest),
+- the smoke test (`_registered_hook_ids` + `check_surface_manifest`).
+
+**Consequence:** Org hook IDs must not be derived from the command, but instead
+come from the **declaration** and be carried explicitly through all three
+layers. This is the guiding decision of the plan.
+
+---
+
+## Declaration (schema)
+
+Profile-wide `hooks:` block (not preset-scoped), map `id → {event, command, matcher?}`:
 
 ```yaml
 hooks:
@@ -41,119 +41,119 @@ hooks:
     command: ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py
 ```
 
-Skripte liegen unter `org-profile/hooks/` — `overlay_org_profile()` kopiert den
-Profil-Ordner ohnehin komplett nach `build/org-profile/`.
+Scripts live under `org-profile/hooks/` — `overlay_org_profile()` copies the
+whole profile folder to `build/org-profile/` anyway.
 
-Schema-Regeln (`schemas/org-profile.schema.yaml`, neuer Top-Level `hooks`):
-- `propertyNames` `^[a-z0-9][a-z0-9_-]{0,62}$`, `additionalProperties:false` pro Hook.
+Schema rules (`schemas/org-profile.schema.yaml`, new top-level `hooks`):
+- `propertyNames` `^[a-z0-9][a-z0-9_-]{0,62}$`, `additionalProperties:false` per hook.
 - `event`: enum `[UserPromptSubmit, PreToolUse, PostToolUse, Stop, SubagentStop, Notification, SessionStart, SessionEnd, PreCompact]`.
 - `command`: string, required. `matcher`: string, optional.
-- `maxProperties` (z.B. 32) als Runaway-Backstop.
+- `maxProperties` (e.g. 32) as a runaway backstop.
 
 ---
 
-## Contract-Änderungen (bidirektional)
+## Contract changes (bidirectional)
 
 ### 1. Schema — `schemas/org-profile.schema.yaml`
-Neuer `hooks`-Block wie oben.
+New `hooks` block as above.
 
-### 2. Validation — `scripts/validate_org_profile.py` (neues `_check_hooks`, mirror `_check_mcp`)
-Strukturchecks, die JSON-Schema nicht ausdrückt:
-- `command` **muss** mit `${CLAUDE_PLUGIN_ROOT}/org-profile/` beginnen (org-Skript
-  im Profil-Ordner) — Host-Pfade, absolute Pfade, `..` ablehnen.
-- Das aufgelöste Skript **muss existieren** unter dem Profil-Verzeichnis
-  (reuse `_resolve_under`, gegen den Pfad-Rest nach `${CLAUDE_PLUGIN_ROOT}/org-profile/`).
-- `matcher` nur bei `PreToolUse`/`PostToolUse`.
-- ID darf nicht mit den Upstream-IDs kollidieren (`security-coach`, `agent-logger` reserviert).
-- In die Doc-Aufzählung oben (`validate_org_profile.py:8-16`) eine Zeile ergänzen.
+### 2. Validation — `scripts/validate_org_profile.py` (new `_check_hooks`, mirror `_check_mcp`)
+Structural checks that JSON Schema cannot express:
+- `command` **must** start with `${CLAUDE_PLUGIN_ROOT}/org-profile/` (org script
+  in the profile folder) — reject host paths, absolute paths, `..`.
+- The resolved script **must exist** under the profile directory
+  (reuse `_resolve_under`, against the path remainder after `${CLAUDE_PLUGIN_ROOT}/org-profile/`).
+- `matcher` only for `PreToolUse`/`PostToolUse`.
+- ID must not collide with the upstream IDs (`security-coach`, `agent-logger` reserved).
+- Add a line to the doc listing above (`validate_org_profile.py:8-16`).
 
 ### 3. Packager — `scripts/package_internal_plugin.py`
-- **`_org_profile_hooks(build) -> dict`** — liest `hooks` aus dem overlaid Profil
-  (analog `_org_profile_mcp_servers`, `:415`).
-- **`apply_hook_policy` erweitern** (`:367`):
-  - `available = _available_hook_ids(build) ∪ set(org_hooks)` — org-IDs werden
-    Teil der Keep-Menge, damit `plugin_surface.hooks` include/exclude sie **auch
-    gated**.
-  - Nach dem Filtern der Upstream-Hooks: gekeepte org-Hooks in `filtered_events`
-    mergen. Pro Hook ein outer-Eintrag `{matcher?, hooks:[{type:"command", command}]}`
-    unter `event`.
-  - Rückgabe erweitern: `{"included", "removed", "events", "org": [{id, event, command}]}`
-    (nur gekeepte org-Hooks).
-- Reihenfolge stimmt bereits: `overlay_org_profile` läuft vor
-  `apply_package_surface_policy` (MCP liest denselben overlaid Profil-Stand).
+- **`_org_profile_hooks(build) -> dict`** — reads `hooks` from the overlaid profile
+  (analogous to `_org_profile_mcp_servers`, `:415`).
+- **Extend `apply_hook_policy`** (`:367`):
+  - `available = _available_hook_ids(build) ∪ set(org_hooks)` — org IDs become
+    part of the keep set, so that `plugin_surface.hooks` include/exclude **also
+    gates** them.
+  - After filtering the upstream hooks: merge kept org hooks into `filtered_events`.
+    One outer entry per hook `{matcher?, hooks:[{type:"command", command}]}`
+    under `event`.
+  - Extend the return value: `{"included", "removed", "events", "org": [{id, event, command}]}`
+    (only kept org hooks).
+- Ordering is already correct: `overlay_org_profile` runs before
+  `apply_package_surface_policy` (MCP reads the same overlaid profile state).
 
-### 4. Surface-Manifest — `write_surface_manifest` (`:449`)
-Das `hooks`-Dict trägt jetzt `org: [...]` — **keine Signaturänderung** (hooks-Dict
-wird schon durchgereicht). Das Manifest führt org-Hooks getrennt von den
-Upstream-`included/removed`. Ohne Manifest-Eintrag kein org-Hook — harte Bedingung.
+### 4. Surface manifest — `write_surface_manifest` (`:449`)
+The `hooks` dict now carries `org: [...]` — **no signature change** (the hooks dict
+is already passed through). The manifest lists org hooks separately from the
+upstream `included/removed`. No manifest entry, no org hook — a hard condition.
 
-### 5. Smoke-Test — `scripts/smoke_test_package.py:check_surface_manifest` (`:129`)
-Für jeden `hooks.org`-Eintrag prüfen:
-- der `command` steht in der gebauten `hooks/hooks.json` unter dem deklarierten `event`,
-- das referenzierte Skript existiert unter `org-profile/` im Build.
-Neuer Helper `_commands_for_event(root, event)` scannt hooks.json. Fehlt ein
-deklarierter org-Hook (oder umgekehrt) → `_die`.
+### 5. Smoke test — `scripts/smoke_test_package.py:check_surface_manifest` (`:129`)
+For each `hooks.org` entry, check:
+- the `command` appears in the built `hooks/hooks.json` under the declared `event`,
+- the referenced script exists under `org-profile/` in the build.
+New helper `_commands_for_event(root, event)` scans hooks.json. If a declared
+org hook is missing (or vice versa) → `_die`.
 
 ### 6. `required-permissions.yaml`
-**Keine Änderung.** Das ist Build-Zeit; die org-Hooks laufen im gepackten
-Artefakt als Claude-Code-Hooks (org-Fläche, im Manifest geführt), nicht über den
-Upstream-Permission-Contract der Skills.
+**No change.** This is build time; the org hooks run in the packaged artifact
+as Claude Code hooks (org surface, tracked in the manifest), not through the
+upstream permission contract of the skills.
 
 ---
 
-## Doku (knapp, Muster wie MCP-Sektion)
+## Docs (brief, same pattern as the MCP section)
 
-- **`docs/internal-plugin-packaging.md`** — neue Sektion „Bundle your own hooks"
-  neben der MCP-Sektion: `hooks:`-Beispiel, Skript unter `org-profile/hooks/`,
-  `${CLAUDE_PLUGIN_ROOT}`-Regel, package-surface-Eintrag, Smoke-Test.
-- **`docs/org-profiles.md`** — kurzer `## Hooks`-Abschnitt (Deklaration +
-  ein Satz: läuft auf Claude-Code-Event-Ebene, kann keine Findings/Severity/Schemas
-  ändern; im Surface-Manifest geführt).
-- Präzedenz/Trust in einem Satz: org-Hook-Code ist org-vertraut (ihr Artefakt);
-  die Analyse-Pipeline bleibt core-owned.
+- **`docs/internal-plugin-packaging.md`** — new section "Bundle your own hooks"
+  next to the MCP section: `hooks:` example, script under `org-profile/hooks/`,
+  `${CLAUDE_PLUGIN_ROOT}` rule, package-surface entry, smoke test.
+- **`docs/org-profiles.md`** — short `## Hooks` section (declaration +
+  one sentence: runs at the Claude Code event level, cannot change findings/severity/schemas;
+  tracked in the surface manifest).
+- Precedence/trust in one sentence: org hook code is org-trusted (their artifact);
+  the analysis pipeline stays core-owned.
 
 ---
 
 ## Tests
 
-- **`tests/test_org_profile_schema.py`**: valider `hooks`-Block; ungültiges `event`;
-  `command` ohne `${CLAUDE_PLUGIN_ROOT}`; `matcher` auf `Stop`; ID-Kollision mit `agent-logger`.
-- **`tests/fixtures/org-profiles/acme/`**: `hooks`-Block + winziges
-  `hooks/guard.py` (No-op, gibt `{}` aus).
-- **`tests/test_package_internal_plugin.py`**: org-Hook landet in gebauter
-  hooks.json unter dem Event **und** im Surface-Manifest (`hooks.org`);
-  `plugin_surface.hooks` exclude entfernt ihn wieder.
-- **`tests/test_smoke_test_package.py`** (falls vorhanden): org-Hook-Verifikation
-  grün; manipuliertes Manifest (Hook fehlt in hooks.json) → Fehler.
-- Falls `_check_hooks` in einem eigenen Validator-Test lebt: missing-script /
-  host-path / reserved-id ablehnen.
+- **`tests/test_org_profile_schema.py`**: valid `hooks` block; invalid `event`;
+  `command` without `${CLAUDE_PLUGIN_ROOT}`; `matcher` on `Stop`; ID collision with `agent-logger`.
+- **`tests/fixtures/org-profiles/acme/`**: `hooks` block + tiny
+  `hooks/guard.py` (no-op, prints `{}`).
+- **`tests/test_package_internal_plugin.py`**: org hook lands in the built
+  hooks.json under the event **and** in the surface manifest (`hooks.org`);
+  `plugin_surface.hooks` exclude removes it again.
+- **`tests/test_smoke_test_package.py`** (if present): org hook verification
+  green; tampered manifest (hook missing from hooks.json) → error.
+- If `_check_hooks` lives in its own validator test: reject missing-script /
+  host-path / reserved-id.
 
 ---
 
-## Offene Design-Punkte (vor Bau kurz bestätigen)
+## Open design points (confirm briefly before building)
 
-1. **Event-Allowlist** — voller Claude-Code-Satz (oben) oder engerer Safe-Subset?
-   Vorschlag: voller Satz (es sind die Hooks der Org).
-2. **Nur `type: command`** für org-Hooks (keine anderen Hook-Typen). Vorschlag: ja.
-3. **package-policy-Default** — org-Hooks standardmäßig **eingeschlossen** (wie
-   MCP-Server), exclude-bar. Vorschlag: ja.
-4. **Reservierte IDs** — `security-coach`, `agent-logger` gesperrt. Vorschlag: ja.
+1. **Event allowlist** — full Claude Code set (above) or a narrower safe subset?
+   Proposal: full set (they are the org's hooks).
+2. **Only `type: command`** for org hooks (no other hook types). Proposal: yes.
+3. **package-policy default** — org hooks **included** by default (like
+   MCP servers), exclude-able. Proposal: yes.
+4. **Reserved IDs** — `security-coach`, `agent-logger` locked. Proposal: yes.
 
 ---
 
-## Reihenfolge & Verify
+## Order & verify
 
-1. Schema + `_check_hooks` → `test_org_profile_schema` grün.
-2. Packager-Merge + Surface → `test_package_internal_plugin` grün.
-3. Smoke-Test → grün, inkl. Negativfall.
-4. Fixture-Integration: Paket mit org-Hook bauen, `hooks.json` + `package-surface.json` inspizieren.
-5. Doku.
+1. Schema + `_check_hooks` → `test_org_profile_schema` green.
+2. Packager merge + surface → `test_package_internal_plugin` green.
+3. Smoke test → green, including the negative case.
+4. Fixture integration: build a package with an org hook, inspect `hooks.json` + `package-surface.json`.
+5. Docs.
 6. `make test` / `make lint`.
-7. Manuell: acme-Fixture paketieren, `hooks/hooks.json` (org-Eintrag) + `package-surface.json` (`hooks.org`) prüfen; `smoke_test_package.py` laufen lassen.
+7. Manual: package the acme fixture, check `hooks/hooks.json` (org entry) + `package-surface.json` (`hooks.org`); run `smoke_test_package.py`.
 
-## Aufwand / Risiko
-Größer als Gate/Coach: berührt Packager, Validator, Smoke-Test, Schema, Doku,
-Tests. Risiko konzentriert sich auf die ID-Tracking-Schicht (Knackpunkt oben) —
-wenn org-IDs nicht durch alle drei Schichten getragen werden, wird ein Hook
-still nicht auditiert. Deshalb: Packager + Surface + Smoke-Test **zusammen**
-bauen und testen, nicht einzeln. Empfehlung: Worktree.
+## Effort / risk
+Bigger than Gate/Coach: touches the packager, validator, smoke test, schema, docs,
+tests. Risk concentrates in the ID-tracking layer (the crux above) — if org IDs
+are not carried through all three layers, a hook silently goes unaudited.
+Therefore: build and test the packager + surface + smoke test **together**,
+not separately. Recommendation: worktree.
