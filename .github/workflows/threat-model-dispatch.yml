@@ -25,6 +25,9 @@ on:
           - python-quick
           - python-standard
           - python-thorough
+          - ai-quick
+          - ai-standard
+          - ai-thorough
       plugin_ref:
         description: "appsec-advisor ref to run (blank = the branch you dispatched from)"
         type: string

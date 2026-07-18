@@ -34,6 +34,7 @@ the artifact (90 days) and, optionally, the SARIF alerts persist.
 |--------------|--------------------------------------|
 | `python-`    | `matthiasrohr/insecure-python-app`   |
 | `spring-`    | `matthiasrohr/insecure-spring-app`   |
+| `ai-`        | `matthiasrohr/insecure-ai-app`       |
 | `juice-shop-`| `juice-shop/juice-shop`              |
 
 Each preset pins `output_path` (`out/<use_case>/`), `mode`, `assessment_depth`,
@@ -46,6 +47,7 @@ not the workflow.
 # The workflow + presets must live on the ref you dispatch (default branch for the UI).
 gh workflow run threat-model-dispatch.yml --ref main -f use_case=python-standard
 gh workflow run threat-model-dispatch.yml --ref main -f use_case=spring-standard
+gh workflow run threat-model-dispatch.yml --ref main -f use_case=ai-standard
 gh workflow run threat-model-dispatch.yml --ref main -f use_case=juice-shop-standard
 ```
 
