@@ -585,13 +585,13 @@ def test_contract_required_subsection_pattern_match(tmp_path: Path):
         "document:\n  order:\n    - sec\n"
         "sections:\n"
         "  sec:\n"
-        "    heading: '## 7. Security Architecture'\n"
+        "    heading: '## 6. Security Architecture'\n"
         "    required_subsections:\n"
         "      - level: 3\n"
-        "        pattern: '7\\.2 .*Identity.*'\n",
+        "        pattern: '6\\.2 .*Identity.*'\n",
         encoding="utf-8",
     )
-    md = _md(tmp_path, "## 7. Security Architecture\n### 7.2 Identity Controls\nbody\n")
+    md = _md(tmp_path, "## 6. Security Architecture\n### 6.2 Identity Controls\nbody\n")
     report = qa.check_contract(md, contract)
     assert not any("required subsection missing" in i for i in report.issues)
 
@@ -603,13 +603,13 @@ def test_contract_required_subsection_invalid_pattern(tmp_path: Path):
         "document:\n  order:\n    - sec\n"
         "sections:\n"
         "  sec:\n"
-        "    heading: '## 7. Security Architecture'\n"
+        "    heading: '## 6. Security Architecture'\n"
         "    required_subsections:\n"
         "      - level: 3\n"
         "        pattern: '(unclosed'\n",
         encoding="utf-8",
     )
-    md = _md(tmp_path, "## 7. Security Architecture\nbody\n")
+    md = _md(tmp_path, "## 6. Security Architecture\nbody\n")
     report = qa.check_contract(md, contract)
     assert any("invalid required_subsection pattern" in i for i in report.issues)
 
@@ -621,7 +621,7 @@ def test_contract_required_subsection_order_violation(tmp_path: Path):
         "document:\n  order:\n    - sec\n"
         "sections:\n"
         "  sec:\n"
-        "    heading: '## 7. Security Architecture'\n"
+        "    heading: '## 6. Security Architecture'\n"
         "    required_subsections:\n"
         "      - level: 3\n        title: 'Alpha Sub'\n"
         "      - level: 3\n        title: 'Beta Sub'\n",
@@ -630,7 +630,7 @@ def test_contract_required_subsection_order_violation(tmp_path: Path):
     # Beta before Alpha -> subsection order violation.
     md = _md(
         tmp_path,
-        "## 7. Security Architecture\n### Beta Sub\nb\n### Alpha Sub\na\n",
+        "## 6. Security Architecture\n### Beta Sub\nb\n### Alpha Sub\na\n",
     )
     report = qa.check_contract(md, contract)
     assert any("required subsection order violation" in i for i in report.issues)
@@ -733,14 +733,14 @@ def test_action_severity_cosmetic_types(monkeypatch):
 
 def test_action_severity_blocking_types(monkeypatch):
     monkeypatch.delenv("APPSEC_QA_COSMETIC_BLOCKING", raising=False)
-    # chain_tid_consistency and walkthrough_coverage are deliberately blocking.
+    # These types all correspond to substantive document-integrity defects.
     for t in (
         "mermaid_syntax",
         "missing_section",
         "table_schema_drift",
         "chain_tid_consistency",
         "walkthrough_coverage",
-        "unclassified",
+        "report_integrity",
     ):
         assert qa._action_severity(t) == "blocking"
 
@@ -748,6 +748,11 @@ def test_action_severity_blocking_types(monkeypatch):
 def test_action_severity_env_override_forces_blocking(monkeypatch):
     monkeypatch.setenv("APPSEC_QA_COSMETIC_BLOCKING", "1")
     assert qa._action_severity("diagram_compactness") == "blocking"
+
+
+def test_action_severity_unclassified_type_requires_manual_review(monkeypatch):
+    monkeypatch.delenv("APPSEC_QA_COSMETIC_BLOCKING", raising=False)
+    assert qa._action_severity("future_presentation_check") == "manual_review"
 
 
 def test_classify_plan_status_cosmetic_only():
@@ -766,6 +771,18 @@ def test_classify_plan_status_mixed_blocking_wins():
     status, actionable = qa._classify_plan_status(["issue"], actions)
     assert status == "fail"
     assert actionable is True
+
+
+def test_classify_plan_status_unclassified_writable_action_does_not_rerender():
+    actions = [
+        {
+            "fragments_to_rewrite": [".fragments/x.md"],
+            "severity": "manual_review",
+        }
+    ]
+    status, actionable = qa._classify_plan_status(["future presentation check"], actions)
+    assert status == "manual_review"
+    assert actionable is False
 
 
 def test_classify_plan_status_no_severity_key_is_blocking():
@@ -861,13 +878,13 @@ def test_build_repair_plan_required_subsection_missing(tmp_path: Path):
         "document:\n  order:\n    - sec7\n"
         "sections:\n"
         "  sec7:\n"
-        "    heading: '## 7. Security Architecture'\n"
+        "    heading: '## 6. Security Architecture'\n"
         "    required_subsections:\n"
         "      - level: 3\n"
         "        title: 'Mandatory Sub'\n",
         encoding="utf-8",
     )
-    md = _md(tmp_path, "## 7. Security Architecture\nbody without the sub\n")
+    md = _md(tmp_path, "## 6. Security Architecture\nbody without the sub\n")
     plan, _ = qa.build_repair_plan(md, tmp_path, contract)
     assert any(a["type"] == "missing_required_subsection" for a in plan["actions"])
 

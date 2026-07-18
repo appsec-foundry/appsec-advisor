@@ -57,7 +57,7 @@ Each sentence is a single attacker action as the main clause; the code
 mechanism, if named, is a short subordinate "because…"/"since…" clause, not the
 sentence. **At most one `file:line` per step.** Do not narrate the code's
 internal control flow (which function calls what, which argument is missing,
-which dependency version) — that belongs in the §7/§8 register row, not the
+which dependency version) — that belongs in the §6/§8 register row, not the
 attack steps. If you cannot say the step as one action a reader could perform,
 cut it.
 
@@ -104,7 +104,7 @@ Every sentence adds a fact the heading, table, or diagram does not
 already convey. Section openers that restate the heading get cut.
 
 **Avoid:**
-> ### 7. Security Architecture
+> ### 6. Security Architecture
 >
 > This section consolidates the architectural narrative with the
 > canonical control catalog. Each domain contains an assessment of how
@@ -112,7 +112,7 @@ already convey. Section openers that restate the heading get cut.
 > findings that exploit its gaps.
 
 **Prefer:**
-> ### 7. Security Architecture
+> ### 6. Security Architecture
 >
 > Catalog totals: ✅ 0 Adequate · ⚠️ 3 Partial · 🔶 5 Weak · ❌ 5 Missing
 > · 13 controls tracked.
@@ -159,11 +159,11 @@ same explanation would apply to every row, write it once at the section
 level and let the rows carry only their per-row specifics.
 
 **Avoid (repeated in every row of an 8-row table):**
-> | … | … | … | See §7 for the domain-level structural gaps. | Broad
+> | … | … | … | See §6 for the domain-level structural gaps. | Broad
 >   defence-in-depth; no single finding directly addressed. |
 
 **Prefer:**
-> *(suppress the column entirely — the §7 cross-reference belongs in
+> *(suppress the column entirely — the §6 cross-reference belongs in
 > the section intro, not in 8 identical cells)*
 
 Likewise: do not write "this section will discuss…" sentences, do not
@@ -235,7 +235,7 @@ author, the gate catches the highest-cost misses.
 
 ## Rule 7 — Lead with the concrete thing; cut the textbook purpose
 
-This rule governs the *opening* of any descriptive paragraph — most visibly the §7 control intros, but the same defect appears in scenario and remediation prose. Two AI tells dominate:
+This rule governs the *opening* of any descriptive paragraph — most visibly the §6 control intros, but the same defect appears in scenario and remediation prose. Two AI tells dominate:
 
 **Formulaic subject stem.** `The application <verb>s …`, `The system …`, `The server …`, `The framework …`. One such opener in a section is fine; a column of them down a section is the signature of a model filling a template. A domain expert names the artifact first.
 
@@ -289,16 +289,16 @@ token count. If trimming a sentence removes a fact, keep the sentence.
 
 ---
 
-## Control narrative quality bar (§7 Security Architecture)
+## Control narrative quality bar (§6 Security Architecture)
 
 Section 7 narratives must satisfy the rules below. For current
-`security_schema=v2`, §7 is a 13-section control-category model with
+`security_schema=v2`, §6 is a 13-section control-category model with
 section-level `Verdict / Controls covered / Implemented controls /
 Assessment` labels and H4 subcontrols carrying `Security assessment` plus
 `Relevant findings`. The Architect-Reviewer and QA gates check this shape via
 `contract`, `control_subsection_coverage`, and `architectural_prose`.
 
-The shared root cause behind these rules: pre-2026-05 §7 narratives drifted
+The shared root cause behind these rules: pre-2026-05 §6 narratives drifted
 into pure finding-lists ("the application has SQL injection at routes/
 login.ts:34, an XSS bypass at about.component.ts:12, …"). A reader needs
 to know **what** the control class is and **how** this codebase implements
@@ -306,8 +306,8 @@ it BEFORE they can evaluate the findings. Otherwise the section reads like
 an unstructured AI-generated dump of greps and misses the architecture-
 level signal entirely.
 
-> **§7.X authoring shape.** The body shape is defined in
-> `agents/appsec-threat-renderer.md → "§7.X authoring pattern"`:
+> **§6.X authoring shape.** The body shape is defined in
+> `agents/appsec-threat-renderer.md → "§6.X authoring pattern"`:
 > H3 control-category section → `**Verdict:**` → `**Controls covered:**`
 > links → `**Implemented controls:**` → `**Assessment:**` → H4 subcontrol
 > blocks with `**Security assessment**` and `**Relevant findings**`.
@@ -316,13 +316,13 @@ level signal entirely.
 
 | # | Rule | Heuristic check |
 |---|---|---|
-| §7-1 | **Control context before gap detail.** Every H4 control block opens with a positive intro paragraph that explains what the control is and how this codebase implements it before naming weaknesses. | Intro paragraph appears before `**Security assessment**`; it does not open with `No`, `Missing`, `Not implemented`, or `There is no`. |
-| §7-2 | **Concrete implementation evidence.** Implementation claims cite a verifiable artifact: file path, route, library, IaC resource, platform API, or generated evidence excerpt. | At least one artifact token from recon/YAML/evidence appears in the block. |
-| §7-3 | **Findings live under the affected control.** Finding bullets appear in the relevant H4 block, not as a detached domain-level dump. | `**Relevant findings**` is a standalone label followed by bullets; finding-to-section routing follows `schema_v2.finding_routing`. |
-| §7-4 | **Dense issue lists become bullets.** Two or more discrete weaknesses in one assessment block use bullets instead of one long paragraph. | Paragraphs with 3+ finding/mitigation refs are flagged for bullet formatting. |
-| §7-5 | **No AI-typical filler.** Avoid `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`, and renderer-specific banned vocabulary such as `mechanism layer` or `codified rule`. | Enforced by `qa_checks.py check_architectural_prose`. |
+| §6-1 | **Control context before gap detail.** Every H4 control block opens with a positive intro paragraph that explains what the control is and how this codebase implements it before naming weaknesses. | Intro paragraph appears before `**Security assessment**`; it does not open with `No`, `Missing`, `Not implemented`, or `There is no`. |
+| §6-2 | **Concrete implementation evidence.** Implementation claims cite a verifiable artifact: file path, route, library, IaC resource, platform API, or generated evidence excerpt. | At least one artifact token from recon/YAML/evidence appears in the block. |
+| §6-3 | **Findings live under the affected control.** Finding bullets appear in the relevant H4 block, not as a detached domain-level dump. | `**Relevant findings**` is a standalone label followed by bullets; finding-to-section routing follows `schema_v2.finding_routing`. |
+| §6-4 | **Dense issue lists become bullets.** Two or more discrete weaknesses in one assessment block use bullets instead of one long paragraph. | Paragraphs with 3+ finding/mitigation refs are flagged for bullet formatting. |
+| §6-5 | **No AI-typical filler.** Avoid `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`, and renderer-specific banned vocabulary such as `mechanism layer` or `codified rule`. | Enforced by `qa_checks.py check_architectural_prose`. |
 
-**How to apply across architectures.** None of the §7 rules assume a
+**How to apply across architectures.** None of the §6 rules assume a
 specific application class. They work as written for:
 
 - **User-facing web** (Express + React/Angular/Vue, Django, Rails, Spring): file paths and library tokens are abundant; QB-3 trivially satisfied.
@@ -357,7 +357,7 @@ Loaded explicitly by:
   `mitigation_title`, `remediation.steps`, `controls_in_place`.
 - `agents/phases/phase-group-finalization.md` — before authoring
   `ms-verdict.json` and `ms-architecture-assessment.json`, and before
-  filling the §7 narrative placeholders.
+  filling the §6 narrative placeholders.
 - `agents/appsec-threat-renderer.md` — same set of fragments at Stage 2.
 - `agents/shared/ms-template.md` — referenced as the authority for prose
   rules cited from the Management Summary template.

@@ -1,12 +1,42 @@
 ---
 name: show-threat-model
-description: Read-only at-a-glance overview of the current threat model — project and scan identity, findings by severity, top-Critical threats, mitigation/control counts, and whether the model is still up to date. Reuses the same change detection that decides if an incremental scan is needed. Does not analyze code or write files.
+description: >-
+  Print the standard summary block of the current threat model — scan identity,
+  findings by severity, the remediation backlog (P1/P2/P3) and mitigation
+  coverage, the worst-case scenarios, control posture, and whether the model is
+  still up to date. A DISPLAY command, not a question-answering surface: use it
+  only for an explicit request to see that block ("show me the threat model
+  summary", "zeig mir die threat-model-uebersicht", "print the overview").
+  Reuses the same change detection that decides if an incremental scan is
+  needed. Does not analyze code, write files, or compose prose — it prints a
+  rendered block verbatim and cannot answer anything the block does not already
+  contain. Do NOT route a natural-language question here, not even "is there a
+  threat model?" / "gibt es hier ein bedrohungsmodell?" — every question goes to
+  ask-threat-model, which answers directly and can produce this block too.
 ---
 
 You are printing a human-facing overview of the threat model in the target
 repository. This skill is **read-only** — it does **not** analyze code, does
 **not** spawn agents, and does **not** write files. It reads the committed
 `threat-model.yaml` and reports.
+
+## This is a display command, not a Q&A surface
+
+Your entire job is to emit the rendered block. You do **not** answer questions
+about the model here, and you do **not** compose prose around the block.
+
+If the user's request was actually a **question** — "is there a threat model?",
+"does it cover SSRF?", "what's the fix for F-003?", "was ist am schlimmsten?" —
+routing landed on the wrong skill. Print the block (it is still useful context),
+then hand off in one line: *"Für Fragen zum Modell:
+`/appsec-advisor:ask-threat-model`"*. Do not attempt the answer yourself from
+the block — it holds a fixed set of facts and cannot answer beyond them, and a
+plausible-sounding answer assembled from a summary is exactly the ungrounded
+output `ask-threat-model` exists to prevent.
+
+The two skills are asymmetric on purpose: `ask-threat-model` can also produce
+this block, so a misroute in that direction costs nothing — a misroute *here*
+is a dead end unless you hand off.
 
 The freshness verdict comes from `threat_model_health.py --json`, which wraps
 `baseline_state.py check-changes` + `dirty-set` — the **same** change detection
@@ -35,10 +65,17 @@ WHAT IT SHOWS
   * Freshness: is the model still current, or has security-relevant code changed?
     (same change detection that drives the incremental-scan decision)
   * Findings by severity (Critical / High / Medium / Low)
+  * Remediation backlog by mitigation priority (P1 / P2 / P3) and how many
+    findings have a proposed mitigation vs. are uncovered
+  * The top "worst case if nothing changes" scenarios (from the model's
+    curated critical findings, with the covering mitigation)
   * Top Critical threats (or all threats with --all)
+  * Control posture: effectiveness mix (Missing / Weak / Partial / Adequate)
+    and the weakest control domains
   * Mitigation and control counts, plus the rendered report path
 
 RELATED
+  /appsec-advisor:ask-threat-model      Ask anything about the model (any question)
   /appsec-advisor:threat-model-health   Ops/CI probe: freshness + cleanup + run state
   /appsec-advisor:create-threat-model   Generate or update the threat model
 ```

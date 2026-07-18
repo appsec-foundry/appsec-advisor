@@ -26,9 +26,147 @@ _TIERS = ("actors", "client", "application", "data")
 _TIER_TITLE = {
     "actors": "External Actors — Internet (untrusted)",
     "client": "Client Tier — browser",
-    "application": "Application Tier — Node / Express",
+    "application": "Application Tier",
     "data": "Data Tier",
 }
+
+
+def _stack_label(components: list[dict]) -> str | None:
+    """Derive the application-tier stack label (e.g. "Java / Spring") from the
+    component metadata already in the YAML — `paths`, `name`, `description`.
+
+    Deterministic, self-contained (no filesystem read): the same component data
+    the Mermaid builder uses to detect the framework. Returns None when no signal
+    is present, so the caller keeps a bare "Application Tier" rather than guessing.
+    Previously the tier title hardcoded "Node / Express" (a Juice-Shop-era
+    default), which mislabelled every non-Node stack.
+    """
+    parts: list[str] = []
+    for c in components or []:
+        if not isinstance(c, dict):
+            continue
+        parts.append((c.get("name") or "").lower())
+        parts.append((c.get("description") or "").lower())
+        paths = c.get("paths") or c.get("source_paths") or []
+        if isinstance(paths, list):
+            parts.extend(str(p).lower() for p in paths)
+        elif paths:
+            parts.append(str(paths).lower())
+    hay = " ".join(p for p in parts if p)
+    if not hay:
+        return None
+
+    def has(*needles: str) -> bool:
+        return any(n in hay for n in needles)
+
+    _JAVA = ("pom.xml", "build.gradle", "src/main/java", "maven", "gradle")
+    # framework-specific first, then language fallback
+    if has("spring") and has(*_JAVA):
+        return "Java / Spring"
+    if has(*_JAVA):
+        return "Java"
+    if has(".csproj", ".sln", "asp.net", "aspnet"):
+        return ".NET"
+    if has("django"):
+        return "Python / Django"
+    if has("flask"):
+        return "Python / Flask"
+    if has("fastapi"):
+        return "Python / FastAPI"
+    if has("requirements.txt", "pyproject.toml", "manage.py", "setup.py"):
+        return "Python"
+    if has("nestjs", "nest.js"):
+        return "Node / NestJS"
+    if has("express"):
+        return "Node / Express"
+    if has("package.json", "tsconfig", "node_modules"):
+        return "Node.js"
+    if has("go.mod"):
+        return "Go"
+    if has("gemfile", "rails"):
+        return "Ruby / Rails"
+    if has("composer.json", "laravel"):
+        return "PHP"
+    if has("cargo.toml"):
+        return "Rust"
+    return None
+
+
+# Data-store display names, matched as a substring of a trust-boundary endpoint
+# (e.g. "sqlite-legacy-auth" → SQLite). Used to explain WHY a data tier is empty.
+_STORE_NAMES = {
+    "sqlite": "SQLite",
+    "postgresql": "PostgreSQL",
+    "postgres": "PostgreSQL",
+    "mariadb": "MariaDB",
+    "mysql": "MySQL",
+    "mongodb": "MongoDB",
+    "mongo": "MongoDB",
+    "dynamodb": "DynamoDB",
+    "cassandra": "Cassandra",
+    "elasticsearch": "Elasticsearch",
+    "sqlserver": "SQL Server",
+    "mssql": "SQL Server",
+    "oracle": "Oracle",
+    "redis": "Redis",
+    "h2": "H2",
+}
+_DB_HINT = ("database", "datastore", "storage", "-db", "db-", "rds", "bucket")
+
+
+def _data_stores(trust_boundaries: list) -> list[str]:
+    """Pretty data-store names referenced by trust-boundary endpoints."""
+    names: list[str] = []
+    for tb in trust_boundaries or []:
+        if not isinstance(tb, dict):
+            continue
+        to = (tb.get("to") or "").strip().lower()
+        if not to:
+            continue
+        for key, pretty in _STORE_NAMES.items():
+            if key in to and pretty not in names:
+                names.append(pretty)
+                break
+    return names
+
+
+def _ghost_reason(tier: str, components: list, trust_boundaries: list) -> str:
+    """One-line explanation for an EMPTY canonical tier — why it is absent here,
+    so a dimmed ghost band informs rather than reads as a missing/forgotten tier.
+    """
+    if tier == "client":
+        parts = " ".join(
+            f"{(c.get('name') or '')} {(c.get('description') or '')} {' '.join(map(str, c.get('paths') or c.get('source_paths') or []))}".lower()
+            for c in (components or [])
+            if isinstance(c, dict)
+        )
+        server_rendered = any(
+            k in parts
+            for k in (
+                "thymeleaf",
+                "jsp",
+                "freemarker",
+                "mvc view",
+                "server-side render",
+                "ssr",
+                "blade",
+                "razor",
+                ".erb",
+                "haml",
+            )
+        )
+        return "no distinct client tier — server-rendered" if server_rendered else "no distinct client tier"
+    if tier == "data":
+        stores = _data_stores(trust_boundaries)
+        if stores:
+            return f"data embedded in-process ({', '.join(stores[:3])}) — no separate tier"
+        hay = " ".join((tb.get("to") or "").lower() for tb in (trust_boundaries or []) if isinstance(tb, dict))
+        if any(h in hay for h in _DB_HINT):
+            return "data embedded in-process — no separate tier"
+        return "no separate data tier"
+    return "not present in this architecture"
+
+
 # (band background, accent/border) per tier — a consistent colour LANGUAGE that
 # reads outside-in: neutral grey = untrusted external zone, then a cool ramp
 # blue → green → purple for client → application → data (deeper = closer to the
@@ -48,6 +186,11 @@ _ATTACK = "#c0392b"
 _BACKBONE = "#8a8f98"
 _INK = "#1f2733"
 _MUTED = "#6b7280"
+# Ghost tier band — a canonical reference tier that is EMPTY in this architecture
+# (dimmed placeholder, not a solid empty band and not silently dropped).
+_GHOST_BG = "#f5f6f8"
+_GHOST_STROKE = "#c3c9d2"
+_GHOST_TEXT = "#9aa2ad"
 
 # ---- geometry --------------------------------------------------------------
 _PAD = 18
@@ -66,6 +209,7 @@ _OOS_GAP = 10  # gap above the out-of-scope box row inside a tier band
 #  so no repeated per-band caption is drawn)
 _BANDPAD = 20
 _BANDGAP = 34  # room for the flow arrow + its label between bands
+_GHOST_H = 44  # height of a dimmed ghost band (empty canonical tier)
 _LEGGAP = 70  # right lane: hosts the red attack corridor (2 lanes), then the legend
 _LEGW = 226
 _EXPOSED = "#c0392b"  # internet-exposed marker (red = attacker-reachable)
@@ -206,6 +350,13 @@ def build_figure1_svg(
     meta = meta or (yaml_data.get("meta") or {})
     components = yaml_data.get("components") or []
     threats = yaml_data.get("threats") or []
+
+    # Per-tier titles: the application-tier stack is derived from the components
+    # (was hardcoded "Node / Express"). None → bare "Application Tier".
+    tier_titles = dict(_TIER_TITLE)
+    _stack = _stack_label(components)
+    if _stack:
+        tier_titles["application"] = f"Application Tier — {_stack}"
     if not components or not (attack_paths_data.get("attack_paths") or []):
         return ""  # nothing to draw — caller falls back to the Mermaid builder
     cls_by_id = {c.get("id"): c for c in (attack_taxonomy.get("classes") or []) if isinstance(c, dict)}
@@ -409,6 +560,7 @@ def build_figure1_svg(
     box_pos: dict[str, tuple[float, float, float, float]] = {}  # cid -> (cx, top, bottom, left)
     y = _PAD
     bands: list[tuple[str, float, float]] = []  # (tier, y_top, height)
+    ghost_tiers: set[str] = set()  # empty canonical tiers drawn as dimmed placeholders
 
     def band_title(
         tier: str, ytop: float, h: float, num: int, bw: float | None = None, title: str | None = None
@@ -646,6 +798,31 @@ def build_figure1_svg(
     for num, tier in ((2, "client"), (3, "application"), (4, "data")):
         cids = drawn[tier]
         oosc = oos_by_tier[tier]
+
+        # Ghost tier: a canonical reference tier (client/data) that is EMPTY in
+        # THIS architecture — no in-scope component, no out-of-scope box, and no
+        # attack targets it. Draw a dimmed placeholder that NAMES why it is absent
+        # (server-rendered → no client tier; in-process DB → no data tier). This
+        # keeps the 4-tier reading order consistent across reports while being
+        # honest: a solid empty band reads as a real tier with no boxes, and
+        # dropping it reads as forgotten. The absence is itself a threat signal.
+        ta = tier_attacks.get(tier, {})
+        if tier in ("client", "data") and not cids and not oosc and not (ta.get("direct") or ta.get("indirect")):
+            bh = _GHOST_H
+            c.rect(band_left, y, band_w, bh, fill=_GHOST_BG, stroke=_GHOST_STROKE, sw=1.2, rx=10, dash="5 4")
+            _icon(c, tier, band_left + 26, y + bh / 2, _GHOST_TEXT)
+            c.text(band_left + 14, y + bh / 2 + 4, f"{num})", size=13, fill=_GHOST_TEXT, anchor="start", weight="bold")
+            gt_lines = _wrap(_TIER_TITLE[tier].split(" — ")[0], _LG - 46, 12)
+            gy0 = y + bh / 2 + 4 - (len(gt_lines) - 1) * 6.5
+            for gi, ln in enumerate(gt_lines):
+                c.text(band_left + 40, gy0 + gi * 13, ln, size=11.5, fill=_GHOST_TEXT, anchor="start", weight="bold")
+            reason = _ghost_reason(tier, components, yaml_data.get("trust_boundaries") or [])
+            c.text(cx0 + cw / 2, y + bh / 2 + 4, reason, size=11, fill=_GHOST_TEXT, anchor="middle", italic=True)
+            ghost_tiers.add(tier)
+            bands.append((tier, y, bh))
+            y += bh + _BANDGAP
+            continue
+
         note_h = 16 if hidden[tier] else 0
         # OOS sub-row reserved inside the band when this tier has excluded comps.
         oos_h = (_OOS_GAP + _OOS_BOX_H) if oosc else 0
@@ -669,7 +846,7 @@ def build_figure1_svg(
             bh = _BANDPAD * 2 + barh + note_h
             barw = 0.52 * cw
             bx0 = cx0 + (cw - barw) / 2  # bar centred so the grey flow stays centred
-            band_title(tier, y, bh, num)
+            band_title(tier, y, bh, num, title=tier_titles.get(tier))
             draw_bar(cids[0], bx0, y + _BANDPAD, barw, barh)
             also_note(tier, y, bh)
             bands.append((tier, y, bh))
@@ -682,7 +859,7 @@ def build_figure1_svg(
             bh = _BANDPAD * 2 + (oos_h or 40) + note_h
         else:
             bh = _BANDPAD * 2 + analyzed_h + gap_ao + oos_h + note_h
-        band_title(tier, y, bh, num)
+        band_title(tier, y, bh, num, title=tier_titles.get(tier))
         yy = y + _BANDPAD
         if ncids == 1:
             # single comp but the tier also has OOS → draw the bar full-width-
@@ -713,11 +890,24 @@ def build_figure1_svg(
     flow_labels = ["uses", "API calls", "reads / writes"]
     bxc = cx0 + cw / 2
     for i in range(len(bands) - 1):
-        _, yt0, h0 = bands[i]
-        _, yt1, _h1 = bands[i + 1]
+        t0, yt0, h0 = bands[i]
+        t1, yt1, _h1 = bands[i + 1]
         yf, yt = yt0 + h0, yt1
-        c.line(bxc, yf + 1, bxc, yt - 1, stroke=_BACKBONE, sw=1.8, marker="arrowgrey")
-        if i < len(flow_labels):
+        # A hop touching a ghost tier is not a real request hop — draw it dimmed
+        # and dashed with no label, so the flow never implies a boundary crossing
+        # that does not exist.
+        dim = t0 in ghost_tiers or t1 in ghost_tiers
+        c.line(
+            bxc,
+            yf + 1,
+            bxc,
+            yt - 1,
+            stroke=_GHOST_STROKE if dim else _BACKBONE,
+            sw=1.3 if dim else 1.8,
+            dash="5 4" if dim else None,
+            marker=None if dim else "arrowgrey",
+        )
+        if not dim and i < len(flow_labels):
             c.text(bxc + 12, (yf + yt) / 2 + 3.5, flow_labels[i], size=10.5, fill=_MUTED, anchor="start", weight="bold")
 
     # ---- attack vectors — emanate from the ATTACKER ZONE (both attackers) -----

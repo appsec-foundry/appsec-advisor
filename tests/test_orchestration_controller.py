@@ -60,13 +60,66 @@ def test_route_defaults_to_thin_for_full_or_rebuild(monkeypatch, tmp_path):
     assert incremental["runtime"] == "legacy"
 
 
-@pytest.mark.parametrize("key", ["dry_run", "resume", "rerender"])
+def test_route_defaults_to_compact_rerender(monkeypatch, tmp_path):
+    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
+    cfg = _cfg(tmp_path, "rerender")
+    cfg["rerender"] = True
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    action = controller.route([])
+    assert action["runtime"] == "thin-rerender"
+    assert action["instruction_file"] == str(controller.THIN_RERENDER_RUNTIME)
+
+
+@pytest.mark.parametrize("key", ["dry_run", "resume"])
 def test_route_keeps_special_paths_on_legacy(monkeypatch, tmp_path, key):
     monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path)
     cfg[key] = True
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
     assert controller.route([])["runtime"] == "legacy"
+
+
+def test_rerender_with_deadline_keeps_legacy_runtime(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+    cfg = _cfg(tmp_path, "rerender")
+    cfg.update({"rerender": True, "max_cost_usd": 1})
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    assert controller.route([])["runtime"] == "legacy"
+
+
+def test_compact_rerender_prepare_verifies_artifacts_and_dispatches_stage2(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path, "rerender")
+    cfg["rerender"] = True
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    for name in ("threat-model.yaml", ".threats-merged.json", ".triage-flags.json"):
+        (output / name).write_text("{}", encoding="utf-8")
+    fragments = output / ".fragments"
+    fragments.mkdir()
+    for name in ("system-overview.md", "assets.md", "security-architecture.md"):
+        (fragments / name).write_text("fragment", encoding="utf-8")
+
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed("lock acquired\n"))
+    action = controller.prepare(["--rerender"])
+    assert action["action"] == "dispatch_agent"
+    assert action["mode"] == "rerender"
+    assert action["stage"] == "stage2"
+    assert action["instruction_file"] == str(controller.THIN_RERENDER_RUNTIME)
+    assert Path(action["config_path"]).is_file()
+
+
+def test_compact_rerender_prepare_fails_before_lock_when_artifacts_are_missing(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path, "rerender")
+    cfg["rerender"] = True
+    Path(cfg["output_dir"]).mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    action = controller.prepare(["--rerender"])
+    assert action["action"] == "abort"
+    assert action["exit_code"] == 2
+    assert ".threats-merged.json" in action["reason"]
 
 
 @pytest.mark.parametrize("key", ["max_wall_time_seconds", "max_cost_usd"])
@@ -474,12 +527,14 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
     # The LLM-authored fragments the renderer would have produced.
     (frag / "ms-verdict.json").write_text("{}", encoding="utf-8")
-    (frag / "security-architecture.md").write_text("## 7. Security Architecture\n", encoding="utf-8")
+    (frag / "security-architecture.md").write_text("## 6. Security Architecture\n", encoding="utf-8")
 
     md = output / "threat-model.md"
+    commands = []
 
     def fake_run(cmd, **kwargs):
         # Simulate compose_threat_model.py writing the report; all steps succeed.
+        commands.append(cmd)
         if any("compose_threat_model.py" in str(c) for c in cmd):
             md.write_text("# Threat Model\n", encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, "", "")
@@ -489,6 +544,10 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     action = controller.next_action(output)
     assert md.is_file()  # composed deterministically
     assert action["stage"] == "stage3"  # routed to QA, NOT re-dispatched as stage2
+    rendered_scripts = " ".join(" ".join(map(str, cmd)) for cmd in commands)
+    assert "emit_general_mitigation_titles.py" in rendered_scripts
+    assert "hydrate_mitigation_details.py" in rendered_scripts
+    assert "validate_mitigation_quality.py" in rendered_scripts
 
 
 def test_next_action_falls_back_to_stage2_when_compose_fails(tmp_path, monkeypatch):
@@ -510,6 +569,65 @@ def test_next_action_falls_back_to_stage2_when_compose_fails(tmp_path, monkeypat
     action = controller.next_action(output)
     assert not (output / "threat-model.md").is_file()
     assert action["stage"] == "stage2"
+
+
+def test_next_action_stamps_slug_deliverables_on_complete(tmp_path):
+    """The deterministic slug-stamp backstop: a completed run whose config
+    carries a non-null slug gets the postfix-stamped copy set produced by the
+    `next` gate itself — no reliance on the trailing LLM-driven skill block that
+    a compaction-resumed orchestrator can skip (2026-07-15 juice-shop)."""
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["slug"] = "juice-shop-standard-v0.5"
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    (output / ".qa-status.json").write_text("{}", encoding="utf-8")
+
+    action = controller.next_action(output)
+
+    assert action["action"] == "complete"
+    assert (output / "threat-model-juice-shop-standard-v0.5.md").is_file()
+    assert (output / "threat-model-juice-shop-standard-v0.5.yaml").is_file()
+
+
+def test_next_action_no_stamp_without_slug(tmp_path):
+    """No slug configured → the `next` gate produces no stamped copies."""
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)  # no "slug" key
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    (output / ".qa-status.json").write_text("{}", encoding="utf-8")
+
+    action = controller.next_action(output)
+
+    assert action["action"] == "complete"
+    assert not list(output.glob("threat-model-*.md"))
+
+
+def test_stamp_if_configured_is_idempotent_for_current_report(tmp_path, monkeypatch):
+    """A second `next` call at complete does not re-run the stamp when the
+    stamped copy already reflects the current (unchanged) canonical report."""
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["slug"] = "s1"
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    (output / "threat-model-s1.md").write_text("# report\n", encoding="utf-8")
+
+    calls = []
+    real_run = controller.subprocess.run
+
+    def counting_run(cmd, **kwargs):
+        calls.append(cmd)
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(controller.subprocess, "run", counting_run)
+    controller._stamp_if_configured(output, cfg)
+    assert calls == []  # stamped copy already up to date → no subprocess
 
 
 def test_action_schema_rejects_executable_command_field():
@@ -574,6 +692,8 @@ def test_dispatch_values_supply_runtime_defaults(tmp_path):
     assert values["reuse_recon_eligible"] is False
     assert values["write_pdf"] is False
     assert values["write_html"] is False
+    assert "renderer_model" in values
+    assert "abuse_verifier_model" in values
     assert set(values) == set(controller._DISPATCH_KEYS) | set(controller._DISPATCH_EXTRA_KEYS)
 
 

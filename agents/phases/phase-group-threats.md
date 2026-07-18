@@ -419,7 +419,7 @@ When no obvious priority files are derivable (rare, e.g. brand-new component wit
 - data-persistence: 170 s → ~80 s by reading the ORM model + raw-query route directly.
 
 
-Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
+Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and the `model` parameter set to the **tier alias** of `$STRIDE_MODEL` — overrides the agent's frontmatter default. **The Agent tool's `model` parameter accepts ONLY the bare tier aliases `sonnet` / `opus` / `haiku`; a full version id (`claude-sonnet-4-6`, `claude-opus-4-7`, …) is rejected.** Reduce `$STRIDE_MODEL` to its tier for the parameter: any `claude-opus-*` / `opus*` → `opus`, any `claude-haiku-*` / `haiku*` → `haiku`, anything else (incl. `claude-sonnet-*`) → `sonnet`; a value that is already a bare alias passes through unchanged. Keep the full `$STRIDE_MODEL` id ONLY in the `(model: …)` log lines (below) so cost accounting stays exact. This same tier-alias reduction applies to **every** Agent-tool `model` parameter in this skill (triage, recon, context, config, actor, abuse, renderer). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
 
 **STRIDE_PROFILE forwarding (M3.5).** The `STRIDE_PROFILE_JSON` env var (set by the skill from `.skill-config.json → stride_profile`) is forwarded verbatim into Group A of every per-component dispatch prompt. When the user runs with `--reasoning-model sonnet-economy --assessment-depth quick` the JSON encodes the A-F depth-reduction flags. With the opt-in `--stride-cap N` flag the JSON is `{"max_threats_per_category": N, "stride_profile_label": "full (per-category cap N)"}` — full depth except the key-gated per-category cap. Otherwise it is `{"stride_profile_label":"full"}` and the analyzer runs at full depth. Emit the line as:
 
@@ -526,7 +526,7 @@ When `$MERGER_MODEL` is set to an Opus identifier (opt-in via `--reasoning-model
 Pipeline:
 
 1. **Collect** — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" collect --output-dir "$OUTPUT_DIR"`
-   - Reads all `.stride-*.json`, runs mechanical exact-dedup (same CWE + STRIDE + evidence.file + line), writes deterministic `auto_decisions` for unambiguous groups, groups only the remaining near-duplicate candidates (shared CWE + STRIDE letter with ≥2 members) for LLM judgment, and writes `$OUTPUT_DIR/.merge-candidates.json`.
+   - Reads all `.stride-*.json`, runs mechanical exact-dedup (same CWE + STRIDE + evidence.file + line), writes deterministic `auto_decisions` for unambiguous groups, groups only the remaining near-duplicate candidates (shared CWE + STRIDE letter with ≥2 members) for LLM judgment, and writes `$OUTPUT_DIR/.merge-candidates.json`. Candidate members carry a bounded scenario excerpt plus source/instance provenance so the merger compares exploit paths without reading repository source.
    - If the resulting `candidate_group_count` is `0`, **skip the merger dispatch entirely** — no ambiguous groups means nothing for LLM judgment.
 
 2. **Dispatch `appsec-threat-merger`** (only when candidates exist):
@@ -539,7 +539,7 @@ Pipeline:
    ```
    subagent_type: "appsec-advisor:appsec-threat-merger"
    description: "Dedup / consolidate candidate threat groups"
-   model: $MERGER_MODEL
+   model: <tier alias of $MERGER_MODEL — sonnet/opus/haiku only>
    run_in_background: false
    prompt: |
      REPO_ROOT=<REPO_ROOT>
@@ -549,10 +549,27 @@ Pipeline:
      COMPONENT_MAP_PATH=<OUTPUT_DIR>/.merge-context/component-map.json
    ```
    Before dispatch, write `$OUTPUT_DIR/.merge-context/component-map.json` as JSON object `{component_id: {name, trust_boundaries}}`. Pass only the path; do not inline the component map in the prompt.
-   Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage-validator dispatch above, using `$MERGER_MODEL` in the message.
+   The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id — `$MERGER_MODEL` resolves to a full id at `standard` (`claude-sonnet-5`) and `thorough` (`claude-opus-*`), so reduce it to its tier for the param (see the STRIDE dispatch note in Phase 9). Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage-validator dispatch above, using the full `$MERGER_MODEL` id in the message.
+
+2.5. **Emit weakness design signals (P1)** — before finalize, normalize
+   *unpromoted* architecture-coverage hypotheses into design-signal records so
+   finalize's weakness reconciler can fold them under the matching weakness
+   heading (proposal §4b) instead of surfacing them as a separate
+   `threat_hypotheses[]` list beside proven findings. File-presence-gated on the
+   Phase-2.6 coverage output; absent → no-op (reconciler simply gets no design
+   fold). Only hypotheses carrying an observable absent-control signal are
+   emitted; pure speculation is dropped (I2 / proposal §0).
+   ```bash
+   if [ -f "$OUTPUT_DIR/.architecture-coverage.json" ]; then
+     python3 "$CLAUDE_PLUGIN_ROOT/scripts/arch_coverage_to_threats.py" emit-design-signals \
+         --input "$OUTPUT_DIR/.architecture-coverage.json" \
+         --output-dir "$OUTPUT_DIR" > /dev/null
+   fi
+   ```
 
 3. **Finalize** — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" finalize --output-dir "$OUTPUT_DIR"`
    - Reads `.merge-candidates.json` + embedded `auto_decisions` + (if present) `.merge-decisions.json`, applies decisions, performs the deterministic 8-field sort, assigns `T-001`..`T-NNN`, writes `.threats-merged.json`.
+   - Also reads `.arch-design-signals.json` (step 2.5, if present) and writes the deterministic `weaknesses[]` register (P1) alongside `threats[]`.
    - If `.merge-decisions.json` is missing (merger failed or was skipped), every candidate group is treated as "keep all" — no dedup, but no data loss.
 
 The hybrid path produces a `.threats-merged.json` whose schema is byte-compatible with the inline merge output — downstream steps (coverage checks, Phase 10 SCA synthesis, Phase 10b triage validation) do not need to know which path produced the file.
@@ -703,7 +720,7 @@ threat_categories:          # 18 architectural patterns (TH-01 .. TH-18)
     title: Injection
     cwe_pillar: CWE-707
     cwe_primary: CWE-74
-    owasp_top10_2021: A03
+    owasp_top10_2025: A05
     aggregated:
       max_risk: Critical
       max_cvss: 10.0
@@ -785,7 +802,7 @@ Sort: max-CVSS desc → finding_count desc → TH-ID asc.
 | **Max Risk** | 🔴 Critical (CVSS 10.0) |
 | **CWE Pillar** | [CWE-707](…) — Improper Neutralization |
 | **Canonical CWE** | [CWE-74](…) — Improper Neutralization of Special Elements |
-| **OWASP** | [A03:2021](…) — Injection |
+| **OWASP** | [A05:2025](…) — Injection |
 | **CWE Top 25** | 🏆 contains CWE-79 (#2), CWE-89 (#3), CWE-94 (#11) |
 | **Findings** | 7 (4 Critical, 3 High, 0 Medium, 0 Low) |
 | **Mitigated by** | [M-007](…) — Parameterize SQL queries · [M-008](…) — Replace notevil · [M-005](…) — Disable XXE · [M-009](…) — Field allowlist |
@@ -915,10 +932,10 @@ The threat register lists every confirmed STRIDE finding with its evidence, curr
 **Consistency invariants (QA-enforced):**
 
 1. Every Risk cell in the sub-section tables MUST match the Likelihood/Impact matrix above — no exceptions without an explicit `architectural_violation: true` escalation note in the threat row
-2. The counts in the "Risk Distribution" line MUST sum to the **Total** and MUST equal the row counts in the four sub-section headings (`### 7.1 Critical (<N>)` …)
+2. The counts in the "Risk Distribution" line MUST sum to the **Total** and MUST equal the row counts in the four sub-section headings (`### 6.1 Critical (<N>)` …)
 3. The counts in the "STRIDE Coverage" line MUST sum to the **Total** — one threat has exactly one primary STRIDE category; never split a threat across two categories
 
-### 7.1 Critical (<N>)
+### 6.1 Critical (<N>)
 
 These findings combine high exploitability with maximum impact. Every entry here is referenced by T-NNN from the `## Critical Attack Tree` block (placed directly after the Management Summary) and is the source of the P1 rollout actions in the Management Summary's Immediate Actions table. Section 7.1 is the authoritative per-finding source — the Attack Tree block links back here, never duplicates this content.
 
@@ -976,14 +993,14 @@ Segments:
 |---|---|---|---|
 | 🏆 Top 25 #R | CWE has `cwe_top25_2024` rank set in taxonomy | `🏆 Top 25 #<rank>` | `cwes.CWE-NNN.cwe_top25_2024` |
 | Pillar | CWE has `pillar` field ≠ null (i.e. CWE is not itself a pillar) | `Pillar [CWE-PPP](url)` | `cwes.CWE-NNN.pillar` + `pillars.CWE-PPP.url` |
-| OWASP | CWE has `owasp_top10_2021` mapping | `OWASP [A0X:2021](url)` | `cwes.CWE-NNN.owasp_top10_2021` + `owasp_top10_2021_urls.A0X` |
+| OWASP | CWE has `owasp_top10_2025` mapping | `OWASP [A0X:2025](url)` | `cwes.CWE-NNN.owasp_top10_2025` + `owasp_top10_2025_urls.A0X` |
 
 The three segments are separated by ` · ` (middle-dot with spaces). If a segment is unavailable, skip it — do not emit empty placeholders. The tag is **in addition to** the CWE link, on the same line, same cell.
 
 Example row in Threat Register for T-009 (SQL injection in product search):
 
 ```markdown
-| <a id="t-009"></a>T-009 | REST API | Information Disclosure | SQL injection in product search: … [CWE-89](https://cwe.mitre.org/data/definitions/89.html) 🏆 Top 25 #3 · Pillar [CWE-707](https://cwe.mitre.org/data/definitions/707.html) · OWASP [A03:2021](https://owasp.org/Top10/A03_2021-Injection/) | High | Critical | 🔴 Critical | … | [M-007](#m-007) — Parameterize raw queries |
+| <a id="t-009"></a>T-009 | REST API | Information Disclosure | SQL injection in product search: … [CWE-89](https://cwe.mitre.org/data/definitions/89.html) 🏆 Top 25 #3 · Pillar [CWE-707](https://cwe.mitre.org/data/definitions/707.html) · OWASP [A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/) | High | Critical | 🔴 Critical | … | [M-007](#m-007) — Parameterize raw queries |
 ```
 
 **When an LLM-related OWASP code is used** (`LLM03`, `LLM04`, etc. from `cwe-taxonomy.yaml → owasp_llm_top10`), emit it alongside the OWASP Top 10 tag with the same formatting, e.g. `OWASP [A10:2021](…) · LLM [LLM03](…)`. Only LLM-integrated components trigger this — the STRIDE analyzer decides.
@@ -1171,10 +1188,10 @@ When a mitigation addresses **two or more** findings, the `**Addresses:**` block
 3. <next step>
 
 ```<lang>
-// Before (<file>:<line>):
+// Before (<file>:<line>) — <why this behavior is unsafe>:
 <code>
 
-// After:
+// After — <security property now enforced>:
 <code>
 ```
 
@@ -1199,7 +1216,7 @@ When a mitigation addresses **two or more** findings, the `**Addresses:**` block
 | `**Effort:**` | always | `Low` (< 2h, single file) · `Medium` (half-day, multi-file) · `High` (multi-day, architectural). On its own line. |
 | `**Why:**` | always | 1–3 sentences. **When a Blueprint applies, quote the Blueprint rationale verbatim** before adding any custom commentary. |
 | `**How:**` | always | Numbered steps. **When a Blueprint applies, the first step MUST come from the Blueprint section** — do not invent your own first step. |
-| Code block | when fix involves code or config | Language-tagged before/after snippet (3–10 lines). The `Before` snippet carries a `(<file>:<line>)` provenance comment on the first line; the `After` snippet shows the fixed form. Omit the block only when the fix is purely operational (e.g. "rotate the secret in vault"). |
+| Code block | when fix involves code or config | Language-tagged before/after snippet (3–10 lines) using APIs present in the repository. The `Before` comment names `(<file>:<line>)` and, when useful, why the current behavior is unsafe; the `After` comment states the security property enforced. The renderer introduces every block with an `Example implementation in <file>` sentence. Omit the block only when the fix is purely operational (e.g. "rotate the secret in vault"). |
 | `**Verification:**` | always | Concrete check the developer can run after the fix — never "verify the fix works". |
 | `**Reference:**` | always | CWE Pillar link + OWASP Top 10 / OWASP LLM link (external CWE/OWASP URL — never internal anchor). Use `➚` arrow prefix per link for visual consistency. |
 | `---` separator | always (between blocks) | A standalone `---` line between consecutive M-NNN blocks within a priority group; not required before the first block of a group (the group's own `---` after the intro sentence serves). |
@@ -1381,7 +1398,7 @@ The template is ~4 k tokens. Load it in the same Bash call that reads `.triage-f
 - 🔴/🟡/🟢 severity cue in `### Verdict` + red HTML blockquote with worst-case bullets (F-NNN links) — no separate `### ⚠ Worst Case Scenarios` heading.
 - `### Top Findings` is a 7-column table (not bullets): `#`, `Criticality`, `Finding`, `Component`, `Threat`, `Vektor`, `Primary Mitigations`. Max 15–20 rows; every Vektor cell is a link to Appendix A.
 - Do not emit legacy Management Summary subsections: `### Top Critical Findings`, `### Critical Findings`, `### Recommended Priority Actions`, `### Key Strengths`, or `### Overall Security Rating`. Content that used to live there is replaced by `### Top Findings`, `## Critical Attack Tree`, `#### Prioritized Mitigations`, and `### Operational Strengths`.
-- `### Architecture Assessment` uses a 3-column table (`Defect` / `Description` / `Key Findings`) with a closing §7 reference line.
+- `### Architecture Assessment` uses a 3-column table (`Defect` / `Description` / `Key Findings`) with a closing §6 reference line.
 - `### Mitigations` has two sub-tables (`#### Prioritized` + `#### Follow-up`), both 5 columns: `ID`, `Mitigation`, `Component`, `Addresses`, `Effort`.
 - `### Operational Strengths` is a mandatory 5-column table (5–8 rows min): `Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`.
 - Sub-section headings MUST NOT be numbered (`### 1.1 Verdict` is a generation defect — QA auto-strips the prefix).
@@ -1457,7 +1474,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_sca_practice.py" \
   --output-dir "$OUTPUT_DIR" \
   --asset-tier "$ASSET_TIER" \
   >> "$OUTPUT_DIR/.agent-run.log" 2>&1 \
-  || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  emit_sca_practice failed — §7.11 SCA-practice rows missing this run" >> "$OUTPUT_DIR/.agent-run.log"
+  || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  emit_sca_practice failed — §6.11 SCA-practice rows missing this run" >> "$OUTPUT_DIR/.agent-run.log"
 
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_known_bad_libs.py" \
   --repo-root  "$REPO_ROOT" \
@@ -1470,8 +1487,8 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  AGENT_D
 ```
 
 Outputs written by these emitters:
-- `$OUTPUT_DIR/.dep-update-activity.json` — passive `git log` cadence signal (active | sporadic | inactive | unknown) plus optional `gh pr list` count when the GitHub CLI is available. Drives the §7.11 "Automated dependency updates" lift.
-- `$OUTPUT_DIR/.security-controls.json` (extended) — three §7.11 control rows (Automated SCA scanning, Automated dependency updates, Lockfile hygiene), each rated `Adequate | Partial | Missing`.
+- `$OUTPUT_DIR/.dep-update-activity.json` — passive `git log` cadence signal (active | sporadic | inactive | unknown) plus optional `gh pr list` count when the GitHub CLI is available. Drives the §6.11 "Automated dependency updates" lift.
+- `$OUTPUT_DIR/.security-controls.json` (extended) — three §6.11 control rows (Automated SCA scanning, Automated dependency updates, Lockfile hygiene), each rated `Adequate | Partial | Missing`.
 - `$OUTPUT_DIR/.sca-practice-findings.json` — MF-NNN candidates when any of the three control rows is `Partial` / `Missing`. Severity tier-driven via `data/sca-practice-severity.yaml`.
 - `$OUTPUT_DIR/.known-bad-libs-findings.json` — MF-NNN candidates for any dependency matched against `data/known-bad-libs.yaml`. Severity capped by asset tier.
 
@@ -1657,7 +1674,7 @@ prompt: |
   MODEL_ID=<TRIAGE_MODEL>
 ```
 
-Pass `$TRIAGE_MODEL` (resolved from `--reasoning-model` by the skill) as the Agent tool's `model` parameter — overrides the agent's frontmatter `model: sonnet` default.
+Pass the **tier alias** of `$TRIAGE_MODEL` (resolved from `--reasoning-model` by the skill) as the Agent tool's `model` parameter — overrides the agent's frontmatter `model: sonnet` default. The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id — reduce `$TRIAGE_MODEL` to its tier (see the STRIDE dispatch note in Phase 9); keep the full id only in the `(model: …)` log line.
 
 **Log before dispatch:**
 ```bash
@@ -1810,11 +1827,13 @@ Both sidecars run AFTER the triage agent completes — they consume `.triage-fla
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10c/11] Abuse Case Verification" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
     --output-dir "$OUTPUT_DIR" \
+    --repo-root "$REPO_ROOT" \
+    --signals "$OUTPUT_DIR/.recon-signals.json" \
     ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} || true
 # → .abuse-case-matches.json
 CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
 ```
-The matcher reads `.threats-merged.json`, applies each case's `scope_qualifier` and per-step `probe.sink_patterns`, and emits a structural verdict per case. Only `candidate` / `partial_candidate` cases proceed to verification.
+The matcher reads `.threats-merged.json` and `.recon-signals.json` when present, applies each case's `scope_qualifier` (signals and repository path patterns), and emits a structural verdict per case. A sink may match an existing finding or a bounded direct source probe; the latter is only a verifier candidate, never a finding or verdict. After verification, `promote_verified_abuse_cases.py` may materialise a confirmed source-probe step into a normal finding only when the case declares its `chain[].finding` classification and remediation metadata. Only `candidate` / `partial_candidate` cases proceed to verification. A missing signal sidecar remains fail-open for compatibility.
 
 **Step 2 — verifier fan-out (one Sonnet agent per candidate, parallel — same pattern as Phase 9 STRIDE).** For each id in `$CANDIDATES`, dispatch:
 
@@ -1831,7 +1850,7 @@ prompt: |
   MODEL_ID=$ABUSE_VERIFIER_MODEL
 ```
 
-`$ABUSE_VERIFIER_MODEL` defaults to `sonnet` (→ host session); pin via `APPSEC_ABUSE_VERIFIER_MODEL`. SKILL-impl.md Stage 1c is authoritative for operational runs. Set the Agent `model` param explicitly or the frontmatter `sonnet` default silently wins.
+`$ABUSE_VERIFIER_MODEL` defaults to `sonnet` (→ host session); pin via `APPSEC_ABUSE_VERIFIER_MODEL`. SKILL-impl.md Stage 1c is authoritative for operational runs. Set the Agent `model` param explicitly (as the **tier alias** — `sonnet`/`opus`/`haiku`, never a full version id; reduce a pinned `claude-sonnet-5` to `sonnet`, see the STRIDE dispatch note in Phase 9) or the frontmatter `sonnet` default silently wins.
 
 Dispatch all candidates together (wall-clock ≈ the slowest single case, not the sum). Each agent writes one `.abuse-case-verdict-<AC-ID>.json`. **Budget-critical guard:** if `$OUTPUT_DIR/.budget-critical` exists before this step, skip the fan-out — the merge below records every candidate as `inconclusive`.
 
@@ -1839,6 +1858,8 @@ Dispatch all candidates together (wall-clock ≈ the slowest single case, not th
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/promote_verified_abuse_cases.py" --output-dir "$OUTPUT_DIR" || true
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/abuse_case_gate.py" --output-dir "$OUTPUT_DIR"
 # → .abuse-case-verdicts.json (per-step verdicts folded into a chain verdict)
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 10c/11] Abuse Case Verification" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```

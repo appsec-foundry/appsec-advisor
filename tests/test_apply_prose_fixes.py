@@ -27,9 +27,9 @@ prose = _load_apply_prose_fixes()
 
 def test_apply_fixes_is_idempotent_for_core_rewrites():
     md = textwrap.dedent("""\
-        ## 7. Security Architecture
+        ## 6. Security Architecture
 
-        ### 7.2 Identity and Authentication Controls
+        ### 6.2 Identity and Authentication Controls
 
         **Controls covered:** [Stale](#stale).
 
@@ -409,25 +409,25 @@ def test_nosql_object_inside_existing_code_span_is_preserved():
 
 
 def test_controls_covered_bulletized_form_not_reinlined():
-    """§7 fix (2026-06-04): when the composer has bulletized
+    """§6 fix (2026-06-04): when the composer has bulletized
     `**Controls covered:**` into a header + `- [name](#slug)` list, the
     anchor-rewrite must NOT re-add inline links onto the header (that produced
     the double-listing bug). It keeps the header bare and refreshes the bullets.
     """
     md = textwrap.dedent(
         """\
-        ### 7.4 Authorization Controls
+        ### 6.4 Authorization Controls
 
-        **Controls covered:** [7.4.1 Route-Level Authorization](#741-route-level-authorization) · [7.4.2 Object-Level Authorization](#742-object-level-authorization)
+        **Controls covered:** [6.4.1 Route-Level Authorization](#641-route-level-authorization) · [6.4.2 Object-Level Authorization](#642-object-level-authorization)
 
-        - [7.4.1 Route-Level Authorization](#741-route-level-authorization)
-        - [7.4.2 Object-Level Authorization](#742-object-level-authorization)
+        - [6.4.1 Route-Level Authorization](#641-route-level-authorization)
+        - [6.4.2 Object-Level Authorization](#642-object-level-authorization)
 
-        #### 7.4.1 Route-Level Authorization
+        #### 6.4.1 Route-Level Authorization
 
         body
 
-        #### 7.4.2 Object-Level Authorization
+        #### 6.4.2 Object-Level Authorization
 
         body
         """
@@ -435,11 +435,11 @@ def test_controls_covered_bulletized_form_not_reinlined():
     out, n = prose.apply_fixes(md)
     # The inline `· `-joined link line is collapsed to a bare header.
     assert "**Controls covered:**\n" in out
-    assert "**Controls covered:** [7.4.1" not in out
+    assert "**Controls covered:** [6.4.1" not in out
     # Exactly one header + the two bullets survive (no duplication).
     assert out.count("**Controls covered:**") == 1
-    assert out.count("- [7.4.1 Route-Level Authorization](#741-route-level-authorization)") == 1
-    assert out.count("- [7.4.2 Object-Level Authorization](#742-object-level-authorization)") == 1
+    assert out.count("- [6.4.1 Route-Level Authorization](#641-route-level-authorization)") == 1
+    assert out.count("- [6.4.2 Object-Level Authorization](#642-object-level-authorization)") == 1
     # Idempotent.
     out2, n2 = prose.apply_fixes(out)
     assert n2 == 0 and out2 == out
@@ -450,17 +450,17 @@ def test_controls_covered_legacy_inline_form_preserved():
     is kept (and anchors refreshed) — only the bulletized layout collapses."""
     md = textwrap.dedent(
         """\
-        ### 7.4 Authorization Controls
+        ### 6.4 Authorization Controls
 
-        **Controls covered:** [7.4.1 Route-Level Authorization](#wrong-anchor)
+        **Controls covered:** [6.4.1 Route-Level Authorization](#wrong-anchor)
 
-        #### 7.4.1 Route-Level Authorization
+        #### 6.4.1 Route-Level Authorization
 
         body
         """
     )
     out, _ = prose.apply_fixes(md)
-    assert "**Controls covered:** [7.4.1 Route-Level Authorization](#741-route-level-authorization)" in out
+    assert "**Controls covered:** [6.4.1 Route-Level Authorization](#641-route-level-authorization)" in out
 
 
 # ---------------------------------------------------------------------------

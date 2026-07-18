@@ -169,6 +169,35 @@ def test_resolve_explicit_preset_overrides_default(isolated_root):
     assert effective["defaults"]["write_pentest_tasks"] is True
 
 
+def test_resolve_requirements_gate_surfaces_from_preset(isolated_root):
+    # ci-standard carries a gate block (enforce/partial/SHOULD); it must reach
+    # defaults.requirements_gate so the requirements skills can seed their gate.
+    effective, errors = rop.resolve(str(FIXTURE_PATH), "ci-standard", False, None, isolated_root, env={})
+    assert errors == []
+    gate = effective["defaults"]["requirements_gate"]
+    assert gate == {"mode": "enforce", "gate_on": "partial", "priority_floor": "SHOULD"}
+
+
+def test_resolve_requirements_gate_none_when_preset_has_no_gate(isolated_root):
+    # release-review has requirements.enabled but no gate block → None, so the
+    # skills fall back to their built-in advisory/fail/MUST defaults.
+    effective, errors = rop.resolve(str(FIXTURE_PATH), "release-review", False, None, isolated_root, env={})
+    assert errors == []
+    assert effective["defaults"]["requirements_gate"] is None
+
+
+def test_resolve_fail_on_surfaces_from_preset_guardrails(isolated_root):
+    effective, errors = rop.resolve(str(FIXTURE_PATH), "ci-standard", False, None, isolated_root, env={})
+    assert errors == []
+    assert effective["defaults"]["fail_on"] == "high"
+
+
+def test_resolve_url_allowlist_surfaces_from_policy(isolated_root):
+    effective, errors = rop.resolve(str(FIXTURE_PATH), "ci-standard", False, None, isolated_root, env={})
+    assert errors == []
+    assert effective["defaults"]["url_allowlist"] == ["security.acme.example", "raw.githubusercontent.com"]
+
+
 def test_resolve_unknown_preset_fails(isolated_root):
     effective, errors = rop.resolve(str(FIXTURE_PATH), "ghost", False, None, isolated_root, env={})
     assert errors

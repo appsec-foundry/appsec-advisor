@@ -605,6 +605,103 @@ def test_weakness_class_strips_on_line_artefact():
     )
 
 
+def test_weakness_class_strips_paren_fileref():
+    # Q1 (2026-07-16 user request): scanner/IaC/SCA findings carry the location
+    # in PARENS rather than the em-dash tail, so the em-dash split alone left a
+    # raw `(Dockerfile:13)` / `(LegacySqliteUserStore.java:64)` in the §3 title.
+    assert renderer._weakness_class("Hardcoded JWT Signing Key (Dockerfile:13)") == "Hardcoded JWT Signing Key"
+    assert (
+        renderer._weakness_class("SQL Injection Authentication Bypass (LegacySqliteUserStore.java:64)")
+        == "SQL Injection Authentication Bypass"
+    )
+    # A descriptive parenthetical that names no file (no extension, no `:line`)
+    # MUST survive — it is not a location.
+    assert renderer._weakness_class("Mass Assignment (privileged field accepted)") == (
+        "Mass Assignment (privileged field accepted)"
+    )
+
+
+def test_attack_class_prefers_title_source_and_keeps_attack_framing():
+    # §3 heading source: `_title_source` (the analyst's pre-normalization
+    # original) is preferred over the normalized register `title`, and the
+    # attacker framing it carries is KEPT (unlike _weakness_class which reduces
+    # to the bare class for §6/§8).
+    threat = {
+        "_title_source": "SQL Injection Authentication Bypass",
+        "title": "SQL Injection — routes/login.ts:34",
+    }
+    assert renderer._attack_class(threat) == "SQL Injection Authentication Bypass"
+
+
+def test_attack_class_strips_via_impl_and_file_tokens():
+    # The `via <impl>` tail and any file token are dropped — the concrete
+    # feature is re-attached by _attack_target_label; impl/file live on Source.
+    assert renderer._attack_class({"_title_source": "UNION SQL Injection via Product Search"}) == "UNION SQL Injection"
+    assert renderer._attack_class({"_title_source": "XXE via libxmljs2 external entity resolution on Upload"}) == "XXE"
+    assert (
+        renderer._attack_class({"_title_source": "Server-Side Template Injection via eval (routes/userProfile.ts:62)"})
+        == "Server-Side Template Injection"
+    )
+    assert (
+        renderer._attack_class({"_title_source": "Mass Assignment: role Field Writable via POST server.ts:483"})
+        == "Mass Assignment: role Field Writable"
+    )
+
+
+def test_attack_class_falls_back_to_weakness_when_no_source():
+    # No `_title_source` and a bare weakness `title` → same as the register class
+    # (graceful degradation: never worse than today, richer only where a source
+    # provides attack framing).
+    assert renderer._attack_class({"title": "Insecure JWT Verification — lib/insecurity.ts:54"}) == (
+        "Insecure JWT Verification"
+    )
+
+
+def test_heading_uses_attack_framing_from_title_source():
+    ydata = {
+        "threats": [
+            {
+                "id": "T-004",
+                "_title_source": "SQL Injection Authentication Bypass",
+                "title": "SQL Injection — routes/login.ts:34",
+                "risk": "critical",
+                "cwe": "CWE-89",
+                "vektor": "internet-anon",
+                "scenario": "Attacker submits an OR 1=1 payload to the login form.",
+                "evidence": [{"file": "routes/login.ts", "line": 34}],
+            }
+        ]
+    }
+    out = renderer.gen_attack_walkthroughs(ydata)
+    # Attack-framed clause + feature suffix; register title's bare class is NOT used.
+    assert "### 3.1 SQL Injection Authentication Bypass in Login\n" in out
+    heading_line = next(ln for ln in out.splitlines() if ln.startswith("### 3.1"))
+    assert "—" not in heading_line  # anchor stability preserved
+
+
+def test_heading_skips_feature_suffix_on_double_in():
+    # An attack clause that already carries a prepositional "in" must NOT get a
+    # second one appended ("… Stored in localStorage in Login").
+    ydata = {
+        "threats": [
+            {
+                "id": "T-001",
+                "_title_source": "JWT Bearer Token Stored in localStorage",
+                "title": "Insecure Token Storage — login.component.ts:101",
+                "risk": "critical",
+                "cwe": "CWE-922",
+                "vektor": "internet-anon",
+                "scenario": "Attacker reads the persisted token via any XSS foothold.",
+                "evidence": [{"file": "frontend/src/app/login/login.component.ts", "line": 101}],
+            }
+        ]
+    }
+    out = renderer.gen_attack_walkthroughs(ydata)
+    heading_line = next(ln for ln in out.splitlines() if ln.startswith("### 3.1"))
+    assert heading_line == "### 3.1 JWT Bearer Token Stored in localStorage"
+    assert "localStorage in " not in heading_line
+
+
 class TestAttackTargetLabel:
     """§3 headings must name the concrete FEATURE under attack (juice-shop
     2026-07-03 user request) — "against Login", not the broad zone "against

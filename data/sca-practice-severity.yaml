@@ -4,7 +4,7 @@
 # emitted by scripts/emit_sca_practice.py.
 #
 # Three independent control rows (scanning / dep_updates / lockfile_hygiene)
-# are evaluated per repo (§7.11 Operations Runtime and Supply Chain
+# are evaluated per repo (§6.11 Operations Runtime and Supply Chain
 # Controls). When the row is `missing`, an MF-NNN is emitted at the severity
 # from this matrix, capped by asset_tier resolved by context-resolver in
 # Phase 1.
@@ -73,7 +73,7 @@ partial_severity:
 # Default tier when context-resolver could not classify. Conservative middle.
 default_tier: T2
 
-# Severity ordering — used by the §7.13 derived "patch management posture"
+# Severity ordering — used by the §6.13 derived "patch management posture"
 # row to pick the worst-of-three across the three controls (worst wins).
 severity_order:
   - Informational

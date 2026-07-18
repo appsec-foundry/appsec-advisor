@@ -62,7 +62,7 @@ Load `PRE_PASS_JSON_PATH` first. It is the authoritative result for **every** me
 | `yaml_md_consistency.issues` | Check 4 — yaml/md drift | Fix YAML to match MD |
 | `posture_structure.issues` | Check 7b — Security Posture invariants | Annotate or surface for re-render |
 | `heading_hygiene.issues` | Check 13b — embedded link artefacts in headings | Repair-plan only |
-| `subcontrol_naming_canonical.issues` | Check 3l — §7.X H4 names | Surface for re-render via heading_rename_cascade |
+| `subcontrol_naming_canonical.issues` | Check 3l — §6.X H4 names | Surface for re-render via heading_rename_cascade |
 | `strengths_row_quality.issues` | Check 3i — Operational Strengths cluster | Annotate; let Phase 11 rerun fix |
 | `inline_code_format.warnings` / `label_as_code.warnings` | Check 3f — backtick wrapping | Already auto-fixed by `apply_prose_fixes.py`; no action |
 
@@ -287,7 +287,7 @@ Read these `PRE_PASS_JSON` keys — they cover ~all of 7a/7b:
 - `contract.issues` — section presence, ordering, table-column schema. Covers 7a.
 - `ms_structure.issues` — MS Verdict / sub-section count + order / numeric-prefix strip / legacy renames. Covers the MS portion of 7a + 7b (formerly `shared/qa-ms-checks.md` §§1–4).
 - `heading_hygiene.issues` / `posture_structure.issues` / `mermaid_syntax.issues` / `infobox_completeness.issues` — covered in their respective Checks (13b, 14, 8a).
-- `paragraph_density.issues`, `section7_{narrative_placeholders,h4_positive_intro,fence_intro_sentence,finding_link_duplicate,finding_reference_semantic}.issues`, `diagram_compactness.issues`, `chain_compactness.issues`, `chain_tid_consistency.issues`, `walkthrough_coverage.issues`, `walkthrough_depth.issues`, `falls_short_format.issues`, `relevant_findings_bullet_list.issues`, `control_subsection_coverage.issues`, `na_against_recon.issues`, `dependency_cross_ref.issues`, `finding_range_homogeneous.issues`, `generic_phrases.issues`, `rhetorical_severity.issues`, `section_opener_restates_heading.issues`, `ai_padding_phrases.issues` — all cover §7 structural quality.
+- `paragraph_density.issues`, `section7_{narrative_placeholders,h4_positive_intro,fence_intro_sentence,finding_link_duplicate,finding_reference_semantic}.issues`, `diagram_compactness.issues`, `chain_compactness.issues`, `chain_tid_consistency.issues`, `walkthrough_coverage.issues`, `walkthrough_depth.issues`, `falls_short_format.issues`, `relevant_findings_bullet_list.issues`, `control_subsection_coverage.issues`, `na_against_recon.issues`, `dependency_cross_ref.issues`, `finding_range_homogeneous.issues`, `generic_phrases.issues`, `rhetorical_severity.issues`, `section_opener_restates_heading.issues`, `ai_padding_phrases.issues` — all cover §6 structural quality.
 
 Every entry from these keys lands in `.qa-repair-plan.json` automatically. **Skip the corresponding manual sub-check**: re-doing it costs turns without adding coverage.
 
@@ -305,7 +305,7 @@ The canonical structural-quality presence rows (excerpt — full list in `data/s
 | `## 3. Attack Walkthroughs` | Present. When the Threat Register has ≥1 Critical row: one `sequenceDiagram` per Critical finding (max 5), each carrying an `alt`/`else` block where `alt` is labelled `Current state — T-NNN` (marked `%% attack-path`) and `else` is labelled `After M-NNN — <mitigation>`. When `CRIT_COUNT == 0`: present as a 2-line empty-state stub referencing `[Section 8 — Threat Register](#8-threat-register)`. Legacy `## 3. Security-Relevant Use Cases` is auto-renamed by the contract gate. |
 | `## 4. Assets` | Present and contains the asset classification table (`Asset`, `Classification`, `Description`, `Linked Threats`). |
 | `## 5. Attack Surface` | Present and contains a Markdown table. |
-| `## 7. Security Architecture` | Present with `### 7.1 Security Control Overview` through `### 7.13 Defense-in-Depth Summary`. |
+| `## 6. Security Architecture` | Present with `### 6.1 Security Control Overview` through `### 6.13 Defense-in-Depth Summary`. |
 | `## 8. Threat Register` | Present with ≥1 data row. |
 | `## Critical Attack Tree` | Present when §8 has ≥2 Critical rows. Must contain a one-line explanation, a single Mermaid `graph LR` tree (goal-decomposition, short `T-NNN` leaf boxes), and a one-line **Findings** pointer below it. No Key-takeaway, Mitigation-breakpoints, or quick-reference table (all retired). Omitted entirely when Critical count < 2. |
 | `## 9. Abuse Cases` | Present. Either the abuse-case scenarios (summary table + per-`AC-NNN` blocks) or the single italic placeholder line when none applied. |
@@ -340,13 +340,13 @@ Additionally check (semantic, not in helper):
 
 ### 7d — Unified controls catalog (extended depth only)
 
-Phase 2 invariant: §7 and the MS Operational Strengths table are both rendered from `threat-model.yaml → security_controls[]`. Drift between the two views is a renderer defect.
+Phase 2 invariant: §6 and the MS Operational Strengths table are both rendered from `threat-model.yaml → security_controls[]`. Drift between the two views is a renderer defect.
 
-Validate per-`SC-NN` schema (architectural_control, domain, effectiveness ∈ {adequate/partial/weak/missing}, mitigates_findings, positive_framing, show_in_strengths_by_default). Cross-check §7 rows ↔ catalog: missing in §7 → silently insert; not in catalog → repair-plan flag; effectiveness drift → YAML wins, rewrite MD cell. Cross-check Operational Strengths is `[sc for sc in catalog if sc.effectiveness != 'missing' and sc.show_in_strengths_by_default]` sorted by effectiveness asc + `len(mitigates_findings)` desc, top 8. Validate Missing-by-design coverage via `cwe-taxonomy.yaml → owasp_top10_2021` and `architectural-controls.yaml → default_references.cwe[]`.
+Validate per-`SC-NN` schema (architectural_control, domain, effectiveness ∈ {adequate/partial/weak/missing}, mitigates_findings, positive_framing, show_in_strengths_by_default). Cross-check §6 rows ↔ catalog: missing in §6 → silently insert; not in catalog → repair-plan flag; effectiveness drift → YAML wins, rewrite MD cell. Cross-check Operational Strengths is `[sc for sc in catalog if sc.effectiveness != 'missing' and sc.show_in_strengths_by_default]` sorted by effectiveness asc + `len(mitigates_findings)` desc, top 8. Validate Missing-by-design coverage via `cwe-taxonomy.yaml → owasp_top10_2025` and `architectural-controls.yaml → default_references.cwe[]`.
 
 Skip 7d at `core`/`full` depth or when `threat-model.yaml` is absent.
 
-**Print when done:** `[qa-reviewer]   ↳ Sections: <n> contract gaps, <n> §7c invariants, <n> §7d catalog drift, MS regenerated=<yes|no>, §2.4 themes flagged=<n>, Critical Attack Tree=<ok|surfaced>`
+**Print when done:** `[qa-reviewer]   ↳ Sections: <n> contract gaps, <n> §6c invariants, <n> §6d catalog drift, MS regenerated=<yes|no>, §2.4 themes flagged=<n>, Critical Attack Tree=<ok|surfaced>`
 
 ---
 
@@ -619,7 +619,7 @@ Do NOT touch `threat-model.md` or `threat-model.yaml` in this check.
 
    **Do NOT** emit the flat form `"operation": "replace_string"` with sibling `search_text` / `replace_text` keys — `apply_content_repair.py` requires the nested object above and rejects (exit 3) any plan whose `operation` is a string. `replace_string` is preferred for most fixes (`append_after` for inserting a missing line like a `**Key takeaway:**`).
 
-   **`heading_rename_cascade`** is mandatory for §7 H4 renames (the `subcontrol_naming_canonical` defect). Plain `replace_string` only renames the H4; cascade additionally rewrites the `<a id="<kebab>"></a>` anchor, the `**Controls covered:**` `[Name](#anchor)` link, and the §7.1 overview-table `(e.g. <Name>)` row in one shot.
+   **`heading_rename_cascade`** is mandatory for §6 H4 renames (the `subcontrol_naming_canonical` defect). Plain `replace_string` only renames the H4; cascade additionally rewrites the `<a id="<kebab>"></a>` anchor, the `**Controls covered:**` `[Name](#anchor)` link, and the §6.1 overview-table `(e.g. <Name>)` row in one shot.
 
    When zero actions needed, do NOT emit the file (the applier no-ops on a missing plan).
 
@@ -633,7 +633,7 @@ Do NOT touch `threat-model.md` or `threat-model.yaml` in this check.
   ↳ YAML/MD:              <n> IDs added, <n> risk corrected, <n> count mismatches
   ↳ Prior findings:       <n> unaddressed (<n> external, <n> known-threats)
   ↳ Placeholders:         <n> flagged
-  ↳ Sections:             <n> contract gaps, <n> §7c invariants, MS regenerated=<yes|no>
+  ↳ Sections:             <n> contract gaps, <n> §6c invariants, MS regenerated=<yes|no>
   ↳ Diagrams:             <n> mermaid issues, <n> §3 alt/else violations, <n> annotator gaps
   ↳ Evidence files:       <n> verified, <n> missing
   ↳ Anchors:              <n> injected (or fast-path satisfied)

@@ -35,7 +35,7 @@ likewise pure data-matching (the LLM judgment residue moves to the
   Check 12 Remediation ROI — high_plus/effort formula, top-5 not-prioritized.
   Check 13 Config/IaC coverage — config-scan findings must map to a
            configuration-defect threat (set-membership; skip when absent).
-  Check 14 §7 quality bar — mechanical rules from sec7-quality-bar-rules.md
+  Check 14 §6 quality bar — mechanical rules from sec7-quality-bar-rules.md
            (heading set, H4 labels/status, no-legacy-flows, overview table,
            floskeln, generic openers). (Judgment residue: Unsafe-vs-Missing
            control classification.)
@@ -1048,7 +1048,7 @@ def check_actor_coverage(output_dir: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Check 14 — §7 Security Architecture quality bar (mechanical rules)
+# Check 14 — §6 Security Architecture quality bar (mechanical rules)
 # ---------------------------------------------------------------------------
 # Implements the deterministic rules from shared/sec7-quality-bar-rules.md.
 # The one judgement rule (is a present-but-broken control mislabelled "Missing"
@@ -1065,7 +1065,7 @@ _SEC7_FLOSKELN = (
     "with the expectation that",
 )
 _SEC7_OPENER_RE = re.compile(r"^\s*The (application|system|server)\b", re.I)
-# §7 H4 label probes. The colon may sit INSIDE the bold span
+# §6 H4 label probes. The colon may sit INSIDE the bold span
 # (`**Security assessment:**`) or be absent (`**Relevant findings**`) — both
 # are contract-valid, so tolerate the optional `:` rather than literal-matching
 # one fixed form (the literal form false-positived on the whole section).
@@ -1074,8 +1074,8 @@ _SEC7_FINDINGS_LABEL_RE = re.compile(r"\*\*Relevant findings:?\*\*")
 
 
 def _extract_sec7_body(tm_md: str) -> str:
-    """Return the §7 body: from the first '### 7.1' to the next H2 ('## ')."""
-    m = re.search(r"^###\s*7\.1\b", tm_md, re.MULTILINE)
+    """Return the §6 body: from the first '### 6.1' to the next H2 ('## ')."""
+    m = re.search(r"^###\s*6\.1\b", tm_md, re.MULTILINE)
     if not m:
         return ""
     rest = tm_md[m.start() :]
@@ -1087,12 +1087,12 @@ def check_sec7_quality_bar(tm_md_path: Path) -> dict[str, Any]:
     tm_md = _read_text(tm_md_path)
     body = _extract_sec7_body(tm_md)
     if not body:
-        return {"check": "sec7-quality-bar", "skipped": True, "reason": "no §7 body (pre-render)", "findings": []}
+        return {"check": "sec7-quality-bar", "skipped": True, "reason": "no §6 body (pre-render)", "findings": []}
 
     findings: list[dict[str, Any]] = []
 
     # sec7_v2_heading_set — H3 7.1..7.13 all present.
-    h3_nums = {int(n) for n in re.findall(r"^###\s*7\.(\d+)\b", body, re.MULTILINE)}
+    h3_nums = {int(n) for n in re.findall(r"^###\s*6\.(\d+)\b", body, re.MULTILINE)}
     missing = [n for n in range(1, 14) if n not in h3_nums]
     if missing:
         findings.append(
@@ -1100,25 +1100,25 @@ def check_sec7_quality_bar(tm_md_path: Path) -> dict[str, Any]:
                 "check": "sec7-quality-bar",
                 "severity": "warning",
                 "kind": "sec7_v2_heading_set",
-                "message": f"§7 is missing H3 subsection(s): {', '.join('7.' + str(n) for n in missing)}.",
+                "message": f"§6 is missing H3 subsection(s): {', '.join('7.' + str(n) for n in missing)}.",
             }
         )
 
     # sec7_v2_no_legacy_flows — no legacy flow headings / trailers.
-    if re.search(r"^####\s*7\.\d+\.\d+\b.*\bFlow\b", body, re.MULTILINE) or "Findings in this flow" in body:
+    if re.search(r"^####\s*6\.\d+\.\d+\b.*\bFlow\b", body, re.MULTILINE) or "Findings in this flow" in body:
         findings.append(
             {
                 "check": "sec7-quality-bar",
                 "severity": "warning",
                 "kind": "sec7_v2_no_legacy_flows",
-                "message": "§7 contains legacy flow headings / 'Findings in this flow' trailers — "
+                "message": "§6 contains legacy flow headings / 'Findings in this flow' trailers — "
                 "v2 layout forbids them.",
             }
         )
 
-    # sec7_v2_overview_table — §7.1 has the 3-column overview header.
-    m71 = re.search(r"^###\s*7\.1\b", body, re.MULTILINE)
-    m72 = re.search(r"^###\s*7\.2\b", body, re.MULTILINE)
+    # sec7_v2_overview_table — §6.1 has the 3-column overview header.
+    m71 = re.search(r"^###\s*6\.1\b", body, re.MULTILINE)
+    m72 = re.search(r"^###\s*6\.2\b", body, re.MULTILINE)
     sec71 = body[m71.start() : m72.start()] if (m71 and m72) else ""
     if not re.search(r"Control category", sec71, re.I):
         findings.append(
@@ -1126,12 +1126,12 @@ def check_sec7_quality_bar(tm_md_path: Path) -> dict[str, Any]:
                 "check": "sec7-quality-bar",
                 "severity": "warning",
                 "kind": "sec7_v2_overview_table",
-                "message": "§7.1 is missing the 'Control category | Verdict | Main reason' overview table.",
+                "message": "§6.1 is missing the 'Control category | Verdict | Main reason' overview table.",
             }
         )
 
     # Per-H4 checks: each #### subcontrol needs Status + Security assessment + Relevant findings.
-    h4_iter = list(re.finditer(r"^####\s*(7\.\d+\.\d+)\s+(.+)$", body, re.MULTILINE))
+    h4_iter = list(re.finditer(r"^####\s*(6\.\d+\.\d+)\s+(.+)$", body, re.MULTILINE))
     h4_no_status: list[str] = []
     h4_no_labels: list[str] = []
     h4_generic_opener = 0
@@ -1196,7 +1196,7 @@ def check_sec7_quality_bar(tm_md_path: Path) -> dict[str, Any]:
                 "check": "sec7-quality-bar",
                 "severity": "info",
                 "kind": "qb7_no_floskeln",
-                "message": f"§7 prose contains {floskel_hits} templated-filler token(s) "
+                "message": f"§6 prose contains {floskel_hits} templated-filler token(s) "
                 f"(leverages / robust / comprehensive / …) — tighten to concrete claims.",
             }
         )

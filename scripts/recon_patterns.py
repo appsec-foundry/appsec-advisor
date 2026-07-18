@@ -2641,6 +2641,37 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+# Cap findings per category in the aggregate `.recon-patterns.json` the
+# recon-scanner agent Reads into its LLM context. A recon pre-pass is a SIGNAL,
+# not an exhaustive enumeration — the analyst re-greps on demand — so an
+# unbounded findings list (juice-shop 2026-07-14: 319 KB of `categories`,
+# ~120k tokens re-read every turn, a major contributor to the multi-million
+# cache_read that made the streaming call fragile) only inflates context. The
+# true magnitude stays in each category's `count`; strong-strength hits are kept
+# ahead of the cap so build_stride_dispatch_manifest still sees them.
+_MAX_FINDINGS_PER_CATEGORY = 40
+
+
+def _cap_category_findings(categories: dict[str, Any], cap: int) -> None:
+    """Truncate each category's ``findings`` to ``cap`` in place, strong first.
+
+    ``count`` is set by the scanners before this runs, so it keeps the true
+    pre-cap total. A ``findings_truncated`` marker records how many were dropped.
+    """
+    for cat in categories.values():
+        if not isinstance(cat, dict):
+            continue
+        findings = cat.get("findings")
+        if not isinstance(findings, list) or len(findings) <= cap:
+            continue
+        ordered = sorted(
+            findings,
+            key=lambda f: 0 if isinstance(f, dict) and f.get("strength") == "strong" else 1,
+        )
+        cat["findings"] = ordered[:cap]
+        cat["findings_truncated"] = len(findings) - cap
+
+
 def run_all(
     repo_root: Path,
     include_manifest: bool = False,
@@ -2669,6 +2700,7 @@ def run_all(
             "29": scan_mobile_architecture(repo_root),
         },
     }
+    _cap_category_findings(out["categories"], _MAX_FINDINGS_PER_CATEGORY)
     if include_manifest:
         manifest: list[str] = []
         # Re-walk once purely to collect the manifest; the per-category

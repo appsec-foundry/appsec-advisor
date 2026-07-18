@@ -129,15 +129,6 @@ def mutate_yaml_missing(out: Path) -> None:
     (out / "threat-model.yaml").unlink()
 
 
-def mutate_arch_diagrams_missing_components_subsection(out: Path) -> None:
-    p = out / ".fragments" / "architecture-diagrams.md"
-    txt = p.read_text()
-    # Rename away from the canonical title so the required-subsections
-    # check fails.
-    txt = txt.replace("### 2.3 Components", "### 2.3 Stuff")
-    p.write_text(txt)
-
-
 def mutate_system_overview_wrong_heading(out: Path) -> None:
     p = out / ".fragments" / "system-overview.md"
     txt = p.read_text()
@@ -165,14 +156,14 @@ def mutate_attack_surface_rename_5_1(out: Path) -> None:
 
 
 def mutate_sec_arch_strip_7_3_diagram(out: Path) -> None:
-    # §7.3 carries an active `domain_required_patterns` gate through the
-    # schema_v2 overlay. Neutralise every sequenceDiagram in the §7.3 slice so
+    # §6.3 carries an active `domain_required_patterns` gate through the
+    # schema_v2 overlay. Neutralise every sequenceDiagram in the §6.3 slice so
     # the gate fires.
     p = out / ".fragments" / "security-architecture.md"
     txt = p.read_text()
-    head = "### 7.3 Session and Token Controls"
+    head = "### 6.3 Session and Token Controls"
     start = txt.index(head)
-    end = txt.index("### 7.4", start)
+    end = txt.index("### 6.4", start)
     txt = txt[:start] + txt[start:end].replace("sequenceDiagram", "flowchart TD") + txt[end:]
     p.write_text(txt)
 
@@ -203,11 +194,15 @@ MUTATIONS = [
     ("verdict-missing", mutate_remove_required_fragment, "verdict"),
     ("yaml-missing", mutate_yaml_missing, "threat-model.yaml"),
     # ---- Contract-level enforcement (markdown fragments) ----
-    ("arch-diagrams-missing-2-3", mutate_arch_diagrams_missing_components_subsection, "2.3 Components"),
+    # NB: no `arch-diagrams-missing-2-3` case — since c5a86d5 ("prevent
+    # threat-model repair drift") §2 is regenerated deterministically from
+    # yaml data at the composition chokepoint (compose `gen_architecture_diagrams`),
+    # so the four §2.x subsections are emitted unconditionally and a fragment
+    # edit can no longer produce a missing-subsection state to enforce against.
     ("system-overview-wrong-head", mutate_system_overview_wrong_heading, "must begin with"),
     ("walkthroughs-missing-seqdiagram", mutate_attack_walkthroughs_missing_seqdiagram, "sequenceDiagram"),
     ("attack-surface-rename-5-1", mutate_attack_surface_rename_5_1, "5.1 Unauthenticated Entry Points"),
-    ("sec-arch-7-3-strip-diagram", mutate_sec_arch_strip_7_3_diagram, "7.3 Session"),
+    ("sec-arch-7-3-strip-diagram", mutate_sec_arch_strip_7_3_diagram, "6.3 Session"),
 ]
 
 
@@ -269,15 +264,15 @@ def test_qa_ms_structure_strips_numeric_prefix(tmp_path: Path) -> None:
 
 
 def test_qa_contract_detects_missing_section(tmp_path: Path) -> None:
-    """If §7 is deleted from the body, `qa_checks.py contract` must flag it."""
+    """If §6 is deleted from the body, `qa_checks.py contract` must flag it."""
 
     def drop_section_7(p: Path):
         t = p.read_text()
-        # Remove the whole §7 block (from `## 7.` until the next `## `).
+        # Remove the whole §6 block (from `## 7.` until the next `## `).
         import re as _re
 
         t = _re.sub(
-            r"^##\s+(?:<a id=\"[^\"]+\"></a>)?7\. Security Architecture.*?(?=^##\s+(?:<a id=\"[^\"]+\"></a>)?8\.)",
+            r"^##\s+(?:<a id=\"[^\"]+\"></a>)?6\. Security Architecture.*?(?=^##\s+(?:<a id=\"[^\"]+\"></a>)?8\.)",
             "",
             t,
             flags=_re.DOTALL | _re.MULTILINE,
@@ -290,9 +285,9 @@ def test_qa_contract_detects_missing_section(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
     )
-    assert result.returncode != 0, "qa_checks contract should have flagged missing §7"
+    assert result.returncode != 0, "qa_checks contract should have flagged missing §6"
     assert "Security Architecture" in result.stdout, (
-        f"Missing §7 was flagged but message doesn't mention it. stdout: {result.stdout}"
+        f"Missing §6 was flagged but message doesn't mention it. stdout: {result.stdout}"
     )
 
 

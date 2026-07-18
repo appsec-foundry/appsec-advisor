@@ -3,7 +3,7 @@
 # Used by: appsec-stride-analyzer (match detected controls to canonical names),
 # appsec-threat-merger (dedup identically-named controls across components),
 # phase-group-threats.md / phase-group-finalization.md (render Operational
-# Strengths + Section 7 with consistent terminology).
+# Strengths + Section 6 with consistent terminology).
 #
 # Each entry:
 #   name                — canonical, tech-agnostic architectural control name
@@ -11,7 +11,7 @@
 #                         (library names, synonyms, STRIDE-analyzer phrasings)
 #   domain              — one of IAM / AuthZ / DataProt / InputVal /
 #                         FrontendSec / Audit / Infra / SupplyChain / RealTime /
-#                         AI / SessionMgmt — for grouping in Section 7
+#                         AI / SessionMgmt — for grouping in Section 6
 #   default_references  — default ASVS/NIST/CWE refs when analyzer provides none
 #
 # Extend additively. Never rename a canonical `name`; add new aliases instead.
@@ -40,21 +40,21 @@ domains:
 controls:
   # ---------- IAM ----------
   #
-  # Each IAM entry carries a `kind:` discriminator used by §7 rendering:
+  # Each IAM entry carries a `kind:` discriminator used by §6 rendering:
   #   mechanism    — an end-to-end way identity is established (Password
   #                  Login, OAuth, mTLS, AWS IAM Role, Webhook HMAC, …).
   #                  In v2, appears as a concrete H4 subcontrol under the
-  #                  relevant §7 control-category section.
+  #                  relevant §6 control-category section.
   #   primitive    — a building block used INSIDE a mechanism (Password
   #                  Hashing, JWT Signature Verification, Rate Limiting).
   #                  In v2, remains a subcontrol or supporting assessment,
   #                  not a standalone auth flow.
   #   cross-cutting — applies across multiple domains (Secret Management,
   #                  Defense-in-Depth). Renders into the matching v2
-  #                  control-category section or §7.13 summary.
+  #                  control-category section or §6.13 summary.
   #
   # The discriminator prevents token formats (e.g. "JWT") and primitives
-  # from replacing the real authentication mechanism in the §7 control
+  # from replacing the real authentication mechanism in the §6 control
   # inventory.
 
   - name: "Multi-Factor Enrollment (TOTP)"
@@ -108,7 +108,7 @@ controls:
       owasp_asvs: V2.2
       nist_sp_800_53: IA-5
 
-  # Session token lifecycle (§7.3) — Sign → Validate → Store → Revoke → Expire.
+  # Session token lifecycle (§6.3) — Sign → Validate → Store → Revoke → Expire.
   # The legacy `JWT Issuance` / `JWT Verification` / `JWT Verification and
   # Protected Route Middleware` / `Token Storage` / `Token Expiry` /
   # `Token Revocation` headings all moved to these lifecycle-aware names as of
@@ -233,7 +233,7 @@ controls:
       open-redirect are SAML-specific failure modes and belong under TH-02.
 
   # IAM mechanisms beyond the user-facing web auth set. These are the entries
-  # the §7.3 per-mechanism decomposition relies on for backend services,
+  # the §6.3 per-mechanism decomposition relies on for backend services,
   # serverless apps, mesh-internal services, and webhook receivers.
 
   - name: "User Registration"
@@ -246,7 +246,7 @@ controls:
     notes: |
       Account-lifecycle mechanism. Surfaces mass-assignment risk (role
       field), enumeration risk via differential error messages, and
-      registration-without-verification risk. Reference §7.2 lists it
+      registration-without-verification risk. Reference §6.2 lists it
       as a dedicated #### sub-block separate from Password Login because
       the credential-creation step has its own threat model.
 
@@ -357,7 +357,7 @@ controls:
     default_references:
       cwe: [CWE-306]
       owasp_asvs: V2.10
-    notes: "Explicit negative-finding row when public/unauthenticated routes exist by design or by oversight. Recorded as a mechanism so §7.3 can document the implicit identity model (e.g. 'requests are processed without authentication; downstream relies on network ACLs')."
+    notes: "Explicit negative-finding row when public/unauthenticated routes exist by design or by oversight. Recorded as a mechanism so §6.3 can document the implicit identity model (e.g. 'requests are processed without authentication; downstream relies on network ACLs')."
 
   # ---------- Authorization ----------
   - name: "Role-Based Access Control"

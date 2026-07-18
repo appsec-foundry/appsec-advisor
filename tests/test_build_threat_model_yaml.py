@@ -1867,6 +1867,19 @@ def test_build_threats_skips_info_stubs_and_missing_id():
                 "evidence": None,
                 "affected_parameter": "x" * 60,
             },
+            # Refuted candidates are evidence-verification output, not active
+            # findings. They stay in .threats-merged.json for audit but do not
+            # enter threat-model.yaml.
+            {
+                "t_id": "T-005",
+                "title": "Already fixed — routes/z.ts:3",
+                "component_id": "c1",
+                "likelihood": "High",
+                "risk": "High",
+                "cwe": "CWE-89",
+                "evidence": {"file": "z.ts", "line": 3},
+                "evidence_check": "refuted",
+            },
         ]
     }
     threats, warnings = b.build_threats(merged)
@@ -1880,6 +1893,7 @@ def test_build_threats_skips_info_stubs_and_missing_id():
     assert len(threats[1]["affected_parameter"]) <= 40
     assert threats[1]["affected_parameter"].endswith("…")
     assert any("observation-stub" in w for w in warnings)
+    assert any("evidence-refuted" in w for w in warnings)
 
 
 def test_build_mitigations_bumps_severity_to_max():
@@ -2017,6 +2031,59 @@ def test_prune_dangling_mitigation_threat_ids_noop_when_all_resolve():
     out, warnings = b.prune_dangling_mitigation_threat_ids(threats, mitigations)
     assert out[0]["threat_ids"] == ["T-001", "T-002"]
     assert warnings == []
+
+
+# --- prune_dangling_weakness_instances ---------------------------------------
+
+
+def test_prune_dangling_weakness_instances_drops_below_floor_instance():
+    # Reproduces juice-shop 2026-07-16 W-006→T-068: build_threats dropped T-068
+    # below the medium severity floor (register goes sparse), but the weakness
+    # register — built pre-drop — still names it as an instance. Left in, it renders
+    # a titleless [F-068] phantom link + inflates the md finding count.
+    threats = [{"id": "T-025"}, {"id": "T-038"}, {"id": "T-067"}, {"id": "T-075"}]
+    weaknesses = [
+        {
+            "id": "W-006",
+            "instance_count": 5,
+            "instances": [
+                {"id": "T-025", "file": "a"},
+                {"id": "T-038", "file": "b"},
+                {"id": "T-067", "file": "c"},
+                {"id": "T-068", "file": "d"},  # below-floor, dropped from threats[]
+            ],
+        }
+    ]
+    out, warnings = b.prune_dangling_weakness_instances(threats, weaknesses)
+    kept = [i["id"] for i in out[0]["instances"]]
+    assert kept == ["T-025", "T-038", "T-067"]  # T-068 pruned, order kept
+    assert out[0]["instance_count"] == 3  # count field updated
+    assert any("W-006" in w and "T-068" in w for w in warnings)
+
+
+def test_prune_dangling_weakness_instances_noop_when_all_resolve():
+    threats = [{"id": "T-001"}, {"id": "T-002"}]
+    weaknesses = [{"id": "W-001", "instances": [{"id": "T-001"}, {"id": "T-002"}]}]
+    out, warnings = b.prune_dangling_weakness_instances(threats, weaknesses)
+    assert [i["id"] for i in out[0]["instances"]] == ["T-001", "T-002"]
+    assert warnings == []
+
+
+def test_prune_dangling_weakness_instances_leaves_observable_backing_untouched():
+    # Only instances[] (confirmed-exploitable legs) are pruned; observable_backing
+    # intentionally references practice/absent-control sites that are not threats.
+    threats = [{"id": "T-001"}]
+    weaknesses = [
+        {
+            "id": "W-002",
+            "instances": [{"id": "T-001"}, {"id": "T-999"}],
+            "observable_backing": {"practice_evidence": [{"id": "T-999"}]},
+        }
+    ]
+    out, _ = b.prune_dangling_weakness_instances(threats, weaknesses)
+    assert [i["id"] for i in out[0]["instances"]] == ["T-001"]
+    # observable_backing.practice_evidence must NOT be pruned
+    assert out[0]["observable_backing"]["practice_evidence"] == [{"id": "T-999"}]
 
 
 # --- build_meta_findings branches --------------------------------------------

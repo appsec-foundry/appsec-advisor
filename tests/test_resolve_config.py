@@ -923,6 +923,19 @@ class TestCLI:
         assert r.returncode == 1
         assert "--abuse-cases and --no-abuse-cases" in r.stderr
 
+    def test_per_scan_abuse_case_selection_is_persisted(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = json.loads(
+            self._run(
+                "--abuse-case-file",
+                "security/payments.yaml",
+                "--only-abuse-case",
+                "REPO-AC-010",
+            ).stdout
+        )
+        assert cfg["abuse_case_files"] == ["security/payments.yaml"]
+        assert cfg["only_abuse_case_ids"] == ["REPO-AC-010"]
+
     # -- summary "show only when active" rules ------------------------------
 
     def test_summary_default_quiet_no_optional_rows(self, tmp_path, monkeypatch):

@@ -7,8 +7,6 @@ than a concrete code fix:
 
   M-15: evidence_check == "ambiguous" → kind=review, "Manual review:
         verify <weakness> at <file:line>" (P3).
-  M-16: evidence_check == "refuted"   → kind=review, "Confirm fix coverage
-        at <file:line>" (P3).
   M-17: source ∈ {architectural-anti-pattern, coverage-gap}
         → kind=investigate, ONE card per architectural_theme cluster
         (volume control per verification report) (P2).
@@ -43,6 +41,7 @@ import yaml
 
 # Local shared modules — single source of truth for source-string enums.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _critical_findings_sync import resync_critical_findings  # noqa: E402
 from _shared_sources import ARCH_ALL_SOURCES  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -156,18 +155,18 @@ def _link_threat_to_mitigation(threats_by_id: dict, tid: str, mid: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# M-15 / M-16: evidence_check ∈ {ambiguous, refuted}
+# M-15: evidence_check == ambiguous
 # ---------------------------------------------------------------------------
 
 
 def _synthesize_evidence_review(data: dict, state: dict, threats_by_id: dict) -> list[dict]:
-    """One review card per threat with evidence_check ∈ {ambiguous, refuted}."""
+    """One review card per threat with ambiguous evidence."""
     new_cards: list[dict] = []
     for t in data.get("threats") or []:
         if not isinstance(t, dict):
             continue
         ec = (t.get("evidence_check") or "").strip().lower()
-        if ec not in ("ambiguous", "refuted"):
+        if ec != "ambiguous":
             continue
         tid = (t.get("id") or "").strip()
         if not tid:
@@ -176,25 +175,15 @@ def _synthesize_evidence_review(data: dict, state: dict, threats_by_id: dict) ->
         target = f"{f}:{ln}" if (f and ln) else (f or "the cited location")
         weakness = _short_weakness(t.get("title") or "")
         mid = _allocate_next_m_id(state)
-        if ec == "ambiguous":
-            title = f"Manual review: verify {weakness} at {target}"
-            how = (
-                "The evidence-verifier sample could not confirm or refute "
-                "the claim from the cited snippet alone. Have a developer "
-                "familiar with this code path read ±20 lines around the "
-                f"cited location ({target}) and decide whether to keep, "
-                "downgrade, or remove this finding."
-            )
-            reason = "evidence-verifier returned ambiguous"
-        else:  # refuted
-            title = f"Confirm fix coverage at {target}"
-            how = (
-                "The evidence-verifier sample disagrees with the original "
-                "claim — the cited line does not show the weakness as stated. "
-                "Confirm the fix has fully landed, that no sibling code path "
-                "reintroduces the defect, and that the finding can be closed."
-            )
-            reason = "evidence-verifier returned refuted"
+        title = f"Manual review: verify {weakness} at {target}"
+        how = (
+            "The evidence-verifier sample could not confirm or refute "
+            "the claim from the cited snippet alone. Have a developer "
+            "familiar with this code path read ±20 lines around the "
+            f"cited location ({target}) and decide whether to keep, "
+            "downgrade, or remove this finding."
+        )
+        reason = "evidence-verifier returned ambiguous"
         new_cards.append(
             {
                 "id": mid,
@@ -412,6 +401,10 @@ def main(argv: list[str]) -> int:
         if not isinstance(existing, list):
             existing = []
         data["mitigations"] = existing + new_cards
+
+    # This emitter relinks threats[].mitigation_ids, which makes the builder's
+    # critical_findings[].mitigation_id stale. Re-derive before persisting.
+    resync_critical_findings(data)
 
     yaml_path.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),

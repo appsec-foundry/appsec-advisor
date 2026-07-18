@@ -38,10 +38,40 @@ def _mutate_evidence_line_null(d: dict) -> None:
     d["threats"][0]["evidence"]["line"] = None  # null line permitted
 
 
+def _mutate_evidence_tier(d: dict) -> None:
+    # P1 (weakness-class evidence model): the new instance-level evidence basis.
+    d["threats"][0]["evidence_tier"] = "insecure-practice"
+
+
+def _valid_weakness() -> dict:
+    return {
+        "id": "W-001",
+        "weakness_class": "injection",
+        "kind": "design",
+        "title": "Database query safety",
+        "statement": "SQL built by string concatenation; no parametrized layer.",
+        "severity": "High",
+        "severity_basis": "confirmed",
+        "observable_backing": {
+            "absent_control_signal": [{"pattern": "sequelize", "hit_count": 0}],
+            "practice_evidence": [{"file": "routes/search.ts", "line": 23}],
+        },
+        "affected_components": ["api"],
+        "instances": [{"id": "T-001", "file": "routes/login.ts", "line": 34, "basis": "confirmed-exploitable"}],
+    }
+
+
+def _mutate_add_weakness(d: dict) -> None:
+    # P1: top-level weakness register parents. Optional, additive.
+    d["weaknesses"] = [_valid_weakness()]
+
+
 _POSITIVE_CASES = [
     ("pristine-fixture-passes", lambda d: None),
     ("likelihood-allows-critical", _mutate_likelihood_critical),
     ("evidence-line-may-be-null", _mutate_evidence_line_null),
+    ("evidence-tier-accepted", _mutate_evidence_tier),
+    ("weakness-register-accepted", _mutate_add_weakness),
 ]
 
 
@@ -111,6 +141,32 @@ _NEGATIVE_CASES: list[tuple[str, Callable[[dict], None], list | tuple]] = [
     ("evidence-line-must-be-int", _set(("threats", 0, "evidence", "line"), "22"), ["line"]),
     ("title-must-not-be-empty", _set(("threats", 0, "title"), "   "), ["title"]),
     ("missing-row-field-component-id", _delete(("threats", 0, "component_id")), ["component_id"]),
+    # P1 weakness-class evidence model — new instance/weakness contract.
+    (
+        "evidence-tier-enum-enforced",
+        _set(("threats", 0, "evidence_tier"), "maybe"),
+        ["evidence_tier"],
+    ),
+    (
+        "weakness-id-pattern-enforced",
+        lambda d: d.update({"weaknesses": [{**_valid_weakness(), "id": "T-001"}]}),
+        ["W-"],
+    ),
+    (
+        "weakness-class-enum-enforced",
+        lambda d: d.update({"weaknesses": [{**_valid_weakness(), "weakness_class": "sqli"}]}),
+        ["weakness_class"],
+    ),
+    (
+        "weakness-kind-enum-enforced",
+        lambda d: d.update({"weaknesses": [{**_valid_weakness(), "kind": "runtime"}]}),
+        ["kind"],
+    ),
+    (
+        "weakness-requires-observable-backing",
+        lambda d: d.update({"weaknesses": [{k: v for k, v in _valid_weakness().items() if k != "observable_backing"}]}),
+        ["observable_backing"],
+    ),
 ]
 
 
@@ -156,3 +212,92 @@ def test_validator_does_not_mutate_input() -> None:
     mutated["threats"][0]["risk"] = "Low"
     validate_threats_merged(mutated)
     assert original["threats"][0]["risk"] == "Critical"
+
+
+# ---------------------------------------------------------------------------
+# P1.5 — weakness-register emission invariants (I2 + W-NNN uniqueness),
+# enforced as Python post-checks in validate_intermediate.
+# ---------------------------------------------------------------------------
+
+
+def test_weakness_empty_backing_rejected() -> None:
+    data = _load()
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "title": "Input validation",
+            "statement": "x",
+            "severity": "High",
+            "severity_basis": "design-risk",
+            "observable_backing": {},  # I2 violation: no backing
+        }
+    ]
+    ok, errors = validate_threats_merged(data)
+    assert not ok
+    assert any("observable_backing" in e for e in errors)
+
+
+def test_weakness_duplicate_id_rejected() -> None:
+    data = _load()
+    w = {
+        "id": "W-001",
+        "weakness_class": "injection",
+        "kind": "design",
+        "title": "Input validation",
+        "statement": "x",
+        "severity": "High",
+        "severity_basis": "design-risk",
+        "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
+    }
+    data["weaknesses"] = [w, dict(w)]
+    ok, errors = validate_threats_merged(data)
+    assert not ok
+    assert any("duplicated weakness id" in e for e in errors)
+
+
+def test_weakness_with_backing_accepted() -> None:
+    data = _load()
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "title": "Input validation",
+            "statement": "x",
+            "severity": "High",
+            "severity_basis": "design-risk",
+            "observable_backing": {"practice_evidence": [{"file": "a.ts", "line": 1}]},
+        }
+    ]
+    ok, errors = validate_threats_merged(data)
+    assert ok, f"valid weakness rejected: {errors}"
+
+
+def test_observed_practice_weakness_is_schema_valid() -> None:
+    data = _load()
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "implementation",
+            "title": "Database query safety",
+            "statement": "Unsafe query construction in the persistence boundary.",
+            "severity": "High",
+            "severity_basis": "observed-practice",
+            "observable_backing": {"practice_evidence": [{"file": "routes/search.ts", "line": 23}]},
+        }
+    ]
+    ok, errors = validate_threats_merged(data)
+    assert ok, f"observed practice weakness rejected: {errors}"
+
+
+def test_weakness_title_length_is_enforced() -> None:
+    data = _load()
+    weakness = _valid_weakness()
+    weakness["title"] = "x" * 81
+    data["weaknesses"] = [weakness]
+    ok, errors = validate_threats_merged(data)
+    assert not ok
+    assert any("title" in error for error in errors)

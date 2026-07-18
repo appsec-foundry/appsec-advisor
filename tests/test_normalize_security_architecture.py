@@ -33,17 +33,17 @@ def _write(tmp_path: Path, body: str) -> Path:
     return p
 
 
-# A §7 fragment with all three structural defects:
-#  - §7.6 first #### is a specific parser block, not a validation-approach block
-#  - §7.2 TOTP flow block carries no sequenceDiagram
-#  - §7.2.3 is missing the **Relevant findings** label
-DEFECTIVE = """## 7. Security Architecture
+# A §6 fragment with all three structural defects:
+#  - §6.6 first #### is a specific parser block, not a validation-approach block
+#  - §6.2 TOTP flow block carries no sequenceDiagram
+#  - §6.2.3 is missing the **Relevant findings** label
+DEFECTIVE = """## 6. Security Architecture
 
-### 7.2 Identity and Authentication Controls
+### 6.2 Identity and Authentication Controls
 
 **Controls covered:** [Password-Based Authentication](#a), [Multi-Factor Authentication (TOTP)](#b), [User Registration](#c)
 
-#### 7.2.1 Password-Based Authentication
+#### 6.2.1 Password-Based Authentication
 
 Intro about password login.
 
@@ -61,7 +61,7 @@ Assessment text.
 
 - [F-001](#f-001)
 
-#### 7.2.2 Multi-Factor Authentication (TOTP)
+#### 6.2.2 Multi-Factor Authentication (TOTP)
 
 Intro about TOTP enrollment and verification.
 
@@ -73,7 +73,7 @@ Assessment text.
 
 - [F-002](#f-002)
 
-#### 7.2.3 User Registration
+#### 6.2.3 User Registration
 
 Intro about registration.
 
@@ -81,11 +81,11 @@ Intro about registration.
 
 Assessment text.
 
-### 7.6 Input Boundary Validation Controls
+### 6.6 Input Boundary Validation Controls
 
 **Controls covered:** [File Upload Validation](#u)
 
-#### 7.6.1 File Upload Validation
+#### 6.6.1 File Upload Validation
 
 Intro.
 
@@ -118,29 +118,74 @@ def test_normalizer_makes_all_three_gates_pass(tmp_path):
 
 def test_validation_approach_inserted_first(tmp_path):
     out, _ = nrm.normalize_text(DEFECTIVE)
-    # The first #### under §7.6 must now be the approach block.
-    sec = out.split("### 7.6 ")[1]
+    # The first #### under §6.6 must now be the approach block.
+    sec = out.split("### 6.6 ")[1]
     first_h4 = sec.split("#### ", 1)[1].splitlines()[0]
     assert "Validation Approach" in first_h4
 
 
 def test_totp_flow_diagram_inserted(tmp_path):
     out, _ = nrm.normalize_text(DEFECTIVE)
-    totp = out.split("#### 7.2.2 Multi-Factor Authentication (TOTP)")[1].split("#### ")[0]
+    totp = out.split("#### 6.2.2 Multi-Factor Authentication (TOTP)")[1].split("#### ")[0]
     assert "sequenceDiagram" in totp
 
 
 def test_missing_relevant_findings_label_added(tmp_path):
     out, _ = nrm.normalize_text(DEFECTIVE)
-    reg = out.split("#### 7.2.3 User Registration")[1].split("### 7.6")[0]
+    reg = out.split("#### 6.2.3 User Registration")[1].split("### 6.6")[0]
     assert "**Relevant findings**" in reg
 
 
 def test_password_block_diagram_not_duplicated(tmp_path):
-    # §7.2.1 already has a sequenceDiagram — the normalizer must not add a 2nd.
+    # §6.2.1 already has a sequenceDiagram — the normalizer must not add a 2nd.
     out, _ = nrm.normalize_text(DEFECTIVE)
-    pw = out.split("#### 7.2.1 Password-Based Authentication")[1].split("#### 7.2.2")[0]
+    pw = out.split("#### 6.2.1 Password-Based Authentication")[1].split("#### 6.2.2")[0]
     assert pw.count("sequenceDiagram") == 1
+
+
+def test_nonmechanism_auth_heading_is_folded_into_the_preceding_method(tmp_path):
+    fragment = """## 6. Security Architecture
+
+### 6.2 Identity and Authentication Controls
+
+**Controls covered:** [Password-Based Authentication](#password-based-authentication)
+
+#### 6.2.1 Password-Based Authentication
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    U->>API: login
+```
+
+**Security assessment**
+
+Password authentication is present.
+
+**Relevant findings**
+
+- None identified.
+
+#### 6.2.2 Login Rate Limiting
+
+The login route has no rate limit.
+
+**Security assessment**
+
+The missing limit permits credential stuffing.
+
+**Relevant findings**
+
+- [F-001](#f-001)
+"""
+    out, changes = nrm.normalize_text(fragment)
+    p = _write(tmp_path, out)
+    assert "#### 6.2.2 Login Rate Limiting" not in out
+    assert "**Login Rate Limiting.**" in out
+    assert any("folded non-mechanism" in change for change in changes)
+    assert qc.check_auth_method_decomposition(p).ok == 1, qc.check_auth_method_decomposition(p).issues
+    assert qc.check_control_subsection_coverage(p).ok == 1, qc.check_control_subsection_coverage(p).issues
+    assert qc.check_subcontrol_naming_canonical(p).ok == 1, qc.check_subcontrol_naming_canonical(p).issues
 
 
 def test_idempotent(tmp_path):
@@ -161,8 +206,8 @@ def test_clean_input_is_noop(tmp_path):
 
 def test_not_applicable_section_not_fabricated(tmp_path):
     frag = (
-        "## 7. Security Architecture\n\n"
-        "### 7.12 Real-time and Not Applicable Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.12 Real-time and Not Applicable Controls\n\n"
         "_Not applicable — no real-time channels in scope._\n"
     )
     out, changes = nrm.normalize_text(frag)
@@ -171,10 +216,10 @@ def test_not_applicable_section_not_fabricated(tmp_path):
 
 
 def test_section_with_no_subsections_left_for_repair_loop(tmp_path):
-    # §7.6 with zero #### — normalizer must NOT fabricate one (out of scope).
+    # §6.6 with zero #### — normalizer must NOT fabricate one (out of scope).
     frag = (
-        "## 7. Security Architecture\n\n"
-        "### 7.6 Input Boundary Validation Controls\n\n"
+        "## 6. Security Architecture\n\n"
+        "### 6.6 Input Boundary Validation Controls\n\n"
         "Some prose but no H4 subsections.\n"
     )
     out, changes = nrm.normalize_text(frag)
@@ -210,10 +255,10 @@ def test_cli_accepts_output_dir(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# §7.x heading canonicalization (Oxford-comma drift — 2026-06-06)
+# §6.x heading canonicalization (Oxford-comma drift — 2026-06-06)
 # --------------------------------------------------------------------------- #
-# The contract's required_subsections use comma-free §7 titles deliberately
-# (e.g. "7.9 Cryptography Secrets and Data Protection"); enforce_control_taxonomy
+# The contract's required_subsections use comma-free §6 titles deliberately
+# (e.g. "6.9 Cryptography Secrets and Data Protection"); enforce_control_taxonomy
 # canonicalises yaml domains to match. The enrich-on secarch LLM renderer
 # routinely re-adds the Oxford comma, which trips the strict
 # `required_subsection_missing` gate. normalize_text rewrites the heading back
@@ -221,65 +266,65 @@ def test_cli_accepts_output_dir(tmp_path):
 
 
 def test_oxford_comma_heading_canonicalized():
-    md = "### 7.9 Cryptography, Secrets and Data Protection\nBody text.\n"
+    md = "### 6.9 Cryptography, Secrets and Data Protection\nBody text.\n"
     out, changes = nrm.normalize_text(md)
-    assert "### 7.9 Cryptography Secrets and Data Protection" in out
+    assert "### 6.9 Cryptography Secrets and Data Protection" in out
     assert "Cryptography, Secrets" not in out
     assert any("heading_canonicalized" in c for c in changes)
 
 
 def test_multiple_comma_headings_canonicalized():
     md = (
-        "### 7.10 File, Parser and Outbound Request Controls\n\n"
-        "### 7.11 Operations, Runtime and Supply Chain Controls\n"
+        "### 6.10 File, Parser and Outbound Request Controls\n\n"
+        "### 6.11 Operations, Runtime and Supply Chain Controls\n"
     )
     out, _ = nrm.normalize_text(md)
-    assert "### 7.10 File Parser and Outbound Request Controls" in out
-    assert "### 7.11 Operations Runtime and Supply Chain Controls" in out
+    assert "### 6.10 File Parser and Outbound Request Controls" in out
+    assert "### 6.11 Operations Runtime and Supply Chain Controls" in out
 
 
 def test_already_canonical_heading_untouched():
-    md = "### 7.9 Cryptography Secrets and Data Protection\nBody.\n"
+    md = "### 6.9 Cryptography Secrets and Data Protection\nBody.\n"
     out, changes = nrm.normalize_text(md)
-    assert "### 7.9 Cryptography Secrets and Data Protection" in out
+    assert "### 6.9 Cryptography Secrets and Data Protection" in out
     assert not any("heading_canonicalized" in c for c in changes)
 
 
 def test_canon_compare_strips_trailing_controls():
-    # 7.9 is the only v2 §7 title that does not itself end in "Controls"; the
+    # 7.9 is the only v2 §6 title that does not itself end in "Controls"; the
     # strip lets a drifted "…Protection Controls" canonical-match the contract.
-    assert nrm._canon_compare("7.9 Cryptography Secrets and Data Protection Controls") == nrm._canon_compare(
-        "7.9 Cryptography Secrets and Data Protection"
+    assert nrm._canon_compare("6.9 Cryptography Secrets and Data Protection Controls") == nrm._canon_compare(
+        "6.9 Cryptography Secrets and Data Protection"
     )
     # A title that legitimately ends in "Controls" still compares equal to
     # itself (both sides strip), so no distinct titles collapse together.
-    assert nrm._canon_compare("7.5 Query Construction and Data Access Controls") == nrm._canon_compare(
-        "7.5 Query Construction and Data Access Controls"
+    assert nrm._canon_compare("6.5 Query Construction and Data Access Controls") == nrm._canon_compare(
+        "6.5 Query Construction and Data Access Controls"
     )
 
 
 def test_trailing_controls_suffix_canonicalized_on_79():
     # The secarch LLM renderer sometimes re-adds a trailing "Controls" to 7.9
-    # (the one v2 §7 title without it). Must be rewritten back to the contract
-    # title instead of hard-failing the §7.9 required_subsection gate.
-    md = "### 7.9 Cryptography Secrets and Data Protection Controls\nBody text.\n"
+    # (the one v2 §6 title without it). Must be rewritten back to the contract
+    # title instead of hard-failing the §6.9 required_subsection gate.
+    md = "### 6.9 Cryptography Secrets and Data Protection Controls\nBody text.\n"
     out, changes = nrm.normalize_text(md)
-    assert "### 7.9 Cryptography Secrets and Data Protection\n" in out
+    assert "### 6.9 Cryptography Secrets and Data Protection\n" in out
     assert "Data Protection Controls" not in out
     assert any("heading_canonicalized" in c for c in changes)
 
 
 def test_non_matching_heading_not_renamed():
-    # A genuinely different §7.9 title (not just punctuation) must be left as-is.
-    md = "### 7.9 Completely Different Title\nBody.\n"
+    # A genuinely different §6.9 title (not just punctuation) must be left as-is.
+    md = "### 6.9 Completely Different Title\nBody.\n"
     out, changes = nrm.normalize_text(md)
-    assert "### 7.9 Completely Different Title" in out
+    assert "### 6.9 Completely Different Title" in out
     assert not any("heading_canonicalized" in c for c in changes)
 
 
 def test_subsubsection_heading_not_touched():
     # 7.2.1 has no canonical entry (only 7.2 does) — must never be rewritten.
-    md = "#### 7.2.1 Password-Based Authentication\nBody.\n"
+    md = "#### 6.2.1 Password-Based Authentication\nBody.\n"
     out, changes = nrm.normalize_text(md)
-    assert "#### 7.2.1 Password-Based Authentication" in out
+    assert "#### 6.2.1 Password-Based Authentication" in out
     assert not any("heading_canonicalized" in c for c in changes)

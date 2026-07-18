@@ -1,6 +1,6 @@
 # appsec-advisor
 
-[![Version](https://img.shields.io/badge/version-0.4.0--beta-orange.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.5.0--beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
@@ -13,6 +13,24 @@
 It also supports requirements audits, change reviews, prompt-time security guidance, and CI gates. AppSec teams can supply their own requirements, threat context, presets, and guardrails.
 
 **Model compatibility.** The plugin runs on the latest Anthropic models and is tuned for Sonnet 5, but the defaults favor economy: the token-intensive majority of the work runs on the cheaper Sonnet-4.6, and Sonnet-5 is applied by default only to the stages where its stronger reasoning is worth the added cost. You can pin any agent to a specific model (e.g. `claude-sonnet-5`, `claude-sonnet-4-6`), and the scan prints the model for every agent at start. See [Session Model](docs/threat-modeler.md#session-model).
+
+## What's new in 0.5-beta
+
+**Ask questions about your threat model.** No report to re-read, no export to grep:
+
+```text
+what are the most critical findings?
+what should I fix first?
+does it cover SSRF?
+```
+
+Answers are grounded in the model and cite finding IDs. See [Triage the findings into a plan](#4-triage-the-findings-into-a-plan).
+
+- **`review-threat-model`** — turn findings into a decided remediation plan: fix / accept / defer, in bulk, with owners.
+- **Weakness Register** — systemic and design-level weaknesses as their own report chapter, summarised as a security-principles verdict.
+- **Beyond JavaScript** — the access-control, crypto, and mass-assignment scanners now also cover Java, Python, Go, PHP, C#/.NET, Ruby/Rails, and mobile.
+
+[Full changelog](CHANGELOG.md)
 
 ## Problem
 
@@ -112,9 +130,39 @@ Open Claude Code in the repository you want to analyze and run:
 
 The threat modeler analyzes the current Git repository and writes output to `docs/security/`. Reports are git-ignored because they may contain vulnerability details.
 
+Once a model exists, keep it current after code changes with:
+
+```text
+/appsec-advisor:update-threat-model
+```
+
+This re-analyzes only the components that changed (an alias for `create-threat-model --incremental`) and aborts with guidance if no model exists yet, so an update never turns into an accidental first full scan.
+
 For assessment depth, cost controls, focused scans, actor configuration, and repo-local and cross-repo context, see [docs/threat-modeler.md](docs/threat-modeler.md).
 
-### 4. Optional: Publish the threat model
+### 4. Triage the findings into a plan
+
+The assessment ranks findings by severity, but deciding what to fix now — and what to accept or defer — is a judgement call. Turning the report into a decided plan is the recommended next step (though you can also stop at the report). Run the triage helper at any later point, independently of the assessment:
+
+```text
+/appsec-advisor:review-threat-model
+```
+
+It opens with a one-screen verdict (backlog by priority, severity mix, and the worst-case scenarios if nothing changes), then lets you drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with an owner and target) on a whole selection at once. Your decisions live in a sidecar that survives the next re-scan, and it writes a `remediation-plan.md`. It never regenerates or re-scores the model.
+
+A finished report is long, so you do not have to read it first — just talk to Claude Code about the model. Questions and instructions both work:
+
+```text
+what are the most critical findings?
+what should I fix first?
+does it cover SSRF?
+fix the critical findings
+accept the risk on F-012
+```
+
+Questions are answered read-only from the model, cite finding IDs, and say so when the model does not contain the answer. Instructions land in the triage console above, which applies fixes one finding at a time, each shown before it is written — never as a blind bulk change across a selection.
+
+### 5. Optional: Publish the threat model
 
 Generated reports are not committed automatically. For a local review, you can stop after the assessment completes. If your team intentionally tracks reviewed threat models in git, run the publish helper:
 
@@ -128,9 +176,15 @@ Generated reports are not committed automatically. For a local review, you can s
 
 An assessment produces a report covering architecture observations, trust boundaries, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams. Default outputs are `threat-model.md` and `threat-model.yaml`; optional exports include PDF, HTML, SARIF, and pentest task lists.
 
-**Example:** [Read a thorough assessment of OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md).
+**Standards coverage.** Findings are cross-referenced to established OWASP catalogs, rendered as linked reference badges in the report:
 
-![Threat Model Juice Shop Thorough](./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
+- [OWASP Top 10:2025](https://owasp.org/Top10/2025/) — the web application security risks, mapped per finding with a deterministic coverage check that flags any category with no identified threat.
+- [OWASP Top 10 for LLM Applications (2025)](https://genai.owasp.org/llm-top-10/) — applied as an additional lens whenever the repository has an LLM/AI surface.
+- [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) — applied on top of the LLM lens when the surface is agentic (an LLM wired to tools, memory, or other agents).
+
+**Example:** [Read a thorough assessment of OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.md) — or browse [more examples](examples/threat-modeler/README.md).
+
+![Threat Model Juice Shop Thorough](./examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.figure1.svg)
 
 Assessments consume model tokens and typically take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) compares measured costs by depth and model and documents hard cost and time limits.
 

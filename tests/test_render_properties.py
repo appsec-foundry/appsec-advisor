@@ -186,7 +186,7 @@ def test_all_unconditional_chapters_render(tmp_path: Path) -> None:
     later. Catches the failure mode where a whole chapter silently goes missing
     because a renderer returns empty or is dropped from the dispatch map. The
     fixture also exercises the two conditional chapters §3 Attack Walkthroughs
-    and §7 Security Architecture, asserted explicitly below."""
+    and §6 Security Architecture, asserted explicitly below."""
     contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
     out = _prepare(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
@@ -205,7 +205,7 @@ def test_all_unconditional_chapters_render(tmp_path: Path) -> None:
     assert not missing, "Unconditional chapter(s) absent from composed report:\n  " + "\n  ".join(missing)
 
     # The fixture is built to exercise these two condition-gated chapters too.
-    for heading in ("## 3. Attack Walkthroughs", "## 7. Security Architecture"):
+    for heading in ("## 3. Attack Walkthroughs", "## 6. Security Architecture"):
         assert heading in rendered, f"fixture should render {heading!r} but it is missing"
 
 

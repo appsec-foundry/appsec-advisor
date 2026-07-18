@@ -17,8 +17,10 @@ floor:
     to `verified` (deterministic — the evidence pointer resolves cleanly).
 
 Idempotent — a finding that already carries `verified-prior`, `refuted`,
-or `ambiguous` from the LLM verifier is left untouched. The script never
-*lowers* a confidence rating.
+or `ambiguous` from the LLM verifier is left untouched during validation.
+Before writing the final artifact, however, refuted candidates are removed:
+the active threat model is a current-risk snapshot, while the merged
+intermediate retains the audit verdict.
 
 Usage:
     python3 validate_evidence_lines.py <output_dir> --repo-root <REPO_ROOT>
@@ -27,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import functools
 import re
 import sys
 from pathlib import Path
@@ -43,6 +46,36 @@ from _shared_sources import ARCH_ALL_SOURCES  # noqa: E402
 # NOT flag lines that *contain* a trailing `// …` after real code — the
 # real code is the evidence; the trailing comment is annotation.
 _COMMENT_PREFIXES = ("//", "#", "/*", "*", "<!--", "--")
+
+
+@functools.lru_cache(maxsize=1)
+def _file_exists_config_check_ids() -> frozenset[str]:
+    """Return catalog checks whose violation is an absent target file.
+
+    A normal finding pointing at a missing file has a broken evidence anchor.
+    For a config-scan ``expect: file_exists`` check, however, the missing file
+    is the violation itself and is therefore positive evidence. Keep this
+    distinction data-driven so new catalog checks inherit the correct
+    evidence semantics without a validator code change.
+    """
+    catalog = Path(__file__).resolve().parent.parent / "data" / "config-iac-checks.yaml"
+    try:
+        document = yaml.safe_load(catalog.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return frozenset()
+    checks = document.get("checks") or []
+    return frozenset(
+        str(check.get("id")).strip()
+        for check in checks
+        if isinstance(check, dict) and check.get("expect") == "file_exists" and check.get("id")
+    )
+
+
+def _is_expected_absence_finding(threat: dict) -> bool:
+    """Whether a missing evidence file positively proves this config finding."""
+    return (threat.get("source") or "").strip() == "config-scan" and (
+        threat.get("config_check_id") or ""
+    ).strip() in _file_exists_config_check_ids()
 
 
 # RC.D — patterns that match a line containing only an import / package
@@ -201,6 +234,9 @@ def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:
             code_hits += 1
 
     if file_misses == len(entries):
+        if _is_expected_absence_finding(threat):
+            flags.append("expected_file_absent")
+            return "verified", flags
         flags.append("file_missing")
         return "refuted", flags
     if file_misses > 0:
@@ -265,6 +301,29 @@ def validate_yaml(data: dict, repo_root: Path) -> tuple[dict, dict]:
     return data, stats
 
 
+def drop_refuted_findings(data: dict) -> int:
+    """Remove evidence-refuted candidates from the final active model.
+
+    ``refuted`` is valid intermediate evidence-verification state but must not
+    appear in ``threat-model.yaml``. Fixed findings from an incremental scan
+    are already represented through ``resolved_prior_findings`` and the
+    changelog; a new scan has no active finding to render once its evidence is
+    refuted.
+    """
+    threats = data.get("threats")
+    if not isinstance(threats, list):
+        return 0
+    kept: list[object] = []
+    dropped = 0
+    for threat in threats:
+        if isinstance(threat, dict) and (threat.get("evidence_check") or "").strip().lower() == "refuted":
+            dropped += 1
+            continue
+        kept.append(threat)
+    data["threats"] = kept
+    return dropped
+
+
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="validate_evidence_lines", description="Deterministic evidence-line validation backstop."
@@ -292,6 +351,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     data, stats = validate_yaml(data, repo_root)
+    dropped_refuted = drop_refuted_findings(data)
     yaml_path.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
         encoding="utf-8",
@@ -299,7 +359,8 @@ def main(argv: list[str]) -> int:
     print(
         f"validate_evidence_lines: sampled={stats['sampled']} "
         f"verified={stats.get('verified', 0)} refuted={stats.get('refuted', 0)} "
-        f"ambiguous={stats.get('ambiguous', 0)} skipped(prior)={stats['skipped']}"
+        f"ambiguous={stats.get('ambiguous', 0)} skipped(prior)={stats['skipped']} "
+        f"dropped_refuted={dropped_refuted}"
     )
     return 0
 

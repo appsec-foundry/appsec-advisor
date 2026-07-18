@@ -638,19 +638,19 @@ class TestLinkifyBareCwes:
 
 class TestLinkifySectionRefs:
     def test_links_section(self):
-        md = "## 7 Security\n\nSee §7 above.\n"
+        md = "## 6 Security\n\nSee §6 above.\n"
         out = compose._linkify_section_refs(md)
-        assert "[§7](#" in out
+        assert "[§6](#" in out
 
     def test_no_headings_noop(self):
-        md = "See §7 here."
+        md = "See §6 here."
         assert compose._linkify_section_refs(md) == md
 
     def test_heading_itself_not_linkified(self):
-        md = "## 7 Security §7\n"
+        md = "## 7 Security §6\n"
         out = compose._linkify_section_refs(md)
         # heading line must not get a link inserted
-        assert out.splitlines()[0] == "## 7 Security §7"
+        assert out.splitlines()[0] == "## 7 Security §6"
 
 
 class TestNormalizeEmdashes:
@@ -1272,7 +1272,7 @@ class TestStripSection7Crossrefs:
 
 class TestAnchorFromHeading:
     def test_slugifies(self):
-        out = compose._anchor_from_heading("## 7.3 Security Architecture")
+        out = compose._anchor_from_heading("## 6.3 Security Architecture")
         assert out and " " not in out
         assert out == out.lower()
 
@@ -2623,6 +2623,8 @@ class TestInstancesCard:
         assert "Instances (2):" in card
         assert "lib/insecurity.ts:191" in card
         assert "routes/chatbot.ts:248" in card
+        assert "#### F-001 · Insecure JWT Verification" in card
+        assert "**Location:** Multiple locations (2)" in card
 
     def test_mixed_severity_shows_per_instance_dots(self, tmp_path):
         t = self._systemic_threat(
@@ -2660,3 +2662,210 @@ class TestInstancesCard:
         assert "… (+4 more)" in card  # 12 - 8 cap = 4 collapsed
         assert "routes/r08.ts:8" in card  # 8th shown
         assert "routes/r09.ts:9" not in card  # 9th collapsed into "+more"
+
+
+class TestWeaknessBasisBreakdown:
+    """P1.4 — _weakness_basis_breakdown: post-consolidation count split."""
+
+    def test_none_when_no_weakness_register(self):
+        # Pre-P1 data → None → verdict keeps legacy risk-distribution behavior.
+        assert compose._weakness_basis_breakdown({"threats": [{"risk": "High"}]}) is None
+
+    def test_confirmed_excludes_folded_practice(self):
+        yd = {
+            "threats": [
+                {"id": "T-001", "risk": "Critical", "evidence_tier": "confirmed-exploitable"},
+                {"id": "T-002", "risk": "High", "evidence_tier": "confirmed-exploitable"},
+                {"id": "T-003", "risk": "Medium", "evidence_tier": "insecure-practice"},
+            ],
+            "weaknesses": [
+                {"id": "W-001", "kind": "design", "weakness_class": "injection"},
+                {"id": "W-002", "kind": "implementation", "weakness_class": "weak_crypto"},
+            ],
+        }
+        assert compose._weakness_basis_breakdown(yd) == (4, 2, 1, 1)
+
+    def test_missing_tier_counts_as_confirmed(self):
+        # Legacy threats without evidence_tier are register findings (confirmed).
+        yd = {
+            "threats": [{"id": "T-001", "risk": "High"}],
+            "weaknesses": [{"id": "W-001", "kind": "design", "weakness_class": "injection"}],
+        }
+        assert compose._weakness_basis_breakdown(yd) == (2, 1, 0, 1)
+
+
+class TestSystemicWeaknessesRender:
+    """Systemic weaknesses render as a dedicated evidence-backed chapter."""
+
+    class _Ctx:
+        def __init__(self, yaml_data):
+            self.yaml_data = yaml_data
+
+        def severity_emoji(self, k):
+            return {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(k, "")
+
+    def test_empty_when_no_register(self):
+        assert compose._render_systemic_weaknesses(self._Ctx({"threats": []})) == ""
+
+    def test_renders_heading_instances_and_practice(self):
+        ctx = self._Ctx(
+            {
+                "weaknesses": [
+                    {
+                        "id": "W-001",
+                        "weakness_class": "injection",
+                        "kind": "design",
+                        "severity": "Critical",
+                        "severity_basis": "confirmed",
+                        "statement": "no parametrized layer",
+                        "instances": [{"id": "T-001"}, {"id": "T-002"}],
+                        "observable_backing": {"practice_evidence": [{"file": "a"}, {"file": "b"}]},
+                        "affected_components": ["api"],
+                    }
+                ]
+            }
+        )
+        block = compose._render_systemic_weaknesses(ctx)
+        # 2026-07-14: numbered heading + index table + bullet cards.
+        assert "## 7. Weakness Register" in block
+        assert "### W-001 — no parametrized layer" in block
+        assert "design weakness · confirmed" in block
+        assert "[F-001](#f-001)" in block and "[F-002](#f-002)" in block
+        assert "**Practice sites:**" in block and "`a`" in block and "`b`" in block
+        assert "**Affected components:** api" in block
+
+    def test_sorted_by_severity_then_basis(self):
+        ctx = self._Ctx(
+            {
+                "weaknesses": [
+                    {
+                        "id": "W-001",
+                        "weakness_class": "dos",
+                        "kind": "implementation",
+                        "severity": "Low",
+                        "severity_basis": "confirmed",
+                        "statement": "x",
+                        "observable_backing": {"practice_evidence": [{"file": "a"}]},
+                    },
+                    {
+                        "id": "W-002",
+                        "weakness_class": "injection",
+                        "kind": "design",
+                        "severity": "Critical",
+                        "severity_basis": "design-risk",
+                        "statement": "y",
+                        "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
+                    },
+                ]
+            }
+        )
+        block = compose._render_systemic_weaknesses(ctx)
+        # Critical weakness must render before Low weakness.
+        assert block.index("W-002 — y") < block.index("W-001 — x")
+
+
+class TestTopFindingsDesignRiskRow:
+    """P1.4 / §9.3 — a design-risk weakness (W-NNN) in findings_ranked renders
+    as a distinct Top Findings row linking to the §8 weakness anchor."""
+
+    def _ctx(self, tmp_path):
+        import yaml as _yaml
+
+        contract = _yaml.safe_load(open("data/sections-contract.yaml"))
+        return compose.RenderContext(
+            output_dir=tmp_path,
+            contract=contract,
+            yaml_data={
+                "components": [{"id": "C-01", "name": "API", "component_id": "api"}],
+                "threats": [
+                    {
+                        "t_id": "T-001",
+                        "id": "T-001",
+                        "component_id": "api",
+                        "risk": "High",
+                        "title": "SQL Injection (a.ts:1)",
+                        "cwe": "CWE-89",
+                        "evidence": [{"file": "a.ts", "line": 1}],
+                    }
+                ],
+                "mitigations": [],
+                "weaknesses": [
+                    {
+                        "id": "W-001",
+                        "weakness_class": "injection",
+                        "kind": "design",
+                        "severity": "Critical",
+                        "severity_basis": "design-risk",
+                        "statement": "no central validation",
+                        "affected_components": ["api"],
+                        "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
+                    }
+                ],
+            },
+            triage={
+                "ranking": {
+                    "views": {
+                        "top_findings": {
+                            "findings_ranked": [
+                                {"id": "W-001", "effective_severity": "Critical", "rank": 1},
+                                {"id": "T-001", "effective_severity": "High", "rank": 2},
+                            ]
+                        }
+                    }
+                }
+            },
+            fragments_dir=tmp_path,
+            severity_taxonomy={
+                "critical": {"emoji": "🔴", "label": "Critical"},
+                "high": {"emoji": "🟠", "label": "High"},
+            },
+            effectiveness_taxonomy={},
+            category_taxonomy={},
+            eval_context={},
+            warnings=[],
+            structured_warnings=[],
+        )
+
+    def test_design_risk_weakness_row(self, tmp_path):
+        rows, _ = compose._compute_top_findings_rows(self._ctx(tmp_path))
+        w = [r for r in rows if r["finding_id"] == "W-001"]
+        assert w, "design-risk weakness row not rendered"
+        assert w[0]["rank"] == 1
+        assert "(design-risk)" in w[0]["finding_title"]
+        assert w[0]["component_name"] == "api"  # first affected component (raw fallback)
+        # confirmed threat still renders as a normal F-row
+        assert any(r["finding_id"] == "F-001" for r in rows)
+
+
+class TestRiskDistributionCounts:
+    """Verdict Risk-distribution tally: design-risk weaknesses visible, no double-count."""
+
+    def test_design_risk_weakness_counted(self):
+        yd = {
+            "threats": [{"risk": "High", "evidence_tier": "confirmed-exploitable"}],
+            "weaknesses": [{"id": "W-001", "kind": "design", "severity": "Critical", "severity_basis": "design-risk"}],
+        }
+        c = compose._risk_distribution_counts(yd)
+        assert c["critical"] == 1  # the design-risk weakness — now visible
+        assert c["high"] == 1  # the confirmed threat
+
+    def test_confirmed_weakness_not_double_counted(self):
+        # A confirmed weakness is represented by its instance in threats[]; the
+        # heading must NOT be re-added.
+        yd = {
+            "threats": [{"risk": "Critical", "evidence_tier": "confirmed-exploitable"}],
+            "weaknesses": [{"id": "W-001", "kind": "design", "severity": "Critical", "severity_basis": "confirmed"}],
+        }
+        assert compose._risk_distribution_counts(yd)["critical"] == 1
+
+    def test_folded_practice_excluded_weakness_counted_once(self):
+        yd = {
+            "threats": [{"risk": "High", "evidence_tier": "insecure-practice"}],
+            "weaknesses": [
+                {"id": "W-001", "kind": "implementation", "severity": "High", "severity_basis": "design-risk"}
+            ],
+        }
+        assert compose._risk_distribution_counts(yd)["high"] == 1
+
+    def test_no_weaknesses_counts_threats_plainly(self):
+        assert compose._risk_distribution_counts({"threats": [{"risk": "High"}]})["high"] == 1

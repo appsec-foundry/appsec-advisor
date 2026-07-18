@@ -65,6 +65,29 @@ def test_check_verdict_bullet_over_budget_and_non_dict(tmp_path):
     assert len(v) == 1 and "bullets[1].body" in v[0]
 
 
+def test_check_verdict_rejects_technical_detail_and_multiple_sentences(tmp_path):
+    _write_verdict(
+        tmp_path,
+        {
+            "opening": "Not production-ready. The JWT implementation exposes customer accounts.",
+            "closing": "Fix the SQL query before release.",
+            "bullets": [
+                {
+                    "title": "JWT account takeover",
+                    "body": "Anyone can take over an account. The middleware accepts unsigned tokens.",
+                }
+            ],
+        },
+    )
+    v: list[str] = []
+    mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
+    assert any("opening contains technical detail 'JWT'" in issue for issue in v)
+    assert any("closing contains technical detail 'SQL'" in issue for issue in v)
+    assert any("title contains technical detail 'JWT'" in issue for issue in v)
+    assert any("body has 2 sentences" in issue for issue in v)
+    assert any("body contains technical detail 'middleware'" in issue for issue in v)
+
+
 # --- main ------------------------------------------------------------------
 
 

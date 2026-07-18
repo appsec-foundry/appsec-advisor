@@ -80,6 +80,8 @@ ANY_LEVEL_FILE_EXCLUDES = {
 }
 PATH_EXCLUDES = {
     ("data", "appsec-requirements-fallback.yaml"),
+    ("docs", "analysis"),
+    ("docs", "internal"),
     ("docs", "security"),
     ("scripts", "docs"),
     ("skills", "create-threat-model", "docs"),
@@ -87,6 +89,7 @@ PATH_EXCLUDES = {
 }
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 SURFACE_MANIFEST = ".claude-plugin/package-surface.json"
+MCP_CONFIG = ".mcp.json"
 HOOK_SCRIPT_IDS = {
     "agent_logger.py": "agent-logger",
     "security_steering.py": "security-coach",
@@ -235,7 +238,7 @@ def _policy_surface(policy: dict) -> dict:
     surface = policy.get("plugin_surface", policy)
     if not isinstance(surface, dict):
         _die("package policy 'plugin_surface' must be a mapping/object")
-    unknown = set(surface) - {"skills", "hooks"}
+    unknown = set(surface) - {"skills", "hooks", "mcp_servers"}
     if unknown:
         _die(f"package policy has unknown plugin_surface keys: {sorted(unknown)}")
     return surface
@@ -361,8 +364,26 @@ def apply_skill_policy(build: Path, surface: dict) -> dict:
     return {"included": sorted(keep), "removed": removed}
 
 
+def _org_profile_hooks(build: Path) -> dict:
+    """Hook definitions declared in the packaged org profile (top-level `hooks`).
+
+    Returns a {id: {event, command, matcher?}} mapping, or {} when the profile
+    has none. The org profile is already overlaid into build/org-profile here."""
+    profile_path = build / "org-profile" / "org-profile.yaml"
+    if not profile_path.is_file():
+        return {}
+    data = _load_yaml_or_json(profile_path)
+    hooks = data.get("hooks")
+    return hooks if isinstance(hooks, dict) else {}
+
+
 def apply_hook_policy(build: Path, surface: dict) -> dict:
-    available = _available_hook_ids(build)
+    org_hooks = _org_profile_hooks(build)
+    # Org hook ids join the upstream ids in the keep-set resolution, so
+    # plugin_surface.hooks (include/exclude) gates org hooks too. Declared org
+    # hooks are included by default.
+    upstream_available = _available_hook_ids(build)
+    available = upstream_available | set(org_hooks)
     keep = _resolve_keep_set(surface.get("hooks"), available, "hooks")
     removed = sorted(available - keep)
 
@@ -391,6 +412,22 @@ def apply_hook_policy(build: Path, surface: dict) -> dict:
         if kept_entries:
             filtered_events[event] = kept_entries
 
+    # Merge kept org hooks into the built hooks.json under their declared event.
+    org_kept: list[dict] = []
+    for hook_id in sorted(keep):
+        cfg = org_hooks.get(hook_id)
+        if not isinstance(cfg, dict):
+            continue
+        event = cfg.get("event")
+        command = cfg.get("command")
+        if not event or not command:
+            continue
+        outer: dict = {"hooks": [{"type": "command", "command": command}]}
+        if cfg.get("matcher"):
+            outer["matcher"] = cfg["matcher"]
+        filtered_events.setdefault(event, []).append(outer)
+        org_kept.append({"id": hook_id, "event": event, "command": command})
+
     if hooks_path.parent.exists():
         hooks_path.write_text(
             json.dumps({"hooks": filtered_events}, indent=2) + "\n",
@@ -403,10 +440,47 @@ def apply_hook_policy(build: Path, surface: dict) -> dict:
             keywords_path.unlink()
 
     return {
-        "included": sorted(keep),
+        # Upstream hooks only — org hooks are tracked separately under "org"
+        # (they are not discoverable via the /scripts/ id derivation).
+        "included": sorted(upstream_available & keep),
         "removed": removed,
         "events": sorted(filtered_events),
+        "org": org_kept,
     }
+
+
+def _org_profile_mcp_servers(build: Path) -> dict:
+    """MCP server definitions declared in the packaged org profile (mcp.servers).
+
+    Returns a {name: server_config} mapping, or {} when the profile has no mcp
+    block. The org profile has already been overlaid into build/org-profile at
+    this point.
+    """
+    profile_path = build / "org-profile" / "org-profile.yaml"
+    if not profile_path.is_file():
+        return {}
+    data = _load_yaml_or_json(profile_path)
+    servers = (data.get("mcp") or {}).get("servers")
+    return servers if isinstance(servers, dict) else {}
+
+
+def apply_mcp_policy(build: Path, surface: dict) -> dict:
+    """Emit build/.mcp.json from the org profile's mcp.servers, gated by the
+    package-policy allowlist (plugin_surface.mcp_servers). Declared servers are
+    included by default; an include/exclude list narrows them. Writes no file
+    when nothing is kept."""
+    servers = _org_profile_mcp_servers(build)
+    available = set(servers)
+    keep = _resolve_keep_set(surface.get("mcp_servers"), available, "mcp_servers")
+    removed = sorted(available - keep)
+
+    mcp_path = build / MCP_CONFIG
+    if keep:
+        payload = {"mcpServers": {name: servers[name] for name in sorted(keep)}}
+        mcp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    elif mcp_path.exists():
+        mcp_path.unlink()
+    return {"included": sorted(keep), "removed": removed}
 
 
 def write_surface_manifest(
@@ -415,6 +489,7 @@ def write_surface_manifest(
     skills: dict,
     hooks: dict,
     upstream_url: str | None = None,
+    mcp_servers: dict | None = None,
 ) -> None:
     if policy_path is None:
         policy_ref = None
@@ -431,6 +506,8 @@ def write_surface_manifest(
         "skills": skills,
         "hooks": hooks,
     }
+    if mcp_servers is not None:
+        manifest["mcp_servers"] = mcp_servers
     if upstream_url:
         manifest["upstream_url"] = upstream_url
         manifest["based_on"] = upstream_url.removesuffix(".git")
@@ -445,7 +522,8 @@ def apply_package_surface_policy(
     surface = _policy_surface(policy)
     skills = apply_skill_policy(build, surface)
     hooks = apply_hook_policy(build, surface)
-    write_surface_manifest(build, policy_path, skills, hooks, upstream_url)
+    mcp_servers = apply_mcp_policy(build, surface)
+    write_surface_manifest(build, policy_path, skills, hooks, upstream_url, mcp_servers)
 
 
 def _text_files(root: Path):

@@ -16,28 +16,25 @@ Set `MODEL_ID=sonnet` in progress/log text when a model identifier is needed.
 
 ## Render role — READ FIRST (perf 2026-06-05)
 
-The skill may split Stage-2 authoring across two agents that run **in parallel**
-so §7 prose and the management-summary fragments are written concurrently
-(~5 min wall instead of ~11 min serial). Your `RENDER_ROLE` decides which
-fragments you author and — critically — whether you compose. **The skill runs
+The current parallel path dispatches the focused `appsec-secarch-renderer` and
+`appsec-ms-renderer` agents, so they do not pay for this full fallback prompt.
+This agent remains the single-dispatch and recovery renderer. `RENDER_ROLE`
+is retained only for backwards-compatible recovery calls: the skill runs
 `compose_threat_model.py`, the QA gate, the Postcondition Gate, and the final
-checkpoint itself after both parallel agents return** — so in the two split
-roles you do NOT compose and do NOT run those tail steps.
+checkpoint after split agents return, so split roles do not compose or run
+those tail steps.
 
 | `RENDER_ROLE` | Author | Do NOT touch | Compose / QA / Postcondition / Completion |
 |---|---|---|---|
-| `full` (default / unset) | everything below (MS + §7) | — | **YES — you run them** (back-compat, unchanged) |
-| `secarch` | ONLY `security-architecture.md` per the §7 contract below | `architecture-diagrams.md` (deterministic — the skill force-regenerates it from `threat-model.yaml` before AND after this dispatch, so any edit here is always discarded; §2 incl. its `**Key takeaway:**` lines is owned by `pregenerate_fragments.py:gen_architecture_diagrams`), any `ms-*.json`, `security-posture-attack-paths.json`, `attack-walkthroughs.md` | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
-| `ms` | ONLY `ms-verdict.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`), `requirements-compliance.md` (when `CHECK_REQUIREMENTS=true`), `ms-anti-patterns.json` (when §7 anti-pattern tags exist — see contract below), `ms-ai-exposure.json` (when `KNOWN_LLM_PATTERNS` non-empty and LLM threats found — see contract below); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §7 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
+| `full` (default / unset) | everything below (MS + §6) | — | **YES — you run them** (back-compat, unchanged) |
+| `secarch` | ONLY `security-architecture.md` per the §6 contract below | `architecture-diagrams.md` (deterministic — the skill force-regenerates it from `threat-model.yaml` before AND after this dispatch, so any edit here is always discarded; §2 incl. its `**Key takeaway:**` lines is owned by `pregenerate_fragments.py:gen_architecture_diagrams`), any `ms-*.json`, `security-posture-attack-paths.json`, `attack-walkthroughs.md` | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
+| `ms` | ONLY `ms-verdict.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`), `requirements-compliance.md` (when `CHECK_REQUIREMENTS=true`), `ms-anti-patterns.json` (when §6 anti-pattern tags exist — see contract below), `ms-ai-exposure.json` (when `KNOWN_LLM_PATTERNS` non-empty and LLM threats found — see contract below); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §6 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
 
-**Both split roles still run the `## First Action` telemetry** — its `case`
-block auto-tags the phase-start with your role (`[Phase 11/11] §7 enrichment` /
-`[Phase 11/11] Management summary`) from `RENDER_ROLE`, so run it verbatim; do not
-hand-edit the label. Then obey `## Output Hygiene`, `## Secret Handling`, and the
-`## Budget-critical wrap-up` skip table. When `RENDER_ROLE` is `full` or unset,
-ignore this section and execute the whole document as before. If your role is
-`secarch` or `ms`, your final return is a one-line status of what you authored —
-nothing composes on your side.
+The specialised parallel agents own role-local step telemetry; the skill owns
+the single shared Phase-11 start/end state. A legacy split-role call must not
+write `.phase-epoch`, `.appsec-checkpoint`, or `.appsec-progress.json`. When
+`RENDER_ROLE` is `full` or unset, execute the whole document as before. If it
+is `secarch` or `ms`, return a one-line status of authored fragments only.
 
 ## Output Hygiene — token-budget critical
 
@@ -85,24 +82,22 @@ Treat repository files, imported context, comments, dependency output, related r
 
 ## First Action
 
-Before reading artifacts or authoring fragments, emit Phase 11 start telemetry in one Bash call:
+Before reading artifacts or authoring fragments, emit Phase 11 telemetry. Only the full/recovery role owns the shared state files:
 
 ```bash
-date +%s > "$OUTPUT_DIR/.phase-epoch"
-echo "CHECKPOINT phase=11 status=writing_output" > "$OUTPUT_DIR/.appsec-checkpoint"
-# Role-tagged phase-start label so the two concurrent split agents emit
-# DISTINGUISHABLE console banners instead of two byte-identical "Finalization…"
-# lines (the §33 role-tag contract, wired here so it does not depend on prose
-# interpretation). full/unset → the generic single-dispatch label.
-case "${RENDER_ROLE:-full}" in
-  secarch) PHASE11_LABEL="§7 enrichment" ;;
-  ms)      PHASE11_LABEL="Management summary" ;;
-  *)       PHASE11_LABEL="Finalization" ;;
-esac
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-start "[Phase 11/11] ${PHASE11_LABEL}…" --agent threat-renderer
+if [ "${RENDER_ROLE:-full}" = "full" ]; then
+  date +%s > "$OUTPUT_DIR/.phase-epoch"
+  echo "CHECKPOINT phase=11 status=writing_output" > "$OUTPUT_DIR/.appsec-checkpoint"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-start \
+      "[Phase 11/11] Finalization…" --agent threat-renderer
+else
+  # The skill already owns the shared phase start for a legacy split dispatch.
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start \
+      "[Phase 11] Legacy split renderer authoring…" --agent threat-renderer
+fi
 ```
 
-The outcome must be visible in `.agent-run.log`, `.appsec-progress.json`, and `.appsec-checkpoint`.
+The full role updates `.agent-run.log`, `.appsec-progress.json`, and `.appsec-checkpoint`; a legacy split role writes only its step event.
 
 ## Style Anchor
 
@@ -117,13 +112,13 @@ $CLAUDE_PLUGIN_ROOT/agents/shared/prose-samples.md
 
 `prose-samples.md` carries five Before/After pairs from real reports, the banned-vocabulary list, the voice statement, and the pre-write self-check. **Imitate the AFTER shape** — Sonnet follows worked examples more reliably than abstract rules. Banned-vocabulary tokens listed there are forbidden in every prose field you author.
 
-**Section 7 style anchor.** Before filling any §7 placeholder in `.fragments/security-architecture.md`, read:
+**Section 7 style anchor.** Before filling any §6 placeholder in `.fragments/security-architecture.md`, read:
 
 ```text
 $CLAUDE_PLUGIN_ROOT/templates/fragments/security-architecture.example.md
 ```
 
-That file is **not** a template to be rendered — it is the proven reference shape every H4 control block in §7.2-§7.12 must match. It demonstrates the four valid shapes (with diagram + code, with diagram only, with code only, pure prose) and shows the mandatory positive intro paragraph, the introduction sentence that precedes every fenced block, the multi-sentence `**Security assessment**`, and the bullet form for `**Relevant findings**`. Mirror its sentence length, vocabulary, and rhythm.
+That file is **not** a template to be rendered — it is the proven reference shape every H4 control block in §6.2-§6.12 must match. It demonstrates the four valid shapes (with diagram + code, with diagram only, with code only, pure prose) and shows the mandatory positive intro paragraph, the introduction sentence that precedes every fenced block, the multi-sentence `**Security assessment**`, and the bullet form for `**Relevant findings**`. Mirror its sentence length, vocabulary, and rhythm.
 
 ## Fragment Contract
 
@@ -131,8 +126,8 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 
 - `.fragments/ms-verdict.json` — do NOT cite exact severity counts in the `opening` prose (e.g. "eight Critical and eleven High"); those drift from the real totals. The composer injects an authoritative deterministic `**Risk distribution:** 🔴 Critical: N · 🟠 High: M · …` line directly under the opening. Describe posture + consequence in words; let the injected line carry the numbers.
 - `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
-- `.fragments/ms-anti-patterns.json` when one or more §7 control blocks carry an `⚠ Anti-pattern:` label — derive from those labels. **Omit the file entirely** when no §7 anti-pattern is tagged; the schema requires `minItems:1` and the composer soft-skips the section when the fragment is absent.
-- `.fragments/ms-ai-exposure.json` when the system has a genuine LLM/AI surface **and** you found ≥1 LLM-specific threat. **Detect the surface from `$OUTPUT_DIR/threat-model.yaml` FIRST — that is the authoritative signal.** The surface exists when **either** (a) any `threats[]` entry is LLM-categorizable — its `title`/`description`/`component` names an LLM/AI concern (chat, chatbot, prompt, model API, tool-calling, excessive agency, system prompt, `/rest/chat`, an AI SDK), **or** (b) any `components[]` entry is an LLM/AI component. If either holds you **MUST** author this fragment. The `.recon-summary.md` section `### 7.13 AI / LLM Integration` (`**LLM detected: yes**`) is a *confirming* signal only — do **NOT** gate solely on it: when recon runs in fallback mode that heading is absent even though the YAML carries LLM threats (juice-shop 2026-07-02 shipped a blank/thin callout for exactly this reason). Do **not** rely on `KNOWN_LLM_PATTERNS` being passed as a prompt variable — the orchestrator does not always forward it. Map each LLM threat to its OWASP LLM Top-10 category (see `### ms-ai-exposure.json authoring contract` below). **Omit the file entirely** only when the YAML has NO LLM-categorizable threat AND no LLM component. Missing this fragment when LLM threats exist leaves the `### AI / LLM Exposure` Management Summary section blank; a deterministic backstop (`pregenerate_fragments.py --only ms-ai-exposure.json`) regenerates it from the YAML if you omit it, but authoring it yourself yields the richer executive prose.
+- `.fragments/ms-anti-patterns.json` when one or more §6 control blocks carry an `⚠ Anti-pattern:` label — derive from those labels. **Omit the file entirely** when no §6 anti-pattern is tagged; the schema requires `minItems:1` and the composer soft-skips the section when the fragment is absent.
+- `.fragments/ms-ai-exposure.json` when the system has a genuine LLM/AI surface **and** you found ≥1 LLM-specific threat. **Detect the surface from `$OUTPUT_DIR/threat-model.yaml` FIRST — that is the authoritative signal.** The surface exists when **either** (a) any `threats[]` entry is LLM-categorizable — its `title`/`description`/`component` names an LLM/AI concern (chat, chatbot, prompt, model API, tool-calling, excessive agency, system prompt, `/rest/chat`, an AI SDK), **or** (b) any `components[]` entry is an LLM/AI component. If either holds you **MUST** author this fragment. The `.recon-summary.md` section `### 6.13 AI / LLM Integration` (`**LLM detected: yes**`) is a *confirming* signal only — do **NOT** gate solely on it: when recon runs in fallback mode that heading is absent even though the YAML carries LLM threats (juice-shop 2026-07-02 shipped a blank/thin callout for exactly this reason). Do **not** rely on `KNOWN_LLM_PATTERNS` being passed as a prompt variable — the orchestrator does not always forward it. Map each LLM threat to its OWASP LLM Top-10 category (see `### ms-ai-exposure.json authoring contract` below). **Omit the file entirely** only when the YAML has NO LLM-categorizable threat AND no LLM component. Missing this fragment when LLM threats exist leaves the `### AI / LLM Exposure` Management Summary section blank; a deterministic backstop (`pregenerate_fragments.py --only ms-ai-exposure.json`) regenerates it from the YAML if you omit it, but authoring it yourself yields the richer executive prose.
 - ~~`.fragments/ms-top-mitigations.json`~~ — **DO NOT author by default.** The composer builds the §1 Top-Mitigations leader-board **deterministically** (`_row_sort_key` ordering + Critical-floor coverage). LLM curation is retired: the marginal re-ordering gain did not justify the extra renderer turns. Skip it unless `ENRICH_TOP_MITIGATIONS=true` is explicitly set. See contract below.
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
 - `.fragments/requirements-compliance.md` when `CHECK_REQUIREMENTS=true` — see authoring contract below
@@ -178,7 +173,7 @@ edit `_render_top_threats_architecture` (and its tests), not this agent prompt.
 
 ### MS prose — single-pass discipline (perf 2026-06-05, hard rule)
 
-Author `ms-verdict.json` **exactly once**. Do **NOT** re-open or rewrite an MS fragment to "tighten", "polish", or "shrink toward the word budget" by eye — that speculative re-authoring (the former 2-3× churn per fragment) burned Stage-2 wall time for zero content gain. The word budgets below are a deterministic contract; meet them on the first write.
+Author `ms-verdict.json` **exactly once**. Do **NOT** re-open or rewrite an MS fragment to "tighten", "polish", or "shrink toward the word budget" by eye — that speculative re-authoring (the former 2-3× churn per fragment) burned Stage-2 wall time for zero content gain. The readability limits below are a deterministic contract; meet them on the first write.
 
 After authoring the MS fragment, run the compactness gate **once**:
 
@@ -186,10 +181,10 @@ After authoring the MS fragment, run the compactness gate **once**:
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_ms_compactness.py" "$OUTPUT_DIR"
 ```
 
-- **Exit 0 (PASS)** → the fragments are within budget. **Stop. Do not rewrite
+- **Exit 0 (PASS)** → the fragments are concise and management-readable. **Stop. Do not rewrite
   anything.** Proceed to the next fragment / compose.
 - **Exit 1 (FAIL)** → re-author **ONLY** the specific field(s) the script names
-  (it prints `fragment: field is N words (max M)` per violation). Touch nothing
+  (it prints the specific field and violation). Touch nothing
   else, then re-run the gate once to confirm. Never rewrite a field the gate did
   not flag.
 
@@ -203,28 +198,30 @@ Renders as the §1 Verdict block (red/yellow/green HTML blockquote). **Author EX
 ```json
 {
   "severity": "red",                     // enum: "green" | "yellow" | "red" — REQUIRED. NOT "verdict_color"/"verdict_label".
-  "opening": "<2-4 sentence posture statement, 60-800 chars>",   // REQUIRED. NO F-NNN/T-NNN ids (regex-blocked). Posture, not a finding list.
+  "opening": "<1-2 short-sentence posture statement, 60-450 chars>",   // REQUIRED. NO F-NNN/T-NNN ids (regex-blocked). Posture, not a finding list.
   "bullets_intro": "<1 sentence introducing the blockquote, 20-200 chars>",  // OPTIONAL. No F/T ids.
   "bullets": [                           // REQUIRED, 2-8 items. NOT "worst_case_scenarios".
     {
-      "title": "<business-outcome headline, 5-80 chars>",
-      "body": "<how the attacker achieves it, 20-400 chars>",
+      "title": "<plain-language business-outcome headline, 5-60 chars>",
+      "body": "<one short sentence: outcome and broad protection gap, 20-260 chars>",
       "refs": ["T-001", "F-012"]         // REQUIRED, 1-5 ids, each matching ^[FT]-\\d{3,4}$
     }
   ],
-  "closing": "<1-2 sentence wrap, 40-300 chars>"   // REQUIRED. NO F/T ids (regex-blocked). NOT "closing_prose".
+  "closing": "<one short plain-language wrap, 40-220 chars>"   // REQUIRED. NO F/T ids (regex-blocked). NOT "closing_prose".
 }
 ```
 
 **Forbidden legacy keys** (they were the 2026-06-05 parallel-render drift): `verdict_label`, `verdict_color`, `worst_case_scenarios`, `closing_prose`, `verdict_prose`. The ONLY top-level keys are the five above. Do not cite exact severity counts in `opening` (the composer injects the authoritative `**Risk distribution:** …` line). Run the MS compactness gate after authoring (see "MS prose — single-pass discipline").
 
+**Management-language hard gate.** A product owner must understand the verdict without security training. `opening` is at most 52 words; each bullet body is **one sentence, at most 32 words**; `closing` is at most 220 characters. Never use security acronyms or implementation vocabulary in `opening`, `title`, `body`, or `closing`: for example `JWT`, `RSA`, `SQL`, `XSS`, `XML`, `API`, `endpoint`, `middleware`, `localStorage`, `HttpOnly`, `sandbox`, file paths, line numbers, code, or backticks. Say "account takeover", "customer data exposed", "server takeover", "active login stolen", or "unapproved discounts" instead. `refs` are audit provenance only: the renderer deliberately hides IDs, finding titles, locations, and abuse-case IDs in this block. Every reference must directly support the scenario; never pad a bullet with a loosely related Critical finding. The renderer shows only the plain-language badge `✓ verified attack path` when a referenced finding anchors a fully viable chain.
+
 ### `ms-anti-patterns.json` authoring contract (OPTIONAL — architecture anti-patterns)
 
-Renders as the optional **`### Architectural Anti-Patterns`** callout in the Management Summary, immediately after the Verdict. Its job is to NAME the design-level defects you already articulate in §7 prose (e.g. "No BFF is implemented to move token storage server-side", "raw SQL string interpolation across multiple routes") so they are visible at executive level instead of buried in per-control narrative. Schema: `schemas/fragments/anti-patterns.schema.json` (`additionalProperties:false`).
+Renders as the optional **`### Architectural Anti-Patterns`** callout in the Management Summary, immediately after the Verdict. Its job is to NAME the design-level defects you already articulate in §6 prose (e.g. "No BFF is implemented to move token storage server-side", "raw SQL string interpolation across multiple routes") so they are visible at executive level instead of buried in per-control narrative. Schema: `schemas/fragments/anti-patterns.schema.json` (`additionalProperties:false`).
 
 **When to author.** ONLY when ≥1 *genuine, named* architectural anti-pattern is present. **Omit the file entirely** when the report has none — the section then renders nothing (do NOT author an empty array; the schema requires `minItems:1`). An anti-pattern is a *named structural design defect*, not a routine control gap and not a finding restatement.
 
-**MANDATORY — `SPA without BFF`.** Whenever the architecture is a client-side SPA (Angular/React/Vue/Svelte, tier=client) talking to a backend (tier=application) where the SPA holds the session credential client-side (a bearer token / JWT in `localStorage` or `sessionStorage`, reachable by XSS) and **no Backend-for-Frontend** holds the token server-side, you MUST include a `SPA without BFF` entry. This is the report's signature architectural defect — never let it be implied only in §7 prose. Anchor it to the localStorage/JWT-storage finding and propose the BFF (token moved to an `HttpOnly Secure SameSite=Strict` cookie). The same pattern MUST also carry the `⚠ **Anti-pattern:**` label in its §7 session/token control block.
+**MANDATORY — `SPA without BFF`.** Whenever the architecture is a client-side SPA (Angular/React/Vue/Svelte, tier=client) talking to a backend (tier=application) where the SPA holds the session credential client-side (a bearer token / JWT in `localStorage` or `sessionStorage`, reachable by XSS) and **no Backend-for-Frontend** holds the token server-side, you MUST include a `SPA without BFF` entry. This is the report's signature architectural defect — never let it be implied only in §6 prose. Anchor it to the localStorage/JWT-storage finding and propose the BFF (token moved to an `HttpOnly Secure SameSite=Strict` cookie). The same pattern MUST also carry the `⚠ **Anti-pattern:**` label in its §6 session/token control block.
 
 ```json
 {
@@ -242,13 +239,13 @@ Renders as the optional **`### Architectural Anti-Patterns`** callout in the Man
 }
 ```
 
-**Naming vocabulary** (use a canonical label, do not invent one to pad the list): `SPA without BFF` · `JWT in localStorage` · `Raw SQL string interpolation` · `Secrets hardcoded in source` · `Missing server-side authorization layer` · `Mass-assignment / unscoped object binding` · `Client-side trust boundary` · `Sanitizer bypass by default` · `Unvalidated OAuth/OIDC token` · `Server-side eval of untrusted input`. Derive each entry from the §7 control blocks / threat scenarios you have already written — this fragment is a *headline index* of them, not new analysis. The same pattern you tag here should carry the `⚠ Anti-pattern:` label in its §7 control block (see the §7.X authoring pattern below).
+**Naming vocabulary** (use a canonical label, do not invent one to pad the list): `SPA without BFF` · `JWT in localStorage` · `Raw SQL string interpolation` · `Secrets hardcoded in source` · `Missing server-side authorization layer` · `Mass-assignment / unscoped object binding` · `Client-side trust boundary` · `Sanitizer bypass by default` · `Unvalidated OAuth/OIDC token` · `Server-side eval of untrusted input`. Derive each entry from the §6 control blocks / threat scenarios you have already written — this fragment is a *headline index* of them, not new analysis. The same pattern you tag here should carry the `⚠ Anti-pattern:` label in its §6 control block (see the §6.X authoring pattern below).
 
 ### `ms-ai-exposure.json` authoring contract (OPTIONAL — AI / LLM surface)
 
-Renders as the optional **`### AI / LLM Exposure`** callout in the Management Summary, immediately after the anti-patterns block. Its job is to make explicit, at executive level, that the system embeds an **LLM / AI-agent surface** and to name its headline architectural risks (the OWASP LLM Top-10 lens you already applied in STRIDE) — instead of leaving them scattered across §7 control prose. Schema: `schemas/fragments/ai-exposure.schema.json` (`additionalProperties:false`).
+Renders as the optional **`### AI / LLM Exposure`** callout in the Management Summary, immediately after the anti-patterns block. Its job is to make explicit, at executive level, that the system embeds an **LLM / AI-agent surface** and to name its headline architectural risks (the OWASP LLM Top-10 lens you already applied in STRIDE) — instead of leaving them scattered across §6 control prose. Schema: `schemas/fragments/ai-exposure.schema.json` (`additionalProperties:false`).
 
-**When to author.** ONLY when the system has a genuine LLM/AI surface — but detect that from `$OUTPUT_DIR/threat-model.yaml`, which is authoritative. Author the fragment when **either** any `threats[]` entry is LLM-categorizable (its `title`/`description`/`component` names chat/chatbot/prompt/model-API/tool-calling/excessive-agency/system-prompt/`/rest/chat`/an AI SDK) **or** any `components[]` entry is an LLM/AI component. The `.recon-summary.md` section `### 7.13 AI / LLM Integration` (`**LLM detected: yes**`) is only a *confirming* signal — do NOT gate solely on it, because fallback recon omits that heading while the YAML still carries LLM threats (juice-shop 2026-07-02 shipped a thin callout for exactly this reason). Do **not** rely on `KNOWN_LLM_PATTERNS` being passed as a prompt variable — it is only forwarded to STRIDE analyzers, not to the renderer. **Omit the file entirely** only when the YAML has NO LLM-categorizable threat AND no LLM component (do NOT author an empty array; the schema requires `minItems:1`). This keeps non-AI reports unchanged: no AI surface → no fragment → the section renders nothing. Derive each `ai_risks[]` entry from the LLM threats you already recorded — this fragment is a *headline index* of them, not new analysis.
+**When to author.** ONLY when the system has a genuine LLM/AI surface — but detect that from `$OUTPUT_DIR/threat-model.yaml`, which is authoritative. Author the fragment when **either** any `threats[]` entry is LLM-categorizable (its `title`/`description`/`component` names chat/chatbot/prompt/model-API/tool-calling/excessive-agency/system-prompt/`/rest/chat`/an AI SDK) **or** any `components[]` entry is an LLM/AI component. The `.recon-summary.md` section `### 6.13 AI / LLM Integration` (`**LLM detected: yes**`) is only a *confirming* signal — do NOT gate solely on it, because fallback recon omits that heading while the YAML still carries LLM threats (juice-shop 2026-07-02 shipped a thin callout for exactly this reason). Do **not** rely on `KNOWN_LLM_PATTERNS` being passed as a prompt variable — it is only forwarded to STRIDE analyzers, not to the renderer. **Omit the file entirely** only when the YAML has NO LLM-categorizable threat AND no LLM component (do NOT author an empty array; the schema requires `minItems:1`). This keeps non-AI reports unchanged: no AI surface → no fragment → the section renders nothing. Derive each `ai_risks[]` entry from the LLM threats you already recorded — this fragment is a *headline index* of them, not new analysis.
 
 ```json
 {
@@ -256,6 +253,7 @@ Renders as the optional **`### AI / LLM Exposure`** callout in the Management Su
   "ai_risks": [                            // REQUIRED, 1-10, most severe first
     {
       "owasp_llm_id": "LLM01",             // OPTIONAL, enum LLM01..LLM10 (leading badge)
+      "owasp_asi_id": "ASI01",             // OPTIONAL, enum ASI01..ASI10 — agentic-surface risks only (renders a linked badge)
       "name": "Prompt Injection",          // REQUIRED, canonical risk name (4-60 chars)
       "severity": "red",                   // OPTIONAL, enum green|yellow|red; defaults red
       "description": "<1-2 sentence design-review prose: which untrusted input reaches which AI sink and why it is structural, 40-400 chars>",  // REQUIRED. Components/files referenced GENERICALLY.
@@ -269,6 +267,8 @@ Renders as the optional **`### AI / LLM Exposure`** callout in the Management Su
 ```
 
 **Naming vocabulary** (canonical OWASP LLM Top-10 risk names; do not invent one to pad the list): `Prompt Injection` (LLM01) · `Sensitive Information Disclosure` (LLM02) · `Model Supply Chain` (LLM03) · `Data & Model Poisoning` (LLM04) · `Improper Output Handling` (LLM05) · `Excessive Agency` (LLM06) · `System Prompt Leakage` (LLM07) · `Vector & Embedding Weaknesses` (LLM08) · `Misinformation` (LLM09) · `Unbounded Consumption` (LLM10). Map each to its `owasp_llm_id` and anchor it to the finding(s) where you recorded it.
+
+**`owasp_asi_id` (OPTIONAL — agentic surface).** When the risk is on an **agentic** surface (the component wires the LLM to tools, persistent memory, retrieval, or other agents — matching the ASI lens the STRIDE analyzer applied), also set `owasp_asi_id` (enum ASI01..ASI10). For most risks this is the agentic crosswalk of the `owasp_llm_id` you already set — `LLM01→ASI01`, `LLM06→ASI02`, `LLM03→ASI04`, `LLM05→ASI05`, `LLM04/LLM08→ASI06`, `LLM09→ASI09`, `LLM10→ASI08` — so set BOTH ids on the same risk. `ASI03` (Agent Identity & Privilege Abuse), `ASI07` (Insecure Inter-Agent Communication), and `ASI10` (Rogue Agents) have no LLM analog: set `owasp_asi_id` alone, and only when a genuine multi-agent / tool-wielding surface is present. Do NOT set an `owasp_asi_id` for a plain LLM call-and-return with no tools/memory/autonomy.
 
 ### `ms-top-mitigations.json` authoring contract
 
@@ -387,82 +387,82 @@ Map findings to requirements via the `requirement_ids[]` field in `.threats-merg
 
 ### `security-architecture.md` authoring
 
-For `security-architecture.md`, preserve the scaffolded v2 13-section control-category structure. Fill placeholders with evidence-grounded prose. **Use the H4 heading form `#### 7.X.Y <Function in plain language> (<Tech / library / mechanism>)`** — the parenthetical is REQUIRED whenever the function name alone is generic (e.g. `Session Token Signing (JWT Based)`) or the library is operationally relevant (e.g. `XML Parser Hardening (libxmljs2)`), and OMITTED only when the function name is already self-locating (e.g. `Password Reset`, `CORS Policy`, `User Registration`). The legacy "`#### 7.3.N <name> Flow`" shape (with the trailing `Flow` literal and a `**Findings in this flow:**` trailer) remains retired — the new numbered form does NOT carry the `Flow` suffix and uses `**Relevant findings**` as the trailer.
+For `security-architecture.md`, preserve the scaffolded v2 13-section control-category structure. Fill placeholders with evidence-grounded prose. **Use the H4 heading form `#### 6.X.Y <Function in plain language> (<Tech / library / mechanism>)`** — the parenthetical is REQUIRED whenever the function name alone is generic (e.g. `Session Token Signing (JWT Based)`) or the library is operationally relevant (e.g. `XML Parser Hardening (libxmljs2)`), and OMITTED only when the function name is already self-locating (e.g. `Password Reset`, `CORS Policy`, `User Registration`). The legacy "`#### 6.3.N <name> Flow`" shape (with the trailing `Flow` literal and a `**Findings in this flow:**` trailer) remains retired — the new numbered form does NOT carry the `Flow` suffix and uses `**Relevant findings**` as the trailer.
 
-**§7 schema selection.** `security_schema=v2` is the default. Use the 13-section layout from `data/sections-contract.yaml → schema_v2.required_subsections`: 7.1 overview, 7.2 identity/authentication, 7.3 session/token, 7.4 authorization, 7.5 query/data access, 7.6 input boundaries, 7.7 output/rendering, 7.8 browser/cross-origin, 7.9 crypto/secrets/data, 7.10 file/parser/outbound, 7.11 operations/runtime/supply chain, 7.12 real-time/not-applicable, 7.13 defense-in-depth summary. The canonical finding→section routing lives in `schema_v2.finding_routing` — consult it BEFORE assigning a finding to any §7 sub-section.
+**§6 schema selection.** `security_schema=v2` is the default. Use the 13-section layout from `data/sections-contract.yaml → schema_v2.required_subsections`: 7.1 overview, 7.2 identity/authentication, 7.3 session/token, 7.4 authorization, 7.5 query/data access, 7.6 input boundaries, 7.7 output/rendering, 7.8 browser/cross-origin, 7.9 crypto/secrets/data, 7.10 file/parser/outbound, 7.11 operations/runtime/supply chain, 7.12 real-time/not-applicable, 7.13 defense-in-depth summary. The canonical finding→section routing lives in `schema_v2.finding_routing` — consult it BEFORE assigning a finding to any §6 sub-section.
 
 The v1 schema is legacy-only. Do not use v1 headings or the retired 21-section intermediate layout when `.skill-config.json` resolves to v2.
 
-**§7 finding-categorisation discipline (arch3.md §4).** Each finding has exactly ONE primary §7 sub-section. Cross-references between sub-sections are allowed, but the primary listing must reflect the *weakness category*, not the surface affected. The mapping below resolves the most common LLM mis-categorisations observed on the 2026-05 juice-shop run:
+**§6 finding-categorisation discipline (arch3.md §4).** Each finding has exactly ONE primary §6 sub-section. Cross-references between sub-sections are allowed, but the primary listing must reflect the *weakness category*, not the surface affected. The mapping below resolves the most common LLM mis-categorisations observed on the 2026-05 juice-shop run:
 
-| Finding type / cue | Primary v2 §7 sub-section | Pitfall to avoid |
+| Finding type / cue | Primary v2 §6 sub-section | Pitfall to avoid |
 |---|---|---|
-| Password login bypass, missing rate limit, weak password hashing, password reset/change weakness, OAuth/OIDC adapter, TOTP enrollment/verification | §7.2 Identity and Authentication Controls | §7.2 covers **authentication FLOWS** — the paths by which a principal proves identity. Do NOT route token-signing/verification primitives here; those belong in §7.3. Do not route CWE-620/640/916 to input validation or crypto only. |
-| Session-token signing, session-token validation middleware, token storage (browser/cookie), token lifetime/revocation/expiry | §7.3 Session and Token Controls | §7.3 covers the **session-token LIFECYCLE** — Sign → Validate → Store → Revoke → Expire — for the locally-signed session token (commonly called JWT in this codebase) regardless of which §7.2 flow established it. Token storage is session architecture, not XSS root cause. |
-| Missing route middleware, role/object authorization, client-side-only guards, CSRF as action authorization | §7.4 Authorization Controls | Do not hide object authorization gaps under frontend or routing prose. |
-| SQL/NoSQL construction weaknesses | §7.5 Query Construction and Data Access Controls | Injection findings belong with query construction, not generic input validation. |
-| Parser limits, upload constraints, URL/path validation, business-rule limits | §7.6 Input Boundary Validation Controls | Keep boundary validation separate from query construction and output encoding. |
-| XSS, sanitizer bypass, unsafe HTML rendering | §7.7 Output Encoding and Rendering Controls | Missing CSP is cross-origin/browser hardening; raw rendering is output encoding. |
-| Wildcard CORS, missing CSP, X-Frame-Options, Helmet/header gaps | §7.8 Browser and Cross-Origin Controls | Browser policy findings are not primary XSS findings. |
-| Hardcoded keys/secrets, weak crypto, password hash storage, sensitive data exposure | §7.9 Cryptography Secrets and Data Protection | JWT key material and HMAC secrets are crypto/secrets controls even when auth is affected. |
-| Upload/archive/XML/SSRF/redirect/public management-surface exposure | §7.10 File Parser and Outbound Request Controls | Public log/FTP/key routes are exposure controls, not missing audit logging. |
-| Patch-management gap (missing SCA / Dependabot/Renovate / lockfile hygiene), known-bad library choice, CI/runtime/logging/supply-chain weakness | §7.11 Operations Runtime and Supply Chain Controls | Supply-chain posture is surfaced via `emit_sca_practice.py` control rows + `emit_known_bad_libs.py` MFs (since 2026-05), not per-CVE threats. |
-| Socket.IO/WebSocket/real-time evidence or explicit absent-domain statements | §7.12 Real-time and Not Applicable Controls | If recon found Socket.IO/WebSocket, do not claim Not Applicable. |
+| Password login bypass, missing rate limit, weak password hashing, password reset/change weakness, OAuth/OIDC adapter, TOTP enrollment/verification | §6.2 Identity and Authentication Controls | §6.2 covers **authentication FLOWS** — the paths by which a principal proves identity. Do NOT route token-signing/verification primitives here; those belong in §6.3. Do not route CWE-620/640/916 to input validation or crypto only. |
+| Session-token signing, session-token validation middleware, token storage (browser/cookie), token lifetime/revocation/expiry | §6.3 Session and Token Controls | §6.3 covers the **session-token LIFECYCLE** — Sign → Validate → Store → Revoke → Expire — for the locally-signed session token (commonly called JWT in this codebase) regardless of which §6.2 flow established it. Token storage is session architecture, not XSS root cause. |
+| Missing route middleware, role/object authorization, client-side-only guards, CSRF as action authorization | §6.4 Authorization Controls | Do not hide object authorization gaps under frontend or routing prose. |
+| SQL/NoSQL construction weaknesses | §6.5 Query Construction and Data Access Controls | Injection findings belong with query construction, not generic input validation. |
+| Parser limits, upload constraints, URL/path validation, business-rule limits | §6.6 Input Boundary Validation Controls | Keep boundary validation separate from query construction and output encoding. |
+| XSS, sanitizer bypass, unsafe HTML rendering | §6.7 Output Encoding and Rendering Controls | Missing CSP is cross-origin/browser hardening; raw rendering is output encoding. |
+| Wildcard CORS, missing CSP, X-Frame-Options, Helmet/header gaps | §6.8 Browser and Cross-Origin Controls | Browser policy findings are not primary XSS findings. |
+| Hardcoded keys/secrets, weak crypto, password hash storage, sensitive data exposure | §6.9 Cryptography Secrets and Data Protection | JWT key material and HMAC secrets are crypto/secrets controls even when auth is affected. |
+| Upload/archive/XML/SSRF/redirect/public management-surface exposure | §6.10 File Parser and Outbound Request Controls | Public log/FTP/key routes are exposure controls, not missing audit logging. |
+| Patch-management gap (missing SCA / Dependabot/Renovate / lockfile hygiene), known-bad library choice, CI/runtime/logging/supply-chain weakness | §6.11 Operations Runtime and Supply Chain Controls | Supply-chain posture is surfaced via `emit_sca_practice.py` control rows + `emit_known_bad_libs.py` MFs (since 2026-05), not per-CVE threats. |
+| Socket.IO/WebSocket/real-time evidence or explicit absent-domain statements | §6.12 Real-time and Not Applicable Controls | If recon found Socket.IO/WebSocket, do not claim Not Applicable. |
 
-**§7.2 / §7.3 heading-naming (hard rule — `auth_method_decomposition` gate).** Every `#### 7.2.Y` / `#### 7.3.Y` heading MUST name an authentication **MECHANISM** drawn from the contract `method_whitelist` (Password-Based Authentication / Password Login, OAuth/OIDC, SAML/SSO, MFA/TOTP/2FA, Passkey/WebAuthn, Password Reset, Session, mTLS / Client Certificate, Webhook HMAC, API Key, Bearer Token, …). It must **NEVER** name a primitive, a key-management aspect, an algorithm, or a token format. The following heading classes are FORBIDDEN and are exactly what tripped the gate on the 2026-05 runs — do not emit them:
+**§6.2 / §6.3 heading-naming (hard rule — `auth_method_decomposition` gate).** Every `#### 6.2.Y` / `#### 6.3.Y` heading MUST name an authentication **MECHANISM** drawn from the contract `method_whitelist` (Password-Based Authentication / Password Login, OAuth/OIDC, SAML/SSO, MFA/TOTP/2FA, Passkey/WebAuthn, Password Reset, Session, mTLS / Client Certificate, Webhook HMAC, API Key, Bearer Token, …). It must **NEVER** name a primitive, a key-management aspect, an algorithm, or a token format. The following heading classes are FORBIDDEN and are exactly what tripped the gate on the 2026-05 runs — do not emit them:
 
 - Primitives: `Password Hashing`, `Signature Verification`, `Rate Limiting`, `Account Lockout`, `Session Revocation`, `Token Storage` → fold these as **bullets inside** the owning mechanism block (e.g. password hashing is a bullet under Password-Based Authentication), never as peer `####` headings.
-- Key-management / format / algorithm: `JWT Signing Key Management`, `JWT Algorithm Restriction`, `JWT RS256`, `alg:none`, `Bearer Token Flow` → these are §7.3 session-token-lifecycle controls or §7.9 crypto controls. If you need a §7.3 token heading, name the mechanism (`Bearer Token Authentication`), not the format. The bare token `JWT` alone is NOT on the whitelist.
+- Key-management / format / algorithm: `JWT Signing Key Management`, `JWT Algorithm Restriction`, `JWT RS256`, `alg:none`, `Bearer Token Flow` → these are §6.3 session-token-lifecycle controls or §6.9 crypto controls. If you need a §6.3 token heading, name the mechanism (`Bearer Token Authentication`), not the format. The bare token `JWT` alone is NOT on the whitelist.
 
-Concrete fix for the recurring failure: collapse `Password Hashing` + `JWT Signing Key Management` + `JWT Algorithm Restriction` into a single `#### 7.2.1 Password-Based Authentication` block (login sequenceDiagram once; hashing, key-management, and algorithm-confusion as bullets with a cross-reference to §7.3/§7.9), and keep `#### 7.2.2 Multi-Factor Authentication (TOTP/2FA)` as its own mechanism block.
+Concrete fix for the recurring failure: collapse `Password Hashing` + `JWT Signing Key Management` + `JWT Algorithm Restriction` into a single `#### 6.2.1 Password-Based Authentication` block (login sequenceDiagram once; hashing, key-management, and algorithm-confusion as bullets with a cross-reference to §6.3/§6.9), and keep `#### 6.2.2 Multi-Factor Authentication (TOTP/2FA)` as its own mechanism block.
 
-**§7.12 / every §7.X control-block structure (hard rule — `control_subsection_coverage` gate).** A §7.X block that maps **any** control MUST contain ≥1 `#### <Control Name>` subsection plus a `**Controls covered:**` line whose markdown links resolve to those subsections, and each subsection MUST carry `**Security assessment**` and `**Relevant findings**` labels. Never ship a §7.X (including §7.12) as a bare prose paragraph when controls exist. When recon found Socket.IO/WebSocket, §7.12 takes a real `#### 7.12.1 WebSocket / Socket.IO Security` subsection (do NOT use "Not applicable" phrasing — it contradicts recon). Only when a domain is genuinely absent from the codebase use the v2 form `_<Domain> is present in this codebase, but no security finding was derived during this assessment. No controls mapped._` rather than an `####`-less block.
+**§6.12 / every §6.X control-block structure (hard rule — `control_subsection_coverage` gate).** A §6.X block that maps **any** control MUST contain ≥1 `#### <Control Name>` subsection plus a `**Controls covered:**` line whose markdown links resolve to those subsections, and each subsection MUST carry `**Security assessment**` and `**Relevant findings**` labels. Never ship a §6.X (including §6.12) as a bare prose paragraph when controls exist. When recon found Socket.IO/WebSocket, §6.12 takes a real `#### 6.12.1 WebSocket / Socket.IO Security` subsection (do NOT use "Not applicable" phrasing — it contradicts recon). Only when a domain is genuinely absent from the codebase use the v2 form `_<Domain> is present in this codebase, but no security finding was derived during this assessment. No controls mapped._` rather than an `####`-less block.
 
-**§7 finding-range citations.** When listing multiple findings in §7 prose, NEVER use a range notation (`[F-016]...[F-021]`) UNLESS every F-ID in the span shares the same primary weakness cluster. The qa_checks `finding_range_homogeneous` check verifies this by cross-referencing each F-ID's CWE against `data/weakness-classes.yaml`. Prefer explicit enumeration of the listed findings — readers should not have to lookup which IDs fall inside a span.
+**§6 finding-range citations.** When listing multiple findings in §6 prose, NEVER use a range notation (`[F-016]...[F-021]`) UNLESS every F-ID in the span shares the same primary weakness cluster. The qa_checks `finding_range_homogeneous` check verifies this by cross-referencing each F-ID's CWE against `data/weakness-classes.yaml`. Prefer explicit enumeration of the listed findings — readers should not have to lookup which IDs fall inside a span.
 
-**No code in finding titles, Top-Findings cells, or §7.1 "Main reason" cells (hard rule).** Findings are first-class human-readable artifacts; titles and high-level reason cells must read as **prose**, not as code fragments.
+**No code in finding titles, Top-Findings cells, or §6.1 "Main reason" cells (hard rule).** Findings are first-class human-readable artifacts; titles and high-level reason cells must read as **prose**, not as code fragments.
 
-The following are forbidden in (a) `findings[].title` / `threats[].title` strings, (b) any rendered Finding cell of the §1 Top Findings table (`[F-NNN](#f-NNN) — <title>`), (c) the §7.1 Security Control Overview "Main reason" column, AND (d) any markdown link text that points at an F-NNN / T-NNN anchor (the linked-title form `[F-001](#f-001) — <title>`):
+The following are forbidden in (a) `findings[].title` / `threats[].title` strings, (b) any rendered Finding cell of the §1 Top Findings table (`[F-NNN](#f-NNN) — <title>`), (c) the §6.1 Security Control Overview "Main reason" column, AND (d) any markdown link text that points at an F-NNN / T-NNN anchor (the linked-title form `[F-001](#f-001) — <title>`):
 
-- Library identifiers with versions: `express-jwt@0.1.3`, `socket.io@3.1.2`, `libxmljs2@0.30`, `unzipper@0.9.15`, `notevil@1.x`, `jsonwebtoken@0.4.0`. The library name is allowed in §7.X prose; the `@version` suffix is not allowed anywhere in titles or §7.1.
+- Library identifiers with versions: `express-jwt@0.1.3`, `socket.io@3.1.2`, `libxmljs2@0.30`, `unzipper@0.9.15`, `notevil@1.x`, `jsonwebtoken@0.4.0`. The library name is allowed in §6.X prose; the `@version` suffix is not allowed anywhere in titles or §6.1.
 - Algorithm / payload phrases used as title fragments: `alg:none`, `noent:true`, `bypassSecurityTrustHtml()`, `crypto.createHash('md5')`, `package-lock=false`, `helmet.xssFilter`, `noSniff`, `frameguard`. Reword as plain prose: `JWT algorithm confusion`, `XXE external-entity parsing`, `unsafe-HTML sanitizer bypass`, `unsalted password hashing`.
 - Function-call literals: `models.sequelize.query()`, `eval()`, `fetch(url)`, `app.use(cors())`. Reword as the weakness class.
 - File-path payloads inside the title proper (the trailing `(<path>[:line])` group on a title is the only legal place for a path — never in the leading weakness clause).
 
-The legal title shape is the storage form `<Weakness class> (<relative_file_path[:line]>)` (yaml) and the rendered xref form `<Weakness class> in file <path> (param "<name>")`. The library + version + payload phrasing belongs in the finding's `evidence.excerpt` or in the §7 narrative prose — never in the title.
+The legal title shape is the storage form `<Weakness class> (<relative_file_path[:line]>)` for one instance, or class-only for consolidated multi-location findings. The rendered `Instances (N)` row owns their paths. The library + version + payload phrasing belongs in the finding's `evidence.excerpt` or in the §6 narrative prose — never in the title.
 
-**§7.1 "Main reason" cells.** The §7.1 Security Control Overview is the reader's first map; its `Main reason` column is the section's headline, not a debugger output. The cell MUST be a single narrative clause built from the section's dominant weakness theme — e.g. `SQL login, hardcoded JWT signing material, and weak password hashing break the authentication boundary` — and MUST NOT contain `lib@version` strings, payload phrases, or function-call literals. The §7.1 pregenerator owns the mechanical fallback (`X control(s), Y routed finding(s).`); the LLM may upgrade to a narrative reason but only inside the same prose constraints. If you find yourself typing `express-jwt@0.1.3` or `bypassSecurityTrustHtml()` into a §7.1 cell, stop — that string belongs in the §7.2/§7.3/§7.7 prose, not on the overview row.
+**§6.1 "Main reason" cells.** The §6.1 Security Control Overview is the reader's first map; its `Main reason` column is the section's headline, not a debugger output. The cell MUST be a single narrative clause built from the section's dominant weakness theme — e.g. `SQL login, hardcoded JWT signing material, and weak password hashing break the authentication boundary` — and MUST NOT contain `lib@version` strings, payload phrases, or function-call literals. The §6.1 pregenerator owns the mechanical fallback (`X control(s), Y routed finding(s).`); the LLM may upgrade to a narrative reason but only inside the same prose constraints. If you find yourself typing `express-jwt@0.1.3` or `bypassSecurityTrustHtml()` into a §6.1 cell, stop — that string belongs in the §6.2/§6.3/§6.7 prose, not on the overview row.
 
-Fenced code blocks INSIDE §7.X prose (after a colon-terminated introducing sentence) remain explicitly allowed — those are evidence anchors, not titles.
+Fenced code blocks INSIDE §6.X prose (after a colon-terminated introducing sentence) remain explicitly allowed — those are evidence anchors, not titles.
 
-**§7 "Not applicable" claims.** A `_Not applicable - no X detected_` line in §7 is only legal when `.recon-summary.md` ALSO does not contain evidence of the domain. The qa_checks `na_against_recon` check enforces this. If recon found a domain (e.g. `socket.io` in `package.json` + `lib/startup/registerWebsocketEvents.ts`) and no finding was derived, state explicitly: `_<Domain> is present in this codebase, but no security finding was derived during this assessment. No controls mapped._` — not `_Not applicable_`.
+**§6 "Not applicable" claims.** A `_Not applicable - no X detected_` line in §6 is only legal when `.recon-summary.md` ALSO does not contain evidence of the domain. The qa_checks `na_against_recon` check enforces this. If recon found a domain (e.g. `socket.io` in `package.json` + `lib/startup/registerWebsocketEvents.ts`) and no finding was derived, state explicitly: `_<Domain> is present in this codebase, but no security finding was derived during this assessment. No controls mapped._` — not `_Not applicable_`.
 
-**§7.X authoring pattern (current v2 contract).**
+**§6.X authoring pattern (current v2 contract).**
 
-§7 is an **architectural review** of controls, not a finding catalog. The unit of discussion is the concrete control or boundary. Findings are evidence and belong under the affected control's `**Relevant findings**` block.
+§6 is an **architectural review** of controls, not a finding catalog. The unit of discussion is the concrete control or boundary. Findings are evidence and belong under the affected control's `**Relevant findings**` block.
 
-`### 7.1 Security Control Overview` contains only the overview table: `Control category | Verdict | Main reason`. Do not add control IDs or finding-ID columns to this table.
+`### 6.1 Security Control Overview` contains only the overview table: `Control category | Verdict | Main reason`. Do not add control IDs or finding-ID columns to this table.
 
-Each `### 7.2` through `### 7.12` block uses this exact section-level structure:
+Each `### 6.2` through `### 6.12` block uses this exact section-level structure:
 
 1. `**Verdict:**` one concise verdict line.
 2. `**Controls covered:**` markdown links to every H4 subcontrol in the section. The pregenerator emits this line for you and marks it LOCKED (`<!-- … LLM must not re-author it. -->`) — **leave it exactly as scaffolded.** It is mechanically derived from the H4 headings actually emitted below, so it can never list a control you did not write a `####` for. If you re-author it by hand you reintroduce the dangling-link failure the `control_subsection_coverage` gate hard-fails on.
 3. `**Implemented controls:**` one concrete inventory sentence.
-4. `**Assessment:**` the section-level architectural conclusion. For §7.2 and §7.3, the Assessment paragraph carries the **bridging sentence** that locates the boundary between authentication flows and session-token lifecycle (see "§7.2/§7.3 topology" below).
-5. One `#### 7.X.Y <Function in plain language> (<Tech>)` subsection per covered control. **PRESERVE the scaffolded H4 headings verbatim — do NOT rename, split, merge, add, or drop them.** Fill ONLY the placeholder prose (Status clause, positive intro, sequenceDiagram where required, `**Security assessment**`, `**Relevant findings**`) inside each scaffolded block. The scaffold already names §7.2/§7.3 headings by whitelisted MECHANISM (e.g. the grouped `7.2.1 Password-Based Authentication`) — re-authoring them into primitives/libraries/token-formats (`Password Hashing`, `JWT Authentication`, `Multi-Factor Authentication`) is exactly what tripped the `auth_method_decomposition` gate on the 2026-06-01 run. **Emit a `#### <Control>` subsection for EVERY control listed in `**Controls covered:**`, including the lower sections §7.4–§7.12** — never leave a covered control without its matching `####` block (the §7.4/§7.9/§7.10/§7.11/§7.12 omission that drove the 2026-06-01 re-render loop). The **anchor must be an explicit `<a id="…">` immediately above the heading** (the composer renumbers heading text, not the anchor).
+4. `**Assessment:**` the section-level architectural conclusion. For §6.2 and §6.3, the Assessment paragraph carries the **bridging sentence** that locates the boundary between authentication flows and session-token lifecycle (see "§6.2/§6.3 topology" below).
+5. One `#### 6.X.Y <Function in plain language> (<Tech>)` subsection per covered control. **PRESERVE the scaffolded H4 headings verbatim — do NOT rename, split, merge, add, or drop them.** Fill ONLY the placeholder prose (Status clause, positive intro, sequenceDiagram where required, `**Security assessment**`, `**Relevant findings**`) inside each scaffolded block. The scaffold already names §6.2/§6.3 headings by whitelisted MECHANISM (e.g. the grouped `7.2.1 Password-Based Authentication`) — re-authoring them into primitives/libraries/token-formats (`Password Hashing`, `JWT Authentication`, `Multi-Factor Authentication`) is exactly what tripped the `auth_method_decomposition` gate on the 2026-06-01 run. **Emit a `#### <Control>` subsection for EVERY control listed in `**Controls covered:**`, including the lower sections §6.4–§6.12** — never leave a covered control without its matching `####` block (the §6.4/§6.9/§6.10/§6.11/§6.12 omission that drove the 2026-06-01 re-render loop). The **anchor must be an explicit `<a id="…">` immediately above the heading** (the composer renumbers heading text, not the anchor).
 
-**Inline finding references in §7 prose are auto-reduced to ID-only links.** Cite findings inline as bare `[F-NNN](#f-nnn)` (no title) — the composer strips any title the global linkifier would add, because the titled enumeration already lives in each control's `**Relevant findings**` block. Do NOT repeat the finding title in the assessment prose; it is redundant and will be removed.
+**Inline finding references in §6 prose are auto-reduced to ID-only links.** Cite findings inline as bare `[F-NNN](#f-nnn)` (no title) — the composer strips any title the global linkifier would add, because the titled enumeration already lives in each control's `**Relevant findings**` block. Do NOT repeat the finding title in the assessment prose; it is redundant and will be removed.
 
-**§7.2/§7.3 topology — authoritative.** §7.2 enumerates authentication **flows** (the ways identity is established); §7.3 traces the **session token lifecycle** that follows every successful flow. JWT-handling sub-sections belong in §7.3 (not §7.2), because the token in this codebase is the local session token regardless of which §7.2 flow issued it. OAuth here is a frontend identity hint terminating in local login — it does NOT consume an IdP-issued id_token — so JWT Issuance / Verification are NOT subordinate to OAuth.
+**§6.2/§6.3 topology — authoritative.** §6.2 enumerates authentication **flows** (the ways identity is established); §6.3 traces the **session token lifecycle** that follows every successful flow. JWT-handling sub-sections belong in §6.3 (not §6.2), because the token in this codebase is the local session token regardless of which §6.2 flow issued it. OAuth here is a frontend identity hint terminating in local login — it does NOT consume an IdP-issued id_token — so JWT Issuance / Verification are NOT subordinate to OAuth.
 
-The canonical §7.2 sub-sections group authentication by **factor**, so the reader sees at a glance *where* authentication is broken (the knowledge factor) and *what* holds (the possession factor). Do NOT emit one flat H4 per password flow — fold the password lifecycle into ONE grouped sub-control with the stages as bullets:
+The canonical §6.2 sub-sections group authentication by **factor**, so the reader sees at a glance *where* authentication is broken (the knowledge factor) and *what* holds (the possession factor). Do NOT emit one flat H4 per password flow — fold the password lifecycle into ONE grouped sub-control with the stages as bullets:
 
 - `7.2.1 Password-Based Authentication` — the knowledge factor. ONE H4 covering the whole password lifecycle. After the Status badge and a positive intro that names the shared root-cause sink(s) (e.g. one hashing primitive + one query path), render the stages as a **bulleted lifecycle**, one bullet per stage, each led by the stage name in bold + its own status token + a one-clause note + its finding links:
   - **Login** — verifies the credential
   - **Registration / Initial Password Set** — sets the credential
   - **Password Reset** — recovers the credential
   - **Password Change** — rotates the credential
-  - **Password Storage** — persists the credential (one-line + cross-link to `§7.9.2 Password Storage`; the deep dive stays in §7.9, not duplicated here)
+  - **Password Storage** — persists the credential (one-line + cross-link to `§6.9.2 Password Storage`; the deep dive stays in §6.9, not duplicated here)
 - `7.2.2 Federated / Social Login (OAuth)` — or `OAuth Login Adapter` when it is a frontend adapter terminating in local login
 - `7.2.3 Multi-Factor Authentication (TOTP)` — the possession factor. ONE H4; render `Enrollment` and `Verification` as two bullets, each with its own status token (enrollment is often 🟢 Adequate while the overall control is 🟡 Partial because TOTP is optional / not enforced for admins).
 
@@ -470,7 +470,7 @@ This grouping is the structure the `auth_method_decomposition` QA gate itself re
 
 If you must fall back to flat per-flow H4s (e.g. the controls catalog did not group them), the legacy flat names remain valid: `User Registration`, `Password-Based Login`, `Social Login Adapter (OAuth / OIDC)`, `Multi-Factor Enrollment (TOTP)`, `Multi-Factor Verification (TOTP)`, `Password Reset`, `Password Change`.
 
-The canonical §7.3 sub-sections (lifecycle order) are:
+The canonical §6.3 sub-sections (lifecycle order) are:
 
 - `7.3.1 Session Token Signing (JWT Based)` — was the legacy `JWT Issuance` heading
 - `7.3.2 Session Token Validation (JWT Based)` — was the legacy `JWT Verification and Protected Route Middleware` heading
@@ -478,25 +478,25 @@ The canonical §7.3 sub-sections (lifecycle order) are:
 - `7.3.4 Session Token Revocation`
 - `7.3.5 Session Token Expiry`
 
-The §7.3 Assessment paragraph MUST open with the bridging sentence template:
+The §6.3 Assessment paragraph MUST open with the bridging sentence template:
 
-> *This application uses a single locally-signed token format (commonly called JWT) for every authenticated session, regardless of the login flow in §7.2 that established it. The sub-sections below trace one token through its lifecycle: signing on issuance, validation on every protected request, storage in the browser, manual revocation, and time-based expiry.*
+> *This application uses a single locally-signed token format (commonly called JWT) for every authenticated session, regardless of the login flow in §6.2 that established it. The sub-sections below trace one token through its lifecycle: signing on issuance, validation on every protected request, storage in the browser, manual revocation, and time-based expiry.*
 
-The §7.2 Assessment paragraph MUST close with a one-sentence handoff that names §7.3, e.g.:
+The §6.2 Assessment paragraph MUST close with a one-sentence handoff that names §6.3, e.g.:
 
-> *Each successful flow above terminates in the server issuing a session token; the signing, validation, propagation, storage, and lifecycle of that token are described in [§7.3 Session and Token Controls](#73-session-and-token-controls).*
+> *Each successful flow above terminates in the server issuing a session token; the signing, validation, propagation, storage, and lifecycle of that token are described in [§6.3 Session and Token Controls](#63-session-and-token-controls).*
 
 Every H4 subcontrol MUST contain these elements, in this order:
 
-0. **Status badge (REQUIRED)** — the FIRST line under the `#### 7.X.Y …` heading, before the intro paragraph: `**Status:** <icon> <word> — <one clause>`. Use the verdict vocabulary (`🟢 Adequate` / `🟡 Partial` / `🟠 Weak` / `🔴 Unsafe` / `🔴 Missing`); pick the icon from the control's `effectiveness`. The trailing clause is the bottom line — what holds, or what is defeated and how — so the reader gets the verdict before reading the assessment. For the two red verdicts the clause MUST make the remediation obvious: **Unsafe** = the control exists but is defeated/bypassable (FIX the existing control); **Missing** = the control was never built (ADD it). Never tag a present-but-broken control "Missing" — an MD5 hash, a raw-SQL query path, a hardcoded signing key, or a parser with unsafe options is **Unsafe**, not Missing. The pregenerator emits this line (deterministically from `effectiveness`); keep it and fill any placeholder clause.
+0. **Status badge (REQUIRED)** — the FIRST line under the `#### 6.X.Y …` heading, before the intro paragraph: `**Status:** <icon> <word> — <one clause>`. Use the verdict vocabulary (`🟢 Adequate` / `🟡 Partial` / `🟠 Weak` / `🔴 Unsafe` / `🔴 Missing`); pick the icon from the control's `effectiveness`. The trailing clause is the bottom line — what holds, or what is defeated and how — so the reader gets the verdict before reading the assessment. For the two red verdicts the clause MUST make the remediation obvious: **Unsafe** = the control exists but is defeated/bypassable (FIX the existing control); **Missing** = the control was never built (ADD it). Never tag a present-but-broken control "Missing" — an MD5 hash, a raw-SQL query path, a hardcoded signing key, or a parser with unsafe options is **Unsafe**, not Missing. The pregenerator emits this line (deterministically from `effectiveness`); keep it and fill any placeholder clause.
 
-0b. **Anti-pattern label (OPTIONAL, metadata)** — when this control block embodies a *named architectural anti-pattern* (a structural design defect that recurs across call-sites or defeats a whole boundary, not a single bug), add a SECOND metadata line directly below the Status badge, before the intro paragraph: `⚠ **Anti-pattern:** <canonical name>`. Use the same canonical vocabulary as the `ms-anti-patterns.json` contract above (`SPA without BFF`, `JWT in localStorage`, `Raw SQL string interpolation`, `Secrets hardcoded in source`, `Missing server-side authorization layer`, `Sanitizer bypass by default`, …). This makes the structural defect explicit at the point of analysis and is the §7 counterpart of the same pattern's row in the Management Summary anti-patterns callout — tag it in BOTH places or neither. Keep it to the bare label line; the explanation belongs in the assessment bullets. Omit entirely for control blocks that are routine gaps with no recognized pattern — do not over-tag.
+0b. **Anti-pattern label (OPTIONAL, metadata)** — when this control block embodies a *named architectural anti-pattern* (a structural design defect that recurs across call-sites or defeats a whole boundary, not a single bug), add a SECOND metadata line directly below the Status badge, before the intro paragraph: `⚠ **Anti-pattern:** <canonical name>`. Use the same canonical vocabulary as the `ms-anti-patterns.json` contract above (`SPA without BFF`, `JWT in localStorage`, `Raw SQL string interpolation`, `Secrets hardcoded in source`, `Missing server-side authorization layer`, `Sanitizer bypass by default`, …). This makes the structural defect explicit at the point of analysis and is the §6 counterpart of the same pattern's row in the Management Summary anti-patterns callout — tag it in BOTH places or neither. Keep it to the bare label line; the explanation belongs in the assessment bullets. Omit entirely for control blocks that are routine gaps with no recognized pattern — do not over-tag.
 
 1. **Positive-case intro paragraph (REQUIRED)** — 1-3 sentences describing how this control actually works in THIS codebase: which routes or components are involved, which library performs the operation, what the intended successful flow is. NEVER start with the attack or the missing protection. The reader uses this paragraph to understand the mechanism BEFORE reading the security assessment below.
 
-   **Lead with the concrete subject — not a formulaic stem.** A domain expert names the thing first: the route, file, library, component, or middleware. The opener `The application <present-tense-verb>s …` (and its clones `The system …`, `The server …`, `The framework …`) is a templated AI stem — if more than one H4 in the same §7.X section opens that way, you are pattern-filling, not describing. Vary the subject — lead with the artifact: "`oauth.component.ts` reads …", "Sequelize backs most queries; the login and search routes call raw `models.sequelize.query()` …", "RS256-signed JWTs are issued by `lib/insecurity.ts` on every login …".
+   **Lead with the concrete subject — not a formulaic stem.** A domain expert names the thing first: the route, file, library, component, or middleware. The opener `The application <present-tense-verb>s …` (and its clones `The system …`, `The server …`, `The framework …`) is a templated AI stem — if more than one H4 in the same §6.X section opens that way, you are pattern-filling, not describing. Vary the subject — lead with the artifact: "`oauth.component.ts` reads …", "Sequelize backs most queries; the login and search routes call raw `models.sequelize.query()` …", "RS256-signed JWTs are issued by `lib/insecurity.ts` on every login …".
 
-   **Do not pad the intro with the control's textbook purpose.** Trailing clauses that restate why the control category exists in general — `with the intention that user-supplied values are passed as bound parameters`, `with the expectation that the token limits access to the owner`, `preventing user-controlled content from being interpreted as markup`, `so that a database breach does not directly yield credentials`, `is expected to reject or sanitise values that …` — add no information about THIS app and are the single biggest source of sprawl in §7. The reader already knows what parameterized queries or output encoding are for. State what this codebase does and stop; the gap goes in the assessment.
+   **Do not pad the intro with the control's textbook purpose.** Trailing clauses that restate why the control category exists in general — `with the intention that user-supplied values are passed as bound parameters`, `with the expectation that the token limits access to the owner`, `preventing user-controlled content from being interpreted as markup`, `so that a database breach does not directly yield credentials`, `is expected to reject or sanitise values that …` — add no information about THIS app and are the single biggest source of sprawl in §6. The reader already knows what parameterized queries or output encoding are for. State what this codebase does and stop; the gap goes in the assessment.
 
    Good (concrete subject, no purpose-padding):
    > "The OAuth flow is implemented in the Angular frontend as a frontend identity adapter, not a server-side OAuth/OIDC authorization-code flow. `oauth.component.ts` reads the access token from the redirect URL and calls `UserService.oauthLogin()` to exchange it for a local session JWT."
@@ -508,20 +508,20 @@ Every H4 subcontrol MUST contain these elements, in this order:
    > "**Security assessment:** ❌ Missing — OAuth is not properly implemented because..."
 
 2. **Mermaid sequence diagram — REQUIRED for the primary authentication and session-token flows; clarity aid elsewhere.** A `sequenceDiagram` is MANDATORY in:
-   - **§7.2** — the primary credential-verification flow (the grouped `Password-Based Authentication` H4, or the flat `Password-Based Login` fallback). When OAuth/OIDC or MFA (TOTP) flows are present, each ALSO carries its own diagram. This is the single most-requested missing element in §7 (2026-05-30 user report: "bei den Authentifizierungsverfahren fehlen schon wieder komplett die Mermaid Diagramme") — do NOT skip it.
-   - **§7.3** — `Session Token Signing (JWT Based)` and `Session Token Validation (JWT Based)`: show issuance (login → sign → return token) and validation (request → verify-middleware → route) respectively.
+   - **§6.2** — the primary credential-verification flow (the grouped `Password-Based Authentication` H4, or the flat `Password-Based Login` fallback). When OAuth/OIDC or MFA (TOTP) flows are present, each ALSO carries its own diagram. This is the single most-requested missing element in §6 (2026-05-30 user report: "bei den Authentifizierungsverfahren fehlen schon wieder komplett die Mermaid Diagramme") — do NOT skip it.
+   - **§6.3** — `Session Token Signing (JWT Based)` and `Session Token Validation (JWT Based)`: show issuance (login → sign → return token) and validation (request → verify-middleware → route) respectively.
 
    The diagram is the architecture view the user wants front-and-centre; it shows the actors/components and the happy-path hops, so the reader sees the mechanism before the prose. Render the **positive flow** (not the attack) — 3–6 steps between 2–3 participants (e.g. `User`/`Browser`, `API`/route, `DB`/key store). Diagrams remain OPTIONAL (and add noise) for pure primitives — hashing, a single header value, cookie-flag hardening, rate limiting, signature-verification-as-algorithm — skip them there. **You MUST introduce every diagram with exactly one sentence that ends in `:`** (reference form: `The diagram shows the positive password-login path, including the branch into TOTP verification:`). A `sequenceDiagram` fence with no introducing sentence is a contract violation.
 
 3. `**Security assessment**` — **default to a short framing sentence + a bullet list**, architecture-focused and tight. This is the section the user singled out as "viel zu viel Text mit unverlinkten Findings" (2026-05-30): the fix is structure and restraint, not more prose.
 
-   **Hard limits — keep §7 scannable:**
+   **Hard limits — keep §6 scannable:**
    - **Default form is bullets.** One framing sentence (≤ 1 line) naming the boundary/mechanism, then **2–5 bullets, one weakness each**, led by the weakness in plain words + its `file:line` evidence. A reader scans "SQL injection at `routes/login.ts:36`" and "unsalted MD5 at `lib/insecurity.ts:43`" as two items far faster than as two clauses welded into a 60-word paragraph.
-   - **Budget: ≤ ~90 words total** per control block assessment. If you exceed it you are narrating single findings — cut to the architectural point. §7 is about the *control boundary*, not a per-finding catalog; findings are **anchor points for a larger structural problem**, not the subject.
+   - **Budget: ≤ ~90 words total** per control block assessment. If you exceed it you are narrating single findings — cut to the architectural point. §6 is about the *control boundary*, not a per-finding catalog; findings are **anchor points for a larger structural problem**, not the subject.
    - Keep flowing prose only when the weaknesses form ONE causal chain that genuinely reads better as a narrative (e.g. "the key is committed, so any forged token passes, so the route guard is moot") — and even then ≤ 3 sentences.
    - The bullet form satisfies the multi-sentence requirement — it is NOT the banned single-line inline tag (`**Security assessment:** ❌ Missing - <one sentence>` remains a violation). One main clause per bullet; do not chain three weaknesses through comma-and-semicolon strings.
 
-   **Every finding reference in §7 prose MUST be a markdown link — bare `(F-001)` / `(T-001)` plain-text mentions are FORBIDDEN.** Either link it inline as `[F-001](#f-001)` at the point you cite it, or (preferred) cite no raw ID in the assessment at all and let the `**Relevant findings**` block below carry the linked enumeration. The plain-text `(F-NNN)` form that appeared throughout the 2026-05-30 juice-shop §7.2/§7.3 prose ("returning the first user … (F-001)") is exactly the unlinked-finding defect the user flagged.
+   **Every finding reference in §6 prose MUST be a markdown link — bare `(F-001)` / `(T-001)` plain-text mentions are FORBIDDEN.** Either link it inline as `[F-001](#f-001)` at the point you cite it, or (preferred) cite no raw ID in the assessment at all and let the `**Relevant findings**` block below carry the linked enumeration. The plain-text `(F-NNN)` form that appeared throughout the 2026-05-30 juice-shop §6.2/§6.3 prose ("returning the first user … (F-001)") is exactly the unlinked-finding defect the user flagged.
 
 4. **Optional code excerpt — clarity aid, not a mandate.** Include a fenced `ts`/`js`/`py`/`yaml`/`dockerfile`/`ini` block (≤ 6 lines) when the weakness concentrates at one short location and the snippet makes the assessment concrete (typical: raw SQL interpolation, `bypassSecurityTrustHtml`, `fetch(user_input)`, hardcoded secrets, permissive `app.use(cors())`, a single insecure config line). Skip the snippet when the weakness is structural and a single excerpt would mislead. **When you include a snippet, you MUST introduce it with exactly one sentence that ends in `:`** (reference forms: `The vulnerable login lookup is built as a raw SQL string:`, `This trusted-HTML call demonstrates where Angular's default escaping is bypassed:`, `The archive extraction logic shows the weak path containment check:`). A code fence with no introducing sentence is a contract violation.
 
@@ -539,24 +539,24 @@ Every H4 subcontrol MUST contain these elements, in this order:
    - [F-009](#f-009) — Persistent XSS (search-result.component.ts:132) - Persistent XSS — search-result.component.ts:132
    ```
 
-The `**Controls covered:**` visible link text must exactly match an H4 heading. The `control_subsection_coverage` QA gate checks this; the `auth_method_decomposition` QA gate (§7.2) checks the canonical-naming + intro + positive-flow requirements above.
+The `**Controls covered:**` visible link text must exactly match an H4 heading. The `control_subsection_coverage` QA gate checks this; the `auth_method_decomposition` QA gate (§6.2) checks the canonical-naming + intro + positive-flow requirements above.
 
-**Canonical heading-naming pattern — REQUIRED in ALL §7.X sections.** Every `#### 7.X.Y` subcontrol heading uses the form `<Plain-language function> (<Tech / library / mechanism>)`. The parenthetical is REQUIRED when the function name alone is generic or when the library/mechanism is operationally relevant; OMITTED when the function name is already self-locating.
+**Canonical heading-naming pattern — REQUIRED in ALL §6.X sections.** Every `#### 6.X.Y` subcontrol heading uses the form `<Plain-language function> (<Tech / library / mechanism>)`. The parenthetical is REQUIRED when the function name alone is generic or when the library/mechanism is operationally relevant; OMITTED when the function name is already self-locating.
 
-- **§7.2 (Authentication flows) canonical names:** `User Registration`, `Password-Based Login`, `Social Login Adapter (OAuth / OIDC)` (or just `OAuth Login Adapter` when no OIDC is configured), `SAML SSO`, `WebAuthn / Passkey Sign-In`, `mTLS Handshake`, `Webhook HMAC Verification`, `Multi-Factor Enrollment (TOTP)`, `Multi-Factor Verification (TOTP)`, `Password Reset`, `Password Change`. **Do NOT** put `JWT Issuance` / `JWT Verification` / any token-signing primitive in §7.2 — those moved to §7.3 as `Session Token Signing (JWT Based)` / `Session Token Validation (JWT Based)`.
-- **§7.3 (Session token lifecycle) canonical names:** `Session Token Signing (JWT Based)`, `Session Token Validation (JWT Based)`, `Session Token Storage (Browser localStorage)` (or whatever client store applies), `Session Token Revocation`, `Session Token Expiry`.
-- **§7.4–§7.12 examples:** `Server-Side Code Evaluation (notevil sandbox)`, `SQL Query Construction (Sequelize + Raw Queries)`, `NoSQL Query Construction (MarsDB)`, `Template Sanitization (Angular)`, `XML Parser Hardening (libxmljs2)`, `Archive Extraction (unzipper)`, `Container Runtime Hardening (Distroless)`. Names already self-locating without a parenthetical: `Password Reset`, `CSRF Protection`, `CORS Policy`, `Cookie Security`, `Clickjacking Protection`, `Password Storage`, `Secret Management`, `Transport Security`, `Data Encryption at Rest`, `Rate Limiting`, `WebSocket Security`, `Dependency Management`, `CI/CD Security`.
+- **§6.2 (Authentication flows) canonical names:** `User Registration`, `Password-Based Login`, `Social Login Adapter (OAuth / OIDC)` (or just `OAuth Login Adapter` when no OIDC is configured), `SAML SSO`, `WebAuthn / Passkey Sign-In`, `mTLS Handshake`, `Webhook HMAC Verification`, `Multi-Factor Enrollment (TOTP)`, `Multi-Factor Verification (TOTP)`, `Password Reset`, `Password Change`. **Do NOT** put `JWT Issuance` / `JWT Verification` / any token-signing primitive in §6.2 — those moved to §6.3 as `Session Token Signing (JWT Based)` / `Session Token Validation (JWT Based)`.
+- **§6.3 (Session token lifecycle) canonical names:** `Session Token Signing (JWT Based)`, `Session Token Validation (JWT Based)`, `Session Token Storage (Browser localStorage)` (or whatever client store applies), `Session Token Revocation`, `Session Token Expiry`.
+- **§6.4–§6.12 examples:** `Server-Side Code Evaluation (notevil sandbox)`, `SQL Query Construction (Sequelize + Raw Queries)`, `NoSQL Query Construction (MarsDB)`, `Template Sanitization (Angular)`, `XML Parser Hardening (libxmljs2)`, `Archive Extraction (unzipper)`, `Container Runtime Hardening (Distroless)`. Names already self-locating without a parenthetical: `Password Reset`, `CSRF Protection`, `CORS Policy`, `Cookie Security`, `Clickjacking Protection`, `Password Storage`, `Secret Management`, `Transport Security`, `Data Encryption at Rest`, `Rate Limiting`, `WebSocket Security`, `Dependency Management`, `CI/CD Security`.
 
 **Forbidden heading forms (hard-fail by `auth_method_decomposition`):**
 
 - Token-format-only headings: `JWT-RS256`, `PASETO`, `HS256 Signing Flow`, `RS256`.
 - Vulnerability-class headings: `Authentication bypass prevention`, `Credential storage`, `JWT library`.
-- Bare technology tokens with no function descriptor: `JWT *`, `TOTP *`, `MarsDB *`, `MD5 *`, `SHA1 *`, `libxmljs2 *` as the entire heading (a function descriptor MUST precede the tech). `Session Token Signing (JWT Based)` is legal; `JWT Issuance` alone in §7.3 is NOT (the function descriptor is missing the lifecycle word `Signing` / `Validation`).
-- The legacy `Flow` suffix on §7.X.Y headings (e.g. `Password Login Flow`, `JWT Signing Flow`) and the legacy `**Findings in this flow:**` trailer — both retired with the v1 auth-flow contract. Use `**Relevant findings**` as the trailer.
+- Bare technology tokens with no function descriptor: `JWT *`, `TOTP *`, `MarsDB *`, `MD5 *`, `SHA1 *`, `libxmljs2 *` as the entire heading (a function descriptor MUST precede the tech). `Session Token Signing (JWT Based)` is legal; `JWT Issuance` alone in §6.3 is NOT (the function descriptor is missing the lifecycle word `Signing` / `Validation`).
+- The legacy `Flow` suffix on §6.X.Y headings (e.g. `Password Login Flow`, `JWT Signing Flow`) and the legacy `**Findings in this flow:**` trailer — both retired with the v1 auth-flow contract. Use `**Relevant findings**` as the trailer.
 
-For `### 7.13 Defense-in-Depth Summary`, write two short cross-cutting prose paragraphs: (1) name the individual positive controls that exist (e.g. distroless runtime image, RS256 algorithm choice); (2) name which control-boundary repairs would restore layered defense. **§7.13 must be prose-only — Markdown tables under §7.13 are a contract violation** (the tabular layer-mapping format invites speculative perimeter-absence claims like `No WAF in source` that the `unfounded_perimeter_claims` rule forbids). No per-control H4 coverage gate applies here.
+For `### 6.13 Defense-in-Depth Summary`, write two short cross-cutting prose paragraphs: (1) name the individual positive controls that exist (e.g. distroless runtime image, RS256 algorithm choice); (2) name which control-boundary repairs would restore layered defense. **§6.13 must be prose-only — Markdown tables under §6.13 are a contract violation** (the tabular layer-mapping format invites speculative perimeter-absence claims like `No WAF in source` that the `unfounded_perimeter_claims` rule forbids). No per-control H4 coverage gate applies here.
 
-**Banned vocabulary for the §7.X body.** These words signal templated security-architecture prose; replace with concrete language:
+**Banned vocabulary for the §6.X body.** These words signal templated security-architecture prose; replace with concrete language:
 
 - `boundary` (as abstract noun), `mechanism layer`, `central ... layer`, `secret management substrate`, `policy layer` → name the concrete thing (env var, middleware, lint rule).
 - `codified rule`, `enforce a policy`, `formal mechanism` → `ESLint rule`, `CI check`, `pre-commit hook`.
@@ -564,14 +564,14 @@ For `### 7.13 Defense-in-Depth Summary`, write two short cross-cutting prose par
 - `the weakness lies in`, `at its core`, `fundamentally`, `in essence` → start the sentence with the subject.
 - `comprehensive`, `robust`, `leverages`, `seamless`, `cutting-edge`, `ensures`, `facilitates` → already banned by QB-7; the rule still applies.
 - **Textbook-purpose padding** — `with the intention that …`, `with the expectation that …`, `is expected to …`, `is intended to …`, and trailing `preventing <X> from being <Y>` / `so that <generic consequence>` clauses that restate why the control class exists → delete them. Describe what THIS app does, not what the control is for in the abstract.
-- **Formulaic intro stems** — opening an H4 with `The application <verb>s …` / `The system …` / `The server …` / `The framework …` more than once per §7.X section signals pattern-filling → lead with the concrete route, file, library, or component instead.
+- **Formulaic intro stems** — opening an H4 with `The application <verb>s …` / `The system …` / `The server …` / `The framework …` more than once per §6.X section signals pattern-filling → lead with the concrete route, file, library, or component instead.
 
-The `qa_checks.py → architectural_prose` check flags these phrases as warnings; repeated occurrences in the same §7.X promote to an error.
+The `qa_checks.py → architectural_prose` check flags these phrases as warnings; repeated occurrences in the same §6.X promote to an error.
 
-**Worked example — §7.2 Identity and Authentication Controls, #### 7.2.3 Social Login Adapter (OAuth / OIDC).** This is the canonical reference shape every flow-like §7.2 #### block should follow: positive-case intro → sequenceDiagram showing the intended flow → `**Security assessment**` narrative → optional code excerpt → `**Relevant findings**` bullet list. Note the `7.X.Y` numbering on the H4 heading and the `<Function> (<Tech>)` form.
+**Worked example — §6.2 Identity and Authentication Controls, #### 6.2.3 Social Login Adapter (OAuth / OIDC).** This is the canonical reference shape every flow-like §6.2 #### block should follow: positive-case intro → sequenceDiagram showing the intended flow → `**Security assessment**` narrative → optional code excerpt → `**Relevant findings**` bullet list. Note the `7.X.Y` numbering on the H4 heading and the `<Function> (<Tech>)` form.
 
 ```markdown
-#### 7.2.3 Social Login Adapter (OAuth / OIDC)
+#### 6.2.3 Social Login Adapter (OAuth / OIDC)
 
 The OAuth flow is implemented in the Angular frontend, not as a server-side OAuth/OIDC authorization-code flow. `oauth.component.ts` reads an access token from the redirect URL, calls Google's userinfo endpoint through `UserService.oauthLogin()`, derives a local password from the returned email, creates a local user if needed, and then calls the same local `/rest/user/login` endpoint.
 
@@ -605,10 +605,10 @@ This is not a full server-side OAuth control. It uses OAuth as a frontend identi
 - The flow inherits [F-003](#f-003), [F-020](#f-020), and [F-006](#f-006) because it ends in the same local login and session mechanism.
 ```
 
-**Worked example — §7.5 Query Construction (primitive-style section, no sequenceDiagram).** When the section is dominated by primitives rather than flow-like mechanisms, the inline-code-snippet-first shape is appropriate; positive-case intro still required. Note the `7.X.Y` numbering and the `<Function> (<Tech>)` heading form.
+**Worked example — §6.5 Query Construction (primitive-style section, no sequenceDiagram).** When the section is dominated by primitives rather than flow-like mechanisms, the inline-code-snippet-first shape is appropriate; positive-case intro still required. Note the `7.X.Y` numbering and the `<Function> (<Tech>)` heading form.
 
 ```markdown
-#### 7.5.1 SQL Query Construction (Sequelize + Raw Queries)
+#### 6.5.1 SQL Query Construction (Sequelize + Raw Queries)
 
 Sequelize models back most relational data access, but the login and search routes bypass the ORM and call raw `models.sequelize.query()` directly. The product-review update path uses MarsDB and passes a request-body field straight into the selector.
 
@@ -638,14 +638,14 @@ models.sequelize.query(`SELECT * FROM Products WHERE ((name LIKE '%${criteria}%'
    tokens to scaffold prose YOU must write; leaving them in is a contract
    violation and the QA gate will hard-fail the run.
 1. The H3 headings are exactly the v2 13-section list from `schema_v2.required_subsections`.
-2. The §7.1 overview table is the pregenerator-emitted block — preserve it verbatim including the `<!-- §7.1 MECHANICAL-FROZEN -->` markers. Column 1 must be Markdown links (`[Identity and Authentication](#72-identity-and-authentication-controls)`), NOT plain text. Verdict icons must be from `data/sections-contract.yaml → verdict_icons` (🟢/🟡/🟠/🔴).
-3. Every §7.2-§7.12 `**Controls covered:**` link has a matching `#### <Control Name>` heading using the canonical github-flavoured slug.
-4. **Every H4 control block opens with a positive intro paragraph (≥ 25 words).** Order is: positive-case intro paragraph → optional `sequenceDiagram` (preceded by one introducing sentence ending in `:`) → `**Security assessment**` (multi-sentence) → optional code excerpt (preceded by one introducing sentence ending in `:`) → `**Relevant findings**` BULLET list. The intro paragraph MUST NOT open with `No `, `None`, `Missing`, `Not implemented`, `There is no ` — gaps are described in the assessment, not in the intro. Every H4 — even a primitive one with no diagram and no code — needs the intro paragraph that explains what the control IS and HOW it works in this codebase, BEFORE the assessment line. **Scan the §7.X section as a whole: no more than one H4 intro may open with the `The application/system/server/framework <verb>s …` stem, and no intro may carry a textbook-purpose tail (`with the intention/expectation that …`, `is expected to …`, `preventing X from being Y`).** Lead each intro with its own concrete subject (route, file, library, component). A Security-assessment block covering ≥2 discrete weaknesses should use a short bullet list, not one dense paragraph.
-5. §7.X headings use the canonical `<Function> (<Tech>)` pattern with sequential `7.X.Y` numbering. §7.2 (auth flows) contains only flow-level mechanisms: `User Registration`, `Password-Based Login`, `Social Login Adapter (OAuth / OIDC)`, `Multi-Factor Enrollment (TOTP)`, `Multi-Factor Verification (TOTP)`, `Password Reset`, `Password Change`, `SAML SSO`, `WebAuthn / Passkey Sign-In`, `mTLS Handshake`, `Webhook HMAC Verification`. §7.3 (session-token lifecycle) contains: `Session Token Signing (JWT Based)`, `Session Token Validation (JWT Based)`, `Session Token Storage (Browser localStorage)`, `Session Token Revocation`, `Session Token Expiry`. NEVER use `JWT Issuance` / `JWT Verification` as standalone §7.2 headings (they moved to §7.3 with lifecycle-aware names), NEVER use bare-tech headings (`JWT *`, `TOTP *`, `MarsDB *`), NEVER use token-format-only or vulnerability-class headings (`JWT-RS256`, `JWT library`, `Authentication bypass prevention`, `Credential storage`) — these are contract violations.
+2. The §6.1 overview table is the pregenerator-emitted block — preserve it verbatim including the `<!-- §6.1 MECHANICAL-FROZEN -->` markers. Column 1 must be Markdown links (`[Identity and Authentication](#62-identity-and-authentication-controls)`), NOT plain text. Verdict icons must be from `data/sections-contract.yaml → verdict_icons` (🟢/🟡/🟠/🔴).
+3. Every §6.2-§6.12 `**Controls covered:**` link has a matching `#### <Control Name>` heading using the canonical github-flavoured slug.
+4. **Every H4 control block opens with a positive intro paragraph (≥ 25 words).** Order is: positive-case intro paragraph → optional `sequenceDiagram` (preceded by one introducing sentence ending in `:`) → `**Security assessment**` (multi-sentence) → optional code excerpt (preceded by one introducing sentence ending in `:`) → `**Relevant findings**` BULLET list. The intro paragraph MUST NOT open with `No `, `None`, `Missing`, `Not implemented`, `There is no ` — gaps are described in the assessment, not in the intro. Every H4 — even a primitive one with no diagram and no code — needs the intro paragraph that explains what the control IS and HOW it works in this codebase, BEFORE the assessment line. **Scan the §6.X section as a whole: no more than one H4 intro may open with the `The application/system/server/framework <verb>s …` stem, and no intro may carry a textbook-purpose tail (`with the intention/expectation that …`, `is expected to …`, `preventing X from being Y`).** Lead each intro with its own concrete subject (route, file, library, component). A Security-assessment block covering ≥2 discrete weaknesses should use a short bullet list, not one dense paragraph.
+5. §6.X headings use the canonical `<Function> (<Tech>)` pattern with sequential `7.X.Y` numbering. §6.2 (auth flows) contains only flow-level mechanisms: `User Registration`, `Password-Based Login`, `Social Login Adapter (OAuth / OIDC)`, `Multi-Factor Enrollment (TOTP)`, `Multi-Factor Verification (TOTP)`, `Password Reset`, `Password Change`, `SAML SSO`, `WebAuthn / Passkey Sign-In`, `mTLS Handshake`, `Webhook HMAC Verification`. §6.3 (session-token lifecycle) contains: `Session Token Signing (JWT Based)`, `Session Token Validation (JWT Based)`, `Session Token Storage (Browser localStorage)`, `Session Token Revocation`, `Session Token Expiry`. NEVER use `JWT Issuance` / `JWT Verification` as standalone §6.2 headings (they moved to §6.3 with lifecycle-aware names), NEVER use bare-tech headings (`JWT *`, `TOTP *`, `MarsDB *`), NEVER use token-format-only or vulnerability-class headings (`JWT-RS256`, `JWT library`, `Authentication bypass prevention`, `Credential storage`) — these are contract violations.
 6. `**Implemented controls:**` opens with a positive inventory ("Angular template escaping, Helmet noSniff, multer file-size limit") — NEVER with "None", "No ", "Missing", "Not implemented". Concrete gaps belong in the Assessment block.
-7. §7.13 is two short prose paragraphs — NO Markdown table, NO speculative perimeter-absence claims (`No WAF`, `No firewall`).
-8. Dependency-relevant findings are mentioned under §7.11; recon-observed TOTP/2FA appears under §7.2; recon-observed Socket.IO/WebSocket prevents a "not applicable" claim under §7.12.
-9. **Every fenced block in §7 is preceded by an introducing sentence ending in `:`.** Walk through every ` ``` `-fence under §7.2-§7.12 (Mermaid and code alike) and confirm the immediately preceding non-empty line is a single sentence terminated by a colon. A "naked" Mermaid or code block — one that appears with no narrative preamble — is a contract violation, even when the fence's content is correct. The reference form is fixed: `The diagram shows …:` for diagrams, `The/This … shows/illustrates/demonstrates …:` for code excerpts.
+7. §6.13 is two short prose paragraphs — NO Markdown table, NO speculative perimeter-absence claims (`No WAF`, `No firewall`).
+8. Dependency-relevant findings are mentioned under §6.11; recon-observed TOTP/2FA appears under §6.2; recon-observed Socket.IO/WebSocket prevents a "not applicable" claim under §6.12.
+9. **Every fenced block in §6 is preceded by an introducing sentence ending in `:`.** Walk through every ` ``` `-fence under §6.2-§6.12 (Mermaid and code alike) and confirm the immediately preceding non-empty line is a single sentence terminated by a colon. A "naked" Mermaid or code block — one that appears with no narrative preamble — is a contract violation, even when the fence's content is correct. The reference form is fixed: `The diagram shows …:` for diagrams, `The/This … shows/illustrates/demonstrates …:` for code excerpts.
 10. **Findings bullets carry one rationale sentence, not a duplicated title.** Confirm no bullet matches the pattern `\[F-\d+\]\(#f-\d+\)\s*[—-]\s*[^—\n]+\s*[—-]\s*[^\n]+` where both trailers are paraphrases of the same finding title. The pregenerator emits bare links; you append exactly one rationale sentence.
 
 Diagrams (`architecture-diagrams.md`, the whole of §2) are **deterministic and generator-owned** — you do **not** author or enrich them. `pregenerate_fragments.py:gen_architecture_diagrams` builds §2.1–§2.4 (diagrams, intro sentences, and the `**Key takeaway:**` line after each block) from `threat-model.yaml`, and the skill force-regenerates the fragment before AND after this dispatch, so any edit you make here is discarded. The notes below are a **defensive backstop** only (for the legacy `full` role / a manual re-render) — under the split `secarch` role you skip §2 entirely:
@@ -827,4 +827,4 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-end "[Pha
 echo "phase=11 status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.appsec-checkpoint"
 ```
 
-Return only a short status summary: fragments authored, renderer result, QA result, and any skipped optional fragments. This is the shared completion contract (`shared/completion-contract.md`) applied to this agent's multi-artifact output — no per-fragment prose, no restated §7/MS content.
+Return only a short status summary: fragments authored, renderer result, QA result, and any skipped optional fragments. This is the shared completion contract (`shared/completion-contract.md`) applied to this agent's multi-artifact output — no per-fragment prose, no restated §6/MS content.

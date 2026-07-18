@@ -63,11 +63,10 @@ def test_evidence_verifier_results_emit_review_cards_and_canonical_links(tmp_pat
     assert by_id["M-011"]["priority"] == "P3"
     assert by_id["M-011"]["auto_source"] == "evidence-check-ambiguous"
     assert by_id["M-011"]["threat_ids"] == ["T-001"]
-    assert by_id["M-012"]["title"] == "Confirm fix coverage at routes/redirect.ts:18"
-    assert by_id["M-012"]["auto_source"] == "evidence-check-refuted"
+    assert "M-012" not in by_id
     threats = {t["id"]: t for t in data["threats"]}
     assert threats["T-001"]["mitigation_ids"] == ["M-011"]
-    assert threats["T-002"]["mitigation_ids"] == ["M-012"]
+    assert "mitigation_ids" not in threats["T-002"]
 
 
 def test_architectural_findings_cluster_by_theme_across_arch_sources(tmp_path: Path) -> None:

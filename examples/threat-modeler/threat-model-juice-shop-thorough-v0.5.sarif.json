@@ -1,0 +1,3444 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "appsec-advisor",
+          "version": "0.5.0-beta",
+          "semanticVersion": "0.5.0-beta",
+          "rules": [
+            {
+              "id": "T-001",
+              "name": "Information Disclosure/spa-holds-session-jwt-in-localstorage-wi",
+              "shortDescription": {
+                "text": "The application is a pure SPA that stores the session JWT in localStorage and reads it back to authenticate every request: the router guard checks localStorage.getItem('token') (app.guard.ts:18), the HTTP interceptor injects Authorization: Bearer <localStorage token> (request.interceptor.ts:13-18), and the OAuth flow writes the token to localStorage (oauth.component.ts:51)."
+              },
+              "fullDescription": {
+                "text": "The application is a pure SPA that stores the session JWT in localStorage and reads it back to authenticate every request: the router guard checks localStorage.getItem('token') (app.guard.ts:18), the HTTP interceptor injects Authorization: Bearer <localStorage token> (request.interceptor.ts:13-18), and the OAuth flow writes the token to localStorage (oauth.component.ts:51). localStorage is readable by any JavaScript in the origin, so any of the XSS sinks in this component immediately yields the bearer token. There is no Backend-for-Frontend holding the token server-side and no httpOnly cookie; the token's confidentiality depends entirely on the SPA being XSS-free, which it is not."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-922",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-002",
+              "name": "Information Disclosure/hardcoded-secrets-embedded-in-source",
+              "shortDescription": {
+                "text": "hmac() at lib/insecurity.ts:42 uses the literal key 'pa4qacea4VK9t9nGv7yZtwmj'."
+              },
+              "fullDescription": {
+                "text": "hmac() at lib/insecurity.ts:42 uses the literal key 'pa4qacea4VK9t9nGv7yZtwmj'. resetPassword.ts:41 compares security.hmac(answer) to the stored SecurityAnswerModel.answer, so knowing this key lets an attacker precompute HMACs of candidate security answers offline and recognize matches, and forge/validate coupon HMACs. Because the key is committed to source it is known to anyone with repository or bundle access, defeating the integrity property the HMAC is supposed to provide."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-798",
+                "source": "configuration-defect"
+              }
+            },
+            {
+              "id": "T-003",
+              "name": "Denial of Service/systemic-missing-rate-limiting-across-un",
+              "shortDescription": {
+                "text": "None of the /rest/web3/* routes (registered server.ts:641-645) carry authentication or rate-limiting middleware."
+              },
+              "fullDescription": {
+                "text": "None of the /rest/web3/* routes (registered server.ts:641-645) carry authentication or rate-limiting middleware. contractExploitListener adds the raw client `walletAddress` to the module-level `walletsConnected` Set before any validation and with no size cap (routes/web3Wallet.ts:15-16); nftMint's `addressesMinted` grows similarly. checkKeys additionally performs an ethers HD-wallet derivation on every request (routes/checkKeys.ts:11), a CPU-bound crypto operation. An attacker scripts high-volume requests with unique addresses to grow the in-memory Sets without bound (heap exhaustion) and to burn CPU on repeated key derivations, degrading or crashing the single-process Node server."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "denial of service"
+                ],
+                "stride": "Denial of Service",
+                "likelihood": "High",
+                "impact": "Medium",
+                "risk": "High",
+                "cwe": "CWE-770",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-004",
+              "name": "Spoofing/oauth-login-derives-account-password-fro",
+              "shortDescription": {
+                "text": "OAuthComponent.ngOnInit reads the OAuth access_token from the URL fragment (parseRedirectUrlParams, line 71 splits location.hash), fetches the provider profile, then at line 30/46 sets the account password to btoa(profile.email.split('').reverse().join('')) — a deterministic, publicly-computable value."
+              },
+              "fullDescription": {
+                "text": "OAuthComponent.ngOnInit reads the OAuth access_token from the URL fragment (parseRedirectUrlParams, line 71 splits location.hash), fetches the provider profile, then at line 30/46 sets the account password to btoa(profile.email.split('').reverse().join('')) — a deterministic, publicly-computable value. Any attacker who knows a victim's email address (e.g. from the /rest/user/whoami leak, a review author name, or an order) can compute the same Base64-of-reversed-email string and log in directly via POST /rest/user/login as that user without ever touching the OAuth provider. The token also travels in the URL fragment (implicit-flow style) and no state/nonce parameter is validated on the callback, so the redirect can be replayed/forged."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "spoofing"
+                ],
+                "stride": "Spoofing",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-287",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-005",
+              "name": "Spoofing/hardcoded-rsa-private-jwt-signing-key-li",
+              "shortDescription": {
+                "text": "The RSA private key used to sign every session JWT is embedded verbatim in lib/insecurity.ts:21 as a string literal and ships in the public source tree and every deployed bundle."
+              },
+              "fullDescription": {
+                "text": "The RSA private key used to sign every session JWT is embedded verbatim in lib/insecurity.ts:21 as a string literal and ships in the public source tree and every deployed bundle. An attacker who reads the repository (or extracts the key from a distributed image) signs a token of their choosing via security.authorize()-equivalent code with data.role='admin' and any data.email/id, then presents it as a bearer token. Because verify()/updateAuthenticatedUsers() validate against the matching public key, the forged token is accepted as a fully authenticated admin session with no credential ever entered."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "spoofing"
+                ],
+                "stride": "Spoofing",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-321",
+                "source": "configuration-defect"
+              }
+            },
+            {
+              "id": "T-006",
+              "name": "Spoofing/insecure-jwt-verification",
+              "shortDescription": {
+                "text": "Without an explicit algorithm allowlist, attackers can forge tokens with alg:none (older lib versions) or use the public key as an HMAC secret to mint valid signatures."
+              },
+              "fullDescription": {
+                "text": "Without an explicit algorithm allowlist, attackers can forge tokens with alg:none (older lib versions) or use the public key as an HMAC secret to mint valid signatures."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "spoofing"
+                ],
+                "stride": "Spoofing",
+                "likelihood": "Critical",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-347",
+                "source": "source-scan"
+              }
+            },
+            {
+              "id": "T-007",
+              "name": "Tampering/cross-site-scripting-xss",
+              "shortDescription": {
+                "text": "filterTable() reads the user-controlled q query parameter and assigns this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam) (line 143), which is then rendered raw through [innerHTML]=\"searchValue\" in search-result.component.html:11."
+              },
+              "fullDescription": {
+                "text": "filterTable() reads the user-controlled q query parameter and assigns this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam) (line 143), which is then rendered raw through [innerHTML]=\"searchValue\" in search-result.component.html:11. bypassSecurityTrustHtml explicitly disables Angular's built-in output sanitization, so a link such as /#/search?q=<img src=x onerror=alert(document.cookie)> executes attacker script in the victim's origin. Because no Content-Security-Policy is served (index.html has no CSP meta and helmet CSP is disabled server-side), there is no defence-in-depth stopping the payload."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-79",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-008",
+              "name": "Tampering/sql-injection-in-login-authentication-qu",
+              "shortDescription": {
+                "text": "login() builds its authentication query by string-interpolating req.body.email directly into raw SQL at routes/login.ts:34: SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${hash(password)}' AND deletedAt IS NULL."
+              },
+              "fullDescription": {
+                "text": "login() builds its authentication query by string-interpolating req.body.email directly into raw SQL at routes/login.ts:34: SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${hash(password)}' AND deletedAt IS NULL. Posting email = admin@juice-sh.op'-- or ' OR 1=1-- comments out the password clause, causing the query to return the first user row; the handler then mints a full session token for that user. This is a classic authentication-bypass SQLi requiring no valid credential, and the same injection point permits UNION-based extraction of arbitrary table data."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-89",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-009",
+              "name": "Tampering/union-based-sql-injection-in-product-sea",
+              "shortDescription": {
+                "text": "The search handler interpolates the `q` query parameter into a raw query: `SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' OR description LIKE '%${criteria}%') ...)` at routes/search.ts:23."
+              },
+              "fullDescription": {
+                "text": "The search handler interpolates the `q` query parameter into a raw query: `SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' OR description LIKE '%${criteria}%') ...)` at routes/search.ts:23. The only limit is a 200-char truncation. An attacker sends `q=')) UNION SELECT ... FROM Users--` to append arbitrary SELECTs, exfiltrating the full Users table (emails and MD5 password hashes) and the SQLite schema via `sqlite_master`. Endpoint is unauthenticated."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-89",
+                "source": "stride",
+                "security-severity": "8.7",
+                "cvss-v4-vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+                "cvss-version": "4.0"
+              }
+            },
+            {
+              "id": "T-010",
+              "name": "Tampering/remote-code-execution-via-notevil-sandbo",
+              "shortDescription": {
+                "text": "The B2B order handler passes user-supplied `body.orderLinesData` into `vm.runInContext('safeEval(orderLinesData)', sandbox, { timeout: 2000 })` at routes/b2bOrder.ts:23, using the `notevil` library as a sandbox."
+              },
+              "fullDescription": {
+                "text": "The B2B order handler passes user-supplied `body.orderLinesData` into `vm.runInContext('safeEval(orderLinesData)', sandbox, { timeout: 2000 })` at routes/b2bOrder.ts:23, using the `notevil` library as a sandbox. notevil is a known-bypassable JS sandbox; crafted payloads escape it (constructor chain / prototype access) to execute arbitrary Node code in the server process. The route sits under `/b2b/v2` which requires a JWT, but that token is forgeable (see backend-api-001)."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-94",
+                "source": "stride",
+                "security-severity": "9.4",
+                "cvss-v4-vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+                "cvss-version": "4.0"
+              }
+            },
+            {
+              "id": "T-011",
+              "name": "Tampering/insecure-direct-object-reference",
+              "shortDescription": {
+                "text": "Server-side authorization MUST derive the resource owner from the authenticated session (req.user / req.session / req.auth), never from attacker-controlled request data."
+              },
+              "fullDescription": {
+                "text": "Server-side authorization MUST derive the resource owner from the authenticated session (req.user / req.session / req.auth), never from attacker-controlled request data. Trusting req.body.UserId etc. enables horizontal privilege escalation across all authenticated tenants."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Critical",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-639",
+                "source": "source-scan"
+              }
+            },
+            {
+              "id": "T-012",
+              "name": "Information Disclosure/xml-external-entity-file-disclosure-rout",
+              "shortDescription": {
+                "text": "POST /file-upload accepts a .xml part and passes its raw buffer to parseXmlString (routes/fileUpload.ts:76)."
+              },
+              "fullDescription": {
+                "text": "POST /file-upload accepts a .xml part and passes its raw buffer to parseXmlString (routes/fileUpload.ts:76). lib/xml.ts:35 parses with XML_PARSE_NOENT | XML_PARSE_DTDLOAD and calls xmlRegisterFsInputProviders(), which grants the libxml2-wasm sandbox host-filesystem access. An unauthenticated attacker uploads a document declaring <!ENTITY xxe SYSTEM \"file:///etc/passwd\"> and references &xxe; in the body; the resolved contents are reflected verbatim in the 410 error at routes/fileUpload.ts:79 (utils.trunc(xmlString, 400)). The same primitive reaches http:// URLs, turning XXE into blind SSRF against prod-env internal services and the cloud metadata endpoint."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-611",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-013",
+              "name": "Elevation of Privilege/mass-assignment-privileged-field-accepte",
+              "shortDescription": {
+                "text": "Server code that consumes req.body.role / req.body.isAdmin / etc."
+              },
+              "fullDescription": {
+                "text": "Server code that consumes req.body.role / req.body.isAdmin / etc. without an explicit allowlist trusts the client to behave. An attacker simply adds {\"role\":\"admin\"} to their request to escalate."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ],
+                "stride": "Elevation of Privilege",
+                "likelihood": "Critical",
+                "impact": "Critical",
+                "risk": "Critical",
+                "cwe": "CWE-915",
+                "source": "source-scan"
+              }
+            },
+            {
+              "id": "T-014",
+              "name": "Spoofing/password-reset-security-answer-brute-for",
+              "shortDescription": {
+                "text": "resetPassword() at routes/resetPassword.ts:41 sets a new password when security.hmac(answer) equals the stored security answer, with no per-account attempt counter or lockout."
+              },
+              "fullDescription": {
+                "text": "resetPassword() at routes/resetPassword.ts:41 sets a new password when security.hmac(answer) equals the stored security answer, with no per-account attempt counter or lockout. The only throttle is the express-rate-limit on /rest/user/reset-password whose keyGenerator returns headers['X-Forwarded-For'] ?? ip (server.ts:346). Because X-Forwarded-For is fully attacker-controlled, an attacker rotates the header on every request to reset the rate-limit bucket and brute-forces the (typically low-entropy) security answer for any target email, then takes over the account by setting a new password."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "spoofing"
+                ],
+                "stride": "Spoofing",
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-640",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-015",
+              "name": "Spoofing/rate-limit-keyed-on-spoofable-x-forwarde",
+              "shortDescription": {
+                "text": "The reset-password rate limiter derives its throttling key from `headers['X-Forwarded-For'] ??"
+              },
+              "fullDescription": {
+                "text": "The reset-password rate limiter derives its throttling key from `headers['X-Forwarded-For'] ?? ip` at server.ts:346. Because X-Forwarded-For is fully attacker-controlled when the app is reached directly (or through a proxy that does not strip it), an attacker rotates a fresh forged header value on each request to reset the counter, defeating the 100-per-5-minute cap and enabling unlimited password-reset / security-answer brute force against victim accounts."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "spoofing"
+                ],
+                "stride": "Spoofing",
+                "likelihood": "High",
+                "impact": "Medium",
+                "risk": "High",
+                "cwe": "CWE-290",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-016",
+              "name": "Spoofing/unauthenticated-websocket-channel",
+              "shortDescription": {
+                "text": "registerWebsocketEvents mounts the Socket.IO server on the same internet-facing HTTP server (server.ts:749) and accepts every connection with `io.on('connection', ...)` at line 23."
+              },
+              "fullDescription": {
+                "text": "registerWebsocketEvents mounts the Socket.IO server on the same internet-facing HTTP server (server.ts:749) and accepts every connection with `io.on('connection', ...)` at line 23. There is no `io.use()` handshake middleware, no `allowRequest` callback, and no token/session check on `socket.handshake` — grep for allowRequest/handshake/io.use/verifyToken in this component returns nothing. Any anonymous client on the internet (a raw socket.io-client, not just the SPA) opens a session, immediately receives the replayed `challenge solved` notifications (lines 29-31), and can emit any of the four inbound events. The `cors.origin: 'http://localhost:4200'` option (line 20) is a hardcoded dev origin that only constrains browser-based handshakes and is trivially bypassed by non-browser clients, so it provides no authentication boundary."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "spoofing"
+                ],
+                "stride": "Spoofing",
+                "likelihood": "High",
+                "impact": "Medium",
+                "risk": "High",
+                "cwe": "CWE-306",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-017",
+              "name": "Spoofing/hardcoded-default-admin-credentials-and-",
+              "shortDescription": {
+                "text": "The seed dataset data/static/users.yml, consumed by data/datacreator.ts:190-200 to populate the Users table on startup, embeds cleartext credentials for privileged accounts: email 'admin' / password 'admi**** (8 chars)' with role 'admin' (data/static/users.yml:2-5), plus additional admin/deluxe accounts and a fixed TOTP seed 'IFTXE3SPOEYVURT2MRYGI52TKJ4HC3KH' (data/static/users.yml:151)."
+              },
+              "fullDescription": {
+                "text": "The seed dataset data/static/users.yml, consumed by data/datacreator.ts:190-200 to populate the Users table on startup, embeds cleartext credentials for privileged accounts: email 'admin' / password 'admi**** (8 chars)' with role 'admin' (data/static/users.yml:2-5), plus additional admin/deluxe accounts and a fixed TOTP seed 'IFTXE3SPOEYVURT2MRYGI52TKJ4HC3KH' (data/static/users.yml:151). Because these values ship in the repository and are provisioned verbatim, anyone who reads the source (public repo, image layer) can authenticate as an administrator on any deployment that runs the default seed — full account and application takeover with no exploitation required. The fixed TOTP seed likewise lets an attacker generate valid 2FA codes for that account."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "spoofing"
+                ],
+                "stride": "Spoofing",
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-798",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-018",
+              "name": "Spoofing/wallet-ownership-accepted-without-signat",
+              "shortDescription": {
+                "text": "POST /rest/web3/walletNFTVerify and POST /rest/web3/walletExploitAddress trust a client-supplied `req.body.walletAddress` verbatim."
+              },
+              "fullDescription": {
+                "text": "POST /rest/web3/walletNFTVerify and POST /rest/web3/walletExploitAddress trust a client-supplied `req.body.walletAddress` verbatim. walletNFTVerify (routes/nftMint.ts:41-45) matches the raw address against the in-memory `addressesMinted` Set and, on hit, marks the NFT-mint challenge solved; contractExploitListener (routes/web3Wallet.ts:15-16) blindly adds the claimed address to `walletsConnected`. Neither endpoint requires the caller to prove control of the address via a signed challenge (e.g. EIP-191 personal_sign of a server nonce). Because minter/exploiter addresses are emitted on a public Sepolia contract event and are readable by anyone on-chain, an attacker can replay any observed address and be credited as its owner without holding the corresponding private key."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "spoofing"
+                ],
+                "stride": "Spoofing",
+                "likelihood": "High",
+                "impact": "Medium",
+                "risk": "High",
+                "cwe": "CWE-290",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-019",
+              "name": "Tampering/stored-xss-via-true-client-ip-header-per",
+              "shortDescription": {
+                "text": "saveLoginIp() reads the attacker-controlled true-client-ip request header at routes/saveLoginIp.ts:18 and writes it to the user's lastLoginIp field."
+              },
+              "fullDescription": {
+                "text": "saveLoginIp() reads the attacker-controlled true-client-ip request header at routes/saveLoginIp.ts:18 and writes it to the user's lastLoginIp field. When the httpHeaderXssChallenge branch is active the value is stored with no sanitization (lines 22-23); sanitizeSecure() is only applied in the else branch. A user (or an attacker who fixed the header on a victim's request) stores markup such as <iframe src=\"javascript:alert(`xss`)\"> which later executes when lastLoginIp is rendered in the account/last-login UI, giving stored cross-site scripting in an authenticated context."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-79",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-020",
+              "name": "Tampering/non-cryptographic-rng-for-a-secret-token",
+              "shortDescription": {
+                "text": "A predictable token/secret lets an attacker guess or brute-force session identifiers, reset links, or OTPs."
+              },
+              "fullDescription": {
+                "text": "A predictable token/secret lets an attacker guess or brute-force session identifiers, reset links, or OTPs."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-330",
+                "source": "source-scan"
+              }
+            },
+            {
+              "id": "T-021",
+              "name": "Tampering/xxe-via-xml-complaint-upload-routes-file",
+              "shortDescription": {
+                "text": "`handleXmlUpload` reads an uploaded .xml file buffer and passes it to `parseXmlString(data)` at routes/fileUpload.ts:74 without disabling DTD processing or external entities."
+              },
+              "fullDescription": {
+                "text": "`handleXmlUpload` reads an uploaded .xml file buffer and passes it to `parseXmlString(data)` at routes/fileUpload.ts:74 without disabling DTD processing or external entities. An attacker uploads XML declaring an external entity (`<!ENTITY x SYSTEM 'file:///etc/passwd'>`) to read local files, or a SYSTEM URL pointing at internal services for SSRF; the parsed content is even reflected back in the error message (line 79), giving direct exfiltration. A billion-laughs entity expansion causes DoS (the code already tracks an xxeDosChallenge)."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-611",
+                "source": "stride",
+                "security-severity": "8.6",
+                "cvss-v4-vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:L/SC:L/SI:N/SA:N",
+                "cvss-version": "4.0"
+              }
+            },
+            {
+              "id": "T-022",
+              "name": "Tampering/prompt-injection-in-ai-chat-leaks-system",
+              "shortDescription": {
+                "text": "`POST /rest/chat` (server.ts:638, unauthenticated) forwards `req.body.messages` verbatim into `streamText` at routes/chat.ts:206 with no input sanitization."
+              },
+              "fullDescription": {
+                "text": "`POST /rest/chat` (server.ts:638, unauthenticated) forwards `req.body.messages` verbatim into `streamText` at routes/chat.ts:206 with no input sanitization. The system prompt (chat.ts:84-105) embeds a CONFIDENTIAL policy including a hidden 15% courtesy discount and the coupon rules. A crafted user message overrides these instructions to (a) exfiltrate the confidential system prompt and (b) drive the `generateCoupon` tool (chat.ts:176) to mint discounts above the 10% cap without meeting any policy precondition (the chatbotPromptInjection / chatbotGreedyInjection challenges). The LLM has direct tool authority to issue real coupon codes."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "Medium",
+                "risk": "High",
+                "cwe": "CWE-1426",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-023",
+              "name": "Tampering/lockfile-generation-disabled-npmrc",
+              "shortDescription": {
+                "text": "The repository root .npmrc sets package-lock off (line 1), so npm never writes package-lock.json for the root project."
+              },
+              "fullDescription": {
+                "text": "The repository root .npmrc sets package-lock off (line 1), so npm never writes package-lock.json for the root project. Every `npm install` in CI (ci.yml lines 51/71/110/147/203/238, release.yml line 55) and in the Docker build (Dockerfile line 5) therefore re-resolves the full dependency graph against the live registry with no committed integrity baseline. An attacker who wins a transitive version window — via typosquatting, a maintainer-account takeover that publishes a higher patch version inside an existing semver range, or npm cache poisoning — gets their package installed across every developer machine, every CI job, and the release/Docker build with no diff signal and no `npm ci` protection possible. The fix cannot be 'switch to npm ci later': without a lockfile there is nothing to `ci` against."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-494",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-024",
+              "name": "Tampering/ci-cd-workflow-supply-chain-risk",
+              "shortDescription": {
+                "text": "The image-compression workflow pins `calibreapp/image-actions@main` (line 33) — a mutable branch ref, not a tag or commit SHA."
+              },
+              "fullDescription": {
+                "text": "The image-compression workflow pins `calibreapp/image-actions@main` (line 33) — a mutable branch ref, not a tag or commit SHA. On the `push` events to master/develop the step runs with `githubToken: ${{ secrets.GITHUB_TOKEN }}` (line 35) and, when it produces output, a follow-up step opens a pull request with `peter-evans/create-pull-request@v8`. Because `@main` resolves to whatever the upstream repository's default branch points at during each run, an attacker who compromises the calibreapp/image-actions repository (or a maintainer account) needs zero further effort — no release, no re-tag — to have arbitrary JavaScript execute inside this repository's runner with the repo-scoped GITHUB_TOKEN. This is the weakest link among the workflow action references: every other action in ci.yml, release.yml, codeql and zap is SHA-pinned, but this one floats on a live branch."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-829",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-025",
+              "name": "Tampering/dependency-install-scripts-enabled-in-re",
+              "shortDescription": {
+                "text": "The privileged build lanes install dependencies with npm lifecycle scripts enabled."
+              },
+              "fullDescription": {
+                "text": "The privileged build lanes install dependencies with npm lifecycle scripts enabled. release.yml line 55 runs `npm install --production` on a `v*` tag push in the same job flow that authenticates to DockerHub (login-action, lines 73-77) and pushes the released image, and Dockerfile line 5 runs `npm install --omit=dev` while assembling the production image. Any dependency in the resolved graph — trivially exploitable because there is no committed lockfile (see ci-cd-pipeline-001) — can ship a `postinstall` hook that executes arbitrary code on the build host. In the release lane that host holds DOCKERHUB_TOKEN and GITHUB_TOKEN, so a poisoned install script can exfiltrate the publish credential or write a backdoor directly into build/ before the image is pushed to bkimminich/juice-shop, poisoning every downstream pull. The lint and frontend-bundle jobs correctly use `--ignore-scripts`, proving the safe pattern is known but not applied to the build/release lanes."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Medium",
+                "impact": "Critical",
+                "risk": "High",
+                "cwe": "CWE-829",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-026",
+              "name": "Tampering/zip-slip-arbitrary-file-write-in-complai",
+              "shortDescription": {
+                "text": "extractZipBuffer iterates zip entries and writes each to 'uploads/complaints/' + entry.path (routes/fileUpload.ts:34)."
+              },
+              "fullDescription": {
+                "text": "extractZipBuffer iterates zip entries and writes each to 'uploads/complaints/' + entry.path (routes/fileUpload.ts:34). The only guard is absolutePath.includes(path.resolve('.')) at line 33, which merely checks the resolved path contains the process CWD string — it does not confirm the target stays inside uploads/complaints. A crafted entry path such as ../ftp/legal.md (the fileWriteChallenge target checked at line 32) or an absolute-looking traversal writes outside the intended directory, overwriting served documents or dropping attacker-controlled files into web-served locations."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-22",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-027",
+              "name": "Tampering/upload-type-enforced-by-extension-only-n",
+              "shortDescription": {
+                "text": "checkFileType (routes/fileUpload.ts:62) derives the type from originalname's extension and only calls challengeUtils.solveIf — it never rejects a request, and downstream handlers dispatch purely on the .xml/.yml/.zip suffix (handleXmlUpload line 71, handleYamlUpload line 102)."
+              },
+              "fullDescription": {
+                "text": "checkFileType (routes/fileUpload.ts:62) derives the type from originalname's extension and only calls challengeUtils.solveIf — it never rejects a request, and downstream handlers dispatch purely on the .xml/.yml/.zip suffix (handleXmlUpload line 71, handleYamlUpload line 102). No magic-byte check is applied on /file-upload (unlike the profile-image path, which uses file-type.fromBuffer). An attacker renames any payload to a permitted extension to route it into the XXE, YAML-eval, or zip-extraction handlers, or stores content whose real type differs from its name."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "Medium",
+                "risk": "High",
+                "cwe": "CWE-434",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-028",
+              "name": "Tampering/open-redirect-via-substring-allowlist-ma",
+              "shortDescription": {
+                "text": "GET /redirect?to=<url> passes the attacker-controlled `query.to` to `res.redirect(toUrl)` (routes/redirect.ts:16-19) after only calling `security.isRedirectAllowed(toUrl)`."
+              },
+              "fullDescription": {
+                "text": "GET /redirect?to=<url> passes the attacker-controlled `query.to` to `res.redirect(toUrl)` (routes/redirect.ts:16-19) after only calling `security.isRedirectAllowed(toUrl)`. That guard (lib/insecurity.ts:133-139) accepts the URL when it merely `includes()` any allowlisted string as a substring. An attacker crafts `https://evil-wallet-drainer.com/#https://github.com/juice-shop/juice-shop` (or `?x=` prefix): the allowlisted GitHub URL appears as a substring, the check returns true, and the victim's browser is 302-redirected to the attacker origin. On a crypto/wallet surface this is a high-value phishing primitive — the redirect lands users on a fake wallet-connect or seed-phrase page under cover of the trusted Juice Shop domain."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-601",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-029",
+              "name": "Information Disclosure/no-content-security-policy-leaves-xss-un",
+              "shortDescription": {
+                "text": "The served index.html contains no Content-Security-Policy meta tag and the Node backend does not set helmet.contentSecurityPolicy, so the browser applies no restriction on script sources or inline execution."
+              },
+              "fullDescription": {
+                "text": "The served index.html contains no Content-Security-Policy meta tag and the Node backend does not set helmet.contentSecurityPolicy, so the browser applies no restriction on script sources or inline execution. Combined with the multiple sanitizer-bypass XSS sinks in this component (angular-frontend-002/003) and the JWT stored in localStorage (angular-frontend-005), the absence of CSP removes the last line of defence: an injected payload can run inline script and exfiltrate the token to an arbitrary attacker host with no connect-src restriction."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "High",
+                "impact": "Medium",
+                "risk": "High",
+                "cwe": "CWE-693",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-030",
+              "name": "Information Disclosure/unsalted-md5-used-for-password-hashing-l",
+              "shortDescription": {
+                "text": "hash() at lib/insecurity.ts:41 is crypto.createHash('md5').update(data).digest('hex'), and this is the function used to hash passwords for both storage and the login comparison at routes/login.ts:34."
+              },
+              "fullDescription": {
+                "text": "hash() at lib/insecurity.ts:41 is crypto.createHash('md5').update(data).digest('hex'), and this is the function used to hash passwords for both storage and the login comparison at routes/login.ts:34. MD5 is fast and unsalted here, so any dump of the Users table (via the SQLi in auth-003 or a backup leak) is trivially reversed with rainbow tables or GPU cracking, and identical passwords produce identical hashes enabling cross-account correlation."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-916",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-031",
+              "name": "Information Disclosure/path-traversal",
+              "shortDescription": {
+                "text": "`servePublicFiles` serves `ftp/<file>` via `res.sendFile(path.resolve('ftp/', file))` at routes/fileServer.ts:33."
+              },
+              "fullDescription": {
+                "text": "`servePublicFiles` serves `ftp/<file>` via `res.sendFile(path.resolve('ftp/', file))` at routes/fileServer.ts:33. It blocks forward slashes and restricts to .md/.pdf, but first calls `cutOffPoisonNullByte(file)` (line 28) which truncates at `%00`, so a request for `package.json.bak%00.md` passes the extension allowlist yet resolves to `ftp/package.json.bak`, disclosing forgotten backup files, `.pyc`, and other non-allowlisted content in the ftp directory."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-22",
+                "source": "stride",
+                "security-severity": "8.7",
+                "cvss-v4-vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+                "cvss-version": "4.0"
+              }
+            },
+            {
+              "id": "T-032",
+              "name": "Information Disclosure/ssrf-via-user-controlled-profile-image-u",
+              "shortDescription": {
+                "text": "`profileImageUrlUpload` fetches `req.body.imageUrl` with `await fetch(url)` at routes/profileImageUrlUpload.ts:24 with no scheme/host validation."
+              },
+              "fullDescription": {
+                "text": "`profileImageUrlUpload` fetches `req.body.imageUrl` with `await fetch(url)` at routes/profileImageUrlUpload.ts:24 with no scheme/host validation. An authenticated user submits `imageUrl=http://169.254.169.254/latest/meta-data/` or `http://localhost:3000/metrics` to make the server issue requests to cloud metadata endpoints or internal-only services. The response body is streamed to disk and can be read back via the profile image, exfiltrating internal responses."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-918",
+                "source": "stride",
+                "security-severity": "7.1",
+                "cvss-v4-vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:N/VA:N/SC:H/SI:N/SA:N",
+                "cvss-version": "4.0"
+              }
+            },
+            {
+              "id": "T-033",
+              "name": "Information Disclosure/github-actions-workflow-level-permission",
+              "shortDescription": {
+                "text": "GitHub Actions workflow-level permissions block — .github/workflows/ci.yml:1."
+              },
+              "fullDescription": {
+                "text": "GitHub Actions workflow-level permissions block — .github/workflows/ci.yml:1. Without an explicit permissions block, the workflow inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-732",
+                "source": "config-scan"
+              }
+            },
+            {
+              "id": "T-034",
+              "name": "Information Disclosure/dockerfile-base-image-must-be-digest-pin",
+              "shortDescription": {
+                "text": "Dockerfile base image must be digest-pinned — Dockerfile:1."
+              },
+              "fullDescription": {
+                "text": "Dockerfile base image must be digest-pinned — Dockerfile:1. Tag-only base images (FROM node:24) can be silently substituted by a malicious publisher. Digest-pinning (@sha256:…) ensures the exact image bytes are used on every build."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-1104",
+                "source": "config-scan"
+              }
+            },
+            {
+              "id": "T-035",
+              "name": "Information Disclosure/unauthenticated-access-log-disclosure-vi",
+              "shortDescription": {
+                "text": "app.use('/support/logs', serveIndex('logs', ...)) and app.use('/support/logs/:file', serveLogFiles()) at server.ts:282-283 browse and serve the logs/ directory."
+              },
+              "fullDescription": {
+                "text": "app.use('/support/logs', serveIndex('logs', ...)) and app.use('/support/logs/:file', serveLogFiles()) at server.ts:282-283 browse and serve the logs/ directory. serveLogFiles (routes/logfileServer.ts:14) only blocks '/' in the filename and streams any file from logs/. The verify.accessControlChallenges() middleware on the path is challenge-instrumentation, not an authorization gate. An unauthenticated attacker lists /support/logs, then downloads access.log — which records request URLs and headers for all users — harvesting session tokens, password-reset links, and PII from other users' traffic."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-532",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-036",
+              "name": "Information Disclosure/unauthenticated-directory-listing-of-ftp",
+              "shortDescription": {
+                "text": "app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true })) at server.ts:269 renders a browsable, unauthenticated index of the ftp/ directory."
+              },
+              "fullDescription": {
+                "text": "app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true })) at server.ts:269 renders a browsable, unauthenticated index of the ftp/ directory. robots.txt advertises the path (app.use(robots({ Disallow: '/ftp' })) at server.ts:226), so an attacker reads robots.txt, browses /ftp, and enumerates every filename — including the intentionally-placed acquisition notes, backup archives, and coupon files — then downloads the document ones directly and the rest via the null-byte bypass (file-storage-003). No authentication or authorization guard is registered on the /ftp index route."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "High",
+                "impact": "Medium",
+                "risk": "High",
+                "cwe": "CWE-548",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-037",
+              "name": "Information Disclosure/totp-secrets-card-pans-and-wallet-balanc",
+              "shortDescription": {
+                "text": "The database is a flat SQLite file at data/juiceshop.sqlite (models/index.ts:41) with no encryption at rest (no SQLCipher, no column-level encryption)."
+              },
+              "fullDescription": {
+                "text": "The database is a flat SQLite file at data/juiceshop.sqlite (models/index.ts:41) with no encryption at rest (no SQLCipher, no column-level encryption). Highly sensitive columns are stored in cleartext: User.totpSecret (models/user.ts:112, the seed that generates 2FA codes), Card.cardNum / fullName / expMonth / expYear (models/card.ts:37-55, full payment card data), plus wallet balances and PII (email, role). Anyone who obtains the .db file — a backup exfiltration, a container/volume snapshot, an SSRF/LFI read, or the raw-SQL injection in the login/search routes — reads all of it directly. Cleartext totpSecret in particular fully defeats the 2FA control: an attacker regenerates valid TOTP codes offline."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "Critical",
+                "risk": "High",
+                "cwe": "CWE-311",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-038",
+              "name": "Information Disclosure/security-answers-hashed-with-global-stat",
+              "shortDescription": {
+                "text": "The SecurityAnswer model setter stores answers as security.hmac(answer) (models/securityAnswer.ts:45), which is HMAC-SHA256 keyed by the hardcoded, repo-wide constant 'pa4qacea4VK9t9nGv7yZtwmj' (lib/insecurity.ts:42)."
+              },
+              "fullDescription": {
+                "text": "The SecurityAnswer model setter stores answers as security.hmac(answer) (models/securityAnswer.ts:45), which is HMAC-SHA256 keyed by the hardcoded, repo-wide constant 'pa4qacea4VK9t9nGv7yZtwmj' (lib/insecurity.ts:42). Because the key is global and there is no per-record salt, the transform is deterministic: the same answer always maps to the same digest across all users. Security answers are typically low-entropy (pet names, cities, dates), so an attacker who reads the SecurityAnswers table can pre-compute HMACs for a dictionary of common answers (the key is known from the source) and recover the cleartext answers, then drive the 'forgot password' / security-question reset flow to take over accounts."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-759",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-039",
+              "name": "Denial of Service/no-rate-limiting-on-the-login-endpoint-r",
+              "shortDescription": {
+                "text": "The reset-password and 2FA endpoints are wrapped in express-rate-limit (server.ts:343,459,466,472), but /rest/user/login is registered with no limiter (server.ts:596: app.post('/rest/user/login', login()))."
+              },
+              "fullDescription": {
+                "text": "The reset-password and 2FA endpoints are wrapped in express-rate-limit (server.ts:343,459,466,472), but /rest/user/login is registered with no limiter (server.ts:596: app.post('/rest/user/login', login())). An attacker can therefore drive unlimited credential-stuffing and password-spraying against the login handler, and each request executes a synchronous SQL query plus an MD5 hash, allowing request floods to consume database and CPU resources. The absence of throttling both enables brute-force authentication and provides a cheap resource-exhaustion vector."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "denial of service"
+                ],
+                "stride": "Denial of Service",
+                "likelihood": "High",
+                "impact": "Medium",
+                "risk": "High",
+                "cwe": "CWE-307",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-040",
+              "name": "Denial of Service/decompression-entity-expansion-bombs-and",
+              "shortDescription": {
+                "text": "handleYamlUpload runs yaml.load on attacker YAML (routes/fileUpload.ts:109) and handleZipFileUpload extracts zip entries (line 34) with no cap on entry count or uncompressed size, while handleXmlUpload parses DTD-bearing XML."
+              },
+              "fullDescription": {
+                "text": "handleYamlUpload runs yaml.load on attacker YAML (routes/fileUpload.ts:109) and handleZipFileUpload extracts zip entries (line 34) with no cap on entry count or uncompressed size, while handleXmlUpload parses DTD-bearing XML. A YAML anchor bomb, zip bomb, or billion-laughs XML inflates a sub-200KB upload into gigabytes of memory. The vm timeouts (2000ms) bound CPU on the YAML/XML paths but not memory allocation, and unzipper streams entries without a total-size ceiling. /file-upload has no rate-limit middleware (rateLimit is applied only to reset-password and a few other routes, not the upload endpoints), so an attacker repeats the request to exhaust memory and crash the prod-env process."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "denial of service"
+                ],
+                "stride": "Denial of Service",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-400",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-041",
+              "name": "Elevation of Privilege/client-side-only-role-gating-trusts-unve",
+              "shortDescription": {
+                "text": "AdminGuard, AccountingGuard and DeluxeGuard authorize privileged routes by calling loginGuard.tokenDecode(), which runs jwtDecode(localStorage token) — a pure Base64 decode with NO signature verification — and compares payload.data.role to roles.admin/accounting/deluxe (app.guard.ts:54/70/86)."
+              },
+              "fullDescription": {
+                "text": "AdminGuard, AccountingGuard and DeluxeGuard authorize privileged routes by calling loginGuard.tokenDecode(), which runs jwtDecode(localStorage token) — a pure Base64 decode with NO signature verification — and compares payload.data.role to roles.admin/accounting/deluxe (app.guard.ts:54/70/86). A user can hand-craft a token whose payload sets role:'admin', place it in localStorage, and the router will render the admin UI, accounting board and deluxe features. While the backend still re-checks privileged APIs, exposing admin/accounting screens and their embedded logic client-side is a broken trust boundary: any server endpoint that under-enforces authorization becomes reachable, and the UI leaks privileged workflow structure."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ],
+                "stride": "Elevation of Privilege",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-602",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-042",
+              "name": "Elevation of Privilege/role-authorization-trusts-self-asserted-",
+              "shortDescription": {
+                "text": "isAccounting() (lib/insecurity.ts:154-162) and isCustomer/isDeluxe (lines 165-173) grant access purely on decodedToken.data.role from the token payload."
+              },
+              "fullDescription": {
+                "text": "isAccounting() (lib/insecurity.ts:154-162) and isCustomer/isDeluxe (lines 165-173) grant access purely on decodedToken.data.role from the token payload. Combined with the hardcoded signing key (auth-001) and unpinned verification (auth-002), an attacker who mints or alters a token with data.role='accounting' or 'admin' passes these guards and reaches privileged accounting/admin functionality. Even absent key forgery, the reliance on a client-carried role claim with no server-side re-derivation from the persisted user record means any token-integrity weakness escalates directly to privilege escalation."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ],
+                "stride": "Elevation of Privilege",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-863",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-043",
+              "name": "Elevation of Privilege/authorization-applied-per-route-not-glob",
+              "shortDescription": {
+                "text": "There is no default-deny gate."
+              },
+              "fullDescription": {
+                "text": "There is no default-deny gate. `security.isAuthorized()` and `denyAll()` are attached route-by-route from server.ts:356 onward, so any endpoint the developer forgets to list is reachable unauthenticated. Combined with the forgeable JWT (backend-api-001), the model is fail-open: adding a new route silently exposes it, and admin-only operations rely on scattered `isAccounting`/`isDeluxe` checks rather than a central policy."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ],
+                "stride": "Elevation of Privilege",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-862",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-044",
+              "name": "Elevation of Privilege/mass-assignment-via-finale-rest-auto-cru",
+              "shortDescription": {
+                "text": "`finale.resource(...)` auto-exposes full CRUD for the models in `autoModels` (server.ts:483-511) without a field allowlist."
+              },
+              "fullDescription": {
+                "text": "`finale.resource(...)` auto-exposes full CRUD for the models in `autoModels` (server.ts:483-511) without a field allowlist. The create/update handlers bind the entire request body onto the Sequelize model, so a registration or update request can set privileged columns the UI never offers — e.g. POSTing `{\"email\":\"x\",\"password\":\"y\",\"role\":\"admin\"}` to the user resource sets an attacker's role to admin (the registerAdminChallenge). No `attributes`/`exclude` write allowlist is applied on create."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ],
+                "stride": "Elevation of Privilege",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-915",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-045",
+              "name": "Tampering/unauthenticated-websocket-allows-deletin",
+              "shortDescription": {
+                "text": "registerWebsocketEvents() creates a Socket.IO server with no authentication or authorization on connection (lib/startup/registerWebsocketEvents.ts:19-23)."
+              },
+              "fullDescription": {
+                "text": "registerWebsocketEvents() creates a Socket.IO server with no authentication or authorization on connection (lib/startup/registerWebsocketEvents.ts:19-23). Any client that connects immediately receives every queued 'challenge solved' notification (lines 29-31, an information leak of server state) and can emit 'notification received' with an arbitrary flag to splice entries out of the shared, process-global notifications array (lines 33-38). Because the array is shared across all users, one anonymous client removes notifications destined for everyone, tampering with and denying delivery of server-pushed messages."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-306",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-046",
+              "name": "Tampering/no-dependency-scanning-or-update-automat",
+              "shortDescription": {
+                "text": "The pipeline runs CodeQL (SAST) and OWASP ZAP (DAST) but performs no software-composition analysis and has no automated dependency-update tooling."
+              },
+              "fullDescription": {
+                "text": "The pipeline runs CodeQL (SAST) and OWASP ZAP (DAST) but performs no software-composition analysis and has no automated dependency-update tooling. There is no `npm audit`, Snyk, OSV-Scanner, Trivy image scan, or `actions/dependency-review-action` step in any workflow, and no `.github/dependabot.yml` or Renovate configuration exists in the repository. Combined with the missing lockfile (ci-cd-pipeline-001), known-vulnerable transitive dependencies — the recon flagged the critically outdated express-jwt@0.1.3 in package.json — reach the published image with no gate and no alerting. Because the repository is public and accepts external pull requests, there is also nothing that blocks a PR whose manifest/lockfile diff pulls in a known-malicious or known-vulnerable package before merge."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-1104",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-047",
+              "name": "Tampering/database-enforces-no-access-control-or-i",
+              "shortDescription": {
+                "text": "All application data lives in one flat file, data/juiceshop.sqlite (models/index.ts:41), with no database-level authentication, no per-table access control, and no tamper-evidence."
+              },
+              "fullDescription": {
+                "text": "All application data lives in one flat file, data/juiceshop.sqlite (models/index.ts:41), with no database-level authentication, no per-table access control, and no tamper-evidence. The connection uses fixed placeholder credentials ('database','username','password' at models/index.ts:33) that SQLite ignores. Access control depends entirely on OS filesystem permissions on the file. Any code path or process that gains write access to the file — a path-traversal/LFI write, a container/volume compromise, a misconfigured backup restore, or a co-located process — can directly modify or delete rows (alter roles, zero out orders, forge wallet balances) with no detection, because there is no integrity check, checksum, or audit binding on the stored records."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "Low",
+                "impact": "High",
+                "risk": "Medium",
+                "cwe": "CWE-284",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-048",
+              "name": "Repudiation/missing-security-event-logging",
+              "shortDescription": {
+                "text": "None of the credential-bearing handlers (routes/login.ts, routes/resetPassword.ts, routes/2fa.ts, routes/saveLoginIp.ts) emit a structured audit record for authentication outcomes."
+              },
+              "fullDescription": {
+                "text": "None of the credential-bearing handlers (routes/login.ts, routes/resetPassword.ts, routes/2fa.ts, routes/saveLoginIp.ts) emit a structured audit record for authentication outcomes. saveLoginIp only overwrites a single lastLoginIp field, which is destroyed on the next login and captures nothing about failures. With no log of who attempted to log in, from where, and whether it succeeded or failed, brute-force campaigns (auth-009, auth-012) and successful account takeovers via forged tokens (auth-001/002) leave no forensic trail, and a compromised user can plausibly deny actions taken under their session."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "repudiation"
+                ],
+                "stride": "Repudiation",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-778",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-049",
+              "name": "Information Disclosure/any-authenticated-user-can-enumerate-all",
+              "shortDescription": {
+                "text": "retrieveUserList() at routes/authenticatedUsers.ts calls UserModel.findAll() (line 12) and returns every user's record."
+              },
+              "fullDescription": {
+                "text": "retrieveUserList() at routes/authenticatedUsers.ts calls UserModel.findAll() (line 12) and returns every user's record. The route /rest/user/authentication-details is protected only by security.isAuthorized() (server.ts:601), which asserts a valid token but performs no role check. Consequently any logged-in customer receives the full roster of user emails, roles, ids, masked-but-present password/totpSecret indicators, and last-login times for the entire system, providing a target list for password spraying and social engineering."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-200",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-050",
+              "name": "Information Disclosure/verbose-error-handler-leaks-stack-traces",
+              "shortDescription": {
+                "text": "`app.use(errorhandler())` at server.ts:682 mounts the `errorhandler` package, which renders full stack traces, source snippets and error messages in HTTP responses."
+              },
+              "fullDescription": {
+                "text": "`app.use(errorhandler())` at server.ts:682 mounts the `errorhandler` package, which renders full stack traces, source snippets and error messages in HTTP responses. Errors from the raw SQL handlers (`next(error.parent)` in search.ts:70, `next(error)` in login.ts:53) propagate here, returning database driver messages to the client. This turns blind SQL injection into error-based extraction and discloses file paths, library versions and internal structure."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "High",
+                "impact": "Low",
+                "risk": "Medium",
+                "cwe": "CWE-200",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-051",
+              "name": "Information Disclosure/unauthenticated-prometheus-metrics-endpo",
+              "shortDescription": {
+                "text": "`app.get('/metrics', ...)` at server.ts:729 exposes the full Prometheus metrics surface with no authentication (registered before the SPA catch-all so it is reachable in every environment)."
+              },
+              "fullDescription": {
+                "text": "`app.get('/metrics', ...)` at server.ts:729 exposes the full Prometheus metrics surface with no authentication (registered before the SPA catch-all so it is reachable in every environment). The metrics include per-user challenge-solve counters, LLM token counters, request timings and internal operational data, letting any anonymous client fingerprint deployment internals and user activity (the exposedMetricsChallenge)."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "High",
+                "impact": "Low",
+                "risk": "Medium",
+                "cwe": "CWE-200",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-052",
+              "name": "Information Disclosure/wide-open-cors-allows-any-origin-server-",
+              "shortDescription": {
+                "text": "`app.use(cors())` at server.ts:183 (plus `app.options('*', cors())` at 182) enables CORS with the default configuration, reflecting any requesting Origin and allowing all methods."
+              },
+              "fullDescription": {
+                "text": "`app.use(cors())` at server.ts:183 (plus `app.options('*', cors())` at 182) enables CORS with the default configuration, reflecting any requesting Origin and allowing all methods. Any malicious website can invoke the JSON REST API in a victim's browser context and read responses, broadening the reach of CSRF-style and token-theft attacks against the SPA that shares this origin."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-942",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-053",
+              "name": "Information Disclosure/dockerfile-user-directive-non-root",
+              "shortDescription": {
+                "text": "Dockerfile USER directive (non-root) — test/smoke/Dockerfile:1."
+              },
+              "fullDescription": {
+                "text": "Dockerfile USER directive (non-root) — test/smoke/Dockerfile:1. Containers running as root expand container-escape blast radius."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-250",
+                "source": "config-scan"
+              }
+            },
+            {
+              "id": "T-054",
+              "name": "Information Disclosure/container-image-signing-via-cosign-or-at",
+              "shortDescription": {
+                "text": "Container image signing via cosign or attest-build-provenance — .github/workflows/ci.yml:1."
+              },
+              "fullDescription": {
+                "text": "Container image signing via cosign or attest-build-provenance — .github/workflows/ci.yml:1. Unsigned container images cannot be verified for provenance — any registry intermediary could substitute them."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-347",
+                "source": "config-scan"
+              }
+            },
+            {
+              "id": "T-055",
+              "name": "Information Disclosure/untrusted-npm-install-postinstall-script",
+              "shortDescription": {
+                "text": "Dockerfile npm/pnpm/yarn install without --ignore-scripts — Dockerfile:4."
+              },
+              "fullDescription": {
+                "text": "Dockerfile npm/pnpm/yarn install without --ignore-scripts — Dockerfile:4. Without --ignore-scripts, any compromised dependency publisher can execute postinstall code at build time."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-506",
+                "source": "config-scan"
+              }
+            },
+            {
+              "id": "T-056",
+              "name": "Information Disclosure/github-token-scope-minimization",
+              "shortDescription": {
+                "text": "GITHUB_TOKEN scope minimization — .github/workflows/lock.yml:1."
+              },
+              "fullDescription": {
+                "text": "GITHUB_TOKEN scope minimization — .github/workflows/lock.yml:1. `contents: read` at workflow root forces per-job opt-in for write scopes — minimal privilege by default."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-732",
+                "source": "config-scan"
+              }
+            },
+            {
+              "id": "T-057",
+              "name": "Information Disclosure/ctf-flags-broadcast-to-all-sockets-ignor",
+              "shortDescription": {
+                "text": "sendNotification builds a notification object that includes `flag = utils.ctfFlag(challenge.name)` (lines 52, 62-66) plus a `hidden: !config.get('challenges.showSolvedNotifications')` marker, then broadcasts the whole object with `globalWithSocketIO.io.emit('challenge solved', notification)` at line 75 to every connected socket."
+              },
+              "fullDescription": {
+                "text": "sendNotification builds a notification object that includes `flag = utils.ctfFlag(challenge.name)` (lines 52, 62-66) plus a `hidden: !config.get('challenges.showSolvedNotifications')` marker, then broadcasts the whole object with `globalWithSocketIO.io.emit('challenge solved', notification)` at line 75 to every connected socket. The secret `flag` value is present in the payload regardless of the `hidden` flag — `hidden` only hints the UI to suppress display, it does not strip the flag from the wire. Additionally, registerWebsocketEvents replays the entire accumulated `notifications` array (including flags) to each newly connected — and unauthenticated (realtime-channel-001) — socket at lines 29-31. Any client that connects or listens receives other participants' CTF flags directly, defeating the intended per-player secrecy of the flag values."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-200",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-058",
+              "name": "Denial of Service/sqlite-single-writer-file-lock-exhausts-",
+              "shortDescription": {
+                "text": "The datastore is a single SQLite file (models/index.ts:41) using IMMEDIATE transactions (models/index.ts:40), which acquire a database-wide write lock."
+              },
+              "fullDescription": {
+                "text": "The datastore is a single SQLite file (models/index.ts:41) using IMMEDIATE transactions (models/index.ts:40), which acquire a database-wide write lock. SQLite permits only one writer at a time; concurrent write transactions receive SQLITE_BUSY. The configured retry policy caps at max: 5 (models/index.ts:35-38) with no backoff ceiling on total load. Under a burst of write-heavy requests (registrations, orders, feedback, basket updates), writers serialize on the single file lock and, once the 5 retries are exhausted, transactions fail outright. An attacker can deliberately flood any write endpoint to induce sustained SQLITE_BUSY failures, degrading or denying service for all users, since every write in the app funnels through this one file."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "denial of service"
+                ],
+                "stride": "Denial of Service",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "cwe": "CWE-400",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-059",
+              "name": "Elevation of Privilege/missing-workflow-permissions-block-githu",
+              "shortDescription": {
+                "text": "Neither ci.yml nor release.yml declares a top-level or job-level `permissions:` key, so every job inherits the repository's default GITHUB_TOKEN scope."
+              },
+              "fullDescription": {
+                "text": "Neither ci.yml nor release.yml declares a top-level or job-level `permissions:` key, so every job inherits the repository's default GITHUB_TOKEN scope. On repositories created before the read-only default (or where the org default is still permissive) that grant is read-write across contents, packages, deployments, issues and pull-requests. The pipelines run many script-enabled `npm install` steps and several third-party actions (Cypress, retry, Coveralls) that receive the token, so any compromised dependency or action step (see ci-cd-pipeline-002/003/004) inherits full write access to the repository rather than a least-privilege slice. codeql-analysis.yml demonstrates the correct pattern with an explicit `permissions:` block (contents:read, security-events:write), making the omission in the two primary pipelines a clear inconsistency rather than an oversight of the mechanism."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "elevation of privilege"
+                ],
+                "stride": "Elevation of Privilege",
+                "likelihood": "Low",
+                "impact": "High",
+                "risk": "Medium",
+                "cwe": "CWE-732",
+                "source": "stride"
+              }
+            },
+            {
+              "id": "T-063",
+              "name": "Information Disclosure/data-disclosure-through-cleartext-transp",
+              "shortDescription": {
+                "text": "The application loads assets over HTTP when served without TLS enforcement; frontend/src/assets/private/ShaderPass.js is an example asset loaded at runtime."
+              },
+              "fullDescription": {
+                "text": "The application loads assets over HTTP when served without TLS enforcement; frontend/src/assets/private/ShaderPass.js is an example asset loaded at runtime. An attacker on the network path (e.g. coffee-shop Wi-Fi, ISP) can intercept or tamper with asset delivery. CWE-319: Cleartext Transmission of Sensitive Information."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "information disclosure"
+                ],
+                "stride": "Information Disclosure",
+                "likelihood": "Medium",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-319",
+                "source": "architecture-coverage",
+                "architectureCoverageRuleId": "ARCH-TLS-001"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "T-001",
+          "level": "error",
+          "message": {
+            "text": "The application is a pure SPA that stores the session JWT in localStorage and reads it back to authenticate every request: the router guard checks localStorage.getItem('token') (app.guard.ts:18), the HTTP interceptor injects Authorization: Bearer <localStorage token> (request.interceptor.ts:13-18), and the OAuth flow writes the token to localStorage (oauth.component.ts:51). localStorage is readable by any JavaScript in the origin, so any of the XSS sinks in this component immediately yields the bearer token. There is no Backend-for-Frontend holding the token server-side and no httpOnly cookie; the token's confidentiality depends entirely on the SPA being XSS-free, which it is not."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/Services/request.interceptor.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 13
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Adopt centralized secrets management for all cryptographic material"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-001"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-002",
+          "level": "error",
+          "message": {
+            "text": "hmac() at lib/insecurity.ts:42 uses the literal key 'pa4qacea4VK9t9nGv7yZtwmj'. resetPassword.ts:41 compares security.hmac(answer) to the stored SecurityAnswerModel.answer, so knowing this key lets an attacker precompute HMACs of candidate security answers offline and recognize matches, and forge/validate coupon HMACs. Because the key is committed to source it is known to anyone with repository or bundle access, defeating the integrity property the HMAC is supposed to provide."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 42
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Integrate SAST/injection scanner in CI to gate injection and XSS pre-merge"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-002"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-003",
+          "level": "error",
+          "message": {
+            "text": "None of the /rest/web3/* routes (registered server.ts:641-645) carry authentication or rate-limiting middleware. contractExploitListener adds the raw client `walletAddress` to the module-level `walletsConnected` Set before any validation and with no size cap (routes/web3Wallet.ts:15-16); nftMint's `addressesMinted` grows similarly. checkKeys additionally performs an ethers HD-wallet derivation on every request (routes/checkKeys.ts:11), a CPU-bound crypto operation. An attacker scripts high-volume requests with unique addresses to grow the in-memory Sets without bound (heap exhaustion) and to burn CPU on repeated key derivations, degrading or crashing the single-process Node server."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/web3Wallet.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 16
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Establish npm dependency pinning with CVE-aware update SLA (<=90 days High)"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-003"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-004",
+          "level": "error",
+          "message": {
+            "text": "OAuthComponent.ngOnInit reads the OAuth access_token from the URL fragment (parseRedirectUrlParams, line 71 splits location.hash), fetches the provider profile, then at line 30/46 sets the account password to btoa(profile.email.split('').reverse().join('')) — a deterministic, publicly-computable value. Any attacker who knows a victim's email address (e.g. from the /rest/user/whoami leak, a review author name, or an order) can compute the same Base64-of-reversed-email string and log in directly via POST /rest/user/login as that user without ever touching the OAuth provider. The token also travels in the URL fragment (implicit-flow style) and no state/nonce parameter is validated on the callback, so the redirect can be replayed/forged."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/oauth/oauth.component.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 30
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Stop deriving OAuth passwords from email and validate an anti-CSRF state on the callback"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-004"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-005",
+          "level": "error",
+          "message": {
+            "text": "The RSA private key used to sign every session JWT is embedded verbatim in lib/insecurity.ts:21 as a string literal and ships in the public source tree and every deployed bundle. An attacker who reads the repository (or extracts the key from a distributed image) signs a token of their choosing via security.authorize()-equivalent code with data.role='admin' and any data.email/id, then presents it as a bearer token. Because verify()/updateAuthenticatedUsers() validate against the matching public key, the forged token is accepted as a fully authenticated admin session with no credential ever entered."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 21
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Move the RSA signing key out of source into a secret store and rotate the exposed key"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-005"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-006",
+          "level": "error",
+          "message": {
+            "text": "Without an explicit algorithm allowlist, attackers can forge tokens with alg:none (older lib versions) or use the public key as an HMAC secret to mint valid signatures."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 189
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Always pass `algorithms: ['RS256']` (or the project's chosen alg) as the third argument's options object to jwt.verify."
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-006"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-007",
+          "level": "error",
+          "message": {
+            "text": "filterTable() reads the user-controlled q query parameter and assigns this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam) (line 143), which is then rendered raw through [innerHTML]=\"searchValue\" in search-result.component.html:11. bypassSecurityTrustHtml explicitly disables Angular's built-in output sanitization, so a link such as /#/search?q=<img src=x onerror=alert(document.cookie)> executes attacker script in the victim's origin. Because no Content-Security-Policy is served (index.html has no CSP meta and helmet CSP is disabled server-side), there is no defence-in-depth stopping the payload."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/search-result/search-result.component.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 143
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove bypassSecurityTrustHtml on the search term and bind via interpolation"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-007"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-008",
+          "level": "error",
+          "message": {
+            "text": "login() builds its authentication query by string-interpolating req.body.email directly into raw SQL at routes/login.ts:34: SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${hash(password)}' AND deletedAt IS NULL. Posting email = admin@juice-sh.op'-- or ' OR 1=1-- comments out the password clause, causing the query to return the first user row; the handler then mints a full session token for that user. This is a classic authentication-bypass SQLi requiring no valid credential, and the same injection point permits UNION-based extraction of arbitrary table data."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/login.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 34
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Replace the interpolated login query with a parameterized/bound query"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-008"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-009",
+          "level": "error",
+          "message": {
+            "text": "The search handler interpolates the `q` query parameter into a raw query: `SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' OR description LIKE '%${criteria}%') ...)` at routes/search.ts:23. The only limit is a 200-char truncation. An attacker sends `q=')) UNION SELECT ... FROM Users--` to append arbitrary SELECTs, exfiltrating the full Users table (emails and MD5 password hashes) and the SQLite schema via `sqlite_master`. Endpoint is unauthenticated."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/search.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 23
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Parameterize the product search LIKE clause"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-009"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-010",
+          "level": "error",
+          "message": {
+            "text": "The B2B order handler passes user-supplied `body.orderLinesData` into `vm.runInContext('safeEval(orderLinesData)', sandbox, { timeout: 2000 })` at routes/b2bOrder.ts:23, using the `notevil` library as a sandbox. notevil is a known-bypassable JS sandbox; crafted payloads escape it (constructor chain / prototype access) to execute arbitrary Node code in the server process. The route sits under `/b2b/v2` which requires a JWT, but that token is forgeable (see backend-api-001)."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/b2bOrder.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 23
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove server-side eval of B2B order payloads; parse with JSON.parse under a schema"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-010"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-011",
+          "level": "error",
+          "message": {
+            "text": "Server-side authorization MUST derive the resource owner from the authenticated session (req.user / req.session / req.auth), never from attacker-controlled request data. Trusting req.body.UserId etc. enables horizontal privilege escalation across all authenticated tenants."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/address.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause."
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-011"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-012",
+          "level": "error",
+          "message": {
+            "text": "POST /file-upload accepts a .xml part and passes its raw buffer to parseXmlString (routes/fileUpload.ts:76). lib/xml.ts:35 parses with XML_PARSE_NOENT | XML_PARSE_DTDLOAD and calls xmlRegisterFsInputProviders(), which grants the libxml2-wasm sandbox host-filesystem access. An unauthenticated attacker uploads a document declaring <!ENTITY xxe SYSTEM \"file:///etc/passwd\"> and references &xxe; in the body; the resolved contents are reflected verbatim in the 410 error at routes/fileUpload.ts:79 (utils.trunc(xmlString, 400)). The same primitive reaches http:// URLs, turning XXE into blind SSRF against prod-env internal services and the cloud metadata endpoint."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/fileUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 76
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Disable DTD loading and external-entity resolution in parseXmlString"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-012"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-013",
+          "level": "error",
+          "message": {
+            "text": "Server code that consumes req.body.role / req.body.isAdmin / etc. without an explicit allowlist trusts the client to behave. An attacker simply adds {\"role\":\"admin\"} to their request to escalate."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/verify.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 53
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Apply an allowlist filter (Joi/Zod/yup schema, _.pick, or explicit field copy) before passing the body to any model, and strip privilege fields before persistence."
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-013"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-014",
+          "level": "error",
+          "message": {
+            "text": "resetPassword() at routes/resetPassword.ts:41 sets a new password when security.hmac(answer) equals the stored security answer, with no per-account attempt counter or lockout. The only throttle is the express-rate-limit on /rest/user/reset-password whose keyGenerator returns headers['X-Forwarded-For'] ?? ip (server.ts:346). Because X-Forwarded-For is fully attacker-controlled, an attacker rotates the header on every request to reset the rate-limit bucket and brute-forces the (typically low-entropy) security answer for any target email, then takes over the account by setting a new password."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/resetPassword.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 41
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Key rate limiting on a trusted client identity and add per-account reset attempt lockout"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-014"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-015",
+          "level": "error",
+          "message": {
+            "text": "The reset-password rate limiter derives its throttling key from `headers['X-Forwarded-For'] ?? ip` at server.ts:346. Because X-Forwarded-For is fully attacker-controlled when the app is reached directly (or through a proxy that does not strip it), an attacker rotates a fresh forged header value on each request to reset the counter, defeating the 100-per-5-minute cap and enabling unlimited password-reset / security-answer brute force against victim accounts."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 346
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Key the rate limiter on the real client IP, not a client-supplied header"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-015"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-016",
+          "level": "error",
+          "message": {
+            "text": "registerWebsocketEvents mounts the Socket.IO server on the same internet-facing HTTP server (server.ts:749) and accepts every connection with `io.on('connection', ...)` at line 23. There is no `io.use()` handshake middleware, no `allowRequest` callback, and no token/session check on `socket.handshake` — grep for allowRequest/handshake/io.use/verifyToken in this component returns nothing. Any anonymous client on the internet (a raw socket.io-client, not just the SPA) opens a session, immediately receives the replayed `challenge solved` notifications (lines 29-31), and can emit any of the four inbound events. The `cors.origin: 'http://localhost:4200'` option (line 20) is a hardcoded dev origin that only constrains browser-based handshakes and is trivially bypassed by non-browser clients, so it provides no authentication boundary."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/startup/registerWebsocketEvents.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 23
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Add a Socket.IO handshake authentication middleware and drive CORS origin from config"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-016"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-017",
+          "level": "error",
+          "message": {
+            "text": "The seed dataset data/static/users.yml, consumed by data/datacreator.ts:190-200 to populate the Users table on startup, embeds cleartext credentials for privileged accounts: email 'admin' / password 'admi**** (8 chars)' with role 'admin' (data/static/users.yml:2-5), plus additional admin/deluxe accounts and a fixed TOTP seed 'IFTXE3SPOEYVURT2MRYGI52TKJ4HC3KH' (data/static/users.yml:151). Because these values ship in the repository and are provisioned verbatim, anyone who reads the source (public repo, image layer) can authenticate as an administrator on any deployment that runs the default seed — full account and application takeover with no exploitation required. The fixed TOTP seed likewise lets an attacker generate valid 2FA codes for that account."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "data/static/users.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 3
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove hardcoded privileged credentials from seed data and force first-boot rotation"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-017"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-018",
+          "level": "error",
+          "message": {
+            "text": "POST /rest/web3/walletNFTVerify and POST /rest/web3/walletExploitAddress trust a client-supplied `req.body.walletAddress` verbatim. walletNFTVerify (routes/nftMint.ts:41-45) matches the raw address against the in-memory `addressesMinted` Set and, on hit, marks the NFT-mint challenge solved; contractExploitListener (routes/web3Wallet.ts:15-16) blindly adds the claimed address to `walletsConnected`. Neither endpoint requires the caller to prove control of the address via a signed challenge (e.g. EIP-191 personal_sign of a server nonce). Because minter/exploiter addresses are emitted on a public Sepolia contract event and are readable by anyone on-chain, an attacker can replay any observed address and be credited as its owner without holding the corresponding private key."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/nftMint.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 41
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Require a signed-nonce challenge and verify it with ethers verifyMessage before crediting wallet ownership"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-018"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-019",
+          "level": "error",
+          "message": {
+            "text": "saveLoginIp() reads the attacker-controlled true-client-ip request header at routes/saveLoginIp.ts:18 and writes it to the user's lastLoginIp field. When the httpHeaderXssChallenge branch is active the value is stored with no sanitization (lines 22-23); sanitizeSecure() is only applied in the else branch. A user (or an attacker who fixed the header on a victim's request) stores markup such as <iframe src=\"javascript:alert(`xss`)\"> which later executes when lastLoginIp is rendered in the account/last-login UI, giving stored cross-site scripting in an authenticated context."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/saveLoginIp.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 18
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Sanitize and output-encode the stored last-login IP unconditionally"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-019"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-020",
+          "level": "error",
+          "message": {
+            "text": "A predictable token/secret lets an attacker guess or brute-force session identifiers, reset links, or OTPs."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 53
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Use crypto.randomBytes / crypto.randomUUID / webcrypto getRandomValues for any security value."
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-020"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-021",
+          "level": "error",
+          "message": {
+            "text": "`handleXmlUpload` reads an uploaded .xml file buffer and passes it to `parseXmlString(data)` at routes/fileUpload.ts:74 without disabling DTD processing or external entities. An attacker uploads XML declaring an external entity (`<!ENTITY x SYSTEM 'file:///etc/passwd'>`) to read local files, or a SYSTEM URL pointing at internal services for SSRF; the parsed content is even reflected back in the error message (line 79), giving direct exfiltration. A billion-laughs entity expansion causes DoS (the code already tracks an xxeDosChallenge)."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/fileUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 74
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Disable DTDs and external entities in the XML parser"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-021"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-022",
+          "level": "error",
+          "message": {
+            "text": "`POST /rest/chat` (server.ts:638, unauthenticated) forwards `req.body.messages` verbatim into `streamText` at routes/chat.ts:206 with no input sanitization. The system prompt (chat.ts:84-105) embeds a CONFIDENTIAL policy including a hidden 15% courtesy discount and the coupon rules. A crafted user message overrides these instructions to (a) exfiltrate the confidential system prompt and (b) drive the `generateCoupon` tool (chat.ts:176) to mint discounts above the 10% cap without meeting any policy precondition (the chatbotPromptInjection / chatbotGreedyInjection challenges). The LLM has direct tool authority to issue real coupon codes."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/chat.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 184
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Enforce coupon policy server-side and isolate untrusted chat input from tool authority"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-022"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-023",
+          "level": "error",
+          "message": {
+            "text": "The repository root .npmrc sets package-lock off (line 1), so npm never writes package-lock.json for the root project. Every `npm install` in CI (ci.yml lines 51/71/110/147/203/238, release.yml line 55) and in the Docker build (Dockerfile line 5) therefore re-resolves the full dependency graph against the live registry with no committed integrity baseline. An attacker who wins a transitive version window — via typosquatting, a maintainer-account takeover that publishes a higher patch version inside an existing semver range, or npm cache poisoning — gets their package installed across every developer machine, every CI job, and the release/Docker build with no diff signal and no `npm ci` protection possible. The fix cannot be 'switch to npm ci later': without a lockfile there is nothing to `ci` against."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".npmrc",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove the lockfile-disable directive from .npmrc and enforce npm ci with a committed lockfile"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-023"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-024",
+          "level": "error",
+          "message": {
+            "text": "The image-compression workflow pins `calibreapp/image-actions@main` (line 33) — a mutable branch ref, not a tag or commit SHA. On the `push` events to master/develop the step runs with `githubToken: ${{ secrets.GITHUB_TOKEN }}` (line 35) and, when it produces output, a follow-up step opens a pull request with `peter-evans/create-pull-request@v8`. Because `@main` resolves to whatever the upstream repository's default branch points at during each run, an attacker who compromises the calibreapp/image-actions repository (or a maintainer account) needs zero further effort — no release, no re-tag — to have arbitrary JavaScript execute inside this repository's runner with the repo-scoped GITHUB_TOKEN. This is the weakest link among the workflow action references: every other action in ci.yml, release.yml, codeql and zap is SHA-pinned, but this one floats on a live branch."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/image_actions.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 33
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Pin calibreapp/image-actions to a full-length commit SHA"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-024"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-025",
+          "level": "error",
+          "message": {
+            "text": "The privileged build lanes install dependencies with npm lifecycle scripts enabled. release.yml line 55 runs `npm install --production` on a `v*` tag push in the same job flow that authenticates to DockerHub (login-action, lines 73-77) and pushes the released image, and Dockerfile line 5 runs `npm install --omit=dev` while assembling the production image. Any dependency in the resolved graph — trivially exploitable because there is no committed lockfile (see ci-cd-pipeline-001) — can ship a `postinstall` hook that executes arbitrary code on the build host. In the release lane that host holds DOCKERHUB_TOKEN and GITHUB_TOKEN, so a poisoned install script can exfiltrate the publish credential or write a backdoor directly into build/ before the image is pushed to bkimminich/juice-shop, poisoning every downstream pull. The lint and frontend-bundle jobs correctly use `--ignore-scripts`, proving the safe pattern is known but not applied to the build/release lanes."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/release.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 55
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Add --ignore-scripts to release and Dockerfile dependency installs and gate any required scripts explicitly"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-025"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-026",
+          "level": "error",
+          "message": {
+            "text": "extractZipBuffer iterates zip entries and writes each to 'uploads/complaints/' + entry.path (routes/fileUpload.ts:34). The only guard is absolutePath.includes(path.resolve('.')) at line 33, which merely checks the resolved path contains the process CWD string — it does not confirm the target stays inside uploads/complaints. A crafted entry path such as ../ftp/legal.md (the fileWriteChallenge target checked at line 32) or an absolute-looking traversal writes outside the intended directory, overwriting served documents or dropping attacker-controlled files into web-served locations."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/fileUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 33
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Anchor zip extraction to a normalized base directory and reject traversing entries"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-026"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-027",
+          "level": "error",
+          "message": {
+            "text": "checkFileType (routes/fileUpload.ts:62) derives the type from originalname's extension and only calls challengeUtils.solveIf — it never rejects a request, and downstream handlers dispatch purely on the .xml/.yml/.zip suffix (handleXmlUpload line 71, handleYamlUpload line 102). No magic-byte check is applied on /file-upload (unlike the profile-image path, which uses file-type.fromBuffer). An attacker renames any payload to a permitted extension to route it into the XXE, YAML-eval, or zip-extraction handlers, or stores content whose real type differs from its name."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/fileUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 62
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Validate uploaded file content with magic-byte sniffing and reject on mismatch"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-027"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-028",
+          "level": "error",
+          "message": {
+            "text": "GET /redirect?to=<url> passes the attacker-controlled `query.to` to `res.redirect(toUrl)` (routes/redirect.ts:16-19) after only calling `security.isRedirectAllowed(toUrl)`. That guard (lib/insecurity.ts:133-139) accepts the URL when it merely `includes()` any allowlisted string as a substring. An attacker crafts `https://evil-wallet-drainer.com/#https://github.com/juice-shop/juice-shop` (or `?x=` prefix): the allowlisted GitHub URL appears as a substring, the check returns true, and the victim's browser is 302-redirected to the attacker origin. On a crypto/wallet surface this is a high-value phishing primitive — the redirect lands users on a fake wallet-connect or seed-phrase page under cover of the trusted Juice Shop domain."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/redirect.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 19
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Replace substring redirect matching with exact-origin allowlisting in isRedirectAllowed"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-028"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-029",
+          "level": "error",
+          "message": {
+            "text": "The served index.html contains no Content-Security-Policy meta tag and the Node backend does not set helmet.contentSecurityPolicy, so the browser applies no restriction on script sources or inline execution. Combined with the multiple sanitizer-bypass XSS sinks in this component (angular-frontend-002/003) and the JWT stored in localStorage (angular-frontend-005), the absence of CSP removes the last line of defence: an injected payload can run inline script and exfiltrate the token to an arbitrary attacker host with no connect-src restriction."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/index.html",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Serve a strict Content-Security-Policy via helmet"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-029"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-030",
+          "level": "error",
+          "message": {
+            "text": "hash() at lib/insecurity.ts:41 is crypto.createHash('md5').update(data).digest('hex'), and this is the function used to hash passwords for both storage and the login comparison at routes/login.ts:34. MD5 is fast and unsalted here, so any dump of the Users table (via the SQLi in auth-003 or a backup leak) is trivially reversed with rainbow tables or GPU cracking, and identical passwords produce identical hashes enabling cross-account correlation."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 41
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Replace MD5 password hashing with bcrypt/argon2 and migrate stored hashes"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-030"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-031",
+          "level": "error",
+          "message": {
+            "text": "`servePublicFiles` serves `ftp/<file>` via `res.sendFile(path.resolve('ftp/', file))` at routes/fileServer.ts:33. It blocks forward slashes and restricts to .md/.pdf, but first calls `cutOffPoisonNullByte(file)` (line 28) which truncates at `%00`, so a request for `package.json.bak%00.md` passes the extension allowlist yet resolves to `ftp/package.json.bak`, disclosing forgotten backup files, `.pyc`, and other non-allowlisted content in the ftp directory."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/fileServer.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 33
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove poison-null-byte truncation and validate the resolved path stays in ftp/"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-031"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-032",
+          "level": "error",
+          "message": {
+            "text": "`profileImageUrlUpload` fetches `req.body.imageUrl` with `await fetch(url)` at routes/profileImageUrlUpload.ts:24 with no scheme/host validation. An authenticated user submits `imageUrl=http://169.254.169.254/latest/meta-data/` or `http://localhost:3000/metrics` to make the server issue requests to cloud metadata endpoints or internal-only services. The response body is streamed to disk and can be read back via the profile image, exfiltrating internal responses."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/profileImageUrlUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 24
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Validate image URLs against an allowlist and block internal address ranges"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-032"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-033",
+          "level": "error",
+          "message": {
+            "text": "GitHub Actions workflow-level permissions block — .github/workflows/ci.yml:1. Without an explicit permissions block, the workflow inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/ci.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-033"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-034",
+          "level": "error",
+          "message": {
+            "text": "Dockerfile base image must be digest-pinned — Dockerfile:1. Tag-only base images (FROM node:24) can be silently substituted by a malicious publisher. Digest-pinning (@sha256:…) ensures the exact image bytes are used on every build."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Pin base image to @sha256:<digest>"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-034"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-035",
+          "level": "error",
+          "message": {
+            "text": "app.use('/support/logs', serveIndex('logs', ...)) and app.use('/support/logs/:file', serveLogFiles()) at server.ts:282-283 browse and serve the logs/ directory. serveLogFiles (routes/logfileServer.ts:14) only blocks '/' in the filename and streams any file from logs/. The verify.accessControlChallenges() middleware on the path is challenge-instrumentation, not an authorization gate. An unauthenticated attacker lists /support/logs, then downloads access.log — which records request URLs and headers for all users — harvesting session tokens, password-reset links, and PII from other users' traffic."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/logfileServer.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 14
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Require authenticated operator role for /support/logs and stop logging secrets"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-035"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-036",
+          "level": "error",
+          "message": {
+            "text": "app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true })) at server.ts:269 renders a browsable, unauthenticated index of the ftp/ directory. robots.txt advertises the path (app.use(robots({ Disallow: '/ftp' })) at server.ts:226), so an attacker reads robots.txt, browses /ftp, and enumerates every filename — including the intentionally-placed acquisition notes, backup archives, and coupon files — then downloads the document ones directly and the rest via the null-byte bypass (file-storage-003). No authentication or authorization guard is registered on the /ftp index route."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 269
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Disable directory browsing on ftp/ and gate document downloads behind explicit allowlisting"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-036"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-037",
+          "level": "error",
+          "message": {
+            "text": "The database is a flat SQLite file at data/juiceshop.sqlite (models/index.ts:41) with no encryption at rest (no SQLCipher, no column-level encryption). Highly sensitive columns are stored in cleartext: User.totpSecret (models/user.ts:112, the seed that generates 2FA codes), Card.cardNum / fullName / expMonth / expYear (models/card.ts:37-55, full payment card data), plus wallet balances and PII (email, role). Anyone who obtains the .db file — a backup exfiltration, a container/volume snapshot, an SSRF/LFI read, or the raw-SQL injection in the login/search routes — reads all of it directly. Cleartext totpSecret in particular fully defeats the 2FA control: an attacker regenerates valid TOTP codes offline."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "models/index.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 41
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Encrypt TOTP secrets and card data at the field level and enable encryption at rest for the SQLite store"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-037"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-038",
+          "level": "error",
+          "message": {
+            "text": "The SecurityAnswer model setter stores answers as security.hmac(answer) (models/securityAnswer.ts:45), which is HMAC-SHA256 keyed by the hardcoded, repo-wide constant 'pa4qacea4VK9t9nGv7yZtwmj' (lib/insecurity.ts:42). Because the key is global and there is no per-record salt, the transform is deterministic: the same answer always maps to the same digest across all users. Security answers are typically low-entropy (pet names, cities, dates), so an attacker who reads the SecurityAnswers table can pre-compute HMACs for a dictionary of common answers (the key is known from the source) and recover the cleartext answers, then drive the 'forgot password' / security-question reset flow to take over accounts."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "models/securityAnswer.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 45
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Hash security answers with per-record-salted argon2id instead of static-key HMAC"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-038"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-039",
+          "level": "error",
+          "message": {
+            "text": "The reset-password and 2FA endpoints are wrapped in express-rate-limit (server.ts:343,459,466,472), but /rest/user/login is registered with no limiter (server.ts:596: app.post('/rest/user/login', login())). An attacker can therefore drive unlimited credential-stuffing and password-spraying against the login handler, and each request executes a synchronous SQL query plus an MD5 hash, allowing request floods to consume database and CPU resources. The absence of throttling both enables brute-force authentication and provides a cheap resource-exhaustion vector."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/login.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 32
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Apply rate limiting and progressive backoff to the login endpoint"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-039"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-040",
+          "level": "error",
+          "message": {
+            "text": "handleYamlUpload runs yaml.load on attacker YAML (routes/fileUpload.ts:109) and handleZipFileUpload extracts zip entries (line 34) with no cap on entry count or uncompressed size, while handleXmlUpload parses DTD-bearing XML. A YAML anchor bomb, zip bomb, or billion-laughs XML inflates a sub-200KB upload into gigabytes of memory. The vm timeouts (2000ms) bound CPU on the YAML/XML paths but not memory allocation, and unzipper streams entries without a total-size ceiling. /file-upload has no rate-limit middleware (rateLimit is applied only to reset-password and a few other routes, not the upload endpoints), so an attacker repeats the request to exhaust memory and crash the prod-env process."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/fileUpload.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 109
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Enforce decompression limits and add rate limiting to upload endpoints"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-040"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-041",
+          "level": "error",
+          "message": {
+            "text": "AdminGuard, AccountingGuard and DeluxeGuard authorize privileged routes by calling loginGuard.tokenDecode(), which runs jwtDecode(localStorage token) — a pure Base64 decode with NO signature verification — and compares payload.data.role to roles.admin/accounting/deluxe (app.guard.ts:54/70/86). A user can hand-craft a token whose payload sets role:'admin', place it in localStorage, and the router will render the admin UI, accounting board and deluxe features. While the backend still re-checks privileged APIs, exposing admin/accounting screens and their embedded logic client-side is a broken trust boundary: any server endpoint that under-enforces authorization becomes reachable, and the UI leaks privileged workflow structure."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/app/app.guard.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 54
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Treat client-side guards as UX-only and enforce role checks server-side on every privileged endpoint"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-041"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-042",
+          "level": "error",
+          "message": {
+            "text": "isAccounting() (lib/insecurity.ts:154-162) and isCustomer/isDeluxe (lines 165-173) grant access purely on decodedToken.data.role from the token payload. Combined with the hardcoded signing key (auth-001) and unpinned verification (auth-002), an attacker who mints or alters a token with data.role='accounting' or 'admin' passes these guards and reaches privileged accounting/admin functionality. Even absent key forgery, the reliance on a client-carried role claim with no server-side re-derivation from the persisted user record means any token-integrity weakness escalates directly to privilege escalation."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/insecurity.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 157
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Re-derive role from the persisted user record after verified authentication"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-042"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-043",
+          "level": "error",
+          "message": {
+            "text": "There is no default-deny gate. `security.isAuthorized()` and `denyAll()` are attached route-by-route from server.ts:356 onward, so any endpoint the developer forgets to list is reachable unauthenticated. Combined with the forgeable JWT (backend-api-001), the model is fail-open: adding a new route silently exposes it, and admin-only operations rely on scattered `isAccounting`/`isDeluxe` checks rather than a central policy."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 356
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Introduce a central default-deny authorization layer with per-route allowlisting"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-043"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-044",
+          "level": "error",
+          "message": {
+            "text": "`finale.resource(...)` auto-exposes full CRUD for the models in `autoModels` (server.ts:483-511) without a field allowlist. The create/update handlers bind the entire request body onto the Sequelize model, so a registration or update request can set privileged columns the UI never offers — e.g. POSTing `{\"email\":\"x\",\"password\":\"y\",\"role\":\"admin\"}` to the user resource sets an attacker's role to admin (the registerAdminChallenge). No `attributes`/`exclude` write allowlist is applied on create."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 501
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Whitelist writable fields on every finale resource create/update hook"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-044"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-045",
+          "level": "warning",
+          "message": {
+            "text": "registerWebsocketEvents() creates a Socket.IO server with no authentication or authorization on connection (lib/startup/registerWebsocketEvents.ts:19-23). Any client that connects immediately receives every queued 'challenge solved' notification (lines 29-31, an information leak of server state) and can emit 'notification received' with an arbitrary flag to splice entries out of the shared, process-global notifications array (lines 33-38). Because the array is shared across all users, one anonymous client removes notifications destined for everyone, tampering with and denying delivery of server-pushed messages."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/startup/registerWebsocketEvents.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 33
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Authenticate WebSocket connections and scope notification handling per user"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-045"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-046",
+          "level": "warning",
+          "message": {
+            "text": "The pipeline runs CodeQL (SAST) and OWASP ZAP (DAST) but performs no software-composition analysis and has no automated dependency-update tooling. There is no `npm audit`, Snyk, OSV-Scanner, Trivy image scan, or `actions/dependency-review-action` step in any workflow, and no `.github/dependabot.yml` or Renovate configuration exists in the repository. Combined with the missing lockfile (ci-cd-pipeline-001), known-vulnerable transitive dependencies — the recon flagged the critically outdated express-jwt@0.1.3 in package.json — reach the published image with no gate and no alerting. Because the repository is public and accepts external pull requests, there is also nothing that blocks a PR whose manifest/lockfile diff pulls in a known-malicious or known-vulnerable package before merge."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/ci.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Add SCA scanning and a dependency-update bot to the pipeline"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-046"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-047",
+          "level": "warning",
+          "message": {
+            "text": "All application data lives in one flat file, data/juiceshop.sqlite (models/index.ts:41), with no database-level authentication, no per-table access control, and no tamper-evidence. The connection uses fixed placeholder credentials ('database','username','password' at models/index.ts:33) that SQLite ignores. Access control depends entirely on OS filesystem permissions on the file. Any code path or process that gains write access to the file — a path-traversal/LFI write, a container/volume compromise, a misconfigured backup restore, or a co-located process — can directly modify or delete rows (alter roles, zero out orders, forge wallet balances) with no detection, because there is no integrity check, checksum, or audit binding on the stored records."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "models/index.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 41
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Lock down the database file and enforce integrity/referential constraints"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-047"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-048",
+          "level": "warning",
+          "message": {
+            "text": "None of the credential-bearing handlers (routes/login.ts, routes/resetPassword.ts, routes/2fa.ts, routes/saveLoginIp.ts) emit a structured audit record for authentication outcomes. saveLoginIp only overwrites a single lastLoginIp field, which is destroyed on the next login and captures nothing about failures. With no log of who attempted to log in, from where, and whether it succeeded or failed, brute-force campaigns (auth-009, auth-012) and successful account takeovers via forged tokens (auth-001/002) leave no forensic trail, and a compromised user can plausibly deny actions taken under their session."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/login.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 32
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Emit structured, append-only audit events for all authentication outcomes"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-048"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-049",
+          "level": "warning",
+          "message": {
+            "text": "retrieveUserList() at routes/authenticatedUsers.ts calls UserModel.findAll() (line 12) and returns every user's record. The route /rest/user/authentication-details is protected only by security.isAuthorized() (server.ts:601), which asserts a valid token but performs no role check. Consequently any logged-in customer receives the full roster of user emails, roles, ids, masked-but-present password/totpSecret indicators, and last-login times for the entire system, providing a target list for password spraying and social engineering."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/authenticatedUsers.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 12
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Restrict the user-directory endpoint to admin role and scope non-admin responses to the caller"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-049"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-050",
+          "level": "warning",
+          "message": {
+            "text": "`app.use(errorhandler())` at server.ts:682 mounts the `errorhandler` package, which renders full stack traces, source snippets and error messages in HTTP responses. Errors from the raw SQL handlers (`next(error.parent)` in search.ts:70, `next(error)` in login.ts:53) propagate here, returning database driver messages to the client. This turns blind SQL injection into error-based extraction and discloses file paths, library versions and internal structure."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 682
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Replace the dev error handler with a sanitized production error responder"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-050"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-051",
+          "level": "warning",
+          "message": {
+            "text": "`app.get('/metrics', ...)` at server.ts:729 exposes the full Prometheus metrics surface with no authentication (registered before the SPA catch-all so it is reachable in every environment). The metrics include per-user challenge-solve counters, LLM token counters, request timings and internal operational data, letting any anonymous client fingerprint deployment internals and user activity (the exposedMetricsChallenge)."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 729
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Require authentication (or network isolation) for the /metrics endpoint"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-051"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-052",
+          "level": "warning",
+          "message": {
+            "text": "`app.use(cors())` at server.ts:183 (plus `app.options('*', cors())` at 182) enables CORS with the default configuration, reflecting any requesting Origin and allowing all methods. Any malicious website can invoke the JSON REST API in a victim's browser context and read responses, broadening the reach of CSRF-style and token-theft attacks against the SPA that shares this origin."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 183
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Restrict CORS to the known frontend origin(s)"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-052"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-053",
+          "level": "warning",
+          "message": {
+            "text": "Dockerfile USER directive (non-root) — test/smoke/Dockerfile:1. Containers running as root expand container-escape blast radius."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "test/smoke/Dockerfile",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Add USER <non-root-uid>"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-053"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-054",
+          "level": "warning",
+          "message": {
+            "text": "Container image signing via cosign or attest-build-provenance — .github/workflows/ci.yml:1. Unsigned container images cannot be verified for provenance — any registry intermediary could substitute them."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/ci.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Add cosign signing step to release workflow; or use actions/attest-build-provenance"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-054"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-055",
+          "level": "warning",
+          "message": {
+            "text": "Dockerfile npm/pnpm/yarn install without --ignore-scripts — Dockerfile:4. Without --ignore-scripts, any compromised dependency publisher can execute postinstall code at build time."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 4
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Use `npm ci --ignore-scripts` and audit required postinstalls separately"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-055"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-056",
+          "level": "warning",
+          "message": {
+            "text": "GITHUB_TOKEN scope minimization — .github/workflows/lock.yml:1. `contents: read` at workflow root forces per-job opt-in for write scopes — minimal privilege by default."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/lock.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Add `permissions: { contents: read }` at root; per-job elevate to `contents: write` only where needed"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-056"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-057",
+          "level": "warning",
+          "message": {
+            "text": "sendNotification builds a notification object that includes `flag = utils.ctfFlag(challenge.name)` (lines 52, 62-66) plus a `hidden: !config.get('challenges.showSolvedNotifications')` marker, then broadcasts the whole object with `globalWithSocketIO.io.emit('challenge solved', notification)` at line 75 to every connected socket. The secret `flag` value is present in the payload regardless of the `hidden` flag — `hidden` only hints the UI to suppress display, it does not strip the flag from the wire. Additionally, registerWebsocketEvents replays the entire accumulated `notifications` array (including flags) to each newly connected — and unauthenticated (realtime-channel-001) — socket at lines 29-31. Any client that connects or listens receives other participants' CTF flags directly, defeating the intended per-player secrecy of the flag values."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "lib/challengeUtils.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 75
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Strip secret flag fields from broadcast payloads and gate hidden notifications server-side"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-057"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-058",
+          "level": "warning",
+          "message": {
+            "text": "The datastore is a single SQLite file (models/index.ts:41) using IMMEDIATE transactions (models/index.ts:40), which acquire a database-wide write lock. SQLite permits only one writer at a time; concurrent write transactions receive SQLITE_BUSY. The configured retry policy caps at max: 5 (models/index.ts:35-38) with no backoff ceiling on total load. Under a burst of write-heavy requests (registrations, orders, feedback, basket updates), writers serialize on the single file lock and, once the 5 retries are exhausted, transactions fail outright. An attacker can deliberately flood any write endpoint to induce sustained SQLITE_BUSY failures, degrading or denying service for all users, since every write in the app funnels through this one file."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "models/index.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 35
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Enable WAL mode and rate-limit write endpoints, or migrate to a concurrent-writer database"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-058"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-059",
+          "level": "warning",
+          "message": {
+            "text": "Neither ci.yml nor release.yml declares a top-level or job-level `permissions:` key, so every job inherits the repository's default GITHUB_TOKEN scope. On repositories created before the read-only default (or where the org default is still permissive) that grant is read-write across contents, packages, deployments, issues and pull-requests. The pipelines run many script-enabled `npm install` steps and several third-party actions (Cypress, retry, Coveralls) that receive the token, so any compromised dependency or action step (see ci-cd-pipeline-002/003/004) inherits full write access to the repository rather than a least-privilege slice. codeql-analysis.yml demonstrates the correct pattern with an explicit `permissions:` block (contents:read, security-events:write), making the omission in the two primary pipelines a clear inconsistency rather than an oversight of the mechanism."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ".github/workflows/ci.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 24
+                }
+              }
+            }
+          ],
+          "fixes": [
+            {
+              "description": {
+                "text": "Declare least-privilege permissions blocks in ci.yml and release.yml"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-059"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-063",
+          "level": "error",
+          "message": {
+            "text": "The application loads assets over HTTP when served without TLS enforcement; frontend/src/assets/private/ShaderPass.js is an example asset loaded at runtime. An attacker on the network path (e.g. coffee-shop Wi-Fi, ISP) can intercept or tamper with asset delivery. CWE-319: Cleartext Transmission of Sensitive Information."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "frontend/src/assets/private/ShaderPass.js",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 2
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "columnKind": "utf16CodeUnits"
+    }
+  ]
+}

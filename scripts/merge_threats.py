@@ -44,6 +44,8 @@ from typing import Any
 
 import yaml
 from _atomic_io import atomic_write_json, atomic_write_text
+from _shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
+from weakness_classifier import classify_cwe, classify_threat, load_weakness_classes
 
 # Stable ordering for the T-NNN deterministic sort.
 _RISK_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -66,6 +68,7 @@ _STRIDE_LETTER = {
 
 _CWE_RE = re.compile(r"^CWE-(\d+)$")
 _TH_ID_RE = re.compile(r"^TH-[0-9]{2}$")
+_MERGE_DECISIONS_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "merge-decisions.schema.json"
 
 
 @functools.lru_cache(maxsize=1)
@@ -318,7 +321,7 @@ def _config_finding_to_threat(f: dict) -> dict:
     cwe = cwes[0] if cwes else ""
     severity = f.get("severity") or "Medium"
     stride = f.get("stride") or f.get("stride_category") or "Information Disclosure"
-    return {
+    threat = {
         "title": f.get("title") or "",
         "scenario": f.get("scenario") or "",
         "stride": stride,
@@ -348,6 +351,14 @@ def _config_finding_to_threat(f: dict) -> dict:
         "mitigation_title": f.get("recommended_mitigation_title"),
         "finding_type_id": f.get("finding_type_id"),
     }
+    # The merger's category guard applies equally to deterministic findings.
+    # Derive the canonical category where the CWE taxonomy is authoritative;
+    # leave genuinely unmapped configuration findings unclassified so they are
+    # conservatively kept rather than merged on a guessed architectural role.
+    category = _threat_category_id_for(threat)
+    if category:
+        threat["threat_category_id"] = category
+    return threat
 
 
 # `dep-scan` ingestion (`.dep-scan.json` → CVE-shaped threats) was removed
@@ -377,6 +388,9 @@ _AUTHZ_TO_STRIDE: dict[str, str] = {
     "AUTHZ-006": "Spoofing",  # JWT decode without verify
     "AUTHZ-007": "Spoofing",  # express-jwt without algorithms
     "AUTHZ-008": "Elevation of Privilege",  # Missing auth middleware
+    "AUTHZ-202": "Elevation of Privilege",  # Spring @RequestBody→entity mass assignment (mass_assignment_scanner.py)
+    "AUTHZ-301": "Elevation of Privilege",  # Confirmed IDOR/BOLA (authz_confirm.py)
+    "AUTHZ-302": "Elevation of Privilege",  # Confirmed missing route auth (authz_confirm.py)
     "INJ-001": "Tampering",  # SQL injection — request data in query string
     "INJ-002": "Elevation of Privilege",  # Command injection — shell RCE
     "INJ-003": "Information Disclosure",  # SSRF — reach internal targets
@@ -431,7 +445,7 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
     severity = f.get("severity") or "Medium"
     file_path = f.get("file") or ""
     component_id, component_name = _guess_component_from_path(file_path)
-    return {
+    threat = {
         "title": f.get("title") or "",
         "scenario": f.get("scenario") or "",
         "stride": stride,
@@ -454,17 +468,30 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         "mitigation_title": f.get("recommended_mitigation_title"),
         "finding_type_id": f.get("finding_type_id"),
     }
+    # The crypto catalog establishes a security-relevant use before emitting a
+    # row. Preserve that fact explicitly; do not infer a weakness later from a
+    # CWE or an algorithm name alone.
+    if check_id == "CRYPTO-HOMEGROWN-XOR":
+        threat["mechanism_id"] = "application-owned-cryptography"
+    elif check_id.startswith("CRYPTO-"):
+        threat["mechanism_id"] = "weak-cryptographic-primitives"
+    category = _threat_category_id_for(threat)
+    if category:
+        threat["threat_category_id"] = category
+    return threat
 
 
-def _load_source_auth_findings(output_dir: Path) -> list[dict]:
-    """Load `.source-auth-findings.json` (output of
-    `scripts/source_auth_scanner.py`) and convert each finding into a
-    merged-threats threat record.
+def _load_source_auth_findings(output_dir: Path, filename: str = ".source-auth-findings.json") -> list[dict]:
+    """Load a source-auth-findings-shaped sidecar and convert each finding into
+    a merged-threats threat record. Default file is
+    `.source-auth-findings.json` (scripts/source_auth_scanner.py); the same
+    loader also ingests `.authz-confirm-findings.json`
+    (scripts/authz_confirm.py) — both share the schema and converter.
 
-    Missing file → empty list (the scanner is opt-in; absence is the
-    default state on repos that have not yet adopted it).
+    Missing file → empty list (both producers are presence-gated; absence is the
+    default state on repos that have not yet adopted them).
     """
-    path = output_dir / ".source-auth-findings.json"
+    path = output_dir / filename
     if not path.exists():
         return []
     try:
@@ -972,6 +999,39 @@ def _instances_of(m: dict) -> list[dict]:
     return [inst]
 
 
+def _candidate_member(threat: dict) -> dict:
+    """Return the bounded, data-only merger view of a candidate threat.
+
+    A title and file:line are not enough to distinguish one shared defect from
+    two sinks in the same CWE class. Keep the comparison context in the
+    candidate artifact rather than asking the merger to read source code. The
+    scenario excerpt is bounded so a pathological analyzer response cannot
+    consume the merger's entire context window.
+    """
+    scenario = threat.get("scenario")
+    if not isinstance(scenario, str):
+        scenario = ""
+    if len(scenario) > 1200:
+        scenario = scenario[:1197].rstrip() + "..."
+    return {
+        "component_id": threat.get("component_id"),
+        "component_name": threat.get("component_name"),
+        "title": threat.get("title"),
+        "scenario_excerpt": scenario,
+        "evidence": threat.get("evidence"),
+        "instances": _instances_of(threat),
+        "risk": threat.get("risk"),
+        "cwe": threat.get("cwe"),
+        "stride": threat.get("stride"),
+        "threat_category_id": threat.get("threat_category_id"),
+        "additional_categories": threat.get("additional_categories") or [],
+        "source": threat.get("source"),
+        "source_check_id": threat.get("source_check_id"),
+        "config_check_id": threat.get("config_check_id"),
+        "source_ref": threat.get("local_id") or threat.get("source_scan_ref") or threat.get("config_scan_ref"),
+    }
+
+
 def _consolidate_by_group(threats: list[dict]) -> list[dict]:
     """Collapse findings sharing a consolidation-group bucket into ONE systemic
     finding carrying ``instances[]`` / ``affected_files[]`` / ``instance_count``
@@ -1124,17 +1184,7 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
                 "cwe": cwe,
                 "stride": stride,
                 "member_count": len(members),
-                "members": [
-                    {
-                        "component_id": m.get("component_id"),
-                        "component_name": m.get("component_name"),
-                        "title": m.get("title"),
-                        "evidence": m.get("evidence"),
-                        "risk": m.get("risk"),
-                        "threat_category_id": m.get("threat_category_id"),
-                    }
-                    for m in members
-                ],
+                "members": [_candidate_member(m) for m in members],
             }
         )
         for m in members:
@@ -1170,19 +1220,7 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
                 "endpoint": endpoint,
                 "cwe_family": family,
                 "member_count": len(members),
-                "members": [
-                    {
-                        "component_id": m.get("component_id"),
-                        "component_name": m.get("component_name"),
-                        "title": m.get("title"),
-                        "evidence": m.get("evidence"),
-                        "risk": m.get("risk"),
-                        "cwe": m.get("cwe"),
-                        "stride": m.get("stride"),
-                        "threat_category_id": m.get("threat_category_id"),
-                    }
-                    for m in members
-                ],
+                "members": [_candidate_member(m) for m in members],
             }
         )
 
@@ -1417,6 +1455,143 @@ def _reconstruct_group_member_indices(threats: list[dict]) -> dict[str, list[int
     return out
 
 
+def _decision_positions(decision: dict, member_indices: list[int]) -> list[int] | None:
+    """Resolve a v2 decision's subset, or all group members for v1.
+
+    A malformed subset is ignored rather than widened. This is deliberately
+    fail-closed: a merger may only remove a member it named explicitly.
+    """
+    requested = decision.get("member_indices")
+    if requested is None:
+        return list(range(len(member_indices)))
+    if not isinstance(requested, list) or not requested:
+        return None
+    if any(not isinstance(pos, int) or pos < 0 or pos >= len(member_indices) for pos in requested):
+        return None
+    if len(set(requested)) != len(requested):
+        return None
+    return list(requested)
+
+
+def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: bool) -> None:
+    """Preserve every merged location, scenario and mitigation on survivor."""
+    instances: list[dict] = []
+    files: list[str] = []
+    mitigation_ids: list[str] = []
+    refs: list[str] = []
+    component_ids: list[str] = []
+    for member in members:
+        prior_components = member.get("merged_from")
+        if not isinstance(prior_components, list):
+            prior_components = []
+        for component_id in [member.get("component_id"), *prior_components]:
+            if isinstance(component_id, str) and component_id and component_id not in component_ids:
+                component_ids.append(component_id)
+        for instance in _instances_of(member):
+            instance = dict(instance)
+            evidence = member.get("evidence") if isinstance(member.get("evidence"), dict) else {}
+            instance.setdefault("file", (evidence.get("file") or "").strip())
+            instance.setdefault("line", evidence.get("line"))
+            scenario = member.get("scenario")
+            if isinstance(scenario, str) and scenario.strip():
+                instance["scenario"] = scenario.strip()
+            source_ref = member.get("local_id") or member.get("source_scan_ref") or member.get("config_scan_ref")
+            if source_ref:
+                instance["source_ref"] = source_ref
+            instances.append(instance)
+            file_path = (instance.get("file") or "").strip()
+            if file_path and file_path not in files:
+                files.append(file_path)
+        for mitigation_id in member.get("mitigation_ids") or []:
+            if mitigation_id not in mitigation_ids:
+                mitigation_ids.append(mitigation_id)
+        ref = member.get("local_id") or member.get("source_scan_ref") or member.get("config_scan_ref")
+        if ref and ref not in refs:
+            refs.append(ref)
+
+    survivor["instances"] = instances
+    survivor["affected_files"] = sorted(files)
+    survivor["instance_count"] = len(instances)
+    if systemic:
+        survivor["systemic"] = True
+    if mitigation_ids:
+        survivor["mitigation_ids"] = mitigation_ids
+    if refs:
+        survivor["consolidated_refs"] = refs
+    if component_ids:
+        survivor["merged_from"] = component_ids
+
+
+def _same_primary_threat_category(members: list[dict]) -> bool:
+    """Return whether every member has one identical canonical TH category.
+
+    The merger agent is instructed not to join different architectural threat
+    categories. Enforce that rule here as well: the decision file is
+    untrusted input and cannot be the only guard against an invalid merge.
+    """
+    categories = [member.get("threat_category_id") for member in members]
+    return (
+        bool(categories)
+        and all(isinstance(category, str) and _TH_ID_RE.match(category) for category in categories)
+        and len(set(categories)) == 1
+    )
+
+
+def _highest_risk_target(target: int, positions: list[int], member_indices: list[int], threats: list[dict]) -> bool:
+    """Ensure a decision cannot discard the highest-severity member."""
+    selected_risks = [_risk_rank(threats[member_indices[pos]].get("risk")) for pos in positions]
+    return _risk_rank(threats[member_indices[target]].get("risk")) == min(selected_risks)
+
+
+@functools.lru_cache(maxsize=1)
+def _load_merge_decisions_schema() -> dict:
+    """Load the v2 merger-decision contract used for agent output."""
+    return json.loads(_MERGE_DECISIONS_SCHEMA.read_text(encoding="utf-8"))
+
+
+def _read_agent_decisions(path: Path) -> list[dict]:
+    """Read v2 decisions only when they satisfy their schema.
+
+    Existing v1 artifacts and bare decision lists remain readable for
+    incremental resumes. Their destructive operations are still constrained by
+    `_apply_decisions`; v2 is the schema-validated format emitted going
+    forward. Invalid v2 input is ignored as a whole so a bad agent write can
+    never silently delete findings.
+    """
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"merge_threats: ignoring unreadable {path.name}: {exc}\n")
+        return []
+    if isinstance(doc, list):
+        return [d for d in doc if isinstance(d, dict)]
+    if not isinstance(doc, dict):
+        sys.stderr.write(f"merge_threats: ignoring {path.name}: top level must be an object or legacy list\n")
+        return []
+    if doc.get("version") == 2:
+        try:
+            from jsonschema import Draft202012Validator
+
+            errors = sorted(
+                Draft202012Validator(_load_merge_decisions_schema()).iter_errors(doc), key=lambda e: list(e.path)
+            )
+        except (ImportError, OSError, ValueError, json.JSONDecodeError) as exc:
+            sys.stderr.write(f"merge_threats: ignoring {path.name}: cannot load decision schema: {exc}\n")
+            return []
+        if errors:
+            detail = "; ".join(f"{list(error.absolute_path)}: {error.message}" for error in errors[:3])
+            sys.stderr.write(f"merge_threats: ignoring invalid {path.name}: {detail}\n")
+            return []
+    elif doc.get("version") not in (None, 1):
+        sys.stderr.write(f"merge_threats: ignoring {path.name}: unsupported version {doc.get('version')!r}\n")
+        return []
+    decisions = doc.get("decisions") or []
+    if not isinstance(decisions, list):
+        sys.stderr.write(f"merge_threats: ignoring {path.name}: decisions must be an array\n")
+        return []
+    return [d for d in decisions if isinstance(d, dict)]
+
+
 def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
     """Apply LLM-produced merge decisions.
 
@@ -1424,16 +1599,15 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
       {
         "group_id": "G-abcd1234",       # or "GE-…" for endpoint groups
         "action": "merge" | "keep" | "consolidate",
-        "keep_indices": [0, 2],         # for "keep": which group members survive
+        "member_indices": [0, 2],       # v2: subset affected by this decision
         "merge_target_index": 0,        # for "merge": which member absorbs the rest
         "consolidated_title": "...",    # for "consolidate": new systemic title
         "rationale": "..."
       }
 
     Unknown group_ids and malformed decisions are ignored (safe-by-default:
-    every threat survives). Over time, the triage-validator can flag
-    suspiciously absent decisions, but the Python layer never drops a
-    threat it cannot justify dropping.
+    every threat survives). `keep` is always a no-op; only a valid, explicit
+    merge/consolidate subset can remove members.
     """
     if not decisions:
         return threats
@@ -1443,6 +1617,7 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
     gid_to_indices = _reconstruct_group_member_indices(threats)
 
     drop: set[int] = set()
+    claimed_by_group: dict[str, set[int]] = {}
     for d in decisions:
         if not isinstance(d, dict):
             continue
@@ -1451,48 +1626,59 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
         member_indices = gid_to_indices.get(gid)
         if member_indices is None:
             continue
+        positions = _decision_positions(d, member_indices)
+        if positions is None:
+            continue
         if action == "merge":
             target = d.get("merge_target_index", 0)
-            if not isinstance(target, int) or target < 0 or target >= len(member_indices):
+            if (
+                not isinstance(target, int)
+                or target not in positions
+                or len(positions) < 2
+                or claimed_by_group.setdefault(gid, set()).intersection(positions)
+            ):
                 continue
             survivor = member_indices[target]
-            for pos, idx in enumerate(member_indices):
-                if pos == target:
-                    continue
-                # Record provenance on survivor
-                surv = threats[survivor]
-                other = threats[idx]
-                mf = surv.setdefault("merged_from", [surv.get("component_id")])
-                cid = other.get("component_id")
-                if cid and cid not in mf:
-                    mf.append(cid)
-                drop.add(idx)
-        elif action == "keep":
-            keep_positions = d.get("keep_indices")
-            if not isinstance(keep_positions, list):
+            selected = [member_indices[pos] for pos in positions]
+            if not _highest_risk_target(
+                target, positions, member_indices, threats
+            ) or not _same_primary_threat_category([threats[idx] for idx in selected]):
                 continue
-            for pos, idx in enumerate(member_indices):
-                if pos not in keep_positions:
-                    drop.add(idx)
+            _merge_member_metadata(threats[survivor], [threats[idx] for idx in selected], systemic=False)
+            drop.update(idx for idx in selected if idx != survivor)
+            claimed_by_group[gid].update(positions)
+        elif action == "keep":
+            # Keep is intentionally a no-op. Legacy v1 keep_indices must name
+            # every group member; anything narrower used to delete findings.
+            keep_positions = d.get("keep_indices")
+            if keep_positions is not None and (
+                not isinstance(keep_positions, list) or set(keep_positions) != set(range(len(member_indices)))
+            ):
+                continue
         elif action == "consolidate":
             target = d.get("merge_target_index", 0)
             new_title = d.get("consolidated_title")
-            if not isinstance(target, int) or target < 0 or target >= len(member_indices):
+            if (
+                not isinstance(target, int)
+                or target not in positions
+                or len(positions) < 3
+                or not isinstance(new_title, str)
+                or not new_title.strip()
+                or claimed_by_group.setdefault(gid, set()).intersection(positions)
+            ):
                 continue
             survivor = member_indices[target]
+            selected = [member_indices[pos] for pos in positions]
+            if not _highest_risk_target(
+                target, positions, member_indices, threats
+            ) or not _same_primary_threat_category([threats[idx] for idx in selected]):
+                continue
             surv = threats[survivor]
-            if isinstance(new_title, str) and new_title.strip():
-                surv["title"] = new_title.strip()
+            surv["title"] = new_title.strip()
             surv["architectural_violation"] = True
-            mf = surv.setdefault("merged_from", [surv.get("component_id")])
-            for pos, idx in enumerate(member_indices):
-                if pos == target:
-                    continue
-                other = threats[idx]
-                cid = other.get("component_id")
-                if cid and cid not in mf:
-                    mf.append(cid)
-                drop.add(idx)
+            _merge_member_metadata(surv, [threats[idx] for idx in selected], systemic=True)
+            drop.update(idx for idx in selected if idx != survivor)
+            claimed_by_group[gid].update(positions)
 
     return [t for i, t in enumerate(threats) if i not in drop]
 
@@ -1541,6 +1727,12 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # `scripts/source_auth_scanner.py`. Loaded only when
     # `.source-auth-findings.json` is on disk (the scanner is opt-in).
     source_auth_threats = _load_source_auth_findings(out_dir)
+    # Route-inventory-driven IDOR/BOLA + missing-route-auth confirmations
+    # (scripts/authz_confirm.py → .authz-confirm-findings.json), same schema.
+    source_auth_threats += _load_source_auth_findings(out_dir, ".authz-confirm-findings.json")
+    # Entity-aware Spring mass-assignment (scripts/mass_assignment_scanner.py →
+    # .mass-assignment-findings.json), same source-auth schema + converter.
+    source_auth_threats += _load_source_auth_findings(out_dir, ".mass-assignment-findings.json")
     if source_auth_threats:
         flat.extend(source_auth_threats)
     # `.dep-scan.json` ingestion was removed 2026-05 — supply-chain
@@ -1596,6 +1788,592 @@ def cmd_collect(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Weakness-class register (P1 weakness-class evidence model, proposal §4a/§4b/
+# §4d-bis). The reconciler that folds confirmed findings + non-exploitable
+# practice sites + arch-coverage design signals into ONE weakness heading per
+# (weakness_class, scope), instead of emitting them as peers (or as a separate
+# `threat_hypotheses[]` list beside proven findings — Fact R).
+#
+# Emitted ADDITIVELY into .threats-merged.json as `weaknesses[]`; `threats[]`
+# is left untouched so existing consumers keep working. Deterministic; no LLM.
+# ---------------------------------------------------------------------------
+
+_SEVERITY_ORDER = ["Low", "Medium", "High", "Critical"]
+_SYSTEMIC_SPREAD_MIN_DEFAULT = 2
+
+
+def _spread_min_for_class(wcid: str, vocab: dict) -> int:
+    """Per-class `systemic_spread_min` override (weakness-classes.yaml), else 2.
+    A `kind: implementation` class rolls up into one app-wide `kind: design`
+    weakness once it recurs across ≥ this many components with no central
+    control present (that co-occurrence IS the systemic signal — §4d-bis)."""
+    for c in vocab.get("clusters") or []:
+        if c.get("id") == wcid:
+            try:
+                return int(c.get("systemic_spread_min") or _SYSTEMIC_SPREAD_MIN_DEFAULT)
+            except (TypeError, ValueError):
+                return _SYSTEMIC_SPREAD_MIN_DEFAULT
+    return _SYSTEMIC_SPREAD_MIN_DEFAULT
+
+
+def _first_evidence(t: dict) -> dict:
+    ev = t.get("evidence")
+    if isinstance(ev, list):
+        ev = next((e for e in ev if isinstance(e, dict)), {})
+    elif not isinstance(ev, dict):
+        ev = {}
+    return ev
+
+
+# Weak-crypto family (weakness-classes.yaml weak_crypto cluster). A weak hash /
+# low KDF rounds / ECB mode / non-CSPRNG is a *definite bad practice* but its
+# exploitability (actual cracking / forgery) is not statically established — so
+# it is insecure-practice, never confirmed-exploitable, and folds under a
+# weak_crypto weakness rather than standing as a proven vuln (proposal §3/§4a).
+_PRACTICE_TIER_CWES = frozenset({"CWE-327", "CWE-328", "CWE-329", "CWE-330", "CWE-916", "CWE-326"})
+
+
+def _instance_evidence_tier(t: dict) -> str:
+    """Evidence basis of a code/config threat. Respects an explicit
+    `evidence_tier` set upstream (STRIDE analyzer, P1); otherwise a proven sink
+    (code/config source WITH file evidence) defaults to confirmed-exploitable,
+    everything else to insecure-practice. Weak-crypto CWEs are always
+    insecure-practice (definite bad practice, exploit not established)."""
+    et = t.get("evidence_tier")
+    if et in ("confirmed-exploitable", "insecure-practice"):
+        return et
+    if (t.get("cwe") or "").strip().upper() in _PRACTICE_TIER_CWES:
+        return "insecure-practice"
+    src = (t.get("source") or "").strip()
+    has_file = bool((_first_evidence(t).get("file") or "").strip())
+    if src in (CODE_LEVEL_SOURCES | CONFIG_DEFECT_SOURCES) and has_file:
+        return "confirmed-exploitable"
+    return "insecure-practice"
+
+
+def _max_severity(sevs: list[str]) -> str:
+    idx = -1
+    for s in sevs:
+        try:
+            idx = max(idx, _SEVERITY_ORDER.index((s or "").strip().title()))
+        except ValueError:
+            continue
+    return _SEVERITY_ORDER[idx] if idx >= 0 else "Medium"
+
+
+def _lower_severity(sev: str) -> str:
+    """Drop one severity band (floor Low) — the exculpatory effect of a
+    standard-vetted control (P2 / §4e)."""
+    try:
+        i = _SEVERITY_ORDER.index((sev or "").strip().title())
+    except ValueError:
+        return sev
+    return _SEVERITY_ORDER[max(0, i - 1)]
+
+
+def _normalise_mechanism_key(value: object) -> str:
+    """Return a stable, human-auditable mechanism key for a design signal."""
+    value = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    return value or "observed-security-mechanism"
+
+
+def _mechanism_from_text(text: str) -> str | None:
+    """Recognise the small set of architecture mechanisms that can arrive from
+    an LLM-authored architectural anti-pattern rather than a deterministic
+    design-signal sidecar. This is deliberately narrow: it gives established
+    patterns (BFF, application-owned crypto, blacklist validation) a stable
+    register identity without treating arbitrary prose as a mechanism."""
+    lower = (text or "").lower()
+    if "bff" in lower or "backend-for-frontend" in lower or "backend for frontend" in lower:
+        return "browser-clients-without-bff"
+    if any(token in lower for token in ("home-grown crypto", "homegrown crypto", "custom crypt", "own crypt")):
+        return "application-owned-cryptography"
+    if "blacklist" in lower and any(token in lower for token in ("validation", "regex", "input")):
+        return "blacklist-only-input-validation"
+    if any(
+        token in lower for token in ("concatenated quer", "string-concatenated sql", "raw sql string interpolation")
+    ):
+        return "database-query-concatenation"
+    if any(token in lower for token in ("output encoding", "raw html", "sanitizer bypass", "sanitiser bypass")):
+        return "frontend-output-encoding"
+    if any(
+        token in lower
+        for token in ("route by route", "per-handler", "centralized authorization", "centralised authorization")
+    ):
+        return "route-by-route-authorization"
+    return None
+
+
+def build_weakness_register(
+    threats: list[dict],
+    design_signals: list[dict] | None = None,
+    impl_strategy: dict[str, str] | None = None,
+) -> list[dict]:
+    """Build narrowly-scoped, evidence-backed architectural weaknesses.
+
+    A CWE family is a reporting taxonomy, not a root cause. Weaknesses are
+    therefore keyed by an observable mechanism (for example, concatenated SQL
+    queries or route-by-route authorization), not by CWE class. A confirmed
+    exploit may substantiate an existing mechanism but never creates a systemic
+    weakness on its own. Conversely, a mechanism with concrete code or
+    architecture evidence is register-worthy even when no exploit path has been
+    established; it is emitted as ``design-risk`` / ``observed-practice`` and
+    never receives CVSS.
+    """
+    vocab = load_weakness_classes()
+    weakness_labels = {str(c.get("id")): str(c.get("label")) for c in (vocab.get("clusters") or [])}
+    class_guidance = vocab.get("class_guidance") or {}
+    mechanism_guidance = vocab.get("mechanism_guidance") or {}
+    agg: dict[str, dict] = {}
+
+    def _bucket(
+        key: str,
+        *,
+        wcid: str,
+        kind: str,
+        title: str,
+        statement: str,
+        cwe: str | None = None,
+        mechanism_id: str | None = None,
+        guidance: dict | None = None,
+        instance_source: str | None = None,
+    ) -> dict:
+        return agg.setdefault(
+            key,
+            {
+                "weakness_class": wcid,
+                "mechanism_id": mechanism_id or _normalise_mechanism_key(key),
+                "kind": kind,
+                "title": title[:80],
+                "statement": statement,
+                "cwe": (cwe or "").upper(),
+                "guidance": guidance or {},
+                "instance_source": instance_source,
+                "instances": [],
+                "instance_severities": [],
+                "practice": [],
+                "absent": [],
+                "components": [],
+                "strategies": [],
+                "design_severities": [],
+            },
+        )
+
+    def _add_component(b: dict, comp: str) -> None:
+        comp = (comp or "").strip()
+        if comp and comp not in b["components"]:
+            b["components"].append(comp)
+
+    def _wname(wcid: str) -> str:
+        """The weakness (negative) name for a class — e.g. `missing_authz` →
+        "Broken Access Control". Prefers class_guidance.weakness_name, then the
+        cluster label, then a titled fallback. (2026-07-14 consolidation: the
+        register names the WEAKNESS, not the missing control.)"""
+        g = class_guidance.get(wcid) or {}
+        return str(g.get("weakness_name") or weakness_labels.get(wcid) or wcid.replace("_", " ").title()).strip()
+
+    def _guidance(mechanism_id: str | None, *, wcid: str, cwe: str | None = None) -> tuple[str, dict]:
+        """Return the stable mechanism id and its reader-facing guidance.
+
+        A producer can pass an explicit mechanism id. Practice-only rows fall
+        back to the first guidance entry that deliberately claims their CWE;
+        otherwise they retain a narrow CWE-scoped key instead of being merged
+        into every other member of the weakness class.
+        """
+        key = _normalise_mechanism_key(mechanism_id) if mechanism_id else ""
+        if key and isinstance(mechanism_guidance.get(key), dict):
+            return key, mechanism_guidance[key]
+        cwe_norm = (cwe or "").upper()
+        for candidate, candidate_guidance in mechanism_guidance.items():
+            if cwe_norm and cwe_norm in {str(v).upper() for v in (candidate_guidance.get("cwes") or [])}:
+                return str(candidate), candidate_guidance
+        return key or f"{wcid}-{cwe_norm.lower() or 'observed-practice'}", {}
+
+    def _title_and_guidance(
+        mechanism_id: str | None,
+        *,
+        wcid: str,
+        cwe: str | None,
+        fallback_title: str,
+        fallback_statement: str,
+    ) -> tuple[str, str, str, dict]:
+        mechanism, guidance = _guidance(mechanism_id, wcid=wcid, cwe=cwe)
+        title = str(guidance.get("weakness_name") or fallback_title or _wname(wcid)).strip()
+        statement = str(fallback_statement or guidance.get("description") or title).strip()
+        return mechanism, title, statement, guidance
+
+    def _design_bucket(t: dict, *, wcid: str, cwe: str | None = None) -> dict:
+        raw_title = str(t.get("title") or t.get("generic_threat_title") or "").strip()
+        raw_statement = str(
+            t.get("statement") or raw_title or "Security mechanism is not consistently enforced."
+        ).strip()
+        mechanism_hint = t.get("mechanism_id") or _mechanism_from_text(" ".join((raw_title, raw_statement)))
+        # A named external advisory is evidence for vulnerability-management,
+        # not evidence that every CWE in the affected library shares one code
+        # weakness. It only attaches `known-vuln` instances below.
+        if (t.get("source") or "").strip() == "known-vuln":
+            wcid = "outdated_deps"
+            mechanism_hint = "vulnerability-management-gap"
+        mechanism, title, statement, guidance = _title_and_guidance(
+            mechanism_hint,
+            wcid=wcid,
+            cwe=cwe,
+            fallback_title=raw_title,
+            fallback_statement=raw_statement,
+        )
+        return _bucket(
+            f"mechanism:{mechanism}",
+            wcid=wcid,
+            kind="design",
+            title=title,
+            statement=statement,
+            cwe=(None if (t.get("source") or "").strip() == "known-vuln" else cwe),
+            mechanism_id=mechanism,
+            guidance=guidance,
+            instance_source="known-vuln" if (t.get("source") or "").strip() == "known-vuln" else None,
+        )
+
+    confirmed: list[dict] = []
+    for t in threats:
+        src = (t.get("source") or "").strip()
+        wcid = classify_threat(t, vocab, warn=False)
+        cwe = (t.get("cwe") or "").strip().upper()
+        if src in DESIGN_LEVEL_SOURCES:
+            b = _design_bucket(t, wcid=wcid, cwe=cwe)
+            for a in t.get("controls_absent_evidence") or []:
+                b["absent"].append(a)
+            # Architectural anti-patterns commonly carry concrete file:line
+            # evidence but not a grep-shaped `controls_absent_evidence` record.
+            # That evidence proves the unsafe mechanism, so retain it as an
+            # observable backing rather than discarding a valid design weakness.
+            if not b["absent"]:
+                ev = _first_evidence(t)
+                if ev.get("file"):
+                    b["absent"].append(
+                        {
+                            "mechanism": b["mechanism_id"],
+                            "file": ev.get("file"),
+                            "line": ev.get("line"),
+                        }
+                    )
+            b["design_severities"].append(t.get("risk") or "Medium")
+            _add_component(b, t.get("component_id") or t.get("component") or "")
+            continue
+        if src == "known-vuln":
+            # Known-vuln records are externally grounded version advisories.
+            # They prove a vulnerability-management gap without claiming that
+            # their implementation CWE is a single application-wide root cause.
+            b = _design_bucket(t, wcid="outdated_deps", cwe=cwe)
+            ev = _first_evidence(t)
+            b["absent"].append(
+                {
+                    "mechanism": b["mechanism_id"],
+                    "file": ev.get("file"),
+                    "line": ev.get("line"),
+                    "advisory": True,
+                }
+            )
+            b["design_severities"].append(t.get("risk") or "Medium")
+            _add_component(b, t.get("component_id") or t.get("component") or "")
+        tier = _instance_evidence_tier(t)
+        # Stamp the resolved basis back onto the threat so downstream consumers
+        # (yaml export → composer count breakdown) can distinguish a confirmed
+        # finding from a folded practice site without re-deriving it. Additive
+        # key; unknown to SARIF/changelog, so no export regresses.
+        t["evidence_tier"] = tier
+        if tier == "confirmed-exploitable":
+            confirmed.append(t)
+        else:
+            component = (t.get("component_id") or t.get("component") or "").strip()
+            mechanism, title, statement, guidance = _title_and_guidance(
+                t.get("mechanism_id"),
+                wcid=wcid,
+                cwe=cwe,
+                fallback_title=f"{_wname(wcid)} is implemented inconsistently",
+                fallback_statement=(t.get("title") or "Observed insecure security-control practice.").strip(),
+            )
+            b = _bucket(
+                f"mechanism:{mechanism}",
+                wcid=wcid,
+                kind="implementation",
+                title=title,
+                statement=statement,
+                cwe=cwe,
+                mechanism_id=mechanism,
+                guidance=guidance,
+            )
+            _add_component(b, component)
+            ev = _first_evidence(t)
+            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+            pe = {"file": (ev.get("file") or "").strip(), "line": ev.get("line")}
+            if tid:
+                pe["id"] = tid
+            if pe["file"]:
+                b["practice"].append(pe)
+
+    # Fold externally-supplied design signals (P1.3 bridge output).
+    for ds in design_signals or []:
+        if not isinstance(ds, dict):
+            continue
+        # Clamp the externally-supplied class to a known cluster id; a malformed
+        # bridge file must not inject an out-of-enum class that later fails
+        # schema validation. Fall back to CWE-derived classification.
+        _raw_wc = (ds.get("weakness_class") or "").strip()
+        _valid_wc = {c.get("id") for c in (vocab.get("clusters") or [])}
+        wcid = _raw_wc if _raw_wc in _valid_wc else classify_cwe(ds.get("cwe") or "", vocab, warn=False)
+        cwe = (ds.get("cwe") or "").strip().upper()
+        b = _design_bucket(ds, wcid=wcid, cwe=cwe)
+        for a in ds.get("absent_control_signal") or ds.get("controls_absent_evidence") or []:
+            b["absent"].append(a)
+        strat = (ds.get("implementation_strategy") or "").strip()
+        if strat:
+            b["strategies"].append(strat)
+        b["design_severities"].append(ds.get("severity") or "Medium")
+        comps = ds.get("affected_components")
+        if not comps and ds.get("component"):
+            comps = [ds["component"]]
+        for c in comps or []:
+            _add_component(b, c)
+
+    weaknesses: list[dict] = []
+    seq = 0
+    for key in sorted(agg):
+        b = agg[key]
+        wcid = b["weakness_class"]
+        # `_unmapped` is the CWE catch-all; it is not a coherent weakness class,
+        # so it never becomes a weakness (its findings stay as plain §8 findings).
+        if wcid == "_unmapped":
+            continue
+        has_absent = bool(b["absent"])
+        has_practice = bool(b["practice"])
+        # A confirmed exploit alone is a finding, not evidence that a systemic
+        # mechanism exists. A weakness must independently carry an observed
+        # practice or architecture/control backing (I2).
+        if not (has_absent or has_practice):
+            continue
+
+        spread = len(b["components"])
+        systemic = spread >= _spread_min_for_class(wcid, vocab)
+        # kind is derived from the evidence: a class with an absent central
+        # control is a design weakness; otherwise it is an implementation one.
+        kind = "design" if has_absent else "implementation"
+
+        # Implementation strategy (P2): a design-signal strategy wins; else the
+        # repo-wide detector's class verdict (detect_impl_strategy.py).
+        resolved_strategy = b["strategies"][0] if b["strategies"] else (impl_strategy or {}).get(wcid)
+
+        # Attach only confirmed findings that substantiate THIS mechanism. CWE
+        # class matching alone would incorrectly put XXE/path traversal beneath a
+        # database-query weakness. Known-vuln mechanisms match their source,
+        # because their implementation CWE is not their management root cause.
+        for t in confirmed:
+            if b.get("instance_source"):
+                if (t.get("source") or "").strip() != b["instance_source"]:
+                    continue
+            elif classify_threat(t, vocab, warn=False) != wcid:
+                continue
+            else:
+                # CWE gate for attaching a confirmed finding as evidence. Per the
+                # mechanism_guidance contract ("`cwes` only controls which concrete
+                # findings may be attached as evidence to that mechanism"), when the
+                # resolved mechanism enumerates its evidence CWEs, honor that set —
+                # a single mechanism can legitimately span several CWEs (e.g.
+                # "secrets committed to source" evidences both hardcoded keys
+                # CWE-321 and credentials CWE-798). Union with the single
+                # design-signal CWE so this only ever broadens attachment, never
+                # drops a finding that matched before; falls back to the single-CWE
+                # exact match when no mechanism CWE set is present.
+                _allowed_cwes = {str(c).strip().upper() for c in ((b.get("guidance") or {}).get("cwes") or [])}
+                if b.get("cwe"):
+                    _allowed_cwes.add(b["cwe"])
+                if _allowed_cwes and (t.get("cwe") or "").strip().upper() not in _allowed_cwes:
+                    continue
+            component = (t.get("component_id") or t.get("component") or "").strip()
+            ev = _first_evidence(t)
+            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+            if not tid:
+                continue
+            inst = {
+                "id": tid,
+                "file": (ev.get("file") or "").strip(),
+                "line": ev.get("line"),
+                "basis": "confirmed-exploitable",
+            }
+            if t.get("poc_hint"):
+                inst["poc_hint"] = t["poc_hint"]
+            b["instances"].append(inst)
+            b["instance_severities"].append(t.get("risk") or "Medium")
+            _add_component(b, component)
+
+        confirmed_basis = bool(b["instances"])
+        # Fall B (§4b "control present"): a standard-vetted control IS the
+        # central control, so a PURE design gap (no confirmed instance, no
+        # bad-practice site) is exculpated — suppressed, not shown.
+        if resolved_strategy == "standard-vetted" and kind == "design" and not confirmed_basis and not has_practice:
+            continue
+
+        if confirmed_basis:
+            # Driven by a proven exploit: keep the real instance severity band.
+            severity_basis = "confirmed"
+            severity = _max_severity(b["instance_severities"])
+        else:
+            severity_basis = "design-risk" if has_absent else "observed-practice"
+            base = _max_severity(b["design_severities"] or ["Medium"])
+            strat_set = {s.lower() for s in b["strategies"]}
+            if resolved_strategy:
+                strat_set.add(resolved_strategy.lower())
+            homegrown = bool(strat_set & {"none", "home-grown"})
+            # §4e: design-risk scales with pervasiveness × strategy. Pervasive +
+            # (home-grown|none) may reach Critical; pervasive alone bumps once.
+            if kind == "design" and systemic and homegrown:
+                severity = "Critical"
+            elif kind == "design" and systemic:
+                severity = _max_severity([base, "High"])
+            else:
+                severity = base
+        # Exculpatory: a standard-vetted control lowers the residual severity
+        # one band (the deviation is an isolated slip against a sound baseline).
+        # NEVER for a `confirmed` weakness — a proven exploit must not be
+        # de-ranked below its own instance severity (risk-register R1); the
+        # softening applies to design-risk gaps only.
+        if resolved_strategy == "standard-vetted" and severity_basis != "confirmed":
+            severity = _lower_severity(severity)
+
+        statement = b["statement"]
+
+        observable_backing: dict = {}
+        if has_absent:
+            observable_backing["absent_control_signal"] = b["absent"]
+        if has_practice:
+            observable_backing["practice_evidence"] = b["practice"]
+
+        w = {
+            "id": "",  # assigned after severity sort below
+            "weakness_class": wcid,
+            "kind": kind,
+            "title": b["title"],
+            "statement": statement,
+            "severity": severity,
+            "severity_basis": severity_basis,
+            "observable_backing": observable_backing,
+        }
+        if b.get("mechanism_id"):
+            w["mechanism_id"] = b["mechanism_id"]
+        if b["components"]:
+            w["affected_components"] = sorted(b["components"])
+        if resolved_strategy:
+            w["implementation_strategy"] = resolved_strategy
+        if b["instances"]:
+            w["instances"] = b["instances"]
+        # Per-class prose for the Weakness Register (2026-07-14 redesign):
+        # `description` explains the control + why the gap is systemic (better
+        # than a title restatement); `structural_recommendation` is the
+        # root-cause fix the Hybrid mitigation model surfaces alongside the
+        # tactical per-finding M-NNN roll-up. Sourced from weakness-classes.yaml
+        # `class_guidance`; absent for _unmapped / unlisted classes.
+        guidance = b.get("guidance") or ((class_guidance.get(wcid) or {}) if isinstance(class_guidance, dict) else {})
+        _desc = " ".join((guidance.get("description") or "").split()).strip()
+        _struct = " ".join((guidance.get("structural_fix") or "").split()).strip()
+        if _desc:
+            w["description"] = _desc
+        if _struct:
+            w["structural_recommendation"] = _struct
+        weaknesses.append(w)
+
+    # Assign W-NNN ids in severity order (W-001 = most severe), with a
+    # confirmed-before-design tiebreak and class-alpha final key — so the ids
+    # match the register's display order and the highest-impact weakness is W-001.
+    _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    _basis_rank = {"confirmed": 0, "observed-practice": 1, "design-risk": 2}
+    weaknesses.sort(
+        key=lambda w: (
+            _sev_rank.get((w.get("severity") or "").strip().lower(), 9),
+            _basis_rank.get((w.get("severity_basis") or "").strip().lower(), 9),
+            w.get("weakness_class") or "",
+        )
+    )
+    for i, w in enumerate(weaknesses, start=1):
+        w["id"] = f"W-{i:03d}"
+    return weaknesses
+
+
+def _load_design_signals(out_dir: Path) -> list[dict]:
+    """Arch-coverage design-signal records (P1.3 bridge output), consumed by the
+    weakness reconciler so architectural design gaps fold into the weakness
+    register with their instances.
+
+    Two independent streams are merged (both fold into the same weakness buckets
+    by class):
+
+    1. **Arch-coverage** — prefer the emitted ``.arch-design-signals.json``; if
+       absent, generate deterministically from ``.architecture-coverage.json``
+       (the Phase-9 agent is *instructed* to run ``arch_coverage_to_threats.py
+       emit-design-signals``, but that soft step is sometimes skipped under
+       turn-budget pressure — which silently dropped EVERY architectural design
+       weakness; the fallback makes the fold happen regardless).
+    2. **Impl-strategy (Gap-A)** — ``.impl-design-signals.json`` from
+       detect_impl_strategy: a home-grown / misused *central control* (unsafe SQL
+       handling, direct DOM sinks, ad-hoc authz) surfaced as a design-risk
+       weakness even when no concrete instance was confirmed."""
+    signals: list[dict] = []
+    path = out_dir / ".arch-design-signals.json"
+    if path.exists():
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            doc = None
+        if isinstance(doc, dict):
+            signals.extend(doc.get("design_signals") or [])
+        elif isinstance(doc, list):
+            signals.extend(doc)
+    else:
+        cov_path = out_dir / ".architecture-coverage.json"
+        if cov_path.exists():
+            try:
+                cov = json.loads(cov_path.read_text(encoding="utf-8"))
+                from arch_coverage_to_threats import build_design_signals
+
+                arch_signals, _ = build_design_signals(cov)
+                signals.extend(arch_signals)
+            except Exception:  # noqa: BLE001 — a fallback must never break finalize
+                pass
+    impl_path = out_dir / ".impl-design-signals.json"
+    if impl_path.exists():
+        try:
+            idoc = json.loads(impl_path.read_text(encoding="utf-8"))
+            if isinstance(idoc, dict):
+                signals.extend(idoc.get("design_signals") or [])
+            elif isinstance(idoc, list):
+                signals.extend(idoc)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return signals
+
+
+def _load_impl_strategy(out_dir: Path) -> dict[str, str]:
+    """Optional per-weakness-class implementation strategy (P2 —
+    detect_impl_strategy.py output). Returns {weakness_class: strategy};
+    absent/malformed file → {} (no strategy effect)."""
+    path = out_dir / ".impl-strategy.json"
+    if not path.exists():
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    strategies = (doc or {}).get("strategies") if isinstance(doc, dict) else None
+    if not isinstance(strategies, dict):
+        return {}
+    out: dict[str, str] = {}
+    for wclass, entry in strategies.items():
+        if isinstance(entry, dict) and entry.get("strategy"):
+            out[wclass] = str(entry["strategy"])
+        elif isinstance(entry, str):
+            out[wclass] = entry
+    return out
+
+
 def cmd_finalize(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
     cand_path = out_dir / ".merge-candidates.json"
@@ -1610,12 +2388,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     decisions: list[dict] = list(cand.get("auto_decisions") or [])
     dec_path = out_dir / ".merge-decisions.json"
     if dec_path.exists():
-        with dec_path.open() as fh:
-            dec_doc = json.load(fh)
-        if isinstance(dec_doc, dict):
-            decisions.extend(dec_doc.get("decisions") or [])
-        elif isinstance(dec_doc, list):
-            decisions.extend(dec_doc)
+        decisions.extend(_read_agent_decisions(dec_path))
 
     threats = _apply_decisions(threats, decisions)
     threats = _assign_t_ids(threats)
@@ -1623,12 +2396,21 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     # to the global T-ids just assigned — must run AFTER _assign_t_ids.
     threats = _remap_scenario_local_refs(threats)
 
+    # Weakness-class register (P1) — folds confirmed findings + non-exploitable
+    # practice sites + arch-coverage design signals into one weakness heading
+    # per class. Runs AFTER _assign_t_ids so instances[] reference real T-ids.
+    # Additive: `threats[]` is untouched. `weaknesses` omitted when empty so
+    # legacy consumers and golden diffs are unaffected until a signal exists.
+    weaknesses = build_weakness_register(threats, _load_design_signals(out_dir), _load_impl_strategy(out_dir))
+
     payload = {
         "version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "threats": threats,
         "resolved_prior_findings": cand.get("resolved_prior_findings") or [],
     }
+    if weaknesses:
+        payload["weaknesses"] = weaknesses
 
     out_path = out_dir / ".threats-merged.json"
     # Atomic write — `.threats-merged.json` is a canonical intermediate

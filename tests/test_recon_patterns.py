@@ -1192,3 +1192,52 @@ class TestCLI:
         out = json.loads(r2.stdout)
         assert out["scan_manifest"] == []
         assert manifest_file.read_text(encoding="utf-8") == "\n"
+
+
+# ---------------------------------------------------------------------------
+# Per-category findings cap (context-bloat guard)
+# ---------------------------------------------------------------------------
+
+
+class TestFindingsCap:
+    def test_truncates_over_cap_and_preserves_true_count(self):
+        cap = rp._MAX_FINDINGS_PER_CATEGORY
+        cats = {
+            "11": {
+                "category": 11,
+                "findings": [{"file": f"r{i}.js", "line": i} for i in range(cap + 30)],
+                "count": cap + 30,
+            }
+        }
+        rp._cap_category_findings(cats, cap)
+        assert len(cats["11"]["findings"]) == cap
+        assert cats["11"]["count"] == cap + 30  # true magnitude retained
+        assert cats["11"]["findings_truncated"] == 30
+
+    def test_small_category_untouched(self):
+        cats = {"18": {"category": 18, "findings": [{"file": "x"}] * 3, "count": 3}}
+        rp._cap_category_findings(cats, rp._MAX_FINDINGS_PER_CATEGORY)
+        assert len(cats["18"]["findings"]) == 3
+        assert "findings_truncated" not in cats["18"]
+
+    def test_strong_findings_survive_cap(self):
+        # build_stride_dispatch_manifest reads cat-13 strong findings; a strong
+        # hit ranked past the cap must be lifted ahead of it, not dropped.
+        cap = rp._MAX_FINDINGS_PER_CATEGORY
+        findings = [{"file": f"w{i}", "strength": "weak"} for i in range(cap + 5)]
+        findings.append({"file": "STRONG", "strength": "strong", "line": 9})
+        cats = {"13": {"category": 13, "findings": findings, "count": len(findings)}}
+        rp._cap_category_findings(cats, cap)
+        kept = cats["13"]["findings"]
+        assert len(kept) == cap
+        assert any(f.get("strength") == "strong" for f in kept)
+
+    def test_run_all_applies_cap(self, tmp_path):
+        # Fabricate many exposed routes so cat 11 exceeds the cap end-to-end.
+        app = tmp_path / "routes.js"
+        lines = [f'app.get("/r{i}", h{i});' for i in range(rp._MAX_FINDINGS_PER_CATEGORY + 20)]
+        app.write_text("\n".join(lines), encoding="utf-8")
+        out = rp.run_all(tmp_path)
+        cat11 = out["categories"]["11"]
+        assert len(cat11["findings"]) <= rp._MAX_FINDINGS_PER_CATEGORY
+        assert cat11["count"] >= len(cat11["findings"])

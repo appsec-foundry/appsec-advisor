@@ -107,6 +107,157 @@ def test_severity_counts_and_totals(tmp_path):
     }
 
 
+def test_severity_uses_effective_severity_precedence(tmp_path):
+    import yaml
+
+    # effective_severity is the capped/canonical value the report ranks by; it
+    # must win over a differing raw `risk` (composer precedence).
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, effective_severity: High, risk: Critical, title: capped down}
+          - {t_id: T-002, risk: Medium, title: risk fallback only}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    assert summary["severity_counts"]["High"] == 1  # effective_severity wins
+    assert summary["severity_counts"]["Critical"] == 0
+    assert summary["severity_counts"]["Medium"] == 1  # risk used when no effective_severity
+    assert summary["criticals"] == []
+
+
+def test_worst_case_from_curated_critical_findings(tmp_path):
+    import yaml
+
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, effective_severity: Critical, component: auth, title: secret}
+          - {t_id: T-002, effective_severity: High, component: api, title: sqli}
+        mitigations:
+          - {id: M-001, priority: P1}
+          - {id: M-002, priority: P2}
+        critical_findings:
+          - {threat_id: T-002, summary: attacker dumps users table, mitigation_id: M-002}
+          - {threat_id: T-001, summary: full account takeover, mitigation_id: M-001}
+          - {threat_id: T-404, summary: gone, mitigation_id: M-000}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    wc = summary["worst_case"]
+    # unresolved threat dropped; Critical before High
+    assert [w["id"] for w in wc] == ["T-001", "T-002"]
+    assert wc[0]["summary"] == "full account takeover"  # verbatim
+    assert wc[0]["mitigation_id"] == "M-001" and wc[0]["priority"] == "P1"
+
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Worst case if nothing changes" in out
+    assert "full account takeover" in out
+    assert "→ M-001 (P1)" in out
+
+
+def test_worst_case_falls_back_to_top_severity(tmp_path):
+    import yaml
+
+    # no critical_findings -> degrade to top Critical/High threats
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    wc = summary["worst_case"]
+    assert all(w["severity"] in ("Critical", "High") for w in wc)
+    assert all(w["mitigation_id"] == "" for w in wc)  # no curated mitigation link
+    assert "T-004" not in {w["id"] for w in wc}  # the Medium finding
+
+
+def test_backlog_and_coverage(tmp_path):
+    import yaml
+
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: Critical, mitigation_ids: [M-001]}
+          - {t_id: T-002, risk: High, mitigation_ids: [M-002]}
+          - {t_id: T-003, risk: Medium}
+        mitigations:
+          - {id: M-001, priority: P1}
+          - {id: M-002, priority: P2}
+          - {id: M-003, priority: P2}
+          - {id: M-004}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    assert summary["backlog"] == {"P1": 1, "P2": 2, "P3": 0}
+    # two of three findings carry mitigation_ids
+    assert summary["coverage"] == {"with_mitigation": 2, "uncovered": 1}
+
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Backlog    1× P1 · 2× P2" in out
+    assert "Coverage   2/3 findings have a mitigation · 1 without" in out
+
+
+def test_control_posture_summary(tmp_path):
+    import yaml
+
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: High}
+        security_controls:
+          - {domain: Authorization, control: RBAC, effectiveness: Missing}
+          - {domain: Crypto, control: TLS, effectiveness: Adequate}
+          - {domain: Crypto, control: Secrets, effectiveness: Weak}
+          - {domain: Logging, control: Audit, effectiveness: Partial}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    posture = summary["control_posture"]
+    assert posture["effectiveness_counts"] == {"Missing": 1, "Adequate": 1, "Weak": 1, "Partial": 1}
+    # weakest-first domains whose weakest control is Missing/Weak
+    assert posture["weak_domains"] == ["Authorization", "Crypto"]
+
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Controls   4 assessed · Missing 1 · Weak 1 · Partial 1 · Adequate 1" in out
+    assert "Weakest    Authorization · Crypto" in out
+
+
+def test_control_posture_normalizes_domain_names(tmp_path):
+    import yaml
+
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: High}
+        security_controls:
+          - {domain: Identity and Authentication Controls, control: login, effectiveness: Missing}
+          - {domain: Authorization Controls, control: rbac, effectiveness: Weak}
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    # verbose control labels surface under canonical Authentication / Authorization
+    assert summary["control_posture"]["weak_domains"] == ["Authentication", "Authorization"]
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Weakest    Authentication · Authorization" in out
+
+
+def test_backlog_line_omitted_when_no_priorities(tmp_path):
+    import yaml
+
+    # SAMPLE mitigations carry no priority -> backlog all zero -> no Backlog line
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    assert summary["backlog"] == {"P1": 0, "P2": 0, "P3": 0}
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Backlog" not in out
+    # coverage still renders: SAMPLE threats carry no mitigation_ids
+    assert "Coverage   0/4 findings have a mitigation · 4 without" in out
+
+
 def test_criticals_only_and_sorted(tmp_path):
     import yaml
 
@@ -161,7 +312,9 @@ def test_render_text_compact(tmp_path):
     out = stm.render_text(summary, None, show_all=False)
     assert "Threat Model — Demo App (1.2.3)" in out
     assert "Top Critical (2)" in out
-    assert "T-001" in out and "T-002" not in out  # High not shown in compact
+    # compact mode does not expand the full by-severity grouping (that is --all)
+    assert "High (1)" not in out
+    assert "Medium (1)" not in out
     assert "depth standard (full)" in out
 
 
@@ -237,6 +390,30 @@ def test_cli_health_json_via_stdin(tmp_path):
     assert "✓ FRESH" in res.stdout
 
 
+def test_cli_empty_file_treated_as_no_model(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "threat-model.yaml").write_text("", encoding="utf-8")
+    res = _run(["--output-dir", str(tmp_path)])
+    assert res.returncode == 1
+    assert "No threat model found" in res.stdout
+    resj = _run(["--output-dir", str(tmp_path), "--json"])
+    assert resj.returncode == 1
+    assert json.loads(resj.stdout)["verdict"] == "NO_MODEL"
+
+
+def test_render_zero_findings_points_to_create(tmp_path):
+    import yaml
+
+    _write_model(tmp_path, "meta: {project: {name: Clean}}\nthreats: []\n")
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    out = stm.render_text(summary, None, show_all=False)
+    assert "Findings   0 threats" in out
+    assert "create-threat-model to (re)scan" in out
+    # no noise blocks when there is nothing to summarize
+    assert "Critical" not in out and "Backlog" not in out
+
+
 def test_cli_unparseable_yaml_exit_2(tmp_path):
     (tmp_path).mkdir(parents=True, exist_ok=True)
     (tmp_path / "threat-model.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
@@ -251,3 +428,27 @@ def test_cli_against_repo_fixture():
     res = _run(["--output-dir", str(fixture)])
     assert res.returncode == 0
     assert "Threat Model —" in res.stdout
+
+
+# ---------------------------------------------------------------------------
+# Cross-skill routing hint
+# ---------------------------------------------------------------------------
+
+
+def test_render_text_names_the_ask_and_review_lanes(tmp_path):
+    """The overview is the FIXED fact set; questions needing an arbitrary subset
+    belong to ask-threat-model. Skill routing between the two is description-
+    based and imperfect, so the rendered block names the other lanes itself —
+    a deterministic correction when the router lands here by mistake.
+    """
+    import yaml
+
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    out = stm.render_text(summary, None, show_all=False)
+
+    assert "/appsec-advisor:ask-threat-model" in out, "overview must point at the Q&A lane"
+    assert "/appsec-advisor:review-threat-model" in out, "overview must point at the triage lane"
+    # The hint belongs at the very end, after Report — never above the facts.
+    assert out.rstrip().endswith("/appsec-advisor:review-threat-model")

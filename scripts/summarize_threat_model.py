@@ -3,9 +3,11 @@
 
 Powers ``/appsec-advisor:show-threat-model``. Read-only: it parses the
 committed semantic model and prints a compact at-a-glance summary —
-project + scan identity, severity breakdown, top-Critical findings,
-mitigation/control counts, and the report path. No LLM judgement, no
-network, no writes; output is byte-stable for a given input.
+project + scan identity, severity breakdown, remediation backlog by
+priority + mitigation coverage, the top "worst case if nothing changes"
+scenarios, top-Critical findings, mitigation/control counts, and the report
+path. No LLM judgement, no network, no writes; output is byte-stable for a
+given input.
 
 Freshness is NOT computed here. The skill obtains the freshness verdict
 from ``threat_model_health.py --json`` (which wraps
@@ -37,11 +39,13 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import sys
 from pathlib import Path
 
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
+_EFFECTIVENESS_ORDER = {"Missing": 0, "Weak": 1, "Partial": 2, "Adequate": 3}
 
 
 # ---------------------------------------------------------------------------
@@ -50,10 +54,15 @@ _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Information
 
 
 def _severity_label(threat: dict | None) -> str:
-    """Canonical severity for a threat; mirrors render_completion_summary."""
+    """Canonical severity for a threat, using the composer's
+    ``effective_severity → risk → severity`` precedence (documented in
+    ``build_threat_model_yaml.py``). ``effective_severity`` is the capped /
+    triage-adjusted value the rendered report and review-threat-model rank by,
+    so ``show`` reflects the same numbers the model actually presents rather
+    than the raw ``risk``."""
     if not threat:
         return ""
-    raw = (threat.get("severity") or threat.get("risk") or "").strip()
+    raw = (threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "").strip()
     label = raw[:1].upper() + raw[1:].lower() if raw else ""
     return label if label in _SEVERITY_ORDER else raw
 
@@ -98,6 +107,118 @@ def _severity_counts(threats: list) -> dict:
     return counts
 
 
+_PRIORITY_BANDS = ("P1", "P2", "P3")
+
+
+def _backlog_by_priority(mitigations: list) -> dict:
+    """Remediation backlog sized by mitigation priority — the same P1→P2→P3 spine
+    the review-threat-model triage console uses, but severity-independent so it
+    never contradicts the risk-based severity histogram above it."""
+    counts = {p: 0 for p in _PRIORITY_BANDS}
+    for m in mitigations:
+        if not isinstance(m, dict):
+            continue
+        p = str(m.get("priority") or "").strip().upper()
+        if p in counts:
+            counts[p] += 1
+    return counts
+
+
+def _coverage(threats: list) -> dict:
+    """How many findings the model proposes a mitigation for (keyed on
+    ``mitigation_ids`` — the same signal review-threat-model uses). Uncovered
+    findings have no proposed fix and most need a human decision."""
+    with_m = sum(1 for t in threats if t.get("mitigation_ids"))
+    return {"with_mitigation": with_m, "uncovered": len(threats) - with_m}
+
+
+def _worst_case(threats: list, mitigations: list, critical_findings: list | None, limit: int = 3) -> list:
+    """The few concrete "if you do nothing" scenarios — mirrors
+    ``review_threat_model.build_worst_case``: read verbatim from the model's
+    curated ``critical_findings[]`` (``threat_id`` + one-line ``summary`` +
+    covering ``mitigation_id``), joined to severity / component / mitigation
+    priority, severity-ranked and capped. Falls back to the top Critical/High
+    threats' titles when the model curated none. Never authors text."""
+    by_id = {_threat_id(t): t for t in threats if _threat_id(t)}
+    mit_by_id = {str(m.get("id")).strip(): m for m in mitigations if isinstance(m, dict) and m.get("id")}
+    out: list = []
+    for c in critical_findings or []:
+        if not isinstance(c, dict):
+            continue
+        tid = str(c.get("threat_id") or "").strip()
+        t = by_id.get(tid)
+        if not t:
+            continue
+        # Prefer the threat's OWN first mitigation over the curated entry's
+        # denormalized copy. The auto-emitter pass relinks threats[] after the
+        # builder wrote critical_findings[], so the copy can be stale (observed:
+        # every entry wrong in two real models). The threat we just joined is
+        # the authoritative link; the curated id is only a fallback.
+        own = [str(x).strip() for x in (t.get("mitigation_ids") or []) if str(x).strip()]
+        mid = own[0] if own else str(c.get("mitigation_id") or "").strip()
+        m = mit_by_id.get(mid)
+        out.append(
+            {
+                "id": tid,
+                "severity": _severity_label(t),
+                "component": (t.get("component") or "").strip(),
+                "summary": str(c.get("summary") or "").strip() or _threat_title(t),
+                "mitigation_id": str(m.get("id")).strip() if m else "",
+                "priority": (str(m.get("priority") or "").strip() if m else ""),
+            }
+        )
+    if not out:  # no curated worst-case — degrade to the top Critical/High findings
+        for t in threats:
+            if _SEVERITY_ORDER.get(_severity_label(t), 9) > 1:
+                continue
+            out.append(
+                {
+                    "id": _threat_id(t),
+                    "severity": _severity_label(t),
+                    "component": (t.get("component") or "").strip(),
+                    "summary": _threat_title(t),
+                    "mitigation_id": "",
+                    "priority": "",
+                }
+            )
+    out.sort(key=lambda w: (_SEVERITY_ORDER.get(w["severity"], 9), w["id"]))
+    return out[:limit]
+
+
+def _normalize_domain(raw: str) -> str:
+    """Clean display name for a control domain — mirrors
+    review_threat_model._normalize_domain so Authentication / Authorization show
+    under stable canonical names (and their label variants merge) here too."""
+    r = raw.strip()
+    low = r.lower()
+    if "authorization" in low or "access control" in low:
+        return "Authorization"
+    if "authentication" in low or "identity" in low:
+        return "Authentication"
+    return r[: -len(" Controls")].strip() if low.endswith("controls") else r
+
+
+def _control_posture(controls: list) -> dict:
+    """Compact control-effectiveness roll-up for the overview: overall counts,
+    plus the domains whose weakest control is Missing/Weak. Read verbatim from
+    security_controls[] — a rating, never a re-score. Mirrors the per-domain
+    ranking in review_threat_model.build_control_posture (incl. domain naming)."""
+    eff_counts: collections.Counter = collections.Counter()
+    worst_by_domain: dict = {}
+    for c in controls:
+        if not isinstance(c, dict):
+            continue
+        eff = str(c.get("effectiveness") or "").strip()
+        eff_counts[eff or "Unknown"] += 1
+        domain = _normalize_domain(str(c.get("domain") or "").strip())
+        if domain:
+            rank = _EFFECTIVENESS_ORDER.get(eff, 9)
+            if domain not in worst_by_domain or rank < worst_by_domain[domain]:
+                worst_by_domain[domain] = rank
+    weak = sorted((d for d, r in worst_by_domain.items() if r <= 1), key=lambda d: (worst_by_domain[d], d))
+    return {"effectiveness_counts": dict(eff_counts), "weak_domains": weak}
+
+
 def build_summary(data: dict, output_dir: Path) -> dict:
     """Reduce raw YAML to the structured summary the renderer consumes."""
     meta = data.get("meta") or {}
@@ -133,6 +254,10 @@ def build_summary(data: dict, output_dir: Path) -> dict:
             "controls": len(controls),
         },
         "severity_counts": counts,
+        "backlog": _backlog_by_priority(mitigations),
+        "coverage": _coverage(threats),
+        "control_posture": _control_posture(controls),
+        "worst_case": _worst_case(threats, mitigations, data.get("critical_findings")),
         "criticals": [
             {
                 "id": _threat_id(t),
@@ -168,6 +293,17 @@ _RECOMMEND_TEXT = {
     "rebuild": "rebuild recommended: /appsec-advisor:create-threat-model --rebuild",
     "none": "",
 }
+
+# This overview is the FIXED fact set. Any question needing an arbitrary subset
+# of the model (a specific finding, "does it cover X?", what to fix first) is
+# ask-threat-model's job. Skill routing between the two is description-based and
+# will never be perfect, so the overview names the other lane itself — a
+# deterministic, zero-cost correction when the router lands here by mistake.
+_NEXT_STEP_HINT = (
+    "\nAsk        a question about a specific finding, coverage, or what to fix first"
+    "\n           → /appsec-advisor:ask-threat-model     act on findings"
+    " → /appsec-advisor:review-threat-model"
+)
 
 
 def _bar(count: int, peak: int, width: int = 24) -> str:
@@ -227,7 +363,23 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
         buf.extend(render_status_line(freshness))
         buf.append("")
 
+    worst = summary.get("worst_case") or []
+    if worst:
+        buf.append("Worst case if nothing changes")
+        for w in worst:
+            line = f"  ⚠ {w['id']:<7} {w['severity']} · {w['component']} · {w['summary']}"
+            if w["mitigation_id"]:
+                tail = f"{w['mitigation_id']} ({w['priority']})" if w["priority"] else w["mitigation_id"]
+                line += f"   → {tail}"
+            buf.append(line)
+        buf.append("")
+
     buf.append(f"Findings   {totals['threats']} threats across {totals['components']} components")
+    if totals["threats"] == 0:
+        buf.append("           no findings recorded — run /appsec-advisor:create-threat-model to (re)scan")
+        buf.append("")
+        buf.append(f"Report     {summary['report']}")
+        return "\n".join(buf) + "\n"
     peak = max(counts.values()) if counts else 0
     for sev in ("Critical", "High", "Medium", "Low", "Informational"):
         n = counts.get(sev, 0)
@@ -254,7 +406,27 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
             buf.append("")
 
     buf.append(f"Mitigations {totals['mitigations']} defined · Controls {totals['controls']} in place")
+    backlog = summary.get("backlog") or {}
+    if sum(backlog.values()):
+        bands = " · ".join(f"{backlog[p]}× {p}" for p in ("P1", "P2", "P3") if backlog.get(p))
+        buf.append(f"Backlog    {bands}")
+    cov = summary.get("coverage") or {}
+    if totals["threats"]:
+        buf.append(
+            f"Coverage   {cov.get('with_mitigation', 0)}/{totals['threats']} findings have a mitigation"
+            f" · {cov.get('uncovered', 0)} without"
+        )
+    posture = summary.get("control_posture") or {}
+    ec = posture.get("effectiveness_counts") or {}
+    if ec:
+        bits = " · ".join(f"{k} {ec[k]}" for k in ("Missing", "Weak", "Partial", "Adequate") if ec.get(k))
+        if bits:
+            buf.append(f"Controls   {sum(ec.values())} assessed · {bits}")
+        weak = posture.get("weak_domains") or []
+        if weak:
+            buf.append(f"Weakest    {' · '.join(weak[:4])}")
     buf.append(f"Report     {summary['report']}")
+    buf.append(_NEXT_STEP_HINT)
     return "\n".join(buf) + "\n"
 
 
@@ -298,21 +470,24 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _emit_no_model(output_dir: Path, as_json: bool) -> None:
+    """Uniform 'no usable model' response — used for a missing file and for a
+    present-but-empty one (an empty YAML is not a usable model). Points the user
+    at create-threat-model rather than showing an empty overview."""
+    if as_json:
+        print(json.dumps({"verdict": "NO_MODEL", "output_dir": str(output_dir)}, indent=2, sort_keys=True))
+    else:
+        print(f"No threat model found at {output_dir / 'threat-model.yaml'}.")
+        print("Run /appsec-advisor:create-threat-model to generate one.")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     output_dir = Path(args.output_dir).resolve()
     yaml_path = output_dir / "threat-model.yaml"
 
     if not yaml_path.is_file():
-        msg = {
-            "verdict": "NO_MODEL",
-            "output_dir": str(output_dir),
-        }
-        if args.json:
-            print(json.dumps(msg, indent=2, sort_keys=True))
-        else:
-            print(f"No threat model found at {yaml_path}.")
-            print("Run /appsec-advisor:create-threat-model to generate one.")
+        _emit_no_model(output_dir, args.json)
         return 1
 
     try:
@@ -322,6 +497,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 — surface any parse failure as exit 2
         print(f"Error: could not parse {yaml_path}: {exc}", file=sys.stderr)
         return 2
+    if data is None:  # present but empty file — no usable model, treat as missing
+        _emit_no_model(output_dir, args.json)
+        return 1
     if not isinstance(data, dict):
         print(f"Error: {yaml_path} is not a mapping.", file=sys.stderr)
         return 2

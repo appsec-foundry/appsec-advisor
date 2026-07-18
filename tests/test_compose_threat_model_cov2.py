@@ -18,6 +18,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -43,6 +44,49 @@ def _prepare_output_dir(tmp_path: Path) -> Path:
     out = tmp_path / "output"
     shutil.copytree(FIXTURE, out)
     return out
+
+
+class TestComposeOptimizationFlags:
+    def test_defer_mermaid_validation_flag_is_opt_in(self):
+        args = compose._parse_args(["--output-dir", "/tmp/out"])
+        assert args.defer_mermaid_validation is False
+
+        deferred = compose._parse_args(["--output-dir", "/tmp/out", "--defer-mermaid-validation"])
+        assert deferred.defer_mermaid_validation is True
+
+    def test_skip_changelog_audit_flag_is_opt_in(self):
+        args = compose._parse_args(["--output-dir", "/tmp/out"])
+        assert args.skip_changelog_audit is False
+
+        intermediate = compose._parse_args(["--output-dir", "/tmp/out", "--skip-changelog-audit"])
+        assert intermediate.skip_changelog_audit is True
+
+    def test_deferred_mermaid_validation_skips_the_compose_time_parser(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        out.mkdir()
+        calls: list[Path] = []
+        fake_qa = ModuleType("qa_checks")
+        fake_qa.check_mermaid_syntax = lambda path: (calls.append(path) or SimpleNamespace(issues=[]))
+        monkeypatch.setitem(sys.modules, "qa_checks", fake_qa)
+        monkeypatch.setattr(compose, "render", lambda *args, **kwargs: ("# Report\n", []))
+
+        assert compose.main(["--output-dir", str(out), "--defer-mermaid-validation", "--skip-changelog-audit"]) == 0
+        assert calls == []
+
+    def test_skip_changelog_audit_omits_only_the_auxiliary_export(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        out.mkdir()
+        fake_audit = ModuleType("render_changelog_audit")
+        audit_calls: list[Path] = []
+        fake_audit.write_audit = lambda output_dir: audit_calls.append(output_dir)
+        monkeypatch.setitem(sys.modules, "render_changelog_audit", fake_audit)
+        monkeypatch.setattr(compose, "render", lambda *args, **kwargs: ("# Report\n", []))
+
+        assert compose.main(["--output-dir", str(out), "--defer-mermaid-validation", "--skip-changelog-audit"]) == 0
+        assert audit_calls == []
+
+        assert compose.main(["--output-dir", str(out), "--defer-mermaid-validation"]) == 0
+        assert audit_calls == [out]
 
 
 # ---------------------------------------------------------------------------
@@ -317,11 +361,11 @@ class TestEmitPreRenderRepairPlan:
         assert plan["status"] == "exhausted"
 
     def test_subsection_missing_remediation(self, tmp_path):
-        err = self._err(section_id="security_architecture", detail="required subsection missing: '7.8 Real-time'")
+        err = self._err(section_id="security_architecture", detail="required subsection missing: '6.8 Real-time'")
         compose._emit_pre_render_repair_plan(tmp_path, err)
         plan = json.loads((tmp_path / ".pre-render-repair-plan.json").read_text())
         assert plan["actions"][0]["type"] == "required_subsection_missing"
-        assert plan["actions"][0]["expected_heading"] == "7.8 Real-time"
+        assert plan["actions"][0]["expected_heading"] == "6.8 Real-time"
 
     def test_corrupt_prior_plan_resets(self, tmp_path):
         (tmp_path / ".pre-render-repair-plan.json").write_text("{ not json")
@@ -343,7 +387,7 @@ class TestDeletePreRenderRepairPlan:
 class TestFragmentErrorHint:
     def test_subsection_missing_hint(self):
         # Use a section that maps to fragments so target is non-empty.
-        err = compose.FragmentError("security_architecture", "required subsection missing: '7.8 Real-time'")
+        err = compose.FragmentError("security_architecture", "required subsection missing: '6.8 Real-time'")
         hint = compose._fragment_error_hint(err)
         # Either a targeted hint or empty depending on fragment map; assert no crash.
         assert isinstance(hint, str)
@@ -957,10 +1001,12 @@ class TestRenderMitigationRegisterBranches:
         )
         # M-003: pre-fenced code_example shape (rendered verbatim)
         data["mitigations"][2].update({"how_code": "```ts\nsanitize(input);\n```", "how_code_lang": "ts"})
+        data["threats"][0]["evidence"] = [{"file": "routes/login.ts", "line": 34}]
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
         assert "**How:**" in rendered
         assert "**Verification:**" in rendered
+        assert "Example implementation in `" in rendered
 
     def test_multi_cwe_extra_snippets_and_prevents_cwes(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
@@ -982,7 +1028,7 @@ class TestRenderMitigationRegisterBranches:
         rendered, _ = compose.render(CONTRACT, out)
         assert "Prevents CWEs" in rendered
         # extra-snippet block label for the second CWE class
-        assert "Additional pattern for" in rendered
+        assert "Additional example implementation" in rendered
 
     def test_operational_strengths_all_demoted_empty_banner(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
@@ -1040,13 +1086,23 @@ class TestRenderThreatCardEvidenceSnippet:
         rendered, _ = compose.render(CONTRACT, out)
         assert "lib/x.ts" in rendered
 
-    def test_refuted_evidence_check_strikethrough(self, tmp_path):
+    def test_refuted_evidence_check_dropped_from_register(self, tmp_path):
+        # A refuted finding is excluded from the §8 threat register entirely
+        # (commit "Fix handling of refuted findings" — no strikethrough row).
         out = _prepare_output_dir(tmp_path)
         data = _load_fixture_yaml(out)
+        title = data["threats"][0]["title"]
+
+        # Baseline: not refuted → the §8 finding card heading is present.
+        _write_yaml(out, data)
+        baseline, _ = compose.render(CONTRACT, out)
+        assert any(ln.startswith("#### ") and title in ln for ln in baseline.splitlines())
+
+        # Refuted → the finding card heading is dropped from the register.
         data["threats"][0]["evidence_check"] = "refuted"
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
-        assert "~~" in rendered  # strikethrough heading
+        assert not any(ln.startswith("#### ") and title in ln for ln in rendered.splitlines())
 
     def test_raw_critical_annotation(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
@@ -1200,13 +1256,13 @@ class TestSubsectionDriftHint:
         assert out == ""
 
     def test_aligned_no_drift(self):
-        md = "### 7.1 Auth\n### 7.2 Crypto\n"
-        section = {"required_subsections": [{"title": "7.1 Auth"}, {"title": "7.2 Crypto"}]}
+        md = "### 6.1 Auth\n### 6.2 Crypto\n"
+        section = {"required_subsections": [{"title": "6.1 Auth"}, {"title": "6.2 Crypto"}]}
         assert compose._subsection_drift_hint(md, section, 3) == ""
 
     def test_drift_reported(self):
-        md = "### 7.1 Auth\n### 7.3 Logging\n"
-        section = {"required_subsections": [{"title": "7.1 Auth"}, {"title": "7.2 Crypto"}]}
+        md = "### 6.1 Auth\n### 6.3 Logging\n"
+        section = {"required_subsections": [{"title": "6.1 Auth"}, {"title": "6.2 Crypto"}]}
         out = compose._subsection_drift_hint(md, section, 3)
         assert "present:" in out and "expected:" in out
 

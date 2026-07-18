@@ -816,6 +816,13 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
     ``.skill-config.json`` to keep them. Severity is read with the same
     effective_severity → risk → severity precedence the composer's
     ``_severity_counts`` uses, so the filtered set matches the rendered tally.
+
+    Evidence-refuted candidates are also excluded from the canonical list. A
+    current threat model is an active-risk snapshot, not a review queue: a
+    candidate whose cited evidence contradicts the claim must never reach the
+    report, exports, or mitigation register. The merged intermediate retains
+    the verdict for audit, while incremental reconciliation records a prior
+    finding as resolved in the changelog when applicable.
     Returns (threats, warnings).
     """
     floor_rank = _SEVERITY_FLOOR_RANK.get((register_floor or "medium").strip().lower(), 2)
@@ -823,6 +830,7 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
     warnings: list[str] = []
     skipped_stubs = 0
     skipped_below_floor = 0
+    skipped_refuted = 0
     for t in merged.get("threats", []):
         threat = dict(t)
         threat["id"] = threat.pop("t_id", threat.get("id"))
@@ -838,6 +846,9 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
         ).lower() == "info"
         if not threat.get("id") or is_info_stub:
             skipped_stubs += 1
+            continue
+        if (threat.get("evidence_check") or "").strip().lower() == "refuted":
+            skipped_refuted += 1
             continue
         # Severity-floor filter. Mirror the composer's effective_severity →
         # risk → severity precedence so the dropped set matches the rendered
@@ -875,6 +886,8 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
         warnings.append(
             f"threats: {skipped_below_floor} below severity floor ({(register_floor or 'medium').lower()}) dropped from register"
         )
+    if skipped_refuted:
+        warnings.append(f"threats: {skipped_refuted} evidence-refuted candidate(s) excluded from active model")
     return out, warnings
 
 
@@ -1036,6 +1049,47 @@ def prune_dangling_mitigation_threat_ids(threats: list[dict], mitigations: list[
             )
             m["threat_ids"] = kept
     return mitigations, warnings
+
+
+def prune_dangling_weakness_instances(threats: list[dict], weaknesses: list[dict]) -> tuple[list[dict], list[str]]:
+    """Drop ``weakness.instances[]`` entries that reference no surviving threat.
+
+    ``merge_threats.build_weakness_register`` builds the register from the FULL
+    pre-drop threat set, so an instance names whatever T-ID the merge stage
+    assigned. ``build_threats`` then drops threats below the severity floor
+    *without renumbering* — the register goes sparse (e.g. T-067 → T-075) but the
+    weakness ``instances[]`` still name the dropped ids. The composer renders each
+    instance as a finding link ``[F-NNN](#f-nnn)``; a dropped instance therefore
+    becomes a titleless phantom link plus a stale positional anchor, and inflates
+    the md finding count so ``qa_checks.yaml_md_consistency`` trips (2026-07-16
+    juice-shop: W-006 kept T-068 after it was floored out).
+
+    This is the deterministic reconciliation point — the caller invokes it once
+    the final surviving ``threats`` set is known. Only ``instances[]`` (the
+    confirmed-exploitable legs) are pruned; ``observable_backing`` is left intact
+    because its practice / absent-control evidence intentionally references sites
+    that are not standalone threats. Returns ``(weaknesses, warnings)``; mutates
+    in place.
+    """
+    valid_tids = {t.get("id") for t in threats if isinstance(t, dict) and t.get("id")}
+
+    def _inst_id(i: object) -> object:
+        return i.get("id") if isinstance(i, dict) else i
+
+    warnings: list[str] = []
+    for w in weaknesses:
+        insts = w.get("instances") or []
+        kept = [i for i in insts if _inst_id(i) in valid_tids]
+        if len(kept) != len(insts):
+            dropped = [_inst_id(i) for i in insts if _inst_id(i) not in valid_tids]
+            warnings.append(
+                f"weakness {w.get('id')}: dropped {len(dropped)} dangling instance(s) "
+                f"{dropped} (threat below severity floor / not in register)"
+            )
+            w["instances"] = kept
+            if "instance_count" in w:
+                w["instance_count"] = len(kept)
+    return weaknesses, warnings
 
 
 def dedupe_mitigation_controls(threats: list[dict], mitigations: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -2088,7 +2142,27 @@ def main() -> int:
         doc["cross_repo_dependencies"] = (
             cross_repo if isinstance(cross_repo, list) else cross_repo.get("dependencies", [])
         )
-    if threat_hypotheses:
+    # Weakness-class register (P1) — carry the deterministic `weaknesses[]` folded
+    # by merge_threats.build_weakness_register straight through to the export.
+    # Instances reference the same T-NNN ids as threats[]. Absent on legacy/first
+    # runs → key omitted.
+    weaknesses = merged.get("weaknesses") or []
+    if weaknesses:
+        # Prune instances that reference threats dropped below the severity floor.
+        # build_threats drops without renumbering, so a stale instance would render
+        # as a titleless [F-NNN] phantom link + inflate the md finding count
+        # (yaml_md_consistency trip — 2026-07-16 juice-shop W-006→T-068).
+        weaknesses, weakness_prune_warnings = prune_dangling_weakness_instances(threats, weaknesses)
+        for w in weakness_prune_warnings:
+            sys.stderr.write(f"  {w}\n")
+        doc["weaknesses"] = weaknesses
+    if threat_hypotheses and not weaknesses:
+        # P1.3c: when the weakness register exists, unpromoted design signals are
+        # folded into weaknesses[] (rendered as design-weakness headings), so
+        # `threat_hypotheses[]` — the retired user-facing "hypothesis" list — is
+        # suppressed to avoid showing the same design gap twice (Fact R). Legacy
+        # runs with no register keep emitting it (readable one release, §Migration).
+        #
         # Only emit if every entry has the required schema fields; otherwise
         # skip — meta_findings/threat_hypotheses synthesis from raw intermediates
         # is non-trivial and is queued for a follow-up migration step.

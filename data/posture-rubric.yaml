@@ -1,0 +1,52 @@
+# posture-rubric.yaml — Layer-2 systemic posture verdict
+# (docs/internal/analysis/implplan-weakness-class-evidence-model.md §P4).
+#
+# Fuses, per security principle (architectural_theme), the weakness register +
+# confirmed findings + implementation strategy into a scored VIOLATED / WEAK /
+# ADEQUATE verdict. The rubric is versioned + calibrated (not inline magic
+# numbers) per proposal §6.4. Consumed by scripts/build_posture_verdict.py.
+
+version: 1
+
+# Map each data/weakness-classes.yaml cluster to the security principle it most
+# directly exercises (architecture-coverage.schema.json architectural_theme).
+theme_by_weakness_class:
+  injection: InputValidation
+  output_xss_csp: InputValidation
+  missing_authz: Authorization
+  broken_auth: Authentication
+  weak_crypto: DataProtection
+  secret_management: DataProtection
+  sensitive_disclosure: DataProtection
+  server_side_exposure: AttackSurfaceDesign
+  dos: SecureDefaults
+  outdated_deps: SupplyChain
+  _unmapped: InsecureDesign
+
+# Human-readable principle labels for the rendered table.
+theme_labels:
+  InputValidation: "Input Validation"
+  Authorization: "Authorization / Access Control"
+  Authentication: "Authentication"
+  DataProtection: "Data Protection & Cryptography"
+  AttackSurfaceDesign: "Attack-Surface Design"
+  SecureDefaults: "Secure Defaults"
+  SupplyChain: "Supply Chain"
+  InsecureDesign: "Insecure Design (general)"
+
+scoring:
+  # A class recurring across ≥ this many components with no central control is
+  # the systemic signal that turns "a few bugs" into "principle ignored".
+  systemic_spread_min: 2
+  # Strategies that AGGRAVATE (security is home-grown / absent).
+  aggravating_strategies: [home-grown, none]
+  # Strategy that EXCULPATES (a standard vetted control is in use).
+  exculpatory_strategy: standard-vetted
+
+# Verdict definitions (evaluated top-down; first match wins) — see
+# build_posture_verdict.py for the deterministic implementation.
+#   VIOLATED — ≥1 confirmed-exploitable instance in the theme, OR a pervasive
+#              (spread ≥ systemic_spread_min) home-grown/none design weakness.
+#   WEAK     — has a weakness/instance but not pervasive-home-grown and not
+#              confirmed-exploitable (isolated deviations / present-but-bypassed).
+#   ADEQUATE — no weakness and no confirmed instance (optionally standard-vetted).

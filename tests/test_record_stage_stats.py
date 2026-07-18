@@ -176,6 +176,30 @@ def test_dispatch_derivation_multi_spawn(tmp_path):
     assert record["duration_ms"] == 486210
 
 
+def test_dispatch_derivation_accepts_parallel_specialist_types(tmp_path):
+    _write_hook_log(
+        tmp_path,
+        """\
+2026-07-14T07:10:00Z  [run]  INFO   AGENT_SPAWN  appsec-advisor:appsec-secarch-renderer  model=sonnet
+2026-07-14T07:10:01Z  [run]  INFO   AGENT_SPAWN  appsec-advisor:appsec-ms-renderer  model=sonnet
+2026-07-14T07:14:00Z  [run]  INFO   AGENT_INVOKE  appsec-advisor:appsec-ms-renderer  model=sonnet
+2026-07-14T07:16:00Z  [run]  INFO   AGENT_INVOKE  appsec-advisor:appsec-secarch-renderer  model=sonnet
+""",
+    )
+    argv = _argv(
+        tmp_path,
+        **{
+            "--stage": "2",
+            "--subagent-type": ("appsec-advisor:appsec-secarch-renderer,appsec-advisor:appsec-ms-renderer"),
+            "--since-iso": "2026-07-14T07:09:00Z",
+        },
+    )
+    assert rec.main(argv) == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert record["dispatch_count"] == 2
+    assert record["wall_secs_observed"] == 360
+
+
 def test_dispatch_derivation_single_spawn(tmp_path):
     """Stage 1 with 1 spawn + 1 clean return → dispatch_count == 1."""
     _write_hook_log(tmp_path)

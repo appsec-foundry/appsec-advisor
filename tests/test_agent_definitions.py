@@ -40,6 +40,8 @@ EXPECTED_MAX_TURNS = {
     "appsec-triage-validator": 20,
     "appsec-threat-merger": 12,
     "appsec-threat-renderer": 80,
+    "appsec-secarch-renderer": 60,
+    "appsec-ms-renderer": 32,
     "appsec-qa-reviewer": 120,
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
@@ -59,6 +61,8 @@ INTERNAL_AGENTS = {
     "appsec-triage-validator",
     "appsec-threat-merger",
     "appsec-threat-renderer",
+    "appsec-secarch-renderer",
+    "appsec-ms-renderer",
     "appsec-qa-reviewer",
     "appsec-architect-reviewer",
     "appsec-config-scanner",
@@ -640,6 +644,8 @@ PROSE_SAMPLES_FILE = AGENTS_DIR / "shared" / "prose-samples.md"
 
 AGENT_FILES_AUTHORING_PROSE = [
     AGENTS_DIR / "appsec-threat-renderer.md",
+    AGENTS_DIR / "appsec-secarch-renderer.md",
+    AGENTS_DIR / "appsec-ms-renderer.md",
     AGENTS_DIR / "appsec-stride-analyzer.md",
     AGENTS_DIR / "phases" / "phase-group-finalization.md",
     AGENTS_DIR / "shared" / "ms-template.md",
@@ -652,6 +658,7 @@ AGENT_FILES_AUTHORING_PROSE = [
 # is template prose only — both are covered by prose-style.md alone for now.
 AGENT_FILES_AUTHORING_MS_PROSE = [
     AGENTS_DIR / "appsec-threat-renderer.md",
+    AGENTS_DIR / "appsec-ms-renderer.md",
     AGENTS_DIR / "phases" / "phase-group-finalization.md",
 ]
 
@@ -727,6 +734,8 @@ REPO_READING_AGENTS = [
     "appsec-abuse-case-verifier",
     "appsec-stride-analyzer",
     "appsec-threat-renderer",
+    "appsec-secarch-renderer",
+    "appsec-ms-renderer",
     "appsec-context-resolver",
     "appsec-threat-analyst",
     "appsec-eval-judge",

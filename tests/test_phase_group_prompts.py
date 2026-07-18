@@ -27,12 +27,12 @@ def finalization_text() -> str:
 
 
 class TestSecurityArchitectureV2Guidance:
-    """Verify that the §7 v2 control-category guidance is still present."""
+    """Verify that the §6 v2 control-category guidance is still present."""
 
     def test_mentions_v2_13_section_layout(self, finalization_text):
         assert "v2 13-section control-category layout" in finalization_text
-        assert "### 7.1 Security Control Overview" in finalization_text
-        assert "### 7.13 Defense-in-Depth Summary" in finalization_text
+        assert "### 6.1 Security Control Overview" in finalization_text
+        assert "### 6.13 Defense-in-Depth Summary" in finalization_text
 
     def test_mentions_section_level_labels(self, finalization_text):
         for marker in (
@@ -52,7 +52,7 @@ class TestSecurityArchitectureV2Guidance:
 
     def test_mentions_new_gate_and_legacy_retirement(self, finalization_text):
         assert "control_subsection_coverage" in finalization_text
-        assert "Do not emit legacy §7.3.N auth-flow structure" in finalization_text
+        assert "Do not emit legacy §6.3.N auth-flow structure" in finalization_text
 
 
 class TestActorPhaseRuntimeContract:

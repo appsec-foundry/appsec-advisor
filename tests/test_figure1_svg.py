@@ -401,6 +401,136 @@ def test_deterministic_output():
     assert a == b
 
 
+# ---- application-tier stack label (derived, not hardcoded) ------------------
+def test_stack_label_detects_java_spring():
+    comps = [
+        {"name": "Auth Subsystem", "paths": ["src/main/java/**/config/SecurityConfig.java"]},
+        {"name": "Backend", "paths": ["src/main/java/**", "pom.xml"], "description": "Spring Boot app"},
+    ]
+    assert F._stack_label(comps) == "Java / Spring"
+
+
+def test_stack_label_framework_matrix():
+    cases = {
+        "Node / Express": [{"name": "api", "paths": ["package.json"], "description": "express server"}],
+        "Node.js": [{"name": "api", "paths": ["package.json", "tsconfig.json"]}],
+        "Python / Django": [{"name": "web", "description": "django app", "paths": ["manage.py"]}],
+        "Python": [{"name": "svc", "paths": ["requirements.txt"]}],
+        "Go": [{"name": "svc", "paths": ["go.mod", "main.go"]}],
+        "Java": [{"name": "svc", "paths": ["build.gradle"]}],
+    }
+    for expected, comps in cases.items():
+        assert F._stack_label(comps) == expected, expected
+
+
+def test_stack_label_none_without_signal():
+    # Language-agnostic paths (Dockerfile only) → no stack guess.
+    assert F._stack_label([{"name": "Container Build", "paths": ["Dockerfile", "Makefile"]}]) is None
+    assert F._stack_label([]) is None
+
+
+def test_application_band_uses_derived_stack_label():
+    # A Java/Spring model must render the derived label and NEVER the old
+    # hardcoded "Node / Express" default.
+    y, apd, tax = _model(app=2)
+    for c in y["components"]:
+        if c["tier"] == "application":
+            c["paths"] = ["src/main/java/**", "pom.xml"]
+            c["description"] = "Spring Boot service"
+    svg = F.build_figure1_svg(y, apd, tax)
+    assert "Java / Spring" in svg
+    assert "Node / Express" not in svg
+
+
+def test_application_band_bare_title_without_stack_signal():
+    # No stack signal (synthetic model has no paths) → bare "Application Tier".
+    svg = _build(app=2, exposed=("app0",))
+    assert "Application Tier" in svg
+    assert "Node / Express" not in svg
+
+
+# ---- ghost bands: empty canonical tiers ------------------------------------
+def _app_only(*, stores=True, server_rendered=True):
+    """A single-tier monolith: only application components. Client and Data are
+    empty canonical tiers → candidates for ghost rendering."""
+    desc = "Spring Boot backend" + ("; Thymeleaf server-rendered views" if server_rendered else "")
+    comps = [
+        {
+            "id": "svc",
+            "name": "Backend",
+            "tier": "application",
+            "paths": ["src/main/java/**", "pom.xml"],
+            "description": desc,
+        }
+    ]
+    threats = [
+        {"id": "T-001", "component": "svc", "risk": "Critical"},
+        {"id": "T-002", "component": "svc", "risk": "High"},
+    ]
+    tb = [{"from": "external", "to": "svc", "name": "Public to app"}]
+    if stores:
+        tb += [
+            {"from": "svc", "to": "h2-database", "name": "App to H2"},
+            {"from": "svc", "to": "sqlite-legacy-auth", "name": "App to SQLite"},
+        ]
+    yaml_data = {"components": comps, "threats": threats, "trust_boundaries": tb, "meta": {}}
+    apd = {
+        "attack_paths": [{"class": "sqli", "actor": "internet-anon", "target": "application", "findings": ["T-001"]}]
+    }
+    tax = {
+        "glyph_sequence": ["①"],
+        "classes": [
+            {
+                "id": "sqli",
+                "short_label": "SQLi",
+                "default_actor": "internet-anon",
+                "default_target_tier": "application",
+            }
+        ],
+    }
+    return yaml_data, apd, tax
+
+
+def test_empty_client_and_data_render_as_ghost():
+    svg = F.build_figure1_svg(*_app_only())
+    # reading order preserved — the tier titles are still present …
+    assert "Client Tier" in svg and "Data Tier" in svg
+    # … but as dimmed ghost bands that NAME why the tier is absent.
+    assert "no distinct client tier — server-rendered" in svg
+    assert "data embedded in-process (H2, SQLite) — no separate tier" in svg
+    assert F._GHOST_STROKE in svg  # dimmed styling actually emitted
+    assert "Node / Express" not in svg
+
+
+def test_ghost_flow_hops_are_unlabelled():
+    # Every legitimate-flow gap touches a ghost tier here → no "uses"/"API calls"
+    # label may imply a boundary crossing that does not exist.
+    svg = F.build_figure1_svg(*_app_only())
+    assert "API calls" not in svg
+
+
+def test_client_ghost_plain_when_not_server_rendered():
+    svg = F.build_figure1_svg(*_app_only(server_rendered=False))
+    assert "no distinct client tier" in svg
+    assert "server-rendered" not in svg
+
+
+def test_data_ghost_generic_without_known_store():
+    reason = F._ghost_reason("data", [], [{"from": "svc", "to": "external-urls"}])
+    assert reason == "no separate data tier"
+    reason_db = F._ghost_reason("data", [], [{"from": "svc", "to": "orders-database"}])
+    assert reason_db == "data embedded in-process — no separate tier"
+
+
+def test_populated_tiers_are_not_ghosted():
+    # The normal 4-tier model (client + data components present) must keep solid
+    # bands and normal flow labels — ghosting is strictly for empty tiers.
+    svg = _build(app=2, exposed=("app0",))
+    assert "no distinct client tier" not in svg
+    assert "no separate data tier" not in svg
+    assert "embedded in-process" not in svg
+
+
 # ---- WeasyPrint smoke (PDF path) — skipped if not installed -----------------
 def test_weasyprint_renders_without_error(tmp_path):
     wp = pytest.importorskip("weasyprint")

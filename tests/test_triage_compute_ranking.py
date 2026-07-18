@@ -218,6 +218,29 @@ def test_refuted_keystone_not_elevated() -> None:
     assert any("elevated:keystone" in r for r in reasons2)
 
 
+def test_ambiguous_keystone_not_elevated() -> None:
+    """RC.P2a: an *ambiguous* verdict (evidence pointer could not be confirmed
+    against real code — e.g. it lands on a package/import line) must be treated
+    like refuted for chain elevation: no promotion, raw risk preserved.
+    """
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+
+    caps = {"contributor_cap": {"default": "High"}}
+    criteria = {"never_individual_critical": [], "always_critical_cwes": [], "conditional_critical": {}}
+
+    ambiguous = {"risk": "High", "evidence_check": "ambiguous", "primary_cwe": "CWE-89"}
+    eff, reasons = tcr._compute_effective(ambiguous, "keystone", 4, caps, criteria, 2)
+    assert eff == "High", f"ambiguous keystone must not elevate; got {eff}"
+    assert any("suppressed:evidence_ambiguous" in r for r in reasons)
+
+    # Contributor role: an ambiguous finding is not elevated by the chain either.
+    amb_contrib = {"risk": "Medium", "evidence_check": "ambiguous", "primary_cwe": "CWE-89"}
+    eff_c, reasons_c = tcr._compute_effective(amb_contrib, "contributor", 4, caps, criteria, 2)
+    assert eff_c == "Medium"
+    assert any("suppressed:evidence_ambiguous(contributor)" in r for r in reasons_c)
+
+
 def test_always_critical_cwe_promotes_under_context() -> None:
     """always_critical_cwes must PROMOTE an under-scored finding to Critical
     when the required context holds — e.g. a CWE-915 mass assignment reaching
@@ -931,3 +954,86 @@ def test_write_outputs_creates_flags_when_absent(tmp_path: Path):
     flags = json.loads((tmp_path / ".triage-flags.json").read_text())
     assert flags["version"] == 2
     assert flags["ranking"]["computed_by"].startswith("triage_compute_ranking.py")
+
+
+def test_design_risk_weakness_enters_findings_ranked(tmp_path: Path) -> None:
+    """P1.4 / §9.3 — a design-risk weakness (zero confirmed instances) is folded
+    into findings_ranked as a W-NNN entry so it can top the ranking."""
+    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+
+    data = _minimal_yaml(
+        [
+            {
+                "t_id": "T-001",
+                "component": "api",
+                "stride": "Tampering",
+                "title": "SQL Injection (a.ts:1)",
+                "scenario": "x" * 12,
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-89",
+                "evidence": [{"file": "a.ts", "line": 1}],
+            },
+        ]
+    )
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "severity": "Critical",
+            "severity_basis": "design-risk",
+            "statement": "no central validation",
+            "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
+            "affected_components": ["api", "search", "admin"],
+        }
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+    ranking = tcr.compute_ranking(tmp_path, PLUGIN_ROOT)
+    ranked = ranking["views"]["top_findings"]["findings_ranked"]
+    w = [r for r in ranked if r["id"] == "W-001"]
+    assert w, "design-risk weakness missing from findings_ranked"
+    assert w[0]["severity_basis"] == "design-risk"
+    assert w[0]["effective_severity"] == "Critical"
+    # A design-risk Critical outranks a confirmed High (§9.3 — may be #1).
+    assert w[0]["rank"] == 1, f"expected design-risk Critical at #1, got {w[0]['rank']}"
+
+
+def test_confirmed_weakness_not_double_ranked(tmp_path: Path) -> None:
+    """A `confirmed`-basis weakness is represented by its instances already —
+    it must NOT be added as a separate W-NNN ranked entry."""
+    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+
+    data = _minimal_yaml(
+        [
+            {
+                "t_id": "T-001",
+                "component": "api",
+                "stride": "Tampering",
+                "title": "SQL Injection (a.ts:1)",
+                "scenario": "x" * 12,
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High",
+                "cwe": "CWE-89",
+                "evidence": [{"file": "a.ts", "line": 1}],
+            },
+        ]
+    )
+    data["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "severity": "High",
+            "severity_basis": "confirmed",
+            "statement": "folded",
+            "observable_backing": {"absent_control_signal": [{"hit_count": 0}]},
+            "instances": [{"id": "T-001", "basis": "confirmed-exploitable"}],
+        }
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+    ranking = tcr.compute_ranking(tmp_path, PLUGIN_ROOT)
+    ranked = ranking["views"]["top_findings"]["findings_ranked"]
+    assert not any(r["id"] == "W-001" for r in ranked)

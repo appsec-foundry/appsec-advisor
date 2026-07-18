@@ -13,12 +13,12 @@
 #   cwe_pillar        — CWE-1000 Research Concepts pillar (canonical)
 #   cwe_canonical     — the narrowest CWE that still covers the whole pattern
 #   cwe_top25_members — list of child CWEs in CWE Top 25 2024 (executive signal)
-#   owasp_top10_2021  — mapping to OWASP Top 10 2021 (A01–A10)
+#   owasp_top10_2025  — mapping to OWASP Top 10 2025 (A01–A10)
 #   owasp_api2023     — OPTIONAL cross-reference to OWASP API Security Top 10
 #                       2023 (API1–API10). Pure label field — does NOT drive
 #                       coverage-gap injection (`scripts/coverage_checks.py`
 #                       reads only `owasp-top10-cwes.yaml`). Renderers can
-#                       surface it next to `owasp_top10_2021` in §8 headers.
+#                       surface it next to `owasp_top10_2025` in §8 headers.
 #   owasp_asvs        — chapter in OWASP ASVS v4.x
 #   typical_findings  — example concrete findings that belong in this category
 #                       (used by STRIDE-analyzer as hints)
@@ -48,7 +48,7 @@ categories:
     cwe_pillar: CWE-707
     cwe_canonical: CWE-74
     cwe_top25_members: [CWE-79, CWE-89, CWE-94]
-    owasp_top10_2021: A03
+    owasp_top10_2025: A05
     owasp_asvs: V5.3
     typical_findings:
       - SQL injection (raw query interpolation)
@@ -68,7 +68,7 @@ categories:
     cwe_pillar: CWE-693
     cwe_canonical: CWE-287
     cwe_top25_members: [CWE-287, CWE-306]
-    owasp_top10_2021: A07
+    owasp_top10_2025: A07
     owasp_asvs: V2.1
     typical_findings:
       - JWT alg:none accepted
@@ -94,7 +94,7 @@ categories:
     cwe_pillar: CWE-693
     cwe_canonical: CWE-310  # legacy class but widely understood
     cwe_top25_members: [CWE-798]
-    owasp_top10_2021: A02
+    owasp_top10_2025: A04
     owasp_asvs: V6.2
     typical_findings:
       - MD5 / SHA-1 for password hashing
@@ -114,7 +114,7 @@ categories:
     cwe_pillar: CWE-664
     cwe_canonical: CWE-922
     cwe_top25_members: []
-    owasp_top10_2021: A02
+    owasp_top10_2025: A04
     owasp_asvs: V3.4
     typical_findings:
       - JWT in localStorage
@@ -131,7 +131,7 @@ categories:
     cwe_pillar: CWE-707
     cwe_canonical: CWE-94
     cwe_top25_members: [CWE-94, CWE-502]
-    owasp_top10_2021: A08
+    owasp_top10_2025: A08
     owasp_asvs: V5.5
     typical_findings:
       - notevil / vm2 sandbox escape
@@ -151,7 +151,7 @@ categories:
     cwe_pillar: CWE-284
     cwe_canonical: CWE-284
     cwe_top25_members: [CWE-862, CWE-863, CWE-639]
-    owasp_top10_2021: A01
+    owasp_top10_2025: A01
     owasp_api2023: [API1, API3, API5]   # BOLA, BOPLA, BFLA
     owasp_asvs: V4.1
     typical_findings:
@@ -169,7 +169,7 @@ categories:
     cwe_pillar: CWE-664
     cwe_canonical: CWE-434
     cwe_top25_members: [CWE-22, CWE-434]
-    owasp_top10_2021: A04
+    owasp_top10_2025: A06
     owasp_asvs: V12.1
     typical_findings:
       - ZIP Slip / archive path traversal
@@ -188,7 +188,7 @@ categories:
     cwe_pillar: CWE-664
     cwe_canonical: CWE-918
     cwe_top25_members: [CWE-918]
-    owasp_top10_2021: A10
+    owasp_top10_2025: A01
     owasp_asvs: V12.6
     typical_findings:
       - Profile image URL fetched without allowlist
@@ -207,7 +207,7 @@ categories:
     cwe_canonical: CWE-306
     owasp_api2023: [API5, API8]   # BFLA, Security Misconfiguration
     cwe_top25_members: [CWE-306]
-    owasp_top10_2021: A01
+    owasp_top10_2025: A01
     owasp_asvs: V4.1
     typical_findings:
       - /ftp directory listing
@@ -228,7 +228,7 @@ categories:
     cwe_pillar: CWE-693
     cwe_canonical: CWE-287
     cwe_top25_members: [CWE-287]
-    owasp_top10_2021: A07
+    owasp_top10_2025: A07
     owasp_asvs: V2.1
     typical_findings:
       - Implicit flow (no PKCE)
@@ -258,7 +258,7 @@ categories:
     cwe_pillar: CWE-707
     cwe_canonical: CWE-79
     cwe_top25_members: [CWE-79]
-    owasp_top10_2021: A03
+    owasp_top10_2025: A05
     owasp_asvs: V5.2
     typical_findings:
       - DomSanitizer.bypassSecurityTrustHtml on user input
@@ -277,7 +277,7 @@ categories:
     cwe_pillar: CWE-664
     cwe_canonical: CWE-400
     cwe_top25_members: []
-    owasp_top10_2021: A04
+    owasp_top10_2025: A06
     owasp_asvs: V11.1
     typical_findings:
       - No rate limiting on auth endpoints
@@ -296,7 +296,7 @@ categories:
     cwe_pillar: CWE-284
     cwe_canonical: CWE-306
     cwe_top25_members: [CWE-306]
-    owasp_top10_2021: A01
+    owasp_top10_2025: A01
     owasp_asvs: V13.4
     typical_findings:
       - "`Socket.IO` upgrade without JWT"
@@ -314,7 +314,7 @@ categories:
     cwe_pillar: CWE-710
     cwe_canonical: CWE-1104
     cwe_top25_members: []
-    owasp_top10_2021: A06
+    owasp_top10_2025: A03
     owasp_asvs: V14.2
     typical_findings:
       - Floating base image tag (no digest)
@@ -332,7 +332,7 @@ categories:
     cwe_pillar: CWE-693
     cwe_canonical: CWE-352
     cwe_top25_members: [CWE-352]
-    owasp_top10_2021: A01
+    owasp_top10_2025: A01
     owasp_asvs: V4.2
     typical_findings:
       - Password change without CSRF token
@@ -349,7 +349,7 @@ categories:
     cwe_pillar: CWE-710
     cwe_canonical: CWE-778
     cwe_top25_members: []
-    owasp_top10_2021: A09
+    owasp_top10_2025: A09
     owasp_asvs: V7.2
     typical_findings:
       - Auth events (login / logout / 2FA) not logged
@@ -366,7 +366,7 @@ categories:
     cwe_pillar: CWE-710
     cwe_canonical: CWE-209
     cwe_top25_members: []
-    owasp_top10_2021: A05
+    owasp_top10_2025: A02
     owasp_asvs: V7.4
     typical_findings:
       - Stack traces on 500 responses
@@ -382,7 +382,7 @@ categories:
     cwe_pillar: CWE-664
     cwe_canonical: CWE-601
     cwe_top25_members: []
-    owasp_top10_2021: A01
+    owasp_top10_2025: A01
     owasp_asvs: V5.1
     typical_findings:
       - /redirect?to=<attacker>
@@ -402,7 +402,7 @@ categories:
     cwe_pillar: CWE-284
     cwe_canonical: CWE-639
     cwe_top25_members: [CWE-639]
-    owasp_top10_2021: A01
+    owasp_top10_2025: A01
     owasp_api2023: [API1, API3]
     owasp_asvs: V4.3
     # NOTE (documentation-only, no current consumer): signal_required and
@@ -437,6 +437,7 @@ categories:
 
 cwe_to_th:
   CWE-79: [TH-11, TH-01]         # XSS -> primary XSS, secondary Injection
+  CWE-116: [TH-11, TH-01]        # Improper Output Encoding/Escaping -> XSS primary
   CWE-89: [TH-01]                # SQL Injection
   CWE-94: [TH-05, TH-01]         # Code Injection -> RCE primary, Injection secondary
   CWE-502: [TH-05]               # Deserialization

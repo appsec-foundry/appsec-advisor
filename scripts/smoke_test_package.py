@@ -81,6 +81,25 @@ def _registered_hook_ids(root: Path) -> set[str]:
     return ids
 
 
+def _event_commands(root: Path) -> dict:
+    """Return {event: set(commands)} from the built hooks.json."""
+    hooks_path = root / "hooks" / "hooks.json"
+    out: dict = {}
+    if not hooks_path.is_file():
+        return out
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    for event, entries in (data.get("hooks") or {}).items():
+        cmds: set[str] = set()
+        for outer in entries or []:
+            if not isinstance(outer, dict):
+                continue
+            for hook in outer.get("hooks") or []:
+                if isinstance(hook, dict) and isinstance(hook.get("command"), str):
+                    cmds.add(hook["command"])
+        out[event] = cmds
+    return out
+
+
 def check_plugin_identity(root: Path, name: str) -> None:
     plugin_path = root / ".claude-plugin" / "plugin.json"
     if not plugin_path.is_file():
@@ -150,6 +169,33 @@ def check_surface_manifest(root: Path) -> None:
     if "security-coach" in (hooks.get("removed") or []):
         if (root / "hooks" / "steering_keywords.json").exists():
             _die("package surface removed security-coach but steering_keywords.json is still present")
+
+    mcp = data.get("mcp_servers") or {}
+    mcp_path = root / ".mcp.json"
+    declared: set[str] = set()
+    if mcp_path.is_file():
+        declared = set(json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {})
+    for server in mcp.get("included") or []:
+        if server not in declared:
+            _die(f"package surface says MCP server {server!r} is included, but it is not in .mcp.json")
+    for server in mcp.get("removed") or []:
+        if server in declared:
+            _die(f"package surface says MCP server {server!r} is removed, but it is present in .mcp.json")
+
+    # Org-declared hooks: each must be merged into hooks.json under its event,
+    # and the referenced script must be packaged under org-profile/.
+    event_commands = _event_commands(root)
+    for hook in hooks.get("org") or []:
+        hook_id = hook.get("id")
+        event = hook.get("event")
+        command = hook.get("command")
+        if command not in event_commands.get(event, set()):
+            _die(f"package surface lists org hook {hook_id!r} for {event}, but it is not in hooks.json")
+        tokens = [t for t in (command or "").split() if "org-profile/" in t]
+        if tokens:
+            rel = tokens[0].split("org-profile/", 1)[1]
+            if not (root / "org-profile" / rel).is_file():
+                _die(f"org hook {hook_id!r} references {rel!r}, which is missing under org-profile/")
 
 
 def check_artifact_hygiene(root: Path) -> None:

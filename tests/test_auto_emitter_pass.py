@@ -27,14 +27,15 @@ SKILL_IMPL = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 # The exact emitter sequence lifted from the inline block — order is contractual
 # (comments in the script explain each "runs AFTER/BEFORE" dependency).
 EXPECTED_SEQUENCE = [
+    "validate_evidence_lines.py",
     "emit_meta_findings.py",
     "emit_review_mitigations.py",
     "emit_config_scan_mitigations.py",
     "emit_finding_fix_mitigations.py",
     "emit_clean_finding_titles.py",
     "emit_general_mitigation_titles.py",
+    "hydrate_mitigation_details.py",
     "sanitize_perimeter_claims.py",
-    "validate_evidence_lines.py",
     "reclassify_components.py",
     "enforce_control_taxonomy.py",
     "emit_auth_coverage.py",
@@ -100,6 +101,36 @@ def test_smoke_run_logs_markers_and_preserves_yaml(tmp_path):
     assert "AUTO_EMITTER_START" in log and "AUTO_EMITTER_END" in log
     # yaml is still loadable — no emitter corrupted it.
     assert yaml.safe_load((tmp_path / "threat-model.yaml").read_text(encoding="utf-8")) is not None
+
+
+def test_refuted_candidate_is_removed_before_emitters_derive_links(tmp_path):
+    """The active YAML never retains a refuted finding or its review card."""
+    yaml = pytest.importorskip("yaml")
+    data = yaml.safe_load(MINIMAL_YAML)
+    data["threats"] = [
+        {
+            "id": "T-001",
+            "title": "Refuted SQL injection",
+            "risk": "High",
+            "cwe": "CWE-89",
+            "source": "stride",
+            "component": "api",
+            "evidence": [{"file": "missing.ts", "line": 1}],
+            "evidence_check": "refuted",
+        }
+    ]
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    res = subprocess.run(
+        ["bash", str(SCRIPT), str(tmp_path), str(tmp_path), str(PLUGIN_ROOT), "false"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert res.returncode == 0, res.stderr
+    written = yaml.safe_load((tmp_path / "threat-model.yaml").read_text(encoding="utf-8"))
+    assert written["threats"] == []
+    assert not any(m.get("auto_source") == "evidence-check-refuted" for m in written["mitigations"])
 
 
 def test_smoke_dry_run_is_noop(tmp_path):

@@ -29,7 +29,7 @@
       "enum": ["stage1", "stage2", "stage3", "stage4", "complete"]
     },
     "runtime": {
-      "enum": ["thin-full", "legacy"]
+      "enum": ["thin-full", "thin-rerender", "legacy"]
     },
     "instruction_file": {
       "type": "string",
@@ -123,6 +123,7 @@
           "reasoning_model",
           "rebuild",
           "recon_scanner_model",
+          "renderer_model",
           "refresh_actor_discovery",
           "repo_root",
           "requirements_url_override",
@@ -148,7 +149,8 @@
           "write_pdf",
           "write_pentest_tasks",
           "write_sarif",
-          "write_yaml"
+          "write_yaml",
+          "abuse_verifier_model"
         ]
       },
       "properties": {

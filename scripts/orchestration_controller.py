@@ -40,6 +40,7 @@ from event_log import format_line  # noqa: E402
 
 ACTION_SCHEMA = PLUGIN_ROOT / "schemas" / "orchestration-action.schema.json"
 THIN_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
+THIN_RERENDER_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
 LEGACY_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 
 _FULL_INTERMEDIATE_NAMES = {
@@ -110,6 +111,7 @@ _REBUILD_GLOBS = (
     "threat-model-*.pdf",
     "threat-model-*.html",
     "threat-model-*.figure*.svg",
+    "pentest-tasks-*.yaml",
     ".stride-*.json",
     ".merge-*.json",
 )
@@ -138,6 +140,8 @@ _DISPATCH_KEYS = (
     "stride_model",
     "triage_model",
     "merger_model",
+    "renderer_model",
+    "abuse_verifier_model",
     "context_resolver_model",
     "recon_scanner_model",
     "qa_routine_model",
@@ -236,17 +240,19 @@ def _resolve(argv: list[str]) -> dict[str, Any]:
 
 
 def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
-    thin = (
+    thin_eligible = (
         os.environ.get("APPSEC_THIN_ORCHESTRATOR") != "0"
-        and cfg.get("mode") in {"full", "rebuild"}
         and not cfg.get("dry_run")
         and not cfg.get("resume")
-        and not cfg.get("rerender")
         and not cfg.get("max_wall_time_seconds")
         and not cfg.get("max_cost_usd")
         and os.environ.get("APPSEC_LIVE_PHASE") != "1"
     )
-    return ("thin-full", THIN_RUNTIME) if thin else ("legacy", LEGACY_RUNTIME)
+    if thin_eligible and cfg.get("mode") in {"full", "rebuild"} and not cfg.get("rerender"):
+        return "thin-full", THIN_RUNTIME
+    if thin_eligible and cfg.get("mode") == "rerender":
+        return "thin-rerender", THIN_RERENDER_RUNTIME
+    return "legacy", LEGACY_RUNTIME
 
 
 def route(argv: list[str]) -> dict[str, Any]:
@@ -254,6 +260,8 @@ def route(argv: list[str]) -> dict[str, Any]:
     runtime, instruction = _runtime_for(cfg)
     if runtime == "thin-full":
         reason = "default full/rebuild compact runtime selected (opt out with APPSEC_THIN_ORCHESTRATOR=0)"
+    elif runtime == "thin-rerender":
+        reason = "compact rerender runtime selected (opt out with APPSEC_THIN_ORCHESTRATOR=0)"
     elif (
         cfg.get("mode") in {"full", "rebuild"}
         and not cfg.get("dry_run")
@@ -682,9 +690,130 @@ def _dispatch_values(
     return values
 
 
+def _missing_permissions_action(cfg: dict[str, Any], repo_root: Path, output_dir: Path) -> dict[str, Any] | None:
+    """Return the fixed permission abort action, if target permissions are missing."""
+    required_raw = check_permissions.load_required()
+    required = [
+        {**item, "entry": check_permissions.expand_entry(item["entry"], repo_root, output_dir, PLUGIN_ROOT)}
+        for item in required_raw
+    ]
+    by_scope = check_permissions.effective_allow(repo_root)
+    all_granted = [rule for scope_rules in by_scope.values() for rule in scope_rules]
+    missing_perms = check_permissions.diff_required(required, all_granted)
+    if not missing_perms:
+        return None
+    entries = "\n".join(f"  {item['entry']}" for item in missing_perms)
+    return {
+        "schema_version": 1,
+        "action": "abort",
+        "mode": cfg.get("mode", "full"),
+        "reason": (
+            f"Missing required Claude Code permissions for this repo.\n"
+            f"Run:  make setup-target REPO={repo_root}\n"
+            f"then restart Claude Code and re-run the skill.\n\n"
+            f"Missing entries:\n{entries}"
+        ),
+        "exit_code": 2,
+    }
+
+
+def _rerender_missing_artifacts(output_dir: Path) -> list[str]:
+    """List the Stage-1 artifacts required to safely re-render an assessment."""
+    missing = [
+        name
+        for name in ("threat-model.yaml", ".threats-merged.json", ".triage-flags.json")
+        if not (output_dir / name).is_file()
+    ]
+    fragment_dir = output_dir / ".fragments"
+    try:
+        fragment_count = sum(path.is_file() for path in fragment_dir.iterdir())
+    except OSError:
+        fragment_count = 0
+    if fragment_count < 3:
+        missing.append(".fragments/(>=3)")
+    return missing
+
+
+def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Prepare the compact rerender path without touching Stage-1 artifacts."""
+    output_dir = Path(cfg["output_dir"]).resolve()
+    repo_root = Path(cfg["repo_root"]).resolve()
+    cfg["output_dir"] = str(output_dir)
+    cfg["repo_root"] = str(repo_root)
+
+    permission_abort = _missing_permissions_action(cfg, repo_root, output_dir)
+    if permission_abort:
+        return permission_abort
+
+    missing = _rerender_missing_artifacts(output_dir)
+    if missing:
+        return {
+            "schema_version": 1,
+            "action": "abort",
+            "mode": "rerender",
+            "reason": (
+                "--rerender needs an existing assessment to re-render. Missing under "
+                f"{output_dir}: {', '.join(missing)}. Run a full assessment first; "
+                "for source-code changes use --incremental or --full."
+            ),
+            "exit_code": 2,
+        }
+
+    cfg["run_id"] = (
+        os.environ.get("CLAUDE_CODE_SESSION_ID")
+        or os.environ.get("CLAUDE_SESSION_ID")
+        or f"run-{int(time.time())}-{os.getpid()}"
+    )
+    try:
+        _run_script("check_state.py", [str(output_dir), "--auto-clean"])
+        lock = _run_script(
+            "acquire_lock.py",
+            [str(output_dir / ".appsec-lock"), f"--run-id={cfg['run_id']}"],
+        )
+        config_path = _persist_config(cfg, output_dir)
+        _activate_markers(cfg)
+        _run_script(
+            "acquire_lock.py",
+            [
+                str(output_dir / ".appsec-lock"),
+                f"--run-id={cfg['run_id']}",
+                "--heartbeat",
+                "--phase=skill",
+                "--step=stage2-dispatch",
+            ],
+        )
+    except (ControllerError, OSError) as exc:
+        try:
+            (output_dir / ".appsec-lock").unlink()
+        except OSError:
+            pass
+        _deactivate_markers()
+        if isinstance(exc, ControllerError):
+            raise
+        raise ControllerError(f"rerender preflight filesystem operation failed: {exc}") from exc
+
+    first_lock_line = (lock.stdout or "").strip().splitlines()
+    receipts = [first_lock_line[0] if first_lock_line else "lock acquired", "rerender artifacts verified"]
+    _append_event(output_dir, "ORCHESTRATION_READY", "mode=rerender runtime=thin-rerender")
+    return {
+        "schema_version": 1,
+        "action": "dispatch_agent",
+        "mode": "rerender",
+        "stage": "stage2",
+        "instruction_file": str(THIN_RERENDER_RUNTIME),
+        "preflight_status": str(cfg.get("preflight_status") or ""),
+        "run_plan": "Re-rendering existing Stage-1 artifacts; threat analysis is skipped.",
+        "config_path": str(config_path),
+        "dispatch_values": _dispatch_values(cfg),
+        "receipts": receipts,
+    }
+
+
 def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     cfg = _resolve(argv)
     runtime, _ = _runtime_for(cfg)
+    if runtime == "thin-rerender":
+        return _prepare_rerender(cfg)
     if runtime != "thin-full":
         raise ControllerError(
             "compact prepare supports only non-dry full/rebuild runs; route this invocation through the legacy runtime"
@@ -697,28 +826,9 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
 
     # Fail fast if required CC permissions are missing rather than letting the
     # run stall on interactive prompts mid-flight.
-    required_raw = check_permissions.load_required()
-    required = [
-        {**r, "entry": check_permissions.expand_entry(r["entry"], repo_root, output_dir, PLUGIN_ROOT)}
-        for r in required_raw
-    ]
-    by_scope = check_permissions.effective_allow(repo_root)
-    all_granted = [rule for scope_rules in by_scope.values() for rule in scope_rules]
-    missing_perms = check_permissions.diff_required(required, all_granted)
-    if missing_perms:
-        entries = "\n".join(f"  {m['entry']}" for m in missing_perms)
-        return {
-            "schema_version": 1,
-            "action": "abort",
-            "mode": cfg.get("mode", "full"),
-            "reason": (
-                f"Missing required Claude Code permissions for this repo.\n"
-                f"Run:  make setup-target REPO={repo_root}\n"
-                f"then restart Claude Code and re-run the skill.\n\n"
-                f"Missing entries:\n{entries}"
-            ),
-            "exit_code": 2,
-        }
+    permission_abort = _missing_permissions_action(cfg, repo_root, output_dir)
+    if permission_abort:
+        return permission_abort
 
     # Stable per-run token so a Stage-1 agent's own lock acquisition can
     # re-acquire this controller-held lock re-entrantly instead of
@@ -961,6 +1071,23 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
         except (OSError, subprocess.SubprocessError):
             return False
 
+    # Complete the canonical mitigation cards before any fragment or report is
+    # rendered. The normal skill path already ran these idempotent helpers; the
+    # thin-runtime recovery path can reach this point after a turn cut-off, so
+    # it must not bypass the developer-actionability contract.
+    if not _run(str(SCRIPT_DIR / "emit_general_mitigation_titles.py"), str(output_dir)):
+        return False
+    # Scanner findings carry only a one-line mitigation_title; synthesise a
+    # structured remediation block (steps + verification) from the check library
+    # before hydration so the P1/P2 quality gate is satisfiable on the recovery
+    # path too (mirrors the auto-emitter pass ordering).
+    if not _run(str(SCRIPT_DIR / "backfill_scanner_remediation.py"), str(output_dir)):
+        return False
+    if not _run(str(SCRIPT_DIR / "hydrate_mitigation_details.py"), str(output_dir)):
+        return False
+    if not _run(str(SCRIPT_DIR / "validate_mitigation_quality.py"), str(output_dir)):
+        return False
+
     # Mechanical structural fragments (idempotent backstop), then the strict
     # compose, then the prose-fix + autofix tail (AGENTS.md "Critical ordering").
     _run(
@@ -988,6 +1115,55 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
     return md.is_file()
+
+
+def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
+    """Deterministically produce the slug-stamped deliverable copy set.
+
+    ``--slug`` asks for a postfix-stamped, collision-proof copy of the
+    deliverables (``threat-model-<slug>.md`` / ``.yaml`` / ``.figure*.svg`` …).
+    In the skill body that stamp is the very last, LLM-driven Bash block and it
+    guards on an in-memory ``$SLUG`` shell variable — neither the variable nor
+    the "run this trailing step" intent survives a context compaction, so a
+    resumed run silently shipped the canonical files with no stamped set
+    (2026-07-15 juice-shop). Anchoring the stamp here, in the mandatory
+    re-entrant ``next`` gate that reads the durable on-disk config, makes it
+    deterministic: any run that reaches ``action=complete`` gets the stamped
+    copies regardless of compaction. Idempotent (re-stamps only when the
+    canonical report is newer than the stamped copy) and fail-safe (never
+    raises into ``next``'s JSON output). This gate fires before the skill's
+    post-summary cleanup, so ``.skill-config.json`` is still on disk; PDF/HTML
+    exported by the skill after this gate remain the trailing block's job.
+    """
+    slug = str(cfg.get("slug") or "").strip()
+    if not slug:
+        return
+    md = output_dir / "threat-model.md"
+    if not md.is_file():
+        return
+    stamped = output_dir / f"threat-model-{slug}.md"
+    try:
+        if stamped.is_file() and stamped.stat().st_mtime >= md.stat().st_mtime:
+            return  # already stamped from the current report — nothing to do
+    except OSError:
+        pass
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_DIR / "stamp_threat_model.py"),
+                "--output-dir",
+                str(output_dir),
+                "--slug",
+                slug,
+            ],
+            cwd=str(SCRIPT_DIR),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def next_action(output_dir: Path) -> dict[str, Any]:
@@ -1037,6 +1213,11 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             "stage": "stage4",
             "instruction_file": str(LEGACY_RUNTIME),
         }
+    # Deterministic slug-stamp backstop: the run is complete, so emit the
+    # postfix-stamped deliverable copy set here rather than relying on the
+    # trailing LLM-driven skill block (which a compaction-resumed orchestrator
+    # can skip, and whose $SLUG guard does not survive compaction anyway).
+    _stamp_if_configured(output_dir, cfg)
     return {
         **common,
         "action": "complete",

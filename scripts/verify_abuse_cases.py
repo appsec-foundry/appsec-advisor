@@ -27,6 +27,28 @@ from pathlib import Path
 _VALID_STEP_VERDICTS = {"confirmed", "blocked", "inconclusive"}
 
 
+def _is_untouched_preseed_step(step: dict) -> bool:
+    """True when a single step is an untouched write-first pre-seed.
+
+    The verifier pre-seeds every step ``inconclusive`` with an empty evidence
+    ``excerpt``, then MUST re-write the step with a concrete ``reason`` (and, for
+    a confirmed/blocked step, a real excerpt) as it investigates. A step that is
+    STILL ``inconclusive`` AND carries no non-empty ``reason`` AND no non-empty
+    ``excerpt`` is therefore one the agent never re-wrote — the turn ceiling hit
+    before it recorded its finding (AC-T-002 step 1 on the 2026-07-15 juice-shop
+    run: the verifier had determined ``address.ts:11`` was protected by
+    ``appendUserId()`` but never wrote the verdict). All three conditions must
+    hold so a legitimately-undecided step (which carries a reason) is never
+    mistaken for an untouched pre-seed.
+    """
+    if (step.get("verdict") or "") != "inconclusive":
+        return False
+    if (step.get("reason") or "").strip():
+        return False
+    excerpt = ((step.get("evidence") or {}).get("excerpt") or "").strip()
+    return not excerpt
+
+
 def _is_unfinalized_preseed(verdict: dict) -> bool:
     """True when a verdict file is an untouched write-first pre-seed.
 
@@ -46,6 +68,22 @@ def _is_unfinalized_preseed(verdict: dict) -> bool:
     if any((s.get("verdict") or "") != "inconclusive" for s in steps):
         return False
     return not any((s.get("reason") or "").strip() for s in steps)
+
+
+def _unverified_preseed_steps(verdict: dict) -> list:
+    """Step numbers that are untouched pre-seeds within a PARTIALLY-verified file.
+
+    Complements `_is_unfinalized_preseed` (which flags a file where EVERY step is
+    an untouched pre-seed). A verifier that confirmed some steps then hit the turn
+    ceiling leaves a MIX — decided step(s) plus untouched pre-seed step(s) — which
+    the whole-file check misses because one decided step makes it return False
+    (AC-T-001 on the 2026-07-15 juice-shop run: step 1 confirmed, steps 2-3
+    untouched). Such a chain would otherwise render as if fully verified. Returns
+    the untouched step numbers so the merge can surface a partial-finalization
+    signal; empty for a genuinely finalized (or fully-unfinalized) file.
+    """
+    steps = verdict.get("step_verdicts") or []
+    return [s.get("step") for s in steps if _is_untouched_preseed_step(s)]
 
 
 def _candidates(output_dir: Path) -> list[str]:
@@ -78,8 +116,16 @@ def _load_verdict_files(output_dir: Path) -> dict[str, dict]:
                 s["verdict"] = "inconclusive"
         # Flag an untouched write-first pre-seed so downstream / operators can
         # tell "verifier never finalized" apart from a reasoned inconclusive.
+        # Whole-file (every step untouched) vs partial (some steps decided, some
+        # left as untouched pre-seed after a mid-chain turn-ceiling cut-off) are
+        # distinct signals — the partial case previously escaped detection.
         if _is_unfinalized_preseed(v):
             v["_not_finalized"] = True
+        else:
+            unverified = _unverified_preseed_steps(v)
+            if unverified:
+                v["_partially_finalized"] = True
+                v["_unverified_steps"] = unverified
         out[cid] = v
     return out
 
@@ -117,6 +163,21 @@ def cmd_merge(args: argparse.Namespace) -> int:
             + " verifier(s) did not finalize (untouched pre-seed, all steps "
             + "inconclusive with no reason): "
             + ", ".join(not_finalized)
+            + " — re-run or raise the verifier turn budget to verify these chains end-to-end\n"
+        )
+    partial = sorted(
+        v["abuse_case_id"] for v in verdicts.values() if v.get("_partially_finalized") and v.get("abuse_case_id")
+    )
+    if partial:
+        # A verifier that decided some steps then hit the turn ceiling leaves the
+        # remaining steps as untouched pre-seeds; the chain would otherwise render
+        # as fully verified. Surface it like the whole-file signal above.
+        sys.stderr.write(
+            "VERIFY: "
+            + str(len(partial))
+            + " verifier(s) partially finalized (some steps decided, others left as "
+            + "untouched pre-seed after a mid-chain cut-off): "
+            + ", ".join(partial)
             + " — re-run or raise the verifier turn budget to verify these chains end-to-end\n"
         )
     return 0

@@ -1,6 +1,6 @@
 ---
 name: appsec-architect-reviewer
-description: "INTERNAL — invoked by the create-threat-model skill as Stage 4 when --architect-review is set. Performs an architect-level review of threat-model.md, threat-model.yaml, and the Management Summary. Writes narrative findings to $OUTPUT_DIR/.architect-review.md and a structured status signal to $OUTPUT_DIR/.architect-status.json; when technical defects are found (broken Mermaid, missing per-Critical walkthrough, §7.3 missing per-flow blocks, etc.) also writes $OUTPUT_DIR/.architect-repair-plan.json so the skill can re-render from fragments. Never edits the threat model directly."
+description: "INTERNAL — invoked by the create-threat-model skill as Stage 4 when --architect-review is set. Performs an architect-level review of threat-model.md, threat-model.yaml, and the Management Summary. Writes narrative findings to $OUTPUT_DIR/.architect-review.md and a structured status signal to $OUTPUT_DIR/.architect-status.json; when technical defects are found (broken Mermaid, missing per-Critical walkthrough, §6.3 missing per-flow blocks, etc.) also writes $OUTPUT_DIR/.architect-repair-plan.json so the skill can re-render from fragments. Never edits the threat model directly."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 40
@@ -34,11 +34,11 @@ You are a **senior software architect** reviewing a completed threat model as if
 
 **Conditional Check 13:** config/IaC coverage review when config-scan artifacts or matching IaC files exist.
 
-**Conditional Check 14:** §7 narrative quality bar (post-render gate).
+**Conditional Check 14:** §6 narrative quality bar (post-render gate).
 
 **Conditional Check 15:** Actor Coverage — runs only when `.actors-resolved.json` exists (i.e. not in Quick-mode). Verifies that the Actor Layer configuration is consistent with the finding distribution.
 
-The output is advisory for **content** observations (insufficient mitigation realism, rating coherence, ROI) but **normative** for **technical defects** that break the `sections-contract.yaml` at an architect-visible level (missing attack walkthrough per Critical, §7.3 missing per-flow `####` blocks, broken Mermaid syntax that survived rendering, diagram labels contradicting the recon summary). When a technical defect is detected, the agent emits a structured repair plan so the skill can re-render from fragments — the agent itself still never edits the threat model.
+The output is advisory for **content** observations (insufficient mitigation realism, rating coherence, ROI) but **normative** for **technical defects** that break the `sections-contract.yaml` at an architect-visible level (missing attack walkthrough per Critical, §6.3 missing per-flow `####` blocks, broken Mermaid syntax that survived rendering, diagram labels contradicting the recon summary). When a technical defect is detected, the agent emits a structured repair plan so the skill can re-render from fragments — the agent itself still never edits the threat model.
 
 ## Preservation constraint — CRITICAL
 
@@ -430,15 +430,15 @@ Runs only when `.config-scan-findings.json` exists OR `config-iac-checks.yaml` h
 
 ---
 
-### Check 14 — §7 Security Architecture narrative quality bar
+### Check 14 — §6 Security Architecture narrative quality bar
 
-**Print now:** `[architect]   ↳ Check 14/15 — §7 narrative quality bar…`
+**Print now:** `[architect]   ↳ Check 14/15 — §6 narrative quality bar…`
 
 **Structural detection is deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.sec7_quality_bar.findings`.** The helper applies the mechanical rules from `shared/sec7-quality-bar-rules.md` (`sec7_v2_heading_set`, `sec7_v2_overview_table`, `sec7_v2_h4_labels`, `section7_h4_status`, `sec7_v2_no_legacy_flows`, `qb7_no_floskeln`, `qb7_concrete_openers`). **Do not re-derive these.** `skipped:true` ⇒ pre-render; skip the whole check.
 
-Your **only** residual job is the one judgment rule the helper cannot decide: **does any §7 block label a present-but-broken control "🔴 Missing" when it should be "🔴 Unsafe"** (control exists and is relied upon but is defeated — MD5 hash, raw-SQL path, hardcoded key, parser with unsafe options)? Read each H4 `**Status:**` badge once and check the verdict against the control's actual presence; emit `warning: sec7_unsafe_vs_missing` per mislabelled block. See `shared/sec7-quality-bar-rules.md` → "Verdict vocabulary" for the distinction.
+Your **only** residual job is the one judgment rule the helper cannot decide: **does any §6 block label a present-but-broken control "🔴 Missing" when it should be "🔴 Unsafe"** (control exists and is relied upon but is defeated — MD5 hash, raw-SQL path, hardcoded key, parser with unsafe options)? Read each H4 `**Status:**` badge once and check the verdict against the control's actual presence; emit `warning: sec7_unsafe_vs_missing` per mislabelled block. See `shared/sec7-quality-bar-rules.md` → "Verdict vocabulary" for the distinction.
 
-Reference (the deterministic rules, already applied by the helper): `shared/sec7-quality-bar-rules.md`. Scope is the rendered `threat-model.md` §7 body — H3 sections `### 7.1` through `### 7.13`, plus every H4 subcontrol under §7.2–§7.12.
+Reference (the deterministic rules, already applied by the helper): `shared/sec7-quality-bar-rules.md`. Scope is the rendered `threat-model.md` §6 body — H3 sections `### 6.1` through `### 6.13`, plus every H4 subcontrol under §6.2–§6.12.
 
 ---
 
@@ -702,7 +702,7 @@ After every run, write two files (in addition to `.architect-review.md`):
         {
           "type": "security_architecture_v2_drift",
           "fragments_to_rewrite": [".fragments/security-architecture.md"],
-          "remediation": "Restore the v2 13-section §7 control-category layout. Ensure §7.2-§7.12 `Controls covered` links point to matching H4 subcontrols and every H4 block contains `Security assessment` plus `Relevant findings`."
+          "remediation": "Restore the v2 13-section §6 control-category layout. Ensure §6.2-§6.12 `Controls covered` links point to matching H4 subcontrols and every H4 block contains `Security assessment` plus `Relevant findings`."
         }
      ],
      "re_render_command": "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py --output-dir $OUTPUT_DIR --strict"

@@ -10,11 +10,14 @@ surfaces:
   thin_full_runtime:
     path: skills/create-threat-model/SKILL-full-runtime.md
     max_bytes: 12000
+  thin_rerender_runtime:
+    path: skills/create-threat-model/SKILL-rerender-runtime.md
+    max_bytes: 10000
   legacy_initial_slice:
     path: skills/create-threat-model/SKILL-impl.md
     start: BOF
     end: "<!-- LAZY-LOAD BOUNDARY"
-    max_bytes: 220000
+    max_bytes: 230000
   full_stage1_slice:
     path: skills/create-threat-model/SKILL-impl.md
     start: "## Stage 1 — Threat Analysis & Triage"
@@ -24,7 +27,17 @@ surfaces:
     path: skills/create-threat-model/SKILL-impl.md
     start: "<!-- LAZY-LOAD BOUNDARY"
     end: EOF
-    max_bytes: 145000
+    max_bytes: 150000
+  stage2_runtime_dispatch_slice:
+    path: skills/create-threat-model/SKILL-impl.md
+    start: "## Stage 2 - Report Rendering"
+    end: "### Handling turn-budget cut-offs"
+    max_bytes: 20000
+  stage3_runtime_gate_slice:
+    path: skills/create-threat-model/SKILL-impl.md
+    start: "## Stage 3 - QA Review"
+    end: "### Stage 3 handoff banner"
+    max_bytes: 25000
   threat_analyst:
     path: agents/appsec-threat-analyst.md
     max_bytes: 155000
@@ -45,5 +58,8 @@ aggregate:
   # Router + compact runtime + Stage-1/1c slice. This is the full/rebuild
   # resident skill text before the Phase-9 fan-out.
   thin_full_pre_stage2_max_bytes: 90000
+  # Router + rerender runtime. Stage-2 instructions are loaded only after the
+  # controller has verified on-disk Stage-1 artifacts.
+  thin_rerender_pre_stage2_max_bytes: 18000
   # The compact path must remain materially smaller than the legacy prefix.
   thin_to_legacy_max_ratio: 0.50

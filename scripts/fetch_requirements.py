@@ -73,6 +73,7 @@ def _read_local(path: str) -> bytes:
 
 # Reuse the single source of truth for source resolution + fail_mode.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _url_guard  # noqa: E402
 import requirements_state as rstate  # noqa: E402
 import resolve_requirements_source as rrs  # noqa: E402
 
@@ -80,7 +81,17 @@ _SKIPPED_STUB = '{"source": "skipped", "categories": [], "blueprints": []}\n'
 
 
 def _http_get(url: str, timeout: int) -> bytes:
-    """Fetch an ``http(s)`` ``url`` and return its bytes. Raises on any failure."""
+    """Fetch an ``http(s)`` ``url`` and return its bytes. Raises on any failure.
+
+    The URL is validated through the shared guard first: it enforces the org
+    profile's ``policy.url_allowlist`` (or ``APPSEC_URL_ALLOWLIST``) when set.
+    ``check_ip_safety=False`` because the requirements URL is org/developer
+    config, not untrusted repo input, and may legitimately be an internal host —
+    the allowlist is the control, not a blanket private-range block.
+    """
+    verdict = _url_guard.validate_target_url(url, check_ip_safety=False)
+    if not verdict.ok:
+        raise urllib.error.URLError(f"blocked by SSRF guard: {verdict.reason}")
     req = urllib.request.Request(url, headers={"Accept": "application/yaml"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         return resp.read()

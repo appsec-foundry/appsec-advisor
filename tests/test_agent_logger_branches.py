@@ -433,6 +433,49 @@ class TestPreToolUseBranches:
         assert "permissionDecision" in out
         assert "deny" in out
 
+    def test_background_watchdog_auto_approved(self, al, capsys):
+        al.handle_pre_tool_use(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": 'python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" --heartbeat-interval 60',
+                    "run_in_background": True,
+                },
+            },
+            "sid",
+        )
+        out = capsys.readouterr().out
+        assert "permissionDecision" in out
+        assert "allow" in out
+
+    def test_background_watchdog_compound_not_approved(self, al, capsys):
+        # A chained/smuggled command must fall through to the normal prompt.
+        al.handle_pre_tool_use(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "python3 scripts/skill_watchdog.py; rm -rf /",
+                    "run_in_background": True,
+                },
+            },
+            "sid",
+        )
+        assert "permissionDecision" not in capsys.readouterr().out
+
+    def test_foreground_watchdog_not_auto_approved(self, al, capsys):
+        # Only backgrounded dispatches trigger the prompt we are suppressing.
+        al.handle_pre_tool_use(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": 'python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR"',
+                    "run_in_background": False,
+                },
+            },
+            "sid",
+        )
+        assert "permissionDecision" not in capsys.readouterr().out
+
     def test_non_agent_verbose_activity(self, tmp_path, monkeypatch):
         al = _load(monkeypatch, tmp_path, env={"APPSEC_VERBOSE": "1"}, name="al_pre_verbose")
         al._save_session_agent("sidv1234", "stride-analyzer")

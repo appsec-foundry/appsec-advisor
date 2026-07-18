@@ -182,6 +182,26 @@ def _step_status_icon(verdict: str, controls_found: list) -> str:
     return "?"  # inconclusive / unknown
 
 
+def _step_unverified(sv: dict) -> bool:
+    """True when a step verdict is an untouched write-first pre-seed.
+
+    Canonical definition lives in ``verify_abuse_cases._is_untouched_preseed_step``
+    (kept in sync deliberately — both scripts are standalone): a step still
+    ``inconclusive`` with no ``reason`` AND no evidence ``excerpt`` is one the
+    verifier never re-wrote (it hit its turn ceiling before investigating this
+    step). Such a step is NOT a reasoned "couldn't decide" — it was never
+    examined — so a chain that carries one is only provisionally verified and the
+    render must say so rather than presenting the chain as fully checked
+    (2026-07-15 juice-shop AC-T-001: step 1 confirmed, steps 2-3 untouched).
+    """
+    if (sv.get("verdict") or "") != "inconclusive":
+        return False
+    if (sv.get("reason") or "").strip():
+        return False
+    excerpt = ((sv.get("evidence") or {}).get("excerpt") or "").strip()
+    return not excerpt
+
+
 # ---------------------------------------------------------------------------
 # Per-case rendering
 # ---------------------------------------------------------------------------
@@ -225,21 +245,28 @@ def render_case(
     """Build the structured render model for one abuse case (used for both the
     markdown block and the JSON sidecar).
 
-    Finding links are sourced with a fallback chain: the verifier's per-step
-    ``matched_finding_id`` (authoritative — it confirmed the step against the
-    code) FALLS BACK to the deterministic matcher's ``step_matches`` from
-    ``.abuse-case-matches.json``. The matcher always binds a finding to every
-    matched step (that is how the case became a candidate in the first place),
-    so even when a verifier sub-agent was cut off and wrote no verdict file,
-    the chain still renders its real findings instead of "_no matching
-    finding_". This keeps abuse cases provably *derived from findings*, and the
-    per-step status icon stays honest ("?" when unverified, ⚠/◐/✓ once a
-    verifier verdict exists). RC-2026-06.
+    Finding *identity* is sourced from the deterministic matcher's
+    ``step_matches`` (``.abuse-case-matches.json``) FIRST, falling back to the
+    verifier's per-step ``matched_finding_id``. The matcher binds each step to a
+    finding by scored CWE/sink specificity; the verifier is dispatched with that
+    binding and owns the *outcome* (the status icon) and the code *evidence*, not
+    the finding's identity. Trusting the verifier's id previously let a mis-fed or
+    unfinalized verifier freeze a wrong link into the chain — e.g. a
+    mass-assignment step echoed back as the IDOR finding (juice-shop 2026-07-13).
+    Matcher-first keeps the identity deterministic and reproducible while the
+    per-step icon stays honest ("?" when unverified, ⚠/◐/✓ once a verifier verdict
+    exists). When neither source binds a finding the row renders without a link.
+    RC-2026-06 / RC-2026-07.
     """
     cid = case["id"]
     chain_verdict = verdict.get("chain_verdict", "inconclusive")
     sv_by_step = {s.get("step"): s for s in verdict.get("step_verdicts") or []}
     match_steps = match_steps or {}
+    # Steps the verifier never actually examined (untouched write-first pre-seed
+    # after a mid-chain turn-ceiling cut-off). A chain carrying one is only
+    # provisionally verified — surfaced as a caveat in the render below so the
+    # "viable" verdict is not read as a fully-checked end-to-end result.
+    unverified_steps = sorted(n for n, sv in sv_by_step.items() if n is not None and _step_unverified(sv))
 
     rows = []
     matched_findings: list[dict] = []
@@ -248,14 +275,22 @@ def render_case(
         n = step.get("step")
         sv = sv_by_step.get(n, {})
         mm = match_steps.get(n, {})
-        # Verifier finding id is authoritative; fall back to the matcher's
-        # deterministic binding so an unfinished verifier never erases the link.
-        fid = _norm_fid(sv.get("matched_finding_id") or mm.get("matched_finding_id"))
+        # Finding IDENTITY: the deterministic matcher is authoritative (scored
+        # CWE/sink binding, reproducible). Fall back to the verifier's id only
+        # when the matcher bound nothing for this step. The verifier still owns
+        # the OUTCOME (status icon) below. The EVIDENCE locator must follow the
+        # SAME source as the identity — a matcher-overridden step must not show
+        # the verifier's stale evidence for the finding it displaced.
+        if mm.get("matched_finding_id"):
+            fid = _norm_fid(mm.get("matched_finding_id"))
+            ev = mm.get("evidence") or sv.get("evidence") or {}
+        else:
+            fid = _norm_fid(sv.get("matched_finding_id"))
+            ev = sv.get("evidence") or {}
         finding = findings_idx.get(fid, {})
         if finding:
             matched_findings.append(finding)
             step_of_fid.setdefault(fid, n)
-        ev = sv.get("evidence") or mm.get("evidence") or {}
         loc = ""
         if ev.get("file"):
             loc = f"{ev['file']}:{ev['line']}" if ev.get("line") else str(ev["file"])
@@ -285,6 +320,7 @@ def render_case(
         "prerequisite": (case.get("attacker") or {}).get("prerequisite", ""),
         "combined_risk": combined,
         "chain_verdict": chain_verdict,
+        "unverified_steps": unverified_steps,
         "rows": rows,
         "matched_finding_ids": matched_ids,
         "combined_risk_rationale": case.get("combined_risk_rationale", ""),
@@ -298,7 +334,11 @@ def _case_markdown(m: dict) -> str:
     src = "mandatory" if m["source"] == "mandatory" else "analysis-discovered"
     cid = m["id"]
     out: list[str] = []
-    out.append(f'### <a id="{cid.lower()}"></a>{cid} — {m["title"]}')
+    # Anchor on its OWN line before the heading (matches the Findings / Weakness
+    # registers) so the heading auto-slug stays clean and both the `#ac-t-nnn`
+    # cross-ref and the editor outline resolve (2026-07-14).
+    out.append(f'<a id="{cid.lower()}"></a>')
+    out.append(f"### {cid} — {m['title']}")
     out.append("")
     out.append(
         f"> **Source:** {src} · **Actor:** {m['actor_label']} · "
@@ -306,6 +346,19 @@ def _case_markdown(m: dict) -> str:
         f"**Verdict:** {icon} {label}"
     )
     out.append("")
+    # Honesty caveat: when the verifier hit its turn ceiling before examining
+    # some steps, the chain's verdict was computed from steps that were never
+    # actually checked. Flag it so a "viable" verdict is not misread as a
+    # fully-verified end-to-end result (2026-07-15 juice-shop AC-T-001/AC-T-002).
+    if m.get("unverified_steps"):
+        steps = ", ".join(str(s) for s in m["unverified_steps"])
+        plural = "s" if len(m["unverified_steps"]) > 1 else ""
+        out.append(
+            f"> ⚠ **Not verified end-to-end:** step{plural} {steps} reached the "
+            f"verifier's turn budget before investigation — this verdict is "
+            f"**provisional**; re-run to confirm the chain."
+        )
+        out.append("")
     out.append(f"**Goal:** {m['goal']}")
     out.append("")
     if m["prerequisite"]:
@@ -478,7 +531,14 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
         p = Path(org_profile)
         profile = rac._load_yaml(p)
         profile_dir = p.parent
-    cases, _ = rac.resolve_abuse_cases(profile, profile_dir, PLUGIN_ROOT, Path(repo_root) if repo_root else None)
+    extra_case_files, _ = _match_mod()._scan_case_config(output_dir)
+    cases, _ = rac.resolve_abuse_cases(
+        profile,
+        profile_dir,
+        PLUGIN_ROOT,
+        Path(repo_root) if repo_root else None,
+        extra_case_files=extra_case_files,
+    )
     case_by_id = {c["id"]: c for c in cases}
 
     tm_path = output_dir / "threat-model.yaml"

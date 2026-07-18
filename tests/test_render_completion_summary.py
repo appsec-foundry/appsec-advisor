@@ -446,6 +446,12 @@ class TestNextSteps:
         lines_without = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
         assert not any("Section 8" in l for l in lines_without)
 
+    def test_triage_hint_only_when_findings_present(self, tmp_path):
+        with_findings = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
+        assert any("review-threat-model" in l for l in with_findings)
+        clean = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
+        assert not any("review-threat-model" in l for l in clean)
+
     def test_architect_review_shown_when_file_exists(self, tmp_path):
         (tmp_path / ".architect-review.md").write_text("# review\n")
         lines = rcs.build_next_steps(
@@ -1138,6 +1144,17 @@ class TestRenderMisc:
     def test_render_next_steps_empty(self):
         assert rcs.render_next_steps([]) == []
 
+    def test_render_next_steps_footer_names_the_ask_lane(self):
+        """The Q&A lane rides as an unnumbered footer, never as a sixth step:
+        the numbered list is capped at 5 and its slots are contested, so a
+        numbered entry could silently displace an action line.
+        """
+        out = rcs.render_next_steps([f"step {i}" for i in range(5)])
+        assert "/appsec-advisor:ask-threat-model" in out[-1]
+        assert not out[-1].strip().startswith("6.")
+        # Example questions carry the message that free-form asking works.
+        assert "critical findings" in out[-1]
+
     def test_render_log_files(self, tmp_path: Path):
         (tmp_path / ".qa-status.json").write_text("{}")
         out = "\n".join(rcs.render_log_files(tmp_path))
@@ -1355,3 +1372,81 @@ class TestVerdictEcho:
         assert len(quiet.stdout) < len(full.stdout)
         # default (non-quiet) still shows the dropped blocks
         assert "Next Steps" in full.stdout and "-- Verdict" in full.stdout
+
+
+# ---------------------------------------------------------------------------
+# Slug-stamp backstop (second anchor) — regression for the recurring
+# post-compaction "slug never stamped" bug (2026-07-15).
+# ---------------------------------------------------------------------------
+
+
+class TestStampSlugBackstop:
+    def _seed(self, tmp_path: Path, slug):
+        (tmp_path / "threat-model.md").write_text("# report\n")
+        cfg = {"slug": slug} if slug is not None else {}
+        import json as _json
+
+        (tmp_path / ".skill-config.json").write_text(_json.dumps(cfg))
+
+    def test_stamps_when_slug_set_and_no_stamped_copy(self, tmp_path: Path, monkeypatch):
+        self._seed(tmp_path, "my-slug")
+        calls = []
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
+        rcs._stamp_slug_if_configured(tmp_path)
+        assert len(calls) == 1
+        assert "stamp_threat_model.py" in " ".join(calls[0])
+        assert "my-slug" in calls[0]
+
+    def test_noop_when_no_slug(self, tmp_path: Path, monkeypatch):
+        self._seed(tmp_path, None)
+        calls = []
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
+        rcs._stamp_slug_if_configured(tmp_path)
+        assert calls == []
+
+    def test_noop_when_no_config(self, tmp_path: Path, monkeypatch):
+        (tmp_path / "threat-model.md").write_text("# report\n")
+        calls = []
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
+        rcs._stamp_slug_if_configured(tmp_path)
+        assert calls == []
+
+    def test_idempotent_when_stamped_copy_is_fresh(self, tmp_path: Path, monkeypatch):
+        self._seed(tmp_path, "my-slug")
+        stamped = tmp_path / "threat-model-my-slug.md"
+        stamped.write_text("# stamped\n")
+        # make the stamped copy strictly newer than the canonical report
+        import os
+
+        md = tmp_path / "threat-model.md"
+        st = md.stat()
+        os.utime(stamped, (st.st_atime + 10, st.st_mtime + 10))
+        calls = []
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
+        rcs._stamp_slug_if_configured(tmp_path)
+        assert calls == []
+
+    def test_restamps_when_canonical_is_newer(self, tmp_path: Path, monkeypatch):
+        self._seed(tmp_path, "my-slug")
+        stamped = tmp_path / "threat-model-my-slug.md"
+        stamped.write_text("# stale\n")
+        import os
+
+        md = tmp_path / "threat-model.md"
+        st = md.stat()
+        # canonical report is newer than the stamped copy -> must re-stamp
+        os.utime(stamped, (st.st_atime - 10, st.st_mtime - 10))
+        calls = []
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
+        rcs._stamp_slug_if_configured(tmp_path)
+        assert len(calls) == 1
+
+    def test_never_raises_on_subprocess_error(self, tmp_path: Path, monkeypatch):
+        self._seed(tmp_path, "my-slug")
+
+        def _boom(*a, **k):
+            raise OSError("stamp exploded")
+
+        monkeypatch.setattr(rcs.subprocess, "run", _boom)
+        # must swallow — the completion summary must never fail on the stamp
+        rcs._stamp_slug_if_configured(tmp_path)

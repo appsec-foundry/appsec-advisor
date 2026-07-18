@@ -613,6 +613,38 @@ def _read_stride_profile(output_dir: Path | None) -> dict:
     return {}
 
 
+def _check_weakness_register(data: dict) -> list[str]:
+    """P1 (weakness-class evidence model) invariants on `weaknesses[]`:
+
+    * I2 — every weakness MUST carry an observable backing: at least one of
+      `observable_backing.absent_control_signal[]` / `practice_evidence[]` is
+      non-empty (schema requires the object; this enforces non-emptiness, the
+      proposal §0 emission rule — no speculation reaches the user).
+    * W-NNN ids are unique within the register.
+    """
+    errors: list[str] = []
+    weaknesses = data.get("weaknesses")
+    if not isinstance(weaknesses, list):
+        return errors
+    seen_ids: set[str] = set()
+    for i, w in enumerate(weaknesses):
+        if not isinstance(w, dict):
+            continue
+        wid = w.get("id") or f"index {i}"
+        if wid in seen_ids:
+            errors.append(f"weaknesses: duplicated weakness id {wid}")
+        seen_ids.add(wid)
+        backing = w.get("observable_backing") or {}
+        has_backing = bool(backing.get("absent_control_signal")) or bool(backing.get("practice_evidence"))
+        if not has_backing:
+            errors.append(
+                f"weaknesses: {wid} has empty observable_backing — a weakness "
+                "MUST carry an absent-control signal or practice evidence (I2 / "
+                "proposal §0); speculation is dropped, never emitted."
+            )
+    return errors
+
+
 def validate_threats_merged(data: Any, output_dir: Path | None = None) -> tuple[bool, list[str]]:
     """Validate a parsed .threats-merged.json object.
 
@@ -635,6 +667,8 @@ def validate_threats_merged(data: Any, output_dir: Path | None = None) -> tuple[
     errors.extend(_check_architecture_coverage_invariants(data))
     # RC.G.1 / RC.I — TH gate on merged output.
     errors.extend(_check_threat_category_id_set(data))
+    # P1 — weakness-class register emission invariant (I2 + W-NNN uniqueness).
+    errors.extend(_check_weakness_register(data))
     return len(errors) == 0, errors
 
 

@@ -1,0 +1,564 @@
+# crypto-checks.yaml — deterministic cryptography rule pack
+# (docs/internal/analysis/implplan-weakness-class-evidence-model.md §P3.1).
+#
+# Run through the SAME engine as data/source-auth-checks.yaml (see
+# scripts/source_auth_scanner.py DEFAULT_EXTRA_CHECKS_REL) — NO new Python.
+# Closes the largest deterministic gap: before this pack, `weak_crypto` was
+# detectable only via the STRIDE LLM. Each rule carries counter_patterns so a
+# legitimate non-security use (cache keys, checksums, ETags, jitter) is
+# suppressed rather than mis-reported. MD5/SHA-1 rules additionally require a
+# local, named security purpose; the algorithm token alone is not a finding.
+#
+# Overlap rule: hardcoded key CWE-798 stays in the Authn/Secrets scanners — do
+# NOT double-count it here.
+
+checks:
+  # ===================================================================
+  # CRYPTO-001 — MD5 / SHA-1 used as a cryptographic hash primitive.
+  # ===================================================================
+  - id: CRYPTO-001
+    name: "Broken hash primitive (MD5/SHA-1)"
+    description: >
+      `crypto.createHash('md5'|'sha1')` uses a hash that is broken for any
+      security purpose (password storage, signatures, integrity of untrusted
+      data). Non-security uses (cache keys, ETags, dedupe fingerprints) are
+      suppressed by the counter-patterns.
+    file_patterns: ["**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**",
+       "**/__mocks__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**",
+       "**/build/**", "**/coverage/**"]
+    pattern: "crypto\\.createHash\\(\\s*['\"`](md5|sha1)['\"`]"
+    counter_scope: window
+    counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|integrity|content[_-]?hash|gravatar|cache\b)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Internet Anon"
+    rationale: >
+      MD5/SHA-1 are collision-broken; used for passwords they are trivially
+      cracked, and for integrity of attacker-influenced data they are forgeable.
+    remediation: "Use SHA-256+ for integrity and a password KDF (argon2id / bcrypt / scrypt) for credentials."
+
+  # ===================================================================
+  # CRYPTO-002 — Math.random() for a security-sensitive value.
+  # ===================================================================
+  - id: CRYPTO-002
+    name: "Non-cryptographic RNG for a secret/token"
+    description: >
+      `Math.random()` is not a CSPRNG; using it for tokens, secrets, OTPs,
+      nonces, session ids, or password-reset values yields predictable output.
+      The pattern only fires when a security-sensitive identifier is on the
+      same line, so animation/jitter uses do not match.
+    file_patterns: ["**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/__tests__/**",
+       "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"]
+    pattern: "(?i)\\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|password|salt|verif\\w*code)\\b[^\\n]{0,60}math\\.random\\(\\)|math\\.random\\(\\)[^\\n]{0,60}\\b(token|secret|otp|nonce|reset|salt)\\b"
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: >
+      A predictable token/secret lets an attacker guess or brute-force session
+      identifiers, reset links, or OTPs.
+    remediation: "Use crypto.randomBytes / crypto.randomUUID / webcrypto getRandomValues for any security value."
+
+  # ===================================================================
+  # CRYPTO-003 — bcrypt cost factor too low.
+  # ===================================================================
+  - id: CRYPTO-003
+    name: "bcrypt cost factor below 10"
+    description: >
+      A bcrypt work factor under 10 (`genSalt(n)` / `hash(pw, n)`) makes
+      offline cracking cheap. Modern guidance is ≥ 10–12.
+    file_patterns: ["**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/fixtures/**",
+       "**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"]
+    pattern: "bcrypt\\w*\\.(?:genSaltSync|genSalt)\\s*\\(\\s*[1-9]\\s*[),]|bcrypt\\w*\\.(?:hashSync|hash)\\s*\\([^,)]*,\\s*[1-9]\\s*[),]"
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: Medium
+    cwe: CWE-916
+    finding_type: FT-051
+    breach_vector: "Internet Anon"
+    rationale: >
+      Low bcrypt rounds shrink the attacker's per-guess cost, undermining the
+      whole point of an adaptive password hash.
+    remediation: "Set the bcrypt cost factor to at least 10 (12+ preferred); benchmark for ~250ms/hash."
+
+  # ===================================================================
+  # CRYPTO-004 — AES-ECB mode (leaks plaintext structure).
+  # ===================================================================
+  - id: CRYPTO-004
+    name: "Insecure ECB cipher mode"
+    description: >
+      ECB mode encrypts identical plaintext blocks to identical ciphertext,
+      leaking structure. Use an authenticated mode (GCM) instead.
+    file_patterns: ["**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/test/**", "**/tests/**", "**/fixtures/**",
+       "**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"]
+    pattern: "createCipheriv\\(\\s*['\"`][a-z0-9-]*-ecb"
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: Medium
+    cwe: CWE-327
+    finding_type: FT-174
+    breach_vector: "Internet Anon"
+    rationale: "ECB reveals patterns in the plaintext and provides no integrity."
+    remediation: "Use AES-256-GCM (or libsodium secretbox) with a unique nonce per message."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase A) — Java + Python crypto sinks.
+  # Same CWEs as the Node rules above, so every hit folds into ONE
+  # `weak_crypto` weakness via merge_threats._PRACTICE_TIER_CWES — no
+  # mapping change needed. Node patterns do not match these languages.
+  # ===================================================================
+
+  - id: CRYPTO-JAVA-001
+    name: "Broken hash primitive (MD5/SHA-1) — Java"
+    description: >
+      `MessageDigest.getInstance("MD5"|"SHA-1")` uses a collision-broken hash.
+      Non-security uses (ETags, cache keys, checksums) are suppressed by the
+      counter-patterns.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/generated/**",
+       "**/target/**", "**/build/**"]
+    pattern: 'MessageDigest\.getInstance\(\s*"(?i:MD5|SHA-?1)"'
+    counter_scope: window
+    counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|integrity|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Internet Anon"
+    rationale: >
+      MD5/SHA-1 are collision-broken; for passwords they are trivially cracked,
+      for integrity of attacker-influenced data they are forgeable.
+    remediation: "Use SHA-256+ for integrity and a password KDF (argon2id / bcrypt) for credentials."
+
+  - id: CRYPTO-JAVA-002
+    name: "Non-cryptographic RNG for a secret/token — Java"
+    description: >
+      `new Random()` / `Math.random()` is not a CSPRNG; using it for a token,
+      secret, OTP, nonce, session id, or salt yields predictable output. Fires
+      only when a security-sensitive identifier is on the same line.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|password|salt|verif\w*code)\b[^\n]{0,60}(new\s+Random\s*\(|Math\.random\s*\()'
+    counter_scope: line
+    counter_patterns:
+      - '\bSecureRandom\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: >
+      A predictable token/secret lets an attacker guess session identifiers,
+      reset links, or OTPs.
+    remediation: "Use java.security.SecureRandom for any security value."
+
+  - id: CRYPTO-JAVA-002B
+    name: "Non-cryptographic RNG in a security module — Java"
+    description: >
+      `new Random()` / `Math.random()` inside a crypto / auth / token / session
+      module. Complements CRYPTO-JAVA-002, which fires only when a security
+      keyword is on the SAME line — it misses the common field-declaration
+      pattern (`private final Random random = new Random();` used later by a
+      `nextOtp()` / token method on another line). The security-sensitive PATH
+      supplies the context the same-line keyword otherwise would.
+    file_patterns:
+      ["**/crypto/**/*.java", "**/auth/**/*.java", "**/authentication/**/*.java", "**/security/**/*.java", "**/session/**/*.java", "**/*Token*.java", "**/*Otp*.java", "**/*Crypto*.java", "**/*Cipher*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '\bnew\s+(java\.util\.)?Random\s*\(|\bMath\.random\s*\('
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '\bSecureRandom\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: >
+      A predictable RNG in a crypto/auth/token module yields guessable secrets,
+      OTPs, or session identifiers regardless of which line instantiates it.
+    remediation: "Use java.security.SecureRandom for any security value."
+
+  - id: CRYPTO-JAVA-003
+    name: "Insecure ECB cipher mode — Java"
+    description: >
+      `Cipher.getInstance("…/ECB/…")` (or the JCE default, which IS ECB) leaks
+      plaintext structure and provides no integrity.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: 'Cipher\.getInstance\(\s*"[A-Za-z0-9]+/ECB/'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: Medium
+    cwe: CWE-327
+    finding_type: FT-174
+    breach_vector: "Internet Anon"
+    rationale: "ECB reveals patterns in the plaintext and provides no integrity."
+    remediation: "Use AES/GCM/NoPadding with a unique IV per message."
+
+  - id: CRYPTO-PY-001
+    name: "Broken hash primitive (MD5/SHA-1) — Python"
+    description: >
+      `hashlib.md5(` / `hashlib.sha1(` used as a cryptographic hash. Non-security
+      uses (cache keys, checksums, ETags) are suppressed by the counter-patterns
+      and by `usedforsecurity=False`.
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/conftest.py",
+       "**/migrations/**", "**/.venv/**", "**/venv/**"]
+    pattern: 'hashlib\.(md5|sha1)\('
+    counter_scope: window
+    counter_window: 2
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+      - 'usedforsecurity\s*=\s*False'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Internet Anon"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use hashlib.sha256+ for integrity and argon2/bcrypt for passwords."
+
+  - id: CRYPTO-PY-002
+    name: "Non-cryptographic RNG for a secret/token — Python"
+    description: >
+      The `random` module is not cryptographically secure; using it for a token,
+      secret, OTP, nonce, or salt yields predictable output. Fires only when a
+      security-sensitive identifier is on the same line; `secrets`/`SystemRandom`
+      are the safe alternatives and are suppressed.
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/.venv/**", "**/venv/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt|verif\w*code)\b[^\n]{0,60}\brandom\.(random|randint|choice|randrange|getrandbits|sample|shuffle)\b'
+    counter_scope: line
+    counter_patterns:
+      - '\bsecrets\.'
+      - '\bSystemRandom\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use the `secrets` module (secrets.token_urlsafe / token_bytes) for any security value."
+
+  # --- Go crypto (multi-stack Phase B) ---
+  - id: CRYPTO-GO-001
+    name: "Broken hash primitive (MD5/SHA-1) — Go"
+    description: >
+      `md5.New` / `sha1.New` / `md5.Sum` / `sha1.Sum` used as a cryptographic
+      hash. Non-security uses (ETags, checksums) are suppressed.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '\b(?:md5|sha1)\.(?:New|Sum)\b'
+    counter_scope: window
+    counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Internet Anon"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use crypto/sha256+ for integrity and argon2/bcrypt for passwords."
+
+  - id: CRYPTO-GO-002
+    name: "Non-cryptographic RNG for a secret/token — Go"
+    description: >
+      The `math/rand` package is not cryptographically secure; using it for a
+      token/secret/OTP/nonce yields predictable output. `crypto/rand` is the safe
+      alternative and is suppressed.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}\brand\.(?:Intn|Int|Int63|Int31|Float64|Read|Perm)\b'
+    counter_scope: line
+    counter_patterns:
+      - 'crypto/rand'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use crypto/rand for any security value."
+
+  # --- C#/.NET crypto (multi-stack Phase B) ---
+  - id: CRYPTO-CS-001
+    name: "Broken hash primitive (MD5/SHA-1) — C#"
+    description: >
+      `MD5.Create()` / `SHA1.Create()` / `MD5CryptoServiceProvider` used as a
+      cryptographic hash. Non-security uses are suppressed.
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/*Tests.cs", "**/*.Tests/**", "**/obj/**", "**/bin/**"]
+    pattern: '\b(?:MD5|SHA1)\.(?:Create|HashData)\b|new\s+(?:MD5|SHA1)(?:CryptoServiceProvider|Managed)\b'
+    counter_scope: window
+    counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Internet Anon"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use SHA256+ for integrity and a password hasher (PasswordHasher / bcrypt) for credentials."
+
+  - id: CRYPTO-CS-002
+    name: "Non-cryptographic RNG for a secret/token — C#"
+    description: >
+      `new Random()` for a token/secret/OTP is predictable;
+      RandomNumberGenerator / RNGCryptoServiceProvider is the safe alternative.
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/*Tests.cs", "**/*.Tests/**", "**/obj/**", "**/bin/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}new\s+Random\s*\('
+    counter_scope: line
+    counter_patterns:
+      - '(?i)\b(RandomNumberGenerator|RNGCryptoServiceProvider)\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use RandomNumberGenerator.GetBytes for any security value."
+
+  # --- PHP crypto (multi-stack Phase B) ---
+  - id: CRYPTO-PHP-001
+    name: "Broken hash primitive (MD5/SHA-1) — PHP"
+    description: >
+      `md5()` / `sha1()` used as a cryptographic hash (passwords, integrity).
+      Non-security uses (ETags, cache keys) are suppressed.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '\b(?:md5|sha1)\s*\('
+    counter_scope: window
+    counter_window: 2
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Internet Anon"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use password_hash() (bcrypt/argon2) for credentials and hash('sha256', …) for integrity."
+
+  - id: CRYPTO-PHP-002
+    name: "Non-cryptographic RNG for a secret/token — PHP"
+    description: >
+      `rand()` / `mt_rand()` / `uniqid()` for a token/secret/OTP is predictable;
+      `random_bytes` / `random_int` are the safe alternatives.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}\b(?:mt_rand|rand|uniqid)\s*\('
+    counter_scope: line
+    counter_patterns:
+      - '(?i)\b(random_bytes|random_int)\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use random_bytes() / random_int() for any security value."
+
+  # --- Ruby crypto (multi-stack Phase B) ---
+  - id: CRYPTO-RB-001
+    name: "Broken hash primitive (MD5/SHA-1) — Ruby"
+    description: >
+      `Digest::MD5` / `Digest::SHA1` used as a cryptographic hash. Non-security
+      uses (ETags, cache keys) are suppressed.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: 'Digest::(?:MD5|SHA1)\b'
+    counter_scope: window
+    counter_window: 2
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Internet Anon"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use Digest::SHA256+ for integrity and bcrypt (has_secure_password) for credentials."
+
+  - id: CRYPTO-RB-002
+    name: "Non-cryptographic RNG for a secret/token — Ruby"
+    description: >
+      `rand()` / `Random.rand` for a token/secret/OTP is predictable;
+      `SecureRandom` is the safe alternative.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}(?:\brand\s*\(|Random\.rand)'
+    counter_scope: line
+    counter_patterns:
+      - '\bSecureRandom\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Internet Anon"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use SecureRandom (hex / urlsafe_base64) for any security value."
+
+  # --- Android / Kotlin crypto (multi-stack Phase C — mobile) ---
+  # JVM crypto APIs; .java is already covered by CRYPTO-JAVA-*, these add Kotlin.
+  - id: CRYPTO-KT-001
+    name: "Broken hash primitive (MD5/SHA-1) — Kotlin"
+    description: '`MessageDigest.getInstance("MD5"|"SHA-1")` in Kotlin. Non-security uses suppressed.'
+    file_patterns: ["**/*.kt"]
+    exclude_file_patterns: ["**/test/**", "**/*Test.kt", "**/build/**"]
+    pattern: 'MessageDigest\.getInstance\(\s*"(?i:MD5|SHA-?1)"'
+    counter_scope: window
+    counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Physical / Local"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use SHA-256+ for integrity and a password KDF (argon2/bcrypt) for credentials."
+
+  - id: CRYPTO-KT-002
+    name: "Non-cryptographic RNG for a secret/token — Kotlin"
+    description: "kotlin.random.Random / java.util.Random for a token/secret is predictable; use SecureRandom."
+    file_patterns: ["**/*.kt"]
+    exclude_file_patterns: ["**/test/**", "**/*Test.kt", "**/build/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}(?:Random\s*\(\s*\)|Random\.next|kotlin\.random)'
+    counter_scope: line
+    counter_patterns:
+      - '\bSecureRandom\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Physical / Local"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use java.security.SecureRandom for any security value."
+
+  # --- iOS (Swift / Objective-C) crypto (multi-stack Phase C — mobile) ---
+  - id: CRYPTO-SWIFT-001
+    name: "Broken hash primitive (MD5/SHA-1) — iOS"
+    description: >
+      CommonCrypto `CC_MD5`/`CC_SHA1` or CryptoKit `Insecure.MD5`/`Insecure.SHA1`
+      used as a cryptographic hash. Non-security uses suppressed.
+    file_patterns: ["**/*.swift", "**/*.m"]
+    exclude_file_patterns: ["**/*Tests.swift", "**/*Test.m", "**/Pods/**"]
+    pattern: '\bCC_(?:MD5|SHA1)\s*\(|Insecure\.(?:MD5|SHA1)\b'
+    counter_scope: window
+    counter_window: 3
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Physical / Local"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use SHA-256+ (CryptoKit SHA256) for integrity and a KDF for credentials."
+
+  - id: CRYPTO-SWIFT-002
+    name: "Non-cryptographic RNG for a secret/token — iOS"
+    description: >
+      `random()` / `rand()` / `drand48()` for a token/secret is predictable;
+      `arc4random` / `SecRandomCopyBytes` are the safe alternatives and are
+      suppressed.
+    file_patterns: ["**/*.swift", "**/*.m"]
+    exclude_file_patterns: ["**/*Tests.swift", "**/*Test.m", "**/Pods/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}\b(?:rand|random|drand48)\s*\('
+    counter_scope: line
+    counter_patterns:
+      - '\b(arc4random|SecRandomCopyBytes)\b'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Physical / Local"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use SecRandomCopyBytes (or arc4random_buf) for any security value."
+
+  # --- Flutter / Dart crypto (multi-stack Phase C — mobile) ---
+  - id: CRYPTO-DART-001
+    name: "Broken hash primitive (MD5/SHA-1) — Dart"
+    description: "`md5.convert` / `sha1.convert` (package:crypto) used as a security hash."
+    file_patterns: ["**/*.dart"]
+    exclude_file_patterns: ["**/test/**", "**/*_test.dart", "**/.dart_tool/**"]
+    pattern: '\b(?:md5|sha1)\.convert\s*\('
+    counter_scope: window
+    counter_window: 2
+    required_context_patterns:
+      - '(?i)\b(?:password|passwd|passcode|pwd|pw|credential|auth(?:entication|orization)?|session|token|secret|api[_-]?key|reset|otp|nonce|sign(?:ature|ing)?|verify|hmac|mac)\w*'
+    counter_patterns:
+      - '(?i)\b(etag|cache[_-]?key|checksum|dedup\w*|fingerprint|content[_-]?hash)'
+    severity_if_violated: Medium
+    cwe: CWE-328
+    finding_type: FT-172
+    breach_vector: "Physical / Local"
+    rationale: "MD5/SHA-1 are collision-broken; unsafe for passwords or integrity of untrusted data."
+    remediation: "Use sha256 for integrity and a password KDF for credentials."
+
+  - id: CRYPTO-DART-002
+    name: "Non-cryptographic RNG for a secret/token — Dart"
+    description: "`Random()` (dart:math) for a token/secret is predictable; use `Random.secure()`."
+    file_patterns: ["**/*.dart"]
+    exclude_file_patterns: ["**/test/**", "**/*_test.dart", "**/.dart_tool/**"]
+    pattern: '(?i)\b(token|secret|api[_-]?key|otp|nonce|session[_-]?id|reset[_-]?token|salt)\b[^\n]{0,60}\bRandom\s*\(\s*\)'
+    counter_scope: line
+    counter_patterns:
+      - 'Random\.secure'
+    severity_if_violated: High
+    cwe: CWE-330
+    finding_type: FT-173
+    breach_vector: "Physical / Local"
+    rationale: "A predictable token/secret lets an attacker guess session ids, reset links, or OTPs."
+    remediation: "Use Random.secure() for any security value."
+
+  - id: CRYPTO-HOMEGROWN-XOR
+    name: "Hand-rolled XOR / repeating-key cipher"
+    description: >
+      A byte or char is XORed against a key array indexed modulo its length
+      (`data[i] ^ key[i % key.length]`) — the signature of a home-grown
+      repeating-key stream cipher. It is trivially reversible (known-plaintext or
+      frequency analysis), usually paired with a hardcoded key, and provides no
+      integrity. Language-agnostic: the same shape appears in Java/Kotlin/C#/Go/
+      JS/TS/Python/Ruby/PHP. This is NOT a substitute for an authenticated cipher.
+    file_patterns:
+      ["**/*.java", "**/*.kt", "**/*.cs", "**/*.go", "**/*.js", "**/*.ts", "**/*.py", "**/*.rb", "**/*.php", "**/*.scala"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.*", "**/*Tests.*", "**/*_test.*", "**/*.test.*", "**/target/**", "**/build/**", "**/dist/**", "**/node_modules/**"]
+    pattern: '\^\s*[A-Za-z_]\w*\s*\[[^\]\n]{0,40}%'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-327
+    finding_type: FT-174
+    breach_vector: "Internet Anon"
+    rationale: >
+      A reversible home-grown cipher protecting tokens, passwords, or exported
+      data can be broken without the key, disclosing every protected value.
+    remediation: "Use an authenticated cipher (AES-GCM) from a vetted library; never a hand-rolled XOR."

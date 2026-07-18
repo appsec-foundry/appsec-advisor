@@ -69,6 +69,19 @@ properties:
           ceiling). OR-combined with the CLI flag --no-opus and the env
           var APPSEC_DISABLE_OPUS — any source can enable it, none can
           disable it for a given run.
+      url_allowlist:
+        type: array
+        maxItems: 64
+        items:
+          type: string
+          minLength: 1
+          maxLength: 253
+        description: |
+          Hostnames the tool may fetch from (e.g. remote requirements
+          catalogs, related-repo threat models). When set, every remote
+          fetch is restricted to these hosts (exact or a dotted subdomain);
+          any other host is rejected on top of the always-on SSRF guard
+          (loopback / RFC1918 / cloud-metadata are blocked regardless).
 
   branding:
     type: object
@@ -185,6 +198,12 @@ properties:
   security_coach:
     type: object
     additionalProperties: false
+    description: |
+      Prompt-time security coaching. An org can define its own steering
+      behaviour here: the always-on baseline text and its own topics. A topic
+      is criteria + action — `triggers` (keywords that fire it) and the
+      `guidance` / `requirements` it injects. Guidance is advisory context,
+      capped by the built-in max_injected_chars; it is never model instructions.
     properties:
       enabled_by_default:
         type: boolean
@@ -192,6 +211,41 @@ properties:
         type: integer
         minimum: 0
         maximum: 10
+      baseline:
+        type: string
+        minLength: 1
+        maxLength: 2000
+        description: Always-on secure-by-default text, replacing the built-in baseline.
+      inherit_default_topics:
+        type: boolean
+        description: Keep the built-in topics (default true); false uses only your topics.
+      topics:
+        type: object
+        maxProperties: 64
+        propertyNames:
+          pattern: "^[a-z0-9][a-z0-9_-]{0,62}$"
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [triggers]
+          properties:
+            triggers:
+              type: array
+              minItems: 1
+              maxItems: 64
+              items:
+                type: string
+                minLength: 1
+                maxLength: 80
+            guidance:
+              type: string
+              maxLength: 1000
+            requirements:
+              type: array
+              maxItems: 20
+              items:
+                type: string
+                maxLength: 80
 
   skill_toggles:
     type: object
@@ -266,7 +320,114 @@ properties:
         type: string
         default: "abuse-cases/*.yaml"
 
+  mcp:
+    type: object
+    additionalProperties: false
+    required: [servers]
+    description: |
+      MCP servers bundled into the packaged plugin's .mcp.json, letting an org
+      wire in its own services (e.g. internal SAST/SCA endpoints). Which declared
+      servers are actually emitted can be narrowed by the package-policy allowlist
+      (plugin_surface.mcp_servers). Secrets — tokens, internal URLs — must be
+      referenced via ${ENV_VAR} and are expanded by Claude Code at load time;
+      a credential embedded in a server url (user:pass@host) is rejected at
+      validation time. MCP tool *output* is untrusted reference data: it can
+      inform findings but never changes severity rules, permissions, schemas,
+      or tool behavior.
+    properties:
+      servers:
+        type: object
+        minProperties: 1
+        maxProperties: 32
+        propertyNames:
+          pattern: "^[a-z0-9][a-z0-9_-]{0,62}$"
+        additionalProperties:
+          $ref: "#/$defs/mcp_server"
+
+  hooks:
+    type: object
+    maxProperties: 32
+    description: |
+      Claude Code hooks bundled into the packaged plugin's hooks/hooks.json, so
+      an org can ship its own event handlers (e.g. a PreToolUse Bash guard)
+      inside one central plugin. Each hook script lives under the profile
+      directory and is referenced with ${CLAUDE_PLUGIN_ROOT}/org-profile/...;
+      the packager records every org hook in package-surface.json (org-owned,
+      distinct from the upstream hooks) so the artifact surface stays auditable,
+      and package-policy (plugin_surface.hooks) can exclude one by id. Org hooks
+      run at Claude Code's event layer — they never reach the analysis pipeline;
+      findings, severity, and schemas stay core-owned.
+    propertyNames:
+      pattern: "^[a-z0-9][a-z0-9_-]{0,62}$"
+    additionalProperties:
+      $ref: "#/$defs/org_hook"
+
 $defs:
+  org_hook:
+    type: object
+    additionalProperties: false
+    required: [event, command]
+    description: |
+      A single org-declared hook. `command` must reference an executable under
+      the profile directory via ${CLAUDE_PLUGIN_ROOT}/org-profile/... `matcher`
+      is only meaningful for PreToolUse / PostToolUse (a tool-name pattern).
+    properties:
+      event:
+        enum:
+          - UserPromptSubmit
+          - PreToolUse
+          - PostToolUse
+          - Stop
+          - SubagentStop
+          - Notification
+          - SessionStart
+          - SessionEnd
+          - PreCompact
+      command:
+        type: string
+        minLength: 1
+        maxLength: 2048
+      matcher:
+        type: string
+        minLength: 1
+        maxLength: 256
+
+  mcp_server:
+    type: object
+    additionalProperties: false
+    minProperties: 1
+    description: |
+      A single MCP server entry, mirroring the Claude Code .mcp.json server
+      contract. Provide `url` (http/sse transport) or `command` (stdio). Use
+      ${ENV_VAR} / ${CLAUDE_PLUGIN_ROOT} for secrets and bundled paths.
+    properties:
+      type:
+        enum: [stdio, http, sse]
+      command:
+        type: string
+        minLength: 1
+        maxLength: 2048
+      args:
+        type: array
+        maxItems: 64
+        items:
+          type: string
+          maxLength: 2048
+      env:
+        type: object
+        additionalProperties:
+          type: string
+          maxLength: 4096
+      url:
+        type: string
+        minLength: 1
+        maxLength: 2048
+      headers:
+        type: object
+        additionalProperties:
+          type: string
+          maxLength: 4096
+
   preset:
     type: object
     additionalProperties: false
@@ -337,6 +498,19 @@ $defs:
     properties:
       enabled:
         type: boolean
+      gate:
+        type: object
+        additionalProperties: false
+        description: |
+          Default gate policy for both requirements skills. CLI flags
+          (--gate / --gate-on / --priority-floor) override these.
+        properties:
+          mode:
+            enum: [advisory, enforce]   # advisory exits 0; enforce = like --gate
+          gate_on:
+            enum: [fail, partial]
+          priority_floor:
+            enum: [MUST, SHOULD, MAY]
 
   preset_context:
     type: object
@@ -389,3 +563,8 @@ $defs:
         type: boolean
       verbose_report:
         type: boolean
+      fail_on:
+        enum: [critical, high, medium]
+        description: |
+          Headless/CI release gate: exit non-zero when the run adds threats at
+          or above this severity. The --fail-on CLI flag overrides it.

@@ -1,12 +1,10 @@
 # Compact Full/Rebuild Runtime
 
-This runtime is used only for non-dry `full` and `rebuild` scans without
-resume, deadline/cost watchdogs, or `APPSEC_LIVE_PHASE=1`. Those special paths
-remain on `SKILL-impl.md`.
+Only for non-dry `full`/`rebuild` scans without resume, deadline/cost watchdogs,
+or `APPSEC_LIVE_PHASE=1`; those paths use `SKILL-impl.md`.
 
-The Python controller owns deterministic preflight and filesystem state. The
-main session owns only user-visible output, Task lifecycle, Agent dispatch, and
-the existing deterministic gates.
+The controller owns deterministic preflight/state; the session owns output,
+Task lifecycle, Agent dispatch, and gates.
 
 ## 1. Prepare
 
@@ -27,8 +25,7 @@ Parse the returned JSON as `ACTION`. It has already been validated against
 
 - If `ACTION.action=abort`, print `ACTION.reason` and stop with
   `ACTION.exit_code`. Do not dispatch an agent.
-- Otherwise require `ACTION.action=dispatch_agent` and
-  `ACTION.stage=stage1`. Any other value is a fail-closed controller error.
+- Otherwise require `dispatch_agent` at `stage1`; otherwise fail closed.
 - Treat `ACTION.dispatch_values` as authoritative resolved configuration. Do
   not parse flags again and do not re-read `.skill-config.json` unless a later
   deterministic script requires it.
@@ -42,7 +39,6 @@ The controller has already:
 - acquired and heartbeated the run lock;
 - generated route, architecture-coverage, and source-auth prepasses;
 - fetched requirements according to the resolved fail mode;
-- written only canonical `event_log.py` log lines.
 
 ## 2. User-visible preflight
 
@@ -98,6 +94,8 @@ SCAN_MANIFEST = scan_manifest
 STRIDE_MODEL = stride_model
 TRIAGE_MODEL = triage_model
 MERGER_MODEL = merger_model
+RENDERER_MODEL = renderer_model
+ABUSE_VERIFIER_MODEL = abuse_verifier_model
 CONTEXT_RESOLVER_MODEL = context_resolver_model
 RECON_SCANNER_MODEL = recon_scanner_model
 QA_ROUTINE_MODEL = qa_routine_model
@@ -228,6 +226,11 @@ Read `SKILL-impl.md` starting exactly at
 `<!-- LAZY-LOAD BOUNDARY` marker. Do not read any earlier part of that file.
 Follow the Stage 1 and Stage 1c instructions with the aliases above.
 
+If a Stage-1 dispatch returns as a stall/stream-watchdog failure instead of
+completing, it is still a return: emit `stall_notice.py "$OUTPUT_DIR" --stage
+"Stage 1"` for the shared banner, then follow the past-boundary "Handling
+turn-budget cut-offs" recovery — do not re-dispatch on your own.
+
 When those instructions say to start the heartbeat watchdog, use this exact
 fixed command with `run_in_background: true` and retain its task id:
 
@@ -249,10 +252,15 @@ are satisfied or inapplicable. Do not repeat them.
 
 ## 6. Stage 2 onward
 
-At the Stage-2 handoff, read `SKILL-impl.md` from the
-`<!-- LAZY-LOAD BOUNDARY` marker to EOF and follow it. This keeps rendering,
-QA, repair, architect review, completion, cleanup, and error handling on the
-existing contract.
+Read only:
+
+- 2: `## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs`.
+  Failure/cut-off only: through `## Incremental Mode`.
+- 3: `## Stage 3 - QA Review` to `### Stage 3 handoff banner`.
+  QA/semantic repair only: through `## Stage 4 - Architect Review`.
+- 4: `## Stage 4 - Architect Review` to `## Completion Summary`.
+- Done: `## Completion Summary` to `## Error Handling`.
+- Error: `## Error Handling` to EOF on that branch.
 
 **Mandatory finalize gate (deterministic — do NOT skip).** After the Stage-2
 renderer agent(s) return, and again before you emit any completion summary, you

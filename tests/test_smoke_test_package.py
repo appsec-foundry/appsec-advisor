@@ -100,6 +100,8 @@ def test_fails_when_entry_command_missing(tmp_path: Path) -> None:
         (".agent-run.log", False),
         ("nested/.appsec-progress.json", False),
         ("skills/create-threat-model/docs", True),
+        ("docs/analysis", True),
+        ("docs/internal", True),
         ("data/appsec-requirements-fallback.yaml", False),
     ],
 )
@@ -435,5 +437,73 @@ def test_check_surface_manifest_steering_keywords_leftover(tmp_path):
     kw = tmp_path / "hooks" / "steering_keywords.json"
     kw.parent.mkdir(parents=True, exist_ok=True)
     kw.write_text("{}")
+    with pytest.raises(SystemExit):
+        smk.check_surface_manifest(tmp_path)
+
+
+# --- check_surface_manifest: org hooks -------------------------------------
+
+
+def _write_org_hook(tmp_path, in_hooks_json=True, script_present=True):
+    cmd = "python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py"
+    hooks = tmp_path / "hooks" / "hooks.json"
+    hooks.parent.mkdir(parents=True, exist_ok=True)
+    events = {}
+    if in_hooks_json:
+        events = {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": cmd}]}]}
+    hooks.write_text(json.dumps({"hooks": events}))
+    if script_present:
+        g = tmp_path / "org-profile" / "hooks" / "guard.py"
+        g.parent.mkdir(parents=True, exist_ok=True)
+        g.write_text("print('{}')\n")
+    manifest = tmp_path / ".claude-plugin" / "package-surface.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps({"hooks": {"org": [{"id": "block-risky-bash", "event": "PreToolUse", "command": cmd}]}})
+    )
+
+
+def test_check_surface_manifest_org_hook_ok(tmp_path):
+    _write_org_hook(tmp_path)
+    smk.check_surface_manifest(tmp_path)  # no raise
+
+
+def test_check_surface_manifest_org_hook_missing_from_hooks_json(tmp_path):
+    _write_org_hook(tmp_path, in_hooks_json=False)
+    with pytest.raises(SystemExit):
+        smk.check_surface_manifest(tmp_path)
+
+
+def test_check_surface_manifest_org_hook_missing_script(tmp_path):
+    _write_org_hook(tmp_path, script_present=False)
+    with pytest.raises(SystemExit):
+        smk.check_surface_manifest(tmp_path)
+
+
+# --- check_surface_manifest: mcp_servers -----------------------------------
+
+
+def _write_manifest(tmp_path, mcp):
+    manifest = tmp_path / ".claude-plugin" / "package-surface.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps({"mcp_servers": mcp}))
+
+
+def test_check_surface_manifest_mcp_included_matches(tmp_path):
+    _write_manifest(tmp_path, {"included": ["acme-sast"], "removed": []})
+    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"acme-sast": {"url": "x"}}}))
+    smk.check_surface_manifest(tmp_path)  # no raise
+
+
+def test_check_surface_manifest_mcp_included_missing_from_config(tmp_path):
+    _write_manifest(tmp_path, {"included": ["acme-sast"], "removed": []})
+    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {}}))
+    with pytest.raises(SystemExit):
+        smk.check_surface_manifest(tmp_path)
+
+
+def test_check_surface_manifest_mcp_removed_still_present(tmp_path):
+    _write_manifest(tmp_path, {"included": [], "removed": ["acme-sast"]})
+    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"acme-sast": {"url": "x"}}}))
     with pytest.raises(SystemExit):
         smk.check_surface_manifest(tmp_path)

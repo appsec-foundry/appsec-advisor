@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import fetch_requirements as fr
+import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "fetch_requirements.py"
@@ -58,7 +59,10 @@ def _http_server(body: bytes):
         def log_message(self, *a):  # silence per-request logging
             pass
 
-    srv = socketserver.TCPServer(("127.0.0.1", 0), _H)
+    try:
+        srv = socketserver.TCPServer(("127.0.0.1", 0), _H)
+    except PermissionError as exc:
+        pytest.skip(f"local TCP listeners are unavailable in this environment: {exc}")
     port = srv.server_address[1]
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
@@ -127,6 +131,29 @@ def test_cli_remote_url_unreachable_aborts(tmp_path):
     r = _run(tmp_path, "--requirements", "http://127.0.0.1:1/reqs.yaml", "--timeout", "2")
     assert r.returncode == 2
     assert "fail_mode=fail_closed" in r.stderr
+
+
+def test_cli_remote_url_blocked_by_url_allowlist(tmp_path):
+    """A url_allowlist that excludes the host blocks the requirements fetch (exit 2)."""
+    cache = tmp_path / "cache.yaml"
+    with _http_server(b"categories:\n  - id: SEC-REMOTE\n") as url:
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--output-dir",
+                str(tmp_path),
+                "--requirements",
+                url,
+                "--cache-path",
+                str(cache),
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "APPSEC_URL_ALLOWLIST": "security.acme.example"},
+        )
+    assert r.returncode == 2
+    assert "not in APPSEC_URL_ALLOWLIST" in (r.stderr + r.stdout)
 
 
 def test_cli_empty_local_file_aborts(tmp_path):

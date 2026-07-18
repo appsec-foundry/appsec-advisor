@@ -131,6 +131,7 @@ def analyze_session(path: Path) -> dict[str, Any]:
     versions: set[str] = set()
     nominal_windows: set[int] = set()
     source_chars: Counter[str] = Counter()
+    stage_metrics: dict[str, dict[str, int]] = {}
     stage: str | None = None
     last_resident: int | None = None
     seen_message_ids: set[str] = set()
@@ -166,6 +167,19 @@ def analyze_session(path: Path) -> dict[str, Any]:
                 cache_read = _usage(entry).get("cache_read_input_tokens", 0)
                 if isinstance(cache_read, int) and cache_read > 0:
                     cache_read_throughput += cache_read
+                stage_name = stage or "unknown"
+                metrics = stage_metrics.setdefault(
+                    stage_name,
+                    {
+                        "assistant_turns_with_usage": 0,
+                        "peak_resident_context": 0,
+                        "cache_read_throughput": 0,
+                    },
+                )
+                metrics["assistant_turns_with_usage"] += 1
+                metrics["peak_resident_context"] = max(metrics["peak_resident_context"], resident)
+                if isinstance(cache_read, int) and cache_read > 0:
+                    metrics["cache_read_throughput"] += cache_read
 
         if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
             boundaries.append(
@@ -187,6 +201,7 @@ def analyze_session(path: Path) -> dict[str, Any]:
         "cache_read_throughput": cache_read_throughput,
         "cache_read_note": "cumulative per-turn throughput; not resident occupancy",
         "content_chars_by_source": dict(sorted(source_chars.items())),
+        "stages": dict(sorted(stage_metrics.items())),
         "models": sorted(model_ids),
         "claude_code_versions": sorted(versions),
         "nominal_context_windows": sorted(nominal_windows),
@@ -252,6 +267,13 @@ def _render_text(report: dict[str, Any]) -> str:
                 f"entry={boundary['entry']} "
                 f"resident_before={boundary['resident_before']} "
                 f"stage={boundary['stage_before'] or 'unknown'}"
+            )
+        for stage, metrics in session["stages"].items():
+            lines.append(
+                f"    stage={stage} "
+                f"turns={metrics['assistant_turns_with_usage']} "
+                f"peak={metrics['peak_resident_context']:,} "
+                f"cache_read={metrics['cache_read_throughput']:,}"
             )
     return "\n".join(lines) + "\n"
 

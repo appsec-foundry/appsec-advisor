@@ -82,7 +82,7 @@ _PATTERNS: list[_Pattern] = [
         "generic_credential_assignment",
         re.compile(
             r"(?ix)"
-            r"\b(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
+            r"\b(?P<kw>password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
             r"\s*(?P<op>[=:])\s*"
             r"(?P<q>['\"])?(?P<val>[A-Za-z0-9_\-+/=\.]{8,})"
         ),
@@ -108,6 +108,26 @@ _CODE_REFERENCE_RE = re.compile(
 
 def _looks_like_code_reference(value: str) -> bool:
     return bool(_CODE_REFERENCE_RE.match(value))
+
+
+def _is_keyword_echo_value(value: str, keyword: str | None, quoted: bool) -> bool:
+    """An unquoted loose-pattern value that echoes its OWN credential keyword —
+    ``password=password``, ``secret=secret``, ``token=token`` — is a tautological
+    documentation placeholder, never a reusable secret. Skipping it is not merely
+    cosmetic: the exact-value pass in redact_known_secrets does a blind
+    ``text.replace(value, mask)`` over every artifact, and these keyword words
+    (``password``, ``secret``, ``token``, ``auth`` …) are exactly the terms that
+    saturate a security report's prose and its anchor slugs. Observed on the
+    2026-07-16 insecure-spring-app run: ``password=password`` in the README
+    collapsed 942 occurrences to ``pass**** (8 chars)``, breaking the §6.2
+    ``#password-based-authentication`` anchor. A genuine secret is never the
+    literal echo of its keyword, so this can never hide a real leak. Quoted
+    values stay flagged (an intentional literal is masked in place, not blindly
+    replaced document-wide)."""
+    if quoted or not keyword:
+        return False
+    norm = lambda s: s.lower().replace("-", "").replace("_", "")  # noqa: E731
+    return norm(value) == norm(keyword)
 
 
 # A plain lowercase English word (no digits, no separators) — e.g. "existing",
@@ -224,6 +244,11 @@ def scan_text(text: str) -> list[SecretHit]:
                 # SEC-USER-AUTH:) — an ID label, not a credential assignment.
                 if "op" in groups and _is_identifier_suffix_keyword(text, m.start(), m.start("op")):
                     continue
+                # Keyword-echo placeholder (``password=password``) — a doc
+                # sample, not a reusable secret. Skipping it keeps the exact-value
+                # redactor from corrupting prose/anchors document-wide.
+                if _is_keyword_echo_value(value, groups.get("kw"), bool(groups.get("q"))):
+                    continue
             snippet = matched[:80].replace("\n", " ")
             hits.append(SecretHit(pattern=pat.name, snippet=snippet, line=line_of(m.start()), value=value))
     return hits
@@ -289,6 +314,10 @@ def mask_text(text: str) -> tuple[str, list[str]]:
                 # Mirror the detector's identifier-suffix guard so masking never
                 # corrupts a requirements row like "SEC-USER-AUTH: Authenticate…".
                 if "op" in groups and _is_identifier_suffix_keyword(text, m.start(), m.start("op")):
+                    return m.group(0)
+                # Mirror the detector's keyword-echo guard so masking never
+                # corrupts a doc example like "password=password".
+                if _is_keyword_echo_value(value, groups.get("kw"), bool(groups.get("q"))):
                     return m.group(0)
             applied.append(_pat.name)
             return _mask_match(_pat, m)

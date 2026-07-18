@@ -88,6 +88,61 @@ def test_returns_no_run_when_output_dir_empty(tmp_path, appsec_status):
     assert snap["active_tool_calls"] == []
 
 
+# ---------------------------------------------------------------------------
+# _cutoff_verdict — post-hoc last-run verdict
+# ---------------------------------------------------------------------------
+
+
+def _seed_stall_log(tmp_path: Path, start: int = 1_000_000_000) -> None:
+    (tmp_path / ".scan-start-epoch").write_text(f"{start}\n")
+    (tmp_path / ".agent-run.log").write_text(
+        "2001-09-09T01:48:20Z  [--------]  WARN   skill   STALL_RECOVERY   stage=Stage 1 — API stream stall\n"
+    )
+
+
+def test_cutoff_verdict_none_when_no_run(tmp_path, appsec_status):
+    assert appsec_status._cutoff_verdict(tmp_path) is None
+
+
+def test_cutoff_verdict_none_when_completed(tmp_path, appsec_status):
+    _seed_stall_log(tmp_path)
+    (tmp_path / ".appsec-checkpoint").write_text("phase=9 status=started")
+    (tmp_path / "threat-model.md").write_text("# done")
+    assert appsec_status._cutoff_verdict(tmp_path) is None
+
+
+def test_cutoff_verdict_api_stall_surfaced(tmp_path, appsec_status):
+    _seed_stall_log(tmp_path)
+    (tmp_path / ".appsec-checkpoint").write_text("phase=2 status=completed")
+    verdict = appsec_status._cutoff_verdict(tmp_path)
+    assert verdict is not None
+    assert verdict["kind"] == "api_stall"
+    lead = appsec_status._render_cutoff(verdict)
+    assert "Last run incomplete" in lead
+    assert "--resume" in lead
+
+
+def test_cutoff_verdict_budget_default_when_stride_present(tmp_path, appsec_status):
+    # STRIDE files on disk but no stall ⇒ Phase-11 branch default (budget).
+    (tmp_path / ".scan-start-epoch").write_text("1000000000\n")
+    (tmp_path / ".agent-run.log").write_text("")
+    (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=started")
+    (tmp_path / ".stride-auth.json").write_text("{}")
+    verdict = appsec_status._cutoff_verdict(tmp_path)
+    assert verdict is not None
+    assert verdict["kind"] == "budget"
+
+
+def test_cutoff_verdict_suppressed_while_run_live(tmp_path, appsec_status):
+    import os
+
+    _seed_stall_log(tmp_path)
+    (tmp_path / ".appsec-checkpoint").write_text("phase=2 status=completed")
+    # Lock held by THIS (alive) process ⇒ a scan is running, not cut off.
+    (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n{int(time.time())}\n")
+    assert appsec_status._cutoff_verdict(tmp_path) is None
+
+
 def test_returns_run_state_when_artefacts_present(tmp_path, appsec_status):
     _seed_run(tmp_path, progress_components=[("auth", 4)], active_tool_age=10)
     snap = appsec_status._live_snapshot(tmp_path)

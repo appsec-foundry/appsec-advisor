@@ -35,7 +35,7 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
 1. Read `$REPAIR_PLAN_PATH` once. Abort (exit 2) when the file is missing, unreadable, or `status != "fail"`. When `status == "manual_review"` or `actionable == false`, emit `REPAIR_SKIPPED` and exit 0 — the skill handles that banner.
 2. For each `action` in the plan, re-author **only** the listed `fragments_to_rewrite`:
    - The authoritative guides are `schemas/fragments/` (for `data`/JSON fragments) and the subsection rules in `data/sections-contract.yaml` (for `markdown` fragments). Read the relevant rule block once when the action concerns it.
-   - **§7.2 Identity and Authentication Controls** (`security-architecture.md`): H4 headings name canonical auth **mechanisms** (Password-Based Authentication, OAuth/OIDC, SAML/SSO, TOTP/2FA/MFA, Passkey/WebAuthn, Magic Link, mTLS, Webhook HMAC, API Key, Bearer Token, Cloud IAM, Anonymous Access) — never primitives (`Password Hashing`, `Login Rate Limiting`, `Credential Storage`), token formats (`JWT-RS256`), library names, or exploit/attack-flow names. **JWT issuance/verification/signing belongs in §7.3, not §7.2.** Each flow-method H4 carries its own positive-flow `sequenceDiagram`. This mirrors the `auth_method_decomposition` contract rule (`enforcement: error`).
+   - **§6.2 Identity and Authentication Controls** (`security-architecture.md`): H4 headings name canonical auth **mechanisms** (Password-Based Authentication, OAuth/OIDC, SAML/SSO, TOTP/2FA/MFA, Passkey/WebAuthn, Magic Link, mTLS, Webhook HMAC, API Key, Bearer Token, Cloud IAM, Anonymous Access) — never primitives (`Password Hashing`, `Login Rate Limiting`, `Credential Storage`), token formats (`JWT-RS256`), library names, or exploit/attack-flow names. **JWT issuance/verification/signing belongs in §6.3, not §6.2.** Each flow-method H4 carries its own positive-flow `sequenceDiagram`. This mirrors the `auth_method_decomposition` contract rule (`enforcement: error`).
    - When re-authoring a narrative/prose fragment, load `agents/shared/prose-style.md` once so the regenerated prose matches the house style the QA reviewer enforces.
    - For `type: table_schema_drift` — re-run `compose_threat_model.py` first (the drift is usually a prior renderer bypass); only re-author the source fragment if the drift persists after a clean render.
    - For `type: report_integrity` — the named section is in scope (its condition is true) but rendered **empty/degraded** because its fragment is missing or empty (surfaced by `.render-integrity.json`). Re-author the listed `fragments_to_rewrite` **from scratch**, using `threat-model.yaml` as the data source plus the schema (`schemas/fragments/`) and `data/sections-contract.yaml` rules for that section — this is fresh authoring of a dropped fragment, not an edit of an existing one. If `fragments_to_rewrite` is empty, the section is deterministic/computed and a re-render cannot fix it (a renderer bug, not a missing fragment) — emit `REPAIR_SKIPPED` for that action and do not loop on it.
@@ -43,7 +43,7 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
 3. After all fragments are written, re-invoke the renderer with strict enforcement:
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
-       --output-dir "$OUTPUT_DIR" --strict
+       --output-dir "$OUTPUT_DIR" --strict --skip-changelog-audit
    ```
    A non-zero exit is a repair failure — emit `RENDER_FAILED` and let the skill's loop count this iteration as unsuccessful.
 4. **Re-run the deterministic finalization tail** — a `--strict` recompose regenerates the Markdown from fragments and therefore discards **every** post-compose mutation the pre-agent gate applied. Re-apply the canonical tail in order (both idempotent):
@@ -57,7 +57,12 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract "$OUTPUT_DIR/threat-model.md"
    ```
    Exit 0 means the repair worked; 1 means the plan was insufficient (the skill's next iteration re-attempts or hard-fails at the cap).
-6. Log a `STEP_END` / `AGENT_END` pair summarizing which fragment paths were rewritten and the final `qa_checks.py contract` exit code.
+6. Only after the contract gate exits 0, regenerate the auxiliary changelog audit once:
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_changelog_audit.py" "$OUTPUT_DIR"
+   ```
+   This keeps failed intermediate compose attempts from repeatedly parsing and writing the large audit export while preserving it for every repaired final report.
+7. Log a `STEP_END` / `AGENT_END` pair summarizing which fragment paths were rewritten and the final `qa_checks.py contract` exit code.
 
 ## Hard rule — the renderer is the only legal writer of the document
 

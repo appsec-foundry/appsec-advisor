@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from unittest import mock
@@ -15,8 +16,13 @@ import _url_guard as guard  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _clear_allowlist(monkeypatch):
+def _clear_allowlist(monkeypatch, tmp_path):
     monkeypatch.delenv("APPSEC_URL_ALLOWLIST", raising=False)
+    # Neutralise both profile-allowlist sources so it is deterministically
+    # absent unless a test opts in: no OUTPUT_DIR, and a cwd with no
+    # docs/security/.org-profile-effective.json.
+    monkeypatch.delenv("OUTPUT_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
     yield
 
 
@@ -250,3 +256,42 @@ def test_same_host_false_on_unparseable():
 
     with mock.patch("urllib.parse.urlsplit", _boom):
         assert guard.same_host("http://a/", "http://a/") is False
+
+
+# ---------------------------------------------------------------------------
+# Org-profile url_allowlist enforcement (policy.url_allowlist)
+# ---------------------------------------------------------------------------
+
+
+def test_profile_allowlist_rejects_unlisted_host(monkeypatch):
+    monkeypatch.setattr(guard, "_allowlist_from_profile", lambda: ["security.acme.example"])
+    with mock.patch("socket.getaddrinfo", _fake_resolver(["8.8.8.8"])):
+        ok, reason, _ = guard.validate_target_url("http://evil.example/x")
+    assert not ok and "not in APPSEC_URL_ALLOWLIST" in reason
+
+
+def test_profile_allowlist_allows_listed_host(monkeypatch):
+    monkeypatch.setattr(guard, "_allowlist_from_profile", lambda: ["security.acme.example"])
+    with mock.patch("socket.getaddrinfo", _fake_resolver(["8.8.8.8"])):
+        ok, reason, _ = guard.validate_target_url("http://security.acme.example/reqs.yaml")
+    assert ok and reason == "ok"
+
+
+def test_env_and_profile_allowlists_union(monkeypatch):
+    monkeypatch.setenv("APPSEC_URL_ALLOWLIST", "reqs.example.com")
+    monkeypatch.setattr(guard, "_allowlist_from_profile", lambda: ["security.acme.example"])
+    with mock.patch("socket.getaddrinfo", _fake_resolver(["8.8.8.8"])):
+        assert guard.validate_target_url("http://reqs.example.com/a").ok
+        assert guard.validate_target_url("http://security.acme.example/b").ok
+        assert not guard.validate_target_url("http://other.example/c").ok
+
+
+def test_profile_allowlist_read_from_effective_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("APPSEC_URL_ALLOWLIST", raising=False)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".org-profile-effective.json").write_text(
+        json.dumps({"defaults": {"url_allowlist": ["security.acme.example"]}})
+    )
+    monkeypatch.setenv("OUTPUT_DIR", str(out))
+    assert guard._allowlist_from_profile() == ["security.acme.example"]

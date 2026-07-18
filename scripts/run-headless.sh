@@ -331,9 +331,18 @@ done
 
 # ── Pre-flight auth check ────────────────────────────────────────────
 if [ "$BILLING_MODE" = "subscription" ]; then
-    AUTH_JSON=$(claude auth status 2>/dev/null) || AUTH_JSON="{}"
-    if ! echo "$AUTH_JSON" | grep -q '"loggedIn": true'; then
-        die "Not authenticated for subscription billing.\n  • To use subscription: run 'claude auth login'\n  • To use API billing:  export ANTHROPIC_API_KEY=<your-key>"
+    if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+        # Non-interactive subscription auth (CI / unattended). The CLI consumes
+        # the OAuth token at request time, but `claude auth status` reflects only
+        # stored credentials (~/.claude/) and would false-negative here — so we
+        # trust the token and skip the interactive-login gate. An invalid token
+        # still surfaces as a real error from `claude -p` downstream.
+        info "Subscription auth via CLAUDE_CODE_OAUTH_TOKEN (non-interactive; skipping login preflight)"
+    else
+        AUTH_JSON=$(claude auth status 2>/dev/null) || AUTH_JSON="{}"
+        if ! echo "$AUTH_JSON" | grep -q '"loggedIn": true'; then
+            die "Not authenticated for subscription billing.\n  • To use subscription: run 'claude auth login' (interactive) or set CLAUDE_CODE_OAUTH_TOKEN (CI / non-interactive)\n  • To use API billing:  export ANTHROPIC_API_KEY=<your-key>"
+        fi
     fi
 fi
 
@@ -936,6 +945,12 @@ fi
 if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
     python3 "$PLUGIN_DIR/scripts/runtime_cleanup.py" "$OUTPUT_PATH" \
         --stage post-qa ${KEEP_RUNTIME_FILES_FLAG:-} 2>/dev/null || true
+fi
+
+# Seed the fail-on level from the active org profile when no --fail-on was
+# passed: guardrails.fail_on rides in .org-profile-effective.json. CLI wins.
+if [ -z "$FAIL_ON" ] && [ -f "$OUTPUT_PATH/.org-profile-effective.json" ]; then
+    FAIL_ON="$(python3 -c "import json,sys;print((json.load(open(sys.argv[1])).get('defaults') or {}).get('fail_on') or '')" "$OUTPUT_PATH/.org-profile-effective.json" 2>/dev/null || true)"
 fi
 
 # ── PR Gate: --fail-on <level> ──────────────────────────────────────

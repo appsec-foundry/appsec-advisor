@@ -100,7 +100,7 @@ def aggregate_categories(findings: list[dict], taxonomy: dict, cwe_tax: dict, mi
         for f in th_findings:
             risk_dist[f["risk"]] += 1
         # Find pillar info + OWASP
-        owasp_a = cat_tax.get("owasp_top10_2021")
+        owasp_a = cat_tax.get("owasp_top10_2025")
         pillar = cat_tax.get("cwe_pillar")
         canonical = cat_tax.get("cwe_canonical")
         top25_members = cat_tax.get("cwe_top25_members", []) or []
@@ -124,7 +124,7 @@ def aggregate_categories(findings: list[dict], taxonomy: dict, cwe_tax: dict, mi
             "cwe_canonical": canonical,
             "cwe_top25_members_present": top25_members
             and any(c in top25_members for f in th_findings for c in (f.get("cwe") or [])),
-            "owasp_top10_2021": owasp_a,
+            "owasp_top10_2025": owasp_a,
             "owasp_asvs": cat_tax.get("owasp_asvs"),
             "aggregated": {
                 "max_risk": max_risk,

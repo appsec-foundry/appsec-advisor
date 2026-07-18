@@ -292,6 +292,65 @@ def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
     return payload
 
 
+_CUTOFF_ONELINE = {
+    "api_stall": "API stream stall (server-side) — NOT a plugin, repository, or configuration fault.",
+    "session_death": "the Claude Code session ended mid-run (window closed / OOM / network) — NOT a plugin fault.",
+    "budget": "turn budget exhausted before final compose — threats merged, only rendering is missing.",
+}
+
+
+def _cutoff_verdict(output_dir: Path) -> dict | None:
+    """Post-hoc last-run verdict when a run ended without a ``threat-model.md``.
+
+    The in-run cut-off banners only print while the orchestrator turn is alive;
+    a stall severe enough to kill that turn leaves the user with no verdict. This
+    surfaces the SAME ``cutoff_cause`` classification in the next live status
+    turn — the one channel the user reliably reads.
+
+    Returns ``None`` (nothing to warn about) when:
+      * the run completed (``threat-model.md`` on disk), or
+      * there is no evidence of a run at all, or
+      * a scan is currently live (a held lock with a live pid) — never
+        false-alarm an in-progress run.
+
+    Otherwise returns ``{"kind": ..., "block": ...}`` from ``cutoff_cause``.
+    """
+    if (output_dir / "threat-model.md").is_file():
+        return None
+    if not ((output_dir / ".agent-run.log").is_file() or (output_dir / ".appsec-checkpoint").is_file()):
+        return None
+    # Suppress while a scan is genuinely running (lock held by a live process).
+    try:
+        from check_state import classify  # type: ignore
+
+        if (classify(output_dir).get("lock") or {}).get("alive") is True:
+            return None
+    except Exception:
+        pass
+    try:
+        import cutoff_cause  # type: ignore
+
+        # Mirror the banner defaults: no STRIDE files yet ⇒ the early-cut-off
+        # branch (session_death default); STRIDE present but no compose ⇒ the
+        # Phase-11 branch (budget default).
+        default = "budget" if list(output_dir.glob(".stride-*.json")) else "session_death"
+        kind, block = cutoff_cause.cause_for(output_dir, default)
+        return {"kind": kind, "block": block}
+    except Exception:
+        return None
+
+
+def _render_cutoff(verdict: dict) -> str:
+    """One-line lead + the single-sourced Cause block + the resume hint."""
+    lead = _CUTOFF_ONELINE.get(verdict["kind"], "run ended without producing a threat model.")
+    return (
+        "⚠ Last run incomplete — no threat-model.md was produced.\n"
+        f"  Cause: {lead}\n"
+        "  → Resume:  /appsec-advisor:create-threat-model --resume\n"
+        f"\n{verdict['block']}\n"
+    )
+
+
 def _last_run_info(output_dir: Path) -> dict:
     code, out, _ = _run_helper(
         "baseline_state.py",
@@ -310,6 +369,10 @@ def _last_run_info(output_dir: Path) -> dict:
 def render_text(data: dict) -> str:
     meta = data["plugin"]
     buf: list[str] = []
+
+    verdict = data.get("cutoff")
+    if verdict:
+        buf.append(_render_cutoff(verdict))
 
     cleaned = data.get("auto_clean", {}).get("removed", [])
     if cleaned:
@@ -690,9 +753,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.live:
         snap = _live_snapshot(output_dir)
+        snap["cutoff"] = _cutoff_verdict(output_dir)
         if args.json:
             print(json.dumps(snap, indent=2, sort_keys=True))
         else:
+            if snap["cutoff"]:
+                print(_render_cutoff(snap["cutoff"]))
             print(_render_live(snap), end="")
         return 0
 
@@ -727,6 +793,7 @@ def main(argv: list[str] | None = None) -> int:
         "fast_path": _fast_path_preview(output_dir, repo_root),
         "auto_clean": auto_clean,
         "org_profile": _org_profile_status(output_dir),
+        "cutoff": _cutoff_verdict(output_dir),
     }
 
     if args.json:

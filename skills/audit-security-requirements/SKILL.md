@@ -105,6 +105,8 @@ GATE FLAGS (CI / merge gate — advisory by default)
   --gate-on <fail|partial> what gates: fail (default) or fail+partial.
   --priority-floor <MUST|SHOULD|MAY>
                            lowest priority that may gate (default MUST).
+  The --gate / --gate-on / --priority-floor defaults can be preset in the active
+  org profile (preset requirements.gate); an explicit flag here overrides it.
 
 DEFAULT BEHAVIOUR
   A plain run prints a banner (catalog, source, fetch date, count, freshness),
@@ -155,6 +157,12 @@ Store the resolved flags: `save_md`, `save_pdf`, `save_json`, `quiet_mode`,
 `--save` sets `save_md`, `save_pdf` and `save_json`. `--pdf` implies `save_md`
 (the PDF is converted from the Markdown report). `--gate-on` and
 `--priority-floor` each consume the following token as their value.
+
+For the three gate knobs also remember whether the user passed the flag
+**explicitly** this run (`gate_mode_set`, `gate_on_set`, `priority_floor_set`).
+The active preset may supply defaults for them (Step 1b, after the org profile is
+resolved), but an explicit CLI flag always wins — precedence is **CLI > preset >
+built-in default (advisory / fail / MUST)**.
 
 #### Reject unknown flags (hard fail)
 
@@ -241,6 +249,34 @@ if [ "$ORG_RESOLVE_EXIT" -ne 0 ]; then
   exit "$ORG_RESOLVE_EXIT"
 fi
 ```
+
+#### Seed the gate policy from the active preset
+
+If an org profile is active and its selected preset carries a
+`requirements.gate` block, use it as the **default** for any gate knob the user
+did **not** set explicitly on the CLI. This runs here — before Step 2.5 / Step 5
+— because a preset with `mode: enforce` turns the audit into a gate, which means
+the structured verdict must be built. Precedence stays **CLI > preset > built-in
+default**; a flag the user passed this run is never overwritten.
+
+```bash
+EFFECTIVE="$AUDIT_OUTPUT_DIR/.org-profile-effective.json"
+if [ -f "$EFFECTIVE" ]; then
+  read PRESET_GATE_MODE PRESET_GATE_ON PRESET_FLOOR < <(python3 - "$EFFECTIVE" <<'PY'
+import json, sys
+d = (json.load(open(sys.argv[1])).get("defaults") or {}).get("requirements_gate") or {}
+print(d.get("mode") or "", d.get("gate_on") or "", d.get("priority_floor") or "")
+PY
+)
+  [ "$GATE_MODE_SET" != "true" ] && [ "$PRESET_GATE_MODE" = "enforce" ] && GATE_MODE=true
+  [ "$GATE_ON_SET" != "true" ]   && [ -n "$PRESET_GATE_ON" ]  && GATE_ON="$PRESET_GATE_ON"
+  [ "$PRIORITY_FLOOR_SET" != "true" ] && [ -n "$PRESET_FLOOR" ] && PRIORITY_FLOOR="$PRESET_FLOOR"
+fi
+```
+
+When a preset supplied any of these (and the user did not override it), surface
+it once in the banner as a `Gate     :` line (Step 1b banner rules) so the
+effective policy is visible. Omit it when no preset gate is in effect.
 
 #### Mode flags — `--clear-requirements` and `--status` exit early
 
@@ -390,6 +426,7 @@ Banner rules:
 - If `surfaced` is `true` (a local `docs/security/requirements.yaml` is in effect), add a line `Note     : using local repo catalog (overrides org profile)`.
 - If `freshness.stale` is `true`, render `Freshness: 🟡 STALE (cache ≥ 30 days) — refresh with --update`, and note that an `--update` attempt was already made this run if the disposition is `cache_after_fetch_fail`.
 - If `disposition` is `cache_after_fetch_fail`, add `Source    : unreachable this run — served the cached copy` so the user knows the network refresh failed.
+- If the active preset supplied a gate policy that took effect (Step 1b "Seed the gate policy from the active preset", and the user did not override it on the CLI), add a `Gate     : <enforce|advisory> · gate-on=<fail|partial> · floor=<MUST|SHOULD|MAY> (from preset <name>)` line. Omit it entirely when no preset gate is in effect.
 - If `STATUS_MODE` is set, print the banner and **stop here** — do not scan the repository, do not render findings, exit 0.
 
 Use `REQUIREMENTS_YAML` as the loaded catalog in Step 1c. The skill cannot

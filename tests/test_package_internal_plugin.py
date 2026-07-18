@@ -121,9 +121,15 @@ def _make_org_profile(root):
 
 def test_copy_source_applies_excludes(tmp_path):
     source = _make_source(tmp_path / "src")
+    (source / "docs" / "analysis").mkdir(parents=True)
+    (source / "docs" / "analysis" / "plan.md").write_text("internal\n", encoding="utf-8")
+    (source / "docs" / "internal" / "analysis").mkdir(parents=True)
+    (source / "docs" / "internal" / "note.md").write_text("internal\n", encoding="utf-8")
     build = tmp_path / "build" / "acme"
     pkg.copy_source(source, build)
     assert (build / ".claude-plugin" / "plugin.json").is_file()
+    assert not (build / "docs" / "analysis").exists()
+    assert not (build / "docs" / "internal").exists()
     assert not (build / "tests").exists()
     assert not (build / "scripts" / "__pycache__").exists()
     assert not (build / "scripts" / "docs").exists()
@@ -524,6 +530,70 @@ def test_apply_hook_policy_skips_malformed_entries(tmp_path):
     assert result["events"] == ["E2"]
 
 
+def _make_build_with_org_hook(root):
+    root.mkdir(parents=True)
+    hooks = root / "hooks"
+    hooks.mkdir()
+    (hooks / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [{"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"}]}]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    op = root / "org-profile"
+    (op / "hooks").mkdir(parents=True)
+    (op / "hooks" / "guard.py").write_text("print('{}')\n", encoding="utf-8")
+    (op / "org-profile.yaml").write_text(
+        "hooks:\n"
+        "  block-risky-bash:\n"
+        "    event: PreToolUse\n"
+        "    matcher: Bash\n"
+        "    command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_apply_hook_policy_merges_org_hook(tmp_path):
+    build = _make_build_with_org_hook(tmp_path / "build")
+    result = pkg.apply_hook_policy(build, {})
+    assert {
+        "id": "block-risky-bash",
+        "event": "PreToolUse",
+        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py",
+    } in result["org"]
+    cmds = json.dumps(json.loads((build / "hooks" / "hooks.json").read_text()))
+    assert "org-profile/hooks/guard.py" in cmds  # org hook merged in
+    assert "agent_logger" in cmds  # upstream hook kept
+
+
+def test_apply_hook_policy_excludes_org_hook(tmp_path):
+    build = _make_build_with_org_hook(tmp_path / "build")
+    result = pkg.apply_hook_policy(build, {"hooks": {"exclude": ["block-risky-bash"]}})
+    assert result["org"] == []
+    assert "block-risky-bash" in result["removed"]
+    cmds = json.dumps(json.loads((build / "hooks" / "hooks.json").read_text()))
+    assert "org-profile/hooks/guard.py" not in cmds
+
+
+def test_org_hook_recorded_in_surface_and_passes_smoke(tmp_path):
+    # End-to-end seam: merge -> surface manifest -> smoke verification, the part
+    # the plan flagged as risky (org hook id carried through all three layers).
+    build = _make_build_with_org_hook(tmp_path / "build")
+    pkg.apply_package_surface_policy(build, {"plugin_surface": {}}, None)
+    manifest = json.loads((build / ".claude-plugin" / "package-surface.json").read_text())
+    org = manifest["hooks"]["org"]
+    assert org and org[0]["id"] == "block-risky-bash" and org[0]["event"] == "PreToolUse"
+
+    import smoke_test_package as smk
+
+    smk.check_surface_manifest(build)  # the same artifact must pass the smoke check
+
+
 # ---------------------------------------------------------------------------
 # write_surface_manifest
 # ---------------------------------------------------------------------------
@@ -575,6 +645,80 @@ def test_apply_package_surface_policy(tmp_path):
     src = _make_source(tmp_path / "src")
     pkg.apply_package_surface_policy(src, {"plugin_surface": {}}, None)
     assert (src / pkg.SURFACE_MANIFEST).is_file()
+
+
+# ---------------------------------------------------------------------------
+# mcp policy (org MCP endpoints -> .mcp.json)
+# ---------------------------------------------------------------------------
+
+
+def _build_with_mcp(tmp_path, servers_yaml: str) -> object:
+    build = tmp_path / "build"
+    profile = build / "org-profile" / "org-profile.yaml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text(f"organization:\n  id: acme\n{servers_yaml}", encoding="utf-8")
+    return build
+
+
+def test_org_profile_mcp_servers_absent(tmp_path):
+    build = _build_with_mcp(tmp_path, "")
+    assert pkg._org_profile_mcp_servers(build) == {}
+
+
+def test_org_profile_mcp_servers_no_profile_file(tmp_path):
+    assert pkg._org_profile_mcp_servers(tmp_path / "nope") == {}
+
+
+def test_apply_mcp_policy_emits_all_declared(tmp_path):
+    build = _build_with_mcp(
+        tmp_path,
+        "mcp:\n  servers:\n    acme-sast:\n      url: ${SAST_URL}\n    acme-sca:\n      command: /bin/sca\n",
+    )
+    result = pkg.apply_mcp_policy(build, {})
+    assert result == {"included": ["acme-sast", "acme-sca"], "removed": []}
+    data = json.loads((build / pkg.MCP_CONFIG).read_text())
+    assert set(data["mcpServers"]) == {"acme-sast", "acme-sca"}
+    assert data["mcpServers"]["acme-sast"]["url"] == "${SAST_URL}"
+
+
+def test_apply_mcp_policy_allowlist_narrows(tmp_path):
+    build = _build_with_mcp(
+        tmp_path,
+        "mcp:\n  servers:\n    acme-sast:\n      url: ${SAST_URL}\n    acme-sca:\n      command: /bin/sca\n",
+    )
+    result = pkg.apply_mcp_policy(build, {"mcp_servers": {"include": ["acme-sast"]}})
+    assert result == {"included": ["acme-sast"], "removed": ["acme-sca"]}
+    data = json.loads((build / pkg.MCP_CONFIG).read_text())
+    assert set(data["mcpServers"]) == {"acme-sast"}
+
+
+def test_apply_mcp_policy_no_servers_writes_no_file(tmp_path):
+    build = _build_with_mcp(tmp_path, "")
+    result = pkg.apply_mcp_policy(build, {})
+    assert result == {"included": [], "removed": []}
+    assert not (build / pkg.MCP_CONFIG).exists()
+
+
+def test_apply_mcp_policy_exclude_all_removes_stale_file(tmp_path):
+    build = _build_with_mcp(tmp_path, "mcp:\n  servers:\n    acme-sast:\n      url: ${SAST_URL}\n")
+    (build / pkg.MCP_CONFIG).write_text('{"mcpServers": {"stale": {}}}', encoding="utf-8")
+    result = pkg.apply_mcp_policy(build, {"mcp_servers": {"exclude": ["acme-sast"]}})
+    assert result == {"included": [], "removed": ["acme-sast"]}
+    assert not (build / pkg.MCP_CONFIG).exists()
+
+
+def test_policy_surface_accepts_mcp_servers():
+    assert pkg._policy_surface({"plugin_surface": {"mcp_servers": {"include": ["x"]}}}) == {
+        "mcp_servers": {"include": ["x"]}
+    }
+
+
+def test_write_surface_manifest_includes_mcp_servers(tmp_path):
+    build = tmp_path / "b"
+    build.mkdir()
+    pkg.write_surface_manifest(build, None, {}, {}, mcp_servers={"included": ["acme-sast"], "removed": []})
+    data = json.loads((build / pkg.SURFACE_MANIFEST).read_text())
+    assert data["mcp_servers"] == {"included": ["acme-sast"], "removed": []}
 
 
 # ---------------------------------------------------------------------------

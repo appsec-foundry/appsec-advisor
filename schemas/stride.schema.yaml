@@ -150,6 +150,13 @@ $defs:
                   type: array
                   items: { type: string }
                 code_example: { type: [string, "null"] }
+                verification:
+                  # A concrete post-change check: test name, request plus
+                  # expected result, CI assertion, or configuration check.
+                  # Required for P1/P2 fix cards by the post-backfill quality
+                  # gate; optional here so intermediate component output can
+                  # still be merged and enriched before that final gate.
+                  type: [string, "null"]
                 reference:    { type: string }
             evidence:
               type: [object, "null"]
@@ -174,6 +181,21 @@ $defs:
               type: [string, "null"]
               enum: [verified, verified-prior, refuted, ambiguous, unchecked,
                      carried-unverified-shallower-depth, null]
+            evidence_tier:
+              # P1 (weakness-class evidence model): the evidence BASIS of the
+              # threat, distinct from `evidence_check` (verification state) —
+              # do NOT overload the two.
+              #   confirmed-exploitable — insecure code observed AND
+              #     exploitability established (reachable input, no mitigating
+              #     control); CVSS-eligible; folds as a weakness instances[]
+              #     entry downstream.
+              #   insecure-practice     — a definite bad-practice site observed
+              #     but the exploit chain is not (yet) proven; no CVSS; folds as
+              #     the weakness's practice_evidence[].
+              # Default when omitted: confirmed-exploitable if a sink is proven,
+              # else insecure-practice (applied by merge_threats.py).
+              type: [string, "null"]
+              enum: [confirmed-exploitable, insecure-practice, null]
             controls_absent_evidence:
               # Records the absence-grep that supports the "control X is
               # not present" claim used to justify this threat. Written

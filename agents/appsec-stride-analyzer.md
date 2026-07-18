@@ -366,7 +366,7 @@ followed.
 1. Look at the recon section text verbatim — it usually names the file (e.g. `frontend/src/app/oauth/oauth.component.ts`). Use that as the evidence file.
 2. Set `cwe` from the FT-*/* row above (FT-091 → CWE-598/522, FT-092 → CWE-345/287, FT-093 → CWE-522/922).
 3. Set `stride` to *Spoofing* or *Information Disclosure* (TH-10's STRIDE mapping).
-4. Title format follows the standard `<weakness class> — <file:line>` rule from `appsec-threat-analyst.md:647`.
+4. Title format follows `shared/finding-title-contract.md`: include a location only for one concrete instance. Consolidation later emits class-only titles.
 5. Cite the recon section in the scenario: *"Section 7.9 reports `<verbatim phrase>` — verified at `<file:line>`."* The architect-reviewer's Sub-Check 15.6 (added 2026-05) will flag the component if a Section 7.9/7.10 trigger pattern exists with no corresponding finding.
 
 **Why this is mandatory and not a heuristic.** The TH-10 taxonomy in
@@ -450,7 +450,8 @@ For `evidence`: file path relative to REPO_ROOT and line number. File-only if no
 - `mitigation_title` = concise action phrase (verb + subject + location). Becomes the `M-NNN` heading. Not `"Fix CSRF"` — `"Add CSRF token validation to all state-changing endpoints"`.
 - `remediation` is **NEVER null** and `remediation.steps` is **NEVER empty**. At least two concrete steps per threat. If uncertain, write the best available guidance — even a generic hardening step beats null.
 - Name the specific API, middleware, library call, or config key — never "use a library" when you can say "use `helmet.contentSecurityPolicy()` in Express".
-- Include `code_example` for findings where the correct implementation is non-obvious. 3–10 lines, language-tagged. Omit for pure-config fixes.
+- Include `code_example` for findings where the correct implementation is non-obvious. Use 3–10 lines in the project's detected language and APIs, anchored to the cited evidence file. When useful, add short `Before` / `After` comments that explain the unsafe behavior and the security property the changed line enforces; never use pseudocode or an unverified dependency. Omit for pure-config fixes.
+- Include `verification` for every Critical or High fix: name an executable test, request plus expected response, CI assertion, or configuration check. Never write "verify the fix works"; state the exploit input and the expected rejection or the exact control that must be present.
 - Use the actual framework version detected (`package.json`, `pom.xml`, etc.).
 - Reference: one OWASP Cheat Sheet URL, CWE ID, or RFC per threat.
 
@@ -468,6 +469,10 @@ Typical fix areas by STRIDE:
 ### OWASP LLM Top 10 — conditional (only when `KNOWN_LLM_PATTERNS != none`)
 
 Read `shared/owasp-llm-top10.md` for the full threat table, grep patterns, and fix patterns. Apply as an additional lens on top of standard STRIDE. Same quality bar.
+
+### OWASP Agentic Top 10 (ASI) — conditional (only for an agentic surface)
+
+When `KNOWN_LLM_PATTERNS` shows an **agentic** signal — an `agent-framework` / `tool-use` subcategory, a multi-agent SDK (`crewai`, `autogen`), or an LLM wired to tools, persistent memory, retrieval, or other agents — also read `shared/owasp-asi-top10.md` and apply the OWASP Top 10 for Agentic Applications (2026) lens. Same quality bar. **Do not duplicate:** most agentic risk is the agentic framing of an LLM finding you already recorded — use the crosswalk in that file to tag it (e.g. an LLM06 Excessive Agency finding is also `ASI02`), and only author a *new* threat for the genuinely agent-specific classes (`ASI03` identity/privilege, `ASI07` inter-agent transport, `ASI10` autonomy bounds) when a real multi-agent / tool-wielding surface is present. A plain LLM call-and-return has no agentic surface — skip this lens.
 
 ### Client-side / SPA — conditional (only for frontend components)
 
@@ -576,7 +581,8 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
           "<concrete step 1 — name specific API/config/library>",
           "<concrete step 2>"
         ],
-        "code_example": "<minimal language-tagged code snippet showing the fix, or null if fix is purely config/docs>",
+        "code_example": "<minimal project-language snippet showing the fix; use concise Before/After comments when they clarify the security change, or null if fix is purely config/docs>",
+        "verification": "<specific test, request + expected result, CI assertion, or configuration check>",
         "reference": "<OWASP URL, CWE-NNN, RFC NNNN, or matched requirement ID — see Requirements reference lookup>",
         "blueprint": "<optional — [BP-ID](section-url) — Section Title, from blueprints[] lookup>"
       },

@@ -194,7 +194,7 @@ def test_m_id_re_matches():
 
 
 # ---------------------------------------------------------------------------
-# §7 schema_v2 contract and coverage gates
+# §6 schema_v2 contract and coverage gates
 # ---------------------------------------------------------------------------
 
 
@@ -211,7 +211,7 @@ def _write_v2_sec7_contract(
             textwrap.dedent("""\
             - rule: control_subsection_coverage
               section_titles:
-                - "7.2 Identity and Authentication Controls"
+                - "6.2 Identity and Authentication Controls"
               controls_covered_label: "Controls covered"
               heading_level: 4
               required_subsection_labels:
@@ -225,7 +225,7 @@ def _write_v2_sec7_contract(
             textwrap.dedent("""\
             - rule: relevant_findings_bullet_list
               section_titles:
-                - "7.2 Identity and Authentication Controls"
+                - "6.2 Identity and Authentication Controls"
               heading_level: 4
               label: "Relevant findings"
               enforcement: "error"
@@ -241,9 +241,9 @@ def _write_v2_sec7_contract(
     if recon_rule:
         recon = textwrap.indent(
             textwrap.dedent("""\
-            "7.2 Identity and Authentication Controls":
+            "6.2 Identity and Authentication Controls":
               - rule: recon_iam_bridge
-                section_title: "7.2 Identity and Authentication Controls"
+                section_title: "6.2 Identity and Authentication Controls"
                 recon_signal_patterns:
                   - "/rest/2fa"
                 required_iam_tokens:
@@ -265,13 +265,13 @@ def _write_v2_sec7_contract(
                 - security_architecture
             sections:
               security_architecture:
-                heading: "## 7. Security Architecture"
+                heading: "## 6. Security Architecture"
                 required_subsections:
-                  - { level: 3, title: "7.1 Legacy Overview" }
+                  - { level: 3, title: "6.1 Legacy Overview" }
                 schema_v2:
                   required_subsections:
-                    - { level: 3, title: "7.1 Security Control Overview" }
-                    - { level: 3, title: "7.2 Identity and Authentication Controls" }
+                    - { level: 3, title: "6.1 Security Control Overview" }
+                    - { level: 3, title: "6.2 Identity and Authentication Controls" }
                   domain_required_patterns: {}
                   domain_required_rules:
         """)
@@ -287,9 +287,9 @@ def test_contract_v2_enforces_required_subsections(monkeypatch, tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.1 Security Control Overview
+            ### 6.1 Security Control Overview
 
             | Control category | Verdict | Main reason |
             |---|---|---|
@@ -298,7 +298,7 @@ def test_contract_v2_enforces_required_subsections(monkeypatch, tmp_path: Path):
 
     report = qa.check_contract(md, contract)
 
-    assert any("required subsection missing" in issue and "7.2 Identity" in issue for issue in report.issues)
+    assert any("required subsection missing" in issue and "6.2 Identity" in issue for issue in report.issues)
 
 
 def test_contract_v2_rejects_legacy_sec7_headings(monkeypatch, tmp_path: Path):
@@ -307,22 +307,22 @@ def test_contract_v2_rejects_legacy_sec7_headings(monkeypatch, tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.1 Overview
+            ### 6.1 Overview
 
-            ### 7.3 Identity & Access Management
+            ### 6.3 Identity & Access Management
         """),
     )
 
     report = qa.check_contract(md, contract)
 
-    assert any("7.1 Security Control Overview" in issue for issue in report.issues)
+    assert any("6.1 Security Control Overview" in issue for issue in report.issues)
 
 
 def _write_depth_contract(path: Path) -> Path:
     """Minimal contract with two depth-conditional sections (§3 walkthroughs on
-    `not skip_attack_walkthroughs`, §7 security-architecture on
+    `not skip_attack_walkthroughs`, §6 security-architecture on
     `render_security_architecture`) plus always-on sections around them."""
     contract = path / "depth-contract.yaml"
     contract.write_text(
@@ -339,7 +339,7 @@ def _write_depth_contract(path: Path) -> Path:
               system_overview: { heading: "## 1. System Overview" }
               attack_walkthroughs: { heading: "## 3. Attack Walkthroughs" }
               assets: { heading: "## 4. Assets" }
-              security_architecture: { heading: "## 7. Security Architecture" }
+              security_architecture: { heading: "## 6. Security Architecture" }
               threat_register: { heading: "## 8. Findings Register" }
         """),
         encoding="utf-8",
@@ -362,7 +362,7 @@ _DOC_WITHOUT_3_AND_7 = textwrap.dedent("""\
 
 
 def test_contract_quick_depth_suppresses_optional_sections(tmp_path: Path):
-    """Regression (2026-06-12): at --quick the composer suppresses §3 and §7, so
+    """Regression (2026-06-12): at --quick the composer suppresses §3 and §6, so
     check_contract must NOT flag them as 'expected section missing'. Previously
     the env hardcoded render_security_architecture=True and omitted
     skip_attack_walkthroughs, producing a false positive that tripped the
@@ -375,12 +375,12 @@ def test_contract_quick_depth_suppresses_optional_sections(tmp_path: Path):
     report = qa.check_contract(md, contract)
 
     assert not any("3. Attack Walkthroughs" in i for i in report.issues), report.issues
-    assert not any("7. Security Architecture" in i for i in report.issues), report.issues
+    assert not any("6. Security Architecture" in i for i in report.issues), report.issues
 
 
 def test_contract_standard_depth_still_enforces_optional_sections(tmp_path: Path):
     """The depth-aware env must NOT weaken enforcement at standard/thorough: a
-    standard run that is genuinely missing §3 / §7 is still flagged."""
+    standard run that is genuinely missing §3 / §6 is still flagged."""
     qa._PrePass.reset()
     contract = _write_depth_contract(tmp_path)
     md = _write_minimal_model(tmp_path, _DOC_WITHOUT_3_AND_7)
@@ -389,7 +389,7 @@ def test_contract_standard_depth_still_enforces_optional_sections(tmp_path: Path
     report = qa.check_contract(md, contract)
 
     assert any("3. Attack Walkthroughs" in i for i in report.issues), report.issues
-    assert any("7. Security Architecture" in i for i in report.issues), report.issues
+    assert any("6. Security Architecture" in i for i in report.issues), report.issues
 
 
 def test_control_subsection_coverage_requires_linked_h4(monkeypatch, tmp_path: Path):
@@ -398,9 +398,9 @@ def test_control_subsection_coverage_requires_linked_h4(monkeypatch, tmp_path: P
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [Password Login](#password-login), [TOTP Verification](#totp-verification).
 
@@ -431,9 +431,9 @@ def test_control_subsection_coverage_accepts_v2_shape(monkeypatch, tmp_path: Pat
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [Password Login](#password-login).
 
@@ -474,9 +474,9 @@ def test_control_subsection_coverage_matches_code_spanned_control_name(monkeypat
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [WebSocket Event Bus (`Socket.IO`)](#websocket-event-bus-socketio).
 
@@ -508,15 +508,15 @@ def test_control_subsection_coverage_matches_backslash_escaped_dot(monkeypatch, 
     `**Controls covered:**` link label un-escaped (link spans are exempt from
     the escape pass). `_heading_matches` must tolerate the one-backslash
     divergence — otherwise the control_subsection_coverage gate false-positives
-    and the re-render loop never converges (juice-shop 2026-06-01 §7.12)."""
+    and the re-render loop never converges (juice-shop 2026-06-01 §6.12)."""
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path, coverage_rule=True)
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [WebSocket and Socket.IO Security](#websocket-and-socketio-security).
 
@@ -548,9 +548,9 @@ def test_relevant_findings_bullet_list_rejects_inline_form(monkeypatch, tmp_path
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             #### Password Login
 
@@ -575,9 +575,9 @@ def test_relevant_findings_bullet_list_accepts_bullets(monkeypatch, tmp_path: Pa
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             #### Password Login
 
@@ -607,9 +607,9 @@ def test_recon_iam_bridge_uses_v2_section_title(monkeypatch, tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [Password Login](#password-login).
 
@@ -623,11 +623,11 @@ def test_recon_iam_bridge_uses_v2_section_title(monkeypatch, tmp_path: Path):
 
     report = qa.check_recon_iam_bridge(md, tmp_path, contract)
 
-    assert any("7.2 Identity and Authentication Controls" in issue for issue in report.issues)
+    assert any("6.2 Identity and Authentication Controls" in issue for issue in report.issues)
 
 
 # ---------------------------------------------------------------------------
-# §7.2 per-flow-method diagram gate + §7.6 validation-approach-first gate.
+# §6.2 per-flow-method diagram gate + §6.6 validation-approach-first gate.
 # These exercise the REAL data/sections-contract.yaml via the schema_v2
 # overlay (no contract arg → DEFAULT_CONTRACT_PATH), so they double as a
 # wiring test that the migrated v1→v2 enforcement is live.
@@ -639,13 +639,13 @@ def test_auth_flow_method_requires_diagram(monkeypatch, tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [OAuth Login](#oauth-login).
 
-            #### 7.2.1 OAuth Login
+            #### 6.2.1 OAuth Login
 
             The app federates login via Google.
 
@@ -669,13 +669,13 @@ def test_auth_flow_method_accepts_diagram(monkeypatch, tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [OAuth Login](#oauth-login).
 
-            #### 7.2.1 OAuth Login
+            #### 6.2.1 OAuth Login
 
             The diagram shows the federated login path:
 
@@ -706,13 +706,13 @@ def test_auth_nonflow_method_exempt_from_diagram(monkeypatch, tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [API Key Authentication](#api-key-authentication).
 
-            #### 7.2.1 API Key Authentication
+            #### 6.2.1 API Key Authentication
 
             Service callers present a static API key header.
 
@@ -733,7 +733,7 @@ def test_auth_nonflow_method_exempt_from_diagram(monkeypatch, tmp_path: Path):
 
 def test_auth_social_login_heading_is_whitelisted(monkeypatch, tmp_path: Path):
     """Regression (2026-06-16): emit_auth_coverage writes the control
-    'Social Login (OAuth / OIDC)'; the renderer simplifies the §7.2 heading to
+    'Social Login (OAuth / OIDC)'; the renderer simplifies the §6.2 heading to
     'Social Login', which token-mismatches oauth/oidc and tripped the
     'not a recognized authentication mechanism' gate, forcing a fragment-fixer
     repair every run. 'social login' is now in method_whitelist."""
@@ -741,13 +741,13 @@ def test_auth_social_login_heading_is_whitelisted(monkeypatch, tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [Social Login](#social-login).
 
-            #### 7.2.6 Social Login
+            #### 6.2.6 Social Login
 
             The app federates login via Google OAuth.
 
@@ -775,7 +775,7 @@ def test_auth_social_login_heading_is_whitelisted(monkeypatch, tmp_path: Path):
 
 def test_auth_threat_hypotheses_heading_exempt(monkeypatch, tmp_path: Path):
     """Regression (2026-06-16): pregenerate_fragments deterministically emits
-    '#### Threat Hypotheses Requiring Validation' inside §7.2 (asserted present
+    '#### Threat Hypotheses Requiring Validation' inside §6.2 (asserted present
     by test_pregenerate_fragments), but the auth-method gate rejected it as a
     non-mechanism — a deterministic self-contradiction that forced a repair
     iteration. It is now a contract-declared structural_heading_exemption.
@@ -786,13 +786,13 @@ def test_auth_threat_hypotheses_heading_exempt(monkeypatch, tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [Password-Based Login](#password-based-login).
 
-            #### 7.2.1 Password-Based Login
+            #### 6.2.1 Password-Based Login
 
             ```mermaid
             sequenceDiagram
@@ -813,7 +813,7 @@ def test_auth_threat_hypotheses_heading_exempt(monkeypatch, tmp_path: Path):
             |---|---|---|---|---|
             | HYP-001 | SQLi exposure | Parameterized Queries | `routes/login.ts:34` | Probe /login |
 
-            #### 7.2.9 Banana Pudding
+            #### 6.2.9 Banana Pudding
 
             Not an auth mechanism at all.
         """),
@@ -837,13 +837,13 @@ def test_validation_approach_first_rejects_specific_first(monkeypatch, tmp_path:
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.6 Input Boundary Validation Controls
+            ### 6.6 Input Boundary Validation Controls
 
             **Controls covered:** [File Upload Limits](#file-upload-limits).
 
-            #### 7.6.1 File Upload Limits
+            #### 6.6.1 File Upload Limits
 
             **Security assessment**
 
@@ -866,13 +866,13 @@ def test_validation_approach_first_accepts_approach_first(monkeypatch, tmp_path:
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.6 Input Boundary Validation Controls
+            ### 6.6 Input Boundary Validation Controls
 
             **Controls covered:** [Validation Approach](#validation-approach).
 
-            #### 7.6.1 Validation Approach
+            #### 6.6.1 Validation Approach
 
             **Security assessment**
 
@@ -882,7 +882,7 @@ def test_validation_approach_first_accepts_approach_first(monkeypatch, tmp_path:
 
             - No dedicated finding routed in this assessment.
 
-            #### 7.6.2 File Upload Limits
+            #### 6.6.2 File Upload Limits
 
             **Security assessment**
 
@@ -905,9 +905,9 @@ def test_validation_approach_first_skips_not_applicable(monkeypatch, tmp_path: P
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.6 Input Boundary Validation Controls
+            ### 6.6 Input Boundary Validation Controls
 
             _Not applicable — no input-validation findings routed to this category._
         """),
@@ -923,9 +923,9 @@ def test_mermaid_alt_convention_is_scoped_to_attack_walkthroughs(tmp_path: Path)
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             ```mermaid
             sequenceDiagram
@@ -2093,8 +2093,10 @@ class TestRepairPlanStatusClassification:
         # Bare-bones MD will violate many contract rules — the important
         # invariant is that the status field is one of the documented values
         # and `actionable` is consistent with the action set.
-        assert plan["status"] in {"pass", "fail", "manual_review"}
-        assert plan["actionable"] == any(a.get("fragments_to_rewrite") for a in plan["actions"])
+        assert plan["status"] in {"pass", "fail", "manual_review", "cosmetic_advisory"}
+        assert plan["actionable"] == any(
+            a.get("fragments_to_rewrite") and a.get("severity") == "blocking" for a in plan["actions"]
+        )
 
 
 class TestTableSchemaDriftClassification:
@@ -2442,7 +2444,7 @@ class TestPostureB2IdConvention:
 # ---------------------------------------------------------------------------
 # Sprint 2B — auth method whitelist filter
 #
-# The §7.3 IAM controls table mixes auth methods (Password Login, OAuth,
+# The §6.3 IAM controls table mixes auth methods (Password Login, OAuth,
 # TOTP) with implementation details (Password Hashing, Login Rate Limiting,
 # express-jwt middleware). Only the auth methods warrant a `#### Flow`
 # sub-section. Pre-Sprint-2B the checker demanded one per row, producing
@@ -2958,14 +2960,14 @@ class TestThreatModelOutputSchemaTitleRequired:
 class TestHeadingAttributeStrip:
     """Pandoc/Kramdown `{#anchor ...}` and `data-source-line=...` residue
     must be stripped from headings before hygiene runs. Users have seen
-    truncated trailers like `{#713-defense-in-depth-summary
+    truncated trailers like `{#613-defense-in-depth-summary
     data-source-line="` leak into visible section titles.
     """
 
     def test_strips_pandoc_attribute_trailer(self, tmp_path: Path):
         md = _write_minimal_model(
             tmp_path,
-            "### 7.13 Defense-in-Depth Summary {#713-defense-in-depth-summary}\n\nbody\n",
+            "### 6.13 Defense-in-Depth Summary {#613-defense-in-depth-summary}\n\nbody\n",
         )
         report, _ = qa.strip_heading_attribute_artifacts(md)
         assert report.fixes, "expected at least one heading to be stripped"
@@ -2977,19 +2979,19 @@ class TestHeadingAttributeStrip:
         """
         md = _write_minimal_model(
             tmp_path,
-            '### 7.13 Defense-in-Depth Summary {#713-defense-in-depth-summary data-source-line="\n\nbody\n',
+            '### 6.13 Defense-in-Depth Summary {#613-defense-in-depth-summary data-source-line="\n\nbody\n',
         )
         report, _ = qa.strip_heading_attribute_artifacts(md)
         assert report.fixes, "expected truncated trailer to be stripped"
         text = md.read_text()
         assert "data-source-line" not in text
         assert "{#" not in text
-        assert "### 7.13 Defense-in-Depth Summary" in text
+        assert "### 6.13 Defense-in-Depth Summary" in text
 
     def test_clean_headings_untouched(self, tmp_path: Path):
         md = _write_minimal_model(
             tmp_path,
-            "### 7.13 Defense-in-Depth Summary\n\n### 8. Findings Register\n",
+            "### 6.13 Defense-in-Depth Summary\n\n### 8. Findings Register\n",
         )
         before = md.read_text()
         report, _ = qa.strip_heading_attribute_artifacts(md)
@@ -3002,7 +3004,7 @@ class TestHeadingAttributeStrip:
         """
         md = _write_minimal_model(
             tmp_path,
-            "### 7.13 Defense-in-Depth Summary {#anchor}\n",
+            "### 6.13 Defense-in-Depth Summary {#anchor}\n",
         )
         report = qa.check_heading_hygiene(md)
         assert any("attribute-syntax" in i for i in report.issues), report.issues
@@ -3325,9 +3327,9 @@ def test_section7_h4_status_flags_missing_badge(tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [Password Login](#password-login).
 
@@ -3357,9 +3359,9 @@ def test_section7_h4_status_accepts_badge_and_intro_tolerates_it(tmp_path: Path)
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [Password Login](#password-login).
 
@@ -3395,9 +3397,9 @@ def test_section7_h4_positive_intro_skips_anti_pattern_label(tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
         textwrap.dedent("""\
-            ## 7. Security Architecture
+            ## 6. Security Architecture
 
-            ### 7.2 Identity and Authentication Controls
+            ### 6.2 Identity and Authentication Controls
 
             **Controls covered:** [Password Login](#password-login).
 
@@ -3593,7 +3595,12 @@ def test_asset_table_converts_and_reflows_description():
 
 
 def test_asset_and_attack_surface_specs_widths_sum_to_100():
-    for widths in (qa._AS_COL_WIDTHS, qa._ASSET_COL_WIDTHS, qa._STRENGTH_COL_WIDTHS):
+    for widths in (
+        qa._AS_COL_WIDTHS,
+        qa._ASSET_COL_WIDTHS,
+        qa._STRENGTH_COL_WIDTHS_3,
+        qa._STRENGTH_COL_WIDTHS_4,
+    ):
         assert sum(int(w.rstrip("%")) for w in widths) == 100
 
 
@@ -3601,11 +3608,14 @@ def test_operational_strengths_table_converts_keeping_structural_breaks():
     # "What's in Place" carries STRUCTURAL <br/> (italic description, then one
     # implementation per line) that must survive the HTML conversion; only the
     # 44-char soft-wrap artifacts (compose now omits them) would be unwanted.
+    # 2026-07-15 — Gap merged into Effectiveness; Mitigates omitted when empty
+    # (3-col form). The merged Effectiveness cell carries the badge + substantive
+    # gap + its finding link-stack.
     gfm = (
-        "| Strength | What's in Place | Effectiveness | Gap | Mitigates |\n"
-        "|---|---|---|---|---|\n"
+        "| Strength | What's in Place | Effectiveness |\n"
+        "|---|---|---|\n"
         "| **Container Hardening** | _Build-time and runtime hardening._<br/>Automated SCA scanning<br/>"
-        "Container Security | ✅ Adequate | - | - |\n"
+        "Container Security | ✅ Adequate |\n"
     )
     out, count = qa._attack_surface_tables_to_html(f"### Operational Strengths\n\n{gfm}\n")
     assert count == 1 and '<table style="table-layout:fixed;width:100%">' in out
@@ -3698,3 +3708,96 @@ def test_autofix_priority_circle_styling_is_idempotent(tmp_path: Path):
     assert second.count("●") == 1
     assert "❶" not in second  # legacy digit migrated away
     assert 'style="color:' not in second  # no fragile colour span
+
+
+# ---------------------------------------------------------------------------
+# MS "Top Weaknesses" proof run stays BARE — the single weakness dot owns the
+# bullet's severity signal, so the finding refs must NOT pick up the global
+# severity-dot / title-suffix enrichment (user 2026-07-15). Every other
+# context still gets its dots + titles.
+# ---------------------------------------------------------------------------
+
+_TW_YAML = textwrap.dedent(
+    """\
+    threats:
+      - id: T-013
+        title: Anonymous Attacker Obtains ADMIN Role
+        severity: critical
+      - id: T-014
+        title: H2 Database Console Accessible Without Authentication
+        severity: critical
+    """
+)
+
+
+def _write_tw_pair(path: Path, md_body: str) -> Path:
+    (path / "threat-model.yaml").write_text(_TW_YAML)
+    f = path / "threat-model.md"
+    f.write_text(md_body)
+    return f
+
+
+def test_annotate_id_refs_skips_top_weaknesses_proof_dots(tmp_path: Path):
+    md = _write_tw_pair(
+        tmp_path,
+        "## Management Summary\n\n"
+        "- 🔴 **[W-001](#w-001) — Endpoints reachable** (Critical) — desc. "
+        "_Proven by [F-013](#f-013), [F-014](#f-014)._\n\n"
+        "Normal prose ref to [F-013](#f-013) elsewhere.\n",
+    )
+    qa._annotate_id_refs(md)
+    out = md.read_text()
+    tw_line = next(ln for ln in out.splitlines() if "_Proven by" in ln)
+    normal_line = next(ln for ln in out.splitlines() if "Normal prose" in ln)
+    # Proof run: bare, no severity dot injected before its F-refs.
+    assert "🔴 [F-013]" not in tw_line and "[F-013](#f-013)" in tw_line
+    # The weakness's own dot survives.
+    assert "🔴 **[W-001]" in tw_line
+    # A normal F-ref elsewhere DID get its severity dot.
+    assert "🔴 [F-013](#f-013)" in normal_line
+
+
+def test_linkify_anchors_skips_top_weaknesses_proof_titles(tmp_path: Path):
+    md = _write_tw_pair(
+        tmp_path,
+        "## Management Summary\n\n"
+        "- 🔴 **[W-001](#w-001) — Endpoints reachable** (Critical) — desc. "
+        "_Proven by [F-013](#f-013), [F-014](#f-014)._\n\n"
+        "Normal prose ref to [F-014](#f-014) elsewhere.\n",
+    )
+    _report, new_text = qa.linkify_anchors(md)
+    tw_line = next(ln for ln in new_text.splitlines() if "_Proven by" in ln)
+    normal_line = next(ln for ln in new_text.splitlines() if "Normal prose" in ln)
+    # Proof run: no `— Title` suffix appended to its F-refs.
+    assert "Anonymous Attacker" not in tw_line
+    assert "H2 Database Console" not in tw_line
+    # A normal F-ref elsewhere DID get its title suffix.
+    assert "F-014](#f-014) — H2 Database Console" in normal_line
+
+
+def test_enrichment_skips_attack_tree_findings_pointer(tmp_path: Path):
+    """The Critical Attack Tree findings pointer lists bare `[F-NNN]` ids; neither
+    the dot retrofit nor the title-suffix pass may decorate them (the tree above
+    already carries id + title). Guards against the double-title bug where a
+    space-separated (non-em-dash) title triggered a second appended title."""
+    md = _write_tw_pair(
+        tmp_path,
+        "## Critical Attack Tree\n\n"
+        "**Findings** (full detail in [§8 Findings Register](#8-findings-register)): "
+        "[F-013](#f-013) · [F-014](#f-014)\n\n"
+        "Normal prose ref to [F-013](#f-013) elsewhere.\n",
+    )
+    # Title-suffix pass.
+    _report, after_titles = qa.linkify_anchors(md)
+    md.write_text(after_titles)
+    # Dot retrofit.
+    qa._annotate_id_refs(md)
+    out = md.read_text()
+    ptr = next(ln for ln in out.splitlines() if "**Findings** (full detail" in ln)
+    normal = next(ln for ln in out.splitlines() if "Normal prose" in ln)
+    # Pointer stays bare: no dot, no title, and (critically) no doubled title.
+    assert "🔴 [F-013]" not in ptr
+    assert "Anonymous Attacker" not in ptr
+    assert ptr.count("[F-013](#f-013)") == 1
+    # A normal ref elsewhere still gets its dot + title.
+    assert "🔴 [F-013](#f-013) — Anonymous Attacker" in normal

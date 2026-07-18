@@ -68,6 +68,11 @@ $defs:
             items: { type: string }
           path_patterns:
             type: array
+            description: >
+              Repository-relative glob patterns. At least one pattern must
+              match a regular file for the case to be in scope. Patterns are
+              evaluated as data, never as shell paths; absolute paths and
+              parent traversal do not match.
             items: { type: string }
       chain:
         type: array
@@ -107,6 +112,31 @@ $defs:
       required:
         type: boolean
         default: true
+      finding:
+        type: object
+        description: >
+          Deterministic classification used only when this step was discovered
+          by a direct source probe and later confirmed by the verifier. It
+          creates a normal finding with a stable evidence binding; no finding
+          is created from a raw regex hit alone.
+        additionalProperties: false
+        required: [cwe, stride, mitigation_title]
+        properties:
+          title: { type: string, minLength: 1, maxLength: 80 }
+          cwe: { type: string, pattern: "^CWE-[0-9]+$" }
+          stride:
+            enum:
+              - Spoofing
+              - Tampering
+              - Repudiation
+              - Information Disclosure
+              - Denial of Service
+              - Elevation of Privilege
+          severity:
+            enum: [Critical, High, Medium, Low]
+            default: Medium
+          mitigation_title: { type: string, minLength: 1, maxLength: 120 }
+          remediation: { type: string, minLength: 1 }
       probe:
         type: object
         additionalProperties: false

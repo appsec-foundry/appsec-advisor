@@ -24,19 +24,17 @@ REPO_ROOT="${2:?REPO_ROOT required}"
 CLAUDE_PLUGIN_ROOT="${3:?CLAUDE_PLUGIN_ROOT required}"
 DRY_RUN="${4:-false}"
 
-# Auto-emitter pass — Meta-Findings + Review-Mitigations (M-RCA-2026-05) +
-# deterministic YAML hygiene (M-RCA-2026-05b: sanitize_perimeter_claims,
-# validate_evidence_lines, reclassify_components). Order matters:
-#   1. emit_meta_findings   — derives MF-NNN from threats[] by source.
-#   2. emit_review_mitigations — synthesises kind:review/investigate mitigations.
-#   3. sanitize_perimeter_claims — strips speculative WAF/DDoS/firewall
+# Auto-emitter pass — deterministic YAML hygiene + Meta-Findings +
+# Review-Mitigations (M-RCA-2026-05). Order matters:
+#   1. validate_evidence_lines — deterministic floor for the
+#      appsec-evidence-verifier agent. Refuted candidates are removed before
+#      any emitter derives mitigations or links from threats[].
+#   2. emit_meta_findings   — derives MF-NNN from active threats[] by source.
+#   3. emit_review_mitigations — synthesises kind:review/investigate mitigations.
+#   4. sanitize_perimeter_claims — strips speculative WAF/DDoS/firewall
 #      absence phrasing from trust_boundaries[].enforcement and
 #      security_controls[].notes. Runs BEFORE pre-gen so the deterministic
 #      architecture-diagrams.md fragment inherits clean text.
-#   4. validate_evidence_lines — deterministic floor for the
-#      appsec-evidence-verifier agent. Sets evidence_check + evidence_flags
-#      on every threat where the LLM verifier did not already write a
-#      verified/refuted/verified-prior verdict.
 #   5. reclassify_components — fixes attack-target-tier vs control-location-
 #      tier drift. Reassigns threats whose evidence.file matches exactly
 #      one other component's paths globs.
@@ -58,9 +56,10 @@ if [ "$DRY_RUN" = "false" ]; then
     # an all-review, no-P1 Mitigation Register (see the script docstring). When
     # the distribution is degenerate this strips evidence_check so the run is
     # treated as unverified-neutral; emit_review then emits no review cards,
-    # emit_finding_fix produces real P1 fixes, and validate_evidence_lines (step
-    # 4 below) re-derives per-line verdicts deterministically for §8.
+    # emit_finding_fix produces real P1 fixes; the evidence backstop below
+    # re-derives per-line verdicts before any emitter consumes threats[].
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/guard_evidence_verification.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_meta_findings.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_review_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     # M-RCA-2026-05 — `kind: fix` mitigations for config-scan threats.
@@ -89,9 +88,10 @@ if [ "$DRY_RUN" = "false" ]; then
     # and skipped.
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_finding_fix_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     # Clean finding TITLES (2026-06-12) — normalize threats[].title to
-    # `<weakness class> — <file:line>` (strip `via <impl>`, parens, params,
-    # embedded files). The verbose code-laden titles otherwise render into every
-    # xref cell (§2/§4/§2.3/§8). Idempotent (_title_source). Runs before the
+    # `<weakness class> — <file:line>` for one location, or class-only for
+    # consolidated findings (strip `via <impl>`, parens, params, embedded files).
+    # The verbose code-laden titles otherwise render into every xref cell
+    # (§2/§4/§2.3/§8). Idempotent (_title_source). Runs before the
     # mitigation-title pass (independent; that keys on CWE, not title).
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_clean_finding_titles.py" "$OUTPUT_DIR" 2>&1 || true
     # General mitigation TITLES (2026-06-12) — runs AFTER all mitigation
@@ -102,8 +102,19 @@ if [ "$DRY_RUN" = "false" ]; then
     # on the addressed CWE (the actionable detail stays in the block body's
     # How/steps/code). Idempotent (stashes _title_source).
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_general_mitigation_titles.py" "$OUTPUT_DIR" 2>&1 || true
+    # Backfill a structured remediation block (steps + verification) on
+    # scanner-derived threats that carry only a one-line mitigation_title. The
+    # source/crypto/config scanners never author remediation.steps; without this
+    # the P1/P2 quality gate below hard-fails the build-mitigations fallback
+    # cards synthesised for those Critical/High findings. Sourced deterministically
+    # from the check library by id (falling back to the mitigation_title). MUST run
+    # BEFORE hydrate so the promoted card inherits real steps.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/backfill_scanner_remediation.py" "$OUTPUT_DIR" 2>&1 || true
+    # Promote the analyzer's concrete remediation from addressed findings onto
+    # the canonical mitigation cards. This keeps YAML/SARIF consumers aligned
+    # with the rendered register and supplies the P1/P2 quality gate below.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/hydrate_mitigation_details.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true
     # RC-1 + RC-6 (2026-05): canonicalise security_controls[].control names
     # against forbidden_heading_patterns + alias rewrites, and re-route

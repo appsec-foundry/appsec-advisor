@@ -26,7 +26,7 @@ vectors:
       - "Endpoint is reachable from the internet (no IP allowlist, no VPN)"
       - "No authentication middleware blocks the request"
     typical_cwes: [89, 79, 306, 327, 611, 918]
-    typical_owasp_top10: ["A01:2021", "A03:2021", "A07:2021"]
+    typical_owasp_top10: ["A01:2025", "A05:2025", "A07:2025"]
     examples:
       - "F-009 SQL injection in product search (`/rest/products/search`)"
       - "F-014 SQL injection in login (`/rest/user/login`)"
@@ -40,7 +40,7 @@ vectors:
       - "Attacker has signed up or otherwise obtained a valid user session"
       - "Endpoint is behind auth but not behind role/admin checks"
     typical_cwes: [434, 611, 918, 352, 287]
-    typical_owasp_top10: ["A01:2021", "A04:2021", "A05:2021", "A10:2021"]
+    typical_owasp_top10: ["A01:2025", "A06:2025", "A02:2025"]
     examples:
       - "F-010 RCE via `notevil` sandbox escape (B2B orders)"
       - "F-027 SSRF via profile image URL"
@@ -54,7 +54,7 @@ vectors:
       - "Attacker holds admin credentials or has elevated privileges"
       - "Endpoint gated on admin role but still exploitable once reached"
     typical_cwes: [862, 79, 94]
-    typical_owasp_top10: ["A01:2021"]
+    typical_owasp_top10: ["A01:2025"]
     examples:
       - "F-023 Admin panel client-side guard only"
       - "F-046 Admin user deletion without safeguards"
@@ -67,7 +67,7 @@ vectors:
       - "Victim must click a link, load a page, or have an active session"
       - "Applies to XSS, CSRF, click-jacking, open redirect"
     typical_cwes: [79, 352, 601, 1021]
-    typical_owasp_top10: ["A01:2021", "A03:2021"]
+    typical_owasp_top10: ["A01:2025", "A05:2025"]
     examples:
       - "F-017 CSRF on password change"
       - "F-024 Stored / Reflected XSS via `DomSanitizer.bypass…()`"
@@ -81,7 +81,7 @@ vectors:
       - "Compromise of a dependency, registry, or base image"
       - "OR compromise of a CI runner with write access to artifacts"
     typical_cwes: [506, 829, 1039, 1104]
-    typical_owasp_top10: ["A08:2021"]
+    typical_owasp_top10: ["A08:2025"]
     typical_owasp_llm: ["LLM03:2025", "LLM04:2025"]
     examples:
       - "F-051 Chatbot `trainingData` URL fetched without validation"
@@ -96,7 +96,7 @@ vectors:
       - "Read access to the source tree at or after commit time"
       - "No runtime exploit needed — the vulnerability is the content of the repo"
     typical_cwes: [798, 312, 540]
-    typical_owasp_top10: ["A02:2021", "A07:2021"]
+    typical_owasp_top10: ["A04:2025", "A07:2025"]
     examples:
       - "F-001 RSA private key committed to repository"
       - "F-002 Hardcoded HMAC key in source"

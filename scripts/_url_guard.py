@@ -5,9 +5,10 @@ attacker-influenced configuration (today: ``load_related_repos.py``).
 
 Rejects loopback, RFC1918 private ranges, link-local (incl. the
 169.254.169.254 cloud-metadata endpoint), multicast, reserved, and
-broadcast addresses. Optional host allowlist via the
-``APPSEC_URL_ALLOWLIST`` env var (comma-separated hostnames) — when
-set, any host not listed is rejected even if the IP would pass.
+broadcast addresses. Optional host allowlist from the
+``APPSEC_URL_ALLOWLIST`` env var (comma-separated hostnames) and/or an
+org profile's ``policy.url_allowlist`` — when either is set, any host
+not listed is rejected even if the IP would pass.
 
 Resolves the host via ``socket.getaddrinfo`` once before the request
 so a DNS rebind cannot flip the IP between validation and connect.
@@ -20,6 +21,7 @@ repo), single-resolution is sufficient.
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import re
 import socket
@@ -74,6 +76,40 @@ def _allowlist_from_env() -> list[str] | None:
     return [h.strip().lower() for h in raw.split(",") if h.strip()]
 
 
+def _allowlist_from_profile() -> list[str] | None:
+    """Read ``policy.url_allowlist`` from the active org profile, if any.
+
+    Best-effort: the allowlist rides in ``.org-profile-effective.json`` under
+    ``defaults.url_allowlist`` (written by resolve_config). Any IO/parse error
+    returns None so a missing profile simply means "no profile allowlist".
+    """
+    candidates = []
+    output_dir = os.environ.get("OUTPUT_DIR")
+    if output_dir:
+        candidates.append(os.path.join(output_dir, ".org-profile-effective.json"))
+    candidates.append(os.path.join(os.getcwd(), "docs", "security", ".org-profile-effective.json"))
+    for path in candidates:
+        try:
+            with open(path) as fh:
+                eff = json.load(fh)
+        except Exception:  # noqa: BLE001
+            continue
+        hosts = (eff.get("defaults") or {}).get("url_allowlist")
+        if isinstance(hosts, list) and hosts:
+            return [str(h).strip().lower() for h in hosts if str(h).strip()]
+    return None
+
+
+def _active_allowlist() -> list[str] | None:
+    """Union of the env allowlist and the org-profile allowlist (either may be
+    None). A non-None result means the host must be on the list."""
+    env = _allowlist_from_env()
+    prof = _allowlist_from_profile()
+    if env is None and prof is None:
+        return None
+    return sorted(set((env or []) + (prof or [])))
+
+
 def _host_allowed(host: str, allowlist: Iterable[str] | None) -> bool:
     if allowlist is None:
         return True
@@ -84,12 +120,19 @@ def _host_allowed(host: str, allowlist: Iterable[str] | None) -> bool:
     return False
 
 
-def validate_target_url(url: str, *, strict: bool = False) -> ValidationResult:
+def validate_target_url(url: str, *, strict: bool = False, check_ip_safety: bool = True) -> ValidationResult:
     """Return (ok, reason, resolved_ip).
 
-    ``strict=True`` requires ``APPSEC_URL_ALLOWLIST`` to be set; absent
-    allowlist is treated as a rejection. Without ``strict``, an absent
-    allowlist allows any non-dangerous IP through.
+    ``strict=True`` requires an allowlist (env or org profile) to be set; an
+    absent allowlist is treated as a rejection. Without ``strict``, an absent
+    allowlist allows any host through (subject to ``check_ip_safety``).
+
+    ``check_ip_safety=True`` (default) additionally rejects hosts that resolve
+    to loopback / RFC1918 / link-local / metadata addresses — the right posture
+    for *untrusted* config (e.g. related-repos.yaml). Pass ``check_ip_safety=
+    False`` for an org-/developer-supplied URL (e.g. the requirements catalog),
+    which may legitimately be an internal host: the allowlist still applies, but
+    a private IP is not itself a rejection.
     """
     try:
         parsed = urllib.parse.urlsplit(url)
@@ -104,7 +147,7 @@ def validate_target_url(url: str, *, strict: bool = False) -> ValidationResult:
     if not host:
         return ValidationResult(False, "missing host", None)
 
-    allowlist = _allowlist_from_env()
+    allowlist = _active_allowlist()
     if strict and allowlist is None:
         return ValidationResult(
             False,
@@ -117,6 +160,11 @@ def validate_target_url(url: str, *, strict: bool = False) -> ValidationResult:
             f"host '{host}' not in APPSEC_URL_ALLOWLIST",
             None,
         )
+
+    if not check_ip_safety:
+        # Allowlist satisfied; the caller trusts the target host (may be
+        # internal). Skip DNS + private-range rejection.
+        return ValidationResult(True, "ok", None)
 
     if re.match(r"^[\d.]+$|^\[?[0-9a-fA-F:]+\]?$", host):
         try:

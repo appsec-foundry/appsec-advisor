@@ -79,6 +79,118 @@ def test_branding_unknown_key_fails(acme_profile):
     assert any("tagline" in e for e in errors), errors
 
 
+def test_preset_requirements_gate_block_validates(acme_profile):
+    # ci-standard already carries a gate block; a MAY/advisory variant is valid too.
+    acme_profile["presets"]["release-review"]["requirements"]["gate"] = {
+        "mode": "advisory",
+        "gate_on": "fail",
+        "priority_floor": "MAY",
+    }
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_preset_requirements_gate_unknown_key_fails(acme_profile):
+    acme_profile["presets"]["ci-standard"]["requirements"]["gate"]["surprise"] = True
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("surprise" in e for e in errors), errors
+
+
+def test_preset_requirements_gate_bad_mode_fails(acme_profile):
+    acme_profile["presets"]["ci-standard"]["requirements"]["gate"]["mode"] = "block"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("mode" in e or "block" in e for e in errors), errors
+
+
+def test_preset_requirements_gate_bad_floor_fails(acme_profile):
+    acme_profile["presets"]["ci-standard"]["requirements"]["gate"]["priority_floor"] = "HIGH"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("priority_floor" in e or "HIGH" in e for e in errors), errors
+
+
+def test_security_coach_topics_validate(acme_profile):
+    # acme already carries a payments topic; a baseline override is valid too.
+    acme_profile["security_coach"]["baseline"] = "Follow Acme secure defaults."
+    acme_profile["security_coach"]["inherit_default_topics"] = False
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_security_coach_topic_without_triggers_fails(acme_profile):
+    acme_profile["security_coach"]["topics"]["broken"] = {"guidance": "no triggers here"}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("triggers" in e for e in errors), errors
+
+
+def test_security_coach_topic_unknown_key_fails(acme_profile):
+    acme_profile["security_coach"]["topics"]["payments"]["severity"] = "high"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("severity" in e for e in errors), errors
+
+
+def test_guardrails_fail_on_validates(acme_profile):
+    acme_profile["presets"]["release-review"]["guardrails"]["fail_on"] = "critical"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_guardrails_fail_on_bad_value_fails(acme_profile):
+    acme_profile["presets"]["ci-standard"]["guardrails"]["fail_on"] = "low"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("fail_on" in e or "low" in e for e in errors), errors
+
+
+def test_policy_url_allowlist_validates(acme_profile):
+    acme_profile["policy"]["url_allowlist"] = ["reqs.example.com"]
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_policy_url_allowlist_must_be_array(acme_profile):
+    acme_profile["policy"]["url_allowlist"] = "security.acme.example"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("url_allowlist" in e for e in errors), errors
+
+
+def test_hooks_block_validates(acme_profile):
+    # acme already carries a PreToolUse hook; the fixture must stay valid.
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_hooks_unknown_event_fails(acme_profile):
+    acme_profile["hooks"]["block-risky-bash"]["event"] = "NotAnEvent"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("event" in e or "NotAnEvent" in e for e in errors), errors
+
+
+def test_hooks_command_must_reference_profile_script(acme_profile):
+    acme_profile["hooks"]["block-risky-bash"]["command"] = "python3 /opt/evil.py"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("org-profile" in e for e in errors), errors
+
+
+def test_hooks_missing_script_fails(acme_profile):
+    acme_profile["hooks"]["block-risky-bash"]["command"] = "python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/nope.py"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("does not exist" in e for e in errors), errors
+
+
+def test_hooks_matcher_only_on_tool_events(acme_profile):
+    acme_profile["hooks"]["block-risky-bash"]["event"] = "Stop"
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("matcher" in e for e in errors), errors
+
+
+def test_hooks_reserved_id_fails(acme_profile):
+    acme_profile["hooks"]["agent-logger"] = {
+        "event": "Stop",
+        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py",
+    }
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("reserved" in e for e in errors), errors
+
+
 def test_context_path_must_stay_under_profile_dir(acme_profile):
     acme_profile["llm_context"]["documents"][0]["path"] = "../../../etc/passwd"
     errors = vop.validate(acme_profile, FIXTURE_DIR)
@@ -203,6 +315,59 @@ def test_abuse_cases_absent_skips_resolution(acme_profile):
     # No abuse_cases block → no abuse-case resolution errors leak in.
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert not any("abuse_cases" in e for e in errors), errors
+
+
+# ---------------------------------------------------------------------------
+# mcp block (org MCP endpoints emitted into the packaged plugin's .mcp.json)
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_http_server_passes(acme_profile):
+    acme_profile["mcp"] = {
+        "servers": {
+            "acme-sast": {
+                "type": "http",
+                "url": "${ACME_SAST_MCP_URL}",
+                "headers": {"Authorization": "Bearer ${ACME_SAST_TOKEN}"},
+            }
+        }
+    }
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_mcp_stdio_server_passes(acme_profile):
+    acme_profile["mcp"] = {"servers": {"acme-sca": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/sca", "args": ["--json"]}}}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_mcp_server_without_url_or_command_fails(acme_profile):
+    acme_profile["mcp"] = {"servers": {"empty": {"type": "http"}}}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("url" in e and "command" in e for e in errors), errors
+
+
+def test_mcp_url_with_credentials_rejected(acme_profile):
+    acme_profile["mcp"] = {"servers": {"acme-sast": {"url": "https://user:secret@sast.acme.test/mcp"}}}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("credentials" in e for e in errors), errors
+
+
+def test_mcp_unknown_server_key_rejected(acme_profile):
+    acme_profile["mcp"] = {"servers": {"acme-sast": {"url": "https://sast.acme.test/mcp", "mystery": 1}}}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("mystery" in e for e in errors), errors
+
+
+def test_mcp_invalid_server_name_rejected(acme_profile):
+    acme_profile["mcp"] = {"servers": {"Bad Name": {"url": "https://sast.acme.test/mcp"}}}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("mcp" in e.lower() or "servers" in e for e in errors), errors
+
+
+def test_mcp_absent_skips_check(acme_profile):
+    assert vop._check_mcp(acme_profile) == []
 
 
 # ---------------------------------------------------------------------------

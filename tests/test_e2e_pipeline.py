@@ -107,7 +107,7 @@ CORE_HEADINGS = [
     "## 3. Attack Walkthroughs",
     "## 4. Assets",
     "## 5. Attack Surface",
-    "## 7. Security Architecture",
+    "## 6. Security Architecture",
     "## 8. Findings Register",
     "## 9. Abuse Cases",
     "## 10. Mitigation Register",
@@ -128,6 +128,7 @@ def _load_module(name: str, path: Path):
 
 
 compose = _load_module("compose_threat_model", SCRIPTS / "compose_threat_model.py")
+qa_checks = _load_module("qa_checks", SCRIPTS / "qa_checks.py")
 
 # Reuse the canonical SARIF validator that test_export_sarif.py uses, rather
 # than re-implementing structural checks here (single source of truth).
@@ -671,3 +672,72 @@ def test_export_sarif_matches_golden(e2e_run: Path) -> None:
     assert produced == golden.read_text(encoding="utf-8"), (
         f"exported SARIF != golden. If intentional, regenerate: {_REGEN_HINT}"
     )
+
+
+# ---------------------------------------------------------------------------
+# P1.4 — weakness-class register render (proposal §4a). The weakness view is
+# gated on weaknesses[] being present, so the committed golden (no register)
+# stays byte-identical; this test injects a register and asserts the composer
+# renders the systemic view cleanly and QA-safe.
+# ---------------------------------------------------------------------------
+
+
+def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
+    yml = e2e_run / "threat-model.yaml"
+    doc = yaml.safe_load(yml.read_text(encoding="utf-8"))
+    tids = [t.get("id") or t.get("t_id") for t in doc.get("threats", []) if (t.get("id") or t.get("t_id"))][:2]
+    assert len(tids) == 2, "fixture needs ≥2 threats to reference as instances"
+    doc["weaknesses"] = [
+        {
+            "id": "W-001",
+            "weakness_class": "injection",
+            "kind": "design",
+            "title": "Database query safety",
+            "severity": "Critical",
+            "severity_basis": "confirmed",
+            "statement": "SQL built by concatenation; no parametrized layer.",
+            "observable_backing": {
+                "absent_control_signal": [{"pattern": "sequelize", "hit_count": 0}],
+                "practice_evidence": [{"file": "routes/x.ts", "line": 1, "id": tids[0]}],
+            },
+            "affected_components": ["api"],
+            "instances": [
+                {"id": tids[0], "basis": "confirmed-exploitable"},
+                {"id": tids[1], "basis": "confirmed-exploitable"},
+            ],
+        }
+    ]
+    yml.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+    rendered, warnings = compose.render(CONTRACT, e2e_run)
+    assert warnings == [], f"unexpected compose warnings: {warnings}"
+    # Weaknesses are a first-class register (renamed + repositioned before the
+    # Findings Register in the 2026-07-14 redesign), not a §8 class roll-up.
+    assert "## 7. Weakness Register" in rendered
+    assert "W-001 — Database query safety" in rendered
+    assert "SQL built by concatenation; no parametrized layer." in rendered
+    assert "**Confirmed findings:**" in rendered
+    # The standalone "### Security Principles" verdict table was retired from the
+    # Management Summary (2026-07-14): it duplicated Top Weaknesses as a second
+    # systemic-framing block and only partially linked to the register. The
+    # executive systemic view is now carried solely by `### Top Weaknesses`.
+    assert "### Security Principles" not in rendered
+    # `### Top Weaknesses` renders INSIDE the Management Summary (between its
+    # `## Management Summary` heading and the next `## ` section) and before the
+    # central Weakness Register it links into.
+    assert "### Top Weaknesses" in rendered
+    ms_start = rendered.index("## Management Summary")
+    ms_end = rendered.index("\n## ", ms_start + 1)
+    assert ms_start < rendered.index("### Top Weaknesses") < ms_end, (
+        "Top Weaknesses table must render inside the Management Summary"
+    )
+    assert "[Weakness Register](#weakness-register)" in rendered
+    assert rendered.index("### Top Weaknesses") < rendered.index("## 7. Weakness Register")
+    # Findings and systemic weaknesses are reported as separate evidence types.
+    assert "**Assessment evidence:**" in rendered
+    assert "confirmed-exploitable finding(s)" in rendered
+    # QA invariants pass on the rendered document (the block adds no anchor /
+    # section that check_invariants would reject).
+    (e2e_run / "threat-model.md").write_text(rendered, encoding="utf-8")
+    inv = qa_checks.check_invariants(e2e_run / "threat-model.md")
+    assert inv.ok, f"check_invariants rejected the weakness-register render: {inv.__dict__}"

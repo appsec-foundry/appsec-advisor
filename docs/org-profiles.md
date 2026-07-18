@@ -10,10 +10,13 @@ See the [packaging runbook](internal-plugin-packaging.md) to bundle a profile in
 
 **Can**
 
-- set default `assessment_depth`, output toggles (SARIF / PDF / pentest tasks / SCA), guardrails (wall time, cost cap, tracing), quality knobs (QA review, architect review, walkthroughs, enrichment) per preset
+- set per-preset defaults: scan depth, outputs (SARIF / PDF / pentest tasks), quality knobs (QA, architect review, walkthroughs), and guardrails (wall time, cost cap)
+- gate CI on failing requirements (`requirements.gate`) or on new threats at a chosen severity (`guardrails.fail_on`)
+- apply profile-wide policy: an Opus ceiling (`policy.disable_opus`) and a remote-fetch allowlist (`policy.url_allowlist`)
 - declare a single requirements source URL, the default active state for create-threat-model, and a separate standalone-audit toggle
 - attach 1–3 short Markdown files with organization, identity, or platform context
-- enable a default-on Security Coach with a `max_requirements_per_topic` cap
+- enable a default-on Security Coach, and define its baseline and its own steering topics (triggers → guidance + requirement IDs)
+- bundle its own Claude Code hooks that run at the event layer (`hooks`)
 - soft-disable optional user-facing skills with a human-readable reason
 
 **Cannot**
@@ -22,7 +25,7 @@ See the [packaging runbook](internal-plugin-packaging.md) to bundle a profile in
 - override `quick` / `standard` / `thorough` semantics
 - inject agent instructions or prompt overrides
 - override schemas, QA gates, permissions, or any renderer template
-- ship remote markdown context, signed packages, or arbitrary scripts
+- ship remote markdown context, or code that runs inside the analysis pipeline (bundled hooks run only at Claude Code's event layer, and are listed in the package surface)
 
 ## Packaging
 
@@ -163,6 +166,76 @@ These rules apply in addition to the schema:
 - `requirements_yaml_url` must not embed credentials and must be http/s.
 - `skill_toggles` keys must be known user-facing skill names; disabled toggles must carry a reason.
 
+## CI gates
+
+Two gates turn a run's outcome into a CI exit code. Each stays advisory until a
+preset opts in, and each is overridden by its own command-line flag.
+
+The requirements gate fails when graded requirements come back FAIL — or PARTIAL
+too, if you ask for it. It covers both `verify-requirements` and
+`audit-security-requirements`.
+
+```yaml
+presets:
+  ci-standard:
+    requirements:
+      enabled: true
+      gate:
+        mode: enforce          # default: advisory (exits 0)
+        gate_on: partial       # default: fail
+        priority_floor: SHOULD # default: MUST
+```
+
+Overridden by `--gate` / `--gate-on` / `--priority-floor`.
+
+The severity gate fails a headless run that adds threats at or above a level.
+Interactive runs never gate.
+
+```yaml
+presets:
+  ci-standard:
+    guardrails:
+      fail_on: high            # critical | high | medium
+```
+
+Overridden by `--fail-on`.
+
+## Policy
+
+`policy:` sits above the presets and applies to every run.
+
+```yaml
+policy:
+  disable_opus: true
+  url_allowlist: [security.acme.example, raw.githubusercontent.com]
+```
+
+`disable_opus` downgrades every Opus selection to Sonnet — a cost or compliance
+ceiling. The profile can only turn it on: `--no-opus` and `APPSEC_DISABLE_OPUS`
+add to it, but nothing switches it back off for a run.
+
+`url_allowlist` limits where the tool fetches from — the requirements catalog and
+related-repo threat models. A host matches exactly or as a dotted subdomain, and
+a listed internal host is allowed even on a private address. Unlisted
+related-repo URLs still hit the full SSRF block (loopback, RFC1918,
+cloud-metadata).
+
+## Branding
+
+Cover-page fields for the PDF and HTML report, shared across presets:
+
+```yaml
+branding:
+  report_title: "Security Assessment"
+  contact_name: "AppSec Team"
+  contact_email: "appsec@acme.example"
+  logo: context/logo.png       # local path or https URL
+```
+
+Each field has a matching flag (`--report-title`, `--contact-name`,
+`--contact-email`, `--logo`) that wins for one run. Whatever you leave out uses
+the default cover.
+
 ## Actors
 
 Use the `actors:` block to add actors or disable default actor classes:
@@ -232,6 +305,28 @@ Skill toggles block commands at runtime. To remove a skill or hook from the pack
 
 `security_coach.max_requirements_per_topic` overrides the static default (3) for per-prompt requirement injection.
 
+### Your own steering rules
+
+Define your own coaching behaviour instead of forking the plugin. A topic is a
+trigger (which prompts it fires on) and what it injects (guidance text and
+requirement IDs from your catalog):
+
+```yaml
+security_coach:
+  enabled_by_default: true
+  baseline: "Follow Acme secure defaults on every change."   # optional, replaces the built-in
+  topics:
+    payments:
+      triggers: [payment, payout, refund]
+      guidance: Post to the ledger idempotently; refunds need dual approval.
+      requirements: [SEC-PAY-IDEMPOTENT, SEC-PAY-DUAL-APPROVAL]
+```
+
+Your topics are added to the built-in ones (auth, injection, crypto, …); an org
+topic with the same name replaces the built-in. Set `inherit_default_topics: false`
+to use only your own. Guidance is injected as advice — like the packaged context,
+it never overrides tool behaviour, gates, or severity.
+
 ## Status output
 
 `/appsec-advisor:status` adds an *Org Profile* section when a profile is active or merely configured:
@@ -286,18 +381,20 @@ Override requirements for one run:
 
 ## Abuse cases
 
-Abuse cases are loaded in this order:
+The plugin loads cases in this order:
 
 1. **Plugin standard library** — `data/abuse-cases/default-library.yaml` (the
    `AC-T-NNN` mandatory set), unless an org profile sets
    `abuse_cases.inherit_defaults: false`.
 2. **Org profile** — `abuse_cases.add` is a glob (relative to the org-profile
-   directory) of extra case files; `abuse_cases.disable` removes ids; ids use
-   the `ORG-AC-NNN` prefix. Validated against `schemas/abuse-cases.schema.yaml`.
+   directory) of extra case files; `abuse_cases.disable` removes ids. Use the
+   `ORG-AC-NNN` ID prefix.
 3. **Repository** — any `*.yaml` under
    `<repo>/.appsec/abuse-cases/` in the target repository is loaded
-   automatically. Use the `REPO-AC-NNN` ID prefix. The org profile's `disable`
-   list still applies, and IDs must be unique across all layers.
+   automatically. Use the `REPO-AC-NNN` ID prefix. IDs must be unique.
+4. **One scan** — `--abuse-case-file <repo-relative-path>` adds a YAML file
+   below the target repository. Repeat `--only-abuse-case <ID>` to run selected
+   cases only.
 
 Example repo-local case (`<repo>/.appsec/abuse-cases/payments.yaml`):
 
@@ -315,8 +412,84 @@ abuse_cases:
       - step: 1
         label: Reuse a prior idempotency key
         grants: replayed-request
+        finding:
+          title: Refund endpoint accepts a reused idempotency key
+          cwe: CWE-841
+          stride: Tampering
+          severity: High
+          mitigation_title: Enforce one-time idempotency keys per payment intent
+          remediation: Bind each key to one payment intent and reject reuse after a successful refund.
         probe:
           sink_patterns: ["idempotenc(y|e)[-_ ]?key"]
 ```
 
-`probe.sink_patterns` matches chain steps to findings. The assessment then checks each step against the code.
+Use `scope_qualifier.required_signals` and `path_patterns` to limit a case to
+relevant repositories. `probe.sink_patterns` match existing findings first; a
+direct source match is checked by the verifier before it is reported.
+
+Add `finding` when a direct source match should become a normal finding after
+verification. It supplies the classification and mitigation and links the
+resulting finding to the abuse-case step. Without it, the case remains a
+scenario check and no finding is created.
+
+Add `release_gate` to fail CI for selected final verdicts:
+
+```yaml
+release_gate:
+  fail_on: [fully_viable]
+  applies_to_presets: [release-review]
+```
+
+## Hooks
+
+An org can bundle its own Claude Code hooks in the packaged plugin — one central
+artifact carrying its own event handlers. Declare them and put the scripts under
+`org-profile/hooks/`:
+
+```yaml
+hooks:
+  block-risky-bash:
+    event: PreToolUse
+    matcher: Bash                                   # PreToolUse / PostToolUse only
+    command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py
+```
+
+Each hook is recorded in `package-surface.json` (org-owned, separate from the
+upstream hooks) so the artifact surface stays auditable; `plugin_surface.hooks`
+can exclude one by id. Hooks run at Claude Code's event layer — they can add
+context or block a tool call, but never reach the analysis pipeline; findings,
+severity, and schemas stay core-owned. The full mechanism and rules live in the
+[packaging runbook](internal-plugin-packaging.md).
+
+## MCP servers
+
+The `mcp` block lets an org wire its own MCP servers — e.g. an internal SAST or
+SCA service — into the packaged plugin. At build time the packager emits the
+declared servers into the plugin's `.mcp.json`, so Claude Code loads them
+whenever the internal plugin is active. Which servers are emitted can be narrowed
+by the [package policy](internal-plugin-packaging.md) allowlist
+(`plugin_surface.mcp_servers`); by default every declared server is included.
+
+```yaml
+mcp:
+  servers:
+    acme-sast:                       # http/sse transport
+      type: http
+      url: ${ACME_SAST_MCP_URL}
+      headers:
+        Authorization: Bearer ${ACME_SAST_TOKEN}
+    acme-sca:                        # stdio transport
+      command: ${CLAUDE_PLUGIN_ROOT}/bin/sca
+      args: ["--json"]
+```
+
+Rules:
+
+- Each server sets **either** `url` (http/sse) **or** `command` (stdio).
+- **Secrets never go in the profile.** Reference tokens and internal URLs as
+  `${ENV_VAR}`; Claude Code expands them at load time, and `${CLAUDE_PLUGIN_ROOT}`
+  resolves to the installed plugin directory. A credential embedded directly in a
+  server `url` (`user:pass@host`) is rejected at validation time.
+- **MCP tool output is untrusted reference data.** Like markdown context, it can
+  inform findings but never changes severity rules, QA gates, schemas,
+  permissions, or tool behavior. Only wire in endpoints you trust.

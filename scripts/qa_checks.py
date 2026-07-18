@@ -296,7 +296,7 @@ class _PrePass:
                 cls._contract = _fast_yaml_load(contract_path.read_text(encoding="utf-8")) or {}
             except (OSError, _yaml.YAMLError):
                 cls._contract = {}
-            # schema_v2 — swap the §7 contract surface with the current
+            # schema_v2 — swap the §6 contract surface with the current
             # v2 layout/rules so downstream checks validate the rendered MD
             # against the supported security-architecture model. The swap is
             # in-memory only; the YAML file keeps the current v2 block grouped.
@@ -305,7 +305,7 @@ class _PrePass:
 
     @classmethod
     def _apply_schema_v2_overlay(cls) -> None:
-        """Swap security_architecture §7 contract fields → schema_v2 fields.
+        """Swap security_architecture §6 contract fields → schema_v2 fields.
 
         The legacy v1 layout has been removed; v2 is the only supported
         security-architecture contract.
@@ -320,7 +320,7 @@ class _PrePass:
         if isinstance(v2_subs, list) and v2_subs:
             sec["required_subsections"] = v2_subs
             # Drop v1 cross-cutting subsection patterns (those headings
-            # are not part of the v2 §7 control-category model).
+            # are not part of the v2 §6 control-category model).
             sec["required_subsection_patterns"] = []
         v2_domain_patterns = v2.get("domain_required_patterns")
         if isinstance(v2_domain_patterns, dict):
@@ -553,7 +553,7 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
     return idx
 
 
-# Pattern that matches the §8 / §7.2-style declaration line for a TH-NN
+# Pattern that matches the §8 / §6.2-style declaration line for a TH-NN
 # threat-class anchor + its short title. The renderer writes one of the
 # two forms below per category — the regex covers both:
 #
@@ -565,7 +565,7 @@ TH_DECL_RE = re.compile(r'<a\s+id="(th-\d{2,3})"\s*></a>\s*TH-\d{2,3}\s*[—–-
 
 
 def _load_th_label_index(md_text: str) -> dict[str, tuple[str, str]]:
-    """Parse threat-class titles from rendered §8 / §7.2 prose.
+    """Parse threat-class titles from rendered §8 / §6.2 prose.
 
     TH-NN labels do not live in `threat-model.yaml` — they are emitted by
     the renderer from `data/threat-class-taxonomy.yaml` (a plugin-internal
@@ -628,10 +628,10 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # `(f.ts:18)` in prose (this pass) vs `(`f.ts:18`)` in §8 tables (compose).
     # Deferred import mirrors the `_manifest_readers` idiom; compose only
     # imports qa_checks function-locally, so there is no import cycle.
-    from compose_threat_model import _codify_label_locator
+    from compose_threat_model import _codify_label_locator, _is_bare_finding_ref_line
 
     # Merge the TH-NN label index parsed from the rendered MD itself —
-    # TH-NN titles live in §8 / §7.2 declarations, not in the yaml.
+    # TH-NN titles live in §8 / §6.2 declarations, not in the yaml.
     # Same {ID: (label, anchor)} shape so the suffix logic below stays
     # uniform across all four ID classes.
     th_idx = _load_th_label_index(text)
@@ -676,6 +676,14 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
         # linkified, because in-heading links break right-side TOC outlines
         # AND trigger heading_hygiene's `[…]([…]) — <text>` rule.
         if stripped_lstrip.startswith("#"):
+            continue
+        # Bare-finding-ref lines (MS Top Weaknesses proof run, Critical Attack
+        # Tree findings pointer) list BARE finding ids by design — a single
+        # higher-level signal owns the context (user 2026-07-15). Their F-refs are
+        # already linked by the composer, so skip label-suffix enrichment here;
+        # otherwise they expand to `[F-NNN] — Long Title` and reintroduce the
+        # clutter the bare form removes. See compose._is_bare_finding_ref_line.
+        if _is_bare_finding_ref_line(line):
             continue
         new_line = line
 
@@ -1109,6 +1117,40 @@ def check_invariants(md_path: Path) -> Report:
                     f"makes silent-death diagnosis impossible)."
                 )
 
+    # Weakness-class evidence-model invariants (I1, I4) — see
+    # docs/internal/analysis/proposal-weakness-class-evidence-model.md §0/§9.
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    if text:
+        # I1 — the retired "Threat Hypotheses Requiring Validation" §6.2 table
+        # must never render: architecture-derived gaps surface as design-weakness
+        # headings, never as a user-facing "hypothesis" section/category. The
+        # word may still appear in prose; only HEADINGS are policed.
+        for m in re.finditer(r"(?m)^#{1,6}\s+(.*)$", text):
+            head = m.group(1)
+            if re.search(r"(?i)threat\s+hypothes|hypotheses\s+requiring\s+validation", head):
+                report.issues.append(
+                    f"I1 violation: user-facing hypothesis heading rendered "
+                    f"({head.strip()!r}); design gaps must render as design-weakness "
+                    f"headings, not a hypotheses section."
+                )
+        # I4 — the headline findings breakdown must be internally consistent:
+        # total == confirmed-exploitable + implementation + design.
+        mb = re.search(
+            r"\*\*Findings:\*\*\s*(\d+)\s*[—-]\s*(\d+)\s+confirmed-exploitable\s*·\s*"
+            r"(\d+)\s+implementation\s*·\s*(\d+)\s+design",
+            text,
+        )
+        if mb:
+            total, conf, impl, design = (int(mb.group(i)) for i in range(1, 5))
+            if total != conf + impl + design:
+                report.issues.append(
+                    f"I4 violation: findings breakdown {conf}+{impl}+{design} "
+                    f"!= stated total {total} (post-consolidation count must sum)."
+                )
+
     if not report.issues:
         report.ok = 1
     return report
@@ -1379,7 +1421,7 @@ def _resolve_contract_run_flags(output_dir: Path) -> dict:
 
     `check_contract` must evaluate the contract's `condition` gates against the
     SAME context the composer used — otherwise depth-conditional sections (§3
-    Attack Walkthroughs, §7 Security Architecture) are flagged as "missing" on a
+    Attack Walkthroughs, §6 Security Architecture) are flagged as "missing" on a
     `--quick` run where they are *intentionally* suppressed. Mirrors
     `compose_threat_model.py`'s eval_context construction (the
     `is_quick_depth` / `skip_attack_walkthroughs` derivation at ~L14210-14221):
@@ -1429,8 +1471,8 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
          ``condition`` gates evaluated against simple counters).
       2. No forbidden_subsection_patterns appear under Management Summary.
       3. Required tables present the declared number of columns with the
-         declared headers (Top Findings: 6 cols; Operational Strengths: 5 cols; Mitigations sub-tables:
-         5 cols each).
+         declared headers (Top Findings: 6 cols; Operational Strengths: 3 or
+         4 cols; Mitigations sub-tables: 5 cols each).
     """
 
     report = Report("contract")
@@ -1449,18 +1491,18 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
     # `condition` gates below evaluate against the SAME context. Without this
     # the env hardcoded `render_security_architecture=True` and omitted
     # `skip_attack_walkthroughs`, so a `--quick` run (where the composer
-    # suppresses §3 and §7 per sections-contract.yaml) was reported as
-    # "expected section missing: '## 3. Attack Walkthroughs' / '## 7. Security
+    # suppresses §3 and §6 per sections-contract.yaml) was reported as
+    # "expected section missing: '## 3. Attack Walkthroughs' / '## 6. Security
     # Architecture'" — a false positive that tripped the Stage-3 repair_plan
     # gate (exit 1) on every quick run. See _resolve_contract_run_flags.
     _flags = _resolve_contract_run_flags(md_path.parent)
-    # §7 mirrors the composer's `render_security_architecture = _resolve_
+    # §6 mirrors the composer's `render_security_architecture = _resolve_
     # security_arch_override(...) != ""`: suppressed at quick depth UNLESS a
-    # rich prior §7 was carried forward (rerender) — in which case §7 *is* in
-    # the rendered doc. So at quick depth we expect §7 only when its heading is
+    # rich prior §6 was carried forward (rerender) — in which case §6 *is* in
+    # the rendered doc. So at quick depth we expect §6 only when its heading is
     # actually present; at standard/thorough it is always expected (unchanged).
     _sec7_section = contract.get("sections", {}).get("security_architecture") or {}
-    _sec7_heading = (_sec7_section.get("heading") or "## 7. Security Architecture").strip()
+    _sec7_heading = (_sec7_section.get("heading") or "## 6. Security Architecture").strip()
     _sec7_present = bool(re.search(rf"(?m)^{re.escape(_sec7_heading)}[ \t]*$", text))
     _render_sec7 = (not _flags["is_quick_depth"]) or _sec7_present
 
@@ -1533,9 +1575,9 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
                 report.issues.append(f"section has no substantive body: {heading!r}")
 
     # 1b. Required sub-section presence + order within each top-level
-    # section. Historically the §7 contract listed required_subsections but
+    # section. Historically the §6 contract listed required_subsections but
     # check_contract only validated the parent `##` headings, so a renderer
-    # could ship a stale §7 layout while the contract still passed.
+    # could ship a stale §6 layout while the contract still passed.
     for raw in contract.get("document", {}).get("order", []):
         sid, cond = (raw, None) if isinstance(raw, str) else (raw.get("id"), raw.get("condition"))
         if cond and not _safe_eval_cond(cond, env):
@@ -1745,10 +1787,13 @@ _TABLE_SCHEMA_CHECKS: list[tuple[str, str, list[str]]] = [
         "operational_strengths",
         "Operational Strengths",
         [
-            # M3.10 — categorical-cluster layout
-            "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
-            # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
+            # 2026-07-15 — Gap merged into Effectiveness; Mitigates shown only when
+            # a row carries a back-reference. 3-col (no Mitigates, the common case)
+            # and 4-col (with Mitigates) forms. The legacy 5-col
+            # `… | Effectiveness | Gap | Mitigates |` is intentionally omitted so
+            # reports rendered by old code are flagged.
             "| Strength | What's in Place | Effectiveness |",
+            "| Strength | What's in Place | Effectiveness | Mitigates |",
             # Post-2026-05 empty-state — every cluster demoted to Weak, no
             # table rendered, only an italic explanatory banner. Accept the
             # banner's stable opener as evidence the section was authored.
@@ -1810,9 +1855,13 @@ def _heading_to_section_id(heading: str, contract: dict) -> str | None:
 # list-shape nits. They surface as advisories but must NOT trigger the
 # skill-layer Re-Render Loop: re-authoring a fragment + recompose is an LLM
 # pass (minutes) that is not worth a diagram-too-wide or walkthrough-too-short
-# finding. Everything NOT listed here (broken diagram, missing table/section,
-# §7 contract-structure drift, wrong T-ID reference) stays blocking and
-# re-renders as before. Override per run with APPSEC_QA_COSMETIC_BLOCKING=1.
+# finding.
+#
+# The Re-Render Loop is a document-integrity safety net, not a general prose
+# polisher. Keep its trigger set explicit: a new action type is manual review
+# by default until its impact and repairability have been assessed. This avoids
+# accidentally turning a future presentational check into an LLM repair pass.
+# Override per run with APPSEC_QA_COSMETIC_BLOCKING=1.
 COSMETIC_ACTION_TYPES = frozenset(
     {
         "diagram_compactness",
@@ -1823,19 +1872,47 @@ COSMETIC_ACTION_TYPES = frozenset(
     }
 )
 
+# Only defects that leave the rendered document incomplete, misleading, or
+# unusable may start the fragment-fixer loop. A missing section/subsection,
+# malformed diagram or TOC link, incorrect table schema, wrong threat reference,
+# or an empty in-scope section are all substantive report-integrity defects.
+BLOCKING_ACTION_TYPES = frozenset(
+    {
+        "report_integrity",
+        "mermaid_syntax",
+        "toc_nested_link",
+        "auth_method_decomposition",
+        "validation_approach_first",
+        "control_subsection_coverage",
+        "walkthrough_coverage",
+        "chain_tid_consistency",
+        "missing_required_subsection",
+        "missing_section",
+        "table_schema_drift",
+    }
+)
+
 
 def _action_severity(action_type: str) -> str:
-    """Classify a repair-plan action ``type`` as ``"cosmetic"`` or ``"blocking"``.
+    """Classify a repair-plan action as blocking, cosmetic, or manual review.
 
     Only ``blocking`` actions with a writable fragment target drive the
     Re-Render Loop (``cmd_repair_plan`` exit 1). Cosmetic-only plans return
     exit 4 (``cosmetic_advisory``) — surfaced, not re-rendered. Setting
     ``APPSEC_QA_COSMETIC_BLOCKING=1`` restores the pre-2026-06-22 behaviour
     where every action was blocking.
+
+    An unclassified action returns ``"manual_review"``. It remains visible and
+    is handled by the one-shot QA/manual-review path, but cannot silently spend
+    an LLM repair iteration merely because it names a fragment.
     """
     if os.environ.get("APPSEC_QA_COSMETIC_BLOCKING") == "1":
         return "blocking"
-    return "cosmetic" if action_type in COSMETIC_ACTION_TYPES else "blocking"
+    if action_type in COSMETIC_ACTION_TYPES:
+        return "cosmetic"
+    if action_type in BLOCKING_ACTION_TYPES:
+        return "blocking"
+    return "manual_review"
 
 
 def _render_integrity_actions(output_dir: Path) -> tuple[list[str], list[dict]]:
@@ -2072,7 +2149,7 @@ def build_repair_plan(
             }
         )
     # One action per auth_method_decomposition finding. All such violations
-    # live inside `.fragments/security-architecture.md` (§7.3 IAM). The
+    # live inside `.fragments/security-architecture.md` (§6.3 IAM). The
     # orchestrator's repair branch re-authors that fragment so the next
     # compose produces the missing #### sub-blocks, sequenceDiagrams, and
     # `**Findings in this flow:**` trailers with consistent T-ID citations.
@@ -2084,7 +2161,7 @@ def build_repair_plan(
                 "section_id": "security_architecture",
                 "fragments_to_rewrite": [".fragments/security-architecture.md"],
                 "remediation": (
-                    "Edit `.fragments/security-architecture.md` so §7.2 Identity "
+                    "Edit `.fragments/security-architecture.md` so §6.2 Identity "
                     "and Authentication Controls is decomposed by authentication "
                     "MECHANISM (Password-Based Authentication, OAuth/OIDC, "
                     "MFA/TOTP, …) — one `####` sub-block per mechanism, not by "
@@ -2109,7 +2186,7 @@ def build_repair_plan(
                 "section_id": "security_architecture",
                 "fragments_to_rewrite": [".fragments/security-architecture.md"],
                 "remediation": (
-                    "Edit `.fragments/security-architecture.md` so §7.6 Input "
+                    "Edit `.fragments/security-architecture.md` so §6.6 Input "
                     "Boundary Validation Controls OPENS with a general "
                     "validation-approach `####` block (e.g. `#### Validation "
                     "Approach` / `Input Validation Strategy`) that states the "
@@ -2117,7 +2194,7 @@ def build_repair_plan(
                     "a schema/middleware layer, or scattered ad-hoc per endpoint? "
                     "— BEFORE the specific parser / upload / business-rule "
                     "sub-blocks. Reorder so the approach block is the FIRST H4 "
-                    "under §7.6. After editing, re-run compose_threat_model.py."
+                    "under §6.6. After editing, re-run compose_threat_model.py."
                 ),
             }
         )
@@ -2131,11 +2208,11 @@ def build_repair_plan(
                 "fragments_to_rewrite": [".fragments/security-architecture.md"],
                 "remediation": (
                     "Edit `.fragments/security-architecture.md` to follow the "
-                    "v2 §7 control-category shape. Each §7.2-§7.12 block needs "
+                    "v2 §6 control-category shape. Each §6.2-§6.12 block needs "
                     "`**Controls covered:**` with markdown links to matching "
                     "`#### <Control Name>` subcontrols. Each subcontrol needs "
                     "`**Security assessment**` and `**Relevant findings**` "
-                    "labels. Do not reintroduce legacy `#### 7.3.N ... Flow` "
+                    "labels. Do not reintroduce legacy `#### 6.3.N ... Flow` "
                     "or `**Findings in this flow:**` requirements."
                 ),
             }
@@ -2149,7 +2226,7 @@ def build_repair_plan(
                 "section_id": "security_architecture",
                 "fragments_to_rewrite": [".fragments/security-architecture.md"],
                 "remediation": (
-                    "Edit `.fragments/security-architecture.md` so every §7.2-§7.12 "
+                    "Edit `.fragments/security-architecture.md` so every §6.2-§6.12 "
                     "H4 subcontrol uses a standalone `**Relevant findings**` label "
                     "followed by a Markdown bullet list. Do not use the inline form "
                     "`**Relevant findings:** [F-001](#f-001), [F-002](#f-002)`. "
@@ -2225,7 +2302,7 @@ def build_repair_plan(
                 "fragments_to_rewrite": [".fragments/security-architecture.md"],
                 "remediation": (
                     "Recon found identity/authentication evidence that is absent "
-                    "from §7. Add the missing TOTP/2FA/MFA subcontrol to the "
+                    "from §6. Add the missing TOTP/2FA/MFA subcontrol to the "
                     "configured identity/authentication controls section, list "
                     "it in `**Controls covered:**`, and include the required "
                     "`**Security assessment**` / `**Relevant findings**` labels."
@@ -2379,7 +2456,7 @@ def build_repair_plan(
                     "remediation": (
                         f"Re-author the fragment for `{parent_heading}` so it "
                         f"contains the required subsection `{subheading}` in "
-                        f"contract order. For §7 v2, use the 13-section "
+                        f"contract order. For §6 v2, use the 13-section "
                         f"control-category layout from "
                         f"`data/sections-contract.yaml → schema_v2.required_subsections`."
                     ),
@@ -2401,8 +2478,8 @@ def build_repair_plan(
                     "fragments_to_rewrite": CONTRACT_SECTION_FRAGMENTS.get(sid or "", []),
                     "remediation": (
                         f"Reorder the subsections under `{parent_heading}` to "
-                        f"match the contract. For §7 v2 this means the 13 "
-                        f"control-category headings 7.1 through 7.13, with no "
+                        f"match the contract. For §6 v2 this means the 13 "
+                        f"control-category headings 6.1 through 6.13, with no "
                         f"legacy v1/v2 headings interleaved."
                     ),
                 }
@@ -2622,10 +2699,11 @@ def _classify_plan_status(
     decide whether iteration can possibly converge:
 
       * ``pass``              — no issues, no actions, no work.
-      * ``manual_review``     — issues exist but every action's
-                                ``fragments_to_rewrite`` is empty. Re-rendering
-                                cannot fix this (typically renderer/checker
-                                drift); the loop must short-circuit.
+      * ``manual_review``     — issues exist but no explicitly blocking action
+                                has a writable fragment target. Re-rendering
+                                cannot fix this safely (typically
+                                renderer/checker drift or a new unclassified
+                                check); the loop must short-circuit.
       * ``cosmetic_advisory`` — (2026-06-22) the only writable-fragment actions
                                 are ``severity == "cosmetic"`` (compactness,
                                 walkthrough depth, list shape, recon-IAM hint).
@@ -2642,17 +2720,15 @@ def _classify_plan_status(
     run's all-``posture_renderer_bug`` repair plan would have burnt 3 ×
     ~10 min loop iterations on a problem only a code change can fix.
     """
-    # A blocking action is ANY non-cosmetic action, whether or not it has a
-    # writable fragment. `actionable` stays gated on a fragment (the re-render
-    # loop can only fix a fragment-backed defect); a blocking action with no
-    # fragment is real but needs manual review, not re-rendering. Blocking must
-    # always win over co-occurring cosmetic advisories — the 2026-07 QA bug was
-    # that a genuine contract defect with no fragment target (e.g. a computed
-    # Top Threats table-schema drift) was silently demoted to
-    # `cosmetic_advisory` (exit 4, treated like pass) whenever any cosmetic
-    # action happened to carry a writable fragment.
-    blocking = any(a.get("severity") != "cosmetic" for a in actions)
-    actionable = any(a.get("fragments_to_rewrite") and a.get("severity") != "cosmetic" for a in actions)
+    # `actionable` stays gated on an explicitly blocking action with a writable
+    # fragment. Unknown actions intentionally require manual review rather than
+    # inheriting the historic "anything non-cosmetic re-renders" behaviour.
+    # Blocking still wins over co-occurring cosmetic or manual-review actions.
+    # Plans written before the severity field existed are intentionally treated
+    # as blocking for backward compatibility; newly emitted unknown actions are
+    # tagged ``manual_review`` by `_action_severity` above.
+    blocking = any(a.get("severity", "blocking") == "blocking" for a in actions)
+    actionable = any(a.get("fragments_to_rewrite") and a.get("severity", "blocking") == "blocking" for a in actions)
     cosmetic = any(a.get("fragments_to_rewrite") and a.get("severity") == "cosmetic" for a in actions)
     if not issues:
         return "pass", actionable
@@ -3203,22 +3279,22 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
 
 
 # ---------------------------------------------------------------------------
-# §7 clarity checks (M2 / M5c / M7 / M8 — "section7_clarity" family).
+# §6 clarity checks (M2 / M5c / M7 / M8 — "section7_clarity" family).
 #
 # Why these exist
 # ---------------
-# A §7 fragment can be syntactically valid (right H3 set, right table columns,
+# A §6 fragment can be syntactically valid (right H3 set, right table columns,
 # right anchor IDs) while reading nothing like the reference threat-model. The
 # four checks below close the four most common Stage-2 LLM failure modes that
 # the reference contract does not catch:
 #
 #   * narrative_placeholder_in_section7 — Stage 2 left HTML-comment placeholders
-#     in §7, so the rendered MD shows the scaffold prompt instead of prose.
+#     in §6, so the rendered MD shows the scaffold prompt instead of prose.
 #   * h4_positive_intro_present — every H4 control block must open with a
 #     positive intro paragraph (≥ 25 words, NO negative openers) BEFORE the
 #     `**Security assessment**` label. Without it, the reader has no idea what
 #     the control IS before being told what is broken.
-#   * fence_intro_sentence_present — every Mermaid or code fence inside §7
+#   * fence_intro_sentence_present — every Mermaid or code fence inside §6
 #     must be preceded by exactly one sentence ending in `:` (the reference's
 #     fixed form: "The diagram shows …:", "The vulnerable login lookup …:").
 #     "Naked" fences are a contract violation even when their contents are
@@ -3232,12 +3308,12 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
 # ---------------------------------------------------------------------------
 
 
-_SECTION7_BEGIN_RE = re.compile(r"^##\s+7\.\s", re.MULTILINE)
+_SECTION7_BEGIN_RE = re.compile(r"^##\s+6\.\s", re.MULTILINE)
 _SECTION_AFTER7_BEGIN_RE = re.compile(r"^##\s+(?:[8-9]|1\d)\.\s", re.MULTILINE)
 
 
 def _extract_section7(md_text: str) -> tuple[str, int]:
-    """Return (§7 text, starting line number) — empty string if absent.
+    """Return (§6 text, starting line number) — empty string if absent.
 
     The starting line number is 1-based so issue messages can carry a
     clickable `line N` location relative to the original threat-model.md.
@@ -3253,7 +3329,7 @@ def _extract_section7(md_text: str) -> tuple[str, int]:
     return (md_text[start:end], start_line)
 
 
-# §7 may legitimately reference NARRATIVE_PLACEHOLDER inside a fenced code
+# §6 may legitimately reference NARRATIVE_PLACEHOLDER inside a fenced code
 # block (the renderer agent example, the security-architecture.example.md
 # style anchor reproduced inline) — the strip helper blanks fences, so we
 # search the stripped form.
@@ -3261,11 +3337,11 @@ _NARRATIVE_PLACEHOLDER_RE = re.compile(r"NARRATIVE_PLACEHOLDER", re.IGNORECASE)
 
 
 def check_section7_narrative_placeholders(md_path: Path) -> Report:
-    """Hard-fail when any NARRATIVE_PLACEHOLDER token survives in §7.
+    """Hard-fail when any NARRATIVE_PLACEHOLDER token survives in §6.
 
     Stage 2 (appsec-threat-renderer) is contractually obliged to fill every
     scaffold placeholder. A surviving placeholder almost always means the
-    LLM truncated authoring and the rendered §7 reads as a TODO list. We
+    LLM truncated authoring and the rendered §6 reads as a TODO list. We
     elevate this from a warning to a hard issue.
     """
     report = Report(check="section7_narrative_placeholders")
@@ -3275,7 +3351,7 @@ def check_section7_narrative_placeholders(md_path: Path) -> Report:
     text = md_path.read_text(encoding="utf-8")
     section, start_line = _extract_section7(text)
     if not section:
-        report.warnings.append("§7 not found in document")
+        report.warnings.append("§6 not found in document")
         report.ok = 1
         return report
     stripped = _strip_code_fences(section)
@@ -3288,7 +3364,7 @@ def check_section7_narrative_placeholders(md_path: Path) -> Report:
         if len(locations) > 8:
             loc += f", +{len(locations) - 8} more"
         report.issues.append(
-            f"§7 contains {len(locations)} unfilled NARRATIVE_PLACEHOLDER "
+            f"§6 contains {len(locations)} unfilled NARRATIVE_PLACEHOLDER "
             f"token(s) at {loc} — Stage 2 must fill these before render."
         )
     report.ok = 1 if not report.issues else 0
@@ -3343,7 +3419,7 @@ def _walk_h4_blocks(section_text: str) -> list[tuple[str, str, int]]:
 
 
 def check_section7_h4_positive_intro(md_path: Path) -> Report:
-    """Every H4 in §7 opens with a positive intro paragraph (≥ 25 words).
+    """Every H4 in §6 opens with a positive intro paragraph (≥ 25 words).
 
     Defects flagged:
       * the first non-blank, non-fence line under the H4 is the
@@ -3359,12 +3435,12 @@ def check_section7_h4_positive_intro(md_path: Path) -> Report:
     text = md_path.read_text(encoding="utf-8")
     section, start_line = _extract_section7(text)
     if not section:
-        report.warnings.append("§7 not found in document")
+        report.warnings.append("§6 not found in document")
         report.ok = 1
         return report
     for title, body, h4_line in _walk_h4_blocks(section):
-        # Skip H4s that are §7.13's cross-cutting prose (no H4 expected
-        # under §7.13) and skip any inside fenced code blocks (already
+        # Skip H4s that are §6.13's cross-cutting prose (no H4 expected
+        # under §6.13) and skip any inside fenced code blocks (already
         # filtered out by virtue of _H4_RE matching at line start outside
         # of fence-aware extraction; the inline example in the prompt
         # appears in a ```markdown fence which is part of the agent file,
@@ -3406,7 +3482,7 @@ def check_section7_h4_positive_intro(md_path: Path) -> Report:
         absolute_line = start_line + h4_line - 1
         if not intro:
             report.issues.append(
-                f"§7 #### {title} (line {absolute_line}) — no positive intro "
+                f"§6 #### {title} (line {absolute_line}) — no positive intro "
                 f"paragraph before `**Security assessment**`. Every control "
                 f"must be explained in 1-3 sentences BEFORE it is assessed."
             )
@@ -3414,7 +3490,7 @@ def check_section7_h4_positive_intro(md_path: Path) -> Report:
         words = _WORD_TOKEN_RE.findall(intro)
         if len(words) < 25:
             report.issues.append(
-                f"§7 #### {title} (line {absolute_line}) — intro paragraph "
+                f"§6 #### {title} (line {absolute_line}) — intro paragraph "
                 f"is too short ({len(words)} words; minimum 25). The intro "
                 f"must name routes, libraries, and the positive flow."
             )
@@ -3422,7 +3498,7 @@ def check_section7_h4_positive_intro(md_path: Path) -> Report:
         for opener in _NEGATIVE_OPENERS:
             if lower_intro.startswith(opener):
                 report.issues.append(
-                    f"§7 #### {title} (line {absolute_line}) — intro "
+                    f"§6 #### {title} (line {absolute_line}) — intro "
                     f"paragraph opens with `{opener.strip()}`. Gaps belong "
                     f"in `**Security assessment**`; the intro must describe "
                     f"what the control IS, not what is missing."
@@ -3433,7 +3509,7 @@ def check_section7_h4_positive_intro(md_path: Path) -> Report:
 
 
 def check_section7_h4_status(md_path: Path) -> Report:
-    """Every §7 H4 sub-control carries a `**Status:**` verdict badge.
+    """Every §6 H4 sub-control carries a `**Status:**` verdict badge.
 
     The badge (`**Status:** 🟢/🟡/🟠/🔴 <word> — <one clause>`) is the
     reader's at-a-glance signal of whether a sub-control is a positive or a
@@ -3459,7 +3535,7 @@ def check_section7_h4_status(md_path: Path) -> Report:
         if not has_status:
             absolute_line = start_line + h4_line - 1
             report.warnings.append(
-                f"§7 #### {title} (line {absolute_line}) — missing "
+                f"§6 #### {title} (line {absolute_line}) — missing "
                 f"`**Status:**` verdict badge. Open every sub-control with "
                 f"`**Status:** <icon> <word> — <one clause>` so the reader "
                 f"sees the verdict (and FIX-vs-ADD for red) before the prose."
@@ -3480,12 +3556,12 @@ _INTRO_TAIL_RE = re.compile(r":\s*$")
 
 
 def check_section7_fence_intro_sentence(md_path: Path) -> Report:
-    """Every code/Mermaid fence inside §7 is preceded by an intro sentence.
+    """Every code/Mermaid fence inside §6 is preceded by an intro sentence.
 
     The intro sentence is the closest preceding non-blank line. It must
-    end with `:` to follow the reference's fixed form. A fence under §7.1
+    end with `:` to follow the reference's fixed form. A fence under §6.1
     inside the MECHANICAL-FROZEN overview block is exempt (no fence is
-    expected there; the check searches §7.2 onwards).
+    expected there; the check searches §6.2 onwards).
     """
     report = Report(check="section7_fence_intro_sentence")
     if not md_path.is_file():
@@ -3494,11 +3570,11 @@ def check_section7_fence_intro_sentence(md_path: Path) -> Report:
     text = md_path.read_text(encoding="utf-8")
     section, start_line = _extract_section7(text)
     if not section:
-        report.warnings.append("§7 not found in document")
+        report.warnings.append("§6 not found in document")
         report.ok = 1
         return report
-    # Limit to §7.2 onwards — the §7.1 overview is pregenerator-owned.
-    m72 = re.search(r"^###\s+7\.2\s", section, re.MULTILINE)
+    # Limit to §6.2 onwards — the §6.1 overview is pregenerator-owned.
+    m72 = re.search(r"^###\s+6\.2\s", section, re.MULTILINE)
     scope_start = m72.start() if m72 else 0
     lines = section[scope_start:].splitlines()
     abs_offset = start_line + section[:scope_start].count("\n") - 1
@@ -3514,7 +3590,7 @@ def check_section7_fence_intro_sentence(md_path: Path) -> Report:
             j -= 1
         if j < 0:
             report.issues.append(
-                f"§7 fence at line {abs_offset + i + 1} ({line.strip()}) — has no introducing sentence."
+                f"§6 fence at line {abs_offset + i + 1} ({line.strip()}) — has no introducing sentence."
             )
             continue
         prev = lines[j].rstrip()
@@ -3530,7 +3606,7 @@ def check_section7_fence_intro_sentence(md_path: Path) -> Report:
             or prev.strip().startswith("**Assessment")
         ):
             report.issues.append(
-                f"§7 fence at line {abs_offset + i + 1} — preceding line is "
+                f"§6 fence at line {abs_offset + i + 1} — preceding line is "
                 f"a structural marker (`{prev.strip()[:40]}…`), not an "
                 f"introducing sentence. Add one sentence ending in `:` "
                 f"such as 'The diagram shows …:' or 'The vulnerable code …:'."
@@ -3538,7 +3614,7 @@ def check_section7_fence_intro_sentence(md_path: Path) -> Report:
             continue
         if not _INTRO_TAIL_RE.search(prev):
             report.issues.append(
-                f"§7 fence at line {abs_offset + i + 1} — preceding line "
+                f"§6 fence at line {abs_offset + i + 1} — preceding line "
                 f"`{prev.strip()[:60]}…` does not end in `:`. The reference "
                 f"form is 'The diagram shows …:' for diagrams and 'The/This "
                 f"… shows/illustrates/demonstrates …:' for code excerpts."
@@ -3559,7 +3635,7 @@ _FINDING_BULLET_RE = re.compile(
 
 
 def check_section7_finding_link_duplicate(md_path: Path) -> Report:
-    """Flag `[F-NNN](#f-nnn) — TITLE — TITLE` duplicate-title bullets in §7."""
+    """Flag `[F-NNN](#f-nnn) — TITLE — TITLE` duplicate-title bullets in §6."""
     report = Report(check="section7_finding_link_duplicate")
     if not md_path.is_file():
         report.issues.append(f"file not found: {md_path}")
@@ -3567,7 +3643,7 @@ def check_section7_finding_link_duplicate(md_path: Path) -> Report:
     text = md_path.read_text(encoding="utf-8")
     section, start_line = _extract_section7(text)
     if not section:
-        report.warnings.append("§7 not found in document")
+        report.warnings.append("§6 not found in document")
         report.ok = 1
         return report
     for m in _FINDING_BULLET_RE.finditer(section):
@@ -3592,7 +3668,7 @@ def check_section7_finding_link_duplicate(md_path: Path) -> Report:
         if head and head in rest:
             line_no = start_line + section.count("\n", 0, m.start())
             report.issues.append(
-                f"§7 finding bullet duplicates title at line {line_no}: "
+                f"§6 finding bullet duplicates title at line {line_no}: "
                 f"`{m.group(0).strip()[:120]}…` — the bullet must carry the "
                 f"F-link and exactly one rationale sentence, not the "
                 f"finding title twice."
@@ -3751,7 +3827,7 @@ def check_section7_finding_reference_semantic(md_path: Path) -> Report:
     text = md_path.read_text(encoding="utf-8")
     section, start_line = _extract_section7(text)
     if not section:
-        report.warnings.append("§7 not found in document")
+        report.warnings.append("§6 not found in document")
         report.ok = 1
         return report
 
@@ -3779,7 +3855,7 @@ def check_section7_finding_reference_semantic(md_path: Path) -> Report:
         if not overlap:
             line_no = start_line + section.count("\n", 0, m.start())
             report.warnings.append(
-                f"§7 line {line_no}: rationale for [{fid}] mentions "
+                f"§6 line {line_no}: rationale for [{fid}] mentions "
                 f"{sorted(rationale_tokens)[:5]} but yaml title is "
                 f"'{title_clean}' — likely wrong F-NNN reference "
                 f"(Repair-Agent content drift / wrong-finding citation)."
@@ -3789,7 +3865,7 @@ def check_section7_finding_reference_semantic(md_path: Path) -> Report:
 
 
 # ---------------------------------------------------------------------------
-# End of §7 clarity checks.
+# End of §6 clarity checks.
 # ---------------------------------------------------------------------------
 
 
@@ -3890,13 +3966,27 @@ def _annotate_id_refs(md_path: Path) -> int:
             return f"{expected}{m.group('sep') or ''}{m.group('link')}"
         return f"{expected} {m.group('link')}"
 
+    from compose_threat_model import _is_bare_finding_ref_line
+
     text = md_path.read_text(encoding="utf-8")
     out: list[str] = []
     for chunk in re.split(r"(```[^\n]*\n.*?\n```|`[^`\n]+`)", text, flags=re.DOTALL):
         if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
             out.append(chunk)
         else:
-            out.append(_M_REF_RE.sub(_m_sub, _F_REF_RE.sub(_f_sub, chunk)))
+            # Bare-finding-ref lines (MS Top Weaknesses proof run, Critical Attack
+            # Tree findings pointer) list BARE finding ids by design — a single
+            # higher-level signal owns the context (user 2026-07-15). Skip the
+            # F-dot retrofit on those lines only (M-refs are not present there, so
+            # the mitigation pass is a harmless no-op). Every other context keeps
+            # its finding severity dots. See compose._is_bare_finding_ref_line.
+            lines_c = chunk.split("\n")
+            for j, ln in enumerate(lines_c):
+                if _is_bare_finding_ref_line(ln):
+                    lines_c[j] = _M_REF_RE.sub(_m_sub, ln)
+                else:
+                    lines_c[j] = _M_REF_RE.sub(_m_sub, _F_REF_RE.sub(_f_sub, ln))
+            out.append("\n".join(lines_c))
     new = "".join(out)
     if new != text:
         atomic_write_text(md_path, new)
@@ -3960,8 +4050,13 @@ _AS_TABLE_HEADERS = ("Method", "Route", "Risk", "Notes")
 _AS_COL_WIDTHS = ("9%", "30%", "14%", "47%")
 _ASSET_TABLE_HEADERS = ("Asset", "Classification", "Description", "Linked Threats")
 _ASSET_COL_WIDTHS = ("22%", "13%", "32%", "33%")
-_STRENGTH_TABLE_HEADERS = ("Strength", "What's in Place", "Effectiveness", "Gap", "Mitigates")
-_STRENGTH_COL_WIDTHS = ("18%", "28%", "13%", "30%", "11%")
+# Operational Strengths (2026-07-15): Gap merged into the Effectiveness cell;
+# Mitigates column shown only when at least one row carries a back-reference.
+# Two fixed-layout forms — 3-col (no Mitigates) and 4-col (with Mitigates).
+_STRENGTH_TABLE_HEADERS_3 = ("Strength", "What's in Place", "Effectiveness")
+_STRENGTH_COL_WIDTHS_3 = ("20%", "33%", "47%")
+_STRENGTH_TABLE_HEADERS_4 = ("Strength", "What's in Place", "Effectiveness", "Mitigates")
+_STRENGTH_COL_WIDTHS_4 = ("18%", "30%", "40%", "12%")
 # Each spec: (headers, widths, {col_idx: inline-style}, prose_col_indices).
 # - inline-style per column: `overflow-wrap:anywhere` lets a long route / asset
 #   name wrap inside its fixed column; `white-space:nowrap` pins short tokens so
@@ -3980,18 +4075,31 @@ _FIXED_LAYOUT_SPECS = (
         frozenset({2}),  # Description (col 2) reflows; Linked Threats keeps its <br/> stack
     ),
     (
-        _STRENGTH_TABLE_HEADERS,
-        _STRENGTH_COL_WIDTHS,
+        _STRENGTH_TABLE_HEADERS_3,
+        _STRENGTH_COL_WIDTHS_3,
+        # All three columns carry prose/links (What's in Place structural <br/>;
+        # Effectiveness now holds the badge + merged substantive gap + its finding
+        # <br/> stack), so each wraps inside its fixed column.
         {
             0: "overflow-wrap:anywhere",
             1: "overflow-wrap:anywhere",
-            3: "overflow-wrap:anywhere",
-            4: "overflow-wrap:anywhere",
+            2: "overflow-wrap:anywhere",
         },
-        # No prose_cols: "What's in Place" carries STRUCTURAL <br/> (italic
-        # description line, then one implementation per line) that must survive;
-        # compose now exempts this table from soft-wrap so there are no stale
-        # 44-char artifact breaks to strip. Gap keeps its finding <br/> stack.
+        # No prose_cols: "What's in Place" and the merged Effectiveness cell carry
+        # STRUCTURAL <br/> (implementation lines; finding link stack) that must
+        # survive; compose exempts this table from soft-wrap so there are no stale
+        # 44-char artifact breaks to strip.
+        frozenset(),
+    ),
+    (
+        _STRENGTH_TABLE_HEADERS_4,
+        _STRENGTH_COL_WIDTHS_4,
+        {
+            0: "overflow-wrap:anywhere",
+            1: "overflow-wrap:anywhere",
+            2: "overflow-wrap:anywhere",
+            3: "overflow-wrap:anywhere",
+        },
         frozenset(),
     ),
 )
@@ -4244,15 +4352,15 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     mermaid_report = check_mermaid_syntax(md)
     toc_nested_report = check_toc_nested_links(md)
     infobox_report = check_infobox_completeness(md)
-    # Legacy §7.3 IAM per-auth-method decomposition (no-op in current v2).
+    # Legacy §6.3 IAM per-auth-method decomposition (no-op in current v2).
     auth_report = check_auth_method_decomposition(md)
-    # Current v2 §7 — every covered control links to a concrete H4
+    # Current v2 §6 — every covered control links to a concrete H4
     # subsection with Security assessment + Relevant findings labels.
     control_coverage_report = check_control_subsection_coverage(md)
-    # Current v2 §7 — `Relevant findings` must be a standalone label followed
+    # Current v2 §6 — `Relevant findings` must be a standalone label followed
     # by bullets, not a dense inline reference sentence.
     relevant_findings_report = check_relevant_findings_bullet_list(md)
-    # Current v2 §7.6 — Input Boundary Validation must open with a general
+    # Current v2 §6.6 — Input Boundary Validation must open with a general
     # validation-approach H4 before the specific boundary sub-blocks.
     validation_approach_report = check_validation_approach_first(md)
     # Sprint 2 Item #5 — placeholders + yaml/md consistency.
@@ -4307,7 +4415,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # strengths. The renderer filters these via `excluded_from_strengths`;
     # this check catches overrides and legacy fragments that slip through.
     strengths_report = check_strengths_row_quality(md)
-    # Warning-only §7 prose checks (paragraph_density, finding_range_homogeneous,
+    # Warning-only §6 prose checks (paragraph_density, finding_range_homogeneous,
     # dependency_cross_ref, na_against_recon, architectural_prose, generic_phrases,
     # rhetorical_severity, section_opener_restates_heading) were retired from the
     # `all` pre-pass: they reached no actuator (not in build_repair_plan, no agent
@@ -4315,7 +4423,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # renderer. Each remains callable as a standalone subcommand.
     subcontrol_naming_report = check_subcontrol_naming_canonical(md)
     ai_padding_report = check_ai_padding_phrases(md)
-    # §7 clarity check (M7) — H4 status label. The sibling M2/M5c/M8 checks
+    # §6 clarity check (M7) — H4 status label. The sibling M2/M5c/M8 checks
     # (narrative placeholders, positive-intro, fence-intro, finding-link
     # duplicate/semantic) were retired from the `all` pre-pass: they reached
     # no actuator (not in build_repair_plan, no agent handoff action) and the
@@ -4704,7 +4812,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
     #      finding title ending in `(<path>)` mid-paren).
     #   3. HTML tags in sequenceDiagram message payloads (`Bearer <token>`,
     #      `<br/>`) — invalid in arrow payloads; reduced to plain text.
-    # The template-level fixes (walkthrough_renderer.py, the §7 renderer) are
+    # The template-level fixes (walkthrough_renderer.py, the §6 renderer) are
     # the primary remediation; this is the safety net for LLM-authored content
     # that re-introduces them and for environments without Layer B. All rules
     # are idempotent — a second pass on patched text is a no-op.
@@ -4718,7 +4826,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
         body = m.group("body")
         line_offset = raw[: m.start()].count("\n") + 1  # 1-based line of ```mermaid
         h2_title = _current_h2_title(raw, m.start())
-        in_sec7 = h2_title.startswith("7. Security Architecture")
+        in_sec7 = h2_title.startswith("6. Security Architecture")
         in_attack_walkthroughs = h2_title.startswith("3. Attack Walkthroughs")
         # Heuristic: only lint sequenceDiagram/flowchart/graph blocks. Skip
         # other diagram types (gantt, erDiagram, journey, …) to avoid false
@@ -5295,13 +5403,13 @@ def check_infobox_completeness(md_path: Path) -> Report:
 
 
 # ---------------------------------------------------------------------------
-# Check — Per-auth-method decomposition of §7.3 Identity & Access Management.
+# Check — Per-auth-method decomposition of §6.3 Identity & Access Management.
 #
 # The contract declares under
 #     sections.security_architecture.domain_required_rules
 #         "7.3 Identity & Access Management":
 #           - rule: auth_method_decomposition
-# that every row in §7.3's control table (`Control` column) must have a
+# that every row in §6.3's control table (`Control` column) must have a
 # matching `#### <method>` subsection containing its own `sequenceDiagram`
 # block and a bold `**Findings in this flow:**` trailer.  T-IDs cited in the
 # trailer must be a subset of the matching row's `Linked Threats` cell
@@ -5422,10 +5530,10 @@ def _parse_subsections(body: str, level: int = 4) -> dict[str, str]:
 
 
 def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
-    """Enforce the ``auth_method_decomposition`` rule on §7.3 IAM.
+    """Enforce the ``auth_method_decomposition`` rule on §6.3 IAM.
 
     Validation steps:
-      1. Every row of the §7.3 control table (``Control`` column) must map
+      1. Every row of the §6.3 control table (``Control`` column) must map
          to a ``#### <method>`` subsection.  Matching is done either via
          explicit ``synonyms`` overrides or via token-subset (default):
          the row's lowercased alphanumeric token set must be a subset of
@@ -5451,7 +5559,7 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
     # R1 — Scan every domain-rule bucket for an `auth_method_decomposition`
     # entry, not just the legacy v1 `7.3 Identity & Access Management` key.
     # Under v2, the schema_v2 overlay rewrites the rules_map; the relevant
-    # key becomes `7.2 Identity and Authentication Controls`. Scanning all
+    # key becomes `6.2 Identity and Authentication Controls`. Scanning all
     # keys keeps the check schema-agnostic and survives any future renaming
     # of the IAM section.
     domain_title = None
@@ -5484,7 +5592,7 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
     required_body_elems = rule.get("required_body_elements") or []
     method_whitelist = rule.get("method_whitelist") or []  # Sprint 2B
     # Post-2026-05: blocks with attack-shaped headings ("alg:none Bypass
-    # Flow", "JWT Forgery Flow", etc.) are forbidden under §7.3 — they
+    # Flow", "JWT Forgery Flow", etc.) are forbidden under §6.3 — they
     # describe exploitation paths, not auth methods, and belong in §3
     # Attack Walkthroughs.
     forbidden_heading_patterns = rule.get("forbidden_heading_patterns") or []
@@ -5493,7 +5601,7 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
     flow_methods_require_diagram = bool(rule.get("flow_methods_require_diagram"))
     flow_method_tokens = rule.get("flow_method_tokens") or []
     flow_diagram_token = (rule.get("flow_diagram_token") or "sequenceDiagram").strip()
-    # Structural / meta §7.2 sub-headings that are deterministically emitted by
+    # Structural / meta §6.2 sub-headings that are deterministically emitted by
     # the pregenerator and are intentionally NOT auth mechanisms (e.g. the
     # "Threat Hypotheses Requiring Validation" table). Absent → no exemptions.
     structural_heading_exemptions = rule.get("structural_heading_exemptions") or []
@@ -5508,17 +5616,17 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
     # Derive the IAM-section heading from the discovered `domain_title` so the
     # rule runs under BOTH layouts:
     #   v1 → "7.3 Identity & Access Management"
-    #   v2 → "7.2 Identity and Authentication Controls"
-    # This used to be hardcoded to §7.3, which made the ENTIRE rule a silent
-    # no-op under v2 (the IAM section is §7.2 there) — the forbidden-heading
+    #   v2 → "6.2 Identity and Authentication Controls"
+    # This used to be hardcoded to §6.3, which made the ENTIRE rule a silent
+    # no-op under v2 (the IAM section is §6.2 there) — the forbidden-heading
     # and method-whitelist gates never ran, so primitive headings like
     # "Password Hashing" / "Login Rate Limiting" and token-format names
-    # shipped unflagged (2026-05 juice-shop §7.2 regression).
+    # shipped unflagged (2026-05 juice-shop §6.2 regression).
     _num_m = re.match(r"\s*(\d+(?:\.\d+)*)\s", (domain_title or "") + " ")
     section_re = (
         r"^###\s+" + re.escape(_num_m.group(1)) + r"\b"
         if _num_m
-        else r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b"
+        else r"^###\s+6\.3\s+Identity\s*&\s*Access\s+Management\b"
     )
     iam_body = _extract_section_body(text, section_re)
     if iam_body is None:
@@ -5527,8 +5635,8 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
         report.ok = 1
         return report
 
-    # Layout detection. v1 (§7.3) uses a `Control` pipe-table + per-method
-    # `sequenceDiagram` + `**Findings in this flow:**` trailer. v2 (§7.2) uses
+    # Layout detection. v1 (§6.3) uses a `Control` pipe-table + per-method
+    # `sequenceDiagram` + `**Findings in this flow:**` trailer. v2 (§6.2) uses
     # a `**Controls covered:**` link line (no pipe table) and optional
     # diagrams, so the v1 matching/structural gates would false-positive there.
     # The rule's `table_column` is the discriminator ("Control" → v1,
@@ -5540,7 +5648,7 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
             heading_level=heading_level,
             method_whitelist=method_whitelist,
             forbidden_heading_patterns=forbidden_heading_patterns,
-            section_label=(domain_title or "7.2 Identity and Authentication Controls"),
+            section_label=(domain_title or "6.2 Identity and Authentication Controls"),
             flow_methods_require_diagram=flow_methods_require_diagram,
             flow_method_tokens=flow_method_tokens,
             flow_diagram_token=flow_diagram_token,
@@ -5562,11 +5670,11 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
 
     if not table_rows:
         report.issues.append(
-            f"§7.3 IAM: no control table with column {table_column!r} found — cannot verify per-method decomposition"
+            f"§6.3 IAM: no control table with column {table_column!r} found — cannot verify per-method decomposition"
         )
     elif not subsections:
         report.issues.append(
-            f"§7.3 IAM: no {hashes} subsections found — every control-table "
+            f"§6.3 IAM: no {hashes} subsections found — every control-table "
             f"row needs a dedicated sub-block with its own sequenceDiagram"
         )
     else:
@@ -5594,12 +5702,12 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
 
 
 def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
-    """Enforce the v2 §7 control-subsection coverage rule.
+    """Enforce the v2 §6 control-subsection coverage rule.
 
-    For each configured §7 control section, the `**Controls covered:**` line
+    For each configured §6 control section, the `**Controls covered:**` line
     must link to concrete H4 control subsections, and every H4 subsection must
     contain the two required labels (`Security assessment`, `Relevant findings`
-    by default). This replaces the legacy §7.3.N auth-flow-only gate with a
+    by default). This replaces the legacy §6.3.N auth-flow-only gate with a
     general control-category gate.
     """
     report = Report("control_subsection_coverage")
@@ -5640,11 +5748,11 @@ def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAU
     for section_title in section_titles:
         body = _extract_section_body(text, r"^###\s+" + re.escape(section_title) + r"[ \t]*$")
         if body is None:
-            continue  # check_contract owns missing §7 section headings.
+            continue  # check_contract owns missing §6 section headings.
 
         # Sections that legitimately have nothing to say ship as a single
         # italic "_Not applicable — …_" stub instead of empty H4 blocks
-        # (e.g. §7.12 when no real-time / WebSocket findings are routed).
+        # (e.g. §6.12 when no real-time / WebSocket findings are routed).
         # Don't flag the absent H4 in that case — the stub is the intended
         # output, not a defect.
         if re.search(r"^\s*_Not applicable\b", body, re.MULTILINE):
@@ -5735,7 +5843,7 @@ def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAU
 
 
 def check_relevant_findings_bullet_list(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
-    """Enforce the v2 §7 `Relevant findings` block shape.
+    """Enforce the v2 §6 `Relevant findings` block shape.
 
     `check_control_subsection_coverage` verifies that the label exists. This
     companion rule verifies that the label is standalone and followed by a
@@ -5780,7 +5888,7 @@ def check_relevant_findings_bullet_list(md_path: Path, contract_path: Path = DEF
     for section_title in section_titles:
         body = _extract_section_body(text, r"^###\s+" + re.escape(section_title) + r"[ \t]*$")
         if body is None:
-            continue  # check_contract owns missing §7 section headings.
+            continue  # check_contract owns missing §6 section headings.
 
         subsections = _parse_subsections(body, level=heading_level)
         for heading, subsection_body in subsections.items():
@@ -5826,9 +5934,9 @@ def check_relevant_findings_bullet_list(md_path: Path, contract_path: Path = DEF
 
 
 def check_validation_approach_first(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
-    """Enforce the §7.6 `validation_approach_first` rule (v2).
+    """Enforce the §6.6 `validation_approach_first` rule (v2).
 
-    §7.6 Input Boundary Validation must OPEN with a general validation-approach
+    §6.6 Input Boundary Validation must OPEN with a general validation-approach
     H4 (the architectural stance — central schema/validation layer vs. scattered
     per-endpoint checks) BEFORE drilling into specific parsers/uploads/business
     rules. An architect states the strategy first, then the boundary details.
@@ -5846,7 +5954,7 @@ def check_validation_approach_first(md_path: Path, contract_path: Path = DEFAULT
     sec = (contract.get("sections") or {}).get("security_architecture") or {}
     rules_map = sec.get("domain_required_rules") or {}
     # Scan every domain-rule bucket so the check is schema-agnostic and
-    # survives a future renaming of the §7.6 key.
+    # survives a future renaming of the §6.6 key.
     rule = None
     for _key, rules in rules_map.items():
         if not isinstance(rules, list):
@@ -5862,7 +5970,7 @@ def check_validation_approach_first(md_path: Path, contract_path: Path = DEFAULT
         report.ok = 1
         return report
 
-    section_title = (rule.get("section_title") or "7.6 Input Boundary Validation Controls").strip()
+    section_title = (rule.get("section_title") or "6.6 Input Boundary Validation Controls").strip()
     heading_level = int(rule.get("heading_level") or 4)
     patterns = [p for p in (rule.get("approach_heading_patterns") or []) if isinstance(p, str) and p]
     enforcement = (rule.get("enforcement") or "warning").strip().lower()
@@ -5876,7 +5984,7 @@ def check_validation_approach_first(md_path: Path, contract_path: Path = DEFAULT
 
     body = _extract_section_body(text, r"^###\s+" + re.escape(section_title) + r"[ \t]*$")
     if body is None:
-        # check_contract owns a missing §7.6 heading.
+        # check_contract owns a missing §6.6 heading.
         report.ok = 1
         return report
     # A legitimately empty section ships as a single italic "_Not applicable …_"
@@ -5905,7 +6013,7 @@ def check_validation_approach_first(md_path: Path, contract_path: Path = DEFAULT
     if compiled and not any(p.search(first_heading) or p.search(first_norm) for p in compiled):
         report.issues.append(
             f"§{section_title}: the first {hashes} sub-block is {first_heading!r}, "
-            f"but §7.6 must OPEN with a general validation-approach block "
+            f"but §6.6 must OPEN with a general validation-approach block "
             f"(e.g. `{hashes} Validation Approach` / `Input Validation Strategy`) "
             f"describing whether validation is centralized (schema/middleware) or "
             f"scattered per-endpoint, BEFORE specific parser/upload/business-rule "
@@ -5928,7 +6036,7 @@ def _run_auth_v2_structural_checks(
     flow_diagram_token: str = "sequenceDiagram",
     structural_heading_exemptions: list = None,
 ) -> None:
-    """v2 (§7.2 "… Authentication Controls") enforcement for
+    """v2 (§6.2 "… Authentication Controls") enforcement for
     ``auth_method_decomposition``.
 
     The v2 layout has no ``Control`` pipe-table and no per-method
@@ -5939,7 +6047,7 @@ def _run_auth_v2_structural_checks(
 
       * every ``####`` heading must name a real authentication MECHANISM from
         ``method_whitelist`` (Password-Based Login, OAuth/OIDC, MFA/TOTP, …).
-        JWT issuance/verification is a §7.3 session-token primitive, NOT a §7.2
+        JWT issuance/verification is a §6.3 session-token primitive, NOT a §6.2
         mechanism — the whitelist excludes it and the forbidden patterns reject
         it. Primitives/aspects like "Password Hashing" or "Login Rate Limiting"
         are not mechanisms either — they belong folded into a mechanism block,
@@ -5950,13 +6058,13 @@ def _run_auth_v2_structural_checks(
     Heading matching strips a leading ``7.2.N`` numeric prefix first, so the
     rule fires on the numbered headings the composer emits — the missing prefix
     handling is exactly why the forbidden-pattern regexes silently passed
-    ``#### 7.2.2 Password Hashing``.
+    ``#### 6.2.2 Password Hashing``.
     """
-    sl = "§" + (section_label.split()[0] if section_label.strip() else "7.2")
+    sl = "§" + (section_label.split()[0] if section_label.strip() else "6.2")
     hashes = "#" * heading_level
     subsections = _parse_subsections(iam_body, level=heading_level)
     if not subsections:
-        # control_subsection_coverage already flags a missing-subsection §7.2;
+        # control_subsection_coverage already flags a missing-subsection §6.2;
         # stay silent here to avoid double-reporting.
         report.ok = 1
         return
@@ -5987,7 +6095,7 @@ def _run_auth_v2_structural_checks(
         # Structural / meta sub-blocks (e.g. the pregenerator's "Threat
         # Hypotheses Requiring Validation" table) are intentionally not auth
         # mechanisms — skip them before mechanism validation so a
-        # deterministically-emitted §7.2 heading is never rejected.
+        # deterministically-emitted §6.2 heading is never rejected.
         if exempt_token_sets:
             head_tokens = set(re.findall(r"[a-z0-9]+", heading_norm.lower()))
             if any(ex.issubset(head_tokens) for ex in exempt_token_sets):
@@ -5997,12 +6105,12 @@ def _run_auth_v2_structural_checks(
             if forbid.search(heading) or forbid.search(heading_norm):
                 report.issues.append(
                     f"{sl} {hashes} {heading!r}: heading matches forbidden "
-                    f"pattern {raw!r}. §7.2 sub-blocks must name authentication "
+                    f"pattern {raw!r}. §6.2 sub-blocks must name authentication "
                     f"MECHANISMS (Password-Based Login, OAuth/OIDC, MFA/TOTP, …), "
                     f"not primitives (hashing), libraries (express-jwt), token "
                     f"formats (JWT-RS256), or vulnerability classes. JWT "
-                    f"issuance/verification belongs in §7.3 Session and Token "
-                    f"Controls, not §7.2."
+                    f"issuance/verification belongs in §6.3 Session and Token "
+                    f"Controls, not §6.2."
                 )
                 flagged = True
                 break
@@ -6011,18 +6119,18 @@ def _run_auth_v2_structural_checks(
         if method_whitelist and not _row_is_auth_method(heading_norm, method_whitelist):
             report.issues.append(
                 f"{sl} {hashes} {heading!r}: not a recognized authentication "
-                f"mechanism. Structure §7.2 by real auth method (e.g. "
+                f"mechanism. Structure §6.2 by real auth method (e.g. "
                 f"Password-Based Login, OAuth/OIDC, MFA/TOTP) and fold aspects "
                 f"such as password hashing or login rate-limiting into the "
                 f"relevant mechanism block as bullets, not as peer headings. "
                 f"A JWT issuance/verification/signing-key heading belongs in "
-                f"§7.3 Session and Token Controls — move it there, do not rename "
-                f"it into a §7.2 mechanism."
+                f"§6.3 Session and Token Controls — move it there, do not rename "
+                f"it into a §6.2 mechanism."
             )
 
-    # Per-flow-method diagram gate (migrated from the v1 rule). A §7.2 ####
+    # Per-flow-method diagram gate (migrated from the v1 rule). A §6.2 ####
     # whose heading names an authentication FLOW must carry its own positive-
-    # flow `sequenceDiagram` — the auth flow is the architecture view §7.2 is
+    # flow `sequenceDiagram` — the auth flow is the architecture view §6.2 is
     # built around. Scoped to flow-token headings so it never fires on static
     # primitives, API keys, anonymous access, or methods the agent adds that
     # have no meaningful sequence (spacing preserved). The grouped
@@ -6037,7 +6145,7 @@ def _run_auth_v2_structural_checks(
             if token not in body:
                 report.issues.append(
                     f"{sl} {hashes} {heading!r}: flow-based authentication "
-                    f"method has no `{token}` diagram. Every §7.2 sub-block "
+                    f"method has no `{token}` diagram. Every §6.2 sub-block "
                     f"that names an auth FLOW (password login, OAuth/OIDC, "
                     f"SAML, TOTP/MFA, passkey, mTLS, webhook HMAC, magic link) "
                     f"must carry its own positive-flow ```mermaid {token}``` — "
@@ -6065,8 +6173,8 @@ def _run_auth_structural_checks(
     """
     forbidden_heading_patterns = forbidden_heading_patterns or []
     # Reject ATTACK-SHAPED headings (e.g. "alg:none Bypass Flow", "JWT
-    # Forgery Flow") under §7.3 — those describe exploitation paths and
-    # belong in §3 Attack Walkthroughs, not in the §7.3 auth-method
+    # Forgery Flow") under §6.3 — those describe exploitation paths and
+    # belong in §3 Attack Walkthroughs, not in the §6.3 auth-method
     # inventory. The pattern list is sourced from the contract.
     for pattern in forbidden_heading_patterns:
         if not isinstance(pattern, str) or not pattern:
@@ -6075,7 +6183,7 @@ def _run_auth_structural_checks(
             forbid = re.compile(pattern)
         except re.error as err:
             report.issues.append(
-                f"§7.3 IAM: invalid `forbidden_heading_patterns` entry "
+                f"§6.3 IAM: invalid `forbidden_heading_patterns` entry "
                 f"{pattern!r} in contract ({err}) — fix data/sections-contract.yaml"
             )
             continue
@@ -6083,26 +6191,26 @@ def _run_auth_structural_checks(
             heading_norm = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip()
             if forbid.search(heading) or forbid.search(heading_norm):
                 report.issues.append(
-                    f"§7.3 IAM {hashes} subsection {heading!r}: heading "
+                    f"§6.3 IAM {hashes} subsection {heading!r}: heading "
                     f"matches forbidden attack-shape pattern {pattern!r}. "
-                    f"§7.3 sub-blocks describe AUTHENTICATION METHODS "
+                    f"§6.3 sub-blocks describe AUTHENTICATION METHODS "
                     f"(Password Login, OAuth, TOTP, JWT Issuance, …), not "
                     f"attacks. Move this content to §3 Attack Walkthroughs "
-                    f"and replace it with a per-method flow under §7.3."
+                    f"and replace it with a per-method flow under §6.3."
                 )
     if heading_pattern:
         try:
             pat = re.compile(heading_pattern)
         except re.error as err:
             report.issues.append(
-                f"§7.3 IAM: invalid `heading_pattern` in contract ({err}) — fix data/sections-contract.yaml"
+                f"§6.3 IAM: invalid `heading_pattern` in contract ({err}) — fix data/sections-contract.yaml"
             )
             pat = None
         if pat is not None:
             for heading in subsections:
                 if not pat.search(heading):
                     report.issues.append(
-                        f"§7.3 IAM {hashes} subsection {heading!r}: heading "
+                        f"§6.3 IAM {hashes} subsection {heading!r}: heading "
                         f"does not match required pattern {heading_pattern!r} "
                         f"— use `{hashes} 7.3.N <Flow Name> Flow` (e.g. "
                         f"`{hashes} 7.3.1 Password Login Flow`)"
@@ -6114,7 +6222,7 @@ def _run_auth_structural_checks(
         for heading, body in subsections.items():
             if not label_re.search(body):
                 report.issues.append(
-                    f"§7.3 IAM {hashes} subsection {heading!r}: missing "
+                    f"§6.3 IAM {hashes} subsection {heading!r}: missing "
                     f"`**{label}:**` trailer — add a bold-label line with "
                     f"the relevant details (see contract: "
                     f"auth_method_decomposition.required_trailers)"
@@ -6131,7 +6239,7 @@ def _run_auth_structural_checks(
             continue
         # R3 / R10 — `intro_before_security_assessment` is a sentinel that
         # verifies a positive-case prose intro precedes the **Security
-        # assessment** label. The reference §7.2 pattern is: 1-3 sentences
+        # assessment** label. The reference §6.2 pattern is: 1-3 sentences
         # describing how the mechanism functions normally, THEN the
         # **Security assessment** block with the gap analysis. Without
         # the intro, the H4 block jumps straight into negative framing
@@ -6144,7 +6252,7 @@ def _run_auth_structural_checks(
         for heading, body in subsections.items():
             if needle not in body:
                 report.issues.append(
-                    f"§7.3 IAM {hashes} subsection {heading!r}: body does "
+                    f"§6.3 IAM {hashes} subsection {heading!r}: body does "
                     f"not contain required element {needle!r} — see "
                     f"contract: auth_method_decomposition.required_body_elements"
                 )
@@ -6152,7 +6260,7 @@ def _run_auth_structural_checks(
 
 def _check_intro_before_diagram(report: Report, heading: str, body: str, hashes: str) -> None:
     """Fix (3): verify that at least one non-empty prose line appears between
-    the #### heading and the first ```mermaid fence in a §7.3.N flow block.
+    the #### heading and the first ```mermaid fence in a §6.3.N flow block.
 
     A section that opens directly with ```mermaid gives readers no orientation
     before the timing diagram. The rule requires at least one sentence-level
@@ -6169,7 +6277,7 @@ def _check_intro_before_diagram(report: Report, heading: str, body: str, hashes:
     ]
     if not prose_lines:
         report.issues.append(
-            f"§7.3 IAM {hashes} subsection {heading!r}: no introductory prose "
+            f"§6.3 IAM {hashes} subsection {heading!r}: no introductory prose "
             f"before the first ```mermaid fence — add at least one sentence "
             f"describing the flow's purpose before the diagram (QB-9 / "
             f"contract: auth_method_decomposition.required_body_elements "
@@ -6180,7 +6288,7 @@ def _check_intro_before_diagram(report: Report, heading: str, body: str, hashes:
 def _check_intro_before_security_assessment(report: Report, heading: str, body: str, hashes: str) -> None:
     """R3 / R10 — verify a positive-case prose intro precedes `**Security assessment**`.
 
-    Reference §7.2 pattern (every #### sub-block):
+    Reference §6.2 pattern (every #### sub-block):
 
         #### OAuth Login Adapter
 
@@ -6231,11 +6339,11 @@ def _check_intro_before_security_assessment(report: Report, heading: str, body: 
         prose_lines.append(s)
     if not prose_lines:
         report.issues.append(
-            f"§7.2 IAM {hashes} subsection {heading!r}: no positive-case prose "
+            f"§6.2 IAM {hashes} subsection {heading!r}: no positive-case prose "
             f"intro before `**Security assessment**` — add 1-3 sentences "
             f"describing how this control normally functions in this codebase "
             f"(routes, libraries, intended flow) BEFORE the assessment label. "
-            f"Reference §7.2 pattern: control description → optional mermaid → "
+            f"Reference §6.2 pattern: control description → optional mermaid → "
             f"**Security assessment** → assessment narrative. See contract: "
             f"auth_method_decomposition.required_body_elements "
             f"intro_before_security_assessment, and prose-style.md Rule 3."
@@ -6245,7 +6353,7 @@ def _check_intro_before_security_assessment(report: Report, heading: str, body: 
 def _row_is_auth_method(name: str, whitelist: list) -> bool:
     """Return True iff ``name`` matches any auth-method entry in ``whitelist``.
 
-    Sprint 2B (M3.5): the §7.3 control table mixes true auth methods
+    Sprint 2B (M3.5): the §6.3 control table mixes true auth methods
     (Password Login, OAuth, TOTP, …) with implementation details (Password
     Hashing, Login Rate Limiting, express-jwt middleware) and cross-cutting
     controls. Only the auth-method rows warrant a dedicated `#### Flow`
@@ -7366,7 +7474,7 @@ def check_recon_iam_bridge(
 
     This closes the gap where routes/2fa.ts is found by recon but never
     surfaces in .security-controls.json, causing TOTP to be silently absent
-    from §7.
+    from §6.
     """
     report = Report("recon_iam_bridge")
     contract = _read_contract(contract_path)
@@ -7413,7 +7521,7 @@ def check_recon_iam_bridge(
             continue  # No signal in recon — rule does not apply.
 
         # Signal present: verify at least one matching token in the configured
-        # §7 section body. The current v2 shape no longer requires a control
+        # §6 section body. The current v2 shape no longer requires a control
         # table, so scan the section prose, Controls-covered line, H4 headings,
         # and any diagrams as one section-local body.
         section_body = _extract_section_body(md_text, r"^###\s+" + re.escape(section_title) + r"[ \t]*$")
@@ -7494,7 +7602,7 @@ def check_falls_short_format(md_path: Path, contract_path: Path = DEFAULT_CONTRA
                 if not has_bullets:
                     excerpt = para[:80].replace("\n", " ")
                     issue = (
-                        f"§7 'Where it falls short.' paragraph contains "
+                        f"§6 'Where it falls short.' paragraph contains "
                         f"{len(unique_refs)} finding references ({sorted(unique_refs)}) "
                         f"but uses prose instead of a bullet list — reformat as one "
                         f"bullet per finding (prose-style Rule 4 / QB-9): "
@@ -7511,10 +7619,10 @@ def check_falls_short_format(md_path: Path, contract_path: Path = DEFAULT_CONTRA
 
 
 def check_paragraph_density(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
-    """M-6: Generic paragraph-density check across §7 narrative subsections.
+    """M-6: Generic paragraph-density check across §6 narrative subsections.
 
     Parallel to `check_falls_short_format` but NOT scoped to `**Where it falls
-    short.**` blocks. Scans every §7.x subsection's prose paragraphs for ≥N
+    short.**` blocks. Scans every §6.x subsection's prose paragraphs for ≥N
     distinct [F/T-NNN] OR [M-NNN] references — when found in a single prose
     paragraph (no bullets), emits a warning. Tables and code-fences are
     excluded so a dense register-style table cell does not falsely fire.
@@ -7552,9 +7660,9 @@ def check_paragraph_density(md_path: Path, contract_path: Path = DEFAULT_CONTRAC
     code_fence_re = re.compile(r"```.*?```", re.DOTALL)
     text_no_code = code_fence_re.sub("", text)
 
-    # Match each §7.x subsection (### 7.N <title> through next ### 7.M or ##).
+    # Match each §6.x subsection (### 6.N <title> through next ### 6.M or ##).
     sec7_re = re.compile(
-        r"(### 7\.\d+\s[^\n]*\n)(.*?)(?=\n### 7\.\d+\s|\n## |\Z)",
+        r"(### 6\.\d+\s[^\n]*\n)(.*?)(?=\n### 6\.\d+\s|\n## |\Z)",
         re.DOTALL,
     )
 
@@ -7612,7 +7720,7 @@ def check_hypothesis_validation_objective(md_path: Path) -> Report:
     filling it would mask the agent bug; this check surfaces it instead so
     the operator knows the hypothesis is unactionable.
 
-    Looks for §7.2 "Threat Hypotheses Requiring Validation" table rows; the
+    Looks for §6.2 "Threat Hypotheses Requiring Validation" table rows; the
     rightmost column is the validation column. Threshold: empty cell or
     placeholder text triggers a warning per row.
     """
@@ -7648,7 +7756,7 @@ def check_hypothesis_validation_objective(md_path: Path) -> Report:
         validation = cells[-1]
         if not validation or placeholder_re.search(validation):
             report.warnings.append(
-                f"§7.2 hypothesis {hid}: `validation_objective` is empty / "
+                f"§6.2 hypothesis {hid}: `validation_objective` is empty / "
                 f"placeholder ({validation!r}) — the LLM did not emit a "
                 f"validate-or-refute objective. Hypothesis is unactionable; "
                 f"either populate the field in `threat-model.yaml → "
@@ -7912,8 +8020,8 @@ def check_label_as_code(md_path: Path) -> Report:
 
 
 # ---------------------------------------------------------------------------
-# Cut-2: schema_v2 §7.X "architectural prose" check.
-# Catches the two failure modes of the legacy §7 template that the new
+# Cut-2: schema_v2 §6.X "architectural prose" check.
+# Catches the two failure modes of the legacy §6 template that the new
 # code-first pattern is meant to eliminate:
 #
 #   (a) Definitional opener: "X is the process by which …" / "X controls
@@ -7958,7 +8066,7 @@ _ARCH_PROSE_BANNED_PATTERNS: list[tuple[str, str]] = [
     (r"\bis (?:expected|intended) to\b", "is expected/intended to"),
 ]
 
-# Definitional opener regex — first sentence of a §7.X body whose first
+# Definitional opener regex — first sentence of a §6.X body whose first
 # verb is one of `is the process`, `decides which`, `governs how`,
 # `determines how`, `covers how`, `controls how`, applied to the section's
 # own subject. Pattern: starts a sentence in the body and contains one of
@@ -7972,18 +8080,18 @@ _DEFINITIONAL_OPENER_RE = re.compile(
 # Formulaic generic-actor opener for H4 control intros. Flags the
 # templated "The application <verb>s …" stem — and adjective-prefixed
 # variants ("The Angular frontend …") — that signals pattern-filling
-# when it repeats across §7's H4 intro paragraphs. A concrete opener
+# when it repeats across §6's H4 intro paragraphs. A concrete opener
 # ("The login query at …", "Sequelize backs …") does NOT match.
 _FORMULAIC_OPENER_RE = re.compile(
     r"^The (?:[A-Z][a-z]+ )?"
     r"(?:application|system|server|framework|backend|frontend|service|platform|codebase)\b",
 )
 
-# H4 subcontrol heading inside §7.X (numbered or bare).
+# H4 subcontrol heading inside §6.X (numbered or bare).
 _SEC7_H4_HEADING_RE = re.compile(r"^#### .+$", re.MULTILINE)
 
-# Section heading regex for §7.X — captures the section number + title.
-_SEC7_HEADING_RE = re.compile(r"^### (7\.\d+(?:\.\d+)?)\s+(.*?)\s*$", re.MULTILINE)
+# Section heading regex for §6.X — captures the section number + title.
+_SEC7_HEADING_RE = re.compile(r"^### (6\.\d+(?:\.\d+)?)\s+(.*?)\s*$", re.MULTILINE)
 
 
 def _first_prose_line(segment: str) -> str:
@@ -8000,7 +8108,7 @@ def _first_prose_line(segment: str) -> str:
 
 
 def _iter_sec7_bodies(text: str):
-    """Yield (heading_number, heading_title, body_text) for every §7.X block."""
+    """Yield (heading_number, heading_title, body_text) for every §6.X block."""
     matches = list(_SEC7_HEADING_RE.finditer(text))
     for i, m in enumerate(matches):
         start = m.end()
@@ -8014,7 +8122,7 @@ def _iter_sec7_bodies(text: str):
 
 
 def check_architectural_prose(md_path: Path) -> Report:
-    """Flag templated mechanism vocabulary and definitional openers in §7.X.
+    """Flag templated mechanism vocabulary and definitional openers in §6.X.
 
     Warnings only — repeated occurrences in the same section get a single
     aggregated warning so the report is scannable.
@@ -8024,7 +8132,7 @@ def check_architectural_prose(md_path: Path) -> Report:
 
     compiled = [(re.compile(p, re.IGNORECASE), name) for p, name in _ARCH_PROSE_BANNED_PATTERNS]
 
-    # Accumulate H4 intro openers across all of §7 so we can flag the
+    # Accumulate H4 intro openers across all of §6 so we can flag the
     # "every control starts with The application …" template drift once.
     formulaic_openers: list[str] = []
 
@@ -8032,7 +8140,7 @@ def check_architectural_prose(md_path: Path) -> Report:
         # Strip fenced code blocks — code is allowed to use any vocabulary.
         body_no_code = re.sub(r"```.*?```", "", body, flags=re.DOTALL)
 
-        # 0. Formulaic H4 intro openers — split this §7.X body on its H4
+        # 0. Formulaic H4 intro openers — split this §6.X body on its H4
         # headings and test the first prose line (the intro paragraph) of
         # each subcontrol against the generic-actor stem.
         h4_starts = [m.start() for m in _SEC7_H4_HEADING_RE.finditer(body_no_code)]
@@ -8075,13 +8183,13 @@ def check_architectural_prose(md_path: Path) -> Report:
                 f"middleware name, env var)."
             )
 
-    # Aggregate formulaic-opener warning across §7 (template drift).
+    # Aggregate formulaic-opener warning across §6 (template drift).
     if len(formulaic_openers) >= 3:
         report.warnings.append(
-            f"§7: {len(formulaic_openers)} H4 control intros open with the "
+            f"§6: {len(formulaic_openers)} H4 control intros open with the "
             f"formulaic `The application/system/server …` stem. A domain "
             f"expert leads with the concrete route, file, library, or "
-            f"component — vary the opener (≤1 such stem per §7.X section)."
+            f"component — vary the opener (≤1 such stem per §6.X section)."
         )
 
     if not report.warnings:
@@ -8131,18 +8239,18 @@ def check_attack_tree_node_id_leak(md_path: Path) -> Report:
 
 
 def check_finding_range_homogeneous(md_path: Path, output_dir: Path | None = None) -> Report:
-    """arch3.md §4 + §7 — flag `[F-NNN](...)..[F-MMM](...)` range citations
-    in §7 prose when the spanned findings belong to different primary
+    """arch3.md §4 + §6 — flag `[F-NNN](...)..[F-MMM](...)` range citations
+    in §6 prose when the spanned findings belong to different primary
     weakness clusters.
 
-    Background: §7.5 in the 2026-05 juice-shop run cited "the four XSS
+    Background: §6.5 in the 2026-05 juice-shop run cited "the four XSS
     findings ([F-016]..[F-021])" — but the F-016..F-021 span actually
     contains F-019 (Session/Storage, CWE-922) and F-020 (Headers,
     CWE-1021) which are NOT XSS. A range citation is only correct when
     every F-ID in the span shares the same weakness cluster.
 
     Detection scope:
-      - §7 body only (skip §8 Findings Register tables where ranges are
+      - §6 body only (skip §8 Findings Register tables where ranges are
         legitimate layout).
       - Only consider markdown-link ranges of the form
         `[F-NNN](#f-nnn) ... – [F-MMM](#f-mmm)` (the renderer's canonical
@@ -8154,7 +8262,7 @@ def check_finding_range_homogeneous(md_path: Path, output_dir: Path | None = Non
       - If the spanned F-NNN set has ≥2 distinct cluster_ids → warning.
 
     Author note: this is intentionally a *warning* not a hard issue.
-    Restructuring §7 prose is an LLM-side semantic edit; flagging it
+    Restructuring §6 prose is an LLM-side semantic edit; flagging it
     surfaces the inconsistency without blocking the run.
     """
     report = Report("finding_range_homogeneous")
@@ -8207,8 +8315,8 @@ def check_finding_range_homogeneous(md_path: Path, output_dir: Path | None = Non
         report.ok = 1
         return report
 
-    # Locate §7 body — start at "## 7. " heading, stop at "## 8. ".
-    sec7_start = text.find("## 7. ")
+    # Locate §6 body — start at "## 6. " heading, stop at "## 8. ".
+    sec7_start = text.find("## 6. ")
     if sec7_start < 0:
         report.ok = 1
         return report
@@ -8258,7 +8366,7 @@ def check_finding_range_homogeneous(md_path: Path, output_dir: Path | None = Non
 
     for line_no, snippet, cwes_seen in flagged[:10]:
         report.warnings.append(
-            f"§7 finding-range citation spans heterogeneous clusters at "
+            f"§6 finding-range citation spans heterogeneous clusters at "
             f"line {line_no}: ({', '.join(cwes_seen)}) — split into separate "
             f"finding references or restructure the prose; ranges over "
             f"mixed weakness classes mislead the reader (arch3.md §2 / §4)."
@@ -8307,8 +8415,8 @@ def _load_weakness_classes() -> dict:
 
 
 def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) -> Report:
-    """arch3.md §4 + §7 — dependency-driven findings MUST be referenced in
-    the §7 supply-chain controls section.
+    """arch3.md §4 + §6 — dependency-driven findings MUST be referenced in
+    the §6 supply-chain controls section.
 
     Detection scope:
       - Threats whose `source == "dep-scan"` (deterministic SCA pipeline
@@ -8414,16 +8522,16 @@ def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) ->
 
     # Locate the supply-chain control body in the rendered MD. v1 used
     # "7.12 Dependency & Supply Chain"; current v2 uses
-    # "7.11 Operations Runtime and Supply Chain Controls".
-    sec_re = re.compile(r"^###\s+(7\.\d+\s+.*Supply\s+Chain.*)$", re.IGNORECASE | re.MULTILINE)
+    # "6.11 Operations Runtime and Supply Chain Controls".
+    sec_re = re.compile(r"^###\s+(6\.\d+\s+.*Supply\s+Chain.*)$", re.IGNORECASE | re.MULTILINE)
     m_sec = sec_re.search(text)
-    section_label = m_sec.group(1).strip() if m_sec else "§7 Supply Chain controls"
+    section_label = m_sec.group(1).strip() if m_sec else "§6 Supply Chain controls"
     if not m_sec:
-        # §7.12 is missing entirely — flag a single high-level warning, then
+        # §6.12 is missing entirely — flag a single high-level warning, then
         # don't enumerate the per-finding misses (would amount to one warning
         # per candidate, which is noise).
         report.warnings.append(
-            f"§7 Supply Chain controls section is missing from the rendered MD, "
+            f"§6 Supply Chain controls section is missing from the rendered MD, "
             f"but {len(candidate_fids)} finding(s) are dependency-relevant: "
             f"{', '.join(fid for fid, _ in candidate_fids[:10])}. Add the "
             f"supply-chain controls section and reference these findings per "
@@ -8431,7 +8539,7 @@ def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) ->
         )
         return report
 
-    # End at next `### 7.` or `## ` heading.
+    # End at next `### 6.` or `## ` heading.
     rest = text[m_sec.end() :]
     next_heading = re.search(r"\n#{2,3}\s", rest)
     sec_body = rest[: next_heading.start() if next_heading else len(rest)]
@@ -8465,7 +8573,7 @@ def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) ->
 #   * `check_section_opener_restates_heading` — "This section evaluates ..."
 #   * `check_ai_padding_phrases` — "it is worth noting", "furthermore", …
 #
-# All four are warning-level by default; ≥N occurrences inside a single §7.x
+# All four are warning-level by default; ≥N occurrences inside a single §6.x
 # escalate to error-level. The thresholds are conservative (favour signal
 # over noise on the first run; can be tightened later).
 # ---------------------------------------------------------------------------
@@ -8492,7 +8600,7 @@ def check_generic_phrases(md_path: Path) -> Report:
     findings — they pass `check_architectural_prose` (which scans for
     structural floskeln) but violate Rule 1.
 
-    Warnings only; per-section count ≥3 in one §7.x escalates to error.
+    Warnings only; per-section count ≥3 in one §6.x escalates to error.
     """
     report = Report("generic_phrases")
     text = _read_md(md_path)
@@ -8671,7 +8779,7 @@ def check_ai_padding_phrases(md_path: Path) -> Report:
     markers — they add discourse structure where bullets or paragraph
     breaks would do the job.
 
-    Threshold: per-section count ≥2 in one §7.x escalates to error.
+    Threshold: per-section count ≥2 in one §6.x escalates to error.
     Section-wide single occurrence stays warning-level.
     """
     report = Report("ai_padding_phrases")
@@ -8703,13 +8811,13 @@ def check_ai_padding_phrases(md_path: Path) -> Report:
 
 
 def check_subcontrol_naming_canonical(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
-    """R1 / R10 — §7.2 IAM H4 subcontrol headings must use canonical mechanism names.
+    """R1 / R10 — §6.2 IAM H4 subcontrol headings must use canonical mechanism names.
 
     Validation rules (driven by sections-contract.yaml →
     `schema_v2.domain_required_rules['7.2 Identity and Authentication
     Controls'].auth_method_decomposition`):
 
-      1. Every #### heading in §7.2 must either:
+      1. Every #### heading in §6.2 must either:
          (a) token-match an entry in `method_whitelist`
              (e.g. "OAuth Login Adapter" matches "oauth"),
          (b) be a Mechanism + Operation form (Enrollment / Verification /
@@ -8751,9 +8859,9 @@ def check_subcontrol_naming_canonical(md_path: Path, contract_path: Path = DEFAU
         return report
 
     text = _read_md(md_path)
-    # Find §7.2 body.
+    # Find §6.2 body.
     sec_re = re.compile(
-        r"^### 7\.2\s+[^\n]*$(.*?)(?=^### 7\.\d|^## )",
+        r"^### 6\.2\s+[^\n]*$(.*?)(?=^### 6\.\d|^## )",
         re.MULTILINE | re.DOTALL,
     )
     m = sec_re.search(text)
@@ -8827,7 +8935,7 @@ def check_subcontrol_naming_canonical(md_path: Path, contract_path: Path = DEFAU
     enforcement = (rule.get("enforcement") or "warning").strip().lower()
     for heading, pat in forbidden_hits:
         report.issues.append(
-            f"§7.2 IAM #### heading {heading!r} matches forbidden pattern "
+            f"§6.2 IAM #### heading {heading!r} matches forbidden pattern "
             f"{pat!r} — token-format-only / library-name / vulnerability-"
             f"class headings are not authentication mechanisms. Use a "
             f"canonical mechanism name (OAuth Login Adapter, OIDC Sign-In, "
@@ -8835,18 +8943,18 @@ def check_subcontrol_naming_canonical(md_path: Path, contract_path: Path = DEFAU
             f"Password Reset, …) from method_whitelist or rephrase. See "
             f"data/architectural-controls.yaml for the canonical vocabulary."
         )
-    # If §7.2 has at least one mechanism heading, allow primitive headings
+    # If §6.2 has at least one mechanism heading, allow primitive headings
     # too (Reference allows `JWT Issuance`, `JWT Verification`, `Password
-    # Hashing` etc. as #### blocks alongside mechanisms). If §7.2 has ONLY
+    # Hashing` etc. as #### blocks alongside mechanisms). If §6.2 has ONLY
     # non-canonical headings (no mechanism row at all), that is the actual
     # defect — flag it as warning.
     if non_canonical and not canonical_hits:
         report.issues.append(
-            f"§7.2 IAM has {len(non_canonical)} #### heading(s) but none "
+            f"§6.2 IAM has {len(non_canonical)} #### heading(s) but none "
             f"match an authentication mechanism from the canonical vocabulary "
             f"(OAuth, OIDC, SAML, Password Login, Password Reset, TOTP, MFA, "
             f"Passkey/WebAuthn, …). Non-matching headings: "
-            f"{', '.join(repr(h) for h in non_canonical[:5])}. The §7.2 "
+            f"{', '.join(repr(h) for h in non_canonical[:5])}. The §6.2 "
             f"contract requires at least one row per discovered auth mechanism."
         )
     if not forbidden_hits and (canonical_hits or not non_canonical):
@@ -8855,18 +8963,18 @@ def check_subcontrol_naming_canonical(md_path: Path, contract_path: Path = DEFAU
 
 
 def check_section_713_no_table(md_path: Path) -> Report:
-    """R7 — §7.13 Defense-in-Depth Summary must be prose-only.
+    """R7 — §6.13 Defense-in-Depth Summary must be prose-only.
 
-    Markdown tables (`| header |` lines under §7.13) are a contract violation
+    Markdown tables (`| header |` lines under §6.13) are a contract violation
     because the tabular layer-mapping format invites speculative perimeter-
     absence claims (`No WAF`, `No firewall`, `No DAM`) that violate the
-    `unfounded_perimeter_claims` rule. Reference §7.13 is two short prose
+    `unfounded_perimeter_claims` rule. Reference §6.13 is two short prose
     paragraphs naming the individual positive controls and the boundary
     repairs that would restore layered defense.
     """
     report = Report("section_713_no_table")
     text = _read_md(md_path)
-    m = re.search(r"^### 7\.13 .*?$", text, re.MULTILINE)
+    m = re.search(r"^### 6\.13 .*?$", text, re.MULTILINE)
     if not m:
         report.ok = 1
         return report
@@ -8880,9 +8988,9 @@ def check_section_713_no_table(md_path: Path) -> Report:
     # A markdown table has a header separator row matching `| ---+ | ---+ |`.
     if re.search(r"^\s*\|[\s\-:|]+\|\s*$", body_no_code, re.MULTILINE):
         report.issues.append(
-            "§7.13 contains a Markdown table — forbidden by the v2 contract "
+            "§6.13 contains a Markdown table — forbidden by the v2 contract "
             "(see sections-contract.yaml → schema_v2.domain_required_rules."
-            "'7.13 Defense-in-Depth Summary'.forbidden_constructs). §7.13 "
+            "'6.13 Defense-in-Depth Summary'.forbidden_constructs). §6.13 "
             "must be prose-only: two short paragraphs covering (1) the "
             "individual controls that exist and (2) which boundary repairs "
             "would restore layered defense. Tables invite speculative "
@@ -8895,11 +9003,11 @@ def check_section_713_no_table(md_path: Path) -> Report:
 
 
 def check_na_against_recon(md_path: Path, output_dir: Path | None = None) -> Report:
-    """arch3.md §4 + §7 — `_Not applicable - no X detected_` claims in §7
+    """arch3.md §4 + §6 — `_Not applicable - no X detected_` claims in §6
     must be consistent with what the recon-scanner found.
 
     Detection scope:
-      - Per §7.x subsection, parse the leading body text. If it starts
+      - Per §6.x subsection, parse the leading body text. If it starts
         with `_Not applicable` AND the recon-summary contains evidence
         of the domain's keywords → flag as warning.
       - Domain keyword map is conservative (only well-known signals).
@@ -8926,20 +9034,20 @@ def check_na_against_recon(md_path: Path, output_dir: Path | None = None) -> Rep
         report.ok = 1
         return report
 
-    # Per-domain recon signals. Order: title pattern in §7 → recon tokens.
+    # Per-domain recon signals. Order: title pattern in §6 → recon tokens.
     _DOMAIN_RECON_TOKENS = (
         (
-            re.compile(r"^###\s+7\.\d+\s+(.*?)WebSocket", re.MULTILINE | re.IGNORECASE),
+            re.compile(r"^###\s+6\.\d+\s+(.*?)WebSocket", re.MULTILINE | re.IGNORECASE),
             "WebSocket",
             ("socket.io", "websocket", "ws://", "wss://"),
         ),
         (
-            re.compile(r"^###\s+7\.\d+\s+(.*?)(AI\s*/\s*LLM|AI/LLM|LLM)", re.MULTILINE | re.IGNORECASE),
+            re.compile(r"^###\s+6\.\d+\s+(.*?)(AI\s*/\s*LLM|AI/LLM|LLM)", re.MULTILINE | re.IGNORECASE),
             "AI/LLM",
             ("openai", "anthropic", "langchain", "llamaindex", " llm ", "ollama"),
         ),
         (
-            re.compile(r"^###\s+7\.\d+\s+(.*?)Real-time", re.MULTILINE | re.IGNORECASE),
+            re.compile(r"^###\s+6\.\d+\s+(.*?)Real-time", re.MULTILINE | re.IGNORECASE),
             "Real-time",
             ("socket.io", "websocket", "real-time", "sse ", "eventsource"),
         ),
@@ -8949,8 +9057,8 @@ def check_na_against_recon(md_path: Path, output_dir: Path | None = None) -> Rep
     seen_section_starts: set[int] = set()
     for sec_re, label, tokens in _DOMAIN_RECON_TOKENS:
         for sec_match in sec_re.finditer(text):
-            # Dedup — multiple patterns can match the same §7.x section
-            # (e.g. WebSocket pattern + Real-time pattern both hit §7.8
+            # Dedup — multiple patterns can match the same §6.x section
+            # (e.g. WebSocket pattern + Real-time pattern both hit §6.8
             # Real-time / WebSocket). Use the heading-start offset as
             # the identity key.
             if sec_match.start() in seen_section_starts:
@@ -8966,7 +9074,7 @@ def check_na_against_recon(md_path: Path, output_dir: Path | None = None) -> Rep
             hits = [tok for tok in tokens if tok in recon]
             if hits:
                 flagged.append(
-                    f"§7 sub-section '{label}' claims `_Not applicable_` but recon evidence "
+                    f"§6 sub-section '{label}' claims `_Not applicable_` but recon evidence "
                     f"contains {hits[:3]} — restate as 'present, no findings mapped' if no "
                     f"finding was derived, or add the domain controls per arch3.md §4."
                 )
@@ -9024,7 +9132,7 @@ def _run_auth_matching_checks(
                 matched = target
             else:
                 report.issues.append(
-                    f"§7.3 IAM: synonym override maps row {control!r} to "
+                    f"§6.3 IAM: synonym override maps row {control!r} to "
                     f"heading {target!r} but no such {hashes} subsection "
                     f"is present"
                 )
@@ -9046,7 +9154,7 @@ def _run_auth_matching_checks(
                         break
         if matched is None:
             report.issues.append(
-                f"§7.3 IAM: no {hashes} subsection matches control-table row "
+                f"§6.3 IAM: no {hashes} subsection matches control-table row "
                 f"{control!r} — add a `{hashes} {control} Flow` sub-block "
                 f"(with its own sequenceDiagram and a "
                 f"`**{trailer_label}:**` trailer) or declare a synonym "
@@ -9063,14 +9171,14 @@ def _run_auth_matching_checks(
     for heading, body in subsections.items():
         if "sequenceDiagram" not in body:
             report.issues.append(
-                f"§7.3 IAM {hashes} subsection {heading!r}: missing "
+                f"§6.3 IAM {hashes} subsection {heading!r}: missing "
                 f"`sequenceDiagram` block (every auth-method sub-block needs "
                 f"its own diagram)"
             )
         m = trailer_re.search(body)
         if not m:
             report.issues.append(
-                f"§7.3 IAM {hashes} subsection {heading!r}: missing "
+                f"§6.3 IAM {hashes} subsection {heading!r}: missing "
                 f"`**{trailer_label}:**` trailer — end each sub-block with "
                 f"`**{trailer_label}:** [T-NNN](#t-nnn) — short label` or "
                 f"`— none` when no direct findings apply"
@@ -9087,7 +9195,7 @@ def _run_auth_matching_checks(
         rows_here = heading_to_rows.get(heading) or []
         if not rows_here:
             report.issues.append(
-                f"§7.3 IAM {hashes} subsection {heading!r}: no matching "
+                f"§6.3 IAM {hashes} subsection {heading!r}: no matching "
                 f"control-table row — add a row with a `{table_column}` that "
                 f"the subsection covers, or remove the subsection"
             )
@@ -9098,7 +9206,7 @@ def _run_auth_matching_checks(
         extraneous = trailer_tids - union_tids
         if extraneous:
             report.issues.append(
-                f"§7.3 IAM {hashes} subsection {heading!r}: trailer cites "
+                f"§6.3 IAM {hashes} subsection {heading!r}: trailer cites "
                 f"{sorted(extraneous)} but none of those T-IDs appear in the "
                 f"`Linked Threats` cell of any control-table row matched to "
                 f"this subsection — add them to the row's Linked Threats "
@@ -9474,7 +9582,15 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
         report.issues.append("yaml top-level is not a mapping")
         return report
 
-    yaml_threat_count = len(yaml_data.get("threats") or [])
+    yaml_threats_all = yaml_data.get("threats") or []
+    # Weakness-Register redesign (2026-07-14, Phase 1): insecure-practice threats
+    # are now FIRST-CLASS §8 cards (no longer suppressed), so the yaml count and
+    # the md count both include them — no exclusion here. (Coverage-gap /
+    # architectural-anti-pattern placeholders are still excluded below, matching
+    # _render_threat_register.)
+    _COVERAGE_GAP_SOURCES = {"coverage-gap", "architectural-anti-pattern"}
+    yaml_threats_all = [t for t in yaml_threats_all if t.get("source") not in _COVERAGE_GAP_SOURCES]
+    yaml_threat_count = len(yaml_threats_all)
     yaml_mitigation_count = len(yaml_data.get("mitigations") or [])
 
     md_text = md_path.read_text(encoding="utf-8")
@@ -10532,7 +10648,7 @@ def main(argv: list[str]) -> int:
         report = check_hypothesis_validation_objective(Path(argv[2]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
-    # Warning-only §7 prose checks retired from the `all` pre-pass (no actuator;
+    # Warning-only §6 prose checks retired from the `all` pre-pass (no actuator;
     # rules enforced at the renderer). Kept callable for CI / manual use.
     if sub == "paragraph_density":
         if len(argv) != 3:

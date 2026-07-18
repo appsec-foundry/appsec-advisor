@@ -106,6 +106,64 @@ def test_stride_model_no_stride_invokes_no_issue(tmp_path):
     assert agg._extract_stride_model_mismatch(tmp_path, [], []) == []
 
 
+# ---------------------------------------------------------------------------
+# _extract_stride_ceiling_events (large-repo cap-lift surfacing)
+# ---------------------------------------------------------------------------
+
+
+def _write_selection(tmp_path, sel):
+    import json
+
+    (tmp_path / ".stride-selection.json").write_text(json.dumps(sel), encoding="utf-8")
+
+
+def test_stride_ceiling_lift_is_surfaced(tmp_path):
+    _write_selection(
+        tmp_path,
+        {"ceiling": 10, "lifted": True, "selected": [{"id": f"c{i}"} for i in range(14)], "excluded": []},
+    )
+    issues = agg._extract_stride_ceiling_events(tmp_path)
+    cats = {i["category"] for i in issues}
+    assert "stride_ceiling_lifted" in cats
+    assert issues[0]["severity"] == "warning"
+
+
+def test_stride_ceiling_overflow_dropped_is_surfaced(tmp_path):
+    _write_selection(
+        tmp_path,
+        {
+            "ceiling": 10,
+            "lifted": False,
+            "selected": [{"id": f"c{i}"} for i in range(10)],
+            "excluded": [
+                {"id": "internal-db", "reason": "ceiling-overflow"},
+                {"id": "x", "reason": "out-of-scope at depth=standard"},
+            ],
+        },
+    )
+    issues = agg._extract_stride_ceiling_events(tmp_path)
+    dropped = next(i for i in issues if i["category"] == "stride_ceiling_overflow_dropped")
+    assert dropped["evidence"]["dropped_components"] == ["internal-db"]
+
+
+def test_stride_ceiling_no_event_when_within_budget(tmp_path):
+    # The normal case (juice-shop): earned set fits the ceiling, nothing dropped.
+    _write_selection(
+        tmp_path,
+        {
+            "ceiling": 10,
+            "lifted": False,
+            "selected": [{"id": f"c{i}"} for i in range(7)],
+            "excluded": [{"id": "x", "reason": "out-of-scope at depth=standard"}],
+        },
+    )
+    assert agg._extract_stride_ceiling_events(tmp_path) == []
+
+
+def test_stride_ceiling_no_selection_file_no_issue(tmp_path):
+    assert agg._extract_stride_ceiling_events(tmp_path) == []
+
+
 def test_orphan_start_followed_by_real_start_pairs_only_once():
     """Bug #5 from 2026-04-26 19:55 — orphan PHASE_START preceded the real one.
 
@@ -899,3 +957,74 @@ class TestMainCLI:
         rc = agg.main([str(tmp_path), "--no-recommend"])
         assert rc == 1
         assert "cannot write" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# reconcile_recovered_events + RUN_RECONCILED annotation
+# ---------------------------------------------------------------------------
+
+
+def _abort(phase: str) -> str:
+    return f"2026-07-16T08:00:00Z  [--------]  WARN   threat-analyst  SESSION_ABORTED_MIDRUN   phase={phase}  reason=unknown"
+
+
+def test_reconcile_all_recovered_when_run_completed(tmp_path):
+    # 2 mid-run stops + 1 build-FATAL, but a later build succeeded and the
+    # deliverable exists → everything recovered, nothing unrecovered.
+    (tmp_path / "threat-model.md").write_text("# report", encoding="utf-8")
+    log = [
+        (1, _abort("8")),
+        (2, "FATAL: schema validation failed"),
+        (3, "✓ threat-model.yaml built deterministically — 68 threats"),
+        (4, _abort("11")),
+    ]
+    rec = agg.reconcile_recovered_events(log, tmp_path)
+    assert rec == {
+        "mid_run_stops": 2,
+        "transient_build_fatals": 1,
+        "run_completed": True,
+        "unrecovered": 0,
+    }
+
+
+def test_reconcile_flags_unrecovered_when_no_completion(tmp_path):
+    # A build-FATAL with no successful rebuild and no deliverable → unrecovered.
+    log = [
+        (1, _abort("10b")),
+        (2, "FATAL: schema validation failed"),
+    ]
+    rec = agg.reconcile_recovered_events(log, tmp_path)
+    assert rec["run_completed"] is False
+    assert rec["transient_build_fatals"] == 0  # the FATAL was NOT recovered
+    assert rec["unrecovered"] == 2  # 1 abort (no completion) + 1 unrecovered FATAL
+
+
+def test_append_reconciliation_writes_all_clear_line(tmp_path):
+    log_path = tmp_path / ".agent-run.log"
+    log_path.write_text("existing\n", encoding="utf-8")
+    agg._append_reconciliation_line(
+        tmp_path, {"mid_run_stops": 3, "transient_build_fatals": 1, "run_completed": True, "unrecovered": 0}
+    )
+    tail = log_path.read_text(encoding="utf-8")
+    assert "RUN_RECONCILED" in tail
+    assert "all recovered" in tail
+    assert "INFO" in tail.splitlines()[-1]
+
+
+def test_append_reconciliation_silent_when_nothing_transient(tmp_path):
+    log_path = tmp_path / ".agent-run.log"
+    log_path.write_text("existing\n", encoding="utf-8")
+    agg._append_reconciliation_line(
+        tmp_path, {"mid_run_stops": 0, "transient_build_fatals": 0, "run_completed": True, "unrecovered": 0}
+    )
+    assert log_path.read_text(encoding="utf-8") == "existing\n"  # untouched
+
+
+def test_append_reconciliation_warns_on_unrecovered(tmp_path):
+    log_path = tmp_path / ".agent-run.log"
+    log_path.write_text("", encoding="utf-8")
+    agg._append_reconciliation_line(
+        tmp_path, {"mid_run_stops": 1, "transient_build_fatals": 0, "run_completed": False, "unrecovered": 1}
+    )
+    last = log_path.read_text(encoding="utf-8").splitlines()[-1]
+    assert "WARN" in last and "UNRECOVERED" in last

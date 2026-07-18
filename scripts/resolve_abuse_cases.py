@@ -96,6 +96,7 @@ def resolve_abuse_cases(
     profile_dir: Path | None,
     plugin_root: Path = PLUGIN_ROOT,
     repo_root: Path | None = None,
+    extra_case_files: list[Path] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Return (active_cases, errors).
 
@@ -143,6 +144,29 @@ def resolve_abuse_cases(
         if repo_dir.is_dir():
             for path in sorted(repo_dir.glob("*.yaml")):
                 file_cases, file_errors = _load_case_file(path, schema)
+                cases += file_cases
+                errors += file_errors
+
+    # Explicit per-scan files are constrained to the target repository. They
+    # are untrusted data, not arbitrary host-file reads. Unlike the automatic
+    # repo-local layer they may live anywhere below the repository root.
+    if extra_case_files:
+        if repo_root is None:
+            errors.append("explicit abuse-case files require a repository root")
+        else:
+            root = Path(repo_root).resolve()
+            for raw_path in extra_case_files:
+                path = Path(raw_path)
+                candidate = (root / path).resolve() if not path.is_absolute() else path.resolve()
+                try:
+                    candidate.relative_to(root)
+                except ValueError:
+                    errors.append(f"explicit abuse-case file {path!s} resolves outside the repository")
+                    continue
+                if candidate.suffix not in {".yaml", ".yml"} or not candidate.is_file():
+                    errors.append(f"explicit abuse-case file {path!s} is not a readable YAML file")
+                    continue
+                file_cases, file_errors = _load_case_file(candidate, schema)
                 cases += file_cases
                 errors += file_errors
 

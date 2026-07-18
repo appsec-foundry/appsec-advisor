@@ -153,10 +153,10 @@ def _op_regex_replace(text: str, op: dict) -> str:
 # place that references the old name. For ``security-architecture.md`` the
 # referenced places are:
 #
-#   1. The H4 heading itself:                ``#### 7.2.1 <old_name>``
+#   1. The H4 heading itself:                ``#### 6.2.1 <old_name>``
 #   2. The pre-heading anchor tag:           ``<a id="<old-kebab>"></a>``
 #   3. ``**Controls covered:**`` link text:  ``[<old_name>](#<old-kebab>)``
-#   4. §7.1 overview-table row text:         ``(e.g. <old_name>)``
+#   4. §6.1 overview-table row text:         ``(e.g. <old_name>)``
 #
 # The op refuses to write when the H4 heading is not found (no needle to
 # cascade FROM). Anchor / link / table-row cascades are best-effort: a
@@ -228,7 +228,7 @@ def _op_heading_rename_cascade(text: str, op: dict) -> str:
     bare_anchor_pat = re.compile(r"\]\(#" + re.escape(old_kebab) + r"\)")
     text = bare_anchor_pat.sub(f"](#{new_kebab})", text)
 
-    # (4) §7.1 overview-table row — `(e.g. <old_name>)`. The §7.1 table is
+    # (4) §6.1 overview-table row — `(e.g. <old_name>)`. The §6.1 table is
     # mechanical-frozen and uses the control name verbatim in its "Main
     # reason" cell. Cascade replaces all such mentions.
     eg_pat = re.compile(r"\(e\.g\.\s+" + re.escape(old_name) + r"\)")

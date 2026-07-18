@@ -128,7 +128,8 @@ def test_fragment_markdown_structure(tmp_path: Path):
     md = rac.render_fragment(models)
     assert md.startswith("## 9. Abuse Cases")
     assert "| # | Scenario | Actor | Combined Risk | Verdict |" in md
-    assert '### <a id="ac-t-001"></a>AC-T-001 —' in md
+    assert '<a id="ac-t-001"></a>' in md
+    assert "### AC-T-001 —" in md
     # 3-column chain table: Evidence folded into Finding (`<br/>`), Status dropped.
     assert "| Step | Finding | Outcome |" in md
     assert "| Step | Finding | Evidence | Outcome | Status |" not in md
@@ -175,6 +176,79 @@ def test_partially_blocked_icon_and_verdict(tmp_path: Path):
     assert icons == ["⚠", "◐"]  # second step has a control → ◐
     # partially_blocked → no escalation; max matched severity is Critical (T-001)
     assert m["combined_risk"] == "Critical"
+
+
+def test_unverified_step_adds_provisional_caveat(tmp_path: Path):
+    # Step 1 confirmed, step 2 an untouched write-first pre-seed (inconclusive,
+    # no reason, empty excerpt = verifier hit its turn ceiling before examining
+    # it). The chain still carries a viable verdict but must render the
+    # provisional caveat so it is not read as fully verified (juice-shop AC-T-001).
+    verdicts = {
+        "schema_version": 1,
+        "verdicts": [
+            {
+                "abuse_case_id": "AC-T-001",
+                "chain_verdict": "fully_viable",
+                "step_verdicts": [
+                    {
+                        "step": 1,
+                        "verdict": "confirmed",
+                        "matched_finding_id": "T-010",
+                        "evidence": {"file": "x.ts", "line": 5},
+                        "controls_found": [],
+                    },
+                    {
+                        "step": 2,
+                        "verdict": "inconclusive",
+                        "matched_finding_id": "T-046",
+                        "evidence": {"excerpt": ""},
+                        "controls_found": [],
+                    },
+                ],
+            }
+        ],
+    }
+    _setup(tmp_path, verdicts)
+    models = rac.build_models(tmp_path, None)
+    assert models[0]["unverified_steps"] == [2]
+    md = rac.render_fragment(models)
+    assert "Not verified end-to-end" in md and "step 2" in md
+    assert "provisional" in md
+
+
+def test_reasoned_inconclusive_step_has_no_caveat(tmp_path: Path):
+    # An inconclusive step WITH a reason is a genuine "examined but couldn't
+    # decide" — not an untouched pre-seed. No provisional caveat.
+    verdicts = {
+        "schema_version": 1,
+        "verdicts": [
+            {
+                "abuse_case_id": "AC-T-001",
+                "chain_verdict": "fully_viable",
+                "step_verdicts": [
+                    {
+                        "step": 1,
+                        "verdict": "confirmed",
+                        "matched_finding_id": "T-010",
+                        "evidence": {"file": "x.ts", "line": 5},
+                        "controls_found": [],
+                    },
+                    {
+                        "step": 2,
+                        "verdict": "inconclusive",
+                        "matched_finding_id": "T-046",
+                        "reason": "handler precedence unresolved within budget",
+                        "evidence": {},
+                        "controls_found": [],
+                    },
+                ],
+            }
+        ],
+    }
+    _setup(tmp_path, verdicts)
+    models = rac.build_models(tmp_path, None)
+    assert models[0]["unverified_steps"] == []
+    assert "Not verified end-to-end" not in rac.render_fragment(models)
 
 
 def test_not_applicable_case_excluded(tmp_path: Path):

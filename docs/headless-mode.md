@@ -478,12 +478,16 @@ Headless runs support API-key and subscription authentication:
 
 | Mode | How to activate | Works in TTY terminal | Works in CI runner (non-TTY) |
 |---|---|---|---|
-| API key (per-token) | `export ANTHROPIC_API_KEY=sk-ant-...` | Yes | **Yes** — recommended for CI |
-| Subscription (Pro / Team / Enterprise) | `claude auth login` — stores refresh token in `~/.claude/` | Yes | **No** — `auth login` needs a browser |
+| API key (per-token) | `export ANTHROPIC_API_KEY=sk-ant-...` | Yes | **Yes** — per-token billing; use `--max-budget` to cap spend |
+| Subscription — interactive login | `claude auth login` — stores refresh token in `~/.claude/` | Yes | **No** — `auth login` needs a browser |
+| Subscription — OAuth token | `claude setup-token` (once, in a browser) → `export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...` | Yes | **Yes** — non-interactive subscription billing for CI |
 
-For CI use, always use an API key injected as a CI secret (`ANTHROPIC_API_KEY`). Subscription auth requires an interactive browser step that is incompatible with headless CI runners.
+Two ways to run unattended:
 
-Use an API key stored as a CI secret for unattended runners.
+- **API key** — inject `ANTHROPIC_API_KEY` as a CI secret. Per-token billing, decoupled from any personal quota, rotatable, and `--max-budget` applies.
+- **Subscription OAuth token** — generate once with `claude setup-token` and store the `sk-ant-oat01-…` value as a CI secret exposed as `CLAUDE_CODE_OAUTH_TOKEN`. The run bills against the subscription (draws on its rate limit). When this variable is set the script skips the interactive-login preflight (`claude auth status` only reflects stored credentials and would false-negative on a fresh runner). Do **not** also set `ANTHROPIC_API_KEY` — it takes precedence and would switch billing to per-token.
+
+Interactive `claude auth login` stores a browser-obtained refresh token in `~/.claude/` and is for local/TTY use only.
 
 <a id="security-and-permissions"></a>
 
@@ -501,7 +505,7 @@ The headless script bypasses interactive permission prompts and uses a fixed too
 
 **Concurrency.** `.appsec-lock` prevents overlapping runs against the same output directory.
 
-**Claude Code permissions.** Headless runs require the tool allow-list to be written into the target repository before the first run. Use `make setup-target REPO=<path>` (or `/appsec-advisor:check-permissions` inside a CC session) to write `.claude/settings.json` into the target repo.
+**Claude Code permissions.** Headless runs require the tool allow-list to be written into the target repository before the first run. Use `make setup-target REPO=<path>` (or `/appsec-advisor:check-permissions` inside a CC session) to write `.claude/settings.local.json` into the target repo (pass `SCOPE=project` to write `.claude/settings.json` instead).
 
 <a id="exit-codes"></a>
 
@@ -614,7 +618,7 @@ The session-model default is where headless runs get their ~half-cost economy au
 ## Troubleshooting
 
 **"No credentials found" / `claude auth login` prompt in CI.**
-The pipeline is trying to use subscription auth. Set `ANTHROPIC_API_KEY` as a CI secret and pass it through as env (`env: ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}` in GitHub Actions). See [Authentication in non-interactive mode](#authentication).
+The pipeline is trying to use subscription auth with no credentials on the runner. Either set `ANTHROPIC_API_KEY` (per-token billing) or `CLAUDE_CODE_OAUTH_TOKEN` (subscription billing, from `claude setup-token`) as a CI secret and pass it through as env (e.g. `env: CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}` in GitHub Actions). See [Authentication in non-interactive mode](#authentication).
 
 **Incremental scan keeps doing a full scan.**
 Incremental needs `threat-model.yaml` from a prior run as baseline. In CI, the workspace is clean every run — restore the prior `docs/security/` via CI cache or `--restore-from`. See [B7](#b7-ci-cache). Also check that you are not passing `--no-yaml` earlier in the pipeline — that breaks the baseline.

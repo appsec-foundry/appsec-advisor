@@ -3,7 +3,7 @@
 **Status:** investigation complete; no production fix implemented.
 
 Use this file to resume the work in a fresh session. Repository:
-`/home/mrohr/appsec-advisor`, branch `dev`.
+`/home/user/appsec-advisor`, branch `dev`.
 
 At investigation time the only pre-existing worktree entries were:
 

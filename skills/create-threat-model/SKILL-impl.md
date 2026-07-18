@@ -102,12 +102,10 @@ the condition stated *in* the section wins.
                                    │
 ┌──────────────────────────────────▼──────────────────────────────────┐
 │  Stage 2 - Report Rendering (M2.12 — fresh renderer budget)         │
-│  Agent: appsec-threat-renderer (Sonnet)                             │
+│  Agents: appsec-secarch-renderer + appsec-ms-renderer (Sonnet)      │
 │  Env  : Stage-2 render configuration                                │
-│  Does : write 2 LLM fragments (ms-verdict, ms-architecture-         │
-│         assessment) + optionally attack-walkthroughs +              │
-│         security-posture-attack-paths; then compose, patch          │
-│         placeholders, run qa_checks all                             │
+│  Does : write independent §7 and Management Summary fragments in    │
+│         parallel; the skill then composes and runs the QA path      │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
@@ -777,8 +775,10 @@ Parse the user's arguments for the following flags:
 | `--no-walkthroughs` | `SKIP_ATTACK_WALKTHROUGHS=true` — skip authoring `attack-walkthroughs.md` in Stage 2; the composer renders §3 with chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2. Also implied by `--assessment-depth quick`. | `false` at standard/thorough; `true` at quick |
 | `--abuse-cases` | `skip_abuse_case_verification=false` — force the Stage 1c abuse-case verifier fan-out ON at any depth (overrides the quick-depth default-off). Conflicts with `--no-abuse-cases`. | on at standard/thorough; off at quick |
 | `--no-abuse-cases` | `skip_abuse_case_verification=true` — force the Stage 1c abuse-case verifier fan-out OFF at any depth (skips matcher + verifiers + chain fold even at standard/thorough; §9 renders the not-applicable catalog and no finding is chain-elevated). Conflicts with `--abuse-cases`. | on at standard/thorough; off at quick |
+| `--abuse-case-file <path>` | Add a YAML case file below the target repository for this scan. May be repeated; paths outside the repository are rejected. | none |
+| `--only-abuse-case <ID>` | Restrict this scan's verification to active case IDs. May be repeated; an unknown ID fails the stage. | all active cases |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
-| `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html`, figure references rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
+| `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json` / `pentest-tasks-<slug>.yaml`, figure and pentest-tasks references rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
@@ -1417,10 +1417,9 @@ case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
     #   • SARIF (--sarif) is a Stage-2 RENDER product, not a post-stage export;
     #     if it is requested-but-missing, re-rendering is required — tell the
     #     user to re-run with --rerender rather than silently doing nothing.
-    # The persisted threat-model.md is already §6 from the original run. These
-    # backstop exports derive directly from it, so no renumber is needed here —
-    # the §7 mirror at .appsec-cache/threat-model.canonical7.md already serves the
-    # carry-forward / snapshot machinery.
+    # The persisted threat-model.md already carries its final native numbering
+    # from the original run. These backstop exports derive directly from it, so
+    # nothing extra is needed here.
     if [ "${WRITE_PDF:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.pdf" ]; then
       printf '\n  No source changes — reusing existing threat model; requested PDF is missing, generating it now.\n' >&2
       # UNSANDBOXED: mermaid → headless Chrome needs socket() (see PDF Export §). Non-fatal.
@@ -1867,6 +1866,17 @@ if [ "$DRY_RUN" != "true" ] && [ "$RERENDER" != "true" ]; then
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/source_auth_scanner.py" \
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --quiet >/dev/null 2>&1 || true
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/authz_confirm.py" \
+      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true  # IDOR/route-auth confirmer
+  # Entity-aware Spring mass assignment (CWE-915) — the two-pass case the
+  # single-regex source_auth_scanner cannot express (@RequestBody <PrivEntity>).
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/mass_assignment_scanner.py" \
+      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --quiet >/dev/null 2>&1 || true
+  # P2 — implementation-strategy axis: classify per weakness class whether a
+  # standard vetted control is used (exculpatory) or security is home-grown
+  # (aggravating). Consumed by merge_threats.build_weakness_register at finalize.
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_impl_strategy.py" \
+      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
   if [ -f "$OUTPUT_DIR/.route-inventory.json" ]; then
     RI_COUNT=$(python3 -c "import json;print(len((json.load(open('$OUTPUT_DIR/.route-inventory.json')) or {}).get('routes') or []))" 2>/dev/null || echo 0)
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  ROUTE_INVENTORY_PREPASS  .route-inventory.json ready (${RI_COUNT} routes)" \
@@ -1880,6 +1890,11 @@ if [ "$DRY_RUN" != "true" ] && [ "$RERENDER" != "true" ]; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  SOURCE_AUTH_PREPASS  .source-auth-findings.json ready (${SAF_COUNT} authz finding(s))" \
         >> "$OUTPUT_DIR/.agent-run.log"
   fi
+  if [ -f "$OUTPUT_DIR/.mass-assignment-findings.json" ]; then
+    MA_COUNT=$(python3 -c "import json;print((json.load(open('$OUTPUT_DIR/.mass-assignment-findings.json')) or {}).get('violations') or 0)" 2>/dev/null || echo 0)
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  MASS_ASSIGN_PREPASS  .mass-assignment-findings.json ready (${MA_COUNT} CWE-915 finding(s))" \
+        >> "$OUTPUT_DIR/.agent-run.log"
+  fi
 fi
 ```
 
@@ -1888,6 +1903,9 @@ Behaviour contract:
 - **Extractor finds no routes** (non-web repo, unsupported framework) → empty inventory, the sidecar-only fallback applies exactly as before; non-fatal.
 - **Script error** (`|| true`) → non-fatal; the analyst's own Phase 2.6 attempt is the second line of defence, and a genuinely empty baseline still renders via the sidecar additions.
 - **`.source-auth-findings.json` produced** → `merge_threats.py` ingests every AUTHZ-NNN finding into the threat-merge candidate pool; absent file → non-fatal, STRIDE-only authz coverage as before.
+- **`.mass-assignment-findings.json` produced** → `merge_threats.py:_load_source_auth_findings` ingests the AUTHZ-202 CWE-915 Spring mass-assignment findings through the same converter (source `source-scan`, STRIDE Elevation of Privilege); absent file → non-fatal (Java/Spring-only scanner, silent on non-Java repos).
+- **`.impl-strategy.json` produced** → `merge_threats.build_weakness_register` stamps `implementation_strategy` on each weakness and applies the exculpatory (standard-vetted control present → a pure design gap is suppressed / residual severity lowered one band) or aggravating (home-grown / none → severity multiplier) effect; absent file → non-fatal, weaknesses carry no strategy as before.
+- **`.impl-design-signals.json` produced** (Gap-A) → for each `central_control` domain in `data/security-libraries.yaml` (input validation, output encoding, access control, authentication) whose control is `home-grown` / `standard-misused`, `detect_impl_strategy.py` emits a design signal backed by the bespoke sink's own file:line. `merge_threats._load_design_signals` merges it with the arch-coverage stream so the reconciler surfaces a **design-risk weakness even when no concrete SQLi/XSS/IDOR instance was confirmed** (the systemic posture then shows e.g. Input Validation / Access Control in the Management Summary Security Principles table). Absent/empty file → non-fatal, no such weakness.
 
 ### Stage 1 Handoff Banner
 
@@ -2034,14 +2052,23 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_state.py" \
     "$OUTPUT_DIR" --resume-guard --max-age-seconds 900
 GUARD_EXIT=$?
 if [ "$GUARD_EXIT" = "3" ]; then
-  # Helper already printed the user-facing reason. Drop the --resume
-  # intent and abort before dispatching Stage 1.
+  # Helper already printed the user-facing reason. Drop the --resume intent
+  # and abort before dispatching Stage 1. Release the lock this run acquired
+  # in "Skill-layer lock acquisition" above and clear the transient markers —
+  # the same cleanup the requirements pre-fetch gate performs on its abort.
+  # Without this, a refused resume leaves a fresh-heartbeat lock behind: the
+  # exact phantom-"scanning" state the guard exists to prevent, and one that
+  # makes the remediation it just printed (/appsec-advisor:clean-run-state)
+  # refuse while our heartbeat is still fresh.
+  rm -f "$OUTPUT_DIR/.appsec-lock"
+  rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
   exit 3
 fi
 ```
 
 Behaviour:
 - No checkpoint present → exit 0, resume proceeds (same as a fresh run).
+- **Checkpoint claims `phase≥1` but `.threat-modeling-context.md` is missing → exit 3** (checked before the status/age rules below). A checkpoint can outlive the intermediate files its phases produced — cleaned up, or written to a different `OUTPUT_DIR`. Resuming then silently re-runs the early phases and rebuilds the full analyst context on *every* attempt; the juice-shop 2026-07-14 loop stalled repeatedly this way, its `cache_read` ballooning 4.5M→9.8M tokens per resume. The helper points at re-running **without** `--resume` (auto-cleans the stale checkpoint) or `--rebuild`.
 - `status=completed` → exit 0, resume proceeds (the orchestrator will no-op and exit cleanly).
 - `status=started` or `status=aborted` AND checkpoint mtime ≤ 15 min → exit 0, resume proceeds.
 - `status=started` or `status=aborted` AND checkpoint mtime > 15 min → **exit 3**. The helper prints a remediation line pointing at `/appsec-advisor:clean-run-state` and `--full` / `--rebuild`. The skill does not dispatch Stage 1.
@@ -2060,7 +2087,12 @@ Behaviour:
        .stride-*.json             : <n files>
    ```
 3. Ask the user whether to resume from the last completed phase or start fresh.
-4. If resuming: pass `RESUME_FROM_PHASE=<N+1>` to the orchestrator (where N is the last completed phase). The orchestrator will skip completed phases and reuse existing intermediate files.
+4. If resuming, derive `RESUME_FROM_PHASE` **deterministically** from the checkpoint — never hand-compute `<N+1>`, because the phase field is a label, not an integer (`10b`, `9-merge` have no arithmetic successor, and `10b`+1 is undefined):
+   - `status=completed` **and** `need_render=true` (Stage 1 finished, Stage 2 never ran — the `needs_stage2` state) → **`RESUME_FROM_PHASE=11`**. This skips Phases 1–10b and re-enters at Phase-11 compose only, reusing `.threats-merged.json` + `.triage-flags.json` verbatim — the same Stage-2-only scope as the STAGE11 recovery dispatch (see §"Stage 2 - Report Rendering (recovery dispatch)"). This is the value the `need_render` intercept's "dispatch Stage 2 only" recommendation resolves to.
+   - `status=completed` at a **numeric** phase `N` → `RESUME_FROM_PHASE=N+1` (phase `N` is done; resume at the next phase).
+   - `status=started` or `status=aborted` at phase `N` → `RESUME_FROM_PHASE=N` (phase `N` was interrupted mid-flight — re-run it, do **not** skip it).
+
+   The orchestrator jumps directly to the specified phase and reuses existing intermediate files; any value it does not recognise falls back to the full Phases 1–11 pipeline (`agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT — early-exit branch"), so an unexpected label degrades safely to a fresh run rather than corrupting state.
 5. If starting fresh: proceed as normal (no `RESUME_FROM_PHASE`).
 
 If no checkpoint exists and `--resume` was passed, inform the user and proceed with a fresh assessment.
@@ -2173,7 +2205,7 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
    **⚠ HARD CONSTRAINT — ONE MESSAGE, ALL COMPONENTS, NO EXCEPTIONS.** Read `.stride-dispatch-manifest.json`; collect ALL `components[]` entries; issue ALL `Agent` calls to `appsec-advisor:appsec-stride-analyzer` **in a SINGLE message turn** (multiple tool-use blocks in one response). This is NOT optional and NOT sequential: every component must be in the SAME message so Claude Code dispatches them concurrently. **DO NOT send one Agent call, wait for it to finish, then send the next.** That sequential pattern collapses the fan-out to a serial chain, multiplying wall-clock by N (observed in production: 6 components × ~4 min each = 27 min instead of 5 min parallel). Concrete check: if you are about to call Agent for component 2 AFTER component 1 returned, you have already violated this constraint — stop and re-read. The proven model is the Stage-1c abuse-verifier dispatch (SKILL-impl.md §"Stage 1c"): all verifiers dispatched in one message, all run concurrently.
 
-   **Set each Agent call's `description` to `"STRIDE: <NAME>"`** (the component's `name` from the manifest entry — e.g. `"STRIDE: express-api"`) so the Claude Code subagent panel shows one labelled row per component being analyzed. The component name leads the string because the panel truncates. Map each manifest entry to the analyzer's prompt params (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). **Each dispatch prompt MUST also pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instruct the analyzer to `export OUTPUT_DIR=<value>` as its FIRST Bash call** — `agent_progress.sh` silently no-ops unless `OUTPUT_DIR` is a shell env var, so without the export the analyzer writes `.stride-<id>.json` but skips `.progress/<id>.json`, blinding the watchdog and (pre-fix) false-positiving `check_stride_dispatch.py`. **⚠ Set each Agent call's `model` parameter to `$STRIDE_MODEL` — explicitly, on every component.** If you omit the `model` param, Claude Code silently runs the analyzer on the agent definition's frontmatter default (`model: sonnet` in `agents/appsec-stride-analyzer.md`), so `--reasoning-model opus` is silently ignored for the entire STRIDE phase — the most expensive, value-defining reasoning runs on Sonnet while the config says Opus. (Verified 2026-06-22 juice-shop: every analyzer fell back to Sonnet because the `model` param was omitted; only triage — which sets it — ran on Opus. The post-run issue aggregation (`aggregate_run_issues.py` → `stride_model_mismatch`) now flags this as a non-blocking run-issue in the completion summary.) Wait for all to return — each writes `.stride-<id>.json` + `.progress/<id>.json`. **Issuing the real per-component `Agent` calls here is what makes the run pass the post-Stage-1 gate.** `check_stride_dispatch.py` requires *count-based* dispatch evidence: at least as many `AGENT_SPAWN appsec-stride-analyzer` lines in `.hook-events.log` as the manifest has components (each `Agent` call emits exactly one). **The manifest's existence alone is NOT proof** — it is built in step 3b *before* this fan-out, so it survives a collapse where you build it and then inline STRIDE instead of dispatching; that is the precise failure the gate now catches (it would silently pass pre-2026-06-05). If the spawn count falls short, the gate falls through to the per-component `.progress/` check — so a genuinely-parallel run whose hooks under-logged is still saved by the `.progress/` files the `export OUTPUT_DIR` above guarantees, while a true inline-collapse (no spawns AND no `.progress/`) trips and aborts the run.
+   **Set each Agent call's `description` to `"STRIDE: <NAME>"`** (the component's `name` from the manifest entry — e.g. `"STRIDE: express-api"`) so the Claude Code subagent panel shows one labelled row per component being analyzed. The component name leads the string because the panel truncates. Map each manifest entry to the analyzer's prompt params (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). **Each dispatch prompt MUST also pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instruct the analyzer to `export OUTPUT_DIR=<value>` as its FIRST Bash call** — `agent_progress.sh` silently no-ops unless `OUTPUT_DIR` is a shell env var, so without the export the analyzer writes `.stride-<id>.json` but skips `.progress/<id>.json`, blinding the watchdog and (pre-fix) false-positiving `check_stride_dispatch.py`. **⚠ Set each Agent call's `model` parameter to the tier alias of `$STRIDE_MODEL` — explicitly, on every component.** The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id: reduce `$STRIDE_MODEL` to its tier (`claude-opus-*`→`opus`, `claude-haiku-*`→`haiku`, else `sonnet`; a bare alias passes through), keeping the full id only in the `(model: …)` log lines. If you omit the `model` param, Claude Code silently runs the analyzer on the agent definition's frontmatter default (`model: sonnet` in `agents/appsec-stride-analyzer.md`), so `--reasoning-model opus` is silently ignored for the entire STRIDE phase — the most expensive, value-defining reasoning runs on Sonnet while the config says Opus. (Verified 2026-06-22 juice-shop: every analyzer fell back to Sonnet because the `model` param was omitted; only triage — which sets it — ran on Opus. The post-run issue aggregation (`aggregate_run_issues.py` → `stride_model_mismatch`) now flags this as a non-blocking run-issue in the completion summary.) Wait for all to return — each writes `.stride-<id>.json` + `.progress/<id>.json`. **Issuing the real per-component `Agent` calls here is what makes the run pass the post-Stage-1 gate.** `check_stride_dispatch.py` requires *count-based* dispatch evidence: at least as many `AGENT_SPAWN appsec-stride-analyzer` lines in `.hook-events.log` as the manifest has components (each `Agent` call emits exactly one). **The manifest's existence alone is NOT proof** — it is built in step 3b *before* this fan-out, so it survives a collapse where you build it and then inline STRIDE instead of dispatching; that is the precise failure the gate now catches (it would silently pass pre-2026-06-05). If the spawn count falls short, the gate falls through to the per-component `.progress/` check — so a genuinely-parallel run whose hooks under-logged is still saved by the `.progress/` files the `export OUTPUT_DIR` above guarantees, while a true inline-collapse (no spawns AND no `.progress/`) trips and aborts the run.
 
    **3c-retry — Stub detection and immediate re-dispatch (before Analyst-B).** After all STRIDE agents return, inspect every `.stride-<id>.json` for stub output BEFORE dispatching Analyst-B:
 
@@ -2203,7 +2235,31 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
    done
    ```
 
-   For each `$cid` in `$STUB_COMPONENTS`, re-dispatch the single `appsec-stride-analyzer` **once** (foreground, `run_in_background: false`) with the same prompt as the original dispatch. If the retry still produces a stub or fails validation, log `STRIDE_STUB_RETRY_FAILED` and proceed without that component (`merge_threats.py` tolerates missing components). Do NOT re-dispatch more than once per component — a second exhaustion signals the component is too large for the current turn budget, and Analyst-B's merge step will carry forward an empty threat set rather than blocking. Dispatch all stub re-runs **simultaneously in one message** when there are multiple stubs.
+   For each `$cid` in `$STUB_COMPONENTS`, re-dispatch the single `appsec-stride-analyzer` **once** (foreground, `run_in_background: false`) with the same prompt as the original dispatch. Do NOT re-dispatch more than once per component — a second exhaustion signals the component is too large for the current turn budget, and Analyst-B's merge step will carry forward an empty threat set rather than blocking. Dispatch all stub re-runs **simultaneously in one message** when there are multiple stubs.
+
+   **Judge recovery from disk, not from the Agent return (deterministic post-retry gate).** After the retry Agent call(s) return, re-read each retried `.stride-<cid>.json` from disk with the SAME stub predicate used above and only THEN decide the outcome. Do **not** infer the verdict from the Agent return value: when a retry session is interrupted mid-run (parent turn-ceiling cut-off), it returns empty even though the analyzer wrote a full `.stride-<cid>.json`, and the component is also re-dispatched again by Analyst-B's Phase-9 merge — so a return-based verdict logs `STRIDE_STUB_RETRY_FAILED` while the file on disk already carries real threats (observed 2026-07-16 juice-shop: auth-service/data-persistence/frontend-spa logged RETRY_FAILED yet ended with 12/12/9 real threats). Judge STILL-a-stub from the on-disk file:
+
+   ```bash
+   for cid in $STUB_COMPONENTS; do
+     f="$OUTPUT_DIR/.stride-$cid.json"
+     STILL_STUB=$(python3 -c "
+   import json, sys
+   try:
+     d = json.load(open('$f'))
+     threats = d.get('threats')
+     print('yes' if (not threats or d.get('partial', False)) else 'no')
+   except Exception:
+     print('yes')
+   " 2>/dev/null)
+     if [ "$STILL_STUB" = "yes" ]; then
+       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  WARN   skill  STRIDE_STUB_RETRY_FAILED   component=$cid — still a stub on disk after retry; Analyst-B merge will attempt final recovery" >> "$OUTPUT_DIR/.agent-run.log"
+     else
+       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  INFO   skill  STRIDE_STUB_RETRY_OK   component=$cid — real threats present on disk after retry" >> "$OUTPUT_DIR/.agent-run.log"
+     fi
+   done
+   ```
+
+   `merge_threats.py` tolerates a genuinely-missing component, so a true still-stub is non-blocking; the point of the on-disk re-read is that `STRIDE_STUB_RETRY_FAILED` now reflects reality instead of an interrupted-return artifact. A component that only Analyst-B recovers is correctly logged `STRIDE_STUB_RETRY_FAILED` here (it IS a stub at this instant) but its later real threats flow into the merge normally — the wording no longer claims the component was dropped.
 
    3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis & Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 
@@ -2518,12 +2574,26 @@ Both scripts are **idempotent** — they strip prior auto-emitted entries before
 # body. The script runs the same fixed sequence of deterministic emitters, each
 # best-effort `|| true`, gated on DRY_RUN=false, tee'd to .agent-run.log. The
 # emitter ORDER and rationale (meta-findings → mitigation backfills → title
-# normalisation → yaml hygiene → control-taxonomy → auth-coverage → vektors →
+# normalisation → mitigation-detail hydration → yaml hygiene → control-taxonomy → auth-coverage → vektors →
 # registration/public-repo/asset-links → secret-mask) live in the script's header
 # and per-call comments. Idempotent + best-effort; NOT re-run inside the
 # Re-Render Loop.
 bash "$CLAUDE_PLUGIN_ROOT/scripts/auto_emitter_pass.sh" \
     "$OUTPUT_DIR" "$REPO_ROOT" "$CLAUDE_PLUGIN_ROOT" "$DRY_RUN"
+```
+
+**Urgent-mitigation quality gate.** After the auto-emitter pass, P1/P2
+`kind: fix` cards must identify the source file for every code example; P1/P2
+cards must also have at least two concrete steps and one executable verification
+instruction. The hydration pass first copies these details from the addressed
+findings; if they remain absent, stop before rendering so the producer can be
+repaired rather than shipping a vague recommendation. Review, investigate, and
+accepted-risk cards are deliberately outside this gate.
+
+```bash
+if [ "$DRY_RUN" != "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_mitigation_quality.py" "$OUTPUT_DIR" || exit 2
+fi
 ```
 
 **Completeness assertion — build phase (2026-06-26).** Immediately after the
@@ -2569,7 +2639,7 @@ The YAML integrity gate that runs before this section will still pass after the 
 
 **Why this lives at the skill level.** Abuse-case discovery → verifier fan-out → `.abuse-case-verdicts.json` is documented in `phase-group-threats.md` as running "after Phase 10b and before Phase 11". But Stage 1 is dispatched with `STAGE1_PHASE_LIMIT=10b`, whose analyst branch stops *after* Phase 10b plus the deterministic Phase-11 substeps 1–3 — it never reaches it. Running it here — after the YAML is final, before Stage 2 renders — closes the gap deterministically and keeps it out of Stage 1's turn budget.
 
-Runs only when `DRY_RUN=false` **and** `skip_abuse_case_verification=false` (resolved in `.skill-config.json` from the `--abuse-cases` / `--no-abuse-cases` flags — default on at standard/thorough, off at quick; see the Argument Parsing table). Entirely non-fatal — any failure leaves §9 to render its catalog/placeholder.
+Runs only when `DRY_RUN=false` **and** `skip_abuse_case_verification=false` (resolved in `.skill-config.json` from the `--abuse-cases` / `--no-abuse-cases` flags — default on at standard/thorough, off at quick; see the Argument Parsing table). Matcher/verifier failures remain visible and non-fatal; an abuse case that explicitly declares `release_gate` is the exception and fails closed.
 
 **Skip the whole stage** (no matcher, no verifier fan-out, no escalation, no chain fold, no §9 render-from-verdicts, and no TaskList row — it was not created in the bootstrap) when **either** `DRY_RUN=true` **or** `skip_abuse_case_verification=true`. In the skip case the §9 fragment is still produced by the deterministic `render_abuse_cases.py` backstop in the Stage-3 pre-generation block, which no-ops to the not-applicable catalog/placeholder because no `.abuse-case-verdicts.json` exists — so §8 → §10 numbering stays contiguous and no finding is chain-elevated. Read the flag at stage entry:
 
@@ -2599,6 +2669,7 @@ fi
    if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
        --output-dir "$OUTPUT_DIR" \
        --repo-root "$REPO_ROOT" \
+       --signals "$OUTPUT_DIR/.recon-signals.json" \
        ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"}; then
      ABUSE_PIPELINE_FAILED=1
      printf '\n\033[1;31m✗ Abuse-case match failed (match_abuse_cases.py match exited nonzero)\033[0m\n' >&2
@@ -2606,11 +2677,16 @@ fi
    CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
        list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
    ```
+   The matcher consumes the recon sidecar when it exists. Its scope qualifiers
+   prevent web-authentication abuse cases from reaching the verifier fan-out in
+   repositories that do not implement the required application surface. A
+   missing sidecar remains fail-open for compatibility: the matcher evaluates
+   the case from findings alone rather than failing the whole stage.
 2. **Verifier fan-out.**
 
    **⚠ HARD CONSTRAINT — ONE MESSAGE, ALL CANDIDATES, NO EXCEPTIONS.** Issue ALL `appsec-advisor:appsec-abuse-case-verifier` `Agent` calls **in a SINGLE message turn** (multiple tool-use blocks in one response) — one per AC-ID in `$CANDIDATES`. This is NOT optional and NOT sequential: **DO NOT dispatch one verifier, wait for it to return, then dispatch the next** — that collapses the fan-out to a serial chain (wall-clock × N instead of ≈ slowest single case). Concrete check: if you are about to call `Agent` for candidate 2 AFTER candidate 1 returned, you have already violated this — stop. (Same proven model the STRIDE fan-out points back to.)
 
-   **Dispatch params** — for each AC-ID in `$CANDIDATES`, call `appsec-advisor:appsec-abuse-case-verifier` (**`model: $ABUSE_VERIFIER_MODEL`**, foreground, `run_in_background: false`) with prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=$ABUSE_VERIFIER_MODEL`. `$ABUSE_VERIFIER_MODEL` defaults to `sonnet` → the host session (byte-unchanged when unpinned); pin to `claude-sonnet-5` (verdict decisiveness) via `APPSEC_ABUSE_VERIFIER_MODEL`. Set the Agent `model` param explicitly or the frontmatter `sonnet` default silently wins. Do **not** hard-default it to 4.6 — 4.6 reintroduces `inconclusive` verdicts. Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file.
+   **Dispatch params** — for each AC-ID in `$CANDIDATES`, call `appsec-advisor:appsec-abuse-case-verifier` (**`model:` = the tier alias of `$ABUSE_VERIFIER_MODEL`** — bare tier alias only (`sonnet`/`opus`/`haiku`), reduce a `claude-sonnet-5` pin to `sonnet`; foreground, `run_in_background: false`) with prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=$ABUSE_VERIFIER_MODEL`. `$ABUSE_VERIFIER_MODEL` defaults to `sonnet` → the host session (byte-unchanged when unpinned); pin to `claude-sonnet-5` (verdict decisiveness) via `APPSEC_ABUSE_VERIFIER_MODEL`. Set the Agent `model` param explicitly or the frontmatter `sonnet` default silently wins. Do **not** hard-default it to 4.6 — 4.6 reintroduces `inconclusive` verdicts. Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file.
 
    **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
 
@@ -2625,6 +2701,24 @@ fi
      ABUSE_PIPELINE_FAILED=1
      printf '\n\033[1;31m✗ Abuse-case finalize failed (match_abuse_cases.py finalize exited nonzero)\033[0m\n' >&2
    fi
+   # A direct source probe is only a verifier candidate.  Materialise a normal
+   # finding only after its step was code-confirmed; the script also binds the
+   # new T-ID into both abuse sidecars.  Rebuild the deterministic YAML so its
+   # mitigation synthesis sees the promoted finding before triage / §9 render.
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/promote_verified_abuse_cases.py" --output-dir "$OUTPUT_DIR"; then
+     ABUSE_PIPELINE_FAILED=1
+     printf '\n\033[1;31m✗ Abuse-case finding promotion failed\033[0m\n' >&2
+   elif [ -f "$OUTPUT_DIR/.abuse-case-verdicts.json" ]; then
+     python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_threat_model_yaml.py" "$OUTPUT_DIR" \
+         --repo-root "$REPO_ROOT" --plugin-root "$CLAUDE_PLUGIN_ROOT" || ABUSE_PIPELINE_FAILED=1
+   fi
+   # Cases may opt into a deterministic release gate in their definition.
+   # Only an explicitly configured final verdict blocks; inconclusive remains
+   # visible rather than becoming an implicit, surprise gate.
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/abuse_case_gate.py" --output-dir "$OUTPUT_DIR"; then
+     printf '\n\033[1;31m✗ Configured abuse-case release gate failed\033[0m\n' >&2
+     exit 2
+   fi
    # DG-2: a pipeline crash must NOT masquerade as "no abuse cases apply". When
    # ABUSE_PIPELINE_FAILED=1 the §9 not-applicable catalog below is rendering
    # over INCOMPLETE data — surface it loudly. stderr is mirrored into
@@ -2634,7 +2728,7 @@ fi
    fi
    ```
 
-3b2. **Fold verified chains into severity** (deterministic, no LLM). Now that the abuse verdicts are final, re-run the deterministic triage ranking so a **code-verified `fully_viable` chain bubbles its constituent findings up** — not only in §9, but in §8 `effective_severity` AND the §1 `top_findings` / Management-Summary ranking. This re-reads `.abuse-case-verdicts.json` + `.abuse-case-matches.json` (the sidecars did not exist when Stage 1 ran Phase 10b) and re-applies the elevation + ranking onto the already-final `threat-model.yaml` + `.triage-flags.json`. The script **self-gates** via `--if-deterministic-owner` on the artifact marker `ranking.computed_by` in `.triage-flags.json` — written only by the deterministic Step 6 run — and exits cleanly otherwise. So this only acts in deterministic-triage mode, where `triage_compute_ranking.py` is the **sole owner** of `effective_severity` and there is no LLM refinement to clobber (`appsec-triage-validator.md` fast-path). Do NOT gate this on the `APPSEC_TRIAGE_DETERMINISTIC` env var: env vars do not reach skill-level Bash, so an env-gated call silently no-ops on every default run. Non-fatal and idempotent — the elevation is upward-only (`_detect_verified_abuse_chains`), so a second pass on identical inputs is a no-op. Under `.budget-critical` every chain is `inconclusive`, so there is nothing to fold and this is a harmless no-op.
+3b2. **Fold verified chains into severity** (deterministic, no LLM). Direct source probes confirmed by the verifier have just been materialised into normal findings and the YAML was rebuilt, so a **code-verified `fully_viable` chain bubbles every bound finding up** — not only in §9, but in §8 `effective_severity` AND the §1 `top_findings` / Management-Summary ranking. This re-reads `.abuse-case-verdicts.json` + `.abuse-case-matches.json` (the sidecars did not exist when Stage 1 ran Phase 10b) and re-applies the elevation + ranking onto the already-final `threat-model.yaml` + `.triage-flags.json`. The script **self-gates** via `--if-deterministic-owner` on the artifact marker `ranking.computed_by` in `.triage-flags.json` — written only by the deterministic Step 6 run — and exits cleanly otherwise. So this only acts in deterministic-triage mode, where `triage_compute_ranking.py` is the **sole owner** of `effective_severity` and there is no LLM refinement to clobber (`appsec-triage-validator.md` fast-path). Do NOT gate this on the `APPSEC_TRIAGE_DETERMINISTIC` env var: env vars do not reach skill-level Bash, so an env-gated call silently no-ops on every default run. Non-fatal and idempotent — the elevation is upward-only (`_detect_verified_abuse_chains`), so a second pass on identical inputs is a no-op. Under `.budget-critical` every chain is `inconclusive`, so there is nothing to fold and this is a harmless no-op.
    ```bash
    if [ -f "$OUTPUT_DIR/.abuse-case-verdicts.json" ]; then
      python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_compute_ranking.py" "$OUTPUT_DIR" \
@@ -2791,9 +2885,17 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    fi
    ```
 
-   **— Parallel-render variant (`PARALLEL_RENDER=true`).** Dispatch **two** `appsec-advisor:appsec-threat-renderer` Agent calls **in a single message** so they run concurrently (same proven Level-0 fan-out as the STRIDE / abuse-verifier pattern). Pass all original configuration variables verbatim to **both** (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, ENRICH_ARCH_FRAGMENTS, SKIP_ATTACK_PATHS_AUTHORING, SKIP_ATTACK_WALKTHROUGHS, VERBOSE_REPORT, INVOCATION_ARGS, etc.). **⚠ Set each Agent call's `model` parameter to `$RENDERER_MODEL` — explicitly, on BOTH calls.** Like the STRIDE dispatch, omitting it silently falls back to the renderer's frontmatter default (`model: sonnet` in `agents/appsec-threat-renderer.md`), so an `APPSEC_RENDERER_MODEL` pin (e.g. `claude-sonnet-5`) is ignored. The default resolves to `sonnet` → the host session, so the byte-unchanged behaviour is preserved when no pin is set. Add exactly one differing key per call:
-   - Agent **S** — `description: "Render: §7 Security Architecture"`, prompt adds `RENDER_ROLE=secarch`. Authors only `security-architecture.md` (+ `architecture-diagrams.md`); does NOT compose.
-   - Agent **M** — `description: "Render: Management Summary"`, prompt adds `RENDER_ROLE=ms`. Authors only `ms-verdict.json` (+ `ms-critical-attack-tree.json` when ≥2 Critical, + `security-posture-attack-paths.json` unless skipped), runs the MS compactness gate; does NOT compose.
+   **— Parallel-render variant (`PARALLEL_RENDER=true`).** Emit the single shared phase-start event **before** dispatch. The specialist agents must not race on `.phase-epoch`, `.appsec-checkpoint`, or `.appsec-progress.json`:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" \
+       phase-start "[Phase 11/11] Finalization (parallel renderer)" --agent threat-renderer
+   ```
+
+   Dispatch the two specialised agents **in a single message** so they run concurrently (same proven Level-0 fan-out as the STRIDE / abuse-verifier pattern). Pass all original configuration variables verbatim to both. **⚠ Set each Agent call's `model` parameter to the tier alias of `$RENDERER_MODEL` — explicitly, on BOTH calls.** The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id: reduce a pin like `claude-sonnet-5` to `sonnet` (see the STRIDE dispatch note in `phase-group-threats.md` Phase 9).
+
+   - Agent **S** — `appsec-advisor:appsec-secarch-renderer`, description: "Render: §7 Security Architecture". It receives only the §7-focused instruction surface and authors `security-architecture.md`; it does not compose or edit generator-owned §2 diagrams.
+   - Agent **M** — `appsec-advisor:appsec-ms-renderer`, description: "Render: Management Summary". It receives only the management-summary instruction surface and authors its owned JSON/conditional fragments; it does not compose.
 
    Wait for **both** to return, then compose + QA **at skill level** (the work the split agents deliberately skip):
 
@@ -2805,14 +2907,32 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    # doc (2026-06-05 parallel-render gotcha). Exit code is the only honest
    # signal. Retry compose once (mirrors the single-dispatch renderer's
    # Postcondition recovery) before handing off to the recovery path.
+   # Stage 3 runs `qa_checks.py all` for standard/thorough non-PR runs. Let
+   # that authoritative gate own Mermaid parsing once; quick/PR/no-QA paths
+   # retain the compose-time parse because no later full gate is guaranteed.
+   COMPOSE_MERMAID_ARG=""
+   if [ "$SKIP_QA" != "true" ] && [ "$DRY_RUN" != "true" ] && [ "$PR_MODE" != "true" ]; then
+       COMPOSE_MERMAID_ARG="--defer-mermaid-validation"
+   fi
+   # ms-verdict.json floor (juice-shop 2026-07-16). The MS renderer (Agent M)
+   # authors the rich verdict, but a mid-run cutoff (observed: SESSION_STOP
+   # stop_reason=unknown while it was still exploring, before its first Write)
+   # leaves this MANDATORY fragment missing and compose HARD-fails with
+   # `RENDER_FAILED: ms-verdict.json not found` — which previously forced a full
+   # renderer re-dispatch. Generate a deterministic, schema-valid floor now,
+   # AFTER both renderers returned (so a rich LLM verdict is never pre-empted)
+   # and BEFORE compose. Idempotent (no --force): skips when Agent M already
+   # wrote it, so the normal path is byte-unchanged.
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
+       --only ms-verdict.json || true
    COMPOSE_RC=0
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
-       --output-dir "$OUTPUT_DIR" --strict || COMPOSE_RC=$?
+       --output-dir "$OUTPUT_DIR" --strict $COMPOSE_MERMAID_ARG || COMPOSE_RC=$?
    if [ "$COMPOSE_RC" -ne 0 ]; then
        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-renderer  COMPOSE_FAILED  rc=$COMPOSE_RC (parallel render) — retrying once" >> "$OUTPUT_DIR/.agent-run.log"
        COMPOSE_RC=0
        python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
-           --output-dir "$OUTPUT_DIR" --strict || COMPOSE_RC=$?
+           --output-dir "$OUTPUT_DIR" --strict $COMPOSE_MERMAID_ARG || COMPOSE_RC=$?
    fi
    if [ "$COMPOSE_RC" -eq 0 ]; then
        # Compose succeeded → run QA (on a stale MD it would be noise) and write
@@ -2839,7 +2959,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 
    On a persistent compose failure the incomplete checkpoint routes into the existing post-dispatch backstop + hard gate and the §"Post-dispatch — fragment-pipeline audit" recovery — the same path the single-dispatch flow uses when a renderer returns without producing `threat-model.md`.
 
-   **— Single full dispatch (`PARALLEL_RENDER=false`).** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`, **`model: $RENDERER_MODEL`** (explicitly — same reason as the parallel variant; default `sonnet` → host session, so byte-unchanged when unpinned), and `RENDER_ROLE=full` (or simply omit it — `full` is the default). Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the LLM-driven JSON fragment (`ms-verdict.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json` and (when `ENRICH_ARCH_FRAGMENTS=true`) the §7 enrichment, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"` and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass.
+   **— Single full dispatch (`PARALLEL_RENDER=false`).** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`, **`model:` = the tier alias of `$RENDERER_MODEL`** (explicitly — same reason as the parallel variant; bare tier alias only, reduce a full-id pin to its tier; default `sonnet` → host session, so byte-unchanged when unpinned), and `RENDER_ROLE=full` (or simply omit it — `full` is the default). Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the LLM-driven JSON fragment (`ms-verdict.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json` and (when `ENRICH_ARCH_FRAGMENTS=true`) the §7 enrichment, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"` and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass.
 
    **RC.B — neither path calls `render_completion_summary.py --patch-placeholders` here.** The renderer cannot observe its own duration / tokens (those are only available post-Agent-return). The skill-final `--patch-placeholders` invocation in the §Completion Summary section below — after every stage has written to `.stage-stats.jsonl` — is the only authoritative patch point.
 
@@ -2869,7 +2989,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
        --duration-ms <duration_ms_from_usage> \
        --tool-uses <tool_uses_from_usage> \
        --tokens <total_tokens_from_usage> \
-       ${STAGE2_START_ISO:+--subagent-type appsec-advisor:appsec-threat-renderer --since-iso "$STAGE2_START_ISO"}
+       ${STAGE2_START_ISO:+--subagent-type appsec-advisor:appsec-secarch-renderer,appsec-advisor:appsec-ms-renderer --since-iso "$STAGE2_START_ISO"}
    ```
 
 ### Handoff banner
@@ -2893,6 +3013,8 @@ After Stage 2 returns, run the deterministic fragment pre-generator one more tim
 This is where the existing `pregenerate_fragments.py || true` + `check_inline_shortcut.py || { exit }` blocks live (Sprint-2 wiring above). They run identically here — the only addition vs. the pre-Sprint-3 flow is that the Stage-2 dispatch sits between Stage 1 and the gates.
 
 ### Handling turn-budget cut-offs
+
+**A stream-watchdog stall counts as a cut-off (any `Agent` dispatch).** A killed call returning a stall/stream error (`no progress … did not recover`) is API latency, not a plugin defect. First emit the shared calm banner — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stall_notice.py" "$OUTPUT_DIR" --stage "<label>"` (never hand-type "stalled … re-dispatching") — then run the detection below; never free-hand a fresh dispatch (it bypasses the `MAX_STAGE1_RESUMES` cap).
 
 Thorough-depth runs whose criteria selection yields the full inventory (commonly ~8 STRIDE analyzers; bounded by the `MAX_STRIDE_COMPONENTS` operational ceiling) routinely touch the Claude Code agent turn budget (observed at ~90 tool calls per agent session in `claude -p` headless mode). When the budget is hit, the Agent call returns control to the skill *before* Phase 11 finalization runs, typically mid-Phase-9 or mid-Phase-10. Two concrete symptoms:
 
@@ -3034,6 +3156,10 @@ if [ "$STAGE11_CUTOFF" = "true" ]; then
   FRAG_LIST=$(ls "$OUTPUT_DIR"/.fragments/ 2>/dev/null | sort | tr '\n' ' ')
   THREATS_MERGED="missing"; [ -f "$OUTPUT_DIR/.threats-merged.json" ] && THREATS_MERGED="present"
   TRIAGE_FLAGS="missing"; [ -f "$OUTPUT_DIR/.triage-flags.json" ] && TRIAGE_FLAGS="present"
+  # Cause-aware body: default is turn-budget exhaustion (the normal Phase-11
+  # cut-off), but an in-window STALL_RECOVERY line rewrites it to the API/network
+  # stall wording so a stalled stream is never mislabelled. See cutoff_cause.py.
+  CUTOFF_CAUSE=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/cutoff_cause.py" "$OUTPUT_DIR" --default budget 2>/dev/null || true)
   cat <<EOF >&2
 
 ══════════════════════════════════════════════════════════════
@@ -3048,10 +3174,8 @@ if [ "$STAGE11_CUTOFF" = "true" ]; then
   threat-model.yaml:      not produced
 
   Phase 11 (Finalization) entered but did not run compose_threat_model.py.
-  Likely cause: orchestrator turn-budget exhausted while writing fragments —
-  this happens most often on long --resume runs that have to plough through
-  Phases 3–10 again before reaching composition. The threats are merged and
-  partially rendered; only the final compose step is missing.
+
+${CUTOFF_CAUSE}
 
   Recover with:
       /appsec-advisor:create-threat-model --resume
@@ -3069,7 +3193,7 @@ fi
 
 The lock is released so the next `--resume` invocation isn't blocked. `.fragments/`, `.threats-merged.json`, `.triage-flags.json`, and the checkpoint are preserved so the resume run can pick them up.
 
-**Early-phase crash (no STRIDE files).** The `STAGE1_CUTOFF_NO_STRIDE=true` branch fires when the orchestrator died before reaching Phase 9 — typically inside Phase 1, 2, 3, 7, or 8. This is the case the historic 2026-04-25 silent-death bug fell into: the parent Claude Code session ended mid-Phase-3 without a `Stop` hook, leaving `.threat-modeling-context.md` and `.recon-summary.md` on disk but no `.stride-*.json` and no `threat-model.md`. Auto-resume is **not** safe here because the resume path at "Recovery path" below assumes Phase 9 has produced stride files; replaying Phases 3–8 from a partial state has no idempotency guarantee. The skill MUST surface the situation explicitly and exit cleanly so the user can choose `--resume` (continue from the checkpoint) or `--full` / `--rebuild` (start over):
+**Early-phase cut-off (no STRIDE files).** The `STAGE1_CUTOFF_NO_STRIDE=true` branch fires when the run was cut off before reaching Phase 9 — typically inside Phase 1, 2, 3, 7, or 8. Two distinct root causes land here and the banner MUST NOT conflate them: (a) an **API stream stall** — the sub-agent's model API response stream stopped emitting tokens and Claude Code's stream watchdog killed the *returning* `Agent` call (the orchestrator is alive; `stall_notice.py` has already logged a `STALL_RECOVERY` line); or (b) a genuine **session death** — the parent Claude Code session ended mid-Phase-3 without a `Stop` hook (the historic 2026-04-25 silent-death bug: window closed, OOM, network drop), leaving `.threat-modeling-context.md` and `.recon-summary.md` on disk but no `.stride-*.json` and no `threat-model.md`. `scripts/cutoff_cause.py` reads `.agent-run.log` for an in-window `STALL_RECOVERY` and emits the correct `Cause:` block so an API/network hiccup is never mislabelled as a crash. Either way, auto-resume is **not** safe here because the resume path at "Recovery path" below assumes Phase 9 has produced stride files; replaying Phases 3–8 from a partial state has no idempotency guarantee. The skill MUST surface the situation explicitly and exit cleanly so the user can choose `--resume` (continue from the checkpoint) or `--full` / `--rebuild` (start over):
 
 ```bash
 if [ "$STAGE1_CUTOFF_NO_STRIDE" = "true" ]; then
@@ -3092,10 +3216,14 @@ if [ "$STAGE1_CUTOFF_NO_STRIDE" = "true" ]; then
   fi
   CTX_MARK="missing"; [ -f "$OUTPUT_DIR/.threat-modeling-context.md" ] && CTX_MARK="present"
   RECON_MARK="missing"; [ -f "$OUTPUT_DIR/.recon-summary.md" ] && RECON_MARK="present"
+  # Cause-aware body: an in-window STALL_RECOVERY line ⇒ API stream stall
+  # (server-side / network), otherwise a genuine session death. Never let a
+  # stall surface as "orchestrator died". See scripts/cutoff_cause.py.
+  CUTOFF_CAUSE=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/cutoff_cause.py" "$OUTPUT_DIR" --default session_death 2>/dev/null || true)
   cat <<EOF >&2
 
 ══════════════════════════════════════════════════════════════
-  ASSESSMENT INCOMPLETE — orchestrator died before Phase 9
+  ASSESSMENT INCOMPLETE — cut off before Phase 9 (no STRIDE ran)
 ══════════════════════════════════════════════════════════════
 
   Last checkpoint:       phase=${CKPT_PHASE} status=${CKPT_STATUS}
@@ -3104,10 +3232,10 @@ if [ "$STAGE1_CUTOFF_NO_STRIDE" = "true" ]; then
   Recon summary:         ${RECON_MARK}
   Context resolution:    ${CTX_MARK}
 
-  The orchestrator session ended mid-pipeline without producing
-  a threat model. No STRIDE analysis ran. This is typically caused
-  by the parent Claude Code session being killed (window closed,
-  OOM, network drop) before the Stop hook could fire.
+  The run was cut off before Phase 9 — no STRIDE analysis ran, so no
+  threat model was produced.
+
+${CUTOFF_CAUSE}
 
   Recover with:
       /appsec-advisor:create-threat-model --resume
@@ -3300,6 +3428,20 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
 # preserved.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --only ms-critical-attack-tree.json \
+    || true
+# ms-verdict.json — deterministic Management-Summary verdict FLOOR, IDEMPOTENT
+# (no --force). Unlike its two siblings above, this fragment is MANDATORY and
+# compose HARD-fails (`RENDER_FAILED: ms-verdict.json not found`) without it, so
+# an abnormal MS-renderer cutoff before its first Write used to force a full
+# re-dispatch (juice-shop 2026-07-16). The Stage-2 parallel path already floors
+# this before its skill-level compose; running it again here covers the
+# single-dispatch recovery + mandatory-finalize recompose paths (which reach the
+# gate without the Stage-2 skill-level compose block). The generator derives a
+# schema-valid verdict from threat-model.yaml (posture + business-language
+# scenarios grouped by STRIDE); a renderer-authored richer version already on
+# disk is preserved.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
+    --only ms-verdict.json \
     || true
 # §9 Abuse Cases — deterministic render from the Phase-10b verdicts. No-ops
 # (and removes any stale fragment) when no abuse case applied, so compose then
@@ -3527,7 +3669,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" autofix \
 - `GATE_EXIT == 0` — contract clean, no repair plan on disk. The `autofix` pass above already applied the in-place fixes; write a compact `$OUTPUT_DIR/.qa-status.json` with `status: "pass"` and `source: "deterministic-pre-agent"`, then skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`. This is the normal fast path: the in-place auto-fixers own links, anchors, MS structure, cell-format; the `repair_plan` **gate** owns contract validation, Mermaid syntax, unfilled placeholders, and YAML↔MD consistency (count + asset cross-reference drift) — each trips the gate (exit 1/3/4) rather than the deferred `all` battery. No LLM session — and no detector pre-pass — is needed when they are clean. (Pre-2026-06-05 `placeholders` and `yaml_md_consistency` lived only in the deferred `all` battery, which never runs on the clean path because the QA agent that consumed it is skipped — so a residual placeholder or a yaml/md count drift could ship silently. They are now folded into `build_repair_plan`.)
 - `GATE_EXIT == 1` — contract drift, `.qa-repair-plan.json` already on disk. Enter the Re-Render Loop below **without** dispatching the QA agent first. The Re-Render Loop dispatches `appsec-fragment-fixer` in REPAIR_MODE, which re-authors the offending fragments and re-renders. The QA agent is dispatched **after** the loop settles (status=pass) so it works on a contract-clean document.
 - `GATE_EXIT == 2` — tool error (bad path, malformed contract). Log and fall back to the old flow: dispatch the agent unconditionally and let its Check 14 write the plan instead.
-- `GATE_EXIT == 3` — `manual_review`: a real defect exists but **no** action carries a writable fragment target, so re-rendering cannot converge (e.g. a deterministic yaml↔md count drift, which means a composer/fragment bug, not LLM drift). Do **not** enter the Re-Render Loop (it would burn iterations on an unfixable plan). Instead dispatch the QA agent **once** for semantic triage — it inherits the on-disk `.qa-repair-plan.json` and decides between a soft edit, a release-blocker, or a `manual_review_items` escalation. Treat it like the `== 2` fallback for dispatch purposes (set `QA_AGENT_DISPATCHED=true`).
+- `GATE_EXIT == 3` — `manual_review`: a real defect exists but no **explicitly blocking** action carries a writable fragment target. This includes deterministic yaml↔md drift (a composer/fragment bug rather than LLM drift) and new, unclassified action types: they must be assessed before they are allowed to spend an LLM repair pass. Do **not** enter the Re-Render Loop. Instead dispatch the QA agent **once** for semantic triage — it inherits the on-disk `.qa-repair-plan.json` and decides between a soft edit, a release-blocker, or a `manual_review_items` escalation. Treat it like the `== 2` fallback for dispatch purposes (set `QA_AGENT_DISPATCHED=true`).
 - `GATE_EXIT == 4` — `cosmetic_advisory` (2026-06-22): the only writable-fragment violations are **cosmetic** — `diagram_compactness`, `chain_compactness`, `walkthrough_depth`, `relevant_findings_bullet_list`, `recon_iam_bridge`. Re-rendering them would spend an LLM fragment-fixer pass on readability nits, so do **not** enter the Re-Render Loop and do **not** dispatch the QA agent for them. Treat dispatch exactly like `GATE_EXIT == 0` (fast path: skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`). Write `$OUTPUT_DIR/.qa-status.json` with `status: "pass"`, `source: "deterministic-pre-agent"`, and a `cosmetic_advisories` array copied from `.qa-repair-plan.json → actions[]` (each item: `type` + `raw_issue`) so the Completion Summary can surface them as non-blocking notes. The plan file is intentionally left on disk (it is **not** a release blocker). To force cosmetic findings back to blocking (exit 1 / Re-Render Loop), set `APPSEC_QA_COSMETIC_BLOCKING=1`.
 
 **Mandatory dispatch guard.** Set a local `QA_AGENT_DISPATCHED=false` flag before this gate. Only set it to `true` in the explicit agent-dispatch branch below. On the clean deterministic path (`GATE_EXIT == 0` or `GATE_EXIT == 4`, `QA_DEPTH != extended`, and `APPSEC_FORCE_QA_AGENT != 1`), do **not** execute any later instruction that invokes `appsec-qa-reviewer`, starts the Stage-3 heartbeat watchdog, extracts QA-agent usage, or waits for a QA-agent result. Continue directly to Stage 4 (if enabled) or the completion summary. Record Stage 3 stats as a zero-token deterministic gate (`agent=deterministic:qa_checks.py`, model=`none`) when the stats helper is available.
@@ -3732,7 +3874,9 @@ json.dump({'status': 'pass', 'source': 'deterministic-post-content-repair',
        #   exit 2 → tool error (missing threat-model.md, unreadable
        #            plan). Log and fall through to the existing path so
        #            the heavy agent can still try.
-       python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_repair_plan.py "$OUTPUT_DIR"
+       # Capture the JSON receipt instead of printing it into the main session;
+       # the repair loop uses the exit code for its next decision.
+       APPLIER_OUTPUT=$(python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_repair_plan.py "$OUTPUT_DIR")
        APPLIER_RC=$?
        if APPLIER_RC == 0:
            # Refresh the gate so the next loop turn observes the fix.
@@ -4264,7 +4408,7 @@ scan-friendly summary in this fixed order:
 7. `Threat Delta` — top 3 new, resolved, and changed threats when available
 8. `Outputs` — artifact paths (yaml conditional on `--write-yaml`; sarif conditional on file presence)
 9. Conditional health / run-issues / security notice blocks
-10. `Next Steps` — 1–5 conditional action lines
+10. `Next Steps` — 1–5 conditional action lines, plus a fixed unnumbered footer pointing at `/appsec-advisor:ask-threat-model` with example questions
 11. `Run Statistics` — timing headline (net compute / idle / wall) always; per-stage durations (from `.stage-stats.jsonl`), agent roster, and tokens + cost only when `--verbose` is passed
 12. `Logs`
 
@@ -4416,37 +4560,14 @@ rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 
 `post-qa` runs the Phase 11 whitelist plus QA-specific artifacts (`.qa-status.json`, empty `.qa-repair-plan.json`, `.fragments/`). `post-architect` additively removes architect-review status files. Exit code 1 (safety-gate block) is silenced with `|| true` — the summary has already been printed. Both `runtime_cleanup.py` invocations are skipped under `--keep-runtime-files` so the kept artifacts survive, matching the conditional `Final summary` task label (no "+ cleanup" advertised when no cleanup runs).
 
-### Reader-facing section renumbering (display-only, §7→§6)
+### Section numbering (native, contiguous)
 
-Runs **after** the three read-only gates (`final_structure`, `assert_completeness`,
-`section_integrity`) have validated the canonical **§7-numbered** document, and
-**before** the PDF / HTML / slug deliverables are produced — so every delivered
-artifact shows contiguous **§1–§10** numbering (the retired-§6 gap is closed:
-Security Architecture becomes §6, Findings §7, …) and the now-inaccurate
-"numbering is non-contiguous" note is dropped.
-
-**The persisted `threat-model.md` ends at §6; a §7 mirror serves the machinery.**
-`renumber_sections_display.py` relabels headings/anchors/TOC/`§N` in place, so the
-reader-facing `threat-model.md` (and every derived deliverable) shows contiguous
-§1–§10. But two internal consumers still key on `## 7.`: the composer's quick-depth
-§7 carry-forward (`compose_threat_model.py` → `_extract_section_verbatim`, fed by
-`snapshot_preserved_sections.py`) and the qa contract's literal §7.x titles. So
-**before** renumbering we copy the §7 document to
-`.appsec-cache/threat-model.canonical7.md` — a mirror `snapshot_preserved_sections.py`
-prefers as its `prior-report.md` source, and which `runtime_cleanup.py` never
-touches (`.appsec-cache/` is in its NEVER set). The primary `threat-model.md` is
-then renumbered to §6 and **not** restored. qa has already run against the §7
-document at this point (this step is after all gates), so the §6 relabel is safe.
-It is a **no-op** at `--quick` depth when §7 was never rendered (the tool's
-canonical-marker guard skips).
-
-```bash
-mkdir -p "$OUTPUT_DIR/.appsec-cache"
-cp "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR/.appsec-cache/threat-model.canonical7.md"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/renumber_sections_display.py" \
-    "$OUTPUT_DIR/threat-model.md" \
-    2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
-```
+The document is numbered natively contiguously by the contract (2026-07-15 reorder:
+§6 Security Architecture, §7 Weakness Register, §8 Findings, …). No last-mile
+renumbering pass runs — headings, anchors, TOC, and `§N` prose already carry their
+final numbers straight out of `compose_threat_model.render()`. The former
+display-only renumber pass and its cached §7-numbered mirror were retired once the
+contract owned contiguous numbering.
 
 ### PDF Export (only when `WRITE_PDF=true`)
 
@@ -4502,34 +4623,48 @@ fi
 
 ### Slug stamping (only when `slug` is set)
 
-Runs **last** — after the PDF / HTML exports — so the stamped copy set includes every produced deliverable. When the resolved config carries a non-null `slug` (from `--slug [<value>]`), copy the canonical deliverables to a postfix-stamped, copy-ready set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json`, whichever exist), with copied figure references inside the copied Markdown repointed at the stamped SVGs. The canonical `threat-model.*` files are left untouched (the pipeline, gates, and incremental baseline depend on them). The slug was already resolved (random when bare `--slug`, explicit otherwise) by `resolve_config.py`, so the skill just reads it.
+**The authoritative stamp is deterministic and already ran.** The mandatory
+`orchestration_controller.py next` finalize gate stamps the core deliverables
+(`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.sarif.json` / `pentest-tasks-<slug>.yaml`) the moment
+it returns `action=complete` — see `_stamp_if_configured`. That gate reads the
+durable on-disk `.skill-config.json`, so the stamp survives a context compaction
+that would wipe the in-memory `$SLUG` binding (2026-07-15 juice-shop: a
+compaction-resumed run skipped this trailing block entirely and shipped no
+stamped set). This block is therefore a **best-effort top-up** whose only unique
+job is stamping the PDF / HTML, which the skill exports *after* the `next` gate.
+
+Runs **last** — after the PDF / HTML exports — so the stamped copy set includes every produced deliverable. When the resolved config carries a non-null `slug` (from `--slug [<value>]`), copy the canonical deliverables to a postfix-stamped, copy-ready set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json` / `pentest-tasks-<slug>.yaml`, whichever exist), with copied figure and pentest-tasks references inside the copied Markdown repointed at the stamped files. The canonical `threat-model.*` files are left untouched (the pipeline, gates, and incremental baseline depend on them). `stamp_threat_model.py` is idempotent per slug, so re-stamping here after the `next` gate never conflicts.
 
 **Non-fatal** — a copy failure must not fail the assessment; the canonical model is already complete.
 
 ```bash
-# SLUG is already bound from dispatch_values (SKILL-full-runtime.md §3 alias table).
-# Do NOT re-read it from .skill-config.json here — that file is deleted by
-# runtime_cleanup.py --stage post-qa (Always-cleanup list, line 32/129) which runs
-# in "Post-summary cleanup" above, before this block. Re-reading it always yields ""
-# and silently skips the stamp (the FileNotFoundError is swallowed by 2>/dev/null).
-if [ -n "$SLUG" ]; then
+# Prefer the in-memory SLUG alias (bound from dispatch_values, SKILL-full-runtime.md
+# §3). Fall back to the durable on-disk config when the alias was lost (a
+# compaction-resumed orchestrator no longer carries it) — .skill-config.json is
+# still present under --keep-runtime-files, and in the non-keep case the `next`
+# gate already produced the core stamped set BEFORE post-summary cleanup deleted
+# the config, so this fallback only ever adds the PDF/HTML.
+STAMP_SLUG="$SLUG"
+if [ -z "$STAMP_SLUG" ] && [ -f "$OUTPUT_DIR/.skill-config.json" ]; then
+    STAMP_SLUG=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("slug") or "")' \
+        "$OUTPUT_DIR/.skill-config.json" 2>/dev/null || echo "")
+fi
+if [ -n "$STAMP_SLUG" ]; then
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/stamp_threat_model.py" \
-        --output-dir "$OUTPUT_DIR" --slug "$SLUG" \
+        --output-dir "$OUTPUT_DIR" --slug "$STAMP_SLUG" \
         2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
 fi
 ```
 
 `stamp_threat_model.py` is idempotent per slug (a re-run with the same slug overwrites its own stamped set, never the canonical files) and lists the created paths. `scripts/runtime_cleanup.py` treats `threat-model-*` stamped deliverables the same as the canonical ones (never touched).
 
-### §7 mirror retained (no restore)
+### Carry-forward source (next run)
 
-The persisted `threat-model.md` intentionally stays at §6 — that is the
-reader-facing deliverable. The §7 document is preserved at
-`.appsec-cache/threat-model.canonical7.md` (written just before the renumber
-above) purely for the next run's §7 carry-forward / snapshot preservation and for
-qa contract matching; `snapshot_preserved_sections.py` prefers it as the
-`prior-report.md` source and `runtime_cleanup.py` never deletes `.appsec-cache/`.
-No restore step runs.
+The persisted `threat-model.md` carries its final native numbering and is the
+reader-facing deliverable. For the next run's Security-Architecture carry-forward /
+snapshot preservation, `snapshot_preserved_sections.py` reads `threat-model.md`
+directly as the `prior-report.md` source; `runtime_cleanup.py` never deletes
+`.appsec-cache/`. No mirror copy and no restore step runs.
 
 **Explicit success exit.** After the slug-stamping block (or after the cleanup block when both `WRITE_PDF=false` and `WRITE_HTML=false`) emit an unambiguous success exit so that no subsequent code path can accidentally run:
 

@@ -59,6 +59,7 @@ def _threat(**overrides):
         "evidence": {"file": "src/auth/login.py", "line": 42},
         "source": "stride",
         "architectural_violation": False,
+        "threat_category_id": "TH-01",
     }
     base.update(overrides)
     return base
@@ -551,6 +552,8 @@ class TestDecisionApplication:
         assert len(result) == 1
         assert "merged_from" in result[0]
         assert "b" in result[0]["merged_from"]
+        assert result[0]["instance_count"] == 2
+        assert {instance["file"] for instance in result[0]["instances"]} == {"a.py", "b.py"}
 
     def test_consolidate_promotes_arch_violation(self, mt):
         threats = [
@@ -630,7 +633,7 @@ class TestDecisionApplication:
 
 class TestEndToEnd:
     def test_collect_produces_candidates_file(self, mt, tmp_path):
-        _write_stride(tmp_path, "auth", [_threat()])
+        _write_stride(tmp_path, "auth", [_threat(scenario="Attacker reaches the first unsafe SQL sink.")])
         _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
 
         rc = mt.main(["collect", "--output-dir", str(tmp_path)])
@@ -639,6 +642,11 @@ class TestEndToEnd:
         assert cand["threat_count_raw"] == 2
         assert cand["candidate_group_count"] == 1
         assert cand["auto_decision_count"] == 0
+        member = next(entry for entry in cand["candidate_groups"][0]["members"] if entry["component_id"] == "auth")
+        assert member["scenario_excerpt"] == "Attacker reaches the first unsafe SQL sink."
+        assert member["cwe"] == "CWE-89"
+        assert member["source"] == "stride"
+        assert member["instances"] == [{"file": "src/auth/login.py", "line": 42, "severity": "High"}]
 
     def test_collect_records_auto_decisions_and_removes_agent_candidates(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat(threat_category_id="TH-01")])
@@ -673,11 +681,14 @@ class TestEndToEnd:
         (tmp_path / ".merge-decisions.json").write_text(
             json.dumps(
                 {
-                    "version": 1,
+                    "version": 2,
+                    "generated_at": "2026-07-13T00:00:00Z",
+                    "model": "sonnet",
                     "decisions": [
                         {
                             "group_id": gid,
                             "action": "merge",
+                            "member_indices": [0, 1],
                             "merge_target_index": 0,
                             "rationale": "duplicate",
                         }
@@ -690,6 +701,24 @@ class TestEndToEnd:
         merged = json.loads((tmp_path / ".threats-merged.json").read_text())
         assert len(merged["threats"]) == 1
         assert merged["threats"][0]["t_id"] == "T-001"
+
+    def test_finalize_accepts_legacy_v1_decision(self, mt, tmp_path):
+        _write_stride(tmp_path, "auth", [_threat()])
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
+        mt.main(["collect", "--output-dir", str(tmp_path)])
+        gid = json.loads((tmp_path / ".merge-candidates.json").read_text())["candidate_groups"][0]["group_id"]
+        (tmp_path / ".merge-decisions.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "decisions": [{"group_id": gid, "action": "merge", "merge_target_index": 0}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert len(merged["threats"]) == 1
 
     def test_collect_missing_dir_returns_error(self, mt, tmp_path):
         rc = mt.main(["collect", "--output-dir", str(tmp_path / "does-not-exist")])
@@ -831,6 +860,53 @@ class TestConsolidateByGroup:
         assert s["risk"] == "Critical"  # survivor = highest-risk member
         assert "lib/insecurity.ts" in s["affected_files"]
         assert "routes/chatbot.ts" in s["affected_files"]
+
+    def test_path_traversal_splits_read_vs_upload(self, mt):
+        # CWE-22 spans two sink families with different fixes: a READ traversal
+        # (open/serve an attacker-chosen path) and an UPLOAD traversal (store a
+        # file under an attacker-chosen original filename). They must NOT fold —
+        # the upload weakness would inherit the read finding's title/fix/severity.
+        read = _threat(
+            cwe="CWE-22",
+            stride="Information Disclosure",
+            risk="Critical",
+            title="Path Traversal via File Name Parameter — Unauthenticated",
+            evidence={"file": "serverside/FileReadController.java", "line": 19},
+        )
+        read["component_id"] = "sb"
+        upload = _threat(
+            cwe="CWE-22",
+            stride="Elevation of Privilege",
+            risk="High",
+            title="Path Traversal via File Upload — Original Filename Used Directly",
+            evidence={"file": "web/BusinessFileStorage.java", "line": 17},
+        )
+        upload["component_id"] = "sb"
+        out = mt._consolidate_by_group([read, upload])
+        assert len(out) == 2, "read + upload traversal must stay separate findings"
+
+    def test_path_traversal_reads_still_consolidate(self, mt):
+        # Two READ traversals in one component DO fold — the desired class rollup
+        # is preserved; only the read/upload split is new.
+        r1 = _threat(
+            cwe="CWE-22",
+            stride="Information Disclosure",
+            risk="High",
+            title="Path Traversal via name parameter",
+            evidence={"file": "a/ReadOne.java", "line": 3},
+        )
+        r1["component_id"] = "sb"
+        r2 = _threat(
+            cwe="CWE-22",
+            stride="Information Disclosure",
+            risk="High",
+            title="Path Traversal via path parameter",
+            evidence={"file": "a/ReadTwo.java", "line": 9},
+        )
+        r2["component_id"] = "sb"
+        out = mt._consolidate_by_group([r1, r2])
+        assert len(out) == 1
+        assert out[0]["instance_count"] == 2
 
     def test_idor_consolidates_cross_component(self, mt):
         # CWE-639 joins the idor-object-authz group (cross-component): broken
@@ -1345,6 +1421,12 @@ class TestSourceAuthFindingToThreat:
         assert out["stride"] == "Tampering"
         assert out["cwe"] == ""
 
+    def test_crypto_checks_preserve_an_explicit_mechanism(self, mt):
+        weak_primitive = mt._source_auth_finding_to_threat({"check_id": "CRYPTO-001"})
+        homegrown = mt._source_auth_finding_to_threat({"check_id": "CRYPTO-HOMEGROWN-XOR"})
+        assert weak_primitive["mechanism_id"] == "weak-cryptographic-primitives"
+        assert homegrown["mechanism_id"] == "application-owned-cryptography"
+
 
 class TestLoadSourceAuthFindings:
     def test_missing_file_empty(self, mt, tmp_path):
@@ -1676,12 +1758,60 @@ class TestApplyDecisionsBranches:
         out = mt._apply_decisions(threats, [{"group_id": gid, "action": "keep", "keep_indices": "nope"}])
         assert len(out) == 2
 
-    def test_keep_drops_unlisted(self, mt):
-        # lines 1389-1391: keep_indices keeps only listed positions.
+    def test_keep_cannot_drop_unlisted(self, mt):
+        # A legacy partial keep is invalid: keep is a no-op, never a deletion.
         threats = self._two_group()
         gid = self._gid(mt, threats)
         out = mt._apply_decisions(threats, [{"group_id": gid, "action": "keep", "keep_indices": [0]}])
-        assert len(out) == 1
+        assert len(out) == 2
+
+    def test_merge_across_primary_categories_is_rejected(self, mt):
+        threats = self._two_group()
+        threats[1]["threat_category_id"] = "TH-02"
+        gid = self._gid(mt, threats)
+        out = mt._apply_decisions(threats, [{"group_id": gid, "action": "merge", "merge_target_index": 0}])
+        assert len(out) == 2
+
+    def test_partial_merge_preserves_unrelated_member_and_metadata(self, mt):
+        threats = [
+            {
+                "component_id": "a",
+                **_threat(
+                    evidence={"file": "a.py", "line": 1},
+                    scenario="The first route passes attacker input to the same unsafe helper.",
+                    mitigation_ids=["M-001"],
+                ),
+            },
+            {
+                "component_id": "b",
+                **_threat(
+                    evidence={"file": "b.py", "line": 2},
+                    scenario="The second route passes attacker input to the same unsafe helper.",
+                    mitigation_ids=["M-002"],
+                ),
+            },
+            {
+                "component_id": "c",
+                **_threat(evidence={"file": "c.py", "line": 3}, scenario="A distinct SQL execution sink."),
+            },
+        ]
+        gid = self._gid(mt, threats)
+        out = mt._apply_decisions(
+            threats,
+            [
+                {"group_id": gid, "action": "merge", "member_indices": [0, 1], "merge_target_index": 0},
+                {"group_id": gid, "action": "keep", "member_indices": [2]},
+            ],
+        )
+        assert len(out) == 2
+        merged = next(threat for threat in out if threat["component_id"] == "a")
+        assert merged["instance_count"] == 2
+        assert {instance["scenario"] for instance in merged["instances"]} == {
+            "The first route passes attacker input to the same unsafe helper.",
+            "The second route passes attacker input to the same unsafe helper.",
+        }
+        assert merged["mitigation_ids"] == ["M-001", "M-002"]
+        assert any(threat["component_id"] == "c" for threat in out)
 
     def test_consolidate_bad_target_skipped(self, mt):
         # line 1396: consolidate out-of-range target → continue.
@@ -1709,7 +1839,13 @@ class TestCmdCollectFinalizeBranches:
             json.dumps({"findings": [{"title": "CORS", "file": "ci.yml", "line": 1}]}), encoding="utf-8"
         )
         (tmp_path / ".source-auth-findings.json").write_text(
-            json.dumps({"findings": [{"check_id": "AUTHZ-002", "title": "IDOR", "file": "r.ts", "line": 2}]}),
+            json.dumps(
+                {
+                    "findings": [
+                        {"check_id": "AUTHZ-002", "title": "IDOR", "file": "r.ts", "line": 2, "cwe": ["CWE-862"]}
+                    ]
+                }
+            ),
             encoding="utf-8",
         )
         rc = mt.main(["collect", "--output-dir", str(tmp_path)])
@@ -1718,6 +1854,8 @@ class TestCmdCollectFinalizeBranches:
         sources = {t.get("source") for t in cand["threats"]}
         assert "config-scan" in sources
         assert "source-scan" in sources
+        source_threat = next(t for t in cand["threats"] if t.get("source") == "source-scan")
+        assert source_threat["threat_category_id"] == "TH-06"
 
     def test_finalize_missing_candidates(self, mt, tmp_path, capsys):
         # lines 1518-1519: no .merge-candidates.json → error.
@@ -1747,7 +1885,7 @@ class TestCmdCollectFinalizeBranches:
         cand = json.loads((tmp_path / ".merge-candidates.json").read_text())
         gid = next(g["group_id"] for g in cand["candidate_groups"])
         (tmp_path / ".merge-decisions.json").write_text(
-            json.dumps({"decisions": [{"group_id": gid, "action": "keep", "keep_indices": [0]}]}),
+            json.dumps({"decisions": [{"group_id": gid, "action": "merge", "merge_target_index": 0}]}),
             encoding="utf-8",
         )
         rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
@@ -1762,6 +1900,27 @@ class TestCmdCollectFinalizeBranches:
         (tmp_path / ".merge-decisions.json").write_text(json.dumps([]), encoding="utf-8")
         rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
         assert rc == 0
+
+    def test_finalize_rejects_invalid_v2_decisions_without_dropping_findings(self, mt, tmp_path, capsys):
+        _write_stride(tmp_path, "a", [_threat(evidence={"file": "a.py", "line": 1})])
+        _write_stride(tmp_path, "b", [_threat(evidence={"file": "b.py", "line": 2})])
+        mt.main(["collect", "--output-dir", str(tmp_path)])
+        gid = json.loads((tmp_path / ".merge-candidates.json").read_text())["candidate_groups"][0]["group_id"]
+        (tmp_path / ".merge-decisions.json").write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "generated_at": "now",
+                    "model": "sonnet",
+                    "decisions": [{"group_id": gid, "action": "merge", "member_indices": [0, 1]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert len(merged["threats"]) == 2
+        assert "ignoring invalid .merge-decisions.json" in capsys.readouterr().err
 
     def test_finalize_attack_surface_coverage_gap(self, mt, tmp_path):
         # lines 1562-1586: yaml present, threat has id not covered → gaps file.
@@ -1806,3 +1965,202 @@ class TestAutoRepairInvalidJSON:
         # file was rewritten to valid JSON
         assert "\\!" not in bad.read_text()
         assert "auto-repaired" in capsys.readouterr().err
+
+
+class TestWeaknessRegister:
+    """P1 weakness-class evidence model — build_weakness_register reconciler
+    (proposal §4a/§4b/§4d-bis). Folds confirmed findings + practice sites +
+    arch design signals into one weakness heading per class."""
+
+    def _confirmed(self, tid, cwe, comp, risk, file):
+        return {
+            "t_id": tid,
+            "source": "source-scan",
+            "cwe": cwe,
+            "component_id": comp,
+            "risk": risk,
+            "evidence": {"file": file, "line": 10},
+        }
+
+    def test_fold_two_sinks_plus_design_signal(self, mt):
+        # §4b: ≥1 proven + absent control → ONE design weakness, sinks as instances.
+        threats = [
+            self._confirmed("T-001", "CWE-89", "login", "Critical", "routes/login.ts"),
+            self._confirmed("T-002", "CWE-89", "search", "High", "routes/search.ts"),
+        ]
+        design = [
+            {
+                "weakness_class": "injection",
+                "cwe": "CWE-89",
+                "statement": "SQL built by concatenation; no parametrized layer.",
+                "absent_control_signal": [{"pattern": "sequelize", "search_paths": ["routes"], "hit_count": 0}],
+            }
+        ]
+        w = mt.build_weakness_register(threats, design)
+        assert len(w) == 1
+        wk = w[0]
+        assert wk["weakness_class"] == "injection"
+        assert wk["kind"] == "design"
+        assert len(wk["instances"]) == 2
+        assert {i["id"] for i in wk["instances"]} == {"T-001", "T-002"}
+        assert wk["severity_basis"] == "confirmed"
+        assert wk["severity"] == "Critical"  # max instance risk
+        assert "absent_control_signal" in wk["observable_backing"]
+        assert wk["id"].startswith("W-")
+
+    def test_confirmed_only_class_is_not_a_weakness(self, mt):
+        # A concrete exploit is a finding, but does not independently prove a
+        # systemic architecture mechanism. The weakness needs observed practice
+        # or an absent-control signal (I2).
+        threats = [self._confirmed("T-001", "CWE-89", "login", "High", "a.ts")]
+        assert mt.build_weakness_register(threats, None) == []
+
+    def test_pervasive_homegrown_design_risk_can_be_critical(self, mt):
+        # §4e: pervasive (≥2 components) + home-grown + no central control →
+        # design-risk Critical even with zero confirmed instances.
+        practice = [
+            {
+                "source": "stride",
+                "cwe": "CWE-327",
+                "mechanism_id": "weak-cryptographic-primitives",
+                "component_id": "a",
+                "evidence": {"file": "a.ts", "line": 1},
+                "evidence_tier": "insecure-practice",
+            },
+            {
+                "source": "stride",
+                "cwe": "CWE-327",
+                "mechanism_id": "weak-cryptographic-primitives",
+                "component_id": "b",
+                "evidence": {"file": "b.ts", "line": 2},
+                "evidence_tier": "insecure-practice",
+            },
+        ]
+        design = [
+            {
+                "weakness_class": "weak_crypto",
+                "mechanism_id": "application-owned-cryptography",
+                "implementation_strategy": "home-grown",
+                "severity": "Medium",
+                "absent_control_signal": [{"pattern": "argon2", "hit_count": 0}],
+                "affected_components": ["a", "b"],
+            }
+        ]
+        # Application-owned cryptography and weak selected primitives are
+        # distinct mechanisms: one addresses protocol/key ownership, the other
+        # the algorithm choice. They must not collapse just because they share a
+        # CWE family.
+        w = mt.build_weakness_register(practice, design)
+        assert len(w) == 2
+        by_mechanism = {item["mechanism_id"]: item for item in w}
+        owned = by_mechanism["application-owned-cryptography"]
+        assert owned["severity"] == "Critical"
+        assert owned["severity_basis"] == "design-risk"
+        primitives = by_mechanism["weak-cryptographic-primitives"]
+        assert len(primitives["observable_backing"]["practice_evidence"]) == 2
+
+    def test_isolated_practice_is_implementation_kind(self, mt):
+        # Single component, no absent-control signal → isolated implementation
+        # weakness folding the practice sites (§4d-bis anti-explosion).
+        practice = [
+            {
+                "source": "stride",
+                "cwe": "CWE-89",
+                "component_id": "seeder",
+                "evidence": {"file": "seed.ts", "line": i},
+                "evidence_tier": "insecure-practice",
+            }
+            for i in range(5)
+        ]
+        w = mt.build_weakness_register(practice, None)
+        assert len(w) == 1
+        assert w[0]["kind"] == "implementation"
+        assert len(w[0]["observable_backing"]["practice_evidence"]) == 5
+
+    def test_database_mechanism_does_not_absorb_other_injection_cwes(self, mt):
+        """A mechanism-level weakness is not a catch-all CWE-class bucket."""
+        threats = [
+            self._confirmed("T-001", "CWE-89", "api", "High", "routes/search.ts"),
+            self._confirmed("T-002", "CWE-611", "import", "High", "routes/import.ts"),
+        ]
+        design = [
+            {
+                "mechanism_id": "database-query-concatenation",
+                "weakness_class": "injection",
+                "cwe": "CWE-89",
+                "statement": "Database queries concatenate application values.",
+                "absent_control_signal": [{"pattern": "parameterized", "hit_count": 0}],
+            }
+        ]
+        weaknesses = mt.build_weakness_register(threats, design)
+        assert len(weaknesses) == 1
+        weakness = weaknesses[0]
+        assert weakness["title"] == "Database access relies on concatenated queries"
+        assert weakness["mechanism_id"] == "database-query-concatenation"
+        assert [item["id"] for item in weakness["instances"]] == ["T-001"]
+
+    def test_bff_architecture_mechanism_needs_no_exploit(self, mt):
+        threats = [
+            {
+                "t_id": "T-001",
+                "source": "architectural-anti-pattern",
+                "title": "SPA without BFF",
+                "cwe": "CWE-922",
+                "component_id": "web",
+                "risk": "High",
+                "evidence": {"file": "src/auth.ts", "line": 12},
+            }
+        ]
+        weaknesses = mt.build_weakness_register(threats)
+        assert len(weaknesses) == 1
+        weakness = weaknesses[0]
+        assert weakness["title"] == "Browser clients access privileged APIs without a BFF"
+        assert weakness["severity_basis"] == "design-risk"
+        assert weakness.get("instances") in (None, [])
+        assert weakness["observable_backing"]["absent_control_signal"][0]["file"] == "src/auth.ts"
+
+    def test_known_vuln_becomes_vulnerability_management_weakness(self, mt):
+        threats = [
+            {
+                "t_id": "T-001",
+                "source": "known-vuln",
+                "title": "Dependency version is affected by an advisory",
+                "cwe": "CWE-89",
+                "component_id": "build",
+                "risk": "High",
+                "evidence": {"file": "package-lock.json", "line": 42},
+            }
+        ]
+        weaknesses = mt.build_weakness_register(threats)
+        assert len(weaknesses) == 1
+        weakness = weaknesses[0]
+        assert weakness["weakness_class"] == "outdated_deps"
+        assert weakness["title"] == "Vulnerability management does not prevent known-vulnerable dependencies"
+        assert weakness["instances"][0]["id"] == "T-001"
+
+
+def test_load_design_signals_fallback_generates_from_coverage(mt, tmp_path):
+    # The Phase-9 agent's `emit-design-signals` step is a soft instruction that
+    # is sometimes skipped; when .arch-design-signals.json is absent,
+    # _load_design_signals must fall back to generating signals from
+    # .architecture-coverage.json so architectural design gaps still fold into
+    # the weakness register.
+    coverage = {
+        "version": 1,
+        "threat_hypotheses": [
+            {
+                "hypothesis_id": "ARCH-HYP-INPUT-001",
+                "rule_id": "ARCH-INPUT-001",
+                "cwe": "CWE-20",
+                "architectural_theme": "InputValidation",
+                "proof_state": "control-derived",
+                "generic_threat_title": "Injection through missing centralized input validation",
+                "weak_or_missing_controls": ["Schema Validation"],
+            }
+        ],
+    }
+    (tmp_path / ".architecture-coverage.json").write_text(json.dumps(coverage))
+    assert not (tmp_path / ".arch-design-signals.json").exists()
+    signals = mt._load_design_signals(tmp_path)
+    assert len(signals) == 1
+    assert signals[0]["weakness_class"] == "injection"

@@ -26,6 +26,8 @@
 #                              `call`  : match_line until balanced close-paren
 #                                        or counter_window lines (whichever first)
 #   counter_patterns         — list of regexes; ANY match suppresses the finding
+#   required_context_patterns — list of regexes; at least one must match in the
+#                               configured scope before the finding is emitted
 #   severity_if_violated     — Critical | High | Medium | Low
 #   cwe                      — primary CWE
 #   finding_type             — FT-NNN from finding-types.yaml
@@ -720,3 +722,805 @@ checks:
       internal services, cloud metadata endpoints, or the loopback interface
       — pivoting past the network perimeter the application sits behind.
     remediation: "Validate the URL against a strict allowlist of hosts/schemes, resolve and block private/link-local ranges, and disable redirects to internal targets."
+
+  - id: INJ-004
+    name: "Path traversal — filesystem access from request input"
+    description: >
+      A filesystem call (fs.readFile / createReadStream / sendFile / path.join)
+      is built from req.body / req.query / req.params with no canonicalization,
+      letting `../` sequences escape the intended directory.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    pattern: '(?is)\b(?:fs\.(?:readFile|readFileSync|createReadStream|readdir\w*)|res\.sendFile|res\.download|path\.(?:join|resolve))\s*\([^)]*\breq\.(?:body|query|params)\b'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(path\.basename|sanitize|normalize\w*|allowlist|whitelist|isAbsolute)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: >
+      A request-controlled path with `../` can read arbitrary files
+      (/etc/passwd, source, secrets) or write outside the intended root.
+    remediation: "Resolve the path, assert it stays within an allowed base directory (path.resolve + startsWith), and use path.basename on user input."
+
+  - id: INJ-005
+    name: "XXE — XML parsed with external entities enabled"
+    description: >
+      An XML parser is configured to resolve external entities (noent/external
+      general entities), allowing an attacker's DOCTYPE to read local files or
+      trigger SSRF via entity expansion.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    pattern: "(?is)(noent\\s*:\\s*true|noEnt\\s*:\\s*true|resolveExternals\\s*:\\s*true|externalEntities\\s*:\\s*true|libxmljs\\.parseXml\\w*\\([^)]*noent)"
+    counter_scope: line
+    counter_window: 0
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-611
+    finding_type: FT-004
+    breach_vector: "Internet Anon"
+    rationale: >
+      External-entity resolution turns XML input into a file-read / SSRF
+      primitive (classic `file:///etc/passwd` and internal-URL fetches).
+    remediation: "Disable DTD / external-entity processing (noent:false, resolveExternals:false) or use a parser that rejects DOCTYPE."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase A) — Java + Python injection sinks.
+  # Same CWEs as INJ-001/002 so they fold via consolidation-groups
+  # (sql-injection / command-injection -per-component). Node patterns do
+  # not match these languages.
+  # ===================================================================
+
+  - id: INJ-JAVA-001
+    name: "SQL injection via string-concatenated query — Java"
+    description: >
+      A JDBC/JPA query built by concatenating (`+`) request-derived data into a
+      SQL string (createQuery / createNativeQuery / prepareStatement /
+      executeQuery) instead of a bound parameter.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '(?is)\.(createQuery|createNativeQuery|prepareStatement|executeQuery|executeUpdate|execute)\s*\(\s*"[^"]*\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\b[^"]*"\s*\+'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '\.setParameter\(|\bPreparedStatement\b[^\n]*\?'
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: >
+      Concatenated request data in a SQL string lets an attacker alter the query
+      (auth bypass, data exfiltration, UNION reads).
+    remediation: "Use bound parameters (setParameter / ? placeholders / Spring Data derived queries); never concatenate request data into SQL."
+
+  - id: INJ-JAVA-002
+    name: "Command injection — Java"
+    description: >
+      `Runtime.getRuntime().exec(...)` or `new ProcessBuilder(...)` invoked with a
+      concatenated / request-derived argument runs an attacker-influenced command.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '(?:Runtime\.getRuntime\(\)\.exec|new\s+ProcessBuilder)\s*\([^)]*\+'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "Request data concatenated into a shell/exec argument yields arbitrary command execution."
+    remediation: "Avoid the shell; pass a fixed argv array with validated, allow-listed arguments."
+
+  - id: INJ-PY-001
+    name: "SQL injection via string-formatted query — Python"
+    description: >
+      A DB cursor / ORM raw query built with an f-string, `%`, `+`, or `.format()`
+      of request data (cursor.execute / .raw / .extra) instead of a bound
+      parameter. The safe `execute("… %s", (val,))` placeholder form does NOT
+      match (the `%` there is inside the literal).
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/migrations/**",
+       "**/.venv/**", "**/venv/**"]
+    pattern: '(?is)\.(execute|executemany|raw|extra)\s*\(\s*(?:f["'']|["''][^"'']*["'']\s*(?:%|\+|\.format\s*\())'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: >
+      f-string / % / + / .format interpolation of request data into SQL lets an
+      attacker rewrite the query.
+    remediation: "Use parameterized queries: cursor.execute(sql, params) with %s / :name placeholders; never interpolate."
+
+  - id: INJ-PY-002
+    name: "Command injection — Python"
+    description: >
+      `os.system` / `os.popen` / `subprocess(..., shell=True)` invoked with
+      request-derived input runs an attacker-influenced shell command.
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/.venv/**", "**/venv/**"]
+    pattern: '(?is)os\.system\s*\(|os\.popen\s*\(|subprocess\.(?:call|run|Popen|check_output|check_call)\s*\([^)]*shell\s*=\s*True'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "A shell command built from request data yields arbitrary command execution."
+    remediation: "Use subprocess with a fixed argv list and shell=False; validate/allow-list any dynamic argument."
+
+  - id: INJ-JAVA-003
+    name: "SSRF — outbound request to a concatenated URL — Java"
+    description: >
+      A RestTemplate / WebClient / URL.openConnection call whose target URL is
+      built by concatenation (`+`), i.e. from dynamic (often request) data.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '(?:\.(?:getForObject|getForEntity|exchange|execute)|new\s+URL|\.openConnection)\s*\([^)]*\+'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|whitelist|isAllowed|URI\.create\("https?://[a-z])'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-JAVA-004
+    name: "Path traversal — filesystem access from a concatenated path — Java"
+    description: >
+      A File / Paths.get / FileInputStream built by concatenation (`+`) with no
+      canonicalization, letting `../` escape the intended directory.
+    file_patterns: ["**/*.java"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*Test.java", "**/*Tests.java", "**/target/**", "**/build/**"]
+    pattern: '(?:new\s+File|Paths\.get|new\s+FileInputStream|new\s+FileReader)\s*\([^)]*\+'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(getCanonicalPath|normalize|startsWith|FilenameUtils)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path with `../` can read/write arbitrary files."
+    remediation: "Resolve + canonicalize the path and assert it stays within an allowed base directory."
+
+  - id: INJ-PY-003
+    name: "SSRF — outbound request to a formatted URL — Python"
+    description: >
+      requests.* / urlopen called with an f-string or concatenated URL, i.e.
+      built from dynamic (often request) data.
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/.venv/**", "**/venv/**"]
+    pattern: '(?is)(?:requests\.(?:get|post|put|delete|head|request)|urlopen|urllib\.request\.urlopen)\s*\(\s*(?:f["'']|["''][^"'']*["'']\s*(?:%|\+|\.format\s*\()|[A-Za-z_][\w.]*\s*\+)'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|whitelist|is_allowed|urlparse)\b'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-PY-004
+    name: "Path traversal — filesystem access from a formatted path — Python"
+    description: >
+      open() / os.path.join / Path() built with an f-string or concatenation and
+      no canonicalization, letting `../` escape the intended directory.
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns:
+      ["**/test/**", "**/tests/**", "**/*_test.py", "**/test_*.py", "**/.venv/**", "**/venv/**"]
+    pattern: '(?is)(?:open|os\.path\.join|Path)\s*\(\s*(?:f["''][^"'']*\{|[A-Za-z_][\w.]*\s*\+|["''][^"'']*["'']\s*\+)'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(basename|safe_join|abspath|realpath|startswith|secure_filename)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path with `../` can read/write arbitrary files."
+    remediation: "Canonicalize (os.path.realpath) and assert the result stays within an allowed base directory."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase B) — Go injection sinks.
+  # ===================================================================
+
+  - id: INJ-GO-001
+    name: "SQL injection via formatted query — Go"
+    description: >
+      A database/sql Query/Exec built with fmt.Sprintf or `+` concatenation
+      instead of `$1`/`?` bind parameters.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '(?is)\.(?:Query|QueryRow|QueryContext|QueryRowContext|Exec|ExecContext)\s*\(\s*(?:[A-Za-z_][\w.]*\s*,\s*)?(?:fmt\.Sprintf|["\x60][^"\x60]*["\x60]\s*\+)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: "Formatted/concatenated request data in SQL lets an attacker alter the query."
+    remediation: "Use bind parameters ($1 / ? placeholders) with the args variadic; never Sprintf into SQL."
+
+  - id: INJ-GO-002
+    name: "Command injection — Go"
+    description: >
+      `exec.Command` invoked via a shell (`sh -c`) or with a concatenated
+      argument runs an attacker-influenced command.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '(?is)exec\.Command(?:Context)?\s*\(\s*(?:"(?:sh|bash|/bin/sh|cmd)"[^)]*"-c"|[^)]*\+)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "A shell command built from request data yields arbitrary command execution."
+    remediation: "Invoke the binary directly with a fixed argv; never pass request data to `sh -c`."
+
+  - id: INJ-GO-003
+    name: "SSRF — outbound request to a formatted URL — Go"
+    description: >
+      net/http Get/Post/NewRequest called with a fmt.Sprintf or concatenated URL
+      built from dynamic (often request) data.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '(?is)(?:http\.(?:Get|Post|Head)|http\.NewRequest(?:WithContext)?|\.Get)\s*\([^)]*(?:fmt\.Sprintf|\+)'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|allowedHosts|url\.Parse)\b'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-GO-004
+    name: "Path traversal — filesystem access from a formatted path — Go"
+    description: >
+      os.Open / os.ReadFile / ioutil.ReadFile / filepath.Join built by
+      concatenation with no cleaning, letting `../` escape the intended directory.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: '(?is)(?:os\.Open|os\.ReadFile|ioutil\.ReadFile|os\.OpenFile)\s*\([^)]*\+'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(filepath\.Clean|filepath\.Base|strings\.HasPrefix)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path with `../` can read/write arbitrary files."
+    remediation: "filepath.Clean the path and assert it stays within an allowed base directory."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase B) — C#/.NET injection sinks.
+  # ===================================================================
+
+  - id: INJ-CS-001
+    name: "SQL injection via interpolated/concatenated query — C#"
+    description: >
+      EF Core FromSqlRaw/ExecuteSqlRaw or a SqlCommand built with an interpolated
+      ($"...") or concatenated SQL string instead of parameters.
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/*Tests.cs", "**/*.Tests/**", "**/obj/**", "**/bin/**"]
+    pattern: '(?is)(?:FromSqlRaw|ExecuteSqlRaw|new\s+SqlCommand|CommandText\s*=)\s*\(?\s*(?:\$"|"[^"]*"\s*\+)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: "Interpolated/concatenated request data in SQL lets an attacker alter the query."
+    remediation: "Use parameters (FromSqlInterpolated with {param}, or SqlParameter); never interpolate raw."
+
+  - id: INJ-CS-002
+    name: "Command injection — C#"
+    description: >
+      `Process.Start` / `ProcessStartInfo` invoked with a concatenated argument
+      (or cmd /c) runs an attacker-influenced command.
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/*Tests.cs", "**/*.Tests/**", "**/obj/**", "**/bin/**"]
+    pattern: '(?is)(?:Process\.Start|new\s+ProcessStartInfo)\s*\([^)]*(?:\+|\$")'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "A command built from request data yields arbitrary command execution."
+    remediation: "Pass a fixed executable with an argument list; never build a shell command from request data."
+
+  - id: INJ-CS-003
+    name: "SSRF — outbound request to an interpolated URL — C#"
+    description: >
+      HttpClient.GetAsync/GetStringAsync or WebClient.DownloadString called with
+      an interpolated/concatenated URL from dynamic (often request) data.
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/*Tests.cs", "**/*.Tests/**", "**/obj/**", "**/bin/**"]
+    pattern: '(?is)(?:GetAsync|GetStringAsync|GetByteArrayAsync|DownloadString|DownloadData|PostAsync)\s*\(\s*(?:\$"|[A-Za-z_][\w.]*\s*\+|"[^"]*"\s*\+)'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|allowedHosts|Uri\.TryCreate)\b'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-CS-004
+    name: "Path traversal — filesystem access from a concatenated path — C#"
+    description: >
+      File.ReadAllText/Open or new FileStream built by interpolation/concatenation
+      with no canonicalization, letting `../` escape the intended directory.
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/*Tests.cs", "**/*.Tests/**", "**/obj/**", "**/bin/**"]
+    pattern: '(?is)(?:File\.(?:ReadAllText|ReadAllBytes|Open|OpenRead|OpenText)|new\s+FileStream)\s*\([^)]*(?:\+|\$")'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(Path\.GetFullPath|Path\.GetFileName|StartsWith)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path with `../` can read/write arbitrary files."
+    remediation: "Canonicalize (Path.GetFullPath) and assert the result stays within an allowed base directory."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase B) — PHP injection sinks.
+  # ===================================================================
+
+  - id: INJ-PHP-001
+    name: "SQL injection via interpolated/concatenated query — PHP"
+    description: >
+      A mysqli_query / PDO ->query / Laravel DB::select built with a request
+      superglobal or `. $var` concatenation instead of a bound parameter.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)(?:mysqli_query|->query|->exec|DB::(?:select|statement|raw)|pg_query)\s*\([^)]*(?:\$_(?:GET|POST|REQUEST|COOKIE)|["''\x60][^"''\x60]*["''\x60]\s*\.\s*\$)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: "Interpolated/concatenated request data in SQL lets an attacker alter the query."
+    remediation: "Use prepared statements (PDO bindParam / mysqli placeholders / Eloquent bindings)."
+
+  - id: INJ-PHP-002
+    name: "Command injection — PHP"
+    description: >
+      `system` / `exec` / `shell_exec` / `passthru` / `popen` invoked with a
+      request superglobal or `. $var` concatenation.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)(?:system|exec|shell_exec|passthru|popen|proc_open)\s*\([^)]*(?:\$_(?:GET|POST|REQUEST|COOKIE)|["''][^"'']*["'']\s*\.\s*\$)'
+    counter_scope: line
+    counter_patterns:
+      - '(?i)\b(escapeshellarg|escapeshellcmd)\b'
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "A shell command built from request data yields arbitrary command execution."
+    remediation: "Avoid the shell; if unavoidable, escapeshellarg every dynamic argument."
+
+  - id: INJ-PHP-003
+    name: "SSRF — outbound request to a request-controlled URL — PHP"
+    description: >
+      curl_setopt(CURLOPT_URL, …) or file_get_contents fetching a URL built from a
+      request superglobal or `. $var` concatenation.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)(?:curl_setopt\s*\([^)]*CURLOPT_URL[^)]*(?:\$_|\.\s*\$)|file_get_contents\s*\(\s*(?:\$_(?:GET|POST|REQUEST)|["'']https?://))'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|allowed_hosts|parse_url)\b'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-PHP-004
+    name: "Path traversal / file inclusion from request input — PHP"
+    description: >
+      fopen / readfile / include / require / file_get_contents built from a
+      request superglobal or `. $var` concatenation, enabling `../` traversal or
+      remote/local file inclusion.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)(?:fopen|readfile|include|include_once|require|require_once|file_get_contents)\s*\(?\s*[^;)]*(?:\$_(?:GET|POST|REQUEST|COOKIE)|["''][^"'']*["'']\s*\.\s*\$)'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(basename|realpath|in_array)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path enables `../` traversal or file inclusion (LFI/RFI)."
+    remediation: "Allow-list the file, use basename(), and resolve+verify the path stays within an allowed base."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase B) — Ruby / Rails injection sinks.
+  # ===================================================================
+
+  - id: INJ-RB-001
+    name: "SQL injection via string interpolation — Ruby/Rails"
+    description: >
+      An ActiveRecord where / find_by_sql / execute built with a `#{}`
+      interpolation or `+` concatenation instead of a bound parameter.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)(?:\.where|\.find_by_sql|\.execute|\.select_all|\.select_value|\.pluck)\s*\(\s*["''][^\n]*?(?:#\{|["'']\s*\+)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: "Interpolated request data in SQL lets an attacker alter the query."
+    remediation: "Use bound parameters: where('name = ?', name) or the hash form where(name: name)."
+
+  - id: INJ-RB-002
+    name: "Command injection — Ruby"
+    description: >
+      A shell invocation (system / exec / backticks / IO.popen / Open3) built
+      with a `#{}` interpolation or `+` concatenation.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)(?:\bsystem\s*\(|\bexec\s*\(|IO\.popen\s*\(|Open3\.\w+\s*\()[^)]*(?:#\{|\+)|\x60[^\x60]*#\{'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: "A shell command built from request data yields arbitrary command execution."
+    remediation: "Pass an argv array to system(cmd, *args); never interpolate request data into a shell string."
+
+  - id: INJ-RB-003
+    name: "SSRF — outbound request to an interpolated URL — Ruby"
+    description: >
+      Net::HTTP / HTTParty / RestClient / URI.open called with a `#{}` or `+`
+      URL built from dynamic (often request) data.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)(?:Net::HTTP\.(?:get|post|get_response)|HTTParty\.\w+|RestClient\.\w+|URI\.open|URI\.parse)\s*\([^)]*(?:#\{|\+)'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(allowlist|allowed_hosts)\b'
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled outbound URL lets an attacker reach internal services / cloud metadata."
+    remediation: "Allow-list the host/scheme; never build the target URL from unvalidated request data."
+
+  - id: INJ-RB-004
+    name: "Path traversal — filesystem access from an interpolated path — Ruby"
+    description: >
+      File.read / File.open / IO.read / send_file built with a `#{}` or `+` path
+      and no canonicalization, letting `../` escape the intended directory.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)(?:File\.(?:read|open|new|binread)|IO\.read|send_file)\s*\([^)]*(?:#\{|\+)'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(File\.basename|File\.expand_path|start_with\?)\b'
+    severity_if_violated: High
+    cwe: CWE-22
+    finding_type: FT-060
+    breach_vector: "Internet Anon"
+    rationale: "A request-controlled path with `../` can read/write arbitrary files."
+    remediation: "Use File.basename and File.expand_path; assert the result stays within an allowed base directory."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase C) — Android (Kotlin/Java) mobile sinks.
+  # Android-specific APIs; complements the recon Android-manifest signals.
+  # ===================================================================
+
+  - id: MOBILE-AND-001
+    name: "SQL injection in local SQLite — Android"
+    description: >
+      `SQLiteDatabase.rawQuery` / `execSQL` built by concatenation feeds
+      attacker-influenced input (deep link, IPC, synced data) into a local query.
+    file_patterns: ["**/*.kt", "**/*.java"]
+    exclude_file_patterns: ["**/test/**", "**/androidTest/**", "**/*Test.*", "**/build/**"]
+    pattern: '\.(?:rawQuery|execSQL)\s*\([^)]*\+'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: Medium
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Physical / Local"
+    rationale: "Concatenated input in a local SQL query can corrupt or exfiltrate on-device data."
+    remediation: "Use the selectionArgs / bind-argument overloads; never concatenate into the SQL string."
+
+  - id: MOBILE-AND-002
+    name: "Secret stored in plaintext SharedPreferences — Android"
+    description: >
+      A token/password/secret written to (non-encrypted) SharedPreferences is
+      readable on a rooted or backed-up device. EncryptedSharedPreferences is the
+      safe alternative and is suppressed.
+    file_patterns: ["**/*.kt", "**/*.java"]
+    exclude_file_patterns: ["**/test/**", "**/androidTest/**", "**/*Test.*", "**/build/**"]
+    pattern: '(?is)\.putString\s*\(\s*["''][^"'']*(?i:token|password|secret|refresh|jwt|api[_-]?key|credential)'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '\bEncryptedSharedPreferences\b'
+    severity_if_violated: Medium
+    cwe: CWE-922
+    finding_type: FT-090
+    breach_vector: "Physical / Local"
+    rationale: "Secrets in plaintext preferences are recoverable via device backup, root, or forensic access."
+    remediation: "Store secrets in EncryptedSharedPreferences or the Android Keystore, never plain SharedPreferences."
+
+  - id: MOBILE-AND-003
+    name: "Insecure WebView JavaScript bridge — Android"
+    description: >
+      `addJavascriptInterface` exposes native methods to page JavaScript; combined
+      with remote/attacker content it enables RCE (pre-API-17) or data theft.
+    file_patterns: ["**/*.kt", "**/*.java"]
+    exclude_file_patterns: ["**/test/**", "**/androidTest/**", "**/*Test.*", "**/build/**"]
+    pattern: '\.addJavascriptInterface\s*\('
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: Medium
+    cwe: CWE-749
+    finding_type: FT-175
+    breach_vector: "Network MITM"
+    rationale: "A JS bridge reachable from untrusted web content can invoke native code / exfiltrate data."
+    remediation: "Avoid the bridge for untrusted content; restrict to https app-owned pages and @JavascriptInterface-annotated methods on API 17+."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase C) — iOS (Swift/Obj-C) mobile sinks.
+  # ===================================================================
+
+  - id: MOBILE-IOS-001
+    name: "Secret stored in UserDefaults — iOS"
+    description: >
+      A token/password/secret written to UserDefaults / NSUserDefaults is stored
+      unencrypted in the app container, recoverable via backup or forensic access.
+      The Keychain is the correct store and is suppressed.
+    file_patterns: ["**/*.swift", "**/*.m"]
+    exclude_file_patterns: ["**/*Tests.swift", "**/*Test.m", "**/Pods/**"]
+    pattern: '(?is)(?:UserDefaults|NSUserDefaults)[^\n]{0,100}(?i:token|password|secret|refresh|jwt|credential)'
+    counter_scope: line
+    counter_patterns:
+      - '(?i)\b(keychain|SecItemAdd|kSecClass)\b'
+    severity_if_violated: Medium
+    cwe: CWE-922
+    finding_type: FT-090
+    breach_vector: "Physical / Local"
+    rationale: "Secrets in UserDefaults are recoverable from an unencrypted backup or a jailbroken device."
+    remediation: "Store secrets in the Keychain (kSecClassGenericPassword), never UserDefaults."
+
+  # ===================================================================
+  # Multi-stack tuning (implplan Phase C) — cross-platform (Flutter/Dart,
+  # React Native) mobile sinks.
+  # ===================================================================
+
+  - id: MOBILE-DART-001
+    name: "SQL injection in local SQLite (sqflite) — Dart"
+    description: >
+      A sqflite rawQuery / execute built with a `$` interpolation or `+`
+      concatenation instead of the `?` + whereArgs binding.
+    file_patterns: ["**/*.dart"]
+    exclude_file_patterns: ["**/test/**", "**/*_test.dart", "**/.dart_tool/**"]
+    pattern: '(?is)\.(?:rawQuery|rawInsert|rawUpdate|rawDelete|execute)\s*\(\s*["''\x60][^\n]*?(?:\$\{?[A-Za-z_]|["''\x60]\s*\+)'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: Medium
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Physical / Local"
+    rationale: "Interpolated input in a local SQL query can corrupt or exfiltrate on-device data."
+    remediation: "Use ? placeholders with whereArgs; never interpolate into the SQL string."
+
+  - id: MOBILE-DART-002
+    name: "Secret stored in plaintext SharedPreferences — Dart/Flutter"
+    description: >
+      A token/secret written to shared_preferences is unencrypted;
+      flutter_secure_storage is the correct store and is suppressed.
+    file_patterns: ["**/*.dart"]
+    exclude_file_patterns: ["**/test/**", "**/*_test.dart", "**/.dart_tool/**"]
+    pattern: '(?is)\.setString\s*\(\s*["''][^"'']*(?i:token|password|secret|refresh|jwt|credential)'
+    counter_scope: window
+    counter_window: 3
+    counter_patterns:
+      - '(?i)\b(flutter_secure_storage|FlutterSecureStorage)\b'
+    severity_if_violated: Medium
+    cwe: CWE-922
+    finding_type: FT-090
+    breach_vector: "Physical / Local"
+    rationale: "Secrets in shared_preferences are recoverable via backup, root, or forensic access."
+    remediation: "Use flutter_secure_storage (Keystore/Keychain-backed), never plain shared_preferences."
+
+  - id: MOBILE-RN-001
+    name: "Secret stored in AsyncStorage — React Native"
+    description: >
+      A token/secret written to AsyncStorage is stored unencrypted;
+      react-native-keychain / EncryptedStorage are the correct stores.
+    file_patterns: ["**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx"]
+    exclude_file_patterns:
+      ["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/node_modules/**", "**/dist/**"]
+    pattern: '(?is)AsyncStorage\.setItem\s*\([^)]*(?i:token|password|secret|refresh|jwt|credential)'
+    counter_scope: window
+    counter_window: 2
+    counter_patterns:
+      - '(?i)\b(react-native-keychain|EncryptedStorage|Keychain)\b'
+    severity_if_violated: Medium
+    cwe: CWE-922
+    finding_type: FT-090
+    breach_vector: "Physical / Local"
+    rationale: "AsyncStorage is unencrypted; secrets are recoverable on a rooted/jailbroken or backed-up device."
+    remediation: "Use react-native-keychain or react-native-encrypted-storage for secrets."
+
+  # ===================================================================
+  # Access-control tuning (per-language JWT verification + mass assignment).
+  # IDOR/BOLA + missing-route-auth stay JS-only (AUTHZ-002/008): they need an
+  # inline request-marker / multi-line scope the low-FP regex engine lacks.
+  # ===================================================================
+
+  - id: AUTHZ-GO-001
+    name: "JWT parsed without signature verification — Go"
+    description: >
+      golang-jwt `ParseUnverified`, the `none` signing method, or the unsafe
+      no-signature type accepts a forged/unsigned token.
+    file_patterns: ["**/*.go"]
+    exclude_file_patterns: ["**/*_test.go", "**/vendor/**", "**/testdata/**"]
+    pattern: 'jwt\.ParseUnverified\s*\(|jwt\.SigningMethodNone\b|UnsafeAllowNoneSignatureType'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "Skipping signature verification lets an attacker forge a token and impersonate any user."
+    remediation: "Use jwt.Parse with a keyfunc that pins the expected signing method; reject `none`."
+
+  - id: AUTHZ-CS-001
+    name: "JWT signature validation disabled — C#"
+    description: >
+      TokenValidationParameters with `ValidateIssuerSigningKey = false` or
+      `RequireSignedTokens = false` accepts a forged/unsigned token.
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/*Tests.cs", "**/*.Tests/**", "**/obj/**", "**/bin/**"]
+    pattern: 'ValidateIssuerSigningKey\s*=\s*false|RequireSignedTokens\s*=\s*false'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-347
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "Disabling signing-key validation lets an attacker forge a token and impersonate any user."
+    remediation: "Set ValidateIssuerSigningKey = true and RequireSignedTokens = true with a pinned key/algorithm."
+
+  - id: AUTHZ-PHP-001
+    name: "JWT verification allows the 'none' algorithm — PHP"
+    description: >
+      firebase/php-jwt `JWT::decode` whose allowed-algorithms include `none`
+      accepts an unsigned/forged token.
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)JWT::decode\s*\([^;]*["'']none["'']'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-347
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "Allowing `none` lets an attacker submit an unsigned token and impersonate any user."
+    remediation: "Pin a single strong algorithm (e.g. 'RS256'); never include 'none' in the allowed list."
+
+  - id: AUTHZ-PHP-002
+    name: "Mass assignment — Laravel unguarded model / request->all() — PHP"
+    description: >
+      An empty `$guarded = []` (everything fillable) or `fill/create/update` with
+      `$request->all()` lets a client set privileged columns (role, is_admin).
+    file_patterns: ["**/*.php"]
+    exclude_file_patterns: ["**/tests/**", "**/*Test.php", "**/vendor/**"]
+    pattern: '(?is)\$guarded\s*=\s*\[\s*\]|->(?:fill|forceFill)\s*\(\s*\$request->all|::(?:create|update)\s*\(\s*\$request->all'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-915
+    finding_type: FT-041
+    breach_vector: "Internet Anon"
+    rationale: "Unfiltered request attributes let a client escalate privileges by setting protected columns."
+    remediation: "Set an explicit $fillable allowlist and bind only validated/allow-listed fields ($request->only([...]))."
+
+  - id: AUTHZ-RB-001
+    name: "JWT decoded without verification — Ruby"
+    description: >
+      ruby-jwt `JWT.decode` with verification disabled (3rd arg `false`) or the
+      `none` algorithm accepts a forged/unsigned token.
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)JWT\.decode\s*\([^)]*\bfalse\b|algorithms?\s*(?::|=>)\s*\[?\s*["'']none["'']'
+    counter_scope: line
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "Disabling verification lets an attacker forge a token and impersonate any user."
+    remediation: "Call JWT.decode with verify=true and a pinned algorithm (e.g. algorithm: 'RS256')."
+
+  - id: AUTHZ-RB-002
+    name: "Mass assignment — Rails permit! / params in update — Ruby"
+    description: >
+      `params.permit!` (permits every attribute) or `update/create` with a raw
+      `params[...]` hash lets a client set privileged attributes (admin, role).
+    file_patterns: ["**/*.rb"]
+    exclude_file_patterns: ["**/spec/**", "**/test/**", "**/*_spec.rb", "**/*_test.rb", "**/vendor/**"]
+    pattern: '(?is)params\.permit!|\.(?:update|update_attributes|create|new)\s*\(\s*params\['
+    counter_scope: line
+    counter_patterns:
+      - '\.permit\s*\('
+    severity_if_violated: High
+    cwe: CWE-915
+    finding_type: FT-041
+    breach_vector: "Internet Anon"
+    rationale: "Unfiltered params let a client escalate privileges by setting protected attributes."
+    remediation: "Use strong parameters: params.require(:x).permit(:allowed, :fields) — never permit! or raw params."

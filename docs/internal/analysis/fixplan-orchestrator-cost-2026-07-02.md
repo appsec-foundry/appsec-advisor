@@ -5,8 +5,8 @@ Opus). Point the new session at this file. All state below is on disk and surviv
 `/clear`. Context: this started from a juice-shop `create-threat-model` run that cost
 ~$77 and shipped 12 broken §7 anchors + a thin AI/LLM-Exposure map.
 
-Plugin repo: `/home/mrohr/appsec-advisor` (branch `dev`). Target repo of the run:
-`/home/mrohr/juice-shop`, output `docs/security/`.
+Plugin repo: `/home/user/appsec-advisor` (branch `dev`). Target repo of the run:
+`/home/user/juice-shop`, output `docs/security/`.
 
 ---
 
@@ -84,7 +84,7 @@ cost model assumes a "thin cheap orchestrator" — the legacy runtime violates t
 ### Investigation plan (do on FRESH Sonnet session — NO new full scan needed except Phase 4)
 - **Phase 1 — Identify (cheap, deterministic, no scan):** finish attributing the 178M
   cache_read to sources. Tools: `scripts/context_window_report.py --json` on the JSONL
-  under `/home/mrohr/.claude/projects/-home-mrohr-juice-shop/`; bucket tool_result sizes;
+  under `/home/user/.claude/projects/-home-mrohr-juice-shop/`; bucket tool_result sizes;
   attribute the big cache_read jumps (+42M @09:31, +68M @10:26) to specific actions;
   resolve the arithmetic (245 tool_results / ~220k unique content vs 178M cache_read →
   extended-thinking turn count? fixed per-turn overhead?). Deliverable: % split fixed
@@ -114,7 +114,7 @@ fixes) — a fresh session loses nothing.
 
 ## RESUME INSTRUCTIONS (fresh Sonnet session)
 1. Read this file.
-2. `cd /home/mrohr/appsec-advisor && git diff --stat scripts/ agents/` — confirm Part A
+2. `cd /home/user/appsec-advisor && git diff --stat scripts/ agents/` — confirm Part A
    fixes still present (branch `dev`).
 3. Decide with user: commit Part A + add regression tests? then start Part B Phase 1.
 4. Part B Phase 1/2 need NO full scan — scripts + `--rerender` only.

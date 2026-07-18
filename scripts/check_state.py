@@ -461,6 +461,18 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
     says so), refuses to clean and returns a dict with ``skipped: True``.
     Always leaves ``threat-model.*``, ``.appsec-cache/``, ``.fragments/``,
     ``.agent-run.log`` and ``.hook-events.log`` untouched.
+
+    ``needs_stage2`` carve-out: when Stage 1 finished but Stage 2 never ran
+    (``.appsec-checkpoint`` = ``phase=10b status=completed need_render=true``
+    and ``threat-model.md`` absent), the checkpoint is *not* crash residue —
+    it is the ``need_render`` recovery signal ``--resume`` reads to dispatch
+    Stage 2 only. Removing it here (e.g. from the ``--resume`` pre-flight
+    auto-clean, which fires because the status is ``completed``) would silently
+    destroy recoverable Phase-1–10b work and force a full re-run. So we
+    preserve ``.appsec-checkpoint`` while still reaping the stale lock and
+    other residue. ``clean-run-state --force`` still wipes it via its own
+    direct ``rm`` — the state machine is the guarantor of correctness, the
+    skill layer owns the escape hatch (see clean-run-state SKILL.md).
     """
     report = report if report is not None else classify(output_dir)
     if report["state"] == "active":
@@ -468,11 +480,19 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
             "skipped": True,
             "reason": "an active run holds the lock; refusing to clean",
             "removed": [],
+            "preserved": [],
             "state": report["state"],
         }
 
+    preserve: set[str] = {CHECKPOINT_FILE} if report.get("needs_stage2") else set()
+
     removed: list[str] = []
+    preserved: list[str] = []
     for name in _CLEANUP_TARGETS:
+        if name in preserve:
+            if (output_dir / name).exists():
+                preserved.append(name)
+            continue
         target = output_dir / name
         if target.exists():
             try:
@@ -486,6 +506,7 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
         "skipped": False,
         "reason": None,
         "removed": removed,
+        "preserved": preserved,
         "state": report["state"],
     }
 
@@ -551,6 +572,8 @@ def _render_text(report: dict, clean_result: dict | None) -> str:
         else:
             lines.append("")
             lines.append("✓ Nothing to clean.")
+        if clean_result.get("preserved"):
+            lines.append(f"✓ Preserved {', '.join(clean_result['preserved'])} for --resume (Stage-1 work recoverable).")
     return "\n".join(lines) + "\n"
 
 
@@ -606,6 +629,26 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _phase_ordinal(phase: object) -> float | None:
+    """Leading numeric of a checkpoint phase label (``2.5``→2.5, ``10b``→10.0).
+
+    Returns None when there is no leading number (e.g. ``?``). Used by the
+    resume guard to decide whether early-phase artifacts should exist yet.
+    """
+    if phase is None:
+        return None
+    num = ""
+    for ch in str(phase).strip():
+        if ch.isdigit() or (ch == "." and "." not in num):
+            num += ch
+        else:
+            break
+    try:
+        return float(num) if num else None
+    except ValueError:
+        return None
+
+
 def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
     """Classify whether a --resume request should be allowed.
 
@@ -653,6 +696,29 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
     cp = checkpoint or {}
     status = cp.get("status", "")
     phase = cp.get("phase", "?")
+    # Artifact-existence gate (2026-07-14): a checkpoint can outlive the
+    # intermediate files its phases produced — removed by cleanup, or written
+    # to a different OUTPUT_DIR. Resuming then silently re-runs the early phases
+    # and rebuilds the full analyst context on every attempt. The juice-shop
+    # 2026-07-14 loop showed this: checkpoint said phase=2 completed but
+    # .threat-modeling-context.md was gone, so each --resume re-invoked the
+    # context-resolver and stalled, cache_read ballooning 4.5M→9.8M tokens.
+    # When the checkpoint claims Phase 1+ is done but its Phase-1 context file
+    # is missing, resume offers nothing safe — force an honest fresh run.
+    context_md = output_dir / ".threat-modeling-context.md"
+    phase_ord = _phase_ordinal(phase)
+    if phase_ord is not None and phase_ord >= 1 and not context_md.is_file():
+        return (
+            3,
+            (
+                f"Refusing to resume: checkpoint says phase={phase} but "
+                f"{context_md.name} is missing — resume cannot skip the early "
+                "phases and would re-run them from scratch (rebuilding the full "
+                "analyst context each attempt). Re-run WITHOUT --resume "
+                "(auto-cleans the stale checkpoint) or use --rebuild for a "
+                "clean fresh run."
+            ),
+        )
     if status == "completed":
         return (0, "checkpoint status=completed — prior run finalized cleanly")
     if status in ("started", "aborted") and age > max_age:

@@ -191,6 +191,8 @@ def _with_arch_fields(base: dict, rule: CompiledRule) -> dict:
         enriched["architectural_theme"] = rule.architectural_theme
     if rule.generic_threat_title:
         enriched["generic_threat_title"] = rule.generic_threat_title
+    if rule.weakness_mechanism:
+        enriched["weakness_mechanism"] = rule.weakness_mechanism
     return enriched
 
 
@@ -225,6 +227,7 @@ class CompiledRule:
     route_requires: dict
     forbidden_route_signals: dict
     inventory_pattern: dict
+    weakness_mechanism: str | None = None
 
 
 def _compile_patterns(patterns: list[str]) -> list[re.Pattern[str]]:
@@ -276,6 +279,7 @@ def _compile_rule(rule: dict, family: str) -> CompiledRule:
         hypothesis_id_prefix=rule.get("hypothesis_id_prefix"),
         architectural_theme=rule.get("architectural_theme"),
         generic_threat_title=rule.get("generic_threat_title"),
+        weakness_mechanism=rule.get("weakness_mechanism"),
         weak_or_missing_controls=list(rule.get("weak_or_missing_controls", []) or []),
         precondition_patterns=precondition_patterns,
         positive_patterns=positive_patterns,

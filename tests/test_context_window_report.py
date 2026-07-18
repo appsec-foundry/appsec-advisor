@@ -52,6 +52,18 @@ def test_resident_metric_and_real_compaction_boundary(tmp_path):
     assert len(result["compact_boundaries"]) == 1
     assert result["compact_boundaries"][0]["resident_before"] == 106
     assert result["compact_boundaries"][0]["stage_before"] == "Phase 9"
+    assert result["stages"] == {
+        "Phase 9": {
+            "assistant_turns_with_usage": 2,
+            "cache_read_throughput": 130,
+            "peak_resident_context": 106,
+        },
+        "Stage 1": {
+            "assistant_turns_with_usage": 1,
+            "cache_read_throughput": 20,
+            "peak_resident_context": 60,
+        },
+    }
 
 
 def test_multiple_content_blocks_per_message_are_not_double_counted(tmp_path):
@@ -109,4 +121,6 @@ def test_cli_rejects_missing_path(capsys):
 def test_text_labels_cache_read_as_throughput(tmp_path, capsys):
     path = _write(tmp_path / "main.jsonl", [_turn((1, 2, 3), "Stage 1")])
     assert report.main([str(path)]) == 0
-    assert "throughput, not current occupancy" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "throughput, not current occupancy" in output
+    assert "stage=Stage 1 turns=1 peak=6 cache_read=2" in output

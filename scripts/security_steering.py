@@ -257,6 +257,20 @@ def _load_config():
         max_per_topic = org_coach.get("max_requirements_per_topic")
         if isinstance(max_per_topic, int):
             cfg["severity"]["max_requirements_per_topic"] = max_per_topic
+        # An org can define its own steering behaviour in the profile: the
+        # always-on baseline, and its own topics (criteria = triggers, actions =
+        # guidance text + requirement ids). This is declarative data, never code
+        # — the guidance is injected as advice and capped by max_injected_chars.
+        if isinstance(org_coach.get("baseline"), str) and org_coach["baseline"].strip():
+            cfg["baseline"] = org_coach["baseline"]
+        org_topics = org_coach.get("topics")
+        if isinstance(org_topics, dict):
+            # inherit_default_topics=false → use only the org's topics; otherwise
+            # merge, with an org topic overriding a built-in of the same id.
+            if org_coach.get("inherit_default_topics") is False:
+                cfg["topics"] = dict(org_topics)
+            else:
+                cfg["topics"] = {**cfg["topics"], **org_topics}
 
     return cfg
 

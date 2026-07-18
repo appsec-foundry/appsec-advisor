@@ -15,9 +15,9 @@
     "opening": {
       "type": "string",
       "minLength": 60,
-      "maxLength": 800,
+      "maxLength": 450,
       "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
-      "description": "Opening assessment — TWO to FOUR sentences in a human, senior-reviewer voice. The AUDIENCE is the PRODUCT OWNER of the application: someone who owns the roadmap and budget but is not a security engineer. The verdict must be readable for them — translate security mechanics into operational consequences (who can do what, with what access, to whose data) rather than naming attack classes. Avoid acronyms (CSRF, IDOR, XXE, SSTI, CSP, RS256) unless they appear in the bullets below where they are spelled out. The goal is an OVERALL SECURITY CHARACTERISATION of the application — what kind of system is this, what posture does it project, what is it fit and not fit for — NOT a preview of the bullets below. The bullets[] array enumerates the concrete worst-case scenarios; this opening must therefore stay at the level of POSTURE (recurring patterns, structural decisions, audience the app is fit for) and must NOT repeat the same examples that appear in the bullets — that produces visible redundancy in the rendered Verdict block. Begin with a posture phrase such as 'Not production-ready', 'Production-ready with reservations', or 'Production-ready'. Do NOT enumerate findings (that is what bullets[] is for) and do NOT reference F-NNN / T-NNN IDs in this field — the pattern regex blocks them. Stay at management altitude: NO config keys (httpOnly, sslmode), library names/versions (lodash@4.17.10), CVE/CWE numbers, file names or file:line refs, framework-internal symbols (_.merge), or ports — describe missing controls as a class ('the app omits several standard practices, e.g. server-side authorization and input validation') rather than naming the config. The renderer prepends the severity emoji."
+      "description": "Opening assessment — ONE or TWO short sentences for the product owner, who owns roadmap and budget but is not a security engineer. State the overall business posture and consequence in plain language (who can do what, with what access, to whose data); do not name attack classes or implementation mechanics. Begin with a posture phrase such as 'Not production-ready', 'Production-ready with reservations', or 'Production-ready'. The bullets[] array supplies concrete scenarios, so do not repeat them here. Do NOT enumerate findings or reference F-NNN / T-NNN IDs. Stay at management altitude: no config keys, library names or versions, CVE/CWE numbers, file names or file:line refs, framework-internal symbols, ports, security acronyms, or protocol names. The renderer prepends the severity emoji."
     },
     "bullets_intro": {
       "type": "string",
@@ -39,14 +39,14 @@
           "title": {
             "type": "string",
             "minLength": 5,
-            "maxLength": 80,
-            "description": "Short business-outcome headline, e.g. 'Admin login without a password'. Rendered bold."
+            "maxLength": 60,
+            "description": "Short, plain-language business-outcome headline, e.g. 'Admin login without a password'. Rendered bold. Do not name an attack technique or implementation detail."
           },
           "body": {
             "type": "string",
             "minLength": 20,
-            "maxLength": 400,
-            "description": "One sentence in PRODUCT-OWNER language: what an attacker achieves and why, as a business/operational consequence. State a missing control as a CLASS of gap, not a config line. FORBIDDEN here (they belong in §8/§7, and `refs` already points there): config keys (httpOnly, sameSite, sslmode, rejectUnauthorized), library names or version pins (e.g. lodash@4.17.10), CVE/CWE numbers, file names / paths / file:line refs, framework-internal symbols (_.merge), port numbers, HTTP-header names. GOOD: 'Any logged-in user can read and change another customer's records, because the app trusts the account id sent in the request instead of the signed-in identity.' BAD: 'routes/order.ts passes req.params.id to findOne() without an ownerId clause (CWE-639).'"
+            "maxLength": 260,
+            "description": "Exactly one short sentence in PRODUCT-OWNER language: what an attacker achieves and the broad missing protection. Describe a business or operational consequence, not an exploit recipe. FORBIDDEN here (they belong in §8/§7): security acronyms and attack-class names, config keys, library names or version pins, CVE/CWE numbers, file names / paths / file:line refs, framework-internal symbols, port numbers, HTTP-header names, protocol names, code snippets, or backticks. GOOD: 'Anyone can read and change another customer's records because the app does not reliably check ownership.' BAD: 'routes/order.ts passes req.params.id to findOne() without an ownerId clause (CWE-639).'"
           },
           "refs": {
             "type": "array",
@@ -55,7 +55,7 @@
             "items": {
               "type": "string",
               "pattern": "^[FT]-\\d{3,4}$",
-              "description": "Finding (F-NNN) or threat (T-NNN) reference. The renderer converts to clickable anchor link in italics + parentheses."
+              "description": "Finding (F-NNN) or threat (T-NNN) reference. Provenance only: it is retained to derive the verification status, but is deliberately not displayed in the management summary. Each reference must directly support this scenario; do not add loosely related Critical findings."
             }
           }
         }
@@ -64,9 +64,9 @@
     "closing": {
       "type": "string",
       "minLength": 40,
-      "maxLength": 300,
+      "maxLength": 220,
       "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
-      "description": "ONE sentence closing assessment — the bottom line / call-to-action. Rendered after the bullets blockquote. Do NOT reference F-NNN / T-NNN IDs (those are in bullets[].refs)."
+      "description": "ONE short plain-language closing assessment — the bottom line / call to action. Rendered after the bullets blockquote. Do NOT reference F-NNN / T-NNN IDs, security acronyms, attack-class names, config keys, libraries, files, or implementation details."
     }
   }
 }

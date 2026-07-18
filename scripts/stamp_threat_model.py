@@ -2,10 +2,11 @@
 """Stamp a finished threat model's deliverables with a shared random postfix so
 several models can be copied into one directory without overwriting each other.
 
-Copies ``threat-model.{md,yaml,figure*.svg,pdf,html,sarif.json}`` (whichever
-exist) to ``threat-model-<slug>.<ext>`` and rewrites copied figure references
-inside the copied Markdown so they point at the stamped SVGs. The originals are
-left untouched — this only produces an extra, collision-proof copy set.
+Copies ``threat-model.{md,yaml,figure*.svg,pdf,html,sarif.json}`` and
+``pentest-tasks.yaml`` (whichever exist) to their ``-<slug>`` stamped names and
+rewrites copied figure/pentest references inside the copied Markdown so they
+point at the stamped files. The originals are left untouched — this only
+produces an extra, collision-proof copy set.
 
 Usage:
     python3 stamp_threat_model.py --output-dir docs/security [--slug a3f9]
@@ -25,20 +26,32 @@ _SLUG_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 # Deliverables to stamp, in display order. Figure SVGs are discovered at runtime
 # because the renderer may emit Figure 1, Figure 2, or a future numbered figure.
+# `pentest-tasks.yaml` is a first-class deliverable too, so it is stamped
+# alongside the others (its own prefix — it is not a `threat-model.*` file).
 _STATIC_BASENAMES = [
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.pdf",
     "threat-model.html",
     "threat-model.sarif.json",
+    "pentest-tasks.yaml",
 ]
+
+# Known deliverable prefixes, longest-first so the match is unambiguous.
+_STAMP_PREFIXES = ("threat-model", "pentest-tasks")
 
 
 def _stamped_name(basename: str, slug: str) -> str:
-    """`threat-model.figure1.svg` → `threat-model-<slug>.figure1.svg`."""
-    prefix = "threat-model"
-    rest = basename[len(prefix) :]  # ".figure1.svg", ".md", …
-    return f"{prefix}-{slug}{rest}"
+    """Insert ``-<slug>`` after the deliverable prefix.
+
+    ``threat-model.figure1.svg`` → ``threat-model-<slug>.figure1.svg``
+    ``pentest-tasks.yaml``       → ``pentest-tasks-<slug>.yaml``
+    """
+    for prefix in _STAMP_PREFIXES:
+        if basename.startswith(prefix):
+            rest = basename[len(prefix) :]  # ".figure1.svg", ".md", ".yaml", …
+            return f"{prefix}-{slug}{rest}"
+    raise ValueError(f"unstampable basename: {basename!r}")
 
 
 def _figure_basenames(src_dir: Path) -> list[str]:
@@ -86,6 +99,11 @@ def main(argv: list[str] | None = None) -> int:
             # skipped or failed but the Markdown still contains stale text.
             for figure in figure_basenames:
                 text = text.replace(figure, _stamped_name(figure, slug))
+            # Repoint the pentest-tasks prose reference at the stamped copy so a
+            # stamped bundle stays self-consistent in a shared collection dir.
+            # Guarded on existence, mirroring the figure rule above.
+            if (src_dir / "pentest-tasks.yaml").is_file():
+                text = text.replace("pentest-tasks.yaml", _stamped_name("pentest-tasks.yaml", slug))
             dst.write_text(text, encoding="utf-8")
         else:
             shutil.copy2(src, dst)

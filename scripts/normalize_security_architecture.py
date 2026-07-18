@@ -17,6 +17,9 @@ contract-clean scaffold with LLM-authored prose and routinely drops three
   3. ``control_subsection_coverage`` — every §7.2-§7.12 ``#### `` control
      subsection must carry ``**Security assessment**`` and
      ``**Relevant findings**`` labels.
+  4. ``auth_method_decomposition`` — §7.2 aspects such as password hashing
+     or login rate limiting must remain inside their authentication mechanism
+     block, not become peer ``#### `` mechanism headings.
 
 The scaffold/taxonomy fixes that make the *generated* §7 pass "by construction"
 never reach the rendered report when enrichment overwrites the fragment. This
@@ -307,6 +310,60 @@ def _ensure_flow_diagrams(md: str, rules_map: dict, changes: list[str]) -> str:
     return _serialize(segs)
 
 
+def _fold_nonmechanism_auth_subsections(md: str, rules_map: dict, changes: list[str]) -> str:
+    """Demote invalid §7.2 peer headings to labelled detail in their parent.
+
+    The Stage-2 renderer sometimes promotes an authentication *aspect* such as
+    ``Login Rate Limiting`` to ``#### 7.2.N ...``. The §7.2 contract requires
+    peer H4 blocks to name actual mechanisms. Retaining the heading as a bold
+    label preserves the authored evidence while making it part of the preceding
+    mechanism block, which is the canonical report structure.
+    """
+    key, rule = _rule_lookup(rules_map, "auth_method_decomposition")
+    if rule is None:
+        return md
+    section_title = key or "7.2 Identity and Authentication Controls"
+    whitelist = [item for item in (rule.get("method_whitelist") or []) if isinstance(item, str)]
+    if not whitelist:
+        return md
+
+    forbidden: list[re.Pattern[str]] = []
+    for pattern in rule.get("forbidden_heading_patterns") or []:
+        if not isinstance(pattern, str) or not pattern:
+            continue
+        try:
+            forbidden.append(re.compile(pattern))
+        except re.error:
+            continue
+    exemptions: list[set[str]] = []
+    for item in rule.get("structural_heading_exemptions") or []:
+        if isinstance(item, str):
+            tokens = set(re.findall(r"[a-z0-9]+", item.lower()))
+            if tokens:
+                exemptions.append(tokens)
+
+    segs = _segment(md)
+    idx = _find_section(segs, section_title)
+    if idx is None:
+        return md
+    for child_idx in _direct_children(segs, idx):
+        seg = segs[child_idx]
+        heading = _NUM_PREFIX_RE.sub("", seg.heading).strip()
+        tokens = set(re.findall(r"[a-z0-9]+", heading.lower()))
+        if any(exemption.issubset(tokens) for exemption in exemptions):
+            continue
+        is_forbidden = any(pattern.search(seg.heading) or pattern.search(heading) for pattern in forbidden)
+        if not is_forbidden and qc._row_is_auth_method(heading, whitelist):
+            continue
+        seg.level = 0
+        seg.heading = ""
+        seg.raw = f"**{heading}.**\n\n"
+        changes.append(
+            f"auth_method_decomposition: folded non-mechanism §{section_title} #### {heading!r} into its parent"
+        )
+    return _serialize(segs)
+
+
 # --------------------------------------------------------------------------- #
 # Public entrypoint
 # --------------------------------------------------------------------------- #
@@ -393,9 +450,11 @@ def normalize_text(md: str, contract_path: Path = qc.DEFAULT_CONTRACT_PATH) -> t
     if not rules_map:
         return md, changes
 
-    # Order matters: approach-first inserts a labelled block (so coverage sees
-    # it), then coverage tops up any remaining missing labels, then flow
-    # diagrams are inserted before the (now-present) Security assessment label.
+    # Order matters: invalid auth peer headings are folded first, approach-first
+    # then inserts a labelled block (so coverage sees it), coverage tops up any
+    # remaining labels, and flow diagrams are inserted before the (now-present)
+    # Security assessment label.
+    md = _fold_nonmechanism_auth_subsections(md, rules_map, changes)
     md = _ensure_validation_approach_first(md, rules_map, changes)
     md = _ensure_subsection_labels(md, rules_map, changes)
     md = _ensure_flow_diagrams(md, rules_map, changes)

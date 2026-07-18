@@ -49,7 +49,7 @@ groups:
     title: "Sensitive Routes Registered Without Authentication Middleware"
     scope: per-component
     match_any:
-      - source_check_id: [AUTHZ-008]
+      - source_check_id: [AUTHZ-008, AUTHZ-302]
 
   - id: dependabot-ecosystems
     title: "Dependabot Ecosystem Coverage Incomplete"
@@ -178,7 +178,23 @@ groups:
     match_any:
       - cwe: [CWE-78]
 
-  - id: path-traversal-per-component
+  # path-traversal: CWE-22 uniquely spans two distinct sink families with
+  # different fixes — a READ traversal (an attacker-chosen path is opened/served;
+  # fix: canonicalize + base-dir check) and a WRITE/UPLOAD traversal (an attacker-
+  # chosen original filename is used to store a file; fix: sanitize/generate the
+  # stored name). Unlike SQLi/SSRF/XXE/cmd-injection (one CWE = one fix), folding
+  # both into a single class buries the upload weakness under the read finding's
+  # title, fix, and severity. So CWE-22 splits by sink family. The upload group is
+  # listed FIRST (first-match-wins) so an upload-flavoured title binds to it;
+  # every other CWE-22 finding falls through to the read group as before.
+  - id: path-traversal-upload-per-component
+    title: "Path Traversal (File Upload)"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-22]
+        title_pattern: "(?i)upload|original[- ]?filename|multipart|getOriginalFilename"
+
+  - id: path-traversal-read-per-component
     title: "Path Traversal"
     scope: per-component
     match_any:

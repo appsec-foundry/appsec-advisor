@@ -2,12 +2,12 @@
 {#- risks the report articulates (OWASP LLM Top-10 lens). Rendered only when the -#}
 {#- threat-renderer authored ms-ai-exposure.json (system has an LLM/AI surface);  -#}
 {#- absent file → the section renders nothing (zero cost for non-LLM repos).      -#}
-{#- Schema: data.ai_risks[] = {owasp_llm_id?, name, severity?, description, affected_components[]?, findings[]} -#}
+{#- Schema: data.ai_risks[] = {owasp_llm_id?, owasp_asi_id?, name, severity?, description, affected_components[]?, findings[]} -#}
 ### AI / LLM Exposure
 
-{% if data.summary %}{{ data.summary }}{% if section7_present %} See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.{% endif %}
+{% if data.summary %}{{ data.summary }}{% if section7_present %} See **[§6 Security Architecture](#6-security-architecture)** for the per-control detail.{% endif %}
 
-{% else %}This system embeds an LLM / AI-agent surface. The risks below are architectural — each follows from how untrusted input reaches an AI sink (prompt, tool call, retrieval, model supply chain).{% if section7_present %} See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.{% endif %}
+{% else %}This system embeds an LLM / AI-agent surface. The risks below are architectural — each follows from how untrusted input reaches an AI sink (prompt, tool call, retrieval, model supply chain).{% if section7_present %} See **[§6 Security Architecture](#6-security-architecture)** for the per-control detail.{% endif %}
 
 {% endif %}
 
@@ -16,7 +16,7 @@
    link). Findings render as indented sub-list items (``  - ↳ …``) so they
    are visually separated from the LLMXX heading and properly nested. -#}
 {% for r in data.ai_risks -%}
-- **{% if r.owasp_llm_id %}{{ r.owasp_llm_id }} {% endif %}{{ r.name }}** — {{ r.description }}{% if r.affected_components %} _({{ r.affected_components | format_weakness_components(", ") }})_{% endif %}
+- **{% if r.owasp_llm_id %}{{ r.owasp_llm_id }} {% endif %}{% if r.owasp_asi_id %}[{{ r.owasp_asi_id }}](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) {% endif %}{{ r.name }}** — {{ r.description }}{% if r.affected_components %} _({{ r.affected_components | format_weakness_components(", ") }})_{% endif %}
 {% for f in r.findings %}  - ↳ {{ f | format_one_finding }}
 {% endfor %}
 {% endfor %}
