@@ -287,6 +287,17 @@ _RECOMMEND_TEXT = {
     "none": "",
 }
 
+# This overview is the FIXED fact set. Any question needing an arbitrary subset
+# of the model (a specific finding, "does it cover X?", what to fix first) is
+# ask-threat-model's job. Skill routing between the two is description-based and
+# will never be perfect, so the overview names the other lane itself — a
+# deterministic, zero-cost correction when the router lands here by mistake.
+_NEXT_STEP_HINT = (
+    "\nAsk        a question about a specific finding, coverage, or what to fix first"
+    "\n           → /appsec-advisor:ask-threat-model     act on findings"
+    " → /appsec-advisor:review-threat-model"
+)
+
 
 def _bar(count: int, peak: int, width: int = 24) -> str:
     if peak <= 0 or count <= 0:
@@ -408,6 +419,7 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
         if weak:
             buf.append(f"Weakest    {' · '.join(weak[:4])}")
     buf.append(f"Report     {summary['report']}")
+    buf.append(_NEXT_STEP_HINT)
     return "\n".join(buf) + "\n"
 
 

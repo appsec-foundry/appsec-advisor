@@ -1,6 +1,14 @@
 ---
 name: update-threat-model
-description: Convenience alias for create-threat-model in incremental mode — re-analyzes only the components that changed since the last run. Unlike the bare create-threat-model, it does NOT bootstrap: it aborts with a clear message when no threat model exists yet, so an "update" can never silently turn into a first full assessment. An explicit mode flag the user passes (--full, --rebuild, --rerender, --resume) is honored instead of the injected --incremental. Everything else (flags, --repo, --output, behavior, output) is identical to create-threat-model.
+description: >-
+  Convenience alias for create-threat-model in incremental mode — re-analyzes
+  only the components that changed since the last run. Unlike the bare
+  create-threat-model, it does NOT bootstrap — it aborts with a clear message
+  when no threat model exists yet, so an "update" can never silently turn into a
+  first full assessment. An explicit mode flag the user passes (--full,
+  --rebuild, --rerender, --resume) is honored instead of the injected
+  --incremental. Everything else (flags, --repo, --output, behavior, output) is
+  identical to create-threat-model.
 ---
 
 ## What this skill is

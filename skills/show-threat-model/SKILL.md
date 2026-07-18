@@ -1,6 +1,19 @@
 ---
 name: show-threat-model
-description: Read-only at-a-glance overview of the current threat model — project and scan identity, findings by severity, top-Critical threats, mitigation/control counts, and whether the model is still up to date. Reuses the same change detection that decides if an incremental scan is needed. Does not analyze code or write files. To ask a free-form question about the model (a specific finding, "does it cover X?", what a term means) rather than see this fixed overview, use ask-threat-model.
+description: >-
+  Read-only, deterministic overview of the current threat model — the FIXED set
+  of facts about it: whether a model exists at all, project and scan identity,
+  findings by severity, top-Critical threats, mitigation/control counts, and
+  whether the model is still up to date. Use it for presence and status
+  questions and for plain display requests ("is there a threat model here?",
+  "gibt es hier ein bedrohungsmodell?", "do we have one?", "show me the threat
+  model", "zeig mir das bedrohungsmodell", "how does the model stand?", "is it
+  still current?"). Reuses the same change detection that decides if an
+  incremental scan is needed. Does not analyze code, write files, or compose
+  prose — it prints a rendered block verbatim. When the answer instead needs an
+  ARBITRARY subset of the model, reached by lookup or filtering — a specific
+  finding, "does it cover X?", what to fix first, what a term means — use
+  ask-threat-model.
 ---
 
 You are printing a human-facing overview of the threat model in the target

@@ -1,6 +1,19 @@
 ---
 name: ask-threat-model
-description: Answer a concrete, free-form question about the threat model in this repo — read-only Q&A over the committed threat-model.yaml. Use this whenever the user ASKS something about their threat model rather than asking to generate, triage, or export it. Catches data questions ("what's in my threat model?", "what are the critical findings?", "does it cover SSRF / IDOR / auth?", "which findings touch the payment service?", "what's the worst case?", "is there a fix for F-003?", "welche kritischen findings gibt es?", "deckt mein bedrohungsmodell XSS ab?", "was ist das schlimmste szenario?") AND meta/plugin questions about how to read it ("what does P1 mean?", "what is STRIDE here?", "what do the severities mean?", "how do I fix these?", "how was this generated?"). Grounds every data answer in the model and cites F-ids; never analyzes code, re-scores, spawns agents, or writes files. For applying fixes use review-threat-model; for a fixed overview use show-threat-model; to (re)generate use create-threat-model.
+description: >-
+  Answer a concrete, free-form question about the threat model in this repo —
+  read-only Q&A over the committed threat-model.yaml. Use it when answering
+  needs an ARBITRARY subset of the model, reached by lookup, filtering or
+  reasoning ("what are the critical findings?", "does it cover SSRF / IDOR /
+  auth?", "which findings touch the payment service?", "what's the worst case?",
+  "is there a fix for F-003?", "what should we fix first?", "welche kritischen
+  findings gibt es?", "deckt mein bedrohungsmodell XSS ab?"). Also answers meta
+  questions about how to read the model ("what does P1 mean?", "what is STRIDE
+  here?", "how was this generated?"). Grounds every data answer in the model and
+  cites F-ids; never analyzes code, re-scores, spawns agents, or writes files.
+  For the FIXED overview instead — does a model exist at all, severity counts,
+  is it still current — use show-threat-model. To act on findings use
+  review-threat-model; to (re)generate use create-threat-model.
 ---
 
 You answer a user's **concrete question about the threat model** in their
@@ -58,6 +71,7 @@ natural-language question), print this block verbatim and exit.
 USAGE
   /appsec-advisor:ask-threat-model [your question]  [--repo <path>] [--output <path>]
   /appsec-advisor:ask-threat-model --grep <term>    [--repo <path>] [--output <path>] [--json]
+  /appsec-advisor:ask-threat-model --id <F-003>     [--repo <path>] [--output <path>] [--json]
 
 WHAT IT DOES
   Answers a free-form question about the committed threat-model.yaml, grounded
@@ -69,6 +83,8 @@ FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
   --output <path>   Output directory holding the model (default: <repo>/docs/security)
   --grep <term>     Pre-filter findings/mitigations to those matching <term>
+  --id <id>         Look one identifier up precisely (F-/T-/M-/W-NNN), with its
+                    cross-links (finding <-> mitigation <-> weakness)
   --json            Emit the facts index as JSON (for tooling)
 
 RELATED
@@ -87,11 +103,13 @@ tokens — that text IS the question you must answer.
 
 Recognized flags (everything else is the user's question, kept verbatim):
 
-  `--repo <path>`  `--output <path>`  `--grep <term>`  `--json`  `--help` | `-h`
+  `--repo <path>`  `--output <path>`  `--grep <term>`  `--id <id>`  `--json`
+  `--help` | `-h`
 
 - Default `REPO_ROOT` to the current working directory; `--repo` overrides.
 - Default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`; `--output` overrides.
-- `--grep <term>` sets an optional pre-filter; `--json` is a boolean toggle.
+- `--grep <term>` sets an optional pre-filter, `--id <id>` a precise lookup
+  (mutually exclusive); `--json` is a boolean toggle.
 - All remaining tokens form `QUESTION` — the thing you answer in Step 4.
 
 ## Step 2 — Resolve `CLAUDE_PLUGIN_ROOT`
@@ -111,19 +129,32 @@ fi
 
 ## Step 3 — Load the facts (data questions)
 
-For a **data question**, load the compact facts index once. Pass `--grep` only
-when the question centers on one clear keyword (a component name, a
-vulnerability class, an F-id); otherwise load the full digest and answer from
-it — findings are few and the digest is small.
+For a **data question**, load the facts once. Pick the narrowest mode that
+answers it — the digest grows with the finding count, so on a `thorough` model
+the unfiltered read is large:
+
+- **`--id <F-/T-/M-/W-NNN>`** — the question names one identifier ("what's the
+  fix for F-003?", "why is W-002 a problem?"). Returns that record with its
+  cross-links (finding ↔ mitigation ↔ weakness). Cheapest and most precise;
+  prefer it over `--grep` whenever an id is present.
+- **`--grep <term>`** — the question centers on one keyword (a component name, a
+  vulnerability class). Note the severity histogram and worst-case block stay
+  global, so a filtered read still answers "how bad is it overall?".
+- **no filter** — broad questions ("what are the critical findings?"). Fine on a
+  `quick`/`standard` model; on a large one prefer `--grep`/`--id`.
 
 ```bash
-GREP=""
-[ -n "$GREP_TERM" ] && GREP="--grep $GREP_TERM"
+MODE=""
+if [ -n "$ID_QUERY" ]; then
+  MODE="--id $ID_QUERY"
+elif [ -n "$GREP_TERM" ]; then
+  MODE="--grep $GREP_TERM"
+fi
 JSON=""
 [ "$JSON_MODE" = "true" ] && JSON="--json"
 
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/query_threat_model.py" \
-    --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" $GREP $JSON
+    --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" $MODE $JSON
 EXIT=$?
 ```
 
@@ -162,6 +193,14 @@ knowledge below (meta). Rules:
   fact not present in the facts index. If the model does not contain the answer,
   say so plainly ("The model has no finding for SSRF") — absence is a valid,
   useful answer.
+- **Do not confuse "not in the index" with "not in the model."** The facts index
+  covers findings, mitigations and weaknesses only. The model *also* records
+  `components`, `assets`, `attack_surface`, `trust_boundaries` and
+  `security_controls` — those are **not** queryable here (only their counts are
+  in the header). For a question about them, say the query tool does not expose
+  that view and point at the rendered report (§4 Assets, §5 Attack Surface,
+  §6 Security Architecture) or `show-threat-model`. Never answer "the model does
+  not contain that" for one of these — that claim would be false.
 - Prefer a **direct answer first**, then the supporting F-ids. Keep it tight;
   do not dump the whole digest unless asked to list everything.
 - If the user asked to **act** (fix / accept / re-scan / export), answer the
@@ -174,9 +213,14 @@ knowledge below (meta). Rules:
 The threat model is produced by the **appsec-advisor** plugin. Use this to
 answer "how do I read/act on this" questions and to route actions.
 
-**Presence & metadata.** "Is there a threat model?" is answered by the loader
-itself: exit `1` + "No threat model found" means **no** (point to
-create-threat-model); a rendered digest means **yes**. The digest header + the
+**Presence is not this skill's question.** "Is there a threat model?" / "how
+does it stand?" belongs to `show-threat-model` — it answers deterministically,
+including freshness, with no LLM in the output path. If that is *all* the user
+asked, point there rather than paraphrasing a digest. Operationally you still
+handle absence: exit `1` + "No threat model found" means there is none — surface
+the tool's create-threat-model hint and stop, whatever the question was.
+
+**Metadata.** The digest header + the
 `META` block carry the model's own metadata — when it was generated
 (`generated`), the plugin version, scan mode (full/incremental), assessment
 depth, the models used, the analyst, repo URL, owner, asset classification,

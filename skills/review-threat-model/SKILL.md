@@ -1,6 +1,19 @@
 ---
 name: review-threat-model
-description: User-facing triage of an existing threat model — an overview-first console over an already-generated threat-model.yaml (backlog by priority, severity mix, worst-case scenarios), then one of three modes: Just look around (browse the findings read-only — by severity, security aspect, requirement, control posture — no decisions or changes), Fix or accept findings now (apply the code fix for findings you pick — or accept the risk instead — one at a time for review), or Build a remediation plan (decide mitigate / accept-risk per finding and emit a remediation-plan.md, no code changes). Within a triage session you can also Discuss a single finding by id (F-/T-/M-/W-) — a read-only aside to interrogate one finding, mitigation, or weakness before deciding to fix or accept it — that changes nothing. Runs later and completely independently of create-threat-model; reads the model, never regenerates or re-scores it. Not an artifact-quality check (that is eval-threat-model). To only *ask* a question about the model (what a finding is, does it cover X, what to fix first) without acting on it, use ask-threat-model.
+description: >-
+  User-facing triage of an existing threat model — an overview-first console
+  over an already-generated threat-model.yaml (backlog by priority, severity
+  mix, worst-case scenarios), then one of three modes. "Just look around"
+  browses findings read-only by severity, security aspect, requirement, or
+  control posture. "Fix or accept findings now" applies the code fix for
+  findings you pick — or accepts the risk instead — one at a time for review.
+  "Build a remediation plan" decides mitigate / accept-risk per finding and
+  emits a remediation-plan.md without code changes. Within a session you can
+  also discuss a single finding by id (F-/T-/M-/W-), a read-only aside that
+  changes nothing. Runs later and independently of create-threat-model; reads
+  the model, never regenerates or re-scores it. Not an artifact-quality check
+  (that is eval-threat-model). To only *ask* about the model without acting on
+  it, use ask-threat-model.
 ---
 
 You help a user work through the findings of a threat model that already exists,
