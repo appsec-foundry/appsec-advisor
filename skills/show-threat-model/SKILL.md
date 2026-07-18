@@ -1,6 +1,6 @@
 ---
 name: show-threat-model
-description: Read-only at-a-glance overview of the current threat model — project and scan identity, findings by severity, top-Critical threats, mitigation/control counts, and whether the model is still up to date. Reuses the same change detection that decides if an incremental scan is needed. Does not analyze code or write files.
+description: Read-only at-a-glance overview of the current threat model — project and scan identity, findings by severity, top-Critical threats, mitigation/control counts, and whether the model is still up to date. Reuses the same change detection that decides if an incremental scan is needed. Does not analyze code or write files. To ask a free-form question about the model (a specific finding, "does it cover X?", what a term means) rather than see this fixed overview, use ask-threat-model.
 ---
 
 You are printing a human-facing overview of the threat model in the target
