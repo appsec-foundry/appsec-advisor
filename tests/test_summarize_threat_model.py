@@ -428,3 +428,27 @@ def test_cli_against_repo_fixture():
     res = _run(["--output-dir", str(fixture)])
     assert res.returncode == 0
     assert "Threat Model —" in res.stdout
+
+
+# ---------------------------------------------------------------------------
+# Cross-skill routing hint
+# ---------------------------------------------------------------------------
+
+
+def test_render_text_names_the_ask_and_review_lanes(tmp_path):
+    """The overview is the FIXED fact set; questions needing an arbitrary subset
+    belong to ask-threat-model. Skill routing between the two is description-
+    based and imperfect, so the rendered block names the other lanes itself —
+    a deterministic correction when the router lands here by mistake.
+    """
+    import yaml
+
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    out = stm.render_text(summary, None, show_all=False)
+
+    assert "/appsec-advisor:ask-threat-model" in out, "overview must point at the Q&A lane"
+    assert "/appsec-advisor:review-threat-model" in out, "overview must point at the triage lane"
+    # The hint belongs at the very end, after Report — never above the facts.
+    assert out.rstrip().endswith("/appsec-advisor:review-threat-model")
