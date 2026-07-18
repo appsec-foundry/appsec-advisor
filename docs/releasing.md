@@ -27,12 +27,13 @@ at the bottom.
 
 Set the release version in `pyproject.toml` and `.claude-plugin/plugin.json`,
 then promote the pending notes under `## Unreleased` into the dated matching
-`CHANGELOG.md` heading. For the first beta this remains `0.4.0b0` /
-`0.4.0-beta`; no extra version bump is needed. Commit all metadata changes
+`CHANGELOG.md` heading. Leave the `## Unreleased` heading itself in place, empty
+— `check_release_meta.py` requires it to exist *and* to be empty, so deleting it
+fails the gate just as leaving notes under it does. Commit all metadata changes
 together:
 
 ```bash
-git commit -am "release: 0.4.0b0"
+git commit -am "release: 0.5.0b0"
 ```
 
 > Until this commit exists, step 2 will fail at `check_release_meta.py` — that is
@@ -82,6 +83,16 @@ Pushing the tag triggers `.github/workflows/release.yml`: it re-runs
 `make release-check` on the tagged commit, then creates the GitHub release (with
 the prerelease flag for a beta or RC). Confirm the release appears on GitHub and
 the workflow is green.
+
+GitHub refuses to mark a prerelease as "latest", so a beta published this way
+leaves the previous release showing as latest. When the beta *is* the recommended
+version, clear the prerelease flag and promote it (the REST API — `gh release
+edit` has no such flag):
+
+```bash
+id=$(gh api repos/<owner>/<repo>/releases/tags/v0.5.0-beta --jq .id)
+gh api -X PATCH repos/<owner>/<repo>/releases/$id -f prerelease=false -f make_latest=true
+```
 
 ### 5. Reopen `dev` for development
 
