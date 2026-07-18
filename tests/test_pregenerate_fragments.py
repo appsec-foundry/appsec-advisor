@@ -3220,6 +3220,82 @@ class TestClassifyTierBoundary:
         assert len(node_ids) <= 8, f"expected ≤8 nodes, got {sorted(node_ids)}"
 
 
+class TestContainerDiagramNodeCap:
+    """Regression (2026-07-18 juice-shop): `gen_architecture_diagrams` emitted
+    one §2.2 node per component with NO ceiling, so a 9-component model shipped
+    a `diagram_compactness` violation that no re-render could clear — the repair
+    plan's own "regenerate from the Pre-Generator, it obeys the limits by
+    construction" remedy reproduced the violation verbatim.
+    """
+
+    @staticmethod
+    def _yaml(n_app: int, threats: list | None = None) -> dict:
+        comps = [
+            {"id": "angular-spa", "name": "Angular SPA", "paths": ["frontend/src/**"]},
+            {"id": "data-layer", "name": "Data Layer", "paths": ["models/**", "data/app.sqlite"]},
+        ]
+        comps += [{"id": f"svc-{i}", "name": f"Service {i}", "paths": [f"routes/svc{i}.ts"]} for i in range(n_app)]
+        return {"meta": {"project": {"name": "JS"}}, "components": comps, "threats": threats or []}
+
+    @staticmethod
+    def _block(frag: str) -> str:
+        return re.search(r"### 2\.2 Container Architecture.*?```mermaid(.*?)```", frag, re.S).group(1)
+
+    def test_twelve_components_capped_to_contract_maximum(self):
+        frag = pf.gen_architecture_diagrams(self._yaml(n_app=10))
+        node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", self._block(frag), re.M))
+        assert len(node_ids) <= 8, f"expected ≤8 nodes, got {sorted(node_ids)}"
+
+    def test_every_tier_keeps_at_least_one_node(self):
+        block = self._block(pf.gen_architecture_diagrams(self._yaml(n_app=10)))
+        node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", block, re.M))
+        # Client and data tiers must survive the trim — the layered topology is
+        # the point of the diagram.
+        assert "angular_spa" in node_ids
+        assert "data_layer" in node_ids
+
+    def test_highest_risk_components_survive_the_trim(self):
+        threats = [{"component_id": "svc-9", "risk": "critical"} for _ in range(4)]
+        frag = pf.gen_architecture_diagrams(self._yaml(n_app=10, threats=threats))
+        node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", self._block(frag), re.M))
+        assert "svc_9" in node_ids, "the component carrying 4 Criticals must not be trimmed"
+
+    def test_no_class_line_references_a_trimmed_node(self):
+        threats = [{"component_id": "svc-9", "risk": "critical"} for _ in range(4)]
+        block = self._block(pf.gen_architecture_diagrams(self._yaml(n_app=10, threats=threats)))
+        declared = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", block, re.M))
+        classed = set(re.findall(r"^\s*class\s+([A-Za-z0-9_]+)\s", block, re.M))
+        assert classed <= declared, f"class lines reference undeclared nodes: {sorted(classed - declared)}"
+
+    def test_no_edge_references_a_trimmed_node(self):
+        block = self._block(pf.gen_architecture_diagrams(self._yaml(n_app=10)))
+        declared = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", block, re.M))
+        edges = re.findall(r"^\s*([A-Za-z0-9_]+)\s*[-.=]+>\s*\|[^|]*\|\s*([A-Za-z0-9_]+)", block, re.M)
+        referenced = {n for edge in edges for n in edge}
+        assert referenced <= declared, f"edges reference trimmed nodes: {sorted(referenced - declared)}"
+
+    def test_trimmed_components_are_named_not_silently_dropped(self):
+        frag = pf.gen_architecture_diagrams(self._yaml(n_app=10))
+        assert "Not shown" in frag
+        assert "#23-components" in frag
+
+    def test_small_model_is_untouched_and_carries_no_note(self):
+        frag = pf.gen_architecture_diagrams(self._yaml(n_app=3))
+        node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", self._block(frag), re.M))
+        assert len(node_ids) == 5
+        assert "Not shown" not in frag
+
+    def test_cap_helper_keeps_one_per_tier_when_budget_is_tighter_than_tiers(self):
+        by_tier = {
+            "client": [{"id": "c1"}, {"id": "c2"}],
+            "application": [{"id": "a1"}, {"id": "a2"}],
+            "data": [{"id": "d1"}],
+        }
+        capped, dropped = pf._cap_container_tiers(by_tier, {}, {}, max_nodes=2)
+        assert [len(capped[t]) for t in ("client", "application", "data")] == [1, 1, 1]
+        assert len(dropped) == 2
+
+
 # ---------------------------------------------------------------------------
 # RC-2 (2026-06-21 juice-shop): a §6.x section with routed findings but NO
 # catalogued controls must ship a `**Controls covered:**` line that matches its
