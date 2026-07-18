@@ -1414,6 +1414,17 @@ def render_composition_health(health: Optional[dict]) -> list[str]:
     return lines
 
 
+# The numbered list is capped at 5 and its slots are contested by conditional
+# rules, so the Q&A lane gets an unnumbered footer instead of a sixth step: it
+# applies to every completed run, costs no slot, and can never displace an
+# action line. The example questions are the point — they show the user that
+# free-form questions are a real surface, which a bare skill name does not.
+_ASK_HINT = (
+    'Or just ask, e.g. "what are the critical findings?" · "does it cover SSRF?" · '
+    '"is there a fix for F-003?"  → /appsec-advisor:ask-threat-model'
+)
+
+
 def render_next_steps(next_steps: list[str]) -> list[str]:
     if not next_steps:
         return []
@@ -1421,6 +1432,8 @@ def render_next_steps(next_steps: list[str]) -> list[str]:
     lines.append("Next Steps")
     for i, step in enumerate(next_steps, start=1):
         lines.append(f"  {i}. {step}")
+    lines.append("")
+    lines.append(f"  {_ASK_HINT}")
     return lines
 
 

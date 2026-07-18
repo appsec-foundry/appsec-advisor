@@ -4408,7 +4408,7 @@ scan-friendly summary in this fixed order:
 7. `Threat Delta` — top 3 new, resolved, and changed threats when available
 8. `Outputs` — artifact paths (yaml conditional on `--write-yaml`; sarif conditional on file presence)
 9. Conditional health / run-issues / security notice blocks
-10. `Next Steps` — 1–5 conditional action lines
+10. `Next Steps` — 1–5 conditional action lines, plus a fixed unnumbered footer pointing at `/appsec-advisor:ask-threat-model` with example questions
 11. `Run Statistics` — timing headline (net compute / idle / wall) always; per-stage durations (from `.stage-stats.jsonl`), agent roster, and tokens + cost only when `--verbose` is passed
 12. `Logs`
 

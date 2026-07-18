@@ -1144,6 +1144,17 @@ class TestRenderMisc:
     def test_render_next_steps_empty(self):
         assert rcs.render_next_steps([]) == []
 
+    def test_render_next_steps_footer_names_the_ask_lane(self):
+        """The Q&A lane rides as an unnumbered footer, never as a sixth step:
+        the numbered list is capped at 5 and its slots are contested, so a
+        numbered entry could silently displace an action line.
+        """
+        out = rcs.render_next_steps([f"step {i}" for i in range(5)])
+        assert "/appsec-advisor:ask-threat-model" in out[-1]
+        assert not out[-1].strip().startswith("6.")
+        # Example questions carry the message that free-form asking works.
+        assert "critical findings" in out[-1]
+
     def test_render_log_files(self, tmp_path: Path):
         (tmp_path / ".qa-status.json").write_text("{}")
         out = "\n".join(rcs.render_log_files(tmp_path))
