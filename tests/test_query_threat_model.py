@@ -494,3 +494,159 @@ def test_no_violation_is_not_reported_as_compliance(tmp_path):
     r = _run(["--output-dir", str(tmp_path)])
     assert "No finding breaks a declared requirement." in r.stdout
     assert "Not the same as 'compliant'" in r.stdout
+
+
+def test_worst_case_prefers_the_findings_own_mitigation(tmp_path):
+    """critical_findings[].mitigation_id is a denormalized copy that the
+    auto-emitter pass can leave stale. TOP RISK must cite the fix the finding
+    actually links to — observed in production citing "Apply least-privilege
+    permissions" for a JWT-verification finding.
+    """
+    import yaml
+
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    data["threats"][0]["mitigation_ids"] = ["M-042"]
+    data["critical_findings"] = [
+        {"threat_id": data["threats"][0]["id"], "summary": "stale copy", "mitigation_id": "M-001"}
+    ]
+    wc = qtm.build_facts(data, None)["worst_case"]
+    assert wc[0]["mitigation_id"] == "M-042", "must not echo the stale curated id"
+
+
+def test_worst_case_falls_back_to_the_curated_id(tmp_path):
+    """When the finding carries no link of its own, the curated id is all we
+    have — keep it rather than dropping the fix reference entirely."""
+    import yaml
+
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    data["threats"][0]["mitigation_ids"] = []
+    data["critical_findings"] = [
+        {"threat_id": data["threats"][0]["id"], "summary": "only source", "mitigation_id": "M-007"}
+    ]
+    wc = qtm.build_facts(data, None)["worst_case"]
+    assert wc[0]["mitigation_id"] == "M-007"
+
+
+# --------------------------------------------------------------------------
+# System inventory — components / assets / boundaries / controls / surface
+#
+# The index used to carry findings, mitigations and weaknesses only, so
+# "what are my assets?" could not be answered even though the model records
+# them. Worse, the skill's honesty rule would then have reported them as
+# absent from the model — a false statement about the user's own data.
+# --------------------------------------------------------------------------
+
+
+SYS_SAMPLE = """\
+    meta:
+      project: Sys App
+    components:
+      - id: backend-api
+        name: Express Backend
+        tier: application
+        framework: express
+        handles_sensitive_data: true
+        threat_ids: [T-001]
+    assets:
+      - id: A-001
+        name: User Account Database
+        classification: Restricted
+        description: credentials at rest
+        linked_threats: [T-001]
+    trust_boundaries:
+      - id: tb-1
+        name: Public Internet
+        from: external
+        to: backend-api
+    security_controls:
+      - domain: Identity and Authentication
+        control: Password-Based Authentication
+        effectiveness: Weak
+        assessment: bcrypt rounds too low
+        linked_threats: [T-001]
+    attack_surface:
+      - entry_point: POST /file-upload
+        protocol: HTTP
+        auth_required: false
+        relevance_tags: [missing-auth]
+      - entry_point: GET /rest/products
+        protocol: HTTP
+        auth_required: true
+    threats:
+      - id: T-001
+        stride: Tampering
+        component: backend-api
+        severity: Critical
+        title: "SQL Injection"
+"""
+
+
+def _sys_facts(grep=None) -> dict:
+    import yaml
+
+    return qtm.build_facts(yaml.safe_load(textwrap.dedent(SYS_SAMPLE)), grep)
+
+
+def test_components_assets_boundaries_controls_are_indexed():
+    sysv = _sys_facts()["system"]
+    assert [c["id"] for c in sysv["components"]] == ["backend-api"]
+    assert [a["name"] for a in sysv["assets"]] == ["User Account Database"]
+    assert [b["id"] for b in sysv["trust_boundaries"]] == ["tb-1"]
+    assert [c["effectiveness"] for c in sysv["controls"]] == ["Weak"]
+
+
+def test_linked_threats_are_cited_as_f_ids():
+    """The yaml stores T-NNN; the reader sees F-NNN. Same rule as findings."""
+    sysv = _sys_facts()["system"]
+    assert sysv["components"][0]["findings"] == ["F-001"]
+    assert sysv["assets"][0]["findings"] == ["F-001"]
+    assert sysv["controls"][0]["findings"] == ["F-001"]
+
+
+def test_attack_surface_reports_shape_but_not_entries_by_default():
+    """109 entries on a mid-size repo — listing them on every question would
+    inflate the digest a third. Shape always, entries only under a filter."""
+    surf = _sys_facts()["system"]["attack_surface"]
+    assert surf["total"] == 2
+    assert surf["unauthenticated"] == 1
+    assert surf["by_protocol"] == {"HTTP": 2}
+    assert surf["matched"] == []
+
+
+def test_attack_surface_entries_are_listed_under_grep():
+    surf = _sys_facts(grep="file-upload")["system"]["attack_surface"]
+    assert [e["entry_point"] for e in surf["matched"]] == ["POST /file-upload"]
+    assert surf["matched"][0]["auth_required"] is False
+    # Shape stays global so a filtered read still answers "how exposed am I?"
+    assert surf["total"] == 2
+
+
+def test_auth_required_string_false_is_not_truthy():
+    """Some models serialise auth_required as the string "False"; a naive bool()
+    would report an unauthenticated endpoint as authenticated."""
+    import yaml
+
+    data = yaml.safe_load(textwrap.dedent(SYS_SAMPLE))
+    data["attack_surface"][0]["auth_required"] = "False"
+    surf = qtm.build_facts(data, "file-upload")["system"]["attack_surface"]
+    assert surf["matched"][0]["auth_required"] is False
+    assert surf["unauthenticated"] == 1
+
+
+def test_grep_narrows_the_system_catalogs():
+    sysv = _sys_facts(grep="Password-Based")["system"]
+    assert [c["control"] for c in sysv["controls"]] == ["Password-Based Authentication"]
+    assert sysv["assets"] == []
+
+
+def test_cli_renders_system_and_controls_blocks(tmp_path):
+    _write_model(tmp_path, SYS_SAMPLE)
+    r = _run(["--output-dir", str(tmp_path)])
+    assert r.returncode == 0
+    assert "SYSTEM (what exists" in r.stdout
+    assert "CONTROLS (assessed posture" in r.stdout
+    assert "A-001" in r.stdout and "Restricted" in r.stdout
+    assert "2 entry point(s) · 1 without auth" in r.stdout
+    assert "POST /file-upload" not in r.stdout, "entries must stay behind --grep"

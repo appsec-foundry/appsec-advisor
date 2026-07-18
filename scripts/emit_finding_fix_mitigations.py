@@ -48,6 +48,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _critical_findings_sync import resync_critical_findings  # noqa: E402
+
 _M_ID_RE = re.compile(r"\bM-(\d{3,})\b")
 
 # Severity → baseline priority (mirrors build_threat_model_yaml.build_mitigations
@@ -121,6 +124,9 @@ def _scan_max_m_id(data: dict) -> int:
 
 
 def _write_yaml(path: Path, data: dict) -> None:
+    # This emitter relinks threats[].mitigation_ids, which makes the builder's
+    # critical_findings[].mitigation_id stale. Re-derive before persisting.
+    resync_critical_findings(data)
     path.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
         encoding="utf-8",

@@ -41,6 +41,7 @@ import yaml
 
 # Local shared modules — single source of truth for source-string enums.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _critical_findings_sync import resync_critical_findings  # noqa: E402
 from _shared_sources import ARCH_ALL_SOURCES  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -400,6 +401,10 @@ def main(argv: list[str]) -> int:
         if not isinstance(existing, list):
             existing = []
         data["mitigations"] = existing + new_cards
+
+    # This emitter relinks threats[].mitigation_ids, which makes the builder's
+    # critical_findings[].mitigation_id stale. Re-derive before persisting.
+    resync_critical_findings(data)
 
     yaml_path.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),

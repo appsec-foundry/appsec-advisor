@@ -149,7 +149,14 @@ def _worst_case(threats: list, mitigations: list, critical_findings: list | None
         t = by_id.get(tid)
         if not t:
             continue
-        m = mit_by_id.get(str(c.get("mitigation_id") or "").strip())
+        # Prefer the threat's OWN first mitigation over the curated entry's
+        # denormalized copy. The auto-emitter pass relinks threats[] after the
+        # builder wrote critical_findings[], so the copy can be stale (observed:
+        # every entry wrong in two real models). The threat we just joined is
+        # the authoritative link; the curated id is only a fallback.
+        own = [str(x).strip() for x in (t.get("mitigation_ids") or []) if str(x).strip()]
+        mid = own[0] if own else str(c.get("mitigation_id") or "").strip()
+        m = mit_by_id.get(mid)
         out.append(
             {
                 "id": tid,

@@ -178,8 +178,10 @@ the unfiltered read is large:
 - **`--grep <term>`** — the question centers on one keyword (a component name, a
   vulnerability class). Note the severity histogram and worst-case block stay
   global, so a filtered read still answers "how bad is it overall?".
-- **no filter** — broad questions ("what are the critical findings?"). Fine on a
-  `quick`/`standard` model; on a large one prefer `--grep`/`--id`.
+- **no filter** — broad questions ("what are the critical findings?", "what are
+  my assets?", "which controls are weak?"). Fine on a `quick`/`standard` model;
+  on a large one prefer `--grep`/`--id`. Note the attack-surface entry list is
+  *only* rendered under `--grep` — the default shows its shape alone.
 
 ```bash
 MODE=""
@@ -231,14 +233,18 @@ knowledge below (meta). Rules:
   fact not present in the facts index. If the model does not contain the answer,
   say so plainly ("The model has no finding for SSRF") — absence is a valid,
   useful answer.
-- **Do not confuse "not in the index" with "not in the model."** The facts index
-  covers findings, mitigations and weaknesses only. The model *also* records
-  `components`, `assets`, `attack_surface`, `trust_boundaries` and
-  `security_controls` — those are **not** queryable here (only their counts are
-  in the header). For a question about them, say the query tool does not expose
-  that view and point at the rendered report (§4 Assets, §5 Attack Surface,
-  §6 Security Architecture). Never answer "the model does not contain that" for
-  one of these — that claim would be false.
+- **Do not confuse "not in the index" with "not in the model."** Check what the
+  digest actually carries before declaring something absent. Besides findings,
+  mitigations and weaknesses it carries a `SYSTEM` block (components, assets and
+  their classification, trust boundaries) and a `CONTROLS` block (assessed
+  effectiveness per domain) — all cross-linked to the findings that evidence
+  them. The one deliberate gap is the **attack-surface entry list**: only its
+  shape (total, how many unauthenticated, protocol mix) is in the default digest
+  because it routinely runs past 100 entries. Re-run with `--grep <path or
+  keyword>` to list matching entry points instead of claiming the model records
+  none. Narrative depth that no index carries (full asset write-ups, the
+  architecture prose) lives in the rendered report: §4 Assets, §5 Attack
+  Surface, §6 Security Architecture.
 - Prefer a **direct answer first**, then the supporting F-ids. Keep it tight;
   do not dump the whole digest unless asked to list everything.
 - If the user asked to **act** (fix / accept / re-scan / export), answer the

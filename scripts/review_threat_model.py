@@ -472,7 +472,12 @@ def build_worst_case(model: dict, findings: list[dict], mitigations: list[dict],
         f = find_by_id.get(tid)
         if not f:
             continue
-        mid = str(c.get("mitigation_id") or "").strip()
+        # Prefer the finding's OWN first mitigation over the curated entry's
+        # denormalized copy — see summarize_threat_model._worst_case for why
+        # that copy goes stale (auto-emitter pass relinks threats[] after the
+        # builder wrote critical_findings[]).
+        own = [str(x).strip() for x in (f.get("mitigation_ids") or []) if str(x).strip()]
+        mid = own[0] if own else str(c.get("mitigation_id") or "").strip()
         m = mit_by_id.get(mid)
         out.append(
             {

@@ -45,6 +45,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import re
 import sys
@@ -221,6 +222,59 @@ def _weakness_record(w: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _component_record(c: dict) -> dict:
+    return {
+        "id": (c.get("id") or "").strip(),
+        "name": (c.get("name") or "").strip(),
+        "tier": (c.get("tier") or "").strip(),
+        "framework": (c.get("framework") or "").strip(),
+        "sensitive": bool(c.get("handles_sensitive_data")),
+        "findings": [_display_id(str(t).strip()) for t in (c.get("threat_ids") or []) if str(t).strip()],
+    }
+
+
+def _asset_record(a: dict) -> dict:
+    return {
+        "id": (a.get("id") or "").strip(),
+        "name": (a.get("name") or "").strip(),
+        "classification": (a.get("classification") or "").strip(),
+        "description": _trim(a.get("description") or ""),
+        # Stored as T-NNN; cite the F-NNN the reader sees (same rule as findings).
+        "findings": [_display_id(str(t).strip()) for t in (a.get("linked_threats") or []) if str(t).strip()],
+    }
+
+
+def _boundary_record(b: dict) -> dict:
+    return {
+        "id": (b.get("id") or "").strip(),
+        "name": (b.get("name") or "").strip(),
+        "from": (b.get("from") or "").strip(),
+        "to": (b.get("to") or "").strip(),
+        "enforcement": _trim(b.get("enforcement") or ""),
+    }
+
+
+def _control_record(c: dict) -> dict:
+    return {
+        "domain": (c.get("domain") or "").strip(),
+        "control": (c.get("control") or "").strip(),
+        "effectiveness": (c.get("effectiveness") or "").strip(),
+        "assessment": _trim(c.get("assessment") or ""),
+        "findings": [_display_id(str(t).strip()) for t in (c.get("linked_threats") or []) if str(t).strip()],
+    }
+
+
+def _surface_record(e: dict) -> dict:
+    return {
+        "entry_point": (e.get("entry_point") or "").strip(),
+        "protocol": (e.get("protocol") or "").strip(),
+        # Schema allows bool or the string "False" — normalise before trusting it.
+        "auth_required": str(e.get("auth_required")).strip().lower() in ("true", "yes", "1"),
+        "notes": _trim(e.get("notes") or ""),
+        "tags": [str(t).strip() for t in (e.get("relevance_tags") or []) if str(t).strip()],
+    }
+
+
 def _matches(text_fields: list[str], term: str) -> bool:
     low = term.lower()
     return any(low in (f or "").lower() for f in text_fields)
@@ -244,7 +298,13 @@ def _worst_case(findings: list[dict], critical: list, limit: int = 3) -> list[di
                 "id": f["id"],
                 "severity": f["severity"],
                 "summary": str(c.get("summary") or "").strip() or f["title"],
-                "mitigation_id": str(c.get("mitigation_id") or "").strip(),
+                # The finding's own first mitigation wins over the curated
+                # entry's denormalized copy, which the auto-emitter pass can
+                # leave stale (observed: TOP RISK cited "Apply least-privilege
+                # permissions" for a JWT-verification finding).
+                "mitigation_id": (
+                    f["mitigation_ids"][0] if f["mitigation_ids"] else str(c.get("mitigation_id") or "").strip()
+                ),
             }
         )
     if not out:  # no curated worst-case — degrade to the top findings
@@ -316,7 +376,37 @@ def build_facts(data: dict, grep: str | None = None, output_dir: Path | None = N
             if _matches([w["id"], w["title"], w["statement"], w["weakness_class"], w["kind"]], grep)
         ]
 
-    controls = [c for c in (data.get("security_controls") or []) if isinstance(c, dict)]
+    controls_raw = [c for c in (data.get("security_controls") or []) if isinstance(c, dict)]
+    controls = controls_raw
+
+    # The system view: the model's own inventory of what exists, distinct from
+    # what is wrong with it. Previously absent from the index entirely, so
+    # "what are my assets / trust boundaries / controls?" could not be answered
+    # from the model even though the model records all of it.
+    components_l = [_component_record(c) for c in (data.get("components") or []) if isinstance(c, dict)]
+    assets_l = [_asset_record(a) for a in (data.get("assets") or []) if isinstance(a, dict)]
+    boundaries_l = [_boundary_record(b) for b in (data.get("trust_boundaries") or []) if isinstance(b, dict)]
+    controls_l = [_control_record(c) for c in controls_raw]
+    surface_all = [_surface_record(e) for e in (data.get("attack_surface") or []) if isinstance(e, dict)]
+
+    # Attack surface is the one catalog that is routinely huge (109 entries on a
+    # mid-size repo). Always report the shape; list entries only under a filter,
+    # so the default digest does not grow by a third for every question.
+    surface_l = (
+        [e for e in surface_all if _matches([e["entry_point"], e["protocol"], e["notes"], " ".join(e["tags"])], grep)]
+        if grep
+        else []
+    )
+
+    if grep:
+        components_l = [c for c in components_l if _matches([c["id"], c["name"], c["tier"], c["framework"]], grep)]
+        assets_l = [a for a in assets_l if _matches([a["id"], a["name"], a["classification"], a["description"]], grep)]
+        boundaries_l = [
+            b for b in boundaries_l if _matches([b["id"], b["name"], b["from"], b["to"], b["enforcement"]], grep)
+        ]
+        controls_l = [
+            c for c in controls_l if _matches([c["domain"], c["control"], c["effectiveness"], c["assessment"]], grep)
+        ]
 
     # Custom requirements, when the team wired up their own catalog. Computed
     # over ALL findings (like the histogram), so a grep-narrowed read still
@@ -376,6 +466,23 @@ def build_facts(data: dict, grep: str | None = None, output_dir: Path | None = N
             "controls": len(controls),
         },
         "requirements": requirements,
+        "system": {
+            "components": components_l,
+            "assets": assets_l,
+            "trust_boundaries": boundaries_l,
+            "controls": controls_l,
+            "attack_surface": {
+                "total": len(surface_all),
+                "unauthenticated": sum(1 for e in surface_all if not e["auth_required"]),
+                "by_protocol": dict(
+                    sorted(
+                        collections.Counter(e["protocol"] or "?" for e in surface_all).items(),
+                        key=lambda kv: (-kv[1], kv[0]),
+                    )
+                ),
+                "matched": surface_l,
+            },
+        },
         "grep": grep or "",
         "matched_findings": len(findings),
         "findings": findings,
@@ -471,6 +578,46 @@ def render_text(facts: dict) -> str:
         f"Mitigations {totals['mitigations']} proposed · "
         f"Weaknesses {totals['weaknesses']} · Controls {totals['controls']} assessed"
     )
+
+    sysv = facts.get("system") or {}
+    surf = sysv.get("attack_surface") or {}
+    if any(sysv.get(k) for k in ("components", "assets", "trust_boundaries", "controls")) or surf.get("total"):
+        buf.append("")
+        buf.append("SYSTEM (what exists — the model's own inventory)")
+        for c in sysv.get("components") or []:
+            bits = " · ".join(x for x in (c["tier"], c["framework"], "sensitive-data" if c["sensitive"] else "") if x)
+            n = len(c["findings"])
+            buf.append(f"  component  {c['id']:<22} {c['name']}" + (f"  [{bits}]" if bits else ""))
+            if n:
+                buf.append(f"             {n} finding(s): {', '.join(c['findings'])}")
+        for a in sysv.get("assets") or []:
+            buf.append(f"  asset      {a['id']:<22} {a['name']}  [{a['classification'] or 'unclassified'}]")
+            if a["findings"]:
+                buf.append(f"             at risk from: {', '.join(a['findings'])}")
+        for b in sysv.get("trust_boundaries") or []:
+            buf.append(f"  boundary   {b['id']:<22} {b['name']}  ({b['from'] or '?'} -> {b['to'] or '?'})")
+        if surf.get("total"):
+            proto = " · ".join(f"{k} {v}" for k, v in (surf.get("by_protocol") or {}).items())
+            buf.append(
+                f"  surface    {surf['total']} entry point(s) · {surf['unauthenticated']} without auth"
+                + (f" · {proto}" if proto else "")
+            )
+            if not facts.get("grep"):
+                buf.append("             (use --grep to list matching entry points)")
+            for e in surf.get("matched") or []:
+                auth = "auth" if e["auth_required"] else "NO AUTH"
+                tags = f"  [{', '.join(e['tags'])}]" if e["tags"] else ""
+                buf.append(f"             {e['entry_point']}  ({e['protocol'] or '?'} · {auth}){tags}")
+
+    ctrls = sysv.get("controls") or []
+    if ctrls:
+        buf.append("")
+        buf.append("CONTROLS (assessed posture — effectiveness is the model's verdict)")
+        for c in ctrls:
+            head = f"  {c['effectiveness'] or '?':<9} {c['domain']} — {c['control']}"
+            buf.append(head)
+            if c["findings"]:
+                buf.append(f"             evidenced by: {', '.join(c['findings'])}")
 
     reqs = facts.get("requirements") or {}
     if reqs.get("integrated"):
