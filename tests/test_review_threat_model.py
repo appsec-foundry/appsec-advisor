@@ -650,6 +650,34 @@ def test_normalize_domain_auth_and_authz():
     )
 
 
+def test_normalize_domain_does_not_swallow_data_access():
+    # "Data Access Controls" is the data/query layer, not access control. A bare
+    # `"access control" in domain` substring test folded it into Authorization,
+    # which misfiled its controls AND dropped the domain from the posture lens.
+    assert rtm._normalize_domain("Query Construction and Data Access Controls") == "Query Construction and Data Access"
+    assert rtm._normalize_domain("Data Access Controls") == "Data Access"
+    # the genuine authorization labels still fold
+    assert rtm._normalize_domain("Access Control Controls") == "Authorization"
+    assert rtm._normalize_domain("Authorization Controls") == "Authorization"
+
+
+def test_control_posture_keeps_data_access_domain_separate():
+    model = {
+        "security_controls": [
+            {"domain": "Authorization Controls", "control": "rbac", "effectiveness": "Missing"},
+            {"domain": "Query Construction and Data Access Controls", "control": "path", "effectiveness": "Partial"},
+            {"domain": "Query Construction and Data Access Controls", "control": "yaml", "effectiveness": "Adequate"},
+        ]
+    }
+    posture = rtm.build_control_posture(model)
+    by_domain = {d["domain"]: d for d in posture}
+    assert set(by_domain) == {"Authorization", "Query Construction and Data Access"}
+    # Authorization keeps only its own control — not the two query-layer ones
+    assert by_domain["Authorization"]["total"] == 1
+    assert by_domain["Query Construction and Data Access"]["total"] == 2
+    assert by_domain["Query Construction and Data Access"]["worst_effectiveness"] == "Partial"
+
+
 def test_control_posture_normalizes_and_merges_auth_domains():
     model = {
         "security_controls": [

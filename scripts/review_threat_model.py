@@ -569,12 +569,19 @@ def _normalize_domain(raw: str) -> str:
     renames/merges the model's own ``security_controls[].domain`` strings; other
     domains just lose a trailing " Controls" for brevity."""
     r = raw.strip()
-    low = r.lower()
-    if "authorization" in low or "access control" in low:
+    # Trim the trailing " Controls" first so the alias tests read the domain's
+    # actual topic, not the boilerplate suffix.
+    core = r[: -len(" Controls")].strip() if r.lower().endswith(" controls") else r
+    low = core.lower()
+    # "data access" is the data/query layer, NOT access control. Check it before
+    # the access-control test, otherwise a compound domain like "Query
+    # Construction and Data Access Controls" is swallowed by Authorization —
+    # misfiling its controls and dropping the domain from the posture lens.
+    if "data access" not in low and ("authorization" in low or "access control" in low):
         return "Authorization"
     if "authentication" in low or "identity" in low:
         return "Authentication"
-    return r[: -len(" Controls")].strip() if low.endswith("controls") else r
+    return core
 
 
 def build_recommended(mitigations: list[dict], limit: int = 5) -> list[dict]:
