@@ -129,6 +129,39 @@ def _project(data: dict) -> tuple[str, str]:
     return "", ""
 
 
+# Curated provenance / governance scalars from `meta`, in render order. Answers
+# "how / when / by what was this generated?" and "who owns it / what scope?".
+# (label, field). Only scalar values that are present and non-empty surface.
+_PROVENANCE_FIELDS = [
+    ("Plugin", "plugin_version"),
+    ("Scan mode", "mode"),
+    ("Reasoning model", "reasoning_model"),
+    ("STRIDE model", "stride_model"),
+    ("Analyst", "analyst"),
+    ("Scope", "scope"),
+    ("Repo", "repo_url"),
+    ("Owner", "team_owner"),
+    ("Asset class", "asset_classification"),
+    ("Compliance", "compliance_scope"),
+    ("Requirements checked", "check_requirements"),
+]
+
+
+def _provenance(meta: dict) -> dict:
+    """Curated scalar meta fields, keyed by field name. Booleans render as
+    yes/no; lists and empty values are skipped (kept out of the answer surface)."""
+    out: dict[str, str] = {}
+    for _label, key in _PROVENANCE_FIELDS:
+        v = meta.get(key)
+        if isinstance(v, bool):
+            out[key] = "yes" if v else "no"
+        elif isinstance(v, str) and v.strip():
+            out[key] = v.strip()
+        elif isinstance(v, (int, float)):
+            out[key] = str(v)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Record builders
 # ---------------------------------------------------------------------------
@@ -187,6 +220,36 @@ def _matches(text_fields: list[str], term: str) -> bool:
     return any(low in (f or "").lower() for f in text_fields)
 
 
+def _worst_case(findings: list[dict], critical: list, limit: int = 3) -> list[dict]:
+    """The model's own "worst case if nothing changes" — its curated
+    ``critical_findings`` (threat_id/summary/mitigation_id) joined to the finding
+    records. This is the quick verdict. Falls back to the top severity-ranked
+    findings when the model curated none. Never authors new text."""
+    by_raw = {f["raw_id"]: f for f in findings}
+    out: list[dict] = []
+    for c in critical:
+        if not isinstance(c, dict):
+            continue
+        f = by_raw.get(str(c.get("threat_id") or "").strip())
+        if not f:
+            continue
+        out.append(
+            {
+                "id": f["id"],
+                "severity": f["severity"],
+                "summary": str(c.get("summary") or "").strip() or f["title"],
+                "mitigation_id": str(c.get("mitigation_id") or "").strip(),
+            }
+        )
+    if not out:  # no curated worst-case — degrade to the top findings
+        out = [
+            {"id": f["id"], "severity": f["severity"], "summary": f["title"], "mitigation_id": ""}
+            for f in findings[:limit]
+        ]
+    out.sort(key=lambda w: (_SEVERITY_ORDER.get(w["severity"], 9), w["id"]))
+    return out[:limit]
+
+
 def build_facts(data: dict, grep: str | None = None) -> dict:
     meta = data.get("meta") or {}
     git = meta.get("git") or {}
@@ -207,6 +270,10 @@ def build_facts(data: dict, grep: str | None = None) -> dict:
     for f in findings:
         counts[f["severity"]] = counts.get(f["severity"], 0) + 1
     total_findings = sum(counts.values())
+
+    # Worst-case / quick verdict is computed over ALL findings, before any grep
+    # filter narrows the list — the verdict is global, not scoped to a topic.
+    worst_case = _worst_case(findings, data.get("critical_findings") or [])
 
     if grep:
         matched_mit_ids: set[str] = set()
@@ -251,6 +318,8 @@ def build_facts(data: dict, grep: str | None = None) -> dict:
             "assessment_depth": (meta.get("assessment_depth") or "").strip(),
             "generated": (meta.get("generated") or "").strip(),
         },
+        "provenance": _provenance(meta),
+        "worst_case": worst_case,
         "totals": {
             "findings": total_findings,
             "by_severity": counts,
@@ -352,6 +421,22 @@ def render_text(facts: dict) -> str:
         f"Mitigations {totals['mitigations']} proposed · "
         f"Weaknesses {totals['weaknesses']} · Controls {totals['controls']} assessed"
     )
+
+    worst = facts.get("worst_case") or []
+    if worst:
+        buf.append("")
+        buf.append("TOP RISK — worst case if nothing changes (the quick verdict)")
+        for w in worst:
+            fix = w["mitigation_id"] or "no proposed fix"
+            buf.append(f"  {w['id']:<7} [{w['severity'] or 'Unrated'}] {w['summary']}  → {fix}")
+
+    prov = facts.get("provenance") or {}
+    if prov:
+        buf.append("")
+        buf.append("META (how this model was generated)")
+        for label, key in _PROVENANCE_FIELDS:
+            if key in prov:
+                buf.append(f"  {label + ':':<22} {prov[key]}")
 
     if facts["grep"]:
         buf.append("")

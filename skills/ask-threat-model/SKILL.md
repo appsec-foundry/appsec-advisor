@@ -8,6 +8,15 @@ repository. This skill is **read-only** — it does **not** analyze code, does
 **not** spawn agents, and does **not** write files. It reads the committed
 `threat-model.yaml` and answers.
 
+**Correct first, then fast.** The answer must be **grounded and accurate** —
+every claim traceable to the model, cited by F-id, never hallucinated,
+half-true, or inflated. When the model does not contain the answer, say so;
+that is a correct answer. Given that, keep it quick: the common case is **one**
+`query_threat_model.py` call (a pure YAML read, no network, no agents) and a
+short reply — so don't run the freshness probe, re-read the big rendered report,
+or spawn anything unless the question actually needs it (see Step 3b). Speed
+never justifies guessing: if answering correctly needs another read, do it.
+
 This is the "just ask" surface. It is distinct from its siblings:
 
 - **show-threat-model** prints a *fixed* overview. Use it when the user wants
@@ -125,6 +134,23 @@ Exit-code reference:
 
 If `--json` was requested, print the tool's output as the deliverable and stop.
 
+## Step 3b — Freshness (only when the user asks)
+
+Only when the question is about **currency** — "is it still up to date?", "is
+this stale/outdated?", "has the code changed since?" — run the freshness probe.
+It is the slow path (git change-detection over the repo), so never run it for an
+ordinary content question.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" \
+    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --json 2>/dev/null
+```
+
+Report `freshness.verdict` + `freshness.reason` + `freshness.recommend` in plain
+language (e.g. "Stale — 194 security-relevant files changed since the scan;
+recommend re-running create-threat-model"). This is the same change-detection
+that drives the incremental-scan decision — do not re-implement or second-guess it.
+
 ## Step 4 — Answer the question
 
 Answer `QUESTION` **only** from the facts you just loaded (data) and the Plugin
@@ -147,6 +173,28 @@ knowledge below (meta). Rules:
 
 The threat model is produced by the **appsec-advisor** plugin. Use this to
 answer "how do I read/act on this" questions and to route actions.
+
+**Presence & metadata.** "Is there a threat model?" is answered by the loader
+itself: exit `1` + "No threat model found" means **no** (point to
+create-threat-model); a rendered digest means **yes**. The digest header + the
+`META` block carry the model's own metadata — when it was generated
+(`generated`), the plugin version, scan mode (full/incremental), assessment
+depth, the models used, the analyst, repo URL, owner, asset classification,
+compliance scope, and whether requirements were checked. Answer "when/how/by
+what was this generated?" and "who owns it / what scope?" straight from those
+values; report only fields the model actually carries.
+
+**Verdict (quick).** For "what's the verdict?" / "how bad is it?" / "what's the
+worst case?", use the `TOP RISK` block — the model's curated worst-case
+(`critical_findings`) — plus the severity histogram. That is the fast verdict;
+you do not need to read the whole model. Do not synthesise a new risk rating.
+
+**Abuse cases.** These are a *rendered-report* feature (§9 of `threat-model.md`),
+built from finding chains — they are **not** stored in the semantic
+`threat-model.yaml`, so they are not in the facts index and are frequently
+absent/dormant in a model. If asked, say abuse cases live in §9 of the rendered
+report (when present) and are not part of the queryable model; offer
+export-threat-model / the report path rather than inventing chains.
 
 **Identifiers.** Findings are cited as `F-NNN` in the report (stored as `T-NNN`
 in the yaml). Mitigations are `M-NNN`. Components have names/ids. Cite the
@@ -190,6 +238,21 @@ Management Summary surfaces the worst-case findings first; `show`/`review`
 present the remediation backlog along the P1→P2→P3 spine. When asked "what
 should we fix first?", lead with **P1 mitigations** and **Critical findings**,
 and say plainly when a finding has no proposed fix.
+
+**Options (what the plugin can do).** create-threat-model runs at three depths —
+`quick` / `standard` / `thorough` (more STRIDE turns, diagrams, QA the deeper you
+go); supports **incremental** re-scans (only security-relevant changes), custom
+**requirements** compliance, and CI **presets**. Siblings export/publish (PDF/
+HTML), check health/freshness, and evaluate model quality. Point the user at the
+right one; this skill does not run them.
+
+**Limitations (be honest — AGENTS.md §15).** The model is LLM-assisted discovery,
+**not** an exhaustive audit or a pentest — absence of a finding is not proof of
+safety. Findings carry an `evidence_check` state (`verified` … `unchecked`); do
+not present an `unchecked` one as confirmed. Coverage is bounded by scan depth
+and scope. The `verdict` and abuse-case sections are report renders, not always
+in the semantic model. Freshness needs git and is only checked on request
+(Step 3b). When a question exceeds what the model records, say so plainly.
 
 **Sibling skills (route actions here — this skill only answers):**
 - `show-threat-model` — fixed at-a-glance overview.

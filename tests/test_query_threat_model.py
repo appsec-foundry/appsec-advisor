@@ -45,6 +45,10 @@ SAMPLE = """\
       model: claude-sonnet-4-6
       assessment_depth: standard
       generated: "2026-04-19T13:06:37Z"
+      plugin_version: "0.4.0-beta"
+      mode: full
+      check_requirements: false
+      compliance_scope: []
       git:
         commit_sha: cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f
         branch: master
@@ -75,6 +79,10 @@ SAMPLE = """\
       - id: M-002
         priority: P2
         title: "Enforce per-object authorization"
+    critical_findings:
+      - threat_id: T-001
+        summary: "Auth bypass via SQL injection in login."
+        mitigation_id: M-001
     security_controls:
       - domain: Authentication
         effectiveness: Weak
@@ -131,6 +139,48 @@ def test_totals_count_all_axes():
 def test_location_from_first_evidence():
     f1 = next(f for f in _facts()["findings"] if f["id"] == "F-001")
     assert f1["location"] == "routes/login.ts:34"
+
+
+def test_provenance_scalars_bool_and_skip_empty():
+    prov = _facts()["provenance"]
+    assert prov["plugin_version"] == "0.4.0-beta"
+    assert prov["mode"] == "full"
+    assert prov["check_requirements"] == "no"  # bool -> yes/no
+    assert "compliance_scope" not in prov  # empty list skipped
+    assert "team_owner" not in prov  # absent field skipped
+
+
+def test_provenance_rendered_in_digest():
+    out = qtm.render_text(_facts())
+    assert "META (how this model was generated)" in out
+    assert "Plugin:" in out and "0.4.0-beta" in out
+
+
+def test_worst_case_from_curated_critical_findings():
+    wc = _facts()["worst_case"]
+    assert wc[0]["id"] == "F-001"
+    assert wc[0]["summary"] == "Auth bypass via SQL injection in login."
+    assert wc[0]["mitigation_id"] == "M-001"
+
+
+def test_worst_case_is_global_not_narrowed_by_grep():
+    # Even a grep that excludes F-001, the verdict stays global.
+    facts = _facts(grep="authorization")
+    assert [f["id"] for f in facts["findings"]] == ["F-002"]
+    assert facts["worst_case"][0]["id"] == "F-001"
+
+
+def test_worst_case_falls_back_to_top_findings_when_uncurated():
+    import yaml
+
+    data = yaml.safe_load(textwrap.dedent(SAMPLE))
+    data.pop("critical_findings")
+    wc = qtm.build_facts(data, None)["worst_case"]
+    assert wc[0]["id"] == "F-001"  # top severity-ranked finding
+
+
+def test_worst_case_rendered_as_quick_verdict():
+    assert "TOP RISK" in qtm.render_text(_facts())
 
 
 # --------------------------------------------------------------------------
