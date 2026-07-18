@@ -28,6 +28,7 @@ Answers are grounded in the model and cite finding IDs. See [Triage the findings
 
 - **`review-threat-model`** — turn findings into a decided remediation plan: fix / accept / defer, in bulk, with owners.
 - **Weakness Register** — systemic and design-level weaknesses as their own report chapter, summarised as a security-principles verdict.
+- **Beyond JavaScript** — the access-control, crypto, and mass-assignment scanners now also cover Java, Python, Go, PHP, C#/.NET, Ruby/Rails, and mobile.
 
 [Full changelog](CHANGELOG.md)
 
