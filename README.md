@@ -16,7 +16,7 @@ It also supports requirements audits, change reviews, prompt-time security guida
 
 ## What's new in 0.5-beta
 
-**`ask-threat-model`** — ask free-form questions about an existing threat model. No report to re-read, no export to grep:
+**Ask your threat model directly in the console.** The new `ask-threat-model` skill answers free-form questions about an existing model — no report to re-read, no export to grep:
 
 ```text
 what are the most critical findings?
