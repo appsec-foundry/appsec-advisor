@@ -739,7 +739,10 @@ def _screen_fix_start(recommended: list[dict], find_by_key: dict[str, dict]) -> 
     rows = _mit_rows(recommended, find_by_key)
     if not rows:
         return ""
-    out = [f"🛠 **Fix these first** — cheap, low-risk, high-impact; the rest still matter, just later   {_RAMP_LEGEND}", ""]
+    out = [
+        f"🛠 **Fix these first** — cheap, low-risk, high-impact; the rest still matter, just later   {_RAMP_LEGEND}",
+        "",
+    ]
     for cat, rs in _group_fix_rows(rows):
         out.append(f"**Fix {cat}** — {len(rs)}")
         for r in rs:
