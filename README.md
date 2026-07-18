@@ -24,7 +24,7 @@ what should I fix first?
 does it cover SSRF?
 ```
 
-Answers are grounded in the model and cite finding IDs. See [Ask questions about the model](#4-ask-questions-about-the-model).
+Answers are grounded in the model and cite finding IDs. See [Triage the findings into a plan](#4-triage-the-findings-into-a-plan).
 
 - **`review-threat-model`** — turn findings into a decided remediation plan: fix / accept / defer, in bulk, with owners.
 - **Weakness Register** — systemic and design-level weaknesses as their own report chapter, summarised as a security-principles verdict.
@@ -139,41 +139,29 @@ This re-analyzes only the components that changed (an alias for `create-threat-m
 
 For assessment depth, cost controls, focused scans, actor configuration, and repo-local and cross-repo context, see [docs/threat-modeler.md](docs/threat-modeler.md).
 
-### 4. Ask questions about the model
+### 4. Triage the findings into a plan
 
-A finished report is long. Instead of reading it, ask Claude Code:
-
-```text
-what are the most critical findings?
-what should I fix first?
-does it cover SSRF?
-is there a fix for F-003?
-what does P1 mean?
-```
-
-Questions about the threat model route to `/appsec-advisor:ask-threat-model` automatically; you can also invoke it explicitly. Answers cite finding IDs and say so when the model does not contain the answer. Strictly read-only — it never re-scans or writes files. Asking is the light-weight way in: to actually decide or fix something, go to step 5.
-
-### 5. Triage the findings into a plan
-
-The assessment ranks findings by severity, but deciding what to fix now — and what to accept or defer — is a judgement call. Triaging the report into a decided plan is the recommended next step (though you can also stop at the report). Run the triage helper against it at any later point, independently of the assessment:
+The assessment ranks findings by severity, but deciding what to fix now — and what to accept or defer — is a judgement call. Turning the report into a decided plan is the recommended next step (though you can also stop at the report). Run the triage helper at any later point, independently of the assessment:
 
 ```text
 /appsec-advisor:review-threat-model
 ```
 
-It opens a triage console — a one-screen verdict (backlog by priority, severity mix, and the worst-case scenarios if nothing changes) — then lets you drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with an owner and target) on a whole selection at once. Your decisions live in a sidecar that survives the next re-scan, and it writes a `remediation-plan.md`. It only reads the model — it never regenerates or re-scores it.
+It opens with a one-screen verdict (backlog by priority, severity mix, and the worst-case scenarios if nothing changes), then lets you drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with an owner and target) on a whole selection at once. Your decisions live in a sidecar that survives the next re-scan, and it writes a `remediation-plan.md`. It never regenerates or re-scores the model.
 
-You can also enter it by just saying what you want:
+A finished report is long, so you do not have to read it first — just talk to Claude Code about the model. Questions and instructions both work:
 
 ```text
+what are the most critical findings?
+what should I fix first?
+does it cover SSRF?
 fix the critical findings
 accept the risk on F-012
-defer the mediums to next quarter
 ```
 
-Fixes are applied one finding at a time, each shown before it is written — never as a blind bulk change across a selection.
+Questions are answered read-only from the model, cite finding IDs, and say so when the model does not contain the answer. Instructions land in the triage console above, which applies fixes one finding at a time, each shown before it is written — never as a blind bulk change across a selection.
 
-### 6. Optional: Publish the threat model
+### 5. Optional: Publish the threat model
 
 Generated reports are not committed automatically. For a local review, you can stop after the assessment completes. If your team intentionally tracks reviewed threat models in git, run the publish helper:
 
