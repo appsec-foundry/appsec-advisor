@@ -82,6 +82,7 @@ PATH_EXCLUDES = {
     ("data", "appsec-requirements-fallback.yaml"),
     ("docs", "analysis"),
     ("docs", "internal"),
+    ("docs", "proposals"),
     ("docs", "security"),
     ("scripts", "docs"),
     ("skills", "create-threat-model", "docs"),
