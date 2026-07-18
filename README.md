@@ -14,14 +14,22 @@ It also supports requirements audits, change reviews, prompt-time security guida
 
 **Model compatibility.** The plugin runs on the latest Anthropic models and is tuned for Sonnet 5, but the defaults favor economy: the token-intensive majority of the work runs on the cheaper Sonnet-4.6, and Sonnet-5 is applied by default only to the stages where its stronger reasoning is worth the added cost. You can pin any agent to a specific model (e.g. `claude-sonnet-5`, `claude-sonnet-4-6`), and the scan prints the model for every agent at start. See [Session Model](docs/threat-modeler.md#session-model).
 
-> [!NOTE]
-> **New in 0.5-beta**
->
-> - **Weakness Register** — systemic and design-level weaknesses get their own chapter, grouped by evidence strength and by how a control is built (home-grown, misused, or missing), and summarised as a security-principles verdict.
-> - **`/appsec-advisor:review-threat-model`** — a guided triage console: a short risk verdict, then work through findings by top risk, fix, or area and decide fix / accept / defer in bulk. Writes a prioritised `remediation-plan.md` and remembers your decisions across re-scans.
-> - **`/appsec-advisor:ask-threat-model`** — ask questions about an existing threat model directly in Claude Code ("what are the critical findings?", "does it cover SSRF?", "is there a fix for F-003?") and get answers grounded in the model, with finding IDs cited.
->
-> Full list in the [changelog](CHANGELOG.md).
+## What's new in 0.5-beta
+
+**Ask questions about your threat model.** No report to re-read, no export to grep:
+
+```text
+what are the most critical findings?
+what should I fix first?
+does it cover SSRF?
+```
+
+Answers are grounded in the model and cite finding IDs. See [Ask questions about the model](#4-ask-questions-about-the-model).
+
+- **`review-threat-model`** — turn findings into a decided remediation plan: fix / accept / defer, in bulk, with owners.
+- **Weakness Register** — systemic and design-level weaknesses as their own report chapter, summarised as a security-principles verdict.
+
+[Full changelog](CHANGELOG.md)
 
 ## Problem
 
@@ -66,6 +74,7 @@ AppSec and security architecture teams own the plugin configuration, defaults, t
 
 ## Contents
 
+- [What's new in 0.5-beta](#whats-new-in-05-beta)
 - [Quick start](#quick-start)
 - [Threat Modeler](#threat-modeler)
 - [Requirements Audit](#requirements-audit)
@@ -133,13 +142,17 @@ For assessment depth, cost controls, focused scans, actor configuration, and rep
 
 ### 4. Ask questions about the model
 
-Once a model exists, you can query it in plain language without re-reading the report:
+A finished report is long. Instead of reading it, ask Claude Code:
 
 ```text
-/appsec-advisor:ask-threat-model what are the critical findings?
+what are the most critical findings?
+what should I fix first?
+does it cover SSRF?
+is there a fix for F-003?
+what does P1 mean?
 ```
 
-You can also just ask Claude Code in plain language — questions about the threat model route to this skill automatically. Typical questions: *"does it cover SSRF?"*, *"which findings touch the payment service?"*, *"is there a fix for F-003?"*, *"what does P1 mean?"*. Answers are grounded in the committed model and cite finding IDs. It is strictly read-only — it never re-scans, re-scores, or writes files.
+Questions about the threat model route to `/appsec-advisor:ask-threat-model` automatically; you can also invoke it explicitly. Answers cite finding IDs and say so when the model does not contain the answer. Strictly read-only — it never re-scans or writes files; to act on findings, use [`review-threat-model`](#5-triage-the-findings-into-a-plan).
 
 ### 5. Triage the findings into a plan
 
