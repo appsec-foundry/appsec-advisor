@@ -110,5 +110,42 @@
     "sarif": true,
     "output_path": "out/python-thorough",
     "max_duration_sec": 9000
+  },
+
+  "ai-quick": {
+    "target_repo": "matthiasrohr/insecure-ai-app",
+    "target_ref": "",
+    "mode": "full",
+    "assessment_depth": "quick",
+    "reasoning_model": "sonnet-economy",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/ai-quick",
+    "max_duration_sec": 4200
+  },
+  "ai-standard": {
+    "target_repo": "matthiasrohr/insecure-ai-app",
+    "target_ref": "",
+    "mode": "full",
+    "assessment_depth": "standard",
+    "reasoning_model": "sonnet-economy",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/ai-standard",
+    "max_duration_sec": 7200
+  },
+  "ai-thorough": {
+    "target_repo": "matthiasrohr/insecure-ai-app",
+    "target_ref": "",
+    "mode": "full",
+    "assessment_depth": "thorough",
+    "reasoning_model": "opus-cheap",
+    "session_model": "claude-sonnet-4-6",
+    "requirements": false,
+    "sarif": true,
+    "output_path": "out/ai-thorough",
+    "max_duration_sec": 9000
   }
 }
