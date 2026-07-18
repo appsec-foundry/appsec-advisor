@@ -1157,6 +1157,11 @@ sections:
               - "totp"
               - "2fa"
               - "mfa"
+              # Spelled-out 2FA — see the matching note in `method_whitelist`.
+              # TOTP enrollment/verification is a flow mechanism, so this
+              # spelling must trigger the sequenceDiagram requirement too.
+              - "two-factor"
+              - "two factor"
               - "passkey"
               - "webauthn"
               - "magic link"
@@ -1197,6 +1202,19 @@ sections:
               - "2fa"
               - "mfa"
               - "multi-factor"
+              # "Two-Factor Authentication" is the spelled-out form of 2FA and
+              # the heading the Stage-2 renderer emits most often. Matching is
+              # a normalized-TOKEN-SUBSET test, so neither "2fa" ({2fa}) nor
+              # "multi-factor" ({multi,factor}) covers {two,factor,
+              # authentication}. Without these entries the heading is demoted
+              # to a bold label by
+              # normalize_security_architecture._fold_nonmechanism_auth_subsections,
+              # the `Controls covered:` link then points at a heading that no
+              # longer exists, and `control_subsection_coverage` hard-fails on
+              # every run (juice-shop 2026-07-18). Same class of fix — and same
+              # rationale — as "social login" above.
+              - "two-factor"
+              - "two factor"
               - "passkey"
               - "webauthn"
               - "magic link"

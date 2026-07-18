@@ -773,6 +773,64 @@ def test_auth_social_login_heading_is_whitelisted(monkeypatch, tmp_path: Path):
     ), report.issues
 
 
+def test_auth_two_factor_authentication_heading_is_whitelisted(monkeypatch, tmp_path: Path):
+    """Regression (2026-07-18): '#### 6.2.3 Two-Factor Authentication' — the
+    spelled-out form of 2FA — matched NO method_whitelist entry, because the
+    matcher is a token-subset test and neither '2fa' ({2fa}) nor 'multi-factor'
+    ({multi,factor}) is a subset of {two,factor,authentication}. The heading was
+    folded into its parent by normalize_security_architecture, which stranded
+    the `Controls covered:` link and hard-failed control_subsection_coverage on
+    every run. 'two-factor' / 'two factor' are now whitelisted."""
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 6. Security Architecture
+
+            ### 6.2 Identity and Authentication Controls
+
+            **Controls covered:** [Two-Factor Authentication](#two-factor-authentication).
+
+            #### 6.2.3 Two-Factor Authentication
+
+            TOTP adds a possession factor to the password login sequence.
+
+            ```mermaid
+            sequenceDiagram
+                User->>App: 6-digit TOTP code
+            ```
+
+            **Security assessment**
+
+            Pre-auth token is stored client-side before the factor is satisfied.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_auth_method_decomposition(md)
+
+    assert not any(
+        "Two-Factor Authentication" in issue and "not a recognized authentication mechanism" in issue
+        for issue in report.issues
+    ), report.issues
+
+
+def test_auth_two_factor_matches_via_token_subset():
+    """Pin the matcher itself: the whitelist entry must cover every spelling
+    the renderer realistically emits, and must NOT turn into a blanket pass."""
+    whitelist = ["two-factor", "two factor", "2fa", "multi-factor"]
+
+    assert qa._row_is_auth_method("Two-Factor Authentication", whitelist)
+    assert qa._row_is_auth_method("6.2.3 Two Factor Authentication", whitelist)
+    assert qa._row_is_auth_method("Two-Factor (TOTP)", whitelist)
+    # Negative control — an unrelated primitive must still be rejected.
+    assert not qa._row_is_auth_method("Login Rate Limiting", whitelist)
+    assert not qa._row_is_auth_method("Password Hashing", whitelist)
+
+
 def test_auth_threat_hypotheses_heading_exempt(monkeypatch, tmp_path: Path):
     """Regression (2026-06-16): pregenerate_fragments deterministically emits
     '#### Threat Hypotheses Requiring Validation' inside §6.2 (asserted present
