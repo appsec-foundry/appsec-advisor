@@ -59,7 +59,7 @@ jobs:
     steps:
       # 1) Plugin (this repo) — the branch you dispatched from, or plugin_ref.
       - name: Checkout appsec-advisor (plugin)
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
           path: .
@@ -106,7 +106,7 @@ jobs:
 
       # 3) Target repo (external, untrusted) — into ./target.
       - name: Checkout target repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: ${{ steps.preset.outputs.target_repo }}
           ref: ${{ steps.preset.outputs.target_ref }}
@@ -213,7 +213,7 @@ jobs:
       # 8) Publish the report (md / yaml / sarif / run log / permissions).
       - name: Upload report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: threat-model-${{ inputs.use_case }}
           path: ${{ steps.preset.outputs.output_path }}/
@@ -226,7 +226,7 @@ jobs:
       - name: Upload SARIF to Code Scanning
         if: ${{ always() && steps.preset.outputs.sarif == 'true' }}
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3.37.1
         with:
           sarif_file: ${{ steps.preset.outputs.output_path }}/threat-model.sarif.json
           category: threat-model-${{ inputs.use_case }}
