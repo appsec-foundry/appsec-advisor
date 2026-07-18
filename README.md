@@ -14,6 +14,15 @@ It also supports requirements audits, change reviews, prompt-time security guida
 
 **Model compatibility.** The plugin runs on the latest Anthropic models and is tuned for Sonnet 5, but the defaults favor economy: the token-intensive majority of the work runs on the cheaper Sonnet-4.6, and Sonnet-5 is applied by default only to the stages where its stronger reasoning is worth the added cost. You can pin any agent to a specific model (e.g. `claude-sonnet-5`, `claude-sonnet-4-6`), and the scan prints the model for every agent at start. See [Session Model](docs/threat-modeler.md#session-model).
 
+> [!NOTE]
+> **New in 0.5-beta**
+>
+> - **Weakness Register** — systemic and design-level weaknesses get their own chapter, grouped by evidence strength and by how a control is built (home-grown, misused, or missing), and summarised as a security-principles verdict.
+> - **`/appsec-advisor:review-threat-model`** — a guided triage console: a short risk verdict, then work through findings by top risk, fix, or area and decide fix / accept / defer in bulk. Writes a prioritised `remediation-plan.md` and remembers your decisions across re-scans.
+> - **`/appsec-advisor:ask-threat-model`** — ask questions about an existing threat model directly in Claude Code ("what are the critical findings?", "does it cover SSRF?", "is there a fix for F-003?") and get answers grounded in the model, with finding IDs cited.
+>
+> Full list in the [changelog](CHANGELOG.md).
+
 ## Problem
 
 Threat models created during workshops or design reviews become stale as the implementation changes.
@@ -122,7 +131,17 @@ This re-analyzes only the components that changed (an alias for `create-threat-m
 
 For assessment depth, cost controls, focused scans, actor configuration, and repo-local and cross-repo context, see [docs/threat-modeler.md](docs/threat-modeler.md).
 
-### 4. Triage the findings into a plan
+### 4. Ask questions about the model
+
+Once a model exists, you can query it in plain language without re-reading the report:
+
+```text
+/appsec-advisor:ask-threat-model what are the critical findings?
+```
+
+You can also just ask Claude Code in plain language — questions about the threat model route to this skill automatically. Typical questions: *"does it cover SSRF?"*, *"which findings touch the payment service?"*, *"is there a fix for F-003?"*, *"what does P1 mean?"*. Answers are grounded in the committed model and cite finding IDs. It is strictly read-only — it never re-scans, re-scores, or writes files.
+
+### 5. Triage the findings into a plan
 
 The assessment ranks findings by severity, but deciding what to fix now — and what to accept or defer — is a judgement call. Triaging the report into a decided plan is the recommended next step (though you can also stop at the report). Run the triage helper against it at any later point, independently of the assessment:
 
@@ -132,7 +151,7 @@ The assessment ranks findings by severity, but deciding what to fix now — and 
 
 It opens a triage console — a one-screen verdict (backlog by priority, severity mix, and the worst-case scenarios if nothing changes) — then lets you drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with an owner and target) on a whole selection at once. Your decisions live in a sidecar that survives the next re-scan, and it writes a `remediation-plan.md`. It only reads the model — it never regenerates or re-scores it.
 
-### 5. Optional: Publish the threat model
+### 6. Optional: Publish the threat model
 
 Generated reports are not committed automatically. For a local review, you can stop after the assessment completes. If your team intentionally tracks reviewed threat models in git, run the publish helper:
 
