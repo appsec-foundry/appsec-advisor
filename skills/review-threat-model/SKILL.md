@@ -1,6 +1,6 @@
 ---
 name: review-threat-model
-description: User-facing triage of an existing threat model — an overview-first console over an already-generated threat-model.yaml (backlog by priority, severity mix, worst-case scenarios), then one of three modes: Just look around (browse the findings read-only — by severity, security aspect, requirement, control posture — no decisions or changes), Fix or accept findings now (apply the code fix for findings you pick — or accept the risk instead — one at a time for review), or Build a remediation plan (decide mitigate / accept-risk per finding and emit a remediation-plan.md, no code changes). At any point you can also Discuss a finding by id (F-/T-/M-/W-) — a read-only Q&A about one finding, mitigation, or weakness (why it rates as it does, false-positive likelihood, exploit path, fix options) that changes nothing. Runs later and completely independently of create-threat-model; reads the model, never regenerates or re-scores it. Not an artifact-quality check (that is eval-threat-model). To only *ask* a question about the model (what a finding is, does it cover X, what to fix first) without acting on it, use ask-threat-model.
+description: User-facing triage of an existing threat model — an overview-first console over an already-generated threat-model.yaml (backlog by priority, severity mix, worst-case scenarios), then one of three modes: Just look around (browse the findings read-only — by severity, security aspect, requirement, control posture — no decisions or changes), Fix or accept findings now (apply the code fix for findings you pick — or accept the risk instead — one at a time for review), or Build a remediation plan (decide mitigate / accept-risk per finding and emit a remediation-plan.md, no code changes). Within a triage session you can also Discuss a single finding by id (F-/T-/M-/W-) — a read-only aside to interrogate one finding, mitigation, or weakness before deciding to fix or accept it — that changes nothing. Runs later and completely independently of create-threat-model; reads the model, never regenerates or re-scores it. Not an artifact-quality check (that is eval-threat-model). To only *ask* a question about the model (what a finding is, does it cover X, what to fix first) without acting on it, use ask-threat-model.
 ---
 
 You help a user work through the findings of a threat model that already exists,
@@ -64,6 +64,11 @@ WHAT IT DOES
     pick — or accept the risk instead — one at a time for review, no plan), or
     "Build a remediation plan" (decide fix / accept per finding →
     remediation-plan.md, never changes code).
+  * At any point you can Discuss a finding by id (F-/T-/M-/W-NNN) — a read-only
+    aside to ask why it rates as it does, whether it's real, or how to fix it —
+    without leaving the console. Changes nothing.
+  * At any menu, `back` goes up one level and `modes` returns to the mode picker;
+    going back never writes anything.
   * The two action modes find and select findings the same way — a recommended
     "fix first" set (shown with criticality, type and file:line), a pick list, or
     browse by severity / type / requirement / unmitigated; posture ratings orient
@@ -243,7 +248,8 @@ three options — offer **Just look around** first so a user who only wants to
 understand the findings never has to commit to acting:
 
 1. **Just look around** — browse the findings read-only, overall and by aspect
-   (authentication, access control, …). **No decisions, no changes.**
+   (authentication, access control, …), and **ask about any one** (why it rates
+   as it does, whether it's real, how to fix — Step 5D). **No decisions, no changes.**
 2. **Fix or accept findings now** — work through the findings you pick one at a
    time: apply the code fix, or accept the risk instead. **No plan.**
 3. **Build a remediation plan** — decide per finding (fix / accept), produce
@@ -257,9 +263,30 @@ Run the chosen mode's loop. The user may type a free-text intent at any time
 ("accept all Low", "fix the auth ones", "show me the access-control findings") —
 honour it in the current mode; they can switch modes or stop whenever they want.
 A typed **id** — or "discuss F-003" — opens **Discuss** (Step 5D): a read-only
-Q&A about that one finding/weakness that changes nothing and returns to the
-current mode. The user can also enter it straight from here, before picking a
-mode, when they only want to understand a specific finding.
+Q&A about that one finding/weakness that changes nothing and returns to wherever
+it was opened from (see **Navigation**). The user can also enter it straight from
+here, before picking a mode, when they only want to understand a specific finding.
+
+## Navigation (shared by every menu loop)
+
+Menus nest, so going **up** must always be possible — and visible enough to find.
+The levels, innermost first:
+
+`finding detail / Discuss aside` → `lens` → `mode menu` → `mode picker (Step 4b)` → `exit`
+
+Rules every loop below applies:
+- **`back` goes up exactly one level**, honoured at every prompt — the user can
+  always type it (`AskUserQuestion`'s free-text accepts it) even when it is not a
+  button. `modes` (or "switch mode") jumps straight to the mode picker.
+- **When a menu has fewer than 4 options, add `← Back` as the last visible
+  option.** `AskUserQuestion` renders at most 4, so a full menu keeps `back`
+  typed-only — but never silently: end the prompt with "…or type `back`".
+- **On return, re-print that level's screen verbatim**, so the user lands
+  somewhere recognizable instead of at a bare prompt.
+- **Going up never acts and never writes** — no decision, no code, no plan. Backing
+  out of a selection is always safe.
+- **`Done` is not `back`:** `Done` ends the mode (and in Plan mode writes the
+  plan). Where they differ, offer both.
 
 ## Step 5A — Mode: Build a remediation plan (decide → plan, no code)
 
@@ -297,6 +324,8 @@ A menu loop that changes code. On entry and after each fix, first print
    the place to start, not the only findings worth fixing) — the `recommended[]` fixes
 2. **Browse & pick** — by severity / type / requirement / unmitigated
 3. **Done — finish** — point the user at `git diff`
+4. **← Back** — return to the mode picker (Step 4b); fixes already applied stay,
+   nothing new is written
 
 After a selection, run the **Fix loop** (Step 5b) on the named findings — one at a
 time, for review. There is no plan step; the output is the code diff. A finding the
@@ -341,7 +370,8 @@ A free-text lane reachable from any mode (and from Step 4b before a mode is
 picked): the user names one finding or weakness by id and interrogates it — "why
 is this Critical?", "is this a false positive?", "walk me through the exploit",
 "what's the blast radius?", "how else could I fix it?". It **changes nothing** (no
-sidecar, no plan, no code) and returns to the mode the user came from.
+sidecar, no plan, no code) and returns to the level it was opened from
+(see **Navigation**).
 
 1. **Resolve the id** with the shared read-only lookup — the same resolver the
    `ask-threat-model` skill uses, so ids and cross-links match exactly (do **not**
@@ -379,8 +409,10 @@ sidecar, no plan, no code) and returns to the mode the user came from.
    it only when asked.
 
 4. **Exit.** Offer: discuss another id, **act on this one** (bridge to Mode 5B Fix
-   or Mode 5A plan with just this finding preselected), or return to the mode the
-   user came from. Discussing writes nothing and never re-scores the model. (For a
+   or Mode 5A plan with just this finding preselected), or `← Back` to the level
+   this aside was entered from — the lens if it came from a lens, else the mode
+   menu (per **Navigation**) — re-printing that screen. Discussing writes nothing
+   and never re-scores the model. (For a
    full free-form Q&A *outside* a triage session, `/appsec-advisor:ask-threat-model`
    is the standalone equivalent.)
 
@@ -433,7 +465,8 @@ between picks.
 ### Look around — browse & posture (shared)
 The non-fixing lenses — used by the action modes to find findings to act on, and by
 the look-around Mode 5C to just view them. Ask which lens with `AskUserQuestion`,
-offering only the ones that apply and letting the user type `back` to return: the
+offering only the ones that apply and following **Navigation** above (`← Back`
+as the last option whenever fewer than 4 lenses apply, else the typed `back`): the
 **Browse** lenses below, plus **Security posture** (Mode 5A and the look-around
 Mode 5C) when `control_posture` is non-empty. Route to the matching lens, then run
 the action mode's terminal action on the selection (the look-around Mode 5C never
