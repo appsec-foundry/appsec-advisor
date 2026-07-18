@@ -50,6 +50,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _requirements_gate import load_requirements, violated_requirements  # noqa: E402
+
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
 _KNOWN_SEVERITIES = set(_SEVERITY_ORDER)
 _SCENARIO_TRIM = 200
@@ -180,6 +183,9 @@ def _finding_record(threat: dict) -> dict:
         "location": _location(threat),
         "evidence_check": (threat.get("evidence_check") or "").strip(),
         "mitigation_ids": [str(m).strip() for m in (threat.get("mitigation_ids") or []) if str(m).strip()],
+        # Custom requirements this finding breaks. Filtered against the declared
+        # catalog in build_facts — a raw id here may predate the current catalog.
+        "violated_requirements": violated_requirements(threat),
         "scenario": _trim(threat.get("scenario") or threat.get("description") or ""),
     }
 
@@ -250,7 +256,7 @@ def _worst_case(findings: list[dict], critical: list, limit: int = 3) -> list[di
     return out[:limit]
 
 
-def build_facts(data: dict, grep: str | None = None) -> dict:
+def build_facts(data: dict, grep: str | None = None, output_dir: Path | None = None) -> dict:
     meta = data.get("meta") or {}
     git = meta.get("git") or {}
     name, version = _project(data)
@@ -288,6 +294,10 @@ def build_facts(data: dict, grep: str | None = None) -> dict:
                 f["stride"],
                 f["cwe"],
                 f["location"],
+                # Without this a `--grep REQ-AUTH-01` silently returned zero
+                # findings even when one violated exactly that requirement —
+                # a false "no findings match", not an empty result.
+                " ".join(f["violated_requirements"]),
             ]
             mit_hit = any(
                 mid in mit_by_id and _matches([mit_by_id[mid]["title"], mit_by_id[mid]["description"]], grep)
@@ -308,6 +318,44 @@ def build_facts(data: dict, grep: str | None = None) -> dict:
 
     controls = [c for c in (data.get("security_controls") or []) if isinstance(c, dict)]
 
+    # Custom requirements, when the team wired up their own catalog. Computed
+    # over ALL findings (like the histogram), so a grep-narrowed read still
+    # reports compliance truthfully. Only ids the catalog actually declares are
+    # counted as violations — a stale id on a finding is not a live breach.
+    reqs = load_requirements(output_dir, meta) if output_dir else {}
+    requirements: dict = {
+        "integrated": False,
+        "declared": 0,
+        "violated": [],
+        "url_by_id": {},
+        # `checked` without `integrated` means the run ran the bundled OWASP
+        # baseline (or a skipped stub), NOT the team's own catalog. Silence
+        # there reads as "checked, nothing violated" — a false compliance claim.
+        "checked": bool(reqs.get("checked")),
+        "source": reqs.get("source") or "",
+    }
+    # A finding may carry requirement ids from an earlier scan whose catalog is
+    # no longer active. Without this filter the digest renders "violates: REQ-X"
+    # with no catalog behind it — an orphaned compliance claim.
+    declared: set = reqs.get("ids") or set() if reqs.get("integrated") else set()
+    for f in findings:
+        f["violated_requirements"] = [r for r in f["violated_requirements"] if r in declared]
+
+    if reqs.get("integrated"):
+        by_req: dict[str, list[str]] = {}
+        for f in findings if not grep else [_finding_record(t) for t in threats]:
+            for rid in f["violated_requirements"]:
+                if rid in reqs["ids"]:
+                    by_req.setdefault(rid, []).append(f["id"])
+        requirements.update(
+            {
+                "integrated": True,
+                "declared": len(reqs["ids"]),
+                "violated": [{"id": rid, "findings": by_req[rid]} for rid in sorted(by_req)],
+                "url_by_id": {rid: reqs["url_by_id"].get(rid, "") for rid in sorted(by_req)},
+            }
+        )
+
     return {
         "verdict": "OK",
         "project": {"name": name, "version": version},
@@ -327,6 +375,7 @@ def build_facts(data: dict, grep: str | None = None) -> dict:
             "weaknesses": len(data.get("weaknesses") or []),
             "controls": len(controls),
         },
+        "requirements": requirements,
         "grep": grep or "",
         "matched_findings": len(findings),
         "findings": findings,
@@ -387,7 +436,8 @@ def _finding_line(f: dict) -> list[str]:
     if f["location"]:
         head += f"  @ {f['location']}"
     out = [head]
-    tail = "   ".join(x for x in (meta_bits, fix) if x)
+    violates = ("violates: " + ", ".join(f["violated_requirements"])) if f["violated_requirements"] else ""
+    tail = "   ".join(x for x in (meta_bits, fix, violates) if x)
     if tail:
         out.append(f"          {tail}")
     if f["scenario"]:
@@ -421,6 +471,29 @@ def render_text(facts: dict) -> str:
         f"Mitigations {totals['mitigations']} proposed · "
         f"Weaknesses {totals['weaknesses']} · Controls {totals['controls']} assessed"
     )
+
+    reqs = facts.get("requirements") or {}
+    if reqs.get("integrated"):
+        viol = reqs.get("violated") or []
+        buf.append("")
+        buf.append(f"REQUIREMENTS — {reqs['declared']} custom requirement(s) checked in this scan")
+        if not viol:
+            buf.append("  No finding breaks a declared requirement.")
+            buf.append("  (Not the same as 'compliant' — only checked requirements can be broken.)")
+        for v in viol:
+            url = (reqs.get("url_by_id") or {}).get(v["id"]) or ""
+            buf.append(f"  {v['id']:<16} violated by {', '.join(v['findings'])}" + (f"  ({url})" if url else ""))
+    elif reqs.get("checked"):
+        # meta says the check ran, but against no custom catalog. Saying nothing
+        # here would read as "checked, nothing violated".
+        why = {
+            "bundled-bestpractices": "the bundled OWASP best-practices baseline, not a custom catalog",
+            "skipped": "a skipped stub — no requirements were loaded",
+        }.get(reqs.get("source") or "", "no usable requirement catalog")
+        buf.append("")
+        buf.append("REQUIREMENTS — this scan verified NO custom requirements")
+        buf.append(f"  The run used {why}.")
+        buf.append("  Do not report compliance with any custom requirement from this model.")
 
     worst = facts.get("worst_case") or []
     if worst:
@@ -494,6 +567,7 @@ def render_detail(focus: dict) -> str:
             ("CWE", f["cwe"]),
             ("Location", f["location"]),
             ("Evidence", f["evidence_check"]),
+            ("Violates", ", ".join(f["violated_requirements"])),
         ):
             if val:
                 buf.append(f"  {label}: {val}")
@@ -575,7 +649,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.id_query:
-        focus = lookup_id(build_facts(data, None), args.id_query)
+        focus = lookup_id(build_facts(data, None, output_dir), args.id_query)
         print(
             json.dumps(focus, indent=2, sort_keys=True) if args.json else render_detail(focus),
             end="" if not args.json else "\n",
@@ -583,7 +657,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     grep = (args.grep or "").strip() or None
-    facts = build_facts(data, grep)
+    facts = build_facts(data, grep, output_dir)
     print(
         json.dumps(facts, indent=2, sort_keys=True) if args.json else render_text(facts),
         end="" if not args.json else "\n",

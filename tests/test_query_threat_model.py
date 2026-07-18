@@ -303,3 +303,194 @@ def test_cli_grep_and_id_mutually_exclusive(tmp_path):
     _write_model(tmp_path, SAMPLE)
     r = _run(["--output-dir", str(tmp_path), "--grep", "x", "--id", "F-1"])
     assert r.returncode == 2  # argparse usage error
+
+
+# --------------------------------------------------------------------------
+# Custom requirements — the compliance lane
+#
+# When a team wires up their own requirement catalog at scan time
+# (create-threat-model --requirements), asking "which requirements do we
+# break?" must be answerable here. Before this, the facts index carried only
+# meta's "Requirements checked: yes" — and `--grep REQ-AUTH-01` returned ZERO
+# findings even when one violated exactly that id, which reads as a truthful
+# "nothing matches" while being false.
+# --------------------------------------------------------------------------
+
+
+REQ_SAMPLE = """\
+    meta:
+      project: Req App
+      check_requirements: true
+    threats:
+      - id: T-001
+        stride: Tampering
+        component: api
+        severity: Critical
+        title: "SQL Injection"
+        violated_requirements: [REQ-AUTH-01]
+      - id: T-002
+        stride: Spoofing
+        component: api
+        severity: High
+        title: "Weak cipher"
+        requirement_id: REQ-CRYPTO-03
+      - id: T-003
+        stride: Spoofing
+        component: api
+        severity: Low
+        title: "Unrelated finding"
+"""
+
+_CATALOG = {
+    "source": "https://intern.example.com/appsec.yaml",
+    "categories": [
+        {
+            "name": "Auth",
+            "requirements": [
+                {"id": "REQ-AUTH-01", "url": "https://intern.example.com/#auth-01"},
+                {"id": "REQ-CRYPTO-03", "url": ""},
+                {"id": "REQ-UNUSED-99", "url": ""},
+            ],
+        }
+    ],
+}
+
+
+def _write_catalog(output_dir: Path, doc: dict) -> None:
+    import yaml
+
+    (output_dir / ".requirements.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+
+def _req_facts(tmp_path: Path, catalog: dict | None = _CATALOG, grep=None) -> dict:
+    import yaml
+
+    _write_model(tmp_path, REQ_SAMPLE)
+    if catalog is not None:
+        _write_catalog(tmp_path, catalog)
+    data = yaml.safe_load(textwrap.dedent(REQ_SAMPLE))
+    return qtm.build_facts(data, grep, tmp_path)
+
+
+def test_requirements_violations_are_indexed(tmp_path):
+    reqs = _req_facts(tmp_path)["requirements"]
+    assert reqs["integrated"] is True
+    assert reqs["declared"] == 3
+    assert reqs["violated"] == [
+        {"id": "REQ-AUTH-01", "findings": ["F-001"]},
+        {"id": "REQ-CRYPTO-03", "findings": ["F-002"]},
+    ]
+    # A declared-but-unbroken requirement is not reported as violated.
+    assert "REQ-UNUSED-99" not in {v["id"] for v in reqs["violated"]}
+
+
+def test_requirement_id_singular_field_is_picked_up(tmp_path):
+    """A finding may carry `requirement_id` instead of the plural array."""
+    facts = _req_facts(tmp_path)
+    f2 = next(f for f in facts["findings"] if f["id"] == "F-002")
+    assert f2["violated_requirements"] == ["REQ-CRYPTO-03"]
+
+
+def test_grep_matches_a_requirement_id(tmp_path):
+    """The regression: grepping a requirement id must find the finding that
+    breaks it, not silently return an empty result."""
+    facts = _req_facts(tmp_path, grep="REQ-AUTH-01")
+    assert [f["id"] for f in facts["findings"]] == ["F-001"]
+
+
+def test_requirements_survive_a_grep_narrowed_read(tmp_path):
+    """Compliance is a global fact, like the severity histogram: a topic filter
+    must not make violations disappear from the answer surface."""
+    reqs = _req_facts(tmp_path, grep="cipher")["requirements"]
+    assert [v["id"] for v in reqs["violated"]] == ["REQ-AUTH-01", "REQ-CRYPTO-03"]
+
+
+def test_no_catalog_means_no_requirement_signal(tmp_path):
+    assert _req_facts(tmp_path, catalog=None)["requirements"]["integrated"] is False
+
+
+def test_bundled_baseline_is_not_a_custom_requirement(tmp_path):
+    """The zero-config OWASP fallback must never be presented as a team's own
+    requirement catalog — same gate review-threat-model applies."""
+    bundled = dict(_CATALOG, source="bundled-bestpractices")
+    assert _req_facts(tmp_path, catalog=bundled)["requirements"]["integrated"] is False
+
+
+def test_skipped_stub_is_not_a_custom_requirement(tmp_path):
+    stub = dict(_CATALOG, source="skipped")
+    assert _req_facts(tmp_path, catalog=stub)["requirements"]["integrated"] is False
+
+
+def test_check_requirements_off_suppresses_everything(tmp_path):
+    """Catalog present but the run had the check off — report nothing."""
+    import yaml
+
+    _write_model(tmp_path, REQ_SAMPLE)
+    _write_catalog(tmp_path, _CATALOG)
+    data = yaml.safe_load(textwrap.dedent(REQ_SAMPLE))
+    data["meta"]["check_requirements"] = False
+    assert qtm.build_facts(data, None, tmp_path)["requirements"]["integrated"] is False
+
+
+def test_cli_renders_the_requirements_block(tmp_path):
+    _write_model(tmp_path, REQ_SAMPLE)
+    _write_catalog(tmp_path, _CATALOG)
+    r = _run(["--output-dir", str(tmp_path)])
+    assert r.returncode == 0
+    assert "REQUIREMENTS — 3 custom requirement(s) checked" in r.stdout
+    assert "REQ-AUTH-01" in r.stdout and "violated by F-001" in r.stdout
+    assert "https://intern.example.com/#auth-01" in r.stdout
+
+
+def test_cli_id_lookup_shows_violated_requirement(tmp_path):
+    _write_model(tmp_path, REQ_SAMPLE)
+    _write_catalog(tmp_path, _CATALOG)
+    r = _run(["--output-dir", str(tmp_path), "--id", "F-001"])
+    assert r.returncode == 0
+    assert "Violates: REQ-AUTH-01" in r.stdout
+
+
+def test_checked_but_no_custom_catalog_is_stated_not_silent(tmp_path):
+    """meta says the requirements check ran, but only against the bundled OWASP
+    baseline. Staying silent there reads as "checked, nothing violated" — a
+    false compliance claim. The digest must say so explicitly.
+    """
+    _write_model(tmp_path, REQ_SAMPLE)
+    _write_catalog(tmp_path, dict(_CATALOG, source="bundled-bestpractices"))
+    r = _run(["--output-dir", str(tmp_path)])
+    assert r.returncode == 0
+    assert "REQUIREMENTS — this scan verified NO custom requirements" in r.stdout
+    assert "bundled OWASP best-practices baseline" in r.stdout
+    assert "Do not report compliance" in r.stdout
+
+
+def test_check_off_stays_completely_silent(tmp_path):
+    """The common case: no requirements configured at all. No block, no noise —
+    the feature must cost nothing when unused.
+    """
+    import yaml
+
+    _write_model(tmp_path, REQ_SAMPLE)
+    data = yaml.safe_load(textwrap.dedent(REQ_SAMPLE))
+    data["meta"]["check_requirements"] = False
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    r = _run(["--output-dir", str(tmp_path)])
+    assert r.returncode == 0
+    assert "REQUIREMENTS" not in r.stdout
+    assert "violates:" not in r.stdout
+
+
+def test_no_violation_is_not_reported_as_compliance(tmp_path):
+    """A custom catalog with nothing broken must not read as "you comply"."""
+    import yaml
+
+    _write_model(tmp_path, REQ_SAMPLE)
+    data = yaml.safe_load(textwrap.dedent(REQ_SAMPLE))
+    for t in data["threats"]:
+        t.pop("violated_requirements", None)
+        t.pop("requirement_id", None)
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    _write_catalog(tmp_path, _CATALOG)
+    r = _run(["--output-dir", str(tmp_path)])
+    assert "No finding breaks a declared requirement." in r.stdout
+    assert "Not the same as 'compliant'" in r.stdout

@@ -52,6 +52,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _requirements_gate import load_requirements, violated_requirements  # noqa: E402
+
 # CSafeLoader (libyaml) parses a large threat-model.yaml (~360 KB) in ~70 ms vs
 # ~800 ms for the pure-Python SafeLoader — an ~11× win on the dominant cost of
 # loading the console payload. Falls back to SafeLoader where libyaml is absent.
@@ -153,8 +156,7 @@ def _norm_decision(value: object) -> str:
 
 
 def _violated_requirements(threat: dict) -> list[str]:
-    """Requirement IDs a threat evidences — the canonical ``violated_requirements``
-    array plus a single ``requirement_id``, order-preserving + de-duplicated.
+    """Requirement IDs a threat evidences — see ``_requirements_gate``.
 
     Deliberately mirrors ONLY the threat-forward source used by the report's
     traceability table, NOT the ``mitigation.fulfills_requirements`` reverse link
@@ -162,17 +164,7 @@ def _violated_requirements(threat: dict) -> list[str]:
     "does this finding break a custom requirement", not the authoritative
     requirement→finding→mitigation mapping (which stays in the rendered report).
     Filtering against the declared custom IDs happens in ``console``."""
-    out: list[str] = []
-    seen: set[str] = set()
-    for rid in threat.get("violated_requirements") or []:
-        r = str(rid).strip()
-        if r and r not in seen:
-            seen.add(r)
-            out.append(r)
-    single = str(threat.get("requirement_id") or "").strip()
-    if single and single not in seen:
-        out.append(single)
-    return out
+    return violated_requirements(threat)
 
 
 def _load_category_names(path: Path | None = None) -> dict[str, str]:
@@ -236,45 +228,10 @@ def _load_sidecar(sidecar_path: Path) -> dict:
 def _load_requirements(output_dir: Path, meta: dict) -> dict:
     """Gate + declared custom requirement IDs for the requirements badge/lens.
 
-    The badge is shown ONLY for *explicit* custom requirements a team integrated
-    — never the bundled OWASP best-practices baseline, never a skipped stub, and
-    never when the requirements check was off for the run. Signals (all read-only):
-
-      * ``meta.check_requirements`` — the run activated the check.
-      * ``<output-dir>/.requirements.yaml`` ``source`` — ``skipped`` (stub) and
-        ``bundled-bestpractices`` (zero-config OWASP fallback) are both excluded;
-        anything else (company catalog / cache / URL) is a real custom source.
-      * non-empty ``categories`` — a source that actually declares requirements.
-
-    Returns ``{integrated, ids, url_by_id}``; ``integrated`` is False (and ids
-    empty) whenever any signal fails, so the caller shows no requirement signal."""
-    empty = {"integrated": False, "ids": set(), "url_by_id": {}}
-    if not bool(meta.get("check_requirements")):
-        return empty
-    path = output_dir / ".requirements.yaml"
-    try:
-        doc = yaml.load(path.read_text(encoding="utf-8"), Loader=_YAML_LOADER) or {}
-    except (OSError, yaml.YAMLError):
-        return empty
-    if not isinstance(doc, dict):
-        return empty
-    source = str(doc.get("source") or "").strip().lower()
-    cats = doc.get("categories") or []
-    if source in ("skipped", "bundled-bestpractices") or not isinstance(cats, list) or not cats:
-        return empty
-    ids: set[str] = set()
-    url_by_id: dict[str, str] = {}
-    for cat in cats:
-        if not isinstance(cat, dict):
-            continue
-        for req in cat.get("requirements") or []:
-            if not isinstance(req, dict):
-                continue
-            rid = str(req.get("id") or "").strip()
-            if rid:
-                ids.add(rid)
-                url_by_id.setdefault(rid, str(req.get("url") or "").strip())
-    return {"integrated": bool(ids), "ids": ids, "url_by_id": url_by_id} if ids else empty
+    Shared with ``query_threat_model.py`` — see ``_requirements_gate`` for the
+    exclusion rules (skipped stub, bundled OWASP fallback, check switched off).
+    """
+    return load_requirements(output_dir, meta)
 
 
 # ---------------------------------------------------------------------------

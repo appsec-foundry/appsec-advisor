@@ -1,18 +1,19 @@
 ---
 name: ask-threat-model
 description: >-
-  Answer a concrete, free-form question about the threat model in this repo —
-  read-only Q&A over the committed threat-model.yaml. Use it when answering
-  needs an ARBITRARY subset of the model, reached by lookup, filtering or
-  reasoning ("what are the critical findings?", "does it cover SSRF / IDOR /
-  auth?", "which findings touch the payment service?", "what's the worst case?",
-  "is there a fix for F-003?", "what should we fix first?", "welche kritischen
-  findings gibt es?", "deckt mein bedrohungsmodell XSS ab?"). Also answers meta
-  questions about how to read the model ("what does P1 mean?", "what is STRIDE
-  here?", "how was this generated?"). Grounds every data answer in the model and
+  Answer ANY question about the threat model in this repo — read-only Q&A over
+  the committed threat-model.yaml. The default surface for every
+  natural-language query about the model, however simple:
+  does one exist at all ("is there a threat model here?", "gibt es
+  hier ein bedrohungsmodell?"), how it stands ("how bad is it?", "is it still
+  current?"), anything about its contents ("what are the critical findings?",
+  "does it cover SSRF / IDOR / auth?", "which findings touch the payment
+  service?", "is there a fix for F-003?", "welche kritischen findings gibt
+  es?", "deckt mein bedrohungsmodell XSS ab?"), and meta questions ("what does
+  P1 mean?", "what is STRIDE here?"). Grounds every data answer in the model and
   cites F-ids; never analyzes code, re-scores, spawns agents, or writes files.
-  For the FIXED overview instead — does a model exist at all, severity counts,
-  is it still current — use show-threat-model. To act on findings use
+  Prefer this over show-threat-model for anything phrased as a question — show
+  only prints a fixed summary block on explicit request. To act on findings use
   review-threat-model; to (re)generate use create-threat-model.
 ---
 
@@ -32,8 +33,14 @@ never justifies guessing: if answering correctly needs another read, do it.
 
 This is the "just ask" surface. It is distinct from its siblings:
 
-- **show-threat-model** prints a *fixed* overview. Use it when the user wants
-  the standard at-a-glance summary, not an answer to a specific question.
+- **show-threat-model** is a *display command*, not a question surface: it
+  prints the standard summary block and nothing else. It is reached by explicit
+  invocation. **Every** natural-language question about the model lands here
+  instead — including the simplest ("is there one?"). The capabilities are
+  asymmetric: this skill can always produce that summary (Step 3a), while
+  `show` can never answer a question its fixed block does not already contain.
+  So a misroute into this skill is recoverable and a misroute into `show` is a
+  dead end — when in doubt, answer here.
 - **review-threat-model** is an interactive triage console that can *apply
   fixes* or build a remediation plan. Route the user there when they want to
   **act** ("fix these", "accept this risk", "build a remediation plan").
@@ -42,18 +49,27 @@ This is the "just ask" surface. It is distinct from its siblings:
 
 ## Step 0 — Classify the question
 
-Decide which of two kinds the user's question is. You may answer both in one
-turn if they asked both.
+Decide which of three kinds the user's question is. You may answer more than one
+in a turn if they asked more than one.
 
-1. **Data question** — about the *contents* of THIS repo's model ("what are the
+1. **Overview request** — the user wants the standard summary block itself
+   ("give me an overview", "wie sieht mein threat model aus?", "summarise it").
+   → **Step 3a**: emit the rendered block verbatim. Do not paraphrase it.
+2. **Data question** — about the *contents* of THIS repo's model ("what are the
    critical findings?", "does it cover SSRF?", "what touches component X?",
    "what's the fix for F-003?", "what's the worst case?"). → Steps 1–4: load the
    facts, answer grounded with citations.
-2. **Meta / plugin question** — about how to *read or act on* the model, or what
+3. **Meta / plugin question** — about how to *read or act on* the model, or what
    a concept means ("what does P1 mean?", "what is STRIDE?", "how do I fix
    these?", "how was this scan run?"). → Answer from **Plugin knowledge** below.
    You do not need to load the model for a purely conceptual question, but you
    may, e.g. to say "your model has 3 P1 mitigations".
+
+**Presence** ("is there a threat model?", "gibt es hier ein bedrohungsmodell?")
+is a data question and belongs here — answer it **tersely** from the loader's
+exit code: exit `1` means no (surface the tool's create-threat-model hint),
+otherwise yes plus where it lives. Do **not** dump the overview at someone who
+asked a yes/no question; offer it instead ("want the full summary?").
 
 If a request is actually an **action** ("fix F-003", "accept this risk",
 "re-scan", "export to PDF"), this skill does not do that — briefly answer any
@@ -88,7 +104,7 @@ FLAGS
   --json            Emit the facts index as JSON (for tooling)
 
 RELATED
-  /appsec-advisor:show-threat-model     Fixed at-a-glance overview
+  /appsec-advisor:show-threat-model     Print the summary block (display only)
   /appsec-advisor:review-threat-model   Triage: apply fixes / accept risk / plan
   /appsec-advisor:create-threat-model   Generate or update the model
 ```
@@ -126,6 +142,28 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
   exit 2
 fi
 ```
+
+## Step 3a — Overview request (deterministic, no composition)
+
+When the user asked for the summary block itself (Step 0 kind 1), run the same
+pipeline `show-threat-model` runs and print its output **verbatim** as the whole
+deliverable. This keeps the overview a deterministic render — an LLM
+paraphrase of a fixed block is strictly worse, and re-composing pre-rendered
+output is a known cost sink in this plugin. Do not add commentary; the block
+already names the follow-up lanes. Then stop — Step 3 is for questions the
+block cannot answer.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" \
+    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --json 2>/dev/null \
+| python3 "$CLAUDE_PLUGIN_ROOT/scripts/summarize_threat_model.py" \
+    --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --health-json -
+EXIT=$?
+```
+
+This path costs a git change-detection probe (~1s) that Step 3 avoids. Use it
+only for a genuine overview request — never as a fallback for a specific
+question.
 
 ## Step 3 — Load the facts (data questions)
 
@@ -199,8 +237,8 @@ knowledge below (meta). Rules:
   `security_controls` — those are **not** queryable here (only their counts are
   in the header). For a question about them, say the query tool does not expose
   that view and point at the rendered report (§4 Assets, §5 Attack Surface,
-  §6 Security Architecture) or `show-threat-model`. Never answer "the model does
-  not contain that" for one of these — that claim would be false.
+  §6 Security Architecture). Never answer "the model does not contain that" for
+  one of these — that claim would be false.
 - Prefer a **direct answer first**, then the supporting F-ids. Keep it tight;
   do not dump the whole digest unless asked to list everything.
 - If the user asked to **act** (fix / accept / re-scan / export), answer the
@@ -213,14 +251,10 @@ knowledge below (meta). Rules:
 The threat model is produced by the **appsec-advisor** plugin. Use this to
 answer "how do I read/act on this" questions and to route actions.
 
-**Presence is not this skill's question.** "Is there a threat model?" / "how
-does it stand?" belongs to `show-threat-model` — it answers deterministically,
-including freshness, with no LLM in the output path. If that is *all* the user
-asked, point there rather than paraphrasing a digest. Operationally you still
-handle absence: exit `1` + "No threat model found" means there is none — surface
-the tool's create-threat-model hint and stop, whatever the question was.
-
-**Metadata.** The digest header + the
+**Presence & metadata.** "Is there a threat model?" is answered by the loader
+itself: exit `1` + "No threat model found" means **no** (surface the tool's
+create-threat-model hint and stop, whatever the question was); a rendered digest
+means **yes**. Answer that tersely — see Step 0. The digest header + the
 `META` block carry the model's own metadata — when it was generated
 (`generated`), the plugin version, scan mode (full/incremental), assessment
 depth, the models used, the analyst, repo URL, owner, asset classification,
@@ -261,6 +295,24 @@ fix** and usually needs a human decision.
 verified (`verified` / `verified-prior` / `ambiguous` / `unchecked` / …). Report
 it honestly; do not upgrade an `unchecked` finding to "confirmed".
 
+**Custom requirements.** When the team integrated their **own** requirement
+catalog at scan time (`create-threat-model --requirements <url>`), the digest
+carries a `REQUIREMENTS` block: how many were checked and which are violated,
+by which findings. Individual findings show `violates: REQ-…`, and `--grep
+REQ-AUTH-01` finds the findings that break that id. Answer compliance questions
+("welche requirements verletzen wir?", "erfüllen wir REQ-042?") from that block
+and cite both the requirement id and the F-ids.
+
+Two honesty rules here, both load-bearing:
+- **No block means no *custom* catalog** — either the run had the check off, or
+  it fell back to the bundled OWASP best-practices baseline, or the catalog was
+  a skipped stub. Say "this scan checked no custom requirements", **never**
+  "you comply" — an unchecked requirement is not a satisfied one.
+- **A requirement with no violating finding is not proof of compliance.** The
+  scan only ever links requirements to findings it actually made; coverage is
+  bounded by scan depth (see Limitations). Say "no finding breaks it", not "it
+  is met".
+
 **Document structure (the rendered `threat-model.md`).** Top matter is a
 **Management Summary** (exec-level verdict + top risks + posture) and a
 **Critical Attack Tree** (worst-case attack paths). Then numbered sections:
@@ -299,7 +351,8 @@ in the semantic model. Freshness needs git and is only checked on request
 (Step 3b). When a question exceeds what the model records, say so plainly.
 
 **Sibling skills (route actions here — this skill only answers):**
-- `show-threat-model` — fixed at-a-glance overview.
+- `show-threat-model` — display command for the summary block. Never route a
+  question there; if the user wants that block, emit it yourself via Step 3a.
 - `review-threat-model` — triage console: **apply a fix**, **accept a risk**, or
   **build a remediation plan**. This is where "fix these" / "accept" go.
 - `create-threat-model` — **generate or update** the model (analyzes code).
