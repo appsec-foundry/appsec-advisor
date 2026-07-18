@@ -74,7 +74,6 @@ AppSec and security architecture teams own the plugin configuration, defaults, t
 
 ## Contents
 
-- [What's new in 0.5-beta](#whats-new-in-05-beta)
 - [Quick start](#quick-start)
 - [Threat Modeler](#threat-modeler)
 - [Requirements Audit](#requirements-audit)
@@ -152,7 +151,7 @@ is there a fix for F-003?
 what does P1 mean?
 ```
 
-Questions about the threat model route to `/appsec-advisor:ask-threat-model` automatically; you can also invoke it explicitly. Answers cite finding IDs and say so when the model does not contain the answer. Strictly read-only — it never re-scans or writes files; to act on findings, use [`review-threat-model`](#5-triage-the-findings-into-a-plan).
+Questions about the threat model route to `/appsec-advisor:ask-threat-model` automatically; you can also invoke it explicitly. Answers cite finding IDs and say so when the model does not contain the answer. Strictly read-only — it never re-scans or writes files. Asking is the light-weight way in: to actually decide or fix something, go to step 5.
 
 ### 5. Triage the findings into a plan
 
@@ -163,6 +162,16 @@ The assessment ranks findings by severity, but deciding what to fix now — and 
 ```
 
 It opens a triage console — a one-screen verdict (backlog by priority, severity mix, and the worst-case scenarios if nothing changes) — then lets you drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with an owner and target) on a whole selection at once. Your decisions live in a sidecar that survives the next re-scan, and it writes a `remediation-plan.md`. It only reads the model — it never regenerates or re-scores it.
+
+You can also enter it by just saying what you want:
+
+```text
+fix the critical findings
+accept the risk on F-012
+defer the mediums to next quarter
+```
+
+Fixes are applied one finding at a time, each shown before it is written — never as a blind bulk change across a selection.
 
 ### 6. Optional: Publish the threat model
 
