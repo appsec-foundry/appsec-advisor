@@ -265,13 +265,27 @@ def _status_file_is_pass(path: Path) -> bool:
 
 
 def _repair_plan_is_empty(path: Path) -> bool:
-    """Return True if the repair-plan JSON has zero issues (or is absent)."""
+    """Return True if the repair-plan JSON has zero *blocking* issues.
+
+    A missing plan counts as clean. So does a ``cosmetic_advisory`` plan
+    (``qa_checks.py repair_plan`` exit 4): those entries are readability nits —
+    the skill deliberately treats them as non-blocking, leaves the plan on disk,
+    and surfaces them in the completion summary. Counting them as "not clean"
+    suppressed the ENTIRE post-QA branch, so a single cosmetic note left
+    `.fragments/` (POST_QA_DIRS) and all QA bookkeeping behind on an otherwise
+    successful run (juice-shop 2026-07-18).
+
+    ``manual_review`` plans are deliberately NOT covered here — those describe
+    real defects that need a human, so preserving their artefacts is correct.
+    """
     if not path.is_file():
         return True
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
+    if (data.get("status") or "").strip().lower() == "cosmetic_advisory":
+        return True
     return int(data.get("issue_count") or 0) == 0
 
 

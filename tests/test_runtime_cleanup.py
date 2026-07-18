@@ -527,6 +527,29 @@ class TestStatusHelpers:
         p.write_text(json.dumps({"issue_count": 3}), encoding="utf-8")
         assert rc._repair_plan_is_empty(p) is False
 
+    def test_repair_plan_cosmetic_advisory_counts_as_clean(self, tmp_path):
+        """Regression (2026-07-18 juice-shop): a `cosmetic_advisory` plan
+        (repair_plan exit 4) is explicitly non-blocking and is deliberately left
+        on disk, but its non-zero issue_count made the whole post-QA branch
+        preserve everything — one readability nit stopped `.fragments/` and all
+        QA bookkeeping from being reaped on an otherwise successful run."""
+        p = tmp_path / ".qa-repair-plan.json"
+        p.write_text(
+            json.dumps({"status": "cosmetic_advisory", "actionable": False, "issue_count": 1}),
+            encoding="utf-8",
+        )
+        assert rc._repair_plan_is_empty(p) is True
+
+    def test_repair_plan_manual_review_still_not_clean(self, tmp_path):
+        """Negative control — `manual_review` describes a real defect needing a
+        human, so its artefacts must still be preserved."""
+        p = tmp_path / ".qa-repair-plan.json"
+        p.write_text(
+            json.dumps({"status": "manual_review", "actionable": False, "issue_count": 2}),
+            encoding="utf-8",
+        )
+        assert rc._repair_plan_is_empty(p) is False
+
     def test_has_agent_error_missing_log(self, tmp_path):
         assert rc._has_agent_error(tmp_path / "no.log") is False
 
@@ -566,6 +589,20 @@ class TestRunCleanupEdges:
         assert report["skipped"] is False
         assert any("QA not clean" in note for note in report["preserved"])
         assert (out / ".qa-status.json").exists()
+
+    def test_post_qa_reaps_on_pass_with_cosmetic_advisory(self, tmp_path):
+        """End-to-end counterpart: status=pass + cosmetic_advisory plan is the
+        `GATE_EXIT == 4` fast path and must run the post-QA wave normally."""
+        out = _completed_output_dir(tmp_path)
+        _write_json(out / ".qa-status.json", {"status": "pass"})
+        _write_json(
+            out / ".qa-repair-plan.json",
+            {"status": "cosmetic_advisory", "actionable": False, "issue_count": 1},
+        )
+        report = rc.run_cleanup(out, stage="post-qa", keep_runtime_files=False, force=False)
+        assert report["skipped"] is False
+        assert not any("QA not clean" in note for note in report["preserved"])
+        assert not (out / ".qa-status.json").exists()
 
     def test_directory_removed_and_not_present(self, tmp_path):
         out = _completed_output_dir(tmp_path)
