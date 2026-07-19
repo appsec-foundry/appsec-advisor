@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth for the Threat Model (Preset) dispatch workflow. Each slug MUST also appear in the workflow_dispatch use_case dropdown (.github/workflows/threat-model-dispatch.yml). reasoning_model: sonnet-economy for quick/standard, opus-cheap for thorough (drop the field to use the depth default: opus at thorough). output_path is resolved relative to the plugin checkout root, i.e. OUTSIDE the target checkout (required for untrusted scans).",
+  "_comment": "Single source of truth for the Threat Model (Preset) dispatch workflow. Every key MUST be exactly '<target>-<depth>' and the full cross product of the workflow_dispatch target x depth dropdowns (.github/workflows/threat-model-dispatch.yml) — the resolve step composes the key from those two inputs and hard-fails on any drift. A preset is applied whole; the workflow overrides no field, so depth always travels with the budget and reasoning model chosen for it. reasoning_model: sonnet-economy for quick/standard, opus-cheap for thorough (drop the field to use the depth default: opus at thorough). output_path is resolved relative to the plugin checkout root, i.e. OUTSIDE the target checkout (required for untrusted scans).",
 
   "juice-shop-quick": {
     "target_repo": "juice-shop/juice-shop",

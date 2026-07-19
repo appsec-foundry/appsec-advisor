@@ -46,14 +46,35 @@ jobs:
           fetch-depth: 0   # need dev as the PR base
 
       # gh is preinstalled on the runner, so no extra action to pin.
+      #
+      # No matching artifact is not a repair failure: it means the caller died
+      # before the pipeline produced any evidence (missing auth token, bad
+      # preset, checkout error). There is nothing to triage, and failing here
+      # would only add a second red job to the one that already carries the
+      # real error. Skip the rest of the workflow instead.
       - name: Download artifacts
+        id: artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           mkdir -p e2e-artifacts
-          gh run download "${{ inputs.run_id }}" --dir e2e-artifacts \
-            --pattern '${{ inputs.artifact_pattern }}'
+          if gh run download "${{ inputs.run_id }}" --dir e2e-artifacts \
+               --pattern '${{ inputs.artifact_pattern }}'; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::run ${{ inputs.run_id }} published no artifact matching '${{ inputs.artifact_pattern }}' — it failed before producing evidence. Nothing to repair."
+            {
+              echo "# Nothing to repair"
+              echo
+              echo "Run \`${{ inputs.run_id }}\` published no artifact matching"
+              echo "\`${{ inputs.artifact_pattern }}\`, so the failure happened before the"
+              echo "pipeline produced any evidence to triage. Fix that failure and"
+              echo "re-dispatch; the repair agent needs a run that got far enough to"
+              echo "write \`.run-issues.json\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # Pick what is eligible and say so in the job summary.
       #
@@ -63,6 +84,7 @@ jobs:
       # pipeline broke — so any failure is producer-side by definition.
       - name: Triage failures
         id: triage
+        if: steps.artifacts.outputs.found == 'true'
         run: |
           python3 - <<'PY'
           import json, os
@@ -100,6 +122,20 @@ jobs:
               fh.write(f"label={label}\n")
               fh.write(f"kinds={kinds}\n")
           PY
+
+      # A repair-only dispatch (repair_run_id) skips the caller's own preflight,
+      # so this is the first place the token gets checked on that path.
+      - name: Preflight — subscription auth
+        if: steps.triage.outputs.repairable == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::secret CLAUDE_CODE_OAUTH_TOKEN is not set — the repair agent cannot authenticate. Create one with 'claude setup-token', then 'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${{ github.repository }}'."
+            exit 1
+          fi
+          echo "subscription token present"
 
       - name: Install toolchain
         if: steps.triage.outputs.repairable == 'true'

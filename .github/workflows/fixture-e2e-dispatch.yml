@@ -55,11 +55,10 @@ on:
         required: true
         default: quick
         options: [quick, standard, thorough]
-      plugin_ref:
-        description: "appsec-advisor ref to run (blank = the branch you dispatched from)"
-        type: string
-        required: false
-        default: ""
+      # No plugin_ref input: the branch to run is GitHub's own "Use workflow
+      # from" selector. Both dev and main carry this workflow, so any branch
+      # you can dispatch from is a branch whose plugin code gets checked out.
+      # fixtures_ref has no such selector — it lives in another repository.
       fixtures_ref:
         description: "appsec-advisor-fixtures ref to test against (blank = default branch)"
         type: string
@@ -97,10 +96,24 @@ jobs:
     outputs:
       matrix: ${{ steps.discover.outputs.matrix }}
     steps:
+      # Auth preflight. Every matrix job consumes the same token, so check it
+      # once here: `fixture: all` otherwise fans out ten jobs that each redo a
+      # checkout and an npm install only to die on the same auth error.
+      - name: Preflight — subscription auth
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::secret CLAUDE_CODE_OAUTH_TOKEN is not set — the fixtures cannot authenticate. Create one with 'claude setup-token', then 'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${{ github.repository }}'."
+            exit 1
+          fi
+          echo "subscription token present"
+
       - name: Checkout appsec-advisor (plugin)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+          ref: ${{ github.ref_name }}
 
       - name: Checkout appsec-advisor-fixtures
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -227,11 +240,11 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.resolve.outputs.matrix) }}
     steps:
-      # 1) Plugin (this repo) — the branch you dispatched from, or plugin_ref.
+      # 1) Plugin (this repo) — the branch you dispatched from.
       - name: Checkout appsec-advisor (plugin)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+          ref: ${{ github.ref_name }}
           path: .
 
       # 2) Fixture suite (repos/, oracles/, outputs/) — into ./fixtures.
@@ -358,5 +371,5 @@ jobs:
     with:
       run_id: ${{ inputs.repair_run_id != '' && inputs.repair_run_id || github.run_id }}
       artifact_pattern: fixture-e2e-*
-      plugin_ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+      plugin_ref: ${{ github.ref_name }}
     secrets: inherit
