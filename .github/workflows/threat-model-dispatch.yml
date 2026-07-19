@@ -41,12 +41,12 @@ on:
         default: quick
         options: [quick, standard, thorough]
       repair:
-        description: "If this run fails: triage the plugin failure, fix it, and open a PR"
+        description: "If this run finishes but auto-recovered from errors: fix those at the producer and open a PR"
         type: boolean
         required: false
         default: false
       repair_run_id:
-        description: "Repair-only: run id of an earlier failed run. Set this and NO scan happens - the agent works off that run's artifacts."
+        description: "Repair-only: run id of an earlier run. Set this and NO scan happens - the agent works off that run's artifacts."
         type: string
         required: false
         default: ""
@@ -294,9 +294,10 @@ jobs:
           sarif_file: ${{ steps.preset.outputs.output_path }}/threat-model.sarif.json
           category: threat-model-${{ steps.preset.outputs.use_case }}
 
-  # Repair a failed run. There is no oracle here — the run is red exactly when
-  # the pipeline broke — so every failure is producer-side by definition and the
-  # exit-code classification the fixture workflow needs does not apply.
+  # Repair a run that finished but limped. There is no oracle here, so
+  # "finished" means a rendered threat-model.md; the qualifying signal is the
+  # same as everywhere else — errors or auto-recovered failures in
+  # .run-issues.json, i.e. a green report that a runtime workaround produced.
   #
   # The artifacts of THIS workflow derive from scanning an untrusted external
   # repository, so the shared repair workflow treats them as a pointer to where
@@ -304,10 +305,13 @@ jobs:
   # in-repo regression test. See .github/workflows/repair-agent.yml.
   repair:
     needs: threat-model
+    # Deliberately NOT gated on failure — see repair-agent.yml. A scan that
+    # aborted (bad credentials, checkout, mid-pipeline crash) produced no
+    # diagnosis to work from. The subject is a scan that finished and rendered
+    # a report while recording errors or auto-recovering from them.
     if: >-
       always() &&
-      (inputs.repair_run_id != '' ||
-       (inputs.repair && needs.threat-model.result == 'failure'))
+      (inputs.repair_run_id != '' || inputs.repair)
     permissions:
       contents: write        # push the repair branch
       pull-requests: write   # open the PR
