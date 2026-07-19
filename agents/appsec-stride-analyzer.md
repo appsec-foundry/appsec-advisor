@@ -568,6 +568,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
       "title": "<see shared/finding-title-contract.md — canonical form: <Weakness class> (<relative_file_path[:line]>), MAX 80 chars>",
       "affected_parameter": "<optional — when meaningful: 'email', 'q', 'id', 'X-Forwarded-For'. Do NOT cram into title.>",
       "scenario": "<longer prose description of the attack — used in §8 detail body, not in table rows>",
+      "attack_steps": ["<REQUIRED for Critical, optional otherwise — see 'Authoring attack_steps' below. 2-4 attacker-voice steps that §3 renders as the numbered walkthrough. NOT a summary of `scenario`.>"],
       "evidence_summary": "<RECOMMENDED — one-sentence structural assertion about the code that the snippet below visually proves. Distinct from scenario (attack narrative) and impact_description (consequence). Reference code with SHORT inline identifiers only (a file:line, function or variable name); do NOT paste a multi-statement expression or arrow function inline — that code belongs in the fenced snippet below, and embedding it half-quoted renders as broken partial formatting.>",
       "impact_description": "<RECOMMENDED — one-sentence concrete consequence. Distinct from scenario and evidence_summary.>",
       "likelihood": "<High | Medium | Low>",
@@ -608,6 +609,41 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
 ```
 
 **`evidence.line` quality rule.** MUST point at the line that contains the vulnerable statement itself — NOT line 1 (typically a JSDoc opener or copyright header), NOT a blank line, NOT a comment-only line, NOT a closing brace. When you grep with `Grep -n`, use the exact line number where the offending API call, string concat, unsafe parser option, or missing-auth-check lives. For structural vulnerabilities ("no rate-limit middleware on route"), point at the route registration line. The Phase 10b `evidence_integrity` gate refuses comment/blank lines and surfaces `evidence_line_suspicious` per offending threat — treat as a hard contract.
+
+### Authoring `attack_steps` — the §3 walkthrough
+
+**Required for every Critical finding**, optional below. §3 renders it verbatim as
+the numbered "Attack Steps" list. It is NOT a shortened `scenario`: `scenario`
+explains *what is broken and why it matters* (§8 body, code may be the subject);
+`attack_steps` answers *what does the attacker do, in order* (attacker is always
+the subject). Deriving one from the other is why §3 previously renumbered
+rationale and caveats as if they were actions. Write them separately.
+
+Rules — every step:
+
+1. **Attacker is the subject.** Never open with `The function …`, `Server code
+   that …`, `The endpoint requires …`. If the subject is code, it is not a step —
+   fold it into an attacker action or leave it to `scenario`.
+2. **An action, not a state.** Preconditions, rationale and limitations are not steps.
+3. **Chronological** — step *n+1* only possible once *n* happened. Self-check:
+   swapping two steps must break the text.
+4. **One sentence, ≤ 200 chars.**
+5. **Consistent actor** — first step "An attacker …", later steps "The attacker …".
+   Never reintroduce "An attacker" halfway down.
+6. **Whole code tokens in backticks** — `` `request.data['role']` ``, not
+   `` `request.data`['role'] ``; a payload literal is one span: `` `{"is_staff": true}` ``.
+7. **2–4 steps.** Needing five means it is a chain — split it.
+
+Example — mass assignment (`views.py:229`):
+
+```
+1. An attacker registers a normal account and authenticates against the profile API.
+2. The attacker replays the profile-update request with `{"is_staff": true}` added to the JSON body.
+3. `views.py:229` binds the body straight onto the model, so the attacker's account is now staff.
+```
+
+Step 3 names code as the *mechanism* inside an attacker-outcome sentence — fine.
+Banned is code as the grammatical *subject*.
 
 ### threat_category_id — mandatory Phase 3 field
 

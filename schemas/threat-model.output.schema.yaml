@@ -544,6 +544,34 @@ properties:
         scenario:
           type: string
           minLength: 10
+        attack_steps:
+          # Attacker-voice, chronological exploitation steps for §3 Attack
+          # Walkthroughs. Distinct from `scenario`, which is the EXPLANATORY
+          # paragraph feeding the §8 register (what the defect is, why it
+          # matters, what the code does). §3 previously derived its numbered
+          # steps by sentence-splitting `scenario` — a category error that
+          # renumbered rationale ("Critically, `role` is security-bearing…")
+          # and caveats ("Because SQLite supports only single statements…") as
+          # if they were actions, so the list never read as a followable attack
+          # (2026-07-19 user report).
+          #
+          # Author contract (see agents/appsec-stride-analyzer.md):
+          #   1. The ATTACKER is the subject of every step — never the code.
+          #   2. Each step is an action the attacker performs, not a state,
+          #      precondition, rationale, or limitation.
+          #   3. Chronological: step n+1 is only possible once n has happened.
+          #   4. One sentence, <= 200 chars.
+          #   5. First mention "An attacker", every later mention "the attacker".
+          #
+          # Optional. When absent the renderer falls back to the (now filtered)
+          # scenario split, so older models and incremental runs still render.
+          type: [array, "null"]
+          minItems: 2
+          maxItems: 5
+          items:
+            type: string
+            minLength: 15
+            maxLength: 240
         evidence_summary:
           # One-sentence prose claim describing WHAT the snippet in
           # `evidence[]` demonstrates. Distinct from `scenario` (attack

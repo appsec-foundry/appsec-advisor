@@ -49,7 +49,10 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # Raised 2026-06-24: OAuth/OIDC FT-091/092/093 finding-type rows + the
     # evidence_summary "short inline identifiers only" code-formatting rule.
     # Measured 13_011; high = ~14% buffer above the new size.
-    "agents/appsec-stride-analyzer.md": (6_500, 14_900),
+    # 2026-07-19: + the "Authoring attack_steps" contract, so §3 walkthroughs
+    # are authored attacker-first instead of being sentence-split out of
+    # `scenario`. Measured 15_130; high = ~3% buffer above the new size.
+    "agents/appsec-stride-analyzer.md": (6_500, 15_600),
     # Parallel Stage-2 specialists intentionally keep only role-local
     # instructions. They load their relevant legacy contract slice on demand.
     "agents/appsec-secarch-renderer.md": (500, 1_200),

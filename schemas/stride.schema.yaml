@@ -133,6 +133,19 @@ $defs:
               # JSONSchema cannot check "stripped length >= 10"; Python
               # post-check in validate_intermediate.py enforces that.
               minLength: 10
+            attack_steps:
+              # OPTIONAL attacker-voice step list for §3. `scenario` stays the
+              # explanatory paragraph; this is the followable attack. Author
+              # contract and rationale: threat-model.output.schema.yaml →
+              # threats[].attack_steps. Required only for Critical findings
+              # (the ones §3 actually walks through) — see the analyzer agent.
+              type: [array, "null"]
+              minItems: 2
+              maxItems: 5
+              items:
+                type: string
+                minLength: 15
+                maxLength: 240
             likelihood: { $ref: "#/$defs/likelihood" }
             impact:     { $ref: "#/$defs/impact" }
             risk:       { $ref: "#/$defs/risk" }
