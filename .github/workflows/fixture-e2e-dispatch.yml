@@ -18,10 +18,13 @@ name: Fixture E2E (Dispatch)
 # checkout, not enumerated.
 #
 # Repair mode: `repair: true` (or `repair_run_id` for an earlier run) hands a
-# failed run to .github/workflows/repair-agent.yml, shared with
-# threat-model-dispatch.yml. Only exits 1/2/3 are offered to it; an oracle recall
-# miss (exit 4) is reported, not fixed - whether the plugin or the oracle is
-# wrong is not machine-decidable.
+# run to .github/workflows/repair-agent.yml, shared with
+# threat-model-dispatch.yml. The subject is a run that PASSED (exit 0) while
+# recording errors or auto-recovering from them - a green report resting on a
+# runtime workaround, with the producer defect still in place. A run that broke
+# is not offered: it never produced the diagnosis the agent works from. Nor is
+# an oracle recall miss (exit 4) - whether the plugin or the oracle is wrong is
+# not machine-decidable.
 #
 # Auth: subscription billing via the CLAUDE_CODE_OAUTH_TOKEN secret
 # (`claude setup-token`). ANTHROPIC_API_KEY is deliberately NOT set — it would
@@ -71,12 +74,12 @@ on:
         required: false
         default: ""
       repair:
-        description: "If this run fails: triage the plugin failure, fix it, and open a PR"
+        description: "If this run finishes but auto-recovered from errors: fix those at the producer and open a PR"
         type: boolean
         required: false
         default: false
       repair_run_id:
-        description: "Repair-only: run id of an earlier failed run. Set this and NO fixtures are scanned - the agent works off that run's artifacts."
+        description: "Repair-only: run id of an earlier run. Set this and NO fixtures are scanned - the agent works off that run's artifacts."
         type: string
         required: false
         default: ""
@@ -366,10 +369,16 @@ jobs:
   #      retention). This is the answer to "I dispatched with repair: false".
   repair:
     needs: fixture-e2e
+    # Deliberately NOT gated on failure. A run that broke never produced the
+    # diagnosis the agent works from; the repair subject is a run that finished
+    # green while quietly retrying and auto-repairing its way there. The
+    # eligibility decision lives in one place — the triage step of
+    # repair-agent.yml — because it needs the artifacts to make it. A matrix
+    # where some fixtures qualify and others do not is therefore handled per
+    # fixture, not by this job-level condition.
     if: >-
       always() &&
-      (inputs.repair_run_id != '' ||
-       (inputs.repair && needs.fixture-e2e.result == 'failure'))
+      (inputs.repair_run_id != '' || inputs.repair)
     permissions:
       contents: write        # push the repair branch
       pull-requests: write   # open the PR
