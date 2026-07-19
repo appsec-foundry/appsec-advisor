@@ -9,12 +9,19 @@ name: Fixture E2E (Dispatch)
 # a report; this one runs our own trusted fixtures and asserts recall against an
 # oracle. Different inputs, different pass criterion, no shared preset file.
 #
-# Flexibility contract: fixtures are DISCOVERED from <fixture-root>/repos at run
-# time. Adding a fixture to the fixtures repo requires no edit here and none in
-# .github/fixture-presets.json (that file only holds per-depth time budgets).
-# The `fixture` input is free text for exactly that reason - GitHub cannot fill a
-# `type: choice` dropdown dynamically, so a dropdown would be the one place you
-# would have to remember to update.
+# Fixture selection: the `fixture` input is a dropdown, so GitHub cannot fill it
+# from the fixtures repo at run time. The `options:` block below is the single
+# place the list is written down - the resolve job reads it back out of this file
+# and hard-fails when it drifts from what <fixture-root>/repos contains, so
+# adding a fixture to matthiasrohr/appsec-advisor-fixtures without updating the
+# dropdown is loud, never silent. Paths and driver are still DERIVED from the
+# checkout, not enumerated.
+#
+# Repair mode: `repair: true` (or `repair_run_id` for an earlier run) hands a
+# failed run to .github/workflows/repair-agent.yml, shared with
+# threat-model-dispatch.yml. Only exits 1/2/3 are offered to it; an oracle recall
+# miss (exit 4) is reported, not fixed - whether the plugin or the oracle is
+# wrong is not machine-decidable.
 #
 # Auth: subscription billing via the CLAUDE_CODE_OAUTH_TOKEN secret
 # (`claude setup-token`). ANTHROPIC_API_KEY is deliberately NOT set — it would
@@ -24,10 +31,24 @@ on:
   workflow_dispatch:
     inputs:
       fixture:
-        description: "Fixture directory name under <fixtures>/repos, or 'all' for every single-repo fixture"
-        type: string
+        description: "Fixture to run ('all' = every single-repo fixture)"
+        type: choice
         required: true
         default: all
+        # The only place the fixture list is written down. The resolve job reads
+        # these options back and fails the run if they and repos/ disagree.
+        options:
+          - all
+          - spring-boot-threat-fixture
+          - python-threat-fixture
+          - rust-threat-fixture
+          - go-threat-fixture
+          - node-typescript-threat-fixture
+          - python-langchain-llm-threat-fixture
+          - aws-terraform-threat-fixture
+          - npm-supply-chain-threat-fixture
+          - fifty-service-threat-fixture
+          - cross-repo-threat-fixture
       depth:
         description: "Assessment depth"
         type: choice
@@ -44,13 +65,25 @@ on:
         type: string
         required: false
         default: ""
+      repair:
+        description: "If this run fails: triage the plugin failure, fix it, and open a PR"
+        type: boolean
+        required: false
+        default: false
+      repair_run_id:
+        description: "Repair-only: run id of an earlier failed run. Set this and NO fixtures are scanned - the agent works off that run's artifacts."
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
   # Never run the same fixture/depth combination twice at once (shared output dir).
-  group: fixture-e2e-${{ inputs.fixture }}-${{ inputs.depth }}
+  # A repair-only dispatch scans nothing, so it gets its own group per target run
+  # rather than colliding with a live scan of the same fixture/depth.
+  group: fixture-e2e-${{ inputs.repair_run_id != '' && format('repair-{0}', inputs.repair_run_id) || format('{0}-{1}', inputs.fixture, inputs.depth) }}
   cancel-in-progress: false
 
 jobs:
@@ -58,6 +91,8 @@ jobs:
   # are derived from the checkout, not hand-maintained: a fixture whose repos/
   # entry contains a consumer-api/ subdirectory is a cross-repo fixture.
   resolve:
+    # Repair-only dispatch scans nothing.
+    if: inputs.repair_run_id == ''
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.discover.outputs.matrix }}
@@ -81,8 +116,10 @@ jobs:
           FIXTURE: ${{ inputs.fixture }}
           DEPTH: ${{ inputs.depth }}
         run: |
+          python3 -m pip install --quiet pyyaml
           python3 - <<'PY'
           import json, os, sys
+          import yaml
           from pathlib import Path
 
           requested = os.environ["FIXTURE"].strip()
@@ -92,6 +129,13 @@ jobs:
           budget = presets["defaults"][depth]["max_duration_sec"]
           overrides = presets.get("overrides", {})
 
+          # The dropdown is the single source of truth for which fixtures are
+          # offered; read it back out of this very file rather than mirroring
+          # the list somewhere a second time. PyYAML maps the `on:` key to True.
+          wf = yaml.safe_load(open(".github/workflows/fixture-e2e-dispatch.yml"))
+          trigger = wf.get("on") or wf[True]
+          offered = [o for o in trigger["workflow_dispatch"]["inputs"]["fixture"]["options"] if o != "all"]
+
           repos = Path("fixtures/repos")
           if not repos.is_dir():
               print("::error::fixtures checkout has no repos/ directory")
@@ -99,21 +143,60 @@ jobs:
 
           available = sorted(d.name for d in repos.iterdir() if d.is_dir())
 
-          def is_cross_repo(name):
-              return (repos / name / "consumer-api").is_dir()
+          def layout(name):
+              """Classify a fixture from its shape on disk — never a hand-kept list.
+
+              A fixture directory holding only sub-repositories and no files of
+              its own is a multi-repo fixture. Of those, only the consumer-api
+              shape has a driver: scripts/e2e_cross_repo_fixture.sh hardwires
+              FIXTURE_NAME/CONSUMER_NAME, so it cannot identify the entry point
+              of any other multi-repo layout. Those are 'unsupported' — not
+              broken, just waiting for a driver.
+              """
+              d = repos / name
+              if (d / "consumer-api").is_dir():
+                  return "cross-repo"
+              if not any(p.is_file() for p in d.iterdir()):
+                  return "unsupported"
+              return "single"
+
+          runnable = [f for f in available if layout(f) != "unsupported"]
+          unsupported = [f for f in available if layout(f) == "unsupported"]
+          for f in unsupported:
+              print(f"::notice::'{f}' is a multi-repo fixture with no driver yet "
+                    "(only the consumer-api layout is supported) — skipping it")
+
+          # Drift guard: a dropdown cannot be filled at run time, so it can go
+          # stale against the fixtures repo. Fail loudly instead of leaving a
+          # fixture silently unselectable. Fixtures with no driver are neither
+          # offered nor required — the notice above is the signal for those.
+          new = [f for f in runnable if f not in offered]
+          stale = [f for f in offered if f not in available]
+          if new or stale:
+              if new:
+                  print(f"::error::fixtures repo has fixtures the dropdown does not offer: {', '.join(new)}")
+              if stale:
+                  print(f"::error::dropdown offers fixtures that no longer exist in repos/: {', '.join(stale)}")
+              print("::error::update the `fixture` input options in "
+                    ".github/workflows/fixture-e2e-dispatch.yml")
+              sys.exit(1)
 
           if requested == "all":
               # Mirrors tests/e2e/run-fixture-suite.sh: single-repo fixtures only.
-              selected = [f for f in available if not is_cross_repo(f)]
+              selected = [f for f in available if layout(f) == "single"]
+          elif requested in unsupported:
+              print(f"::error::fixture '{requested}' is a multi-repo fixture with no driver. "
+                    "scripts/e2e_cross_repo_fixture.sh only handles the consumer-api layout.")
+              sys.exit(1)
           elif requested in available:
               selected = [requested]
           else:
-              print(f"::error::fixture '{requested}' not found under repos/. Available: {', '.join(available)} (or 'all')")
+              print(f"::error::fixture '{requested}' not found under repos/. Available: {', '.join(runnable)} (or 'all')")
               sys.exit(1)
 
           entries = []
           for fixture in selected:
-              cross = is_cross_repo(fixture)
+              cross = layout(fixture) == "cross-repo"
               entries.append({
                   "fixture": fixture,
                   "driver": "cross-repo" if cross else "single",
@@ -179,13 +262,23 @@ jobs:
             SCOPE=user
 
       # 4) The run: pipeline + oracle verification. Exit codes are distinct
-      #    (1 preflight, 2 pipeline, 3 missing artifacts, 4 oracle).
+      #    (1 preflight, 2 pipeline, 3 missing artifacts, 4 oracle) and the
+      #    repair job keys off exactly that: 1/2/3 are plugin failures it may
+      #    fix, 4 is an oracle recall miss it only reports.
+      #
+      #    The driver is allowed to fail here; the exit code is recorded into the
+      #    output dir (so it ships with the artifact) and re-raised afterwards.
+      #    --clean-output wipes that dir first, hence the tee to RUNNER_TEMP.
       - name: Run fixture E2E
         env:
           # Subscription billing. Do NOT add ANTHROPIC_API_KEY (would override).
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          FIXTURE: ${{ matrix.fixture }}
+          DEPTH: ${{ matrix.depth }}
+          DRIVER: ${{ matrix.driver }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          rc=0
           case "${{ matrix.driver }}" in
             single)
               ./scripts/e2e_fixture.sh \
@@ -193,18 +286,37 @@ jobs:
                 --fixture-root "$PWD/fixtures" \
                 --depth "${{ matrix.depth }}" \
                 --max-duration "${{ matrix.max_duration_sec }}" \
-                --clean-output
+                --clean-output 2>&1 | tee "$RUNNER_TEMP/console.log" || rc=${PIPESTATUS[0]}
               ;;
             cross-repo)
               ./scripts/e2e_cross_repo_fixture.sh \
                 --fixture-root "$PWD/fixtures" \
                 --depth "${{ matrix.depth }}" \
                 --max-duration "${{ matrix.max_duration_sec }}" \
-                --clean-output
+                --clean-output 2>&1 | tee "$RUNNER_TEMP/console.log" || rc=${PIPESTATUS[0]}
               ;;
             *)
               echo "::error::unknown driver '${{ matrix.driver }}'"; exit 1 ;;
           esac
+
+          out="$PWD/${{ matrix.output_dir }}"
+          mkdir -p "$out"
+          cp "$RUNNER_TEMP/console.log" "$out/e2e-console.log" 2>/dev/null || true
+          python3 - "$out/e2e-result.json" "$rc" <<'PY'
+          import json, os, sys
+          path, rc = sys.argv[1], int(sys.argv[2])
+          kinds = {0: "pass", 1: "preflight", 2: "pipeline", 3: "missing_artifacts", 4: "oracle"}
+          json.dump({
+              "fixture": os.environ["FIXTURE"],
+              "depth": os.environ["DEPTH"],
+              "driver": os.environ["DRIVER"],
+              "exit_code": rc,
+              "failure_kind": kinds.get(rc, "unknown"),
+              # 1/2/3 are producer-side; 4 is a recall miss, not machine-decidable.
+              "repairable": rc in (1, 2, 3),
+          }, open(path, "w"), indent=2)
+          PY
+          exit "$rc"
 
       # 5) Publish the generated report (md / yaml / sarif / run log) so an
       #    oracle failure is triageable without a local rerun. `always()` is the
@@ -216,5 +328,35 @@ jobs:
           # Must be unique per matrix job.
           name: fixture-e2e-${{ matrix.fixture }}-${{ matrix.depth }}
           path: ${{ matrix.output_dir }}/
+          # The entire diagnostic state of a run is dot-prefixed (.run-issues.json,
+          # .agent-run.log, .appsec-trace.log, .appsec-checkpoint, ...) and
+          # upload-artifact has excluded hidden files by default since v4.4.
+          # Without this the artifact holds the report but not a single line of
+          # evidence for why the run failed — and both `fix-run-issues` locally
+          # and the repair job below read exactly those files.
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
+
+  # Repair: triage a failed run, fix the producer, verify, open a PR.
+  #
+  # Two entry points, both landing here:
+  #   a) same run   - dispatch with repair: true; runs only if fixture-e2e failed
+  #   b) after the fact - dispatch with repair_run_id: <id of an earlier red run>
+  #      Nothing is scanned; the agent works off that run's artifacts (30d
+  #      retention). This is the answer to "I dispatched with repair: false".
+  repair:
+    needs: fixture-e2e
+    if: >-
+      always() &&
+      (inputs.repair_run_id != '' ||
+       (inputs.repair && needs.fixture-e2e.result == 'failure'))
+    permissions:
+      contents: write        # push the repair branch
+      pull-requests: write   # open the PR
+    uses: ./.github/workflows/repair-agent.yml
+    with:
+      run_id: ${{ inputs.repair_run_id != '' && inputs.repair_run_id || github.run_id }}
+      artifact_pattern: fixture-e2e-*
+      plugin_ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+    secrets: inherit

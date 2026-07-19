@@ -1,5 +1,5 @@
 {
-  "_comment": "Depth presets for the fixture E2E dispatch (.github/workflows/fixture-e2e-dispatch.yml). Deliberately NOT a per-fixture enumeration: fixtures are discovered from <fixture-root>/repos at run time, so adding a fixture to matthiasrohr/appsec-advisor-fixtures needs no edit here and none in the workflow. Only add an 'overrides' entry when one fixture needs a different budget than its depth default. Fields map 1:1 onto flags the drivers accept - scripts/e2e_fixture.sh and scripts/e2e_cross_repo_fixture.sh both take --depth and --max-duration. Do not add model knobs; neither driver forwards them.",
+  "_comment": "Depth presets for the fixture E2E dispatch (.github/workflows/fixture-e2e-dispatch.yml). Only add an 'overrides' entry when one fixture needs a different budget than its depth default. Fields map 1:1 onto flags the drivers accept - scripts/e2e_fixture.sh and scripts/e2e_cross_repo_fixture.sh both take --depth and --max-duration. Do not add model knobs; neither driver forwards them.",
 
   "defaults": {
     "quick": { "max_duration_sec": 3600 },
