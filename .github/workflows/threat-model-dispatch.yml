@@ -229,6 +229,11 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -uo pipefail
+          # The env: block above re-reads the raw secret directly — preflight's
+          # trim happened in its own step and never left that shell, so a
+          # whitespace-wrapped token would otherwise reach `claude` untrimmed
+          # and fail here even though the preflight just called it clean.
+          CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
           out=$(claude -p "Reply with the single word: ok" --output-format text 2>&1)
           rc=$?
           if [ "$rc" -ne 0 ] || printf '%s' "$out" | grep -qiE '401|invalid bearer|not authenticated'; then
@@ -286,6 +291,9 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
+          # Same re-read-the-raw-secret gap as the verify step above: trim again
+          # where the token is actually consumed.
+          CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
           OUT="$PWD/${{ steps.preset.outputs.output_path }}"
           mkdir -p "$OUT"
 

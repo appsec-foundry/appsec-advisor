@@ -21,6 +21,7 @@ happened to read the YAML:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -191,6 +192,19 @@ def _preflight_script(workflow: str, job: str) -> str:
     return step["run"].replace("${{ github.repository }}", "OWNER/REPO")
 
 
+def _step_script(workflow: str, step_name_prefix: str) -> str:
+    """First step across any job whose name starts with the given prefix.
+
+    Unlike `_preflight_script`, the job isn't known up front here — callers
+    only care about a step name that is unique within the workflow.
+    """
+    for job in _load(workflow)["jobs"].values():
+        for step in _steps(job):
+            if step.get("name", "").startswith(step_name_prefix):
+                return step["run"]
+    raise AssertionError(f"no step named like {step_name_prefix!r} in {workflow}")
+
+
 def _run_preflight(tmp_path: Path, workflow: str, job: str, token: str):
     script = tmp_path / "preflight.sh"
     script.write_text(_preflight_script(workflow, job))
@@ -258,6 +272,70 @@ def test_preflight_trims_whitespace_and_says_so(tmp_path, workflow, job, wrapped
     result = _run_preflight(tmp_path, workflow, job, wrapped)
     assert result.returncode == 0, result.stdout
     assert "contained whitespace" in result.stdout
+
+
+def test_every_token_consumer_trims_whitespace_before_use():
+    """The preflight's trim buys nothing if the actual consumers don't repeat it.
+
+    Each consuming step's `env:` block reads `secrets.CLAUDE_CODE_OAUTH_TOKEN`
+    directly — the raw, un-trimmed value — independent of whatever the
+    preflight step computed in its own shell. For a consumer in a different
+    job (fixture-e2e-dispatch.yml's matrix job, which only `needs: resolve`)
+    there is no shared shell at all: a `$GITHUB_ENV` export from the preflight
+    job would not even cross the job boundary. So a token with a copy-pasted
+    leading/trailing newline — exactly what 9b51762 was written to handle —
+    passed a preflight that now trims and warns instead of failing, and then
+    reached `claude` untrimmed one step later, where it was rejected. Every
+    consumer must repeat the trim right where it uses the token.
+    """
+    offenders = []
+    for name in DISPATCH_WORKFLOWS:
+        jobs = _load(name)["jobs"]
+        for job_id, job in jobs.items():
+            for step in _steps(job):
+                if not _consumes_token(step):
+                    continue
+                run = step.get("run") or ""
+                if not re.search(rf"{TOKEN}=.*tr -d '\[:space:\]'", run):
+                    offenders.append(f"{name}: '{step.get('name')}' in job '{job_id}'")
+    assert not offenders, "steps consuming the token without trimming it first: " + "; ".join(offenders)
+
+
+@pytest.mark.parametrize("workflow", DISPATCH_WORKFLOWS)
+@pytest.mark.parametrize(
+    "wrapped",
+    ["\n" + VALID_OAUTH, VALID_OAUTH + "\n", " " + VALID_OAUTH],
+    ids=["leading-newline", "trailing-newline", "leading-space"],
+)
+def test_verify_step_trims_whitespace_before_calling_claude(tmp_path, workflow, wrapped):
+    """Prove the fix, not just assert it's there.
+
+    Stubs `claude` (and `npm`, which fixture-e2e-dispatch.yml's verify step
+    installs inline) and asserts the stub actually receives the token with
+    whitespace already stripped — the concrete failure this closes is the
+    stub/API seeing the raw, un-trimmed value one step after preflight called
+    it clean.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "npm").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "npm").chmod(0o755)
+    seen_file = tmp_path / "seen_token"
+    stub = bin_dir / "claude"
+    stub.write_text(f'#!/bin/sh\nprintf %s "$CLAUDE_CODE_OAUTH_TOKEN" > "{seen_file}"\necho ok\n')
+    stub.chmod(0o755)
+
+    script = tmp_path / "verify.sh"
+    script.write_text(_step_script(workflow, "Verify the token is accepted"))
+
+    result = subprocess.run(
+        ["bash", str(script)],
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "CLAUDE_CODE_OAUTH_TOKEN": wrapped},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen_file.read_text() == VALID_OAUTH
 
 
 @pytest.mark.parametrize("workflow,job", PREFLIGHTS)
