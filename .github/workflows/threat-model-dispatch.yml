@@ -1,8 +1,12 @@
 name: Threat Model (Preset)
 
 # Manually dispatched, preset-driven headless threat-model run against an
-# external target repository. One dispatch == one use_case == one job.
-# Presets live in .github/threat-model-presets.json (single source of truth).
+# external target repository. One dispatch == one preset == one job.
+# Presets live in .github/threat-model-presets.json (single source of truth);
+# `target` x `depth` selects one whole, and nothing overrides a preset field.
+#
+# The branch to run is GitHub's own "Use workflow from" selector — there is no
+# plugin_ref input, because both dev and main carry this workflow.
 #
 # Auth: subscription billing via the CLAUDE_CODE_OAUTH_TOKEN secret
 # (`claude setup-token`). ANTHROPIC_API_KEY is deliberately NOT set — it would
@@ -11,40 +15,31 @@ name: Threat Model (Preset)
 on:
   workflow_dispatch:
     inputs:
-      use_case:
-        description: "Preset slug (must exist in threat-model-presets.json)"
+      # A preset key is exactly `<target>-<depth>`, so these two dropdowns ARE
+      # the preset — asking for the slug and then for a depth override made the
+      # same dimension answerable twice, and the two answers could disagree.
+      # (They did: an override changed `depth` alone while output_path, budget
+      # and reasoning model stayed on the preset's, so a "thorough" run got a
+      # quick run's budget and overwrote the quick run's output.)
+      #
+      # The resolve step crosses these options and hard-fails if the product
+      # and threat-model-presets.json disagree, so adding a target or depth to
+      # one without the other is loud, never silent.
+      target:
+        description: "Repository to scan"
         type: choice
         required: true
         options:
-          - juice-shop-quick
-          - juice-shop-standard
-          - juice-shop-thorough
-          - spring-quick
-          - spring-standard
-          - spring-thorough
-          - python-quick
-          - python-standard
-          - python-thorough
-          - ai-quick
-          - ai-standard
-          - ai-thorough
-      plugin_ref:
-        description: "appsec-advisor ref to run (blank = the branch you dispatched from)"
-        type: string
-        required: false
-        default: ""
-      override_mode:
-        description: "Override preset mode (blank = preset)"
+          - juice-shop
+          - spring
+          - python
+          - ai
+      depth:
+        description: "Assessment depth (also selects budget and reasoning model)"
         type: choice
-        required: false
-        default: ""
-        options: ["", "full", "incremental", "dry-run"]
-      override_depth:
-        description: "Override preset assessment depth (blank = preset)"
-        type: choice
-        required: false
-        default: ""
-        options: ["", "quick", "standard", "thorough"]
+        required: true
+        default: quick
+        options: [quick, standard, thorough]
       repair:
         description: "If this run fails: triage the plugin failure, fix it, and open a PR"
         type: boolean
@@ -61,9 +56,9 @@ permissions:
   security-events: write   # optional SARIF upload (cross-repo; see note below)
 
 concurrency:
-  # Never run the same use_case twice at once (shared output dir semantics).
+  # Never run the same preset twice at once (shared output dir semantics).
   # A repair-only dispatch scans nothing, so it gets its own group per target run.
-  group: threat-model-${{ inputs.repair_run_id != '' && format('repair-{0}', inputs.repair_run_id) || inputs.use_case }}
+  group: threat-model-${{ inputs.repair_run_id != '' && format('repair-{0}', inputs.repair_run_id) || format('{0}-{1}', inputs.target, inputs.depth) }}
   cancel-in-progress: false
 
 jobs:
@@ -73,35 +68,78 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180   # job notbremse; --max-duration is the per-run cap
     steps:
-      # 1) Plugin (this repo) — the branch you dispatched from, or plugin_ref.
+      # 0) Auth preflight. The token is not consumed until step 7, so without
+      #    this the run spends a target checkout, an npm install and the
+      #    permission setup before dying on an auth error from inside
+      #    run-headless.sh. Fail here instead, with the fix in the message.
+      - name: Preflight — subscription auth
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::secret CLAUDE_CODE_OAUTH_TOKEN is not set — the scan cannot authenticate. Create one with 'claude setup-token', then 'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${{ github.repository }}'."
+            exit 1
+          fi
+          echo "subscription token present"
+
+      # 1) Plugin (this repo) — the branch you dispatched from.
       - name: Checkout appsec-advisor (plugin)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+          ref: ${{ github.ref_name }}
           path: .
 
-      # 2) Resolve the preset (+ CLI overrides) into step outputs.
+      # 2) Resolve the preset into step outputs. Nothing is overridden here: a
+      #    preset is applied whole or not at all, so depth always travels with
+      #    the budget, output path and reasoning model that were chosen for it.
       - name: Resolve preset
         id: preset
         env:
-          USE_CASE: ${{ inputs.use_case }}
-          OVERRIDE_MODE: ${{ inputs.override_mode }}
-          OVERRIDE_DEPTH: ${{ inputs.override_depth }}
+          TARGET: ${{ inputs.target }}
+          DEPTH: ${{ inputs.depth }}
         run: |
+          python3 -m pip install --quiet pyyaml
           python3 - <<'PY'
           import json, os, sys
+          import yaml
 
-          use_case = os.environ["USE_CASE"]
+          target, depth = os.environ["TARGET"], os.environ["DEPTH"]
           presets = json.load(open(".github/threat-model-presets.json"))
-          if use_case not in presets:
-              print(f"::error::use_case '{use_case}' not found in threat-model-presets.json")
-              sys.exit(1)
-          p = presets[use_case]
+          keys = {k for k in presets if not k.startswith("_")}
 
-          mode  = os.environ.get("OVERRIDE_MODE")  or p["mode"]
-          depth = os.environ.get("OVERRIDE_DEPTH") or p["assessment_depth"]
+          # Drift guard: the dropdowns are the offered set, presets.json is the
+          # implemented set. A dropdown cannot be filled at run time, so read
+          # the options back out of this very file rather than mirroring them.
+          # PyYAML maps the `on:` key to True.
+          wf = yaml.safe_load(open(".github/workflows/threat-model-dispatch.yml"))
+          trigger = wf.get("on") or wf[True]
+          inputs_ = trigger["workflow_dispatch"]["inputs"]
+          offered = {
+              f"{t}-{d}"
+              for t in inputs_["target"]["options"]
+              for d in inputs_["depth"]["options"]
+          }
+          if offered != keys:
+              missing = sorted(offered - keys)
+              extra = sorted(keys - offered)
+              if missing:
+                  print(f"::error::dropdowns offer presets that do not exist: {', '.join(missing)}")
+              if extra:
+                  print(f"::error::threat-model-presets.json has presets no dropdown offers: {', '.join(extra)}")
+              print("::error::the `target` x `depth` options and "
+                    ".github/threat-model-presets.json must stay in sync")
+              sys.exit(1)
+
+          use_case = f"{target}-{depth}"
+          p = presets[use_case]
+          mode = p["mode"]
+          assert p["assessment_depth"] == depth, (
+              f"preset '{use_case}' declares depth '{p['assessment_depth']}'"
+          )
 
           out = {
+              "use_case": use_case,
               "target_repo": p["target_repo"],
               "target_ref": p.get("target_ref", "") or "",
               "mode": mode,
@@ -231,7 +269,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: threat-model-${{ inputs.use_case }}
+          name: threat-model-${{ steps.preset.outputs.use_case }}
           path: ${{ steps.preset.outputs.output_path }}/
           # The run's diagnostic state is dot-prefixed (.run-issues.json,
           # .agent-run.log, .appsec-trace.log, ...) and upload-artifact has
@@ -245,13 +283,16 @@ jobs:
       # 9) Optional: surface findings in this repo's Code scanning tab.
       #    NOTE: SARIF URIs point at ./target files that don't exist in this repo,
       #    so alerts list but source links won't resolve. Non-fatal.
+      #    Only on a green scan: a failed run has no SARIF to upload, and
+      #    always() turned every failure into a second, misleading "Path does
+      #    not exist" error on top of the real one.
       - name: Upload SARIF to Code Scanning
-        if: ${{ always() && steps.preset.outputs.sarif == 'true' }}
+        if: ${{ success() && steps.preset.outputs.sarif == 'true' }}
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3.37.1
         with:
           sarif_file: ${{ steps.preset.outputs.output_path }}/threat-model.sarif.json
-          category: threat-model-${{ inputs.use_case }}
+          category: threat-model-${{ steps.preset.outputs.use_case }}
 
   # Repair a failed run. There is no oracle here — the run is red exactly when
   # the pipeline broke — so every failure is producer-side by definition and the
@@ -274,5 +315,5 @@ jobs:
     with:
       run_id: ${{ inputs.repair_run_id != '' && inputs.repair_run_id || github.run_id }}
       artifact_pattern: threat-model-*
-      plugin_ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+      plugin_ref: ${{ github.ref_name }}
     secrets: inherit
