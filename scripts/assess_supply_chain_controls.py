@@ -251,6 +251,12 @@ _MUTABLE_INSTALL = (
     r"pip\d?\s+install\b(?![^\n]*-r\s+\S+\.lock)",
 )
 
+# Installing a CLI tool globally is not part of the product's dependency graph.
+# `npm install -g @redocly/cli` or `pip install ruff` in a lint job must not drag
+# an otherwise lockfile-clean repo down to Partial — that is CI tooling noise,
+# not a supply-chain integrity gap in what ships.
+_GLOBAL_TOOL_INSTALL = re.compile(r"(?:npm|pnpm|yarn)\s+(?:install|i|add)\s+(?:-g\b|--global\b)", re.IGNORECASE)
+
 
 def _eval_ci_install(recon: str, repo_root: str | None = None) -> dict[str, str]:
     """CI install integrity: does CI use deterministic install flags?
@@ -260,8 +266,10 @@ def _eval_ci_install(recon: str, repo_root: str | None = None) -> dict[str, str]
     ``npm install`` is not fully deterministic and must not score Adequate.
     """
     text = _ci_text(recon, repo_root)
+    # Drop global tool installs before looking for mutable project installs.
+    project_text = "\n".join(line for line in text.splitlines() if not _GLOBAL_TOOL_INSTALL.search(line))
     deterministic = _has(text, *_DETERMINISTIC_INSTALL)
-    mutable = _has(text, *_MUTABLE_INSTALL)
+    mutable = _has(project_text, *_MUTABLE_INSTALL)
 
     if deterministic and not mutable:
         return {
@@ -406,6 +414,61 @@ def _eval_container_hygiene(recon: str, repo_root: str | None) -> dict[str, str]
 
 _PUBLIC_REGISTRY_HOSTS = ("registry.npmjs.org", "registry.yarnpkg.com", "pypi.org", "files.pythonhosted.org")
 
+# Well-known public supplemental indexes. Pointing at one of these is routine
+# (PyTorch wheels, piwheels, Jetson builds) and is not a confusion setup.
+_PUBLIC_EXTRA_INDEXES = (
+    "pypi.org",
+    "files.pythonhosted.org",
+    "download.pytorch.org",
+    "piwheels.org",
+    "developer.download.nvidia.com",
+    "storage.googleapis.com/jax-releases",
+    "data.pyg.org",
+    "abi.rocm.com",
+)
+
+
+def _is_internal_index(url: str) -> bool:
+    """True when a package index URL looks internal rather than public."""
+    url = url.strip("\"'")
+    if any(host in url for host in _PUBLIC_EXTRA_INDEXES):
+        return False
+    # Credentials in the URL, an RFC1918/localhost host, or a bare hostname with
+    # no public TLD all indicate an internal index.
+    return bool(re.match(r"https?://", url)) or url.startswith("${") or "@" in url
+
+
+def _consumes_internal_packages(recon: str, repo_root: str | None) -> bool:
+    """True when the repo plausibly depends on non-public package names.
+
+    Dependency confusion requires an internal name an attacker can publish
+    publicly. Evidence: a private/scoped npm package of its own, a declared
+    private registry, or a self-hosted registry product in the recon text.
+    """
+    for pkg_path in _iter_files(repo_root, lambda n: n == "package.json"):
+        try:
+            data = json.loads(_read(pkg_path))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("private") is True or str(data.get("name", "")).startswith("@"):
+            return True
+        if isinstance(data.get("publishConfig"), dict):
+            return True
+    npmrc = _read(Path(repo_root) / ".npmrc") if repo_root else ""
+    if re.search(r"@[\w-]+:registry\s*=", npmrc):
+        return True
+    return _has(
+        recon,
+        r"verdaccio",
+        r"artifactory",
+        r"\bnexus\b",
+        r"codeartifact",
+        r"internal.*(?:package|registry)",
+        r"private.*(?:package|registry)",
+    )
+
 
 def _eval_dependency_confusion(recon: str, repo_root: str | None) -> dict[str, str]:
     """Dependency confusion: is internal-package resolution pinned to one source?
@@ -438,13 +501,23 @@ def _eval_dependency_confusion(recon: str, repo_root: str | None) -> dict[str, s
             if not any(host in url for host in _PUBLIC_REGISTRY_HOSTS):
                 evidence.append(f"{name} routes installs to a non-public registry")
 
-    # --- Python: supplemental indexes are the confusion vector ---
+    # --- Python: a *supplemental* index is the confusion vector ---
+    #
+    # Only when it points somewhere internal. `--extra-index-url
+    # https://download.pytorch.org/whl/cpu` is on half the ML repos in existence
+    # and is not a confusion setup: the attack needs an internal package name
+    # that is also resolvable from the public index.
     py_conf = "\n".join(
         _read(p) for p in _iter_files(repo_root, lambda n: n in {"pip.conf", "pip.ini", ".pypirc", "pyproject.toml"})
     )
     haystack = _ci_text(recon, repo_root) + "\n" + py_conf
-    if _has(haystack, r"--extra-index-url", r"PIP_EXTRA_INDEX_URL", r"(?m)^\s*extra-index-url\s*="):
-        risk.append("a supplemental pip index is configured (--extra-index-url), so resolution spans two sources")
+    for m in re.finditer(r"(?:--extra-index-url|PIP_EXTRA_INDEX_URL\s*[=:]|extra-index-url\s*=)\s*(\S+)", haystack):
+        if _is_internal_index(m.group(1)):
+            risk.append(
+                "a supplemental internal pip index is configured alongside PyPI, so an internal "
+                "package name can also resolve from the public index"
+            )
+            break
     if _has(haystack, r"index-strategy\s*=\s*[\"']?unsafe-"):
         risk.append("uv index-strategy is set to an unsafe-* mode, which resolves across indexes by version")
     if _has(py_conf, r"(?m)^\s*index-url\s*=") or _has(haystack, r"--index-url", r"PIP_INDEX_URL"):
@@ -462,21 +535,107 @@ def _eval_dependency_confusion(recon: str, repo_root: str | None) -> dict[str, s
         }
     if evidence:
         return {"effectiveness": ADEQUATE, "reason": (evidence[0][0].upper() + evidence[0][1:]) + "."}
-    return {"effectiveness": MISSING, "reason": "No private registry or scope-pinned resolution configured."}
+    # No internal packages means there is no name for an attacker to squat, so
+    # the absence of a private registry is not a gap. Reporting Missing here
+    # would accuse every repo that simply consumes public dependencies.
+    if not _consumes_internal_packages(recon, repo_root):
+        return {
+            "effectiveness": ADEQUATE,
+            "reason": "No internal or private packages detected — dependency confusion does not apply.",
+        }
+    return {
+        "effectiveness": MISSING,
+        "reason": "Internal package names are resolved without a scope-pinned or private registry.",
+    }
 
 
-# Kept in sync with recon_patterns._CAT17_NPM_LIFECYCLE_KEYS. `prepare` matters
-# most of the three that used to be missing: it is the hook that executes when a
-# git dependency is installed.
+# Hooks that run on a plain `npm install`. These decide the *Partial* rating, so
+# the list stays narrow: `prepare` is deliberately absent because `"prepare":
+# "husky install"` is on a large share of repos and is not a security posture
+# signal — flagging it would be noise.
+_INSTALL_HOOK_KEYS = ("preinstall", "install", "postinstall")
+
+# The wider list, kept in sync with recon_patterns._CAT17_NPM_LIFECYCLE_KEYS, is
+# scanned only for *content* that is actually dangerous (a `prepare` hook that
+# curls a script is a real finding regardless of how common the key is).
 _LIFECYCLE_KEYS = ("preinstall", "install", "postinstall", "prepare", "prebuild", "postpublish")
 
 
-def _eval_postinstall(recon: str, repo_root: str | None) -> dict[str, str]:
-    """Postinstall scripts: are install hooks audited or disabled?
+# Remote code piped straight into an interpreter. The fetched bytes are never
+# pinned or verified, so whoever controls that URL (or can MITM it) controls the
+# build. Deliberately narrow: only the fetch-into-interpreter forms match, so a
+# plain `curl -o artifact.tgz` followed by a checksum check is not flagged.
+_FETCH_EXEC_PATTERNS = (
+    # curl/wget piped to a shell or interpreter
+    r"(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b",
+    r"(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:python\d?|perl|ruby|node)\b",
+    # process substitution / command substitution into an interpreter
+    r"(?:source|\.)\s+<\(\s*(?:curl|wget)\b",
+    r"(?:ba)?sh\s+<\(\s*(?:curl|wget)\b",
+    r"eval\s+[\"'`]?\$\(\s*(?:curl|wget)\b",
+    r"(?:python\d?|node|ruby)\s+-[ce]\s+[\"']?\$\(\s*(?:curl|wget)\b",
+    # PowerShell download-and-execute
+    r"(?:iex|Invoke-Expression)\b[^\n]*(?:DownloadString|Invoke-WebRequest|iwr)\b",
+    r"(?:Invoke-WebRequest|iwr)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b",
+)
 
-    Walks every ``package.json`` in the repo, not just the root one — a
-    workspace monorepo carries its hooks in ``packages/*/package.json``, and
-    ``npm install`` at the root executes them all.
+
+# Install-hook variants of the same threat: code obtained at install time and
+# handed to an interpreter. Narrower than "mentions a URL" on purpose.
+_HOOK_EXEC_PATTERNS = _FETCH_EXEC_PATTERNS + (
+    r"base64\s+(?:-d|--decode)[^\n]*\|\s*(?:sudo\s+)?(?:ba)?sh\b",
+    r"(?:node|python\d?|ruby|perl)\s+-[ce]\s[^\n]*https?://",
+    # setup.py shelling out to a network fetch during install
+    r"(?:os\.system|subprocess\.(?:run|call|Popen|check_output))\s*\([^)]*https?://",
+    r"(?:os\.system|subprocess\.(?:run|call|Popen|check_output))\s*\([^)]*(?:curl|wget)\b",
+)
+
+
+def _eval_fetch_and_execute(recon: str, repo_root: str | None) -> list[tuple[str, str]]:
+    """Find build/install steps that execute code fetched from an external URL.
+
+    Returns ``(location, matched line)`` pairs. This is the highest-severity
+    supply-chain pattern the scorecard looks for: unlike an unpinned dependency,
+    the fetched payload is not recorded anywhere, so a change at the far end is
+    both silent and unreviewable.
+    """
+    hits: list[tuple[str, str]] = []
+
+    def _scan(label: str, text: str) -> None:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or len(stripped) > 500:
+                continue
+            if any(re.search(p, stripped, re.IGNORECASE) for p in _FETCH_EXEC_PATTERNS):
+                hits.append((label, stripped[:120]))
+                return  # one hit per location is enough to make the point
+
+    if repo_root:
+        wf_dir = Path(repo_root) / ".github" / "workflows"
+        if wf_dir.is_dir():
+            for pattern in ("*.yml", "*.yaml"):
+                for wf in sorted(wf_dir.glob(pattern)):
+                    _scan(f".github/workflows/{wf.name}", _read(wf))
+        for name in (".gitlab-ci.yml", ".gitlab-ci.yaml", "Jenkinsfile", "azure-pipelines.yml"):
+            p = Path(repo_root) / name
+            if p.is_file():
+                _scan(name, _read(p))
+        for df in _iter_files(repo_root, lambda n: n == "Dockerfile" or n.startswith("Dockerfile.")):
+            rel = str(df.relative_to(Path(repo_root))).replace("\\", "/")
+            _scan(rel, _read(df))
+    if not hits:
+        _scan("recon summary", recon)
+    return hits
+
+
+def _eval_postinstall(recon: str, repo_root: str | None) -> dict[str, str]:
+    """Install-time code execution: does arbitrary code run when the project is
+    installed or built, and can its source change without review?
+
+    Covers three surfaces that share one threat and one remediation:
+    package-manager lifecycle hooks (every ``package.json`` in the repo, not just
+    the root one — ``npm install`` executes workspace hooks too), ``setup.py``
+    shell escapes, and build steps that pipe a remote script into a shell.
     """
     hooks: list[tuple[str, str, str]] = []  # (relative file, hook name, command)
     for pkg_path in _iter_files(repo_root, lambda n: n == "package.json"):
@@ -520,28 +679,47 @@ def _eval_postinstall(recon: str, repo_root: str | None) -> dict[str, str]:
         r"onlyBuiltDependencies",
     )
 
-    if not hooks:
-        return {"effectiveness": ADEQUATE, "reason": "No install lifecycle hooks detected in any package manifest."}
+    # Highest-severity case: code fetched from a URL and executed, in a build
+    # step or a lifecycle hook. The payload is unpinned and unreviewable.
+    fetch_exec = _eval_fetch_and_execute(recon, repo_root)
+    if fetch_exec:
+        where, line = fetch_exec[0]
+        extra = f" (+{len(fetch_exec) - 1} more location(s))" if len(fetch_exec) > 1 else ""
+        return {
+            "effectiveness": WEAK,
+            "reason": (
+                f"{where} executes code fetched from an external URL at build time{extra}: {line!r} — "
+                "the fetched payload is unpinned and unverified, so whoever controls that URL controls the build."
+            ),
+        }
 
-    dangerous = [
-        h for h in hooks if re.search(r"(curl|wget|fetch\b|https?://|node\s+-e|python\s+-c|eval|base64)", h[2], re.I)
-    ]
+    # A hook that fetches and executes code at install time is the real finding —
+    # any lifecycle key qualifies, however routine that key normally is. Matched
+    # against execution vectors only: a hook named `node scripts/fetch-assets.js`
+    # or one echoing a docs URL is not a finding.
+    dangerous = [h for h in hooks if any(re.search(p, h[2], re.IGNORECASE) for p in _HOOK_EXEC_PATTERNS)]
     if dangerous:
         rel, key, cmd = dangerous[0]
-        # A hook that pulls from the network is not neutralised by --ignore-scripts
-        # in CI, because developer machines still run it on a plain `npm install`.
+        # Not neutralised by --ignore-scripts in CI, because developer machines
+        # still run it on a plain `npm install`.
         return {
             "effectiveness": MISSING,
-            "reason": f"{rel} `{key}` hook performs a network/eval operation: {cmd[:80]!r}",
+            "reason": f"{rel} `{key}` hook fetches and executes code at install time: {cmd[:80]!r}",
         }
+
+    # Everything below grades the *policy*, so only genuine install-time hooks
+    # count — a `prepare` running husky says nothing about supply-chain posture.
+    install_hooks = [h for h in hooks if h[1] in _INSTALL_HOOK_KEYS or h[1] == "setup.py"]
+    if not install_hooks:
+        return {"effectiveness": ADEQUATE, "reason": "No install-time lifecycle hooks with risky content detected."}
     if ignore_scripts:
         return {
             "effectiveness": ADEQUATE,
-            "reason": f"{len(hooks)} install hook(s) present but ignore-scripts is configured.",
+            "reason": f"{len(install_hooks)} install hook(s) present but ignore-scripts is configured.",
         }
     return {
         "effectiveness": PARTIAL,
-        "reason": f"{len(hooks)} install hook(s) present (build tasks only); no ignore-scripts policy.",
+        "reason": f"{len(install_hooks)} install hook(s) present (build tasks only); no ignore-scripts policy.",
     }
 
 
@@ -560,12 +738,14 @@ _ECOSYSTEM_MARKERS = {
 
 
 def _detected_ecosystems(repo_root: str | None) -> set[str]:
-    found = {_ECOSYSTEM_MARKERS[p.name] for p in _iter_files(repo_root, lambda n: n in _ECOSYSTEM_MARKERS)}
-    if repo_root and (Path(repo_root) / ".github" / "workflows").is_dir():
-        found.add("github-actions")
-    if _iter_files(repo_root, lambda n: n == "Dockerfile" or n.startswith("Dockerfile.")):
-        found.add("docker")
-    return found
+    """Package ecosystems the repo actually depends on.
+
+    Deliberately excludes ``github-actions`` and ``docker``: both are graded by
+    their own rows (CI/CD action pinning, Container image hygiene), and counting
+    them here too would report the same gap twice and downgrade almost every
+    repo for not listing them in dependabot.yml.
+    """
+    return {_ECOSYSTEM_MARKERS[p.name] for p in _iter_files(repo_root, lambda n: n in _ECOSYSTEM_MARKERS)}
 
 
 def _eval_dep_management(recon: str, repo_root: str | None) -> dict[str, str]:
@@ -618,10 +798,15 @@ def _eval_dep_management(recon: str, repo_root: str | None) -> dict[str, str]:
             "effectiveness": PARTIAL,
             "reason": f"{tool} configured but does not cover: {', '.join(sorted(uncovered))}.",
         }
+    # A missing install cooldown is a hardening opportunity, not a vulnerability
+    # — it is noted in the reason but does not downgrade the row.
     if not cooldown:
         return {
-            "effectiveness": PARTIAL,
-            "reason": f"{tool} covers all detected ecosystems but sets no install cooldown (minimumReleaseAge).",
+            "effectiveness": ADEQUATE,
+            "reason": (
+                f"{tool} covers all detected ecosystems. Consider an install cooldown "
+                "(minimumReleaseAge / cooldown) to blunt freshly-published malicious versions."
+            ),
         }
     return {
         "effectiveness": ADEQUATE,

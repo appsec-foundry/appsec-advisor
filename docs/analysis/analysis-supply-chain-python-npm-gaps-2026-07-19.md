@@ -3,12 +3,18 @@
 > **Status: implemented 2026-07-19.** All findings below were reproduced against
 > synthetic fixtures before any edit, then fixed in
 > `scripts/assess_supply_chain_controls.py` with paired regression tests in
-> `tests/test_assess_supply_chain_controls.py` (83 pass). The only deferred item is
-> **C2** (adding cooldown / Trusted Publishing / dependency-review as *new*
-> sub-controls), which would change the nine-row contract — the cooldown signal was
-> instead folded into the existing Dependency-management row. Section headings are
-> kept in the past tense of the original analysis for traceability; see
-> "Implementation notes" at the end for what each fix became.
+> `tests/test_assess_supply_chain_controls.py` (102 pass).
+>
+> Read this document together with the two sections at the end. **"Implementation
+> notes"** records what each fix became. **"Signal-over-noise pass"** is the second
+> review: the first pass optimised for correctness and made several rows fire too
+> eagerly, so six of the changes below were narrowed or walked back, and the one
+> genuinely uncovered vulnerability class — build steps that fetch and execute
+> remote code — was added. Where the two sections disagree, the later one wins.
+>
+> Still deferred: **C2** (Trusted Publishing / dependency-review as *new*
+> sub-controls) would change the nine-row contract, and **Y5** (Python `iac_type`)
+> belongs to the IAC layer.
 
 Scope: the **deterministic §8 scorecard** (`scripts/assess_supply_chain_controls.py`, 9
 sub-controls) and the **IAC layer** (`data/config-iac-checks.yaml`). The recon/LLM layer
@@ -221,3 +227,41 @@ rather than migrated.
 `iac_type`, and its Dependabot ecosystem checks still cover only npm / github-actions /
 docker. Adding a Python `iac_type` touches the IAC check-runner and its own contract, so it
 is left as a separate change rather than smuggled into a scorecard fix.
+
+---
+
+## Signal-over-noise pass (2026-07-19, second review)
+
+The first implementation pass optimised for *correctness* and in doing so made several rows
+fire more often. The scorecard is a threat-model input, not a SAST/IaC linter: a row may only
+be downgraded for something genuinely exploitable. Five of the changes above were walked
+back or narrowed.
+
+| Was | Problem | Now |
+| --- | --- | --- |
+| Any `npm install` → downgrade | `npm install -g @redocly/cli` in a lint job is CI tooling, not the product dependency graph | global installs excluded from the mutable check |
+| No private registry → Missing | Dependency confusion needs an internal package name to squat; a repo consuming only public deps has nothing to confuse | not-applicable → Adequate, with the reason saying so; Missing only when internal/private packages are actually detected |
+| Any `--extra-index-url` → Weak | `--extra-index-url https://download.pytorch.org/whl/cpu` is on a large share of ML repos and is benign | Weak only when the supplemental index host is internal (`_is_internal_index`) |
+| Any lifecycle hook → Partial | `"prepare": "husky install"` is ubiquitous and says nothing about posture | `prepare`/`prebuild`/`postpublish` are scanned for dangerous *content* but no longer drive the Partial rating |
+| Missing Dependabot cooldown → Partial | Hardening opportunity, not a vulnerability | stays Adequate; the cooldown advice moved into the reason text |
+| Dependabot must list `github-actions` + `docker` | Both already have dedicated rows — the same gap was reported twice and downgraded nearly every repo | ecosystem comparison restricted to package ecosystems |
+
+### New check: fetch-and-execute of external resources
+
+The one genuinely uncovered vulnerability class, and the highest-severity pattern in the
+domain. `_eval_fetch_and_execute()` flags build and install steps that pipe a remotely
+fetched script straight into an interpreter — `curl … | sh`, `wget … | python3`,
+`eval "$(curl …)"`, `source <(curl …)`, PowerShell `iex (…).DownloadString(…)` — across
+GitHub/GitLab/Jenkins/Azure pipelines and every Dockerfile. Unlike an unpinned dependency the
+fetched payload is recorded nowhere, so a change at the far end is silent and unreviewable;
+whoever controls that URL controls the build.
+
+It is folded into the existing **Postinstall scripts** row (which already carries the
+"arbitrary code runs at install time" semantics) rather than added as a tenth sub-control,
+so the nine-row contract is untouched. Rated `Weak`, checked ahead of the hook classification
+so it wins when both are present.
+
+Deliberately narrow to avoid the noise this whole pass is about: only the
+fetch-*into-interpreter* forms match. `curl -o artifact.tgz`, an API call, `curl … | jq`,
+`wget && tar`, a local `bash ./scripts/build.sh`, and commented-out lines all stay clean —
+pinned by parametrised negative tests.

