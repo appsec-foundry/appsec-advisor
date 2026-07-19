@@ -3741,6 +3741,24 @@ _V2_CWE_ROUTING: dict[str, str] = {
     "CWE-15": "6.11 Operations Runtime and Supply Chain Controls",
     "CWE-260": "6.11 Operations Runtime and Supply Chain Controls",
     "CWE-1385": "6.12 Real-time and Not Applicable Controls",
+    # 2026-07-19 — routing gaps found while diagnosing the recurring §6 repair
+    # loop. An unrouted CWE contributes nothing to `routed_here`, which is one
+    # of the guards deciding whether a Missing control still earns an H4 block;
+    # on an AI/LLM codebase 17 of 49 findings landed here (CWE-1336 x5, CWE-74
+    # x4, ...), so whole §6 sections saw zero routed findings. Each entry below
+    # is placed with its existing siblings: injection-to-RCE classes join
+    # CWE-94/95 in §6.10, missing/spoofed authn joins CWE-287 in §6.2,
+    # resource-exhaustion joins CWE-400 in §6.6.
+    "CWE-306": "6.2 Identity and Authentication Controls",
+    "CWE-290": "6.2 Identity and Authentication Controls",
+    "CWE-284": "6.4 Authorization Controls",
+    "CWE-74": "6.6 Input Boundary Validation Controls",
+    "CWE-770": "6.6 Input Boundary Validation Controls",
+    "CWE-78": "6.10 File Parser and Outbound Request Controls",
+    "CWE-502": "6.10 File Parser and Outbound Request Controls",
+    "CWE-1336": "6.10 File Parser and Outbound Request Controls",
+    "CWE-359": "6.10 File Parser and Outbound Request Controls",
+    "CWE-494": "6.11 Operations Runtime and Supply Chain Controls",
 }
 
 
@@ -4517,7 +4535,14 @@ def _is_flow_like_control(name: str) -> bool:
 
 
 def _emit_v2_subcontrol_legacy(
-    lines: list, c: dict, name: str, threats: list, heading: str, section_id: str = "", idx: int = 0
+    lines: list,
+    c: dict,
+    name: str,
+    threats: list,
+    heading: str,
+    section_id: str = "",
+    idx: int = 0,
+    force: bool = False,
 ) -> bool:
     """Legacy single-block-per-control shape — used when subcontrols[] is empty.
 
@@ -4552,8 +4577,14 @@ def _emit_v2_subcontrol_legacy(
     # strict gate → the recurring §6 REPAIR_MODE loop). Only suppress when
     # there is genuinely nothing to anchor — no own links, no implementation
     # prose, AND no CWE-routed finding for this section.
+    #
+    # `force=True` is the caller's "this block is structurally required"
+    # override: the §6.x section would otherwise ship ZERO H4 blocks (see the
+    # all-suppressed re-emit below), which trips the coverage gate the
+    # paragraph above is trying to stay clear of. Structural coverage wins
+    # over the anti-filler heuristic.
     routed_here = _v2_finding_links(threats, heading, max_links=1)
-    if eff == "missing" and not linked and not impl_text and not routed_here:
+    if not force and eff == "missing" and not linked and not impl_text and not routed_here:
         return False
 
     title = _friendly_subcontrol_title(name)
@@ -5326,6 +5357,38 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                         h4_idx = next_idx
                     else:
                         suppressed_names.append(name)
+            if suppressed_names and h4_idx == 0:
+                # EVERY control in this section was suppressed, so the section
+                # would ship with zero H4 blocks. That is the one shape the
+                # coverage gate cannot accept: the section HAS catalogued
+                # controls, so the `_Not applicable_` exemption in
+                # qa_checks.check_control_subsection_coverage does not apply,
+                # and "no #### control subsections found" fails BLOCKING. The
+                # sibling no-controls path below handles its empty case by
+                # emitting a `_Not applicable_` stub; this branch had no
+                # equivalent, so it fell into the gap and forced an LLM repair
+                # pass that could only re-add exactly what we dropped here
+                # (insecure-ai-app §6.3, 2026-07-19 — both Session/Conversation
+                # Ownership and Agent State Serialization Security suppressed
+                # because no repo CWE routes to §6.3 at all).
+                #
+                # Re-emit the controls as real H4 blocks. A "Missing" control
+                # with no linked findings still deserves a subsection here:
+                # the reader needs to see the absent control named, and
+                # suppressing it is what made the gap invisible.
+                suppressed_names = []
+                for c, name in zip(section_controls[:8], control_names[:8]):
+                    h4_idx += 1
+                    _emit_v2_subcontrol_legacy(
+                        lines,
+                        c,
+                        name,
+                        threats,
+                        heading,
+                        section_id=section_id,
+                        idx=h4_idx,
+                        force=True,
+                    )
             if suppressed_names:
                 # Surface the suppressed control names as a single line so
                 # the user can see that the §6.x catalog item exists but

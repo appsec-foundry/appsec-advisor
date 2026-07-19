@@ -2324,10 +2324,20 @@ class TestSecurityArchitectureV2:
         assert "CSRF Protection" not in labels
         assert "Role-Based Access Control" in titles
 
-    def test_controls_covered_dropped_when_all_suppressed(self):
-        """When every control in a §6.x section is suppressed, the
-        `**Controls covered:**` line is removed entirely (no dangling links);
-        the suppressed-controls note still lists them for the reader."""
+    def test_all_suppressed_section_still_emits_h4_blocks(self):
+        """A §6.x section whose controls would ALL be suppressed must still
+        emit them as H4 blocks rather than shipping empty.
+
+        Previously this case dropped the `**Controls covered:**` line and left
+        the section with zero `####` blocks. That avoided dangling links but
+        produced the one shape qa_checks.check_control_subsection_coverage
+        rejects as BLOCKING: the section HAS catalogued controls, so the
+        `_Not applicable_` exemption does not apply and "no #### control
+        subsections found" fails the gate — an unwinnable repair loop, because
+        the only content that could satisfy it is what was just dropped
+        (insecure-ai-app §6.3, 2026-07-19). The no-dangling-link guarantee is
+        preserved by emitting the H4s so every link resolves.
+        """
         data = {
             "components": [],
             "threats": [],
@@ -2337,9 +2347,22 @@ class TestSecurityArchitectureV2:
         }
         md = pf.gen_security_architecture_v2(data)
         assert "__CONTROLS_COVERED_SENTINEL__" not in md
-        seg = self._section_containing(md, "Additional cataloged controls")
-        assert "**Controls covered:**" not in seg
-        assert "CSRF Protection" in seg
+        seg = self._section_containing(md, "CSRF Protection")
+
+        # The gate's hard requirement: at least one H4 in the section.
+        titles = [re.sub(r"^\d+(?:\.\d+)*\s+", "", t).strip() for t in re.findall(r"^#### (.+)$", seg, re.M)]
+        assert titles, "section shipped with zero #### blocks — control_subsection_coverage would fail"
+        assert "CSRF Protection" in titles
+
+        # Original intent retained: every covered link resolves to an emitted H4.
+        assert "**Controls covered:**" in seg
+        covered_line = seg.split("**Controls covered:**", 1)[1].split("\n", 1)[0]
+        for lab in re.findall(r"\[([^\]]+)\]\(#[^)]+\)", covered_line):
+            assert lab in titles, f"dangling covered link {lab!r}; H4s={titles}"
+
+        # The suppressed-controls note lists controls that were actually
+        # dropped; nothing was dropped here, so it must not appear.
+        assert "Additional cataloged controls" not in seg
 
 
 class TestV2SectionRouting:

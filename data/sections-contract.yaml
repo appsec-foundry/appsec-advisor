@@ -1284,6 +1284,8 @@ sections:
             # (same tokeniser as method_whitelist).
             structural_heading_exemptions:
               - "threat hypotheses requiring validation"
+              - "http route authentication"
+              - "identity verification"
             enforcement: "error"
         "all_control_sections":
           - rule: "control_subsection_coverage"

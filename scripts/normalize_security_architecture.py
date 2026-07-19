@@ -346,15 +346,50 @@ def _fold_nonmechanism_auth_subsections(md: str, rules_map: dict, changes: list[
     idx = _find_section(segs, section_title)
     if idx is None:
         return md
+    # Pass 1 — classify every direct child without mutating anything yet, so we
+    # can tell whether folding would empty the section out completely.
+    keepers: list[int] = []
+    candidates: list[tuple[int, str, bool]] = []  # (child_idx, heading, is_forbidden)
     for child_idx in _direct_children(segs, idx):
         seg = segs[child_idx]
         heading = _NUM_PREFIX_RE.sub("", seg.heading).strip()
         tokens = set(re.findall(r"[a-z0-9]+", heading.lower()))
         if any(exemption.issubset(tokens) for exemption in exemptions):
+            keepers.append(child_idx)
             continue
         is_forbidden = any(pattern.search(seg.heading) or pattern.search(heading) for pattern in forbidden)
         if not is_forbidden and qc._row_is_auth_method(heading, whitelist):
+            keepers.append(child_idx)
             continue
+        candidates.append((child_idx, heading, is_forbidden))
+
+    # Folding EVERY H4 leaves the section with zero subsections, which
+    # qa_checks.check_control_subsection_coverage rejects as BLOCKING ("no ####
+    # control subsections found") — an unwinnable gate, since the only content
+    # that could satisfy it is what we just demoted. The whitelist is an
+    # allow-list of *known* mechanisms, so a heading missing from it means
+    # "unrecognised vocabulary", not "invalid": Stage 1 legitimately names
+    # controls the 41-entry list never anticipated (insecure-ai-app §6.2,
+    # 2026-07-19 — "HTTP Route Authentication" / "Identity Verification" both
+    # folded, section left empty, repair loop). Keep the first such heading so
+    # the section stays structurally valid.
+    #
+    # A heading matching `forbidden_heading_patterns` is a different case: it is
+    # explicitly disallowed, so it still folds and the gate is allowed to surface
+    # the resulting violation rather than us papering over it.
+    if not keepers:
+        for pos, (child_idx, heading, is_forbidden) in enumerate(candidates):
+            if not is_forbidden:
+                candidates.pop(pos)
+                changes.append(
+                    f"auth_method_decomposition: kept §{section_title} #### {heading!r} as the section's "
+                    f"only remaining subsection (folding all peers would fail control_subsection_coverage)"
+                )
+                break
+
+    # Pass 2 — apply the folds that survived the guard.
+    for child_idx, heading, _is_forbidden in candidates:
+        seg = segs[child_idx]
         seg.level = 0
         seg.heading = ""
         seg.raw = f"**{heading}.**\n\n"
