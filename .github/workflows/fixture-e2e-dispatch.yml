@@ -31,14 +31,19 @@ on:
   workflow_dispatch:
     inputs:
       fixture:
-        description: "Fixture to run ('all' = every single-repo fixture)"
+        description: "Fixture to run ('all' = every single-repo fixture, ~9 scans)"
         type: choice
         required: true
-        default: all
-        # The only place the fixture list is written down. The resolve job reads
-        # these options back and fails the run if they and repos/ disagree.
+        # No `default:` — GitHub preselects the first option, so the first
+        # option must be the cheap one. `all` sat here and fans out ~9 full
+        # scans; a dispatch whose dropdown was never touched (or whose
+        # selection did not register) silently spent the lot. `all` now has to
+        # be chosen deliberately, from the bottom of the list.
+        #
+        # This is also the only place the fixture list is written down. The
+        # resolve job reads these options back and fails the run if they and
+        # repos/ disagree; it filters `all` by value, not by position.
         options:
-          - all
           - spring-boot-threat-fixture
           - python-threat-fixture
           - rust-threat-fixture
@@ -49,6 +54,7 @@ on:
           - npm-supply-chain-threat-fixture
           - fifty-service-threat-fixture
           - cross-repo-threat-fixture
+          - all
       depth:
         description: "Assessment depth"
         type: choice

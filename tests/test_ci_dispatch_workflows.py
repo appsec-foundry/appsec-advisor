@@ -160,6 +160,25 @@ def test_no_redundant_dispatch_inputs(name):
     assert not overrides, f"{name}: presets are applied whole, but found {overrides}"
 
 
+def test_the_preselected_fixture_is_not_the_full_fan_out():
+    """The default dispatch must not be the expensive one.
+
+    `all` fans out ~9 full scans. It was both the declared default and the
+    first option, so a dispatch whose dropdown was never touched — or whose
+    selection failed to register — spent nine scans' worth of subscription
+    budget without anyone choosing that. GitHub preselects the first option
+    when no `default:` is given, so the invariant is positional.
+    """
+    fixture = _dispatch_inputs("fixture-e2e-dispatch.yml")["fixture"]
+    options = fixture["options"]
+
+    assert "all" in options, "the fan-out option must still be reachable"
+    preselected = fixture.get("default", options[0])
+    assert preselected != "all", (
+        f"'{preselected}' is preselected — `all` must be chosen deliberately, never inherited from an untouched form"
+    )
+
+
 def test_repair_skips_cleanly_when_the_run_published_no_artifacts():
     """A run that died before writing evidence has nothing to triage."""
     steps = _steps(_load("repair-agent.yml")["jobs"]["repair"])
