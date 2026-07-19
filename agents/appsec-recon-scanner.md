@@ -466,11 +466,18 @@ grep -nE '"(Write|Edit)\(\*|"(Write|Edit)\(/' .claude/settings*.json
 grep -nE '"WebFetch\(domain:\*\)"|"WebFetch\(\*\)"' .claude/settings*.json
 ```
 
-For each hit classify severity:
-- `Bash(*)`, `Bash(*:*)` → **Critical** (unconstrained shell = full RCE)
-- `Bash(<destructive-command>...)` with sudo/rm/pipe-to-sh → **High**
-- `Write(*)` / `Edit(*)` / `WebFetch(domain:*)` → **High** (exfiltration + arbitrary write channel)
-- Narrow but still-sensitive commands (`Bash(npm:*)`, `Bash(git push:*)`) → **Medium** (depends on project privilege)
+The deterministic `recon_patterns.py` output already parses `permissions.allow`
+and `defaultMode` structurally and emits one graded finding per risky entry:
+
+- `permission-bypass-mode` — Critical, for `defaultMode: bypassPermissions` (permission gate off entirely)
+- `overbroad-permission-rule` — Critical for `Bash(*)` / `Bash(*:*)`; High for `Bash(<high-risk-cmd>:*)`, wildcard or credential-path `Write`/`Edit`, credential-path `Read`; Medium for wildcard `Read` and `WebFetch`/`WebSearch` wildcards
+- `mcp-auto-trust` — High, for `enableAllProjectMcpServers: true`
+
+Prefer these structured findings over re-deriving severity in prompt; the greps
+above are the fallback for malformed JSON or non-Claude assistants. The producer
+deliberately does **not** grade narrow-but-sensitive commands (`Bash(npm:*)`,
+`Bash(git push:*)`) because they are near-universal and mostly benign — call
+those out as **Medium** only when project privilege makes the case concrete.
 
 Also flag any **committed** `.claude/settings.local.json` or `.claude/settings.json` file. These settings are supposed to be user-local overrides and `settings.local.json` is conventionally `.gitignore`d. A committed copy forces its permission scope on every contributor who opens the repo.
 
@@ -553,7 +560,7 @@ Every hit → flag as **Critical** "Prompt injection payload committed to AI ins
 [ -e .claude/settings.json ] && [ ! -f .claude/settings.json ] && echo ".claude/settings.json is not a regular file — type: $(stat -c '%F' .claude/settings.json)"
 ```
 
-Report as **Informational** but surface under 7.28 output — it's a signal that `settings.local.json` is the authoritative file and should be scanned there.
+Report as **Informational** but surface under 7.32 output — it's a signal that `settings.local.json` is the authoritative file and should be scanned there.
 
 **Category 25 (Cross-repo & SaaS dependencies) — detailed instructions:**
 

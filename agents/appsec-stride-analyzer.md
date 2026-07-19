@@ -484,7 +484,7 @@ When `COMPONENT_ID` is `mobile-app`, `COMPONENT_DESCRIPTION` indicates Android/i
 
 ### Supply chain — conditional (only when `SUPPLY_CHAIN_FINDINGS != none`)
 
-Read `shared/supply-chain-patterns.md` for the 21 finding-type → STRIDE-category mappings (Cat 27/28 plus unpinned dependencies / lockfile / SCA / runner patterns). Verify each finding by reading the cited `file:line` from recon-summary 7.14–7.17, 7.26, 7.27, 7.28. Same quality bar.
+Read `shared/supply-chain-patterns.md` for the 21 finding-type → STRIDE-category mappings (Cat 27/28 plus unpinned dependencies / lockfile / SCA / runner patterns). Verify each finding by reading the cited `file:line` from recon-summary 7.14–7.17, 7.26, 7.27, 7.32. Same quality bar.
 
 ### Requirements reference lookup — apply to every threat's `remediation.reference`
 

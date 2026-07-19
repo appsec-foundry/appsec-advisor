@@ -2404,6 +2404,162 @@ def _scan_mcp_servers(path: Path, rel: str) -> list[dict[str, Any]]:
     return findings
 
 
+# --- Cat 28b: Claude Code permission model (deterministic) -----------------
+# The flat `_CAT28_DANGEROUS` regex only ever matched literal `Bash(*)`. The
+# checks below parse `permissions.allow` / `defaultMode` structurally so the
+# recon template's 7.32 "dangerous permission patterns" table has a real
+# producer. Only `allow` is graded: `deny`/`ask` entries are protective, and a
+# thin or absent deny-list is hygiene, not an exploitable weakness.
+
+_CLAUDE_SETTINGS_NAMES = {"settings.json", "settings.local.json"}
+_PERM_RULE_RE = re.compile(r"^(?P<tool>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\((?P<arg>.*)\))?$", re.DOTALL)
+_PERM_WILDCARDS = {"", "*", "*:*", "**", "**/*"}
+# Commands that hand over the host (or an exfil channel) when granted with a
+# `:*` argument wildcard. Deliberately narrow: `git`/`npm`/`pip` are omitted
+# because `Bash(git:*)`-style rules are near-universal and mostly benign, and a
+# noisy Cat 28b table would get ignored wholesale.
+_BASH_HIGH_RISK = {
+    "sudo", "su", "rm", "chmod", "chown", "ssh", "scp", "nc", "ncat",
+    "eval", "exec", "dd", "mkfs", "curl", "wget",
+}
+_SENSITIVE_PATH_RE = re.compile(
+    r"(?i)(\.ssh|\.aws|\.gnupg|\.kube|\.netrc|\.npmrc|\.env\b|id_rsa|id_ed25519|credential|\.git/config)"
+)
+
+
+def _classify_permission_rule(rule: str) -> dict[str, str] | None:
+    """Grade one `permissions.allow` entry. Returns None when not a real risk."""
+    match = _PERM_RULE_RE.match(rule.strip())
+    if not match:
+        return None
+    tool = match.group("tool")
+    arg = (match.group("arg") or "").strip()
+    arg_is_wildcard = arg in _PERM_WILDCARDS
+
+    if tool == "Bash":
+        if arg_is_wildcard:
+            return {
+                "severity": "Critical",
+                "reason": f"`{rule}` grants unrestricted shell execution without a permission prompt",
+            }
+        command = arg.split(":", 1)[0].strip()
+        if command in _BASH_HIGH_RISK:
+            return {
+                "severity": "High",
+                "reason": f"`{rule}` pre-approves the high-risk command `{command}` with an argument wildcard",
+            }
+        return None
+
+    if tool in {"Write", "Edit", "MultiEdit", "NotebookEdit"}:
+        if arg_is_wildcard:
+            return {
+                "severity": "High",
+                "reason": f"`{rule}` allows unprompted writes to any path",
+            }
+        if _SENSITIVE_PATH_RE.search(arg):
+            return {
+                "severity": "High",
+                "reason": f"`{rule}` allows unprompted writes to a credential-bearing path",
+            }
+        return None
+
+    if tool == "Read":
+        if _SENSITIVE_PATH_RE.search(arg):
+            return {
+                "severity": "High",
+                "reason": f"`{rule}` grants read access to a credential-bearing path",
+            }
+        if arg_is_wildcard:
+            return {
+                "severity": "Medium",
+                "reason": f"`{rule}` grants unrestricted read access, including files outside the project",
+            }
+        return None
+
+    if tool in {"WebFetch", "WebSearch"} and (arg_is_wildcard or arg.lower() in {"domain:*", "domain:  *"}):
+        return {
+            "severity": "Medium",
+            "reason": f"`{rule}` permits requests to any host — a usable exfiltration channel",
+        }
+
+    return None
+
+
+def _find_line(text: str, needle: str) -> int | None:
+    for idx, line in enumerate(text.splitlines(), start=1):
+        if needle in line:
+            return idx
+    return None
+
+
+def _scan_claude_permissions(path: Path, rel: str) -> list[dict[str, Any]]:
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    findings: list[dict[str, Any]] = []
+    permissions = data.get("permissions")
+    permissions = permissions if isinstance(permissions, dict) else {}
+
+    default_mode = permissions.get("defaultMode") or data.get("defaultMode")
+    if isinstance(default_mode, str) and default_mode.strip() == "bypassPermissions":
+        # Committed into a repo, this disables the tool's only guardrail for
+        # every contributor who opens it — hence Critical rather than High.
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": "permission-bypass-mode",
+                "file": rel,
+                "line": _find_line(raw, "bypassPermissions"),
+                "severity": "Critical",
+                "match": "`defaultMode: bypassPermissions` disables permission prompts for every tool call",
+            }
+        )
+
+    allow = permissions.get("allow")
+    if isinstance(allow, list):
+        for entry in allow:
+            if not isinstance(entry, str):
+                continue
+            classified = _classify_permission_rule(entry)
+            if classified is None:
+                continue
+            findings.append(
+                {
+                    "category": 28,
+                    "subcategory": "overbroad-permission-rule",
+                    "file": rel,
+                    "line": _find_line(raw, entry),
+                    "rule": entry,
+                    "severity": classified["severity"],
+                    "match": classified["reason"],
+                }
+            )
+
+    if data.get("enableAllProjectMcpServers") is True:
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": "mcp-auto-trust",
+                "file": rel,
+                "line": _find_line(raw, "enableAllProjectMcpServers"),
+                "severity": "High",
+                "match": "`enableAllProjectMcpServers: true` auto-approves every MCP server declared in the repo",
+            }
+        )
+
+    return findings
+
+
+def _is_claude_settings_path(rel: str) -> bool:
+    parts = PurePosixPath(rel).parts
+    return len(parts) >= 2 and parts[-2] == ".claude" and parts[-1] in _CLAUDE_SETTINGS_NAMES
+
+
 def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -2444,6 +2600,8 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
             )
         if _is_mcp_config_path(rel):
             findings.extend(_scan_mcp_servers(path, rel))
+        if _is_claude_settings_path(rel):
+            findings.extend(_scan_claude_permissions(path, rel))
 
     for rel in _AI_CONFIG_PATTERNS:
         add_path(repo_root / rel)

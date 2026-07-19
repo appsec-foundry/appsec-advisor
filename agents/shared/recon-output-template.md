@@ -467,7 +467,9 @@ If none: `No AI assistant configurations committed to the repo.`
 |------|------|---------|----------|
 | <`.claude/settings*.json`> | <line> | <`Bash(*:*)` / `Bash(sudo …)` / `Write(*)` / `WebFetch(domain:*)`> | <Critical / High / Medium> |
 
-If none: `No overly-broad permissions detected.`
+Fill from the deterministic Cat 28 subcategories `permission-bypass-mode`,
+`overbroad-permission-rule`, and `mcp-auto-trust` (each carries `file`, `line`,
+`severity`, and a `match` rationale). If none: `No overly-broad permissions detected.`
 
 **Hooks executing arbitrary shell (Cat 28c):**
 

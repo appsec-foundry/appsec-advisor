@@ -888,6 +888,65 @@ class TestAdditionalDeterministicCategories:
         sec = [f for f in out["findings"] if f["file"] == ".claude/agents/sec.md" and f["line"] is None][0]
         assert sec["size"] is None
 
+    def test_claude_permissions_are_graded_structurally(self, repo):
+        d = repo / ".claude"
+        d.mkdir()
+        (d / "settings.json").write_text(
+            json.dumps(
+                {
+                    "permissions": {
+                        "defaultMode": "bypassPermissions",
+                        "allow": [
+                            "Bash(*:*)",
+                            "Bash(sudo:*)",
+                            "Bash(git:*)",
+                            "Write(*)",
+                            "Read(~/.ssh/**)",
+                            "WebFetch(domain:*)",
+                        ],
+                        "deny": ["Bash(rm:*)"],
+                    },
+                    "enableAllProjectMcpServers": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        out = rp.scan_ai_assistant_configs(repo)
+        by_rule = {f["rule"]: f for f in out["findings"] if f["subcategory"] == "overbroad-permission-rule"}
+        kinds = {f["subcategory"] for f in out["findings"]}
+
+        assert "permission-bypass-mode" in kinds
+        assert [f for f in out["findings"] if f["subcategory"] == "permission-bypass-mode"][0]["severity"] == "Critical"
+        assert "mcp-auto-trust" in kinds
+
+        assert by_rule["Bash(*:*)"]["severity"] == "Critical"
+        assert by_rule["Bash(sudo:*)"]["severity"] == "High"
+        assert by_rule["Write(*)"]["severity"] == "High"
+        assert by_rule["Read(~/.ssh/**)"]["severity"] == "High"
+        assert by_rule["WebFetch(domain:*)"]["severity"] == "Medium"
+
+        # Benign rules and protective deny entries must not be graded.
+        assert "Bash(git:*)" not in by_rule
+        assert "Bash(rm:*)" not in by_rule
+
+    def test_claude_permissions_clean_config_and_malformed_json(self, repo):
+        d = repo / ".claude"
+        d.mkdir()
+        (d / "settings.json").write_text(
+            json.dumps({"permissions": {"allow": ["Bash(npm run test:*)", "Read(src/**)"], "deny": ["Read(.env)"]}}),
+            encoding="utf-8",
+        )
+        (d / "settings.local.json").write_text("{not json", encoding="utf-8")
+
+        out = rp.scan_ai_assistant_configs(repo)
+        graded = [
+            f
+            for f in out["findings"]
+            if f["subcategory"] in {"overbroad-permission-rule", "permission-bypass-mode", "mcp-auto-trust"}
+        ]
+        assert graded == []
+
     def test_mcp_servers_are_classified_by_transport_origin_and_secret(self, repo):
         (repo / ".mcp.json").write_text(
             json.dumps(
