@@ -21,6 +21,7 @@ happened to read the YAML:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -47,9 +48,15 @@ def _steps(job: dict) -> list[dict]:
 
 
 def _is_preflight(step: dict) -> bool:
-    """A step that hard-fails on an empty token, not merely one that names it."""
+    """A step that hard-fails on an unusable token, not merely one that names it.
+
+    Structural locator only — whether it actually rejects the right things is
+    covered by executing it (see test_preflight_rejects_credentials_that_cannot
+    _work). It must read the token through the safe expansion and be able to
+    exit non-zero; the value may be tested directly or via a local.
+    """
     run = step.get("run") or ""
-    return TOKEN in (step.get("env") or {}) and f'-z "${{{TOKEN}:-}}"' in run and "exit 1" in run
+    return TOKEN in (step.get("env") or {}) and f'"${{{TOKEN}:-}}"' in run and "-z " in run and "exit 1" in run
 
 
 def _consumes_token(step: dict) -> bool:
@@ -177,6 +184,71 @@ def test_the_preselected_fixture_is_not_the_full_fan_out():
     assert preselected != "all", (
         f"'{preselected}' is preselected — `all` must be chosen deliberately, never inherited from an untouched form"
     )
+
+
+def _preflight_script(workflow: str, job: str) -> str:
+    step = next(s for s in _load(workflow)["jobs"][job]["steps"] if s.get("name", "").startswith("Preflight"))
+    return step["run"].replace("${{ github.repository }}", "OWNER/REPO")
+
+
+def _run_preflight(tmp_path: Path, workflow: str, job: str, token: str):
+    script = tmp_path / "preflight.sh"
+    script.write_text(_preflight_script(workflow, job))
+    return subprocess.run(
+        ["bash", str(script)],
+        env={"PATH": "/usr/bin:/bin", "CLAUDE_CODE_OAUTH_TOKEN": token},
+        capture_output=True,
+        text=True,
+    )
+
+
+PREFLIGHTS = [
+    ("threat-model-dispatch.yml", "threat-model"),
+    ("fixture-e2e-dispatch.yml", "resolve"),
+    ("repair-agent.yml", "repair"),
+]
+
+# A real sk-ant-oat token is much longer; this only has to clear the length floor.
+VALID_OAUTH = "sk-ant-oat01-" + "A" * 44
+
+BAD_TOKENS = [
+    pytest.param("", "is not set", id="empty"),
+    # What was actually in the secret on 2026-07-19: a random string that is not
+    # an Anthropic credential at all. It reached the CLI and came back 401.
+    pytest.param("ScU7fkQ2x9LmPq4vRt8wYz1aBcDeFgHiJkLmNoPqRsTuVwXy", "unrecognised", id="random"),
+    pytest.param("sk-ant-api03-" + "A" * 44, "api-key", id="api-key-not-oauth"),
+    pytest.param("sk-ant-oat01-short", "looks truncated", id="truncated-paste"),
+]
+
+
+@pytest.mark.parametrize("workflow,job", PREFLIGHTS)
+@pytest.mark.parametrize("token,expected", BAD_TOKENS)
+def test_preflight_rejects_credentials_that_cannot_work(tmp_path, workflow, job, token, expected):
+    """Every rejection must name the actual problem, not just fail.
+
+    Subscription billing needs the `claude setup-token` OAuth token
+    (sk-ant-oat...). The secret box accepts anything, so without this the
+    mistake surfaces as a bare 401 from deep inside the pipeline.
+    """
+    result = _run_preflight(tmp_path, workflow, job, token)
+    assert result.returncode == 1, result.stdout
+    assert expected in result.stdout
+
+
+@pytest.mark.parametrize("workflow,job", PREFLIGHTS)
+def test_preflight_accepts_a_subscription_oauth_token(tmp_path, workflow, job):
+    result = _run_preflight(tmp_path, workflow, job, VALID_OAUTH)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("workflow,job", PREFLIGHTS)
+def test_preflight_never_echoes_the_credential(tmp_path, workflow, job):
+    """Job logs are readable by anyone with repo access."""
+    secret = "sk-ant-oat01-" + "S3CR3T" * 8
+    result = _run_preflight(tmp_path, workflow, job, secret)
+    combined = result.stdout + result.stderr
+    assert "S3CR3T" not in combined
+    assert secret not in combined
 
 
 def test_repair_skips_cleanly_when_the_run_published_no_artifacts():
