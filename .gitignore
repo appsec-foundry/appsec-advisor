@@ -71,12 +71,17 @@ Thumbs.db
 .claude/.mcp.json
 .claude/agents/
 .claude/hooks/
+.claude/routines/
 .claude/skills/
+.claude/workflows/
 .claude/worktrees/
 # Empty read-only stubs the harness drops at session start (shadow the dirs above)
 .claude/agents
 .claude/hooks
+.claude/launch.json
+.claude/routines
 .claude/skills
+.claude/workflows
 .vscode
 .gitmodules
 
