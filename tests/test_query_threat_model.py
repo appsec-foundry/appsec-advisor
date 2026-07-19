@@ -33,9 +33,48 @@ qtm = _load_module()
 
 
 def _write_model(output_dir: Path, body: str) -> Path:
+    """Write a schema-valid final-output fixture for CLI tests.
+
+    Unit tests deliberately use minimal shapes to isolate the facts-index
+    builder. The CLI now rejects incomplete final artifacts, so this helper
+    adds the output-contract defaults that production composition guarantees.
+    """
+    import yaml
+
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "threat-model.yaml"
-    path.write_text(textwrap.dedent(body), encoding="utf-8")
+    data = yaml.safe_load(textwrap.dedent(body)) or {}
+    meta = data.setdefault("meta", {})
+    meta.setdefault("schema_version", 1)
+    meta.setdefault("project", "Fixture App")
+    meta.setdefault("generated", "2026-05-08T00:00:00Z")
+    meta.setdefault("mode", "full")
+    meta.setdefault("model", "sonnet")
+    for key in ("components", "assets", "attack_surface", "trust_boundaries", "security_controls", "threats", "mitigations"):
+        data.setdefault(key, [])
+    for threat in data["threats"]:
+        threat.setdefault("scenario", "A test scenario with grounded evidence.")
+        threat.setdefault("likelihood", "Low")
+        threat.setdefault("impact", "Low")
+        threat.setdefault("risk", threat.get("severity") or "Low")
+    mitigation_links = {
+        mitigation.get("id"): [
+            threat.get("id")
+            for threat in data["threats"]
+            if mitigation.get("id") in (threat.get("mitigation_ids") or [])
+        ]
+        for mitigation in data["mitigations"]
+    }
+    for mitigation in data["mitigations"]:
+        mitigation.setdefault("threat_ids", mitigation_links.get(mitigation.get("id"), []))
+        mitigation.setdefault("priority", "P2")
+        mitigation.setdefault("title", "Apply the documented remediation")
+    for control in data["security_controls"]:
+        control.setdefault("control", "Fixture security control")
+        control.setdefault("effectiveness", "Partial")
+    for weakness in data.get("weaknesses") or []:
+        weakness.setdefault("observable_backing", {})
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return path
 
 
@@ -299,6 +338,14 @@ def test_cli_non_mapping_exit_2(tmp_path):
     assert "not a mapping" in r.stderr
 
 
+def test_cli_contract_invalid_mapping_exit_2(tmp_path):
+    """A parseable mapping is not automatically a usable final threat model."""
+    (tmp_path / "threat-model.yaml").write_text("project: incomplete\n", encoding="utf-8")
+    r = _run(["--output-dir", str(tmp_path)])
+    assert r.returncode == 2
+    assert "does not satisfy the threat-model output contract" in r.stderr
+
+
 def test_cli_grep_and_id_mutually_exclusive(tmp_path):
     _write_model(tmp_path, SAMPLE)
     r = _run(["--output-dir", str(tmp_path), "--grep", "x", "--id", "F-1"])
@@ -471,7 +518,7 @@ def test_check_off_stays_completely_silent(tmp_path):
     import yaml
 
     _write_model(tmp_path, REQ_SAMPLE)
-    data = yaml.safe_load(textwrap.dedent(REQ_SAMPLE))
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     data["meta"]["check_requirements"] = False
     (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     r = _run(["--output-dir", str(tmp_path)])
@@ -485,7 +532,7 @@ def test_no_violation_is_not_reported_as_compliance(tmp_path):
     import yaml
 
     _write_model(tmp_path, REQ_SAMPLE)
-    data = yaml.safe_load(textwrap.dedent(REQ_SAMPLE))
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     for t in data["threats"]:
         t.pop("violated_requirements", None)
         t.pop("requirement_id", None)
@@ -650,3 +697,43 @@ def test_cli_renders_system_and_controls_blocks(tmp_path):
     assert "A-001" in r.stdout and "Restricted" in r.stdout
     assert "2 entry point(s) · 1 without auth" in r.stdout
     assert "POST /file-upload" not in r.stdout, "entries must stay behind --grep"
+
+
+# --------------------------------------------------------------------------
+# Targeted filters — avoid loading unrelated findings into the Q&A context
+# --------------------------------------------------------------------------
+
+
+def test_severity_filter_narrows_findings_and_keeps_global_verdict():
+    import yaml
+
+    facts = qtm.build_facts(yaml.safe_load(textwrap.dedent(SAMPLE)), severity="Critical")
+    assert [f["id"] for f in facts["findings"]] == ["F-001"]
+    assert facts["totals"]["findings"] == 2
+    assert facts["worst_case"][0]["id"] == "F-001"
+
+
+def test_component_display_name_filter_matches_component_id():
+    import yaml
+
+    facts = qtm.build_facts(yaml.safe_load(textwrap.dedent(SYS_SAMPLE)), component="Express Backend")
+    assert [f["id"] for f in facts["findings"]] == ["F-001"]
+    assert [c["id"] for c in facts["system"]["components"]] == ["backend-api"]
+
+
+def test_evidence_state_filter_narrows_findings():
+    import yaml
+
+    data = yaml.safe_load(textwrap.dedent(SAMPLE))
+    data["threats"][0]["evidence_check"] = "verified"
+    data["threats"][1]["evidence_check"] = "unchecked"
+    facts = qtm.build_facts(data, evidence_state="verified")
+    assert [f["id"] for f in facts["findings"]] == ["F-001"]
+
+
+def test_cli_severity_filter_is_case_insensitive(tmp_path):
+    _write_model(tmp_path, SAMPLE)
+    r = _run(["--output-dir", str(tmp_path), "--severity", "critical"])
+    assert r.returncode == 0
+    assert "MATCHES for severity Critical — 1 finding(s)" in r.stdout
+    assert "F-002" not in r.stdout.split("FINDINGS", 1)[1]

@@ -56,6 +56,7 @@ from _requirements_gate import load_requirements, violated_requirements  # noqa:
 
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
 _KNOWN_SEVERITIES = set(_SEVERITY_ORDER)
+_SEVERITY_BY_NORMALIZED = {severity.lower(): severity for severity in _KNOWN_SEVERITIES}
 _SCENARIO_TRIM = 200
 _ID_RE = re.compile(r"^([TFMW])-0*(\d+)$", re.IGNORECASE)
 
@@ -316,12 +317,28 @@ def _worst_case(findings: list[dict], critical: list, limit: int = 3) -> list[di
     return out[:limit]
 
 
-def build_facts(data: dict, grep: str | None = None, output_dir: Path | None = None) -> dict:
+def build_facts(
+    data: dict,
+    grep: str | None = None,
+    output_dir: Path | None = None,
+    *,
+    severity: str | None = None,
+    component: str | None = None,
+    evidence_state: str | None = None,
+) -> dict:
     meta = data.get("meta") or {}
     git = meta.get("git") or {}
     name, version = _project(data)
 
     threats = [t for t in (data.get("threats") or []) if isinstance(t, dict)]
+    components_raw = [c for c in (data.get("components") or []) if isinstance(c, dict)]
+    component_terms: dict[str, list[str]] = {}
+    for raw_component in components_raw:
+        component_id = str(raw_component.get("id") or "").strip()
+        component_name = str(raw_component.get("name") or "").strip()
+        terms = [term for term in (component_id, component_name) if term]
+        for term in terms:
+            component_terms.setdefault(term.lower(), terms)
     findings = [_finding_record(t) for t in threats]
     findings.sort(key=lambda f: (_SEVERITY_ORDER.get(f["severity"], 9), f["id"]))
 
@@ -341,7 +358,8 @@ def build_facts(data: dict, grep: str | None = None, output_dir: Path | None = N
     # filter narrows the list — the verdict is global, not scoped to a topic.
     worst_case = _worst_case(findings, data.get("critical_findings") or [])
 
-    if grep:
+    active_filter = bool(grep or severity or component or evidence_state)
+    if active_filter:
         matched_mit_ids: set[str] = set()
         kept_f = []
         for f in findings:
@@ -354,26 +372,39 @@ def build_facts(data: dict, grep: str | None = None, output_dir: Path | None = N
                 f["stride"],
                 f["cwe"],
                 f["location"],
+                f["severity"],
+                f["evidence_check"],
+                *component_terms.get(f["component"].lower(), []),
                 # Without this a `--grep REQ-AUTH-01` silently returned zero
                 # findings even when one violated exactly that requirement —
                 # a false "no findings match", not an empty result.
                 " ".join(f["violated_requirements"]),
             ]
-            mit_hit = any(
+            mit_hit = grep and any(
                 mid in mit_by_id and _matches([mit_by_id[mid]["title"], mit_by_id[mid]["description"]], grep)
                 for mid in f["mitigation_ids"]
             )
-            if _matches(fields, grep) or mit_hit:
+            grep_matches = not grep or _matches(fields, grep) or mit_hit
+            severity_matches = not severity or f["severity"].lower() == severity.lower()
+            component_matches = not component or _matches(
+                [f["component"], *component_terms.get(f["component"].lower(), [])], component
+            )
+            evidence_matches = not evidence_state or f["evidence_check"].lower() == evidence_state.lower()
+            if grep_matches and severity_matches and component_matches and evidence_matches:
                 kept_f.append(f)
                 matched_mit_ids.update(f["mitigation_ids"])
         findings = kept_f
         mitigations = [
-            m for m in mitigations if m["id"] in matched_mit_ids or _matches([m["title"], m["description"]], grep)
+            m
+            for m in mitigations
+            if m["id"] in matched_mit_ids or (grep and _matches([m["title"], m["description"]], grep))
         ]
+        matched_finding_ids = {_id_key(f["id"]) for f in findings}
         weaknesses = [
             w
             for w in weaknesses
-            if _matches([w["id"], w["title"], w["statement"], w["weakness_class"], w["kind"]], grep)
+            if any(_id_key(instance) in matched_finding_ids for instance in w["instances"])
+            or (grep and _matches([w["id"], w["title"], w["statement"], w["weakness_class"], w["kind"]], grep))
         ]
 
     controls_raw = [c for c in (data.get("security_controls") or []) if isinstance(c, dict)]
@@ -383,7 +414,7 @@ def build_facts(data: dict, grep: str | None = None, output_dir: Path | None = N
     # what is wrong with it. Previously absent from the index entirely, so
     # "what are my assets / trust boundaries / controls?" could not be answered
     # from the model even though the model records all of it.
-    components_l = [_component_record(c) for c in (data.get("components") or []) if isinstance(c, dict)]
+    components_l = [_component_record(c) for c in components_raw]
     assets_l = [_asset_record(a) for a in (data.get("assets") or []) if isinstance(a, dict)]
     boundaries_l = [_boundary_record(b) for b in (data.get("trust_boundaries") or []) if isinstance(b, dict)]
     controls_l = [_control_record(c) for c in controls_raw]
@@ -398,8 +429,14 @@ def build_facts(data: dict, grep: str | None = None, output_dir: Path | None = N
         else []
     )
 
+    if grep or component:
+        components_l = [
+            c
+            for c in components_l
+            if (not grep or _matches([c["id"], c["name"], c["tier"], c["framework"]], grep))
+            and (not component or _matches([c["id"], c["name"]], component))
+        ]
     if grep:
-        components_l = [c for c in components_l if _matches([c["id"], c["name"], c["tier"], c["framework"]], grep)]
         assets_l = [a for a in assets_l if _matches([a["id"], a["name"], a["classification"], a["description"]], grep)]
         boundaries_l = [
             b for b in boundaries_l if _matches([b["id"], b["name"], b["from"], b["to"], b["enforcement"]], grep)
@@ -484,6 +521,11 @@ def build_facts(data: dict, grep: str | None = None, output_dir: Path | None = N
             },
         },
         "grep": grep or "",
+        "filters": {
+            "severity": severity or "",
+            "component": component or "",
+            "evidence_state": evidence_state or "",
+        },
         "matched_findings": len(findings),
         "findings": findings,
         "mitigations": mitigations,
@@ -658,9 +700,17 @@ def render_text(facts: dict) -> str:
             if key in prov:
                 buf.append(f"  {label + ':':<22} {prov[key]}")
 
-    if facts["grep"]:
+    filters = facts.get("filters") or {}
+    filter_bits = [
+        f"grep '{facts['grep']}'" if facts["grep"] else "",
+        f"severity {filters.get('severity')}" if filters.get("severity") else "",
+        f"component '{filters.get('component')}'" if filters.get("component") else "",
+        f"evidence state '{filters.get('evidence_state')}'" if filters.get("evidence_state") else "",
+    ]
+    filter_label = "; ".join(bit for bit in filter_bits if bit)
+    if filter_label:
         buf.append("")
-        buf.append(f"MATCHES for '{facts['grep']}' — {facts['matched_findings']} finding(s)")
+        buf.append(f"MATCHES for {filter_label} — {facts['matched_findings']} finding(s)")
 
     buf.append("")
     buf.append("FINDINGS (cite these F-ids — they match the rendered report)")
@@ -760,8 +810,45 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     g = p.add_mutually_exclusive_group()
     g.add_argument("--grep", default=None, help="Case-insensitive topic filter.")
     g.add_argument("--id", dest="id_query", default=None, help="Precise F-/T-/M-/W-NNN lookup.")
+    p.add_argument("--severity", default=None, help="Filter findings by severity (case-insensitive).")
+    p.add_argument("--component", default=None, help="Filter findings by component id or name (case-insensitive).")
+    p.add_argument("--evidence-state", default=None, help="Filter findings by evidence_check (case-insensitive).")
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.severity:
+        args.severity = _SEVERITY_BY_NORMALIZED.get(args.severity.strip().lower())
+        if not args.severity:
+            p.error("--severity must be Critical, High, Medium, Low, or Informational")
+    for attr in ("component", "evidence_state"):
+        value = getattr(args, attr)
+        setattr(args, attr, value.strip() or None if value else None)
+    if args.id_query and any((args.severity, args.component, args.evidence_state)):
+        p.error("--id cannot be combined with --severity, --component, or --evidence-state")
+    return args
+
+
+def _validate_output_contract(data: dict) -> list[str]:
+    """Return final-output schema failures without writing or re-scoring data.
+
+    The Q&A surface consumes the published export, so it applies exactly that
+    export schema. Producer-only semantic checks are intentionally excluded:
+    they can demand remediation synthesis that is useful to enforce while
+    generating a model but is irrelevant to whether existing facts are safe to
+    query.
+    """
+    try:
+        import yaml
+        from jsonschema import Draft202012Validator
+
+        schema_path = Path(__file__).resolve().parent.parent / "schemas" / "threat-model.output.schema.yaml"
+        schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+        errors = sorted(Draft202012Validator(schema).iter_errors(data), key=lambda error: list(error.absolute_path))
+    except Exception as exc:  # noqa: BLE001 -- validation must fail closed for Q&A correctness
+        return [f"could not validate the threat-model output contract: {exc}"]
+    return [
+        f"{'.'.join(str(part) for part in error.absolute_path) or 'root'}: {error.message}"
+        for error in errors
+    ]
 
 
 def _emit_no_model(output_dir: Path, as_json: bool) -> None:
@@ -794,6 +881,14 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(data, dict):
         print(f"Error: {yaml_path} is not a mapping.", file=sys.stderr)
         return 2
+    contract_errors = _validate_output_contract(data)
+    if contract_errors:
+        print(f"Error: {yaml_path} does not satisfy the threat-model output contract.", file=sys.stderr)
+        for error in contract_errors[:5]:
+            print(f"  - {error}", file=sys.stderr)
+        if len(contract_errors) > 5:
+            print(f"  - ... and {len(contract_errors) - 5} more error(s)", file=sys.stderr)
+        return 2
 
     if args.id_query:
         focus = lookup_id(build_facts(data, None, output_dir), args.id_query)
@@ -804,7 +899,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     grep = (args.grep or "").strip() or None
-    facts = build_facts(data, grep, output_dir)
+    facts = build_facts(
+        data,
+        grep,
+        output_dir,
+        severity=args.severity,
+        component=args.component,
+        evidence_state=args.evidence_state,
+    )
     print(
         json.dumps(facts, indent=2, sort_keys=True) if args.json else render_text(facts),
         end="" if not args.json else "\n",
