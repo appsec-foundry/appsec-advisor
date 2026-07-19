@@ -2419,8 +2419,21 @@ _PERM_WILDCARDS = {"", "*", "*:*", "**", "**/*"}
 # because `Bash(git:*)`-style rules are near-universal and mostly benign, and a
 # noisy Cat 28b table would get ignored wholesale.
 _BASH_HIGH_RISK = {
-    "sudo", "su", "rm", "chmod", "chown", "ssh", "scp", "nc", "ncat",
-    "eval", "exec", "dd", "mkfs", "curl", "wget",
+    "sudo",
+    "su",
+    "rm",
+    "chmod",
+    "chown",
+    "ssh",
+    "scp",
+    "nc",
+    "ncat",
+    "eval",
+    "exec",
+    "dd",
+    "mkfs",
+    "curl",
+    "wget",
 }
 _SENSITIVE_PATH_RE = re.compile(
     r"(?i)(\.ssh|\.aws|\.gnupg|\.kube|\.netrc|\.npmrc|\.env\b|id_rsa|id_ed25519|credential|\.git/config)"
@@ -2562,8 +2575,15 @@ def _scan_claude_permissions(path: Path, rel: str) -> list[dict[str, Any]]:
 # the hook structure and grade the actual `command` bodies.
 
 _HOOK_EVENTS = {
-    "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SubagentStop",
-    "SessionStart", "SessionEnd", "Notification", "PreCompact",
+    "PreToolUse",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "Stop",
+    "SubagentStop",
+    "SessionStart",
+    "SessionEnd",
+    "Notification",
+    "PreCompact",
 }
 _HOOK_PIPE_TO_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:ba)?sh\b")
 _HOOK_SUBSTITUTION_RE = re.compile(r"\$\(|`")
