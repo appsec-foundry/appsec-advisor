@@ -2140,6 +2140,84 @@ class TestRepairPlanStatusClassification:
         assert status == "manual_review"
         assert actionable is False
 
+    def test_infobox_thinness_is_a_cosmetic_advisory(self):
+        """2026-07-19 regression: `infobox_incomplete` was unclassified, so a
+        repo without LICENSE/manifest metadata produced `manual_review` (exit 3)
+        on every otherwise-clean run — forcing a QA-agent dispatch for an
+        advisory whose only remedy is a data source the pipeline cannot author.
+        It is cosmetic, and a cosmetic action need not name a fragment."""
+        issues = ["infobox is missing required field(s): license"]
+        actions = [
+            {
+                "raw_issue": issues[0],
+                "type": "infobox_incomplete",
+                "severity": qa._action_severity("infobox_incomplete"),
+                "fragments_to_rewrite": [],
+            },
+        ]
+        assert qa._action_severity("infobox_incomplete") == "cosmetic"
+        status, actionable = qa._classify_plan_status(issues, actions)
+        assert status == "cosmetic_advisory"
+        assert actionable is False
+
+    def test_infobox_advisory_never_masks_a_real_blocker(self):
+        """The advisory must not downgrade a co-occurring blocking defect."""
+        issues = ["infobox is missing required field(s): license", "section missing"]
+        actions = [
+            {
+                "raw_issue": issues[0],
+                "type": "infobox_incomplete",
+                "severity": "cosmetic",
+                "fragments_to_rewrite": [],
+            },
+            {
+                "raw_issue": issues[1],
+                "type": "missing_section",
+                "severity": "blocking",
+                "fragments_to_rewrite": [".fragments/security-architecture.md"],
+            },
+        ]
+        status, actionable = qa._classify_plan_status(issues, actions)
+        assert status == "fail"
+        assert actionable is True
+
+    def test_dead_internal_anchor_reaches_the_gate(self, tmp_path):
+        """2026-07-19 regression: `toc_closure` ran only in the deferred `all`
+        battery, which the skill writes solely on the QA-dispatch path — so a
+        document with dead `[..](#anchor)` links shipped from the clean fast
+        path with the defect never reported (that run delivered 12 while
+        section_integrity and final_structure both passed)."""
+        md = tmp_path / "threat-model.md"
+        md.write_text(
+            "# Threat Model\n\n"
+            "| Control | Verdict |\n|---|---|\n"
+            "| [Identity](#72-identity-and-authentication-controls) | Unsafe |\n\n"
+            "## 6. Security Architecture\n\n"
+            "### 6.2 Identity and Authentication Controls\n\nBody.\n",
+            encoding="utf-8",
+        )
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        toc = [a for a in plan["actions"] if a["type"] == "toc_closure"]
+        assert toc, "dead anchor must surface as a toc_closure action"
+        # Blocking so it cannot pass as the clean fast path, but with no writable
+        # target so it routes to manual_review instead of spinning the
+        # fragment-fixer on a fragment we cannot identify.
+        assert toc[0]["severity"] == "blocking"
+        assert toc[0]["fragments_to_rewrite"] == []
+
+    def test_resolved_anchor_emits_no_toc_closure_action(self, tmp_path):
+        md = tmp_path / "threat-model.md"
+        md.write_text(
+            "# Threat Model\n\n"
+            "| Control | Verdict |\n|---|---|\n"
+            "| [Identity](#62-identity-and-authentication-controls) | Unsafe |\n\n"
+            "## 6. Security Architecture\n\n"
+            "### 6.2 Identity and Authentication Controls\n\nBody.\n",
+            encoding="utf-8",
+        )
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        assert [a for a in plan["actions"] if a["type"] == "toc_closure"] == []
+
     def test_clean_md_end_to_end_returns_pass(self, tmp_path):
         """Smoke test: an MD with no contract violations returns status=pass
         through the full `build_repair_plan` pipeline."""

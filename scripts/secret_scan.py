@@ -92,7 +92,7 @@ _PATTERNS: list[_Pattern] = [
 
 
 # An unquoted credential-assignment value that is a code-identifier reference
-# (camelCase / PascalCase / dotted attribute path, no digits) — e.g.
+# (camelCase / PascalCase / snake_case / dotted attribute path, no digits) — e.g.
 # ``secret: publicKey`` or ``password: security.hash`` — is a reference to a
 # variable in a code excerpt, not a literal secret value, and must not be
 # flagged. Quoted values and opaque/digit-bearing strings (``abcdefghijklmnop``,
@@ -102,8 +102,14 @@ _CODE_REFERENCE_RE = re.compile(
     r"[A-Za-z_]+(?:\.[A-Za-z_]+)+"  # dotted path:  security.hash
     r"|[a-z]+[A-Z][A-Za-z]*"  # camelCase:    publicKey
     r"|[A-Z][a-z]+[A-Z][A-Za-z]*"  # PascalCase:   PublicKey
+    r"|[a-z]+(?:_[a-z]+)+"  # snake_case:   read_unsigned_jwt_claims
     r")$"
 )
+
+
+# A ```mermaid fenced block. Diagram labels (``participant Auth as "auth.py:84"``)
+# routinely match the loose credential-assignment shape; see scan_text().
+_MERMAID_FENCE_RE = re.compile(r"^[ \t]*```[ \t]*mermaid\b.*?^[ \t]*```", re.S | re.M)
 
 
 def _looks_like_code_reference(value: str) -> bool:
@@ -218,11 +224,25 @@ def _line_lookup(text: str):
     return line_of
 
 
+def _mermaid_fence_spans(text: str) -> list[tuple[int, int]]:
+    """Return ``(start, end)`` offsets of every ```mermaid fenced block.
+
+    Only mermaid is collected — a secret inside a ```python or ```yaml block is
+    a genuine leak and must stay in scope for every pattern.
+    """
+    return [(m.start(), m.end()) for m in _MERMAID_FENCE_RE.finditer(text)]
+
+
+def _in_mermaid_fence(spans: list[tuple[int, int]], pos: int) -> bool:
+    return any(start <= pos < end for start, end in spans)
+
+
 def scan_text(text: str) -> list[SecretHit]:
     """Return list of SecretHits — empty list means clean."""
     if not text:
         return []
     line_of = _line_lookup(text)
+    mermaid_spans = _mermaid_fence_spans(text)
     hits: list[SecretHit] = []
     for pat in _PATTERNS:
         for m in pat.regex.finditer(text):
@@ -230,6 +250,21 @@ def scan_text(text: str) -> list[SecretHit]:
             groups = m.groupdict() or {}
             value = m.group("val") if "val" in groups else matched
             if not pat.strict:
+                # Mermaid is a diagram DSL, not code: ``participant Auth as …``
+                # and ``Auth->>Auth: base64-decode`` match the credential-
+                # assignment shape without ever carrying a literal. Strict token
+                # formats (JWT/AWS/PEM/…) still scan these blocks, so a real
+                # secret pasted into a diagram label is still caught.
+                if _in_mermaid_fence(mermaid_spans, m.start()):
+                    continue
+                # Trailing sentence punctuation is not part of the value. The
+                # loose charclass includes ``.``, so prose like
+                # ``Password: password.`` captured ``password.`` — one character
+                # that defeated the keyword-echo guard below (``'password.' !=
+                # 'password'``) and let the exact-value redactor rewrite every
+                # ``password``-prefixed token in the document, corrupting prose
+                # and code samples alike (2026-07-19 insecure-python-app run).
+                value = value.rstrip(".,;:!?")
                 if _value_is_masked(value):
                     continue
                 # Unquoted code-identifier reference (variable name in an

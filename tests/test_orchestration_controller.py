@@ -1195,3 +1195,70 @@ def test_orchestrator_prompt_needed_signal(monkeypatch, tmp_path, session, headl
         # a divergent, interactive run must carry the fields the SKILL prompt needs
         assert action["orchestrator_recommended_model"]
         assert action["orchestrator_recommendation_reason"]
+
+
+# --- Bootstrap-stub recovery (2026-07-19) -----------------------------------
+# `triage_compute_ranking.py --bootstrap-yaml` leaves a `meta._bootstrap` stub
+# when Phase 11 is cut off. Every gate in `next` only tested that
+# threat-model.yaml EXISTS, so the stub passed as canonical and the run
+# continued on an empty model.
+
+
+def _write_yaml(path: Path, meta: dict) -> None:
+    import yaml
+
+    path.write_text(yaml.safe_dump({"meta": meta, "threats": []}), encoding="utf-8")
+
+
+def test_canonical_yaml_needs_no_upgrade(tmp_path):
+    _write_yaml(tmp_path / "threat-model.yaml", {"analysis_version": 3})
+    assert controller._upgrade_bootstrap_yaml(tmp_path, {}) is True
+
+
+def test_bootstrap_stub_without_intermediates_falls_back(tmp_path):
+    """Nothing to rebuild from → False so `next` re-dispatches Stage 1 rather
+    than composing a report out of an empty model."""
+    _write_yaml(tmp_path / "threat-model.yaml", {"analysis_version": 3, "_bootstrap": True})
+    assert controller._upgrade_bootstrap_yaml(tmp_path, {}) is False
+
+
+def test_unreadable_yaml_is_not_claimed_by_the_bootstrap_gate(tmp_path):
+    """An unparseable yaml is a different failure owned by downstream gates —
+    this helper must not change that behaviour."""
+    (tmp_path / "threat-model.yaml").write_text("{[ broken", encoding="utf-8")
+    assert controller._upgrade_bootstrap_yaml(tmp_path, {}) is True
+
+
+def test_missing_yaml_is_not_claimed_by_the_bootstrap_gate(tmp_path):
+    assert controller._upgrade_bootstrap_yaml(tmp_path, {}) is True
+
+
+def test_bootstrap_stub_is_upgraded_when_rebuild_succeeds(tmp_path, monkeypatch):
+    """Positive path: the rebuild script clears the marker → True, and `next`
+    proceeds on a canonical model."""
+    import yaml
+
+    yaml_path = tmp_path / "threat-model.yaml"
+    _write_yaml(yaml_path, {"analysis_version": 3, "_bootstrap": True})
+
+    def _fake_run(cmd, **kwargs):
+        assert "build_threat_model_yaml.py" in " ".join(str(c) for c in cmd)
+        yaml_path.write_text(
+            yaml.safe_dump({"meta": {"analysis_version": 3}, "threats": [], "attack_surface": [{"id": "AS-1"}]}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(controller.subprocess, "run", _fake_run)
+    assert controller._upgrade_bootstrap_yaml(tmp_path, {"repo_root": str(tmp_path)}) is True
+    assert "_bootstrap" not in yaml.safe_load(yaml_path.read_text(encoding="utf-8"))["meta"]
+
+
+def test_bootstrap_upgrade_survives_a_failing_rebuild(tmp_path, monkeypatch):
+    _write_yaml(tmp_path / "threat-model.yaml", {"analysis_version": 3, "_bootstrap": True})
+    monkeypatch.setattr(
+        controller.subprocess,
+        "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "boom"),
+    )
+    assert controller._upgrade_bootstrap_yaml(tmp_path, {}) is False

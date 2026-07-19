@@ -220,7 +220,7 @@ def _ensure_validation_approach_first(md: str, rules_map: dict, changes: list[st
     _key, rule = _rule_lookup(rules_map, "validation_approach_first")
     if rule is None:
         return md
-    section_title = (rule.get("section_title") or "7.6 Input Boundary Validation Controls").strip()
+    section_title = (rule.get("section_title") or "6.6 Input Boundary Validation Controls").strip()
     patterns = [p for p in (rule.get("approach_heading_patterns") or []) if isinstance(p, str) and p]
     if not patterns:
         return md
@@ -289,8 +289,8 @@ def _ensure_flow_diagrams(md: str, rules_map: dict, changes: list[str]) -> str:
         return md
     diagram_token = (rule.get("flow_diagram_token") or "sequenceDiagram").strip()
     # The IAM section heading is the rules_map bucket key (e.g.
-    # "7.2 Identity and Authentication Controls").
-    section_title = key or "7.2 Identity and Authentication Controls"
+    # "6.2 Identity and Authentication Controls").
+    section_title = key or "6.2 Identity and Authentication Controls"
 
     segs = _segment(md)
     idx = _find_section(segs, section_title)
@@ -322,7 +322,7 @@ def _fold_nonmechanism_auth_subsections(md: str, rules_map: dict, changes: list[
     key, rule = _rule_lookup(rules_map, "auth_method_decomposition")
     if rule is None:
         return md
-    section_title = key or "7.2 Identity and Authentication Controls"
+    section_title = key or "6.2 Identity and Authentication Controls"
     whitelist = [item for item in (rule.get("method_whitelist") or []) if isinstance(item, str)]
     if not whitelist:
         return md

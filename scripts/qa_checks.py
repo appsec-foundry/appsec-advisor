@@ -1869,6 +1869,14 @@ COSMETIC_ACTION_TYPES = frozenset(
         "walkthrough_depth",
         "relevant_findings_bullet_list",
         "recon_iam_bridge",
+        # Infobox thinness is a DATA-SOURCE advisory, not a document defect:
+        # the only remedy is repo metadata (LICENSE, a manifest `[project]`
+        # block, README tags) that the pipeline cannot author. Left
+        # unclassified it fell through to `manual_review` → exit 3, which
+        # forces a QA-agent dispatch on EVERY otherwise-clean run of any repo
+        # without project metadata — a recurring LLM cost for something no
+        # repair pass can ever fix (2026-07-19 insecure-python-app run).
+        "infobox_incomplete",
     }
 )
 
@@ -1881,6 +1889,7 @@ BLOCKING_ACTION_TYPES = frozenset(
         "report_integrity",
         "mermaid_syntax",
         "toc_nested_link",
+        "toc_closure",
         "auth_method_decomposition",
         "validation_approach_first",
         "control_subsection_coverage",
@@ -1993,6 +2002,7 @@ def build_repair_plan(
     mermaid_report = check_mermaid_syntax(md_path)
     toc_contract_report = check_toc_contract(md_path, contract_path)
     toc_nested_report = check_toc_nested_links(md_path)
+    toc_closure_report = check_toc_closure(md_path)
     infobox_report = check_infobox_completeness(md_path)
     auth_report = check_auth_method_decomposition(md_path, contract_path)
     control_coverage_report = check_control_subsection_coverage(md_path, contract_path)
@@ -2017,6 +2027,7 @@ def build_repair_plan(
     mermaid_issues = list(mermaid_report.issues)
     toc_contract_issues = list(toc_contract_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
+    toc_closure_issues = list(toc_closure_report.issues)
     infobox_issues = list(infobox_report.issues)
     auth_issues = list(auth_report.issues)
     control_coverage_issues = list(control_coverage_report.issues)
@@ -2035,6 +2046,7 @@ def build_repair_plan(
     report.issues.extend(mermaid_issues)
     report.issues.extend(toc_contract_issues)
     report.issues.extend(toc_nested_issues)
+    report.issues.extend(toc_closure_issues)
     report.issues.extend(infobox_issues)
     report.issues.extend(auth_issues)
     report.issues.extend(control_coverage_issues)
@@ -2122,6 +2134,37 @@ def build_repair_plan(
                     "the section body as `**Threat:** [T-001](#t-001)` rather than "
                     "putting it in the heading. After editing, re-run "
                     "compose_threat_model.py."
+                ),
+            }
+        )
+    # Single action for dead internal links. Until 2026-07-19 `toc_closure` ran
+    # only in the deferred `all` detector battery, which the skill writes solely
+    # on the QA-agent dispatch path — so on the clean fast path a document with
+    # dead `[..](#anchor)` links shipped without the defect ever being reported
+    # (that run delivered 12 of them while section_integrity and final_structure
+    # both passed).
+    #
+    # Deliberately NO `fragments_to_rewrite`: the check reports the dangling
+    # anchor, not the fragment that emitted it, and guessing would start the
+    # kind of non-convergent repair loop 89bef74 had to unwind. Blocking without
+    # a writable target classifies as `manual_review` (exit 3) — the defect
+    # blocks the clean fast path and goes to QA triage, but never spins the
+    # fragment-fixer.
+    if toc_closure_issues:
+        actions.append(
+            {
+                "raw_issue": "; ".join(toc_closure_issues),
+                "type": "toc_closure",
+                "section_id": "toc",
+                "fragments_to_rewrite": [],
+                "remediation": (
+                    "One or more `[label](#anchor)` links resolve to nothing in "
+                    "the rendered document. Locate the heading each anchor was "
+                    "meant to target and reconcile the two — most often the "
+                    "link carries a stale section number (`#72-…` after the "
+                    "section was renumbered to §6) or the heading text changed "
+                    "without the link following. Fix the source fragment, then "
+                    "re-run compose_threat_model.py."
                 ),
             }
         )
@@ -2427,6 +2470,7 @@ def build_repair_plan(
             raw in mermaid_issues
             or raw in toc_contract_issues
             or raw in toc_nested_issues
+            or raw in toc_closure_issues
             or raw in infobox_issues
             or raw in auth_issues
             or raw in control_coverage_issues
@@ -2704,11 +2748,17 @@ def _classify_plan_status(
                                 cannot fix this safely (typically
                                 renderer/checker drift or a new unclassified
                                 check); the loop must short-circuit.
-      * ``cosmetic_advisory`` — (2026-06-22) the only writable-fragment actions
-                                are ``severity == "cosmetic"`` (compactness,
-                                walkthrough depth, list shape, recon-IAM hint).
-                                Surfaced as advisories but NOT re-rendered — an
-                                LLM fixer pass is not worth a readability nit.
+      * ``cosmetic_advisory`` — (2026-06-22) the only remaining actions are
+                                ``severity == "cosmetic"`` (compactness,
+                                walkthrough depth, list shape, recon-IAM hint,
+                                infobox thinness). Surfaced as advisories but
+                                NOT re-rendered — an LLM fixer pass is not worth
+                                a readability nit. A cosmetic action need not
+                                name a writable fragment: some (infobox) are
+                                remedied in a data source rather than a
+                                fragment, and demoting those to
+                                ``manual_review`` would spend a QA dispatch on
+                                an advisory that no repair pass can resolve.
       * ``fail``              — at least one BLOCKING action carries a writable
                                 fragment target. The loop iterates as designed.
 
@@ -2729,7 +2779,7 @@ def _classify_plan_status(
     # tagged ``manual_review`` by `_action_severity` above.
     blocking = any(a.get("severity", "blocking") == "blocking" for a in actions)
     actionable = any(a.get("fragments_to_rewrite") and a.get("severity", "blocking") == "blocking" for a in actions)
-    cosmetic = any(a.get("fragments_to_rewrite") and a.get("severity") == "cosmetic" for a in actions)
+    cosmetic = any(a.get("severity") == "cosmetic" for a in actions)
     if not issues:
         return "pass", actionable
     if blocking:

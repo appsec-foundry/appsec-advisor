@@ -1039,6 +1039,62 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
 _REQUIRED_RENDER_FRAGMENTS = ("ms-verdict.json", "security-architecture.md")
 
 
+def _upgrade_bootstrap_yaml(output_dir: Path, cfg: dict[str, Any]) -> bool:
+    """Rebuild a ``_bootstrap`` stub ``threat-model.yaml`` into the canonical one.
+
+    ``triage_compute_ranking.py --bootstrap-yaml`` writes a minimal stub
+    (``meta._bootstrap: true`` — threats only, no attack surface, trust
+    boundaries or security controls) so a Phase-11 cut-off still leaves *a* yaml
+    on disk. Every gate in ``next`` only tested that the file EXISTS, so the stub
+    sailed through as if it were canonical: the 2026-07-19 insecure-python-app
+    run lost Analyst-B to a session limit, kept a stub carrying 46 threats and 0
+    attack-surface entries, and the finalize gate still answered ``stage3``.
+
+    ``build_threat_model_yaml.py`` already recognises the stub and rebuilds it
+    from the Stage-1 intermediates, so this recovery is deterministic and needs
+    no agent — the same shape as ``_compose_if_ready`` for the report itself.
+
+    Returns True when the yaml is (or has become) canonical, False when the stub
+    could not be upgraded so the caller can fall back to a Stage-1 dispatch.
+    Fail-safe: never raises into ``next``'s JSON output.
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+
+    def _is_bootstrap() -> bool | None:
+        """True/False, or None when the yaml cannot be read or parsed."""
+        try:
+            import yaml  # local import: a missing dep must not break `next`
+
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+        return bool((data.get("meta") or {}).get("_bootstrap"))
+
+    state = _is_bootstrap()
+    if state is not True:
+        # Canonical, or unreadable — an unparseable yaml is a different failure
+        # that the existing downstream gates own. Only the stub is ours.
+        return True
+
+    args = [str(output_dir)]
+    if repo_root := str(cfg.get("repo_root") or ""):
+        args += ["--repo-root", repo_root]
+    args += ["--plugin-root", str(SCRIPT_DIR.parent)]
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "build_threat_model_yaml.py"), *args],
+            cwd=str(SCRIPT_DIR),
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return False
+    return _is_bootstrap() is False
+
+
 def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     """Deterministically compose ``threat-model.md`` from on-disk fragments.
 
@@ -1181,6 +1237,15 @@ def next_action(output_dir: Path) -> dict[str, Any]:
         "dispatch_values": _dispatch_values(cfg),
     }
     if not (output_dir / "threat-model.yaml").is_file():
+        return {
+            **common,
+            "action": "dispatch_agent",
+            "stage": "stage1",
+            "instruction_file": str(LEGACY_RUNTIME),
+        }
+    # A bootstrap stub IS a file but is not a model — upgrade it deterministically
+    # before anything downstream treats it as canonical. Unrecoverable ⇒ Stage 1.
+    if not _upgrade_bootstrap_yaml(output_dir, cfg):
         return {
             **common,
             "action": "dispatch_agent",

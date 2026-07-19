@@ -402,3 +402,59 @@ def test_main_mask_mode_masks_and_reports(secret_scan, tmp_path, capsys):
     assert "aws_access_key" in out
     assert str(clean) not in out
     assert secret_scan.scan_file(leak) == []
+
+
+# --- Regression: loose-pattern false positives that corrupted a shipped report
+# (2026-07-19 insecure-python-app run). Each of the three guards below let the
+# exact-value redactor rewrite legitimate prose/code; the strict-format patterns
+# must keep firing in exactly the same contexts.
+
+
+def test_trailing_sentence_punctuation_does_not_defeat_keyword_echo(secret_scan):
+    """``Password: password.`` captured ``password.`` — the trailing period made
+    the keyword-echo guard miss, and the redactor then rewrote every
+    ``password``-prefixed token document-wide."""
+    prose = "Demo users: alice, bob, admin. Password: password. <a href=/register>"
+    assert secret_scan.scan_text(prose) == []
+
+
+def test_snake_case_identifier_is_a_code_reference(secret_scan):
+    assert secret_scan.scan_text("Auth: read_unsigned_jwt_claims") == []
+    assert secret_scan.scan_text("Auth: decode_homegrown_session_token") == []
+
+
+def test_mermaid_labels_are_not_credential_assignments(secret_scan):
+    diagram = (
+        "```mermaid\n"
+        "sequenceDiagram\n"
+        '    participant Auth as "auth.py:84"\n'
+        "    Auth->>Auth: base64-decode payload\n"
+        "```\n"
+    )
+    assert secret_scan.scan_text(diagram) == []
+
+
+def test_strict_formats_still_fire_inside_mermaid(secret_scan):
+    """Mermaid is exempt from the LOOSE pattern only — a real token pasted into a
+    diagram label is still a leak."""
+    diagram = (
+        "```mermaid\n"
+        "    A->>B: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        ".eyJyb2xlIjoiQURNSU4ifQ.sigsigsigsig\n"
+        "```\n"
+    )
+    assert [h.pattern for h in secret_scan.scan_text(diagram)] == ["jwt"]
+
+
+def test_secrets_in_non_mermaid_fences_still_fire(secret_scan):
+    """Only ```mermaid is exempt (and only from the loose pattern) — a strict
+    token inside any other fence is a genuine leak. Uses AWS's documentation
+    key: a literal matching a live provider format trips GitHub push
+    protection even as an obvious dummy."""
+    block = '```python\naws_access_key_id = "AKIAIOSFODNN7EXAMPLE"\n```\n'
+    assert "aws_access_key" in {h.pattern for h in secret_scan.scan_text(block)}
+
+
+def test_quoted_keyword_echo_and_opaque_values_still_flag(secret_scan):
+    assert secret_scan.scan_text('password = "password"') != []
+    assert secret_scan.scan_text("secret: deadbeef1234") != []
