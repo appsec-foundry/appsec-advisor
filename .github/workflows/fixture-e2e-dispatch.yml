@@ -1,0 +1,220 @@
+name: Fixture E2E (Dispatch)
+
+# Manually dispatched fixture E2E: run the threat-model pipeline against one or
+# all fixtures from matthiasrohr/appsec-advisor-fixtures and verify each report
+# against that fixture's out-of-repo oracle.
+#
+# Deliberately separate from threat-model-dispatch.yml. That workflow scans a
+# real external app (insecure-spring-app, juice-shop, ...) untrusted and produces
+# a report; this one runs our own trusted fixtures and asserts recall against an
+# oracle. Different inputs, different pass criterion, no shared preset file.
+#
+# Flexibility contract: fixtures are DISCOVERED from <fixture-root>/repos at run
+# time. Adding a fixture to the fixtures repo requires no edit here and none in
+# .github/fixture-presets.json (that file only holds per-depth time budgets).
+# The `fixture` input is free text for exactly that reason - GitHub cannot fill a
+# `type: choice` dropdown dynamically, so a dropdown would be the one place you
+# would have to remember to update.
+#
+# Auth: subscription billing via the CLAUDE_CODE_OAUTH_TOKEN secret
+# (`claude setup-token`). ANTHROPIC_API_KEY is deliberately NOT set — it would
+# take precedence and switch billing to per-token.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixture:
+        description: "Fixture directory name under <fixtures>/repos, or 'all' for every single-repo fixture"
+        type: string
+        required: true
+        default: all
+      depth:
+        description: "Assessment depth"
+        type: choice
+        required: true
+        default: quick
+        options: [quick, standard, thorough]
+      plugin_ref:
+        description: "appsec-advisor ref to run (blank = the branch you dispatched from)"
+        type: string
+        required: false
+        default: ""
+      fixtures_ref:
+        description: "appsec-advisor-fixtures ref to test against (blank = default branch)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never run the same fixture/depth combination twice at once (shared output dir).
+  group: fixture-e2e-${{ inputs.fixture }}-${{ inputs.depth }}
+  cancel-in-progress: false
+
+jobs:
+  # Discover the fixtures to run and turn them into a matrix. Driver and paths
+  # are derived from the checkout, not hand-maintained: a fixture whose repos/
+  # entry contains a consumer-api/ subdirectory is a cross-repo fixture.
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - name: Checkout appsec-advisor (plugin)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+
+      - name: Checkout appsec-advisor-fixtures
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: matthiasrohr/appsec-advisor-fixtures
+          ref: ${{ inputs.fixtures_ref }}
+          path: fixtures
+          persist-credentials: false
+
+      - name: Discover fixtures
+        id: discover
+        env:
+          FIXTURE: ${{ inputs.fixture }}
+          DEPTH: ${{ inputs.depth }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+
+          requested = os.environ["FIXTURE"].strip()
+          depth = os.environ["DEPTH"]
+
+          presets = json.load(open(".github/fixture-presets.json"))
+          budget = presets["defaults"][depth]["max_duration_sec"]
+          overrides = presets.get("overrides", {})
+
+          repos = Path("fixtures/repos")
+          if not repos.is_dir():
+              print("::error::fixtures checkout has no repos/ directory")
+              sys.exit(1)
+
+          available = sorted(d.name for d in repos.iterdir() if d.is_dir())
+
+          def is_cross_repo(name):
+              return (repos / name / "consumer-api").is_dir()
+
+          if requested == "all":
+              # Mirrors tests/e2e/run-fixture-suite.sh: single-repo fixtures only.
+              selected = [f for f in available if not is_cross_repo(f)]
+          elif requested in available:
+              selected = [requested]
+          else:
+              print(f"::error::fixture '{requested}' not found under repos/. Available: {', '.join(available)} (or 'all')")
+              sys.exit(1)
+
+          entries = []
+          for fixture in selected:
+              cross = is_cross_repo(fixture)
+              entries.append({
+                  "fixture": fixture,
+                  "driver": "cross-repo" if cross else "single",
+                  "depth": depth,
+                  "max_duration_sec": str(
+                      overrides.get(fixture, {}).get(depth, {}).get("max_duration_sec", budget)
+                  ),
+                  "scan_repo": f"fixtures/repos/{fixture}/consumer-api" if cross else f"fixtures/repos/{fixture}",
+                  "output_dir": f"fixtures/outputs/{fixture}-e2e",
+              })
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write("matrix=" + json.dumps(entries) + "\n")
+          print(f"depth={depth} jobs={len(entries)}")
+          for e in entries:
+              print(f"  - {e['fixture']} ({e['driver']}, {e['max_duration_sec']}s) -> {e['scan_repo']}")
+          PY
+
+  fixture-e2e:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 180   # job notbremse; --max-duration is the per-run cap
+    strategy:
+      fail-fast: false
+      # One subscription token serves the whole matrix — keep concurrent Claude
+      # sessions low so `fixture: all` does not trip rate limits.
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    steps:
+      # 1) Plugin (this repo) — the branch you dispatched from, or plugin_ref.
+      - name: Checkout appsec-advisor (plugin)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+          path: .
+
+      # 2) Fixture suite (repos/, oracles/, outputs/) — into ./fixtures.
+      #    The oracle must stay outside the scanned repo; the drivers enforce it.
+      - name: Checkout appsec-advisor-fixtures
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: matthiasrohr/appsec-advisor-fixtures
+          ref: ${{ inputs.fixtures_ref }}
+          path: fixtures
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: |
+          set -euo pipefail
+          npm install -g @anthropic-ai/claude-code@2   # latest 2.x: fixes + API/model compat, no surprise major bump
+          python3 -m pip install --quiet pyyaml jsonschema
+          claude --version
+
+      # 3) Write required CC permissions to USER scope (~/.claude/settings.json).
+      #    OUTPUT is passed because the fixture output dir lives under ./fixtures,
+      #    not under the plugin checkout.
+      - name: Write permissions (user scope)
+        run: |
+          make setup-target \
+            REPO="$PWD/${{ matrix.scan_repo }}" \
+            OUTPUT="$PWD/${{ matrix.output_dir }}" \
+            SCOPE=user
+
+      # 4) The run: pipeline + oracle verification. Exit codes are distinct
+      #    (1 preflight, 2 pipeline, 3 missing artifacts, 4 oracle).
+      - name: Run fixture E2E
+        env:
+          # Subscription billing. Do NOT add ANTHROPIC_API_KEY (would override).
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.driver }}" in
+            single)
+              ./scripts/e2e_fixture.sh \
+                --fixture "${{ matrix.fixture }}" \
+                --fixture-root "$PWD/fixtures" \
+                --depth "${{ matrix.depth }}" \
+                --max-duration "${{ matrix.max_duration_sec }}" \
+                --clean-output
+              ;;
+            cross-repo)
+              ./scripts/e2e_cross_repo_fixture.sh \
+                --fixture-root "$PWD/fixtures" \
+                --depth "${{ matrix.depth }}" \
+                --max-duration "${{ matrix.max_duration_sec }}" \
+                --clean-output
+              ;;
+            *)
+              echo "::error::unknown driver '${{ matrix.driver }}'"; exit 1 ;;
+          esac
+
+      # 5) Publish the generated report (md / yaml / sarif / run log) so an
+      #    oracle failure is triageable without a local rerun. `always()` is the
+      #    point: the interesting case is the failing one.
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          # Must be unique per matrix job.
+          name: fixture-e2e-${{ matrix.fixture }}-${{ matrix.depth }}
+          path: ${{ matrix.output_dir }}/
+          if-no-files-found: warn
+          retention-days: 30
