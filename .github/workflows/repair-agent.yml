@@ -181,7 +181,16 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
-          tok="${CLAUDE_CODE_OAUTH_TOKEN:-}"
+          raw="${CLAUDE_CODE_OAUTH_TOKEN:-}"
+          # Strip surrounding whitespace before classifying. A newline or space
+          # picked up while copying (or from `gh secret set < file`) leaves an
+          # otherwise-valid token failing the prefix test AND the API call, with
+          # nothing in the message to suggest why. Report the trim rather than
+          # silently papering over it.
+          tok="$(printf '%s' "$raw" | tr -d '[:space:]')"
+          if [ "$tok" != "$raw" ] && [ -n "$raw" ]; then
+            echo "::warning::CLAUDE_CODE_OAUTH_TOKEN contained whitespace (stored ${#raw} chars, ${#tok} after trimming) — it was almost certainly copied with a leading or trailing newline. Re-set the secret without it; the run continues with the trimmed value."
+          fi
           if [ -z "$tok" ]; then
             echo "::error::secret CLAUDE_CODE_OAUTH_TOKEN is not set — the repair agent cannot authenticate. Create one with 'claude setup-token', then 'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${{ github.repository }}'."
             exit 1

@@ -242,6 +242,25 @@ def test_preflight_accepts_a_subscription_oauth_token(tmp_path, workflow, job):
 
 
 @pytest.mark.parametrize("workflow,job", PREFLIGHTS)
+@pytest.mark.parametrize(
+    "wrapped",
+    ["\n" + VALID_OAUTH, VALID_OAUTH + "\n", " " + VALID_OAUTH, " " + VALID_OAUTH + " "],
+    ids=["leading-newline", "trailing-newline", "leading-space", "both"],
+)
+def test_preflight_trims_whitespace_and_says_so(tmp_path, workflow, job, wrapped):
+    """A copy-paste newline must not read as a malformed credential.
+
+    `gh secret set < file` and terminal copy-paste both pick up a newline. The
+    token is fine; only the stored bytes are wrong. Rejecting it as
+    'unrecognised' sends the user off to regenerate a token that was never the
+    problem — so trim, continue, and name what was trimmed.
+    """
+    result = _run_preflight(tmp_path, workflow, job, wrapped)
+    assert result.returncode == 0, result.stdout
+    assert "contained whitespace" in result.stdout
+
+
+@pytest.mark.parametrize("workflow,job", PREFLIGHTS)
 def test_preflight_never_echoes_the_credential(tmp_path, workflow, job):
     """Job logs are readable by anyone with repo access."""
     secret = "sk-ant-oat01-" + "S3CR3T" * 8
