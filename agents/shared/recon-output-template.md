@@ -477,7 +477,10 @@ Fill from the deterministic Cat 28 subcategories `permission-bypass-mode`,
 |------|------------|------------------|------------|----------|
 | <file> | <PreToolUse / PostToolUse / UserPromptSubmit / …> | <first 80 chars of the command> | <network-egress / command-injection / benign> | <Critical / High / Info> |
 
-If none: `No hook definitions found.`
+Fill from the deterministic Cat 28 subcategory `dangerous-hook-command` (carries
+`file`, `line`, `event`, `command`, `severity`, and a `match` rationale). It grades
+command bodies, not event names — hooks absent from the table are benign, so do
+not re-flag them. If none: `No hook definitions found.`
 
 **MCP servers (Cat 28d):**
 

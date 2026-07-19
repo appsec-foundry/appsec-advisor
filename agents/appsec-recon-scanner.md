@@ -487,10 +487,16 @@ Also flag any **committed** `.claude/settings.local.json` or `.claude/settings.j
 grep -rnE '"(PreToolUse|PostToolUse|Stop|SubagentStop|UserPromptSubmit|SessionStart|Notification)"\s*:' .claude/settings*.json .claude/hooks.json 2>/dev/null
 ```
 
-For each hook command extracted from the JSON:
-- Flag **always** when the command contains `$(`, backticks, or unquoted variable expansion → command injection via hook payload.
-- Flag **always** when the command network-egresses (`curl`, `wget`, `nc`, `http` prefix) — hook can exfiltrate on every tool invocation.
-- Flag **Critical** when the hook is `UserPromptSubmit` and shells out — attacker-controlled prompt text reaches the hook payload before any filtering.
+The deterministic `recon_patterns.py` output already walks the hook structure in
+`.claude/settings*.json` and `.claude/hooks.json` and grades the actual `command`
+bodies, emitting `dangerous-hook-command` with `event`, `command`, `line`, and severity:
+
+- **Critical** — `curl`/`wget` piped into a shell (remote code execution per trigger), or shell substitution in a `UserPromptSubmit` hook (attacker-controlled prompt text reaches the command line unfiltered)
+- **High** — shell substitution (`$(`, backticks) in any other event, network egress (`curl`/`wget`/`nc`/`scp`/URL), or a destructive command
+
+Prefer these structured findings; the grep above is the fallback for malformed
+JSON or non-Claude assistants. A hook that the producer did not grade is benign
+(e.g. a formatter) — do not re-flag it merely because the event name matched.
 
 **28d — MCP server definitions.** MCP (Model Context Protocol) servers expose tools that the assistant can invoke. A committed `.mcp.json` pre-approves those tools for every contributor. Parse every `mcp.json` / `.mcp.json` file found in 28a:
 

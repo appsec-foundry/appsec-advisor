@@ -67,7 +67,7 @@ import os
 import re
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 # Try to load the central exclude policy. Fall back to a minimal built-in
 # set if scan_excludes is unavailable — the script must not hard-fail when
@@ -2555,6 +2555,119 @@ def _scan_claude_permissions(path: Path, rel: str) -> list[dict[str, Any]]:
     return findings
 
 
+# --- Cat 28c: hook command bodies (deterministic) --------------------------
+# `_CAT28_DANGEROUS` only ever matched the literal event-key names, so a benign
+# formatter hook was flagged while an exfiltrating `curl` hook was not, and
+# `UserPromptSubmit` was absent from the regex entirely. The checks below walk
+# the hook structure and grade the actual `command` bodies.
+
+_HOOK_EVENTS = {
+    "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SubagentStop",
+    "SessionStart", "SessionEnd", "Notification", "PreCompact",
+}
+_HOOK_PIPE_TO_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:ba)?sh\b")
+_HOOK_SUBSTITUTION_RE = re.compile(r"\$\(|`")
+_HOOK_EGRESS_RE = re.compile(r"(?i)(\bcurl\b|\bwget\b|\bnc\b|\bncat\b|\bscp\b|https?://)")
+_HOOK_DESTRUCTIVE_RE = re.compile(r"(?i)(\brm\s+-[rf]{1,2}\b|\bchmod\s+777\b|\bdd\s+if=)")
+
+
+def _classify_hook_command(event: str, command: str) -> dict[str, str] | None:
+    """Grade one hook `command` body. Returns None when not a real risk."""
+    if _HOOK_PIPE_TO_SHELL_RE.search(command):
+        return {
+            "severity": "Critical",
+            "reason": f"`{event}` hook fetches and pipes remote content into a shell — remote code execution on every trigger",
+        }
+    if _HOOK_SUBSTITUTION_RE.search(command):
+        if event == "UserPromptSubmit":
+            # Attacker-controlled prompt text reaches the command line before
+            # any filtering, so substitution here is directly injectable.
+            return {
+                "severity": "Critical",
+                "reason": "`UserPromptSubmit` hook builds a shell command via substitution — prompt text reaches the command line unfiltered",
+            }
+        return {
+            "severity": "High",
+            "reason": f"`{event}` hook uses shell command substitution — tool payload can influence the executed command",
+        }
+    if _HOOK_EGRESS_RE.search(command):
+        return {
+            "severity": "High",
+            "reason": f"`{event}` hook network-egresses on every trigger — a continuous exfiltration channel",
+        }
+    if _HOOK_DESTRUCTIVE_RE.search(command):
+        return {
+            "severity": "High",
+            "reason": f"`{event}` hook runs a destructive command on every trigger",
+        }
+    return None
+
+
+def _iter_hook_commands(data: Any) -> Iterator[tuple[str, str]]:
+    """Yield (event, command) for every hook entry in a settings/hooks object."""
+    if not isinstance(data, dict):
+        return
+    events = data.get("hooks") if isinstance(data.get("hooks"), dict) else data
+    if not isinstance(events, dict):
+        return
+    for event, groups in events.items():
+        if event not in _HOOK_EVENTS or not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            entries = group.get("hooks")
+            entries = entries if isinstance(entries, list) else [group]
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                command = entry.get("command")
+                if isinstance(command, str) and command.strip():
+                    yield str(event), command
+
+
+def _find_hook_line(raw: str, event: str, command: str) -> int | None:
+    """Locate a hook command in the raw JSON, tolerating string escaping."""
+    escaped = json.dumps(command)[1:-1]
+    for needle in (command[:60], escaped[:60], f'"{event}"'):
+        line = _find_line(raw, needle)
+        if line is not None:
+            return line
+    return None
+
+
+def _scan_hook_commands(path: Path, rel: str) -> list[dict[str, Any]]:
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    findings: list[dict[str, Any]] = []
+    for event, command in _iter_hook_commands(data):
+        classified = _classify_hook_command(event, command)
+        if classified is None:
+            continue
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": "dangerous-hook-command",
+                "file": rel,
+                "line": _find_hook_line(raw, event, command),
+                "event": event,
+                "command": command,
+                "severity": classified["severity"],
+                "match": classified["reason"],
+            }
+        )
+    return findings
+
+
+def _is_claude_hooks_path(rel: str) -> bool:
+    parts = PurePosixPath(rel).parts
+    return len(parts) >= 2 and parts[-2] == ".claude" and parts[-1] == "hooks.json"
+
+
 def _is_claude_settings_path(rel: str) -> bool:
     parts = PurePosixPath(rel).parts
     return len(parts) >= 2 and parts[-2] == ".claude" and parts[-1] in _CLAUDE_SETTINGS_NAMES
@@ -2602,6 +2715,8 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
             findings.extend(_scan_mcp_servers(path, rel))
         if _is_claude_settings_path(rel):
             findings.extend(_scan_claude_permissions(path, rel))
+        if _is_claude_settings_path(rel) or _is_claude_hooks_path(rel):
+            findings.extend(_scan_hook_commands(path, rel))
 
     for rel in _AI_CONFIG_PATTERNS:
         add_path(repo_root / rel)
