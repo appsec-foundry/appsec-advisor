@@ -438,10 +438,7 @@ def test_strict_formats_still_fire_inside_mermaid(secret_scan):
     """Mermaid is exempt from the LOOSE pattern only — a real token pasted into a
     diagram label is still a leak."""
     diagram = (
-        "```mermaid\n"
-        "    A->>B: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-        ".eyJyb2xlIjoiQURNSU4ifQ.sigsigsigsig\n"
-        "```\n"
+        "```mermaid\n    A->>B: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQURNSU4ifQ.sigsigsigsig\n```\n"
     )
     assert [h.pattern for h in secret_scan.scan_text(diagram)] == ["jwt"]
 
