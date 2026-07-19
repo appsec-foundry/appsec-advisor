@@ -25,6 +25,9 @@ Resulting layout:
       go-threat-fixture/
       node-typescript-threat-fixture/
       python-langchain-llm-threat-fixture/
+      aws-terraform-threat-fixture/
+      npm-supply-chain-threat-fixture/
+      fifty-service-threat-fixture/
     oracles/
       <fixture>/
     outputs/
@@ -51,6 +54,10 @@ Known single-repo fixtures:
 - `go-threat-fixture`
 - `node-typescript-threat-fixture`
 - `python-langchain-llm-threat-fixture`
+- `aws-terraform-threat-fixture` — Terraform only, no application code
+- `npm-supply-chain-threat-fixture` — npm supply chain in depth, trivial app
+- `fifty-service-threat-fixture` — 50 services, stresses component selection
+  and per-component dispatch; the most expensive fixture in the suite
 
 List them from the plugin root:
 

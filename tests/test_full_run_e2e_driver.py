@@ -69,6 +69,9 @@ def test_external_fixture_suite_covers_all_declared_languages() -> None:
         "go-threat-fixture",
         "node-typescript-threat-fixture",
         "python-langchain-llm-threat-fixture",
+        "aws-terraform-threat-fixture",
+        "npm-supply-chain-threat-fixture",
+        "fifty-service-threat-fixture",
     ):
         assert fixture in script
     assert "--clean-output" in script
