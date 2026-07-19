@@ -107,18 +107,81 @@ APPSEC_FIXTURE_E2E_OUTPUT=/path/to/outputs/python-threat-fixture-e2e \
 
 `.github/workflows/fixture-e2e-dispatch.yml` runs the same drivers on a GitHub
 runner (Actions → *Fixture E2E (Dispatch)* → *Run workflow*). Inputs are
-`fixture` (a directory name under `repos/`, or `all`), `depth`, and optional
-`plugin_ref` / `fixtures_ref`.
+`fixture` (a dropdown: one fixture, or `all`), `depth`, optional
+`plugin_ref` / `fixtures_ref`, and the repair inputs below.
 
-Fixtures are discovered from the `appsec-advisor-fixtures` checkout at run time
-and the driver is derived from the layout (a `consumer-api/` subdirectory means
-cross-repo). Adding a fixture to the fixtures repo therefore needs no workflow
-edit. `.github/fixture-presets.json` holds only the per-depth `--max-duration`
-budgets plus optional per-fixture overrides.
+Paths and driver are still derived from the checkout layout (a `consumer-api/`
+subdirectory means cross-repo), but the fixture *list* is not discovered: GitHub
+cannot fill a `type: choice` input dynamically. **Adding a fixture to the
+fixtures repo means adding it to the `fixture` input's `options` block** — the
+one place it is written down. The `resolve` job reads those options back out of
+the workflow file and compares them against `repos/`, hard-failing on drift and
+naming the offending fixture, so a forgotten entry is loud rather than a
+silently missing dropdown option. `.github/fixture-presets.json` holds only the
+per-depth `--max-duration` budgets plus optional per-fixture overrides.
 
 Each job uploads its output directory as the artifact
 `fixture-e2e-<fixture>-<depth>` (30 days), including on failure, so an oracle
-mismatch can be triaged without a local rerun.
+mismatch can be triaged without a local rerun. The artifact also carries
+`e2e-result.json` (exit code + failure classification) and `e2e-console.log`.
+
+### Triaging a failed run locally
+
+The artifact is a complete output directory, including the dot-prefixed run
+state (`include-hidden-files: true` on the upload step — without it
+`upload-artifact` v4.4+ silently drops every one of those files, which is most
+of the evidence). So a CI failure can be worked exactly like a local one:
+
+```bash
+gh run list --workflow fixture-e2e-dispatch.yml -L 10   # find the red run
+make ci-triage RUN_ID=<run id>                          # fetch + summarise
+```
+
+`make ci-triage` wraps `scripts/ci_triage.sh` and serves this workflow and
+`threat-model-dispatch.yml` alike: it downloads the `fixture-e2e-*` /
+`threat-model-*` artifacts into `.appsec-ci/` (gitignored), prints one line
+per fixture with its exit code and failure kind, and prints the `OUTPUT_DIR` to
+export for each failure. From there the normal
+`fix-run-issues` skill applies — it reads `$OUTPUT_DIR/.run-issues.json` and its
+`fix_recommendation` entries, and needs `APPSEC_PLUGIN_DEV=1` to write to plugin
+files.
+
+This is the default loop when you are at your machine. Repair mode below is the
+asynchronous fallback, not a replacement for it.
+
+### Repair mode
+
+`repair: true` adds a follow-up job that runs only if a fixture job failed. A
+Claude Code agent triages the artifacts, proves the diagnosis against the code,
+fixes the producer, verifies with the targeted tests plus `make lint`, and opens
+a PR against `dev`.
+
+Scope is deliberately narrow: only exits `1`, `2` and `3` (preflight, pipeline,
+missing artifacts) are treated as repairable. Exit `4` — an oracle recall miss —
+is reported in the job summary but never auto-fixed; whether the plugin or the
+oracle is wrong is a judgement call, and an agent optimising toward the oracle
+is the wrong incentive.
+
+If the agent cannot substantiate a diagnosis, or cannot get its change green, it
+makes no commit and the job explains why in the summary instead of opening a PR.
+
+Whether a fix ships is not the agent's call. The job runs
+`.github/workflows/repair-agent.yml`, shared with `threat-model-dispatch.yml`,
+whose `Gate` step requires a regression test under `tests/` (an unreproduced
+defect is not a verified one) and refuses any change touching `.github/` or
+`.claude/`. A refused change is published as the `repair-refused-<run-id>`
+artifact and fails the job rather than being dropped. That runbook
+(`server-side-dispatch.md`) carries the full rationale, which is driven by the
+untrusted-scan case.
+
+To repair a run you already dispatched **without** `repair`, dispatch again with
+`repair_run_id` set to that run's id (from its Actions URL). Nothing is scanned;
+the agent works off the earlier run's artifacts, so it works for any red run
+inside the 30-day retention window.
+
+The PR is opened with `GITHUB_TOKEN`, which by design does not trigger workflows
+— no checks run on the repair branch. Re-dispatch this workflow with
+`plugin_ref: repair/run-<run id>` to validate the fix before merging.
 
 This is separate from `threat-model-dispatch.yml`, which scans untrusted
 external apps and has no oracle assertion.

@@ -316,6 +316,7 @@ Read only when relevant; code/data is authoritative where named. This section is
 - **Cross-repo context:** `docs/related-repos.yaml`, `scripts/load_related_repos.py`, `scripts/build_cross_repo_register.py`, `scripts/slice_cross_repo_for_component.py`.
 - **CLI/run flags:** `skills/create-threat-model/SKILL.md`.
 - **Server-side dispatch:** `.github/workflows/threat-model-dispatch.yml` + `.github/threat-model-presets.json` run a headless threat model on a runner (no local checkout). Procedure, presets, and the OAuth/default-branch gotchas: `docs/internal/runbooks/server-side-dispatch.md`.
+- **CI repair agent:** `.github/workflows/repair-agent.yml` (called by the dispatch workflows, opt-in per run) lets an agent fix a failed run and open a PR against `dev`. Its `Gate` step is a security control, not a lint: a fix ships only with a regression test under `tests/`, and never touching `.github/` or `.claude/` — because the threat-model artifacts it reads derive from untrusted scanned repositories. Do not weaken or bypass it; rationale in `docs/internal/runbooks/server-side-dispatch.md`.
 - **Repo layout and prompt context:** `CONTRIBUTING.md`, `agents/shared/`, `agents/phases/`, `templates/fragments/*.j2`.
 - **Org packaging smoke test:** `github.com/matthiasrohr/appsec-advisor-org-packaging-example`.
 

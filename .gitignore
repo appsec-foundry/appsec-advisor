@@ -38,6 +38,7 @@ tests/fixtures/e2e/_eval-run/
 
 # AppSec runtime state (live progress / in-flight status snapshots)
 .appsec-progress.json
+.appsec-ci/
 
 # Persistent caches (auto-created at runtime)
 .cache/

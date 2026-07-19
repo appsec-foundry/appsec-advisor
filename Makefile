@@ -55,6 +55,11 @@ e2e-full-eval: e2e-full  ## Run the adversarial semantic-quality judge over a fr
 e2e-fixture-suite:  ## Run all six external language/architecture fixtures and their recall oracles
 	@./tests/e2e/run-fixture-suite.sh
 
+.PHONY: ci-triage
+ci-triage:  ## Fetch a dispatched run's artifacts (fixture E2E or threat model) and summarise failures: make ci-triage RUN_ID=<id> [INTO=.appsec-ci]
+	@test -n "$(RUN_ID)" || { echo "ERROR: set RUN_ID=<github run id>. List runs with: gh run list --workflow fixture-e2e-dispatch.yml -L 10"; exit 2; }
+	@./scripts/ci_triage.sh --run-id "$(RUN_ID)" --into "$(or $(INTO),.appsec-ci)"
+
 .PHONY: e2e-full-keep
 e2e-full-keep:  ## Re-run assertions against the previous _last-run/ output (no pipeline re-run)
 	@APPSEC_E2E_FULL=1 \

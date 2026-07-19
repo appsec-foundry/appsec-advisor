@@ -45,6 +45,16 @@ on:
         required: false
         default: ""
         options: ["", "quick", "standard", "thorough"]
+      repair:
+        description: "If this run fails: triage the plugin failure, fix it, and open a PR"
+        type: boolean
+        required: false
+        default: false
+      repair_run_id:
+        description: "Repair-only: run id of an earlier failed run. Set this and NO scan happens - the agent works off that run's artifacts."
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -52,11 +62,14 @@ permissions:
 
 concurrency:
   # Never run the same use_case twice at once (shared output dir semantics).
-  group: threat-model-${{ inputs.use_case }}
+  # A repair-only dispatch scans nothing, so it gets its own group per target run.
+  group: threat-model-${{ inputs.repair_run_id != '' && format('repair-{0}', inputs.repair_run_id) || inputs.use_case }}
   cancel-in-progress: false
 
 jobs:
   threat-model:
+    # Repair-only dispatch scans nothing.
+    if: inputs.repair_run_id == ''
     runs-on: ubuntu-latest
     timeout-minutes: 180   # job notbremse; --max-duration is the per-run cap
     steps:
@@ -220,6 +233,12 @@ jobs:
         with:
           name: threat-model-${{ inputs.use_case }}
           path: ${{ steps.preset.outputs.output_path }}/
+          # The run's diagnostic state is dot-prefixed (.run-issues.json,
+          # .agent-run.log, .appsec-trace.log, ...) and upload-artifact has
+          # excluded hidden files by default since v4.4. Without this the
+          # artifact holds the report but no evidence of why a run failed —
+          # which is what `fix-run-issues` and the repair job both read.
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 90
 
@@ -233,3 +252,27 @@ jobs:
         with:
           sarif_file: ${{ steps.preset.outputs.output_path }}/threat-model.sarif.json
           category: threat-model-${{ inputs.use_case }}
+
+  # Repair a failed run. There is no oracle here — the run is red exactly when
+  # the pipeline broke — so every failure is producer-side by definition and the
+  # exit-code classification the fixture workflow needs does not apply.
+  #
+  # The artifacts of THIS workflow derive from scanning an untrusted external
+  # repository, so the shared repair workflow treats them as a pointer to where
+  # a defect is, never as instructions, and gates the resulting change on an
+  # in-repo regression test. See .github/workflows/repair-agent.yml.
+  repair:
+    needs: threat-model
+    if: >-
+      always() &&
+      (inputs.repair_run_id != '' ||
+       (inputs.repair && needs.threat-model.result == 'failure'))
+    permissions:
+      contents: write        # push the repair branch
+      pull-requests: write   # open the PR
+    uses: ./.github/workflows/repair-agent.yml
+    with:
+      run_id: ${{ inputs.repair_run_id != '' && inputs.repair_run_id || github.run_id }}
+      artifact_pattern: threat-model-*
+      plugin_ref: ${{ inputs.plugin_ref != '' && inputs.plugin_ref || github.ref_name }}
+    secrets: inherit

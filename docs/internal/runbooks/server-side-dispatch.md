@@ -70,6 +70,51 @@ gh run list --workflow threat-model-dispatch.yml
 gh run download <run-id>        # → threat-model-<use_case>/ (md, yaml, sarif, run log, effective-permissions.json)
 ```
 
+The artifact includes the dot-prefixed run state (`.run-issues.json`,
+`.agent-run.log`, `.appsec-trace.log`) because the upload sets
+`include-hidden-files: true` — without it `upload-artifact` v4.4+ drops every
+one of those, which is most of the evidence. So a failed CI run can be worked
+exactly like a local one:
+
+```bash
+make ci-triage RUN_ID=<run-id>   # download + summarise + print OUTPUT_DIR
+```
+
+then point the `fix-run-issues` skill at the printed `OUTPUT_DIR` (it needs
+`APPSEC_PLUGIN_DEV=1` to write to plugin files).
+
+## Repair mode
+
+`repair: true` hands a failed run to `.github/workflows/repair-agent.yml`,
+shared with `fixture-e2e-dispatch.yml`: an agent triages the failure, fixes the
+producer, verifies, and opens a PR against `dev`. To repair a run dispatched
+*without* it, dispatch again with `repair_run_id: <that run's id>` — nothing is
+scanned and the agent works off the earlier artifacts (90-day retention here).
+
+There is no oracle in this workflow, so the run is red exactly when the pipeline
+broke and every failure is producer-side by definition — the exit-code
+classification the fixture workflow needs does not apply.
+
+**This workflow's artifacts derive from scanning an untrusted repository.**
+Report bodies, run logs and issue entries can therefore contain
+attacker-supplied text, and an agent that reads them and writes plugin code is
+a prompt-injection path. Two things contain that, and only the second is
+enforceable:
+
+- The prompt restricts the artifacts to being a *pointer* to where a defect is —
+  never a specification of what to change — and requires the defect be
+  reproduced from this repository alone, with synthetic input.
+- The `Gate` step decides what may ship, regardless of what the agent claims.
+  A change ships only if it includes a regression test under `tests/` (an
+  unreproduced defect is not a verified one) and touches nothing under
+  `.github/` or `.claude/` (self-modifying CI or agent config is never a
+  legitimate outcome). A refused change is not discarded: the staged diff is
+  published as the `repair-refused-<run-id>` artifact and the job fails loudly.
+
+The gate confirms that evidence exists — it cannot confirm the diagnosis is
+right. The PR is opened with `GITHUB_TOKEN`, so no checks run on the branch;
+re-dispatch against `plugin_ref: repair/run-<run-id>` before merging.
+
 ## Operating notes
 
 - **Must live on the default branch.** `workflow_dispatch` only appears in the
