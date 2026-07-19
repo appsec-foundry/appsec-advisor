@@ -45,6 +45,9 @@ on:
           - go-threat-fixture
           - node-typescript-threat-fixture
           - python-langchain-llm-threat-fixture
+          - aws-terraform-threat-fixture
+          - npm-supply-chain-threat-fixture
+          - fifty-service-threat-fixture
           - cross-repo-threat-fixture
       depth:
         description: "Assessment depth"
@@ -140,10 +143,34 @@ jobs:
 
           available = sorted(d.name for d in repos.iterdir() if d.is_dir())
 
+          def layout(name):
+              """Classify a fixture from its shape on disk — never a hand-kept list.
+
+              A fixture directory holding only sub-repositories and no files of
+              its own is a multi-repo fixture. Of those, only the consumer-api
+              shape has a driver: scripts/e2e_cross_repo_fixture.sh hardwires
+              FIXTURE_NAME/CONSUMER_NAME, so it cannot identify the entry point
+              of any other multi-repo layout. Those are 'unsupported' — not
+              broken, just waiting for a driver.
+              """
+              d = repos / name
+              if (d / "consumer-api").is_dir():
+                  return "cross-repo"
+              if not any(p.is_file() for p in d.iterdir()):
+                  return "unsupported"
+              return "single"
+
+          runnable = [f for f in available if layout(f) != "unsupported"]
+          unsupported = [f for f in available if layout(f) == "unsupported"]
+          for f in unsupported:
+              print(f"::notice::'{f}' is a multi-repo fixture with no driver yet "
+                    "(only the consumer-api layout is supported) — skipping it")
+
           # Drift guard: a dropdown cannot be filled at run time, so it can go
           # stale against the fixtures repo. Fail loudly instead of leaving a
-          # fixture silently unselectable.
-          new = [f for f in available if f not in offered]
+          # fixture silently unselectable. Fixtures with no driver are neither
+          # offered nor required — the notice above is the signal for those.
+          new = [f for f in runnable if f not in offered]
           stale = [f for f in offered if f not in available]
           if new or stale:
               if new:
@@ -154,21 +181,22 @@ jobs:
                     ".github/workflows/fixture-e2e-dispatch.yml")
               sys.exit(1)
 
-          def is_cross_repo(name):
-              return (repos / name / "consumer-api").is_dir()
-
           if requested == "all":
               # Mirrors tests/e2e/run-fixture-suite.sh: single-repo fixtures only.
-              selected = [f for f in available if not is_cross_repo(f)]
+              selected = [f for f in available if layout(f) == "single"]
+          elif requested in unsupported:
+              print(f"::error::fixture '{requested}' is a multi-repo fixture with no driver. "
+                    "scripts/e2e_cross_repo_fixture.sh only handles the consumer-api layout.")
+              sys.exit(1)
           elif requested in available:
               selected = [requested]
           else:
-              print(f"::error::fixture '{requested}' not found under repos/. Available: {', '.join(available)} (or 'all')")
+              print(f"::error::fixture '{requested}' not found under repos/. Available: {', '.join(runnable)} (or 'all')")
               sys.exit(1)
 
           entries = []
           for fixture in selected:
-              cross = is_cross_repo(fixture)
+              cross = layout(fixture) == "cross-repo"
               entries.append({
                   "fixture": fixture,
                   "driver": "cross-repo" if cross else "single",

@@ -117,8 +117,15 @@ runner (Actions → *Fixture E2E (Dispatch)* → *Run workflow*). Inputs are
 `fixture` (a dropdown: one fixture, or `all`), `depth`, optional
 `plugin_ref` / `fixtures_ref`, and the repair inputs below.
 
-Paths and driver are still derived from the checkout layout (a `consumer-api/`
-subdirectory means cross-repo), but the fixture *list* is not discovered: GitHub
+Paths and driver are still derived from the checkout layout, never enumerated.
+A fixture directory holding only sub-repositories and no files of its own is a
+multi-repo fixture; of those only the `consumer-api/` shape has a driver, since
+`scripts/e2e_cross_repo_fixture.sh` hardwires the consumer name. Any other
+multi-repo fixture is reported as having no driver yet, skipped by `all`, and
+rejected with a clear error if selected — rather than being mistaken for a
+single repo and scanned as one.
+
+The fixture *list*, by contrast, is not discovered: GitHub
 cannot fill a `type: choice` input dynamically. **Adding a fixture to the
 fixtures repo means adding it to the `fixture` input's `options` block** — the
 one place it is written down. The `resolve` job reads those options back out of
