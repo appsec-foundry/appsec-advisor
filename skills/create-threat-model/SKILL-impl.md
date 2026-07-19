@@ -3887,6 +3887,20 @@ json.dump({'status': 'pass', 'source': 'deterministic-post-content-repair',
        repair_iteration += 1
        rm -f $OUTPUT_DIR/.budget-critical $OUTPUT_DIR/.budget-warning   # fresh-budget clear (G-BC): the REPAIR pass has its own maxTurns; never inherit an earlier stage's wrap-up flag
        dispatch appsec-fragment-fixer (REPAIR_MODE=true) + REPAIR_PLAN_PATH=$OUTPUT_DIR/.qa-repair-plan.json
+       # Transient-capacity guard: if the dispatch never produced a repair
+       # attempt because the SESSION itself was cut off — "session limit",
+       # "rate limit", "overloaded", "usage limit reached" — that is not a
+       # failed repair, and charging it against the budget can burn the whole
+       # allowance (standard depth has MAX_REPAIR_ITERATIONS=1, so a single
+       # limit error hard-fails a run whose document was one edit from clean —
+       # insecure-ai-app 2026-07-19). Roll the counter back and re-dispatch
+       # once. Only do this when the fragment-fixer wrote NOTHING; a fixer that
+       # ran and left the gate failing is a real iteration and must be counted.
+       if dispatch failed with a capacity/limit error AND no fragment was modified:
+           repair_iteration -= 1
+           print "⏳ Repair pass interrupted by a capacity limit — retrying (iteration not counted)"
+           if this rollback already happened once for this stage:
+               print manual-review banner; break   # do not spin on a hard outage
        continue  (back to Stage 3)
 ```
 
