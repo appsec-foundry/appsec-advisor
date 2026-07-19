@@ -11,6 +11,9 @@ rust-threat-fixture
 go-threat-fixture
 node-typescript-threat-fixture
 python-langchain-llm-threat-fixture
+aws-terraform-threat-fixture
+npm-supply-chain-threat-fixture
+fifty-service-threat-fixture
 "
 
 case "$DEPTH" in

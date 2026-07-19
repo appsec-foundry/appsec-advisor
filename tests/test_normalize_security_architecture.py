@@ -5,6 +5,7 @@ normalizer runs and passes after — so detection (qa_checks) and remediation
 (normalizer) stay tied to the same data/sections-contract.yaml.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -328,3 +329,43 @@ def test_subsubsection_heading_not_touched():
     out, changes = nrm.normalize_text(md)
     assert "#### 6.2.1 Password-Based Authentication" in out
     assert not any("heading_canonicalized" in c for c in changes)
+
+
+def test_fold_never_empties_section_of_all_h4():
+    """`_fold_nonmechanism_auth_subsections` must not demote EVERY §6.2 H4.
+
+    `method_whitelist` is an allow-list of *known* auth mechanisms, so a
+    heading missing from it means "unrecognised vocabulary", not "invalid" —
+    Stage 1 legitimately names controls the list never anticipated. Folding all
+    of them leaves §6.2 with zero subsections, which
+    qa_checks.check_control_subsection_coverage rejects as BLOCKING, and the
+    repair loop cannot converge because the only content that would satisfy the
+    gate is what normalization just demoted (insecure-ai-app §6.2, 2026-07-19:
+    "HTTP Route Authentication" + "Identity Verification" both folded).
+    """
+    md = (
+        "### 6.2 Identity and Authentication Controls\n\n"
+        "#### 6.2.1 Totally Unknown Mechanism Alpha\n\n**Status:** Missing\n\n"
+        "#### 6.2.2 Totally Unknown Mechanism Beta\n\n**Status:** Missing\n\n"
+        "### 6.3 Session and Token Controls\n\nBody.\n"
+    )
+    out, _changes = nrm.normalize_text(md)
+    sec = out.split("### 6.2", 1)[1].split("### 6.3", 1)[0]
+    assert re.findall(r"(?m)^#### ", sec), "all §6.2 H4s folded — coverage gate would fail unwinnably"
+
+
+def test_fold_still_demotes_non_mechanism_when_a_peer_survives():
+    """The guard is a floor, not an amnesty: a real mechanism in the section
+    means non-mechanism aspects still fold as before."""
+    md = (
+        "### 6.2 Identity and Authentication Controls\n\n"
+        "#### 6.2.1 Password-Based Authentication\n\n**Status:** Weak\n\n"
+        "#### 6.2.2 Login Rate Limiting\n\n**Status:** Missing\n\n"
+        "### 6.3 Session and Token Controls\n\nBody.\n"
+    )
+    out, changes = nrm.normalize_text(md)
+    sec = out.split("### 6.2", 1)[1].split("### 6.3", 1)[0]
+    assert "#### 6.2.1 Password-Based Authentication" in sec
+    assert "Login Rate Limiting" in sec
+    assert "#### 6.2.2 Login Rate Limiting" not in sec
+    assert any("folded non-mechanism" in c for c in changes)

@@ -9,7 +9,12 @@ surfaces:
     max_bytes: 8000
   thin_full_runtime:
     path: skills/create-threat-model/SKILL-full-runtime.md
-    max_bytes: 12000
+    # Raised 12000 -> 12500 when evidence_verifier became a routed role and its
+    # RESOLVED_JSON mapping was added (2026-07-19). The surface sat at 11962
+    # bytes, so the guard fired on a 50-byte contract addition -- it had no
+    # headroom left for any new field. The new ceiling restores drift-guard
+    # slack; it is not a licence to grow the runtime surface.
+    max_bytes: 12500
   thin_rerender_runtime:
     path: skills/create-threat-model/SKILL-rerender-runtime.md
     max_bytes: 10000
