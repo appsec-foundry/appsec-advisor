@@ -181,11 +181,31 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+          tok="${CLAUDE_CODE_OAUTH_TOKEN:-}"
+          if [ -z "$tok" ]; then
             echo "::error::secret CLAUDE_CODE_OAUTH_TOKEN is not set — the repair agent cannot authenticate. Create one with 'claude setup-token', then 'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${{ github.repository }}'."
             exit 1
           fi
-          echo "subscription token present"
+          # Subscription billing needs the OAuth token from `claude setup-token`
+          # (sk-ant-oat...), not an API key (sk-ant-api...). The secret box takes
+          # either, so the mistake otherwise surfaces as a bare "401 Invalid
+          # bearer token" minutes into the run. Classify by prefix — never echo a
+          # credential, not even masked.
+          case "$tok" in
+            sk-ant-oat*) shape=oauth ;;
+            sk-ant-api*) shape=api-key ;;
+            sk-ant-*)    shape=other-anthropic-credential ;;
+            *)           shape=unrecognised ;;
+          esac
+          if [ "$shape" != oauth ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN holds a '$shape', not a subscription OAuth token — it must start with 'sk-ant-oat'. Run 'claude setup-token'. An API key belongs in ANTHROPIC_API_KEY and would switch billing to per-token, which this workflow deliberately avoids."
+            exit 1
+          fi
+          if [ "${#tok}" -lt 40 ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN looks truncated (${#tok} characters) — re-run 'claude setup-token' and copy the whole value."
+            exit 1
+          fi
+          echo "subscription OAuth token present (sk-ant-oat…, ${#tok} chars)"
 
       - name: Install toolchain
         if: steps.triage.outputs.repairable == 'true'
@@ -194,6 +214,23 @@ jobs:
           npm install -g @anthropic-ai/claude-code@2
           python3 -m pip install --quiet pyyaml jsonschema
           claude --version
+
+      # A well-formed but rejected token would otherwise surface as an agent
+      # session that dies mid-run, which reads like a repair failure.
+      - name: Verify the token is accepted
+        if: steps.triage.outputs.repairable == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -uo pipefail
+          out=$(claude -p "Reply with the single word: ok" --output-format text 2>&1)
+          rc=$?
+          if [ "$rc" -ne 0 ] || printf '%s' "$out" | grep -qiE '401|invalid bearer|not authenticated'; then
+            echo "::error::the token is well-formed but Anthropic rejected it (claude exit $rc). Re-run 'claude setup-token' and update the CLAUDE_CODE_OAUTH_TOKEN secret."
+            printf '%s\n' "$out" | head -5
+            exit 1
+          fi
+          echo "subscription auth accepted"
 
       # The agent: identify -> verify the diagnosis IN THIS REPO -> fix the
       # producer -> verify the fix. It does not touch git; the gate and PR steps
