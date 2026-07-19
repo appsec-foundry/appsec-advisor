@@ -103,6 +103,26 @@ APPSEC_FIXTURE_E2E_OUTPUT=/path/to/outputs/python-threat-fixture-e2e \
   ./scripts/e2e_fixture.sh
 ```
 
+## Run in CI
+
+`.github/workflows/fixture-e2e-dispatch.yml` runs the same drivers on a GitHub
+runner (Actions → *Fixture E2E (Dispatch)* → *Run workflow*). Inputs are
+`fixture` (a directory name under `repos/`, or `all`), `depth`, and optional
+`plugin_ref` / `fixtures_ref`.
+
+Fixtures are discovered from the `appsec-advisor-fixtures` checkout at run time
+and the driver is derived from the layout (a `consumer-api/` subdirectory means
+cross-repo). Adding a fixture to the fixtures repo therefore needs no workflow
+edit. `.github/fixture-presets.json` holds only the per-depth `--max-duration`
+budgets plus optional per-fixture overrides.
+
+Each job uploads its output directory as the artifact
+`fixture-e2e-<fixture>-<depth>` (30 days), including on failure, so an oracle
+mismatch can be triaged without a local rerun.
+
+This is separate from `threat-model-dispatch.yml`, which scans untrusted
+external apps and has no oracle assertion.
+
 ## What Passes
 
 The script exits with `0` only when:
