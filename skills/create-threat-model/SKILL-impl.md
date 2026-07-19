@@ -943,6 +943,9 @@ ORCHESTRATOR_MODEL=$(echo    "$RESOLVED_JSON" | python3 -c "import json,sys;prin
 # without moving the whole session. Passed as the Agent `model` param at dispatch.
 RENDERER_MODEL=$(echo        "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('renderer_model','sonnet'))")
 ABUSE_VERIFIER_MODEL=$(echo  "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('abuse_verifier_model','sonnet'))")
+# Evidence-verifier: same `sonnet` alias treatment. Never route this to Haiku —
+# see the routing comment in resolve_config.py (degenerate all-ambiguous batch).
+EVIDENCE_VERIFIER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('evidence_verifier_model','sonnet'))")
 
 # STRIDE depth profile (Quick-mode A-F reductions, only when
 # --reasoning-model sonnet-economy AND --assessment-depth quick).

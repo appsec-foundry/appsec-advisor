@@ -140,8 +140,17 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         # every depth (no depth variation, like orchestrator). Manual pin via
         # APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL for quality buy-back
         # (Sonnet-5) or cost (4.6) without moving the whole session.
+        #
+        # evidence_verifier stays on SONNET at every tier and depth — including
+        # sonnet-economy, where every other extraction role drops to Haiku.
+        # Verified/refuted/ambiguous discrimination requires reading code
+        # semantics at the cited line; Haiku regressed to stamping every sampled
+        # finding `ambiguous` (0 verified / 0 refuted, ~57ms batch), which
+        # cascaded into an all-review, zero-P1 Mitigation Register. Override via
+        # APPSEC_EVIDENCE_VERIFIER_MODEL only with that failure mode in mind.
         "renderer":         SONNET,
         "abuse_verifier":   SONNET,
+        "evidence_verifier": SONNET,
     },
     ("sonnet-economy", "standard"): {
         "context_resolver": HAIKU,
@@ -152,6 +161,7 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         "orchestrator":     SONNET,
         "renderer":         SONNET,
         "abuse_verifier":   SONNET,
+        "evidence_verifier": SONNET,
     },
     ("sonnet-economy", "thorough"): {
         "context_resolver": HAIKU,
@@ -162,6 +172,7 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         "orchestrator":     SONNET,
         "renderer":         SONNET,
         "abuse_verifier":   SONNET,
+        "evidence_verifier": SONNET,
     },
 }
 
@@ -179,6 +190,7 @@ _DEFAULT_EXTENDED_ROUTING = {
     "orchestrator":     SONNET,
     "renderer":         SONNET,
     "abuse_verifier":   SONNET,
+    "evidence_verifier": SONNET,
 }
 
 # Quick-mode STRIDE depth reduction. The model stays Sonnet — only the
@@ -669,6 +681,7 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
         "orchestrator":     "APPSEC_ORCHESTRATOR_MODEL",
         "renderer":         "APPSEC_RENDERER_MODEL",
         "abuse_verifier":   "APPSEC_ABUSE_VERIFIER_MODEL",
+        "evidence_verifier": "APPSEC_EVIDENCE_VERIFIER_MODEL",
     }
     for k, env in env_map.items():
         if os.environ.get(env):
@@ -683,6 +696,7 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
         "orchestrator_model":     models["orchestrator"],
         "renderer_model":         models["renderer"],
         "abuse_verifier_model":   models["abuse_verifier"],
+        "evidence_verifier_model": models["evidence_verifier"],
     }
 
 
