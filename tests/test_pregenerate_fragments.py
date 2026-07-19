@@ -397,6 +397,33 @@ class TestAiExposure:
         assert "LLM06" in by_id
         assert by_id["LLM06"].get("owasp_asi_id") == "ASI02"
 
+    def test_explicit_owasp_ids_override_title_heuristics_and_surface_asi_only_risk(self):
+        d = {
+            "components": [{"id": "agent-orchestrator", "name": "Agent Orchestrator"}],
+            "threats": [
+                {
+                    "id": "T-071",
+                    "title": "Delegated Agent Token Reuse (agents/auth.py:48)",
+                    "component": "agent-orchestrator",
+                    "risk": "High",
+                    "owasp_asi_ids": ["ASI03"],
+                },
+                {
+                    "id": "T-072",
+                    "title": "Generic Finding (chat.py:12)",
+                    "component": "agent-orchestrator",
+                    "risk": "High",
+                    "owasp_llm_ids": ["LLM06"],
+                    "owasp_asi_ids": ["ASI02"],
+                },
+            ],
+        }
+        data = json.loads(pf.gen_ai_exposure(d))
+        by_asi = {r.get("owasp_asi_id"): r for r in data["ai_risks"]}
+        assert by_asi["ASI03"]["name"] == "Agent Identity & Privilege Abuse"
+        assert by_asi["ASI03"]["findings"][0]["ref"] == "T-071"
+        assert by_asi["ASI02"]["owasp_llm_id"] == "LLM06"
+
     def test_ai_exposure_schema_declares_asi_enum(self):
         """The ai-exposure fragment schema must accept owasp_asi_id ASI01..ASI10
         (contract guard: producer above emits it, schema must permit it)."""

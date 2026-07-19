@@ -30,7 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _path_guard import iter_escaping_symlinks  # noqa: E402
 from _url_guard import validate_target_url  # noqa: E402
 
+# These files are consumed by the host before the plugin's own prompt can
+# establish its untrusted-data boundary. Keep this list intentionally small
+# and executable/instruction-bearing: ordinary source and documentation are
+# still scanned as data, not rejected wholesale.
 _REPO_OWNED_CLAUDE_PATHS = (
+    "CLAUDE.md",
+    "CLAUDE.local.md",
     ".claude/settings.json",
     ".claude/settings.local.json",
     ".claude/hooks.json",

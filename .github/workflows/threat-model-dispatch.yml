@@ -203,10 +203,11 @@ jobs:
       - name: Sanitize untrusted checkout
         run: |
           set -euo pipefail
+          rm -f   target/CLAUDE.md target/CLAUDE.local.md
           rm -rf  target/.claude
           rm -f   target/.vscode/tasks.json
           rm -f   target/.devcontainer/devcontainer.json
-          echo "Stripped repo-owned .claude / IDE task config from ./target"
+          echo "Stripped repo-owned Claude memory, .claude, and IDE task config from ./target"
           # Escaping symlinks are not auto-removed (would change scan scope); the
           # untrusted preflight will abort on them. Surface any for triage:
           esc=$(find target -type l -printf '%p -> %l\n' 2>/dev/null || true)

@@ -41,3 +41,10 @@ def test_artifact_gate_is_fail_closed_on_missing_md() -> None:
     assert 'err "No threat-model.md in $RESULT_DIR — treating as failure (fail-closed)."' in body
     # Guard against a regression back to the md-OR-yaml (fail-open) condition.
     assert '[ ! -s "$RESULT_DIR/threat-model.md" ] && [ ! -s "$RESULT_DIR/threat-model.yaml" ]' not in body
+
+
+def test_headless_scans_default_to_untrusted_mode() -> None:
+    """A repository checkout must opt in before bypassing untrusted preflight."""
+    body = _body()
+    assert 'TRUST_MODE="untrusted"' in body
+    assert 'trusted|untrusted) TRUST_MODE="$2"' in body

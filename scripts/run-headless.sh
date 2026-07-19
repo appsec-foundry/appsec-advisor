@@ -26,7 +26,7 @@
 #   --fail-on <level>       Exit non-zero when delta contains threats at or above
 #                           <level> (critical, high, medium); PR-gate friendly
 #   --no-qa                 Skip the Stage-3 QA reviewer (faster CI runs)
-#   --trust-mode <mode>     trusted (default) | untrusted — when untrusted, runs
+#   --trust-mode <mode>     untrusted (default) | trusted — untrusted runs
 #                           preflight_untrusted.py first (rejects repo-owned hooks
 #                           and out-of-repo symlinks), enforces --strict-urls on
 #                           related-repos fetches, enables APPSEC_LOG_REDACT_PATHS,
@@ -113,6 +113,9 @@ Options:
   --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
                              opus, opus-cheap, sonnet, sonnet-economy
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
+  --trust-mode <mode>         untrusted (default) | trusted. Untrusted mode rejects
+                               repo-owned agent configuration before Claude starts.
+  --strict-urls               Require APPSEC_URL_ALLOWLIST for remote related-repo fetches
   --json                     Return structured JSON output
   --verbose                  Show the full real-time hook event log on stderr
   --quiet                    Suppress live progress output (default shows
@@ -197,7 +200,10 @@ INCREMENTAL_REQUESTED=0
 CLEAN_MODE=""
 CLEAN_FORCE=0
 CLEAN_DRY_RUN=0
-TRUST_MODE="trusted"
+# Target repositories are untrusted by default. Opting into trusted mode is an
+# explicit acknowledgement that repository-resident agent configuration may
+# execute before this plugin establishes its own instruction boundary.
+TRUST_MODE="untrusted"
 STRICT_URLS=0
 RESUME_REQUESTED=0
 FULL_REQUESTED=0

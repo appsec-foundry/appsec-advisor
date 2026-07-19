@@ -141,8 +141,8 @@ CLEANUP
   --clean-all                  Delete everything in the output directory
   --force                      Skip confirmation prompt for --clean-all
 
-TRUST MODE (untrusted repos — see SECURITY.md → Known issues)
-  --trust-mode <mode>          trusted (default) | untrusted
+TRUST MODE (untrusted by default — see SECURITY.md → Known issues)
+  --trust-mode <mode>          untrusted (default) | trusted
                                In untrusted mode the run will:
                                  - run preflight_untrusted.py first and abort
                                    if the repo contains its own Claude Code
@@ -151,6 +151,8 @@ TRUST MODE (untrusted repos — see SECURITY.md → Known issues)
                                  - enforce --strict-urls;
                                  - set APPSEC_LOG_REDACT_PATHS=1 so the run
                                    log does not record sensitive paths.
+                               Use trusted only after reviewing the repository's
+                               committed agent configuration.
   --strict-urls                Require APPSEC_URL_ALLOWLIST for any remote
                                threat_model URL in docs/related-repos.yaml
                                (implied by --trust-mode untrusted).

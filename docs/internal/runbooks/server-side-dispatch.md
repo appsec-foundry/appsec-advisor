@@ -16,7 +16,7 @@ dispatch (use_case=python-standard)
   ├─ checkout plugin  (this repo @ plugin_ref | dispatch branch)  → .
   ├─ resolve preset   (threat-model-presets.json)                 → target_repo, depth, mode, out
   ├─ checkout target  (matthiasrohr/insecure-python-app)          → ./target
-  ├─ sanitize         (rm .claude / IDE task config)              → ./target  (untrusted-safe)
+  ├─ sanitize         (rm Claude memory / .claude / IDE task config) → ./target  (untrusted-safe)
   ├─ write perms      (make setup-target SCOPE=user)              → ~/.claude/settings.json
   ├─ run-headless     (--repo ./target --trust-mode untrusted …)  → out/python-standard/
   ├─ upload-artifact                                              → threat-model-python-standard (90d)

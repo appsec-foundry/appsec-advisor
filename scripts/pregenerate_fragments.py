@@ -5689,6 +5689,45 @@ _LLM_TO_ASI_CROSSWALK = {
     "LLM09": "ASI09",  # Misinformation        → Human-Agent Trust Exploitation
     "LLM10": "ASI08",  # Unbounded Consumption → Cascading Agent Failures
 }
+_ASI_RISK_DETAILS = {
+    "ASI01": ("Agent Goal Hijack", "Untrusted context can redirect the agent's multi-step goal or plan."),
+    "ASI02": (
+        "Tool Misuse & Exploitation",
+        "Model-controlled tool use can exceed the intended authorization boundary.",
+    ),
+    "ASI03": (
+        "Agent Identity & Privilege Abuse",
+        "The agent can act with an over-broad or inherited identity instead of scoped delegation.",
+    ),
+    "ASI04": (
+        "Agentic Supply Chain",
+        "Tools, MCP servers, plugins, or personas lack sufficient provenance and integrity controls.",
+    ),
+    "ASI05": (
+        "Unexpected Code Execution",
+        "Agent-generated code or commands can reach execution sinks without an adequate sandbox.",
+    ),
+    "ASI06": (
+        "Memory & Context Poisoning",
+        "Persistent memory or shared retrieval context can be poisoned and reused across runs or tenants.",
+    ),
+    "ASI07": (
+        "Insecure Inter-Agent Communication",
+        "Peer-agent messages are trusted without sufficient authentication, integrity, or validation.",
+    ),
+    "ASI08": (
+        "Cascading Agent Failures",
+        "Unbounded loops or tool chains can amplify a single failure into a wider outage or cost event.",
+    ),
+    "ASI09": (
+        "Human-Agent Trust Exploitation",
+        "High-impact agent output or actions can be mistaken for authoritative human or system decisions.",
+    ),
+    "ASI10": (
+        "Rogue Agents",
+        "Standing agent privileges, monitoring, or revocation controls do not bound a compromised agent's blast radius.",
+    ),
+}
 # Substrings that mark a genuine agentic surface (tools/memory/multi-agent/autonomy)
 # in a threat's title+evidence+impact blob. Word-anchored where the token is short.
 _AGENTIC_KEYWORDS = (
@@ -5778,24 +5817,37 @@ def gen_ai_exposure(yaml_data: dict):
     # API...") once its OWN title already matched a keyword (juice-shop
     # 2026-07-02: T-040 lived on the generic "backend-api" component).
     buckets: dict[str, dict] = {}
+    llm_rules_by_id = {rule[0]: rule for rule in _LLM_TOP10_RULES}
+
+    def add_llm_bucket(llm_id: str, threat: dict) -> None:
+        rule = llm_rules_by_id.get(llm_id)
+        if rule is None:
+            return
+        _, name, _, description, _ = rule
+        bucket = buckets.setdefault(llm_id, {"name": name, "description": description, "threats": [], "sev_rank": -1})
+        if threat not in bucket["threats"]:
+            bucket["threats"].append(threat)
+        sev = str(threat.get("effective_severity") or threat.get("risk") or "").lower()
+        bucket["sev_rank"] = max(bucket["sev_rank"], _SEVERITY_RANK.get(sev, 1))
+
     for th in threats:
         title = th.get("title", "") or ""
         title_lc = title.lower()
         context_blob_lc = " ".join(
             str(th.get(f, "") or "") for f in ("title", "evidence_summary", "impact_description")
         ).lower()
+        explicit_ids = th.get("owasp_llm_ids")
+        if isinstance(explicit_ids, list) and explicit_ids:
+            for llm_id in explicit_ids:
+                if isinstance(llm_id, str):
+                    add_llm_bucket(llm_id, th)
+            continue
         for llm_id, name, keywords, description, strong in _LLM_TOP10_RULES:
             if not any(kw in title_lc for kw in keywords):
                 continue
             if not strong and not _llm_context(th, context_blob_lc):
                 continue
-            b = buckets.setdefault(
-                llm_id,
-                {"name": name, "description": description, "threats": [], "sev_rank": -1},
-            )
-            b["threats"].append(th)
-            sev = str(th.get("effective_severity") or th.get("risk") or "").lower()
-            b["sev_rank"] = max(b["sev_rank"], _SEVERITY_RANK.get(sev, 1))
+            add_llm_bucket(llm_id, th)
             break
 
     # Agentic surface? Only then does the LLM→ASI crosswalk apply, so a plain
@@ -5809,11 +5861,6 @@ def gen_ai_exposure(yaml_data: dict):
         str(c.get("name") or "").lower() + " " + str(c.get("description") or "").lower() for c in components
     )
     agentic_surface = any(kw in agentic_blob for kw in _AGENTIC_KEYWORDS)
-
-    if not buckets:
-        # No LLM-categorizable threat — even if a component looks LLM-ish, there
-        # is no concrete risk to surface, so emit nothing (zero-cost contract).
-        return None
 
     ai_risks = []
     for llm_id, b in buckets.items():
@@ -5850,12 +5897,75 @@ def gen_ai_exposure(yaml_data: dict):
             "description": b["description"],
             "findings": findings,
         }
-        asi_id = _LLM_TO_ASI_CROSSWALK.get(llm_id) if agentic_surface else None
+        explicit_asi_ids = [
+            asi_id
+            for threat in group_sorted
+            for asi_id in (threat.get("owasp_asi_ids") or [])
+            if isinstance(asi_id, str) and asi_id in _ASI_RISK_DETAILS
+        ]
+        asi_id = (
+            explicit_asi_ids[0]
+            if explicit_asi_ids
+            else (_LLM_TO_ASI_CROSSWALK.get(llm_id) if agentic_surface else None)
+        )
         if asi_id:
             risk["owasp_asi_id"] = asi_id
         if affected:
             risk["affected_components"] = affected[:8]
         ai_risks.append((b["sev_rank"], llm_id, risk))
+
+    emitted_asi_ids = {risk.get("owasp_asi_id") for _, _, risk in ai_risks}
+    asi_buckets: dict[str, list[dict]] = {}
+    for threat in threats:
+        raw_ids = threat.get("owasp_asi_ids")
+        if not isinstance(raw_ids, list):
+            continue
+        for asi_id in raw_ids:
+            if isinstance(asi_id, str) and asi_id in _ASI_RISK_DETAILS and asi_id not in emitted_asi_ids:
+                asi_buckets.setdefault(asi_id, []).append(threat)
+    for asi_id, group in asi_buckets.items():
+        details = _ASI_RISK_DETAILS[asi_id]
+        group_sorted = sorted(
+            group,
+            key=lambda t: (
+                -_SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1),
+                str(t.get("id", "")),
+            ),
+        )
+        findings = [
+            {"ref": t["id"], "label": _clean_finding_label(t.get("title", ""))} for t in group_sorted if t.get("id")
+        ][:6]
+        if not findings:
+            continue
+        affected = []
+        for threat in group_sorted:
+            cnn = cmap.get(threat.get("component"))
+            if cnn and cnn not in affected:
+                affected.append(cnn)
+        risk = {
+            "owasp_asi_id": asi_id,
+            "name": details[0],
+            "severity": _llm_severity_glyph(
+                max(
+                    _SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1)
+                    for t in group_sorted
+                )
+            ),
+            "description": details[1],
+            "findings": findings,
+        }
+        if affected:
+            risk["affected_components"] = affected[:8]
+        ai_risks.append(
+            (
+                max(
+                    _SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1)
+                    for t in group_sorted
+                ),
+                asi_id,
+                risk,
+            )
+        )
 
     if not ai_risks:
         return None

@@ -65,6 +65,7 @@ import fnmatch
 import json
 import os
 import re
+import stat
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator
@@ -2231,9 +2232,130 @@ _MCP_SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|passwd|
 _MCP_REMOTE_URL_RE = re.compile(r"(?i)^https?://")
 _MCP_PUBLIC_REGISTRY_COMMANDS = {"npx", "uvx", "pipx"}
 
+_AI_AGENT_DIR_MARKERS = (
+    (".claude", "agents"),
+    (".claude", "skills"),
+    (".claude", "commands"),
+    (".continue", "assistants"),
+    (".windsurf", "workflows"),
+    (".cursor", "rules"),
+)
+_AI_INSTRUCTION_FILENAMES = {
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENTS.md",
+    "CONVENTIONS.md",
+    ".cursorrules",
+    ".windsurfrules",
+}
+_AI_INSTRUCTION_PATH_SUFFIXES = {
+    ".continue/instructions.md",
+    ".codeium/instructions.md",
+    ".github/copilot-instructions.md",
+}
+_AGENT_TOOL_RE = re.compile(r"(?im)^\s*(?:tools|allowed-tools)\s*:\s*([^\n]+)")
+_AGENT_CAPABLE_TOOL_RE = re.compile(r"(?i)\b(Bash|Write|Edit|MultiEdit|Agent)\b")
+_AGENT_SHELL_RE = re.compile(
+    r"(?i)(```(?:ba)?sh\b|\$\(|`(?:curl|wget|rm|sudo|sh|bash)\b[^`]*`"
+    r"|\b(?:curl|wget)\b[^|\n]*\|\s*(?:ba)?sh\b)"
+)
+_INSTRUCTION_OVERRIDE_RE = re.compile(
+    r"(?i)(ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|rules|prompts)"
+    r"|disregard\s+(?:the\s+)?(?:system|earlier)\s+(?:prompt|instructions)"
+    r"|<\|?(?:im_start|system|assistant)\|?>|\[INST\]|\{role:\s*[\"']system[\"'])"
+)
+_INSTRUCTION_DESTRUCTIVE_RE = re.compile(
+    r"(?i)\b(?:run|execute|invoke|use)\b.{0,32}"
+    r"(?:rm\s+-rf|sudo\b|(?:curl|wget)\b[^|\n]*\|\s*(?:ba)?sh\b|nc\s+-e|base64\s+-d[^|\n]*\|\s*(?:ba)?sh\b)"
+)
+_INSTRUCTION_ENCODED_PAYLOAD_RE = re.compile(r"(?:^|\s)[A-Za-z0-9+/]{100,}={0,2}(?:\s|$)")
+
 
 def _is_mcp_config_path(rel: str) -> bool:
     return PurePosixPath(rel).name in _MCP_CONFIG_NAMES
+
+
+def _is_ai_agent_artifact(rel: str) -> bool:
+    parts = PurePosixPath(rel).parts
+    return any(parts[: len(marker)] == marker for marker in _AI_AGENT_DIR_MARKERS)
+
+
+def _is_ai_instruction_path(rel: str) -> bool:
+    pure = PurePosixPath(rel)
+    if pure.name in _AI_INSTRUCTION_FILENAMES or rel in _AI_INSTRUCTION_PATH_SUFFIXES:
+        return True
+    return _is_ai_agent_artifact(rel) or rel.startswith(".kiro/steering/") or rel.startswith(".github/instructions/")
+
+
+def _scan_agent_artifact(path: Path, rel: str) -> list[dict[str, Any]]:
+    """Flag executable capabilities in a committed agent artifact.
+
+    A bundled agent is data from the target repository, not a trusted plugin
+    instruction. We only flag concrete execution-capability declarations and
+    shell constructs; prose that merely discusses agents remains out of scope.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    findings: list[dict[str, Any]] = []
+    for match in _AGENT_TOOL_RE.finditer(text):
+        tools = sorted(set(_AGENT_CAPABLE_TOOL_RE.findall(match.group(1))))
+        if not tools:
+            continue
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": "agent-capable-tool-declaration",
+                "file": rel,
+                "line": text.count("\n", 0, match.start()) + 1,
+                "tools": tools,
+                "severity": "High" if "Bash" in tools or "Agent" in tools else "Medium",
+                "match": f"agent frontmatter grants {', '.join(tools)} capability",
+            }
+        )
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if _AGENT_SHELL_RE.search(line):
+            findings.append(
+                {
+                    "category": 28,
+                    "subcategory": "agent-shell-construct",
+                    "file": rel,
+                    "line": line_no,
+                    "severity": "High",
+                    "match": line.strip()[:400],
+                }
+            )
+    return findings
+
+
+def _scan_instruction_red_flags(path: Path, rel: str) -> list[dict[str, Any]]:
+    """Detect high-confidence prompt-injection payloads in assistant instructions."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    rules = (
+        ("instruction-override", "Critical", _INSTRUCTION_OVERRIDE_RE),
+        ("destructive-command-in-instruction", "Critical", _INSTRUCTION_DESTRUCTIVE_RE),
+        ("encoded-payload", "High", _INSTRUCTION_ENCODED_PAYLOAD_RE),
+    )
+    findings: list[dict[str, Any]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        for rule, severity, pattern in rules:
+            if pattern.search(line):
+                findings.append(
+                    {
+                        "category": 28,
+                        "subcategory": "instruction-prompt-injection",
+                        "rule": rule,
+                        "file": rel,
+                        "line": line_no,
+                        "severity": severity,
+                        "match": line.strip()[:400],
+                    }
+                )
+    return findings
 
 
 def _mcp_servers_from_config(data: Any) -> dict[str, Any]:
@@ -2401,6 +2523,20 @@ def _scan_mcp_servers(path: Path, rel: str) -> list[dict[str, Any]]:
                 "match": classified["reason"],
             }
         )
+        url = _first_http_url(server_cfg)
+        if isinstance(url, str) and url.lower().startswith("http://"):
+            findings.append(
+                {
+                    "category": 28,
+                    "subcategory": "mcp-insecure-transport",
+                    "file": rel,
+                    "line": None,
+                    "server": str(server_name),
+                    "transport": classified["transport"],
+                    "severity": "High",
+                    "match": "remote MCP server uses cleartext HTTP; credentials and tool traffic can be intercepted",
+                }
+            )
     return findings
 
 
@@ -2699,13 +2835,37 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
 
     def add_path(path: Path) -> None:
         try:
+            rel = str(path.relative_to(repo_root)).replace("\\", "/")
+        except ValueError:
+            return
+        if rel in seen or _is_excluded(rel):
+            return
+        # A symlink/device in the settings location can hide the effective
+        # configuration from both code review and the structured parser below.
+        # Inspect it with lstat before Path.is_file() follows or rejects it.
+        if _is_claude_settings_path(rel):
+            try:
+                mode = path.lstat().st_mode
+            except OSError:
+                mode = None
+            if mode is not None and not stat.S_ISREG(mode):
+                seen.add(rel)
+                findings.append(
+                    {
+                        "category": 28,
+                        "subcategory": "assistant-config-nonregular-file",
+                        "file": rel,
+                        "line": None,
+                        "severity": "Info",
+                        "match": "Claude settings path is not a regular file; inspect the effective local configuration",
+                    }
+                )
+                return
+        try:
             is_file = path.is_file()
         except OSError:
             return
         if not is_file:
-            return
-        rel = str(path.relative_to(repo_root)).replace("\\", "/")
-        if rel in seen or _is_excluded(rel):
             return
         seen.add(rel)
         try:
@@ -2737,6 +2897,10 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
             findings.extend(_scan_claude_permissions(path, rel))
         if _is_claude_settings_path(rel) or _is_claude_hooks_path(rel):
             findings.extend(_scan_hook_commands(path, rel))
+        if _is_ai_agent_artifact(rel):
+            findings.extend(_scan_agent_artifact(path, rel))
+        if _is_ai_instruction_path(rel):
+            findings.extend(_scan_instruction_red_flags(path, rel))
 
     for rel in _AI_CONFIG_PATTERNS:
         add_path(repo_root / rel)
@@ -2802,7 +2966,8 @@ _CAT13_GROUPS: list[tuple[str, str, re.Pattern[str]]] = [
             r"(?i)(\bopenai\b|\banthropic\b|@anthropic-ai|\blangchain\b|@langchain/"
             r"|llama[_-]?index|\bllamaindex\b|\bautogen\b|\bcrewai\b|\blitellm\b"
             r"|\bcohere\b|\bmistralai\b|google\.generativeai|@google/generative-ai"
-            r"|\bollama\b|@azure/openai|\bbedrock-runtime\b|ChatCompletion"
+            r"|google\.genai|@google/genai|\bsemantic[_-]?kernel\b|\bpydantic[_-]?ai\b"
+            r"|\bollama\b|@azure/openai|azure-ai-inference|\bbedrock-runtime\b|ChatCompletion"
             r"|chat\.completions|GenerativeModel|\bInvokeModel\b)"
         ),
     ),
@@ -2810,7 +2975,15 @@ _CAT13_GROUPS: list[tuple[str, str, re.Pattern[str]]] = [
     (
         "agent-framework",
         "strong",
-        re.compile(r"(AgentExecutor|ReActAgent|create_react_agent|create_tool_calling_agent)"),
+        re.compile(
+            r"(?i)(AgentExecutor|ReActAgent|create_react_agent|create_tool_calling_agent"
+            r"|\blanggraph\b|\bAgentGraph\b|create_supervisor|\bsmolagents\b|\bstrands\b)"
+        ),
+    ),
+    (
+        "agent-memory",
+        "strong",
+        re.compile(r"(?i)(ConversationBufferMemory|MemorySaver|PostgresSaver|RedisSaver|checkpointer\s*=)"),
     ),
     (
         "prompt-framework",
@@ -2853,6 +3026,7 @@ _CAT13_PER_SUBCAT_CAP = 20
 # AI surface here. Cat 28 still catalogs them (that is a separate supply-chain
 # signal), which is why this is a Cat-13-local skip, not a global hard-exclude.
 _CAT13_SKIP_DIRS = frozenset({".claude", ".cursor", ".continue", ".codeium", ".aider", ".windsurf"})
+_CAT13_RUNTIME_ARTIFACT_DIRS = frozenset({".active-tool-calls", ".dispatch-context", ".fragments"})
 
 
 def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
@@ -2879,7 +3053,7 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
         if p.suffix.lower() not in _CAT13_EXTS:
             continue
         rel_path = p.relative_to(repo_root)
-        if any(part in _CAT13_SKIP_DIRS for part in rel_path.parts[:-1]):
+        if any(part in _CAT13_SKIP_DIRS | _CAT13_RUNTIME_ARTIFACT_DIRS for part in rel_path.parts[:-1]):
             continue
         rel = str(rel_path).replace("\\", "/")
         try:
