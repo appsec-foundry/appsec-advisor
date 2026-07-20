@@ -296,8 +296,8 @@ in the run log so users know coverage was reduced.
 
 ## Phase 2.6: Architecture Coverage Pre-pass (arch.md)
 
-After Phase 2.5 returns (whether dispatched or skipped), run two
-deterministic Python scripts that produce the architecture-coverage
+After Phase 2.5 returns (whether dispatched or skipped), run deterministic
+Python scripts that produce the architecture-coverage
 artifacts consumed by Phases 6 (`attack_surface[]`), 8 (`security_controls[]`),
 9 (Phase-9 bridge), and 11 (Section 7.2 hypothesis table).
 
@@ -320,19 +320,36 @@ Spring/JAX-RS, and ASP.NET minimal-API patterns. Output is
 `$OUTPUT_DIR/.route-inventory.json` conforming to
 `schemas/route-inventory.schema.json`. Phase 6 consumes it directly.
 
-### Step 2 — Architecture coverage engine
+### Step 2 — Database principal separation (thorough only)
+
+Do not run this scan at `quick` or `standard` depth. At `thorough`, it
+compares explicitly named privileged and unprivileged database clients. A
+shared opaque secret reference is only a hypothesis; a normal finding requires
+the shared literal principal and a matching visible high-privilege grant or
+role attribute. The sidecar never contains a credential value or connection
+string.
+
+```bash
+if [ "$ASSESSMENT_DEPTH" = "thorough" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/database_privilege_separation.py" \
+      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --assessment-depth thorough > /dev/null
+fi
+```
+
+### Step 3 — Architecture coverage engine
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/architecture_coverage_checks.py" \
-    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" > /dev/null
+    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --assessment-depth "$ASSESSMENT_DEPTH" > /dev/null
 
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_END   Architecture coverage engine → .architecture-coverage.json" >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
 The engine evaluates the 5 hard rules (cookie hardening, CORS wildcard +
 credentials, JWT algorithm whitelist, cleartext transport, management-
-endpoint exposure) and the 4 threat-hypothesis rules (XSS, SQLi, broken
-authorization, broken input validation). Output is
+endpoint exposure) and the threat-hypothesis rules (including XSS, SQLi,
+authorization/input-validation coverage, supply-chain and secret posture, and
+the thorough-only database-principal separation rule). Output is
 `$OUTPUT_DIR/.architecture-coverage.json` conforming to
 `schemas/architecture-coverage.schema.json`.
 

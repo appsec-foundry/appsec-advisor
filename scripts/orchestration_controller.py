@@ -460,16 +460,35 @@ def _deactivate_markers() -> None:
 def _prepasses(cfg: dict[str, Any], receipts: list[str]) -> None:
     repo_root = str(cfg["repo_root"])
     output_dir = str(cfg["output_dir"])
-    calls = (
+    depth = str(cfg.get("assessment_depth") or "standard")
+    calls: list[tuple[str, list[str]]] = [
         ("route_inventory.py", ["--repo-root", repo_root, "--output-dir", output_dir]),
-        (
-            "architecture_coverage_checks.py",
-            ["--repo-root", repo_root, "--output-dir", output_dir],
-        ),
-        (
-            "source_auth_scanner.py",
-            ["--repo-root", repo_root, "--output-dir", output_dir, "--quiet"],
-        ),
+    ]
+    if depth == "thorough":
+        calls.append(
+            (
+                "database_privilege_separation.py",
+                [
+                    "--repo-root",
+                    repo_root,
+                    "--output-dir",
+                    output_dir,
+                    "--assessment-depth",
+                    "thorough",
+                ],
+            )
+        )
+    calls.extend(
+        [
+            (
+                "architecture_coverage_checks.py",
+                ["--repo-root", repo_root, "--output-dir", output_dir, "--assessment-depth", depth],
+            ),
+            (
+                "source_auth_scanner.py",
+                ["--repo-root", repo_root, "--output-dir", output_dir, "--quiet"],
+            ),
+        ]
     )
     for name, args in calls:
         completed = _run_script(name, args, acceptable=(0, 1, 2))

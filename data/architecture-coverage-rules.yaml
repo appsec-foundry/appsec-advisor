@@ -4,7 +4,7 @@
 #   * hard_rules         — 5 high-confidence rules (arch.md §Erste Lieferung)
 #                          may emit anti_pattern_candidates or strong control
 #                          assessments; severity capped per critical-criteria.yaml.
-#   * hypothesis_rules   — 6 conservative threat-hypothesis rules
+#   * hypothesis_rules   — 7 conservative threat-hypothesis rules
 #                          (arch.md §Threat-Hypothesis-Regeln).
 #                          MUST default to emit_hypothesis_only; promotion to
 #                          a hard candidate requires source-to-sink evidence
@@ -334,6 +334,56 @@ hard_rules:
       Check whether the management surface is internet-exposed (attack_surface[].auth_required=false) or only reachable on a private network.
 
 hypothesis_rules:
+
+  # Thorough-only: the dedicated scanner inventories explicit named database
+  # clients. It never treats a shared config reference as a confirmed finding
+  # unless a matching high-privilege grant is visible in the assessed repo.
+  - id: ARCH-DBSEP-001
+    title: "Privileged and unprivileged database clients lack verified principal separation"
+    architectural_theme: LeastPrivilege
+    generic_threat_title: "Privilege escalation through shared database principals"
+    hypothesis_id_prefix: ARCH-HYP-DBSEP
+    control: "Database Principal Separation"
+    weakness_mechanism: shared-database-principal
+    domain: AuthZ
+    cwe: CWE-284
+    threat_category_id: TH-06
+    stride: ElevationOfPrivilege
+    weak_or_missing_controls:
+      - "Separate Database Principals"
+      - "Least-Privilege Database Grants"
+      - "Row-Level Security"
+    preconditions: []
+    positive_signals:
+      any_pattern: []
+    exculpatory_signals:
+      any_pattern: []
+    severity_cap: High
+    output: hypothesis_only
+    review_intent: >
+      Thorough-only assessment: privileged and unprivileged database clients
+      must not share a principal that has broad database privileges. A shared
+      environment or secret reference remains a review hypothesis when grants
+      are external or otherwise not visible in the repository.
+    finding_when:
+      - "Named privileged and unprivileged database clients use the same literal principal"
+      - "A visible GRANT ALL PRIVILEGES, SUPERUSER, or BYPASSRLS attribute matches that principal"
+    not_a_finding_when:
+      - "Clients use distinct principals"
+      - "The principal's effective database grants are not visible in the repository"
+    required_evidence: >
+      The two client definitions plus a visible high-privilege grant or role
+      attribute for their shared literal principal. Do not emit credential
+      values, connection strings, or secret contents.
+    severity_reason: >
+      High only after the shared principal and elevated database privilege are
+      both directly evidenced; external grants and opaque secret references are
+      hypotheses, not confirmed vulnerabilities.
+    reviewer_note: >
+      Verify that the privileged client reaches an administrative workflow and
+      that the unprivileged client serves ordinary application traffic. Review
+      managed database grants separately when they are not represented in code,
+      migrations, or infrastructure-as-code.
 
   - id: ARCH-XSS-001
     title: "XSS exposure from weak output encoding"

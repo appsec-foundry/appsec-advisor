@@ -425,6 +425,25 @@ def test_prepasses_restore_canonical_audit_events(monkeypatch, tmp_path):
     assert len(receipts) == 3
 
 
+def test_prepasses_run_database_separation_only_at_thorough_depth(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path)
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        controller,
+        "_run_script",
+        lambda name, args, **kwargs: (calls.append((name, args)) or _completed()),
+    )
+    controller._prepasses(cfg, [])
+    assert "database_privilege_separation.py" not in [name for name, _ in calls]
+
+    calls.clear()
+    cfg["assessment_depth"] = "thorough"
+    controller._prepasses(cfg, [])
+    assert [name for name, _ in calls][:2] == ["route_inventory.py", "database_privilege_separation.py"]
+    architecture_args = next(args for name, args in calls if name == "architecture_coverage_checks.py")
+    assert architecture_args[-2:] == ["--assessment-depth", "thorough"]
+
+
 def test_session_context_advisory_is_session_scoped(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "12345678-full")
     old = (datetime.now(timezone.utc) - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")

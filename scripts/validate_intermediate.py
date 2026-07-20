@@ -60,6 +60,7 @@ _SCHEMA_FILES = {
     "pentest_tasks": "pentest-tasks.schema.yaml",
     "config_scan_findings": "config-scan-findings.schema.yaml",
     "source_auth_findings": "source-auth-findings.schema.yaml",
+    "db_privilege_separation": "db-privilege-separation.schema.yaml",
     "actors_discovered": "actors-discovered.schema.yaml",
     "actors_resolved": "actors-resolved.schema.yaml",
     "actors_repo": "actors-repo.schema.yaml",
@@ -1168,6 +1169,23 @@ def validate_source_auth_findings(data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
+def validate_db_privilege_separation(data: Any) -> tuple[bool, list[str]]:
+    """Validate the thorough-only database-principal separation sidecar."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("db_privilege_separation", data)
+    seen: set[str] = set()
+    for section in ("confirmed_findings", "hypotheses"):
+        for i, record in enumerate(data.get(section, []) or []):
+            if not isinstance(record, dict) or not isinstance(record.get("local_id"), str):
+                continue
+            local_id = record["local_id"]
+            if local_id in seen:
+                errors.append(f"{section}[{i}].local_id '{local_id}' is duplicated")
+            seen.add(local_id)
+    return len(errors) == 0, errors
+
+
 def validate_actors_discovered(data: Any) -> tuple[bool, list[str]]:
     """Validate the Phase-2.7 LLM actor-discovery sidecar."""
     if not isinstance(data, dict):
@@ -1209,6 +1227,7 @@ _VALIDATORS = {
     "pentest_tasks": validate_pentest_tasks,
     "config_scan_findings": validate_config_scan_findings,
     "source_auth_findings": validate_source_auth_findings,
+    "db_privilege_separation": validate_db_privilege_separation,
     "actors_discovered": validate_actors_discovered,
     "actors_resolved": validate_actors_resolved,
     "actors_repo": validate_actors_repo,

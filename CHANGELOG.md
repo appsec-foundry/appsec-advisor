@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Thorough assessments now inspect whether explicitly named privileged and unprivileged database clients share a high-privilege principal. Opaque secret references remain review hypotheses, and the scan never writes credential values or connection strings.
 - Static auth scanning now flags password resets that rely on security-question answers and local password policies that permit fewer than eight characters. Predictable reset tokens remain covered by the existing secure-randomness checks.
 
 ### Fixed

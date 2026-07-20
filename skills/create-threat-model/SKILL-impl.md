@@ -1858,7 +1858,7 @@ When the deadline-watchdog removes `.appsec-lock`, the heartbeat watchdog's loop
 
 `phase-group-recon.md` §2.6 instructs the Stage 1 analyst to run `route_inventory.py` and `architecture_coverage_checks.py` "unconditionally" — but that is an LLM prompt, and under the `STAGE1_PHASE_LIMIT=8` parallel-STRIDE split (and under turn pressure generally) the analyst sometimes skips them. When `.route-inventory.json` is absent, `build_threat_model_yaml.py:build_attack_surface` gets an **empty baseline** and falls back to whatever finding-relevant entry points the analyst hand-authored into `.attack-surface-overrides.json` — typically a dozen vuln-focused, mostly-unauthenticated routes. The symptom is a report whose §5 Attack Surface lists only a handful of authenticated endpoints even though the app exposes dozens (2026-06-04 juice-shop: 4 authenticated rendered vs. 52 detected across 112 real routes).
 
-These three scripts are pure deterministic pattern extraction (~1 s, no LLM, no tokens), so the skill owns them as a hard pre-pass rather than trusting the analyst. Run them **before the Stage 1 dispatch** so `.route-inventory.json` exists when the analyst's Phase 6 reads it AND when Analyst-B's Phase 11 yaml-write composes `attack_surface[]`. Idempotent — a later analyst re-run is a harmless overwrite. Skip only in `--rerender` mode (Stage 1 is bypassed, the inventory from the prior run is reused) and `--dry-run` (sub-1-minute synthetic run). In incremental mode it still runs (the baseline route set is cheap to recompute and a route added/removed since baseline is exactly what an incremental delta wants to see).
+These deterministic scripts are pure pattern extraction (~1 s, no LLM, no tokens), so the skill owns them as a hard pre-pass rather than trusting the analyst. At `thorough` depth the pre-pass additionally evaluates explicit database-principal separation before architecture coverage consumes its evidence; quick and standard do not invoke that scan. Run them **before the Stage 1 dispatch** so `.route-inventory.json` exists when the analyst's Phase 6 reads it AND when Analyst-B's Phase 11 yaml-write composes `attack_surface[]`. Idempotent — a later analyst re-run is a harmless overwrite. Skip only in `--rerender` mode (Stage 1 is bypassed, the inventory from the prior run is reused) and `--dry-run` (sub-1-minute synthetic run). In incremental mode it still runs (the baseline route set is cheap to recompute and a route added/removed since baseline is exactly what an incremental delta wants to see).
 
 `source_auth_scanner.py` is the deterministic broken-access-control scanner (`data/source-auth-checks.yaml` → AUTHZ-001..008: BOLA / IDOR / mass assignment / JWT algorithm-confusion / missing route auth). Its output `.source-auth-findings.json` is ingested by `merge_threats.py:_load_source_auth_findings` into the same `.threats-merged.json` candidate pool the STRIDE analyzer feeds, so the findings flow through triage, evidence verification, and rendering like any other threat. The ingest is file-presence-gated and was already wired end-to-end; this pre-pass is what produces the file (without it the scanner never runs and the eight high-precision authz checks are dead). Run it here — beside the route inventory and under the same guards — for the same reason: an LLM-prompt instruction is unreliable under turn pressure.
 
@@ -1866,8 +1866,14 @@ These three scripts are pure deterministic pattern extraction (~1 s, no LLM, no 
 if [ "$DRY_RUN" != "true" ] && [ "$RERENDER" != "true" ]; then
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/route_inventory.py" \
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
+  # Thorough-only: inspect explicit privileged/unprivileged database-client
+  # separation before architecture coverage consumes its evidence sidecar.
+  if [ "$ASSESSMENT_DEPTH" = "thorough" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/database_privilege_separation.py" \
+        --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --assessment-depth thorough >/dev/null 2>&1 || true
+  fi
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/architecture_coverage_checks.py" \
-      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
+      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --assessment-depth "$ASSESSMENT_DEPTH" >/dev/null 2>&1 || true
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/source_auth_scanner.py" \
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --quiet >/dev/null 2>&1 || true
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/authz_confirm.py" \

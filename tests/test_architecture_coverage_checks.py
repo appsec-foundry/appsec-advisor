@@ -32,13 +32,15 @@ ALL_RULE_IDS = {
     "ARCH-INPUT-001",
     "ARCH-SUPPLY-001",
     "ARCH-SECRET-001",
+    "ARCH-DBSEP-001",
 }
 
 
-def _run_engine(repo: Path, output_dir: Path | None = None) -> dict:
+def _run_engine(repo: Path, output_dir: Path | None = None, depth: str = "standard") -> dict:
     args = [sys.executable, str(ENGINE), "--repo-root", str(repo), "--stdout"]
     if output_dir is not None:
         args += ["--output-dir", str(output_dir)]
+    args += ["--assessment-depth", depth]
     proc = subprocess.run(args, capture_output=True, text=True, check=True)
     return json.loads(proc.stdout)
 
@@ -105,6 +107,50 @@ def test_rules_evaluated_carries_weakness_mechanism_metadata(tmp_path: Path) -> 
     out = _run_engine(tmp_path)
     assert _verdict(out, "ARCH-SQLI-001")["weakness_mechanism"] == "database-query-concatenation"
     assert _verdict(out, "ARCH-XSS-001")["weakness_mechanism"] == "frontend-output-encoding"
+
+
+def test_database_principal_separation_consumes_only_thorough_sidecar(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    output.mkdir()
+    sidecar = {
+        "version": 1,
+        "generated_at": "2026-07-20T00:00:00Z",
+        "assessment_depth": "thorough",
+        "skipped": False,
+        "skip_reason": None,
+        "confirmed_findings": [
+            {
+                "local_id": "DBSEP-001",
+                "title": "shared principal",
+                "cwe": "CWE-284",
+                "principal_kind": "literal",
+                "privileged_aliases": ["adminDb"],
+                "unprivileged_aliases": ["publicDb"],
+                "evidence": [{"file": "db.ts", "line": 3, "signal": "visible grant"}],
+            },
+            {
+                "local_id": "DBSEP-002",
+                "title": "another shared principal",
+                "cwe": "CWE-284",
+                "principal_kind": "literal",
+                "privileged_aliases": ["managementDb"],
+                "unprivileged_aliases": ["applicationDb"],
+                "evidence": [{"file": "roles.sql", "line": 7, "signal": "another visible grant"}],
+            },
+        ],
+        "hypotheses": [],
+        "warnings": [],
+    }
+    (output / ".db-privilege-separation.json").write_text(json.dumps(sidecar), encoding="utf-8")
+
+    standard = _run_engine(tmp_path, output)
+    assert _verdict(standard, "ARCH-DBSEP-001")["status"] == "not_applicable"
+    thorough = _run_engine(tmp_path, output, "thorough")
+    hypothesis = next(h for h in thorough["threat_hypotheses"] if h["rule_id"] == "ARCH-DBSEP-001")
+    assert hypothesis["proof_state"] == "confirmed"
+    assert hypothesis["confidence"] == "high"
+    assert len([h for h in thorough["threat_hypotheses"] if h["rule_id"] == "ARCH-DBSEP-001"]) == 1
+    assert {e["file"] for e in hypothesis["positive_signals"]} == {"db.ts", "roles.sql"}
 
 
 def test_output_validates_against_schema(tmp_path: Path) -> None:

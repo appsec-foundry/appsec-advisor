@@ -75,6 +75,7 @@ EXPECTED_WHITELIST_FILES = {
     ".skill-watchdog.tick",
     # Architecture-coverage delivery (arch.md) — deterministic intermediates.
     ".route-inventory.json",
+    ".db-privilege-separation.json",
     ".architecture-coverage.json",
     ".arch-coverage-threats.json",
 }

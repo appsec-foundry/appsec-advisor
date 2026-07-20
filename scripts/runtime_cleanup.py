@@ -153,11 +153,12 @@ ALWAYS_FILES = [
     # short lines (iter count + epoch); strictly transient.
     ".skill-watchdog.tick",
     # Architecture-coverage delivery (arch.md §Pipeline-Integration) —
-    # all three are deterministic Phase 2.6 / 9 intermediates. The
+    # all four are deterministic Phase 2.6 / 9 intermediates. The
     # promoted findings live in threats-merged / threat-model.yaml; these
     # files exist only for cross-phase wiring and have no value after
     # finalization.
     ".route-inventory.json",
+    ".db-privilege-separation.json",
     ".architecture-coverage.json",
     ".arch-coverage-threats.json",
 ]
