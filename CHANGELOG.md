@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Thorough assessments now inspect whether explicitly named privileged and unprivileged database clients share a high-privilege principal. Opaque secret references remain review hypotheses, and the scan never writes credential values or connection strings.
 - Static auth scanning now flags password resets that rely on security-question answers and local password policies that permit fewer than eight characters. Predictable reset tokens remain covered by the existing secure-randomness checks.
 
+### Changed
+
+- Large full/rebuild scans now dispatch STRIDE analysis in resumable waves of up to eight components. Set `APPSEC_STRIDE_CONCURRENCY=1..32` to tune concurrency; selected components remain in scope, and incomplete component coverage blocks report publication.
+
 ### Fixed
 
 - Full and rebuild runs now keep Stage 1, abuse verification, and report rendering on compact Thin runtime instructions; deterministic gates run through the controller instead of loading the large legacy stage bodies into Sonnet's context.

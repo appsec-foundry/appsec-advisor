@@ -67,6 +67,7 @@ _FULL_INTERMEDIATE_NAMES = {
     ".run-issues.json",
     ".run-issues-fixes.json",
     ".preserved-provenance.json",
+    ".dispatch-waves.json",
 }
 _FULL_INTERMEDIATE_GLOBS = (".stride-*.json", ".merge-*.json")
 
@@ -102,6 +103,7 @@ _REBUILD_NAMES = {
     ".recon-scanner.pid",
     ".recon-scanner.stdout",
     ".coverage-gaps.json",
+    ".dispatch-waves.json",
     ".scan-manifest.txt",
     ".requirements.yaml",
     ".prior-findings-index.json",
@@ -167,6 +169,7 @@ _DISPATCH_KEYS = (
     "skip_attack_walkthroughs",
     "assessment_depth",
     "max_stride_components",
+    "stride_concurrency",
     "stride_turns_simple",
     "stride_turns_moderate",
     "stride_turns_complex",

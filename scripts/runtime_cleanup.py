@@ -39,6 +39,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .recon-scanner.pid
     .recon-scanner.stdout
     .coverage-gaps.json
+    .dispatch-waves.json
     .scan-manifest.txt
     .triage-ranking.json
     .qa-prepass.json
@@ -137,6 +138,9 @@ ALWAYS_FILES = [
     # Coverage-gaps index written by the STRIDE fan-out phase; obsolete after
     # merge and triage complete.
     ".coverage-gaps.json",
+    # Bounded STRIDE wave schedule + persisted two-attempt counters. Component
+    # outputs are the durable audit artifacts; scheduling state is transient.
+    ".dispatch-waves.json",
     # Scan manifest written when --scan-manifest is passed; transient audit
     # file that belongs to the run, not to the persisted threat model.
     ".scan-manifest.txt",

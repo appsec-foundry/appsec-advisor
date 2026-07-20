@@ -122,6 +122,7 @@ SKIP_ATTACK_PATHS_AUTHORING = skip_attack_paths_authoring
 SKIP_ATTACK_WALKTHROUGHS = skip_attack_walkthroughs
 ASSESSMENT_DEPTH = assessment_depth
 MAX_STRIDE_COMPONENTS = max_stride_components
+STRIDE_CONCURRENCY = stride_concurrency
 STRIDE_TURNS_SIMPLE = stride_turns_simple
 STRIDE_TURNS_MODERATE = stride_turns_moderate
 STRIDE_TURNS_COMPLEX = stride_turns_complex

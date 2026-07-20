@@ -9,6 +9,7 @@ Exit codes
     real ``.stride-<id>.json`` files itself instead of dispatching the
     ``appsec-stride-analyzer`` sub-agents the design mandates.
 3   Tool error (bad path).
+4   Selected-component coverage is incomplete after the bounded retry budget.
 
 Why this script exists
 ----------------------
@@ -88,6 +89,8 @@ import json
 import re
 import sys
 from pathlib import Path
+
+import stride_dispatch_waves
 
 # Extracts the dispatched component from a hook line's trailing
 # ``[… COMPONENT_ID=<id> …]`` payload. Both AGENT_SPAWN and AGENT_INVOKE
@@ -263,6 +266,36 @@ def detect_inlined_components(output_dir: Path) -> list[str]:
     return inlined
 
 
+def selected_coverage_errors(output_dir: Path) -> list[dict[str, str]]:
+    """Return strict completion failures when bounded-wave state is present."""
+    plan_path = output_dir / stride_dispatch_waves.PLAN_NAME
+    if not plan_path.is_file():
+        return []
+    try:
+        payload = stride_dispatch_waves.load_status(output_dir)
+    except stride_dispatch_waves.WavePlanError as exc:
+        return [{"component_id": "wave-plan", "reason": str(exc)}]
+    return payload["incomplete"]
+
+
+def _print_coverage_banner(errors: list[dict[str, str]]) -> None:
+    bar = "═" * 62
+    print("", file=sys.stderr)
+    print(bar, file=sys.stderr)
+    print("  ASSESSMENT BLOCKED — selected STRIDE coverage incomplete", file=sys.stderr)
+    print(bar, file=sys.stderr)
+    print("", file=sys.stderr)
+    print("  The following selected components do not have a complete,", file=sys.stderr)
+    print("  schema-valid STRIDE result after the bounded retry budget:", file=sys.stderr)
+    print("", file=sys.stderr)
+    for row in errors:
+        print(f"    • {row['component_id']}: {row['reason']}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("  The merge and report must not claim coverage for these components.", file=sys.stderr)
+    print(bar, file=sys.stderr)
+    print("", file=sys.stderr)
+
+
 def _print_banner(inlined: list[str], output_dir: Path) -> None:
     bar = "═" * 62
     print("", file=sys.stderr)
@@ -320,6 +353,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.incremental:
         return 0  # carry-forward makes the signal ambiguous — not applicable.
+
+    coverage_errors = selected_coverage_errors(output_dir)
+    if coverage_errors:
+        _print_coverage_banner(coverage_errors)
+        return 4
 
     inlined = detect_inlined_components(output_dir)
     if not inlined:

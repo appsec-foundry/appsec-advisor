@@ -199,6 +199,22 @@ class TestResolveAssessmentDepth:
         assert rc.resolve_assessment_depth(ns)["register_severity_floor"] == "low"
 
 
+class TestResolveStrideConcurrency:
+    def test_default(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_STRIDE_CONCURRENCY", raising=False)
+        assert rc.resolve_stride_concurrency() == {"stride_concurrency": 8}
+
+    def test_override(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_STRIDE_CONCURRENCY", "12")
+        assert rc.resolve_stride_concurrency() == {"stride_concurrency": 12}
+
+    @pytest.mark.parametrize("value", ["0", "33", "many"])
+    def test_invalid_override_fails_closed(self, monkeypatch, value):
+        monkeypatch.setenv("APPSEC_STRIDE_CONCURRENCY", value)
+        with pytest.raises(SystemExit, match="APPSEC_STRIDE_CONCURRENCY"):
+            rc.resolve_stride_concurrency()
+
+
 class TestEvidenceVerifierCap:
     def test_depth_defaults_bound_non_critical_work(self):
         caps = {
@@ -1778,8 +1794,8 @@ class TestSummaryActiveOptions:
     def test_parallel_stride_default_on_for_full(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(mode="full")))
-        assert "parallel" in rows["STRIDE disp"]
+        rows = dict(rc._summary_active_options(_base_cfg(mode="full", stride_concurrency=8)))
+        assert "up to 8 concurrent" in rows["STRIDE disp"]
 
     def test_parallel_stride_optout(self, monkeypatch):
         monkeypatch.setenv("APPSEC_PARALLEL_STRIDE", "0")

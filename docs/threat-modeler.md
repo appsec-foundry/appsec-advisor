@@ -114,6 +114,17 @@ Target specific components to reduce cost and review time on large monorepos or 
 /appsec-advisor:create-threat-model focus on the /services/payment-gateway
 ```
 
+### Large component inventories
+
+Full and rebuild scans keep every criteria-selected component in scope, including
+inventories that exceed the operational component ceiling because many services
+are externally reachable. STRIDE analyzers run in resumable waves of up to eight
+components by default; completed component files are reused after an interrupted
+parent session. Set `APPSEC_STRIDE_CONCURRENCY=1..32` in the Claude Code
+environment to tune host pressure without changing coverage. A selected component
+that remains missing, partial, or schema-invalid after one retry blocks merge and
+report publication.
+
 ### With requirements catalog
 
 Use `--requirements` to include your organization's security requirements. See the [harvester guide](harvester.md) for creating the catalog YAML from Confluence, Antora, or other HTML pages.

@@ -151,6 +151,10 @@ When `--output` points outside the target repository, the assessment does not wr
 # Preview scope before committing to a full run
 ./scripts/run-headless.sh --repo /repos/large-monorepo --dry-run
 
+# Lower analyzer concurrency on a constrained runner; coverage is unchanged
+APPSEC_STRIDE_CONCURRENCY=4 \
+  ./scripts/run-headless.sh --repo /repos/large-monorepo --full
+
 # Cap API spend at $3
 ./scripts/run-headless.sh --repo /repos/small-service --max-budget 3
 

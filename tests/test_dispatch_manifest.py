@@ -619,6 +619,17 @@ def test_select_ceiling_never_drops_crownjewel_silently():
     assert not [e for e in report["excluded"] if e["reason"] == "ceiling-overflow"]
 
 
+def test_fifty_exposed_services_lift_ceiling_without_coverage_loss():
+    """A large real microservice estate is not truncated to the safety ceiling."""
+    components = [_c(f"public-service-{index:02d}", zones=["internet"]) for index in range(1, 51)]
+
+    selected, report = bm.select_stride_components(components, "standard", ceiling=10)
+
+    assert [component["id"] for component in selected] == [component["id"] for component in components]
+    assert report["lifted"] is True
+    assert report["excluded"] == []
+
+
 def test_builder_carries_zones_and_crownjewel_through(tmp_path):
     (tmp_path / ".components.json").write_text(
         json.dumps(

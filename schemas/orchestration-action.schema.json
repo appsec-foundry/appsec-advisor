@@ -139,6 +139,7 @@
           "skip_qa",
           "slug",
           "stride_model",
+          "stride_concurrency",
           "stride_profile",
           "stride_turns_complex",
           "stride_turns_moderate",

@@ -18,6 +18,9 @@ the thin full/rebuild and rerender runtimes (the defaults; opt out with
   `SKILL-thin-stage1c.md`, `SKILL-thin-stage2.md`, and
   `SKILL-rerender-runtime.md` own user-visible output, Task lifecycle, and
   Level-0 Agent calls for their modes.
+- `stride_dispatch_waves.py` owns deterministic bounded-wave scheduling,
+  persisted two-attempt counters, resume selection, and the selected-component
+  completion gate. It never changes component selection or analyzer prompts.
 - Existing agents, phase groups, deterministic gates, renderer, QA, and
   cleanup remain authoritative for analysis and report quality.
 

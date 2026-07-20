@@ -66,6 +66,7 @@ EXPECTED_WHITELIST_FILES = {
     ".recon-scanner.pid",
     ".recon-scanner.stdout",
     ".coverage-gaps.json",
+    ".dispatch-waves.json",
     ".scan-manifest.txt",
     ".triage-ranking.json",
     ".qa-prepass.json",

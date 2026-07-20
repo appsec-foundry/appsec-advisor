@@ -260,9 +260,17 @@ DEPTH_PARAMS = {
 # the selector; this only caps a pathologically large inventory (auth/frontend/
 # exposed are never dropped — the ceiling lifts and logs EXPOSURE_CAP_LIFT).
 # Depth-independent: the same operational limit regardless of assessment depth.
-# The recon scanner's own hint cap (max 8) currently bounds the inventory below
-# this, so in practice it rarely binds.
+# Recon deliberately has no hard inventory cap. When positive selection
+# criteria yield more than this ceiling (for example 50 exposed services), the
+# ceiling lifts and bounded dispatch waves control execution pressure instead.
 STRIDE_COMPONENT_CEILING = 10
+
+# Maximum number of per-component STRIDE agents dispatched in one foreground
+# wave. Selection remains uncapped for exposed/security-relevant components;
+# this bounds only concurrent execution pressure. Override for a particular
+# host with APPSEC_STRIDE_CONCURRENCY (1..32).
+STRIDE_DISPATCH_CONCURRENCY = 8
+STRIDE_DISPATCH_CONCURRENCY_MAX = 32
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +372,19 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
         # threat model. Override with --register-severity-floor low to keep them.
         "register_severity_floor": (getattr(ns, "register_severity_floor", None) or "medium"),
     }
+
+
+def resolve_stride_concurrency() -> dict:
+    raw = os.environ.get("APPSEC_STRIDE_CONCURRENCY")
+    if raw is None or not raw.strip():
+        return {"stride_concurrency": STRIDE_DISPATCH_CONCURRENCY}
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise SystemExit("Error: APPSEC_STRIDE_CONCURRENCY must be an integer between 1 and 32") from exc
+    if not 1 <= value <= STRIDE_DISPATCH_CONCURRENCY_MAX:
+        raise SystemExit("Error: APPSEC_STRIDE_CONCURRENCY must be between 1 and 32")
+    return {"stride_concurrency": value}
 
 
 def resolve_evidence_verifier_cap(ns: argparse.Namespace, depth: str) -> dict:
@@ -1677,6 +1698,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
 
     depth_info = resolve_assessment_depth(ns)
     cfg.update(depth_info)
+    cfg.update(resolve_stride_concurrency())
     if ns.evidence_verifier_cap is not None and ns.evidence_verifier_cap < 1:
         raise SystemExit("Error: --evidence-verifier-cap must be at least 1")
     cfg.update(resolve_evidence_verifier_cap(ns, depth_info["assessment_depth"]))
@@ -3027,7 +3049,7 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
         if parallel_active:
             rows.append((
                 "STRIDE disp",
-                "parallel (per-component fan-out, Level-0; default)",
+                f"bounded waves (up to {cfg.get('stride_concurrency', STRIDE_DISPATCH_CONCURRENCY)} concurrent; Level-0)",
             ))
         else:
             rows.append((

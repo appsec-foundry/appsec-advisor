@@ -495,7 +495,7 @@ Follow `phase-group-architecture.md` Phase 8b. Skip if `CHECK_REQUIREMENTS` is `
 
 **⚠ SEQUENCING: STRIDE analyzers MUST NOT be dispatched before Phase 9.** They require outputs from Phases 6–8.
 
-**Dispatch STRIDE analyzers in parallel WHEN the `Agent` tool is available.** For every non-trivial, non-carry-forward component, prefer issuing an `Agent` tool call to `appsec-advisor:appsec-stride-analyzer` so the components fan out concurrently instead of collapsing into one serial context. This is the intended architecture when this agent runs at orchestrator (level-0) scope.
+**Dispatch STRIDE analyzers in bounded parallel waves WHEN the `Agent` tool is available.** For every non-trivial, non-carry-forward component, issue an `Agent` tool call to `appsec-advisor:appsec-stride-analyzer`, with at most `STRIDE_CONCURRENCY` calls in one wave, so components do not collapse into one serial context or an unbounded burst. This is the intended architecture when this agent runs at orchestrator (level-0) scope.
 
 **Lazy-load `phase-group-threats.md` BEFORE dispatching any STRIDE analyzer** (Sprint 4 Item #9). Issue the Read tool call in parallel with the Phase 9 `PHASE_START` Bash call — zero extra turn. Skip if already in memory.
 

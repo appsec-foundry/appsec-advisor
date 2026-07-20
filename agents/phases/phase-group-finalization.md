@@ -1445,6 +1445,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.recon-scanner.pid` | recon-scanner background PID marker |
 | `$OUTPUT_DIR/.recon-scanner.stdout` | recon-scanner transient stdout |
 | `$OUTPUT_DIR/.coverage-gaps.json` | Phase 9 coverage-gap intermediate |
+| `$OUTPUT_DIR/.dispatch-waves.json` | bounded STRIDE wave schedule and retry checkpoint |
 | `$OUTPUT_DIR/.route-inventory.json` | deterministic route-extractor MVP (arch.md) — feeds Phase 6 `attack_surface[]` and architecture-coverage engine |
 | `$OUTPUT_DIR/.db-privilege-separation.json` | thorough-only database principal-separation evidence sidecar consumed by architecture coverage |
 | `$OUTPUT_DIR/.architecture-coverage.json` | always-on architecture-coverage rule evaluations (arch.md) — feeds `security_controls[]` / `threat_hypotheses[]` / Phase-9 bridge |

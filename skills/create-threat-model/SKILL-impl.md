@@ -782,6 +782,7 @@ Parse the user's arguments for the following flags:
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
 | `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json` / `pentest-tasks-<slug>.yaml`, figure and pentest-tasks references rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
+| _(no CLI flag)_ | `APPSEC_STRIDE_CONCURRENCY=1..32` — bound the number of per-component STRIDE analyzers in one resumable wave. Changes execution pressure only; selected-component coverage is unchanged. | `8` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
 - `--with-requirements` → `--requirements`
@@ -926,6 +927,7 @@ REPO_ROOT=$(echo "$RESOLVED_JSON"  | python3 -c "import json,sys;print(json.load
 
 # Reasoning core models (existing)
 STRIDE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['stride_model'])")
+STRIDE_CONCURRENCY=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('stride_concurrency',8))")
 TRIAGE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['triage_model'])")
 MERGER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['merger_model'])")
 
@@ -1346,7 +1348,7 @@ Files
   Depth     : <depth_summary — see _format_depth_summary>
   Reasoning : <reasoning_summary>
   STRIDE cap : <if stride_profile.max_threats_per_category set: ≤<N> per STRIDE category per component (Criticals always kept); else: none — full STRIDE depth (all threats kept)>
-  <if PARALLEL_STRIDE=true:>STRIDE disp: parallel (per-component fan-out, Level-0; default)
+  <if PARALLEL_STRIDE=true:>STRIDE disp: bounded waves (up to <STRIDE_CONCURRENCY> concurrent; Level-0)
   <elif mode∈{full,rebuild} AND APPSEC_PARALLEL_STRIDE=0:>STRIDE disp: serial inline (disabled via APPSEC_PARALLEL_STRIDE=0)
   <if LIVE_PHASE=true:>Live phase : on (background dispatch + console phase)
   <elif env APPSEC_LIVE_PHASE=1 (set but PARALLEL_STRIDE active):>Live phase : requested — inactive (PARALLEL_STRIDE wins)
@@ -1630,6 +1632,7 @@ Full run: discarding stale intermediate artifacts to avoid cross-contamination.
     .fragments/ (compose inputs from prior contract version)
     .pre-render-repair-plan.json, .qa-repair-plan.json, .architect-repair-plan.json (stale repair signals)
     .stage-stats.jsonl, .run-issues.json, .run-issues-fixes.json (prior-run observability — must not bleed into this run's stats)
+    .dispatch-waves.json (bounded STRIDE schedule and retry checkpoint)
   Preserved:
     threat-model.md, threat-model.yaml, threat-model.sarif.json (overwritten by orchestrator)
     .appsec-cache/ (baseline cache; used for incremental fingerprint comparison)
@@ -1651,7 +1654,7 @@ WIPED_COUNT=$(find . -maxdepth 1 \
      -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
      -o -name ".architect-repair-plan.json" \
      -o -name ".stage-stats.jsonl" -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \
-     -o -name ".preserved-provenance.json" \) \
+     -o -name ".preserved-provenance.json" -o -name ".dispatch-waves.json" \) \
   -print -delete 2>/dev/null | wc -l)
 # .stage-stats.jsonl + .run-issues.json + .run-issues-fixes.json are run-scoped
 # observability, NOT carried-forward state. Before 2026-06-13 the full-run wipe
@@ -2147,7 +2150,7 @@ The script prints a full diagnostic to stderr on abort (the unreachable URL, the
 ## Stage 1 — Threat Analysis & Triage
 
 > **⚠ ROUTING — read FIRST. `PARALLEL_STRIDE` was resolved during Configuration Resolution (default-ON for `MODE` ∈ {full, rebuild}; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).**
-> - **If `PARALLEL_STRIDE=true`** → you MUST take the **Parallel-STRIDE split** (Full-M1): dispatch Analyst-A with `STAGE1_PHASE_LIMIT=8`, then run `build_stride_dispatch_manifest.py` → `validate_dispatch_manifest.py` → **fan out one `appsec-stride-analyzer` per component IN PARALLEL** → dispatch Analyst-B with `RESUME_FROM_PHASE=9-merge`. The full procedure is **step 3 → "Parallel-STRIDE variant"** below. Do **NOT** do the default single `STAGE1_PHASE_LIMIT=10b` dispatch in this case.
+> - **If `PARALLEL_STRIDE=true`** → you MUST take the **Parallel-STRIDE split** (Full-M1): dispatch Analyst-A with `STAGE1_PHASE_LIMIT=8`, then run `build_stride_dispatch_manifest.py` → `validate_dispatch_manifest.py` → dispatch one `appsec-stride-analyzer` per selected component in bounded parallel waves → dispatch Analyst-B with `RESUME_FROM_PHASE=9-merge`. The full procedure is **step 3 → "Parallel-STRIDE variant"** below. Do **NOT** do the default single `STAGE1_PHASE_LIMIT=10b` dispatch in this case.
 > - **If `PARALLEL_STRIDE=false` AND `LIVE_PHASE=false`** (opt-out `APPSEC_PARALLEL_STRIDE=0`, or incremental/rerender mode) → use the single-analyst foreground dispatch (step 3 → "Serial variant").
 > - **If `PARALLEL_STRIDE=false` AND `LIVE_PHASE=true`** (opt-in `APPSEC_LIVE_PHASE=1`) → use the **background dispatch + live-phase Monitor** (step 3 → "Live-phase variant"); also start the Monitor in step 2b. `LIVE_PHASE` is never true when `PARALLEL_STRIDE=true` (mutually exclusive, resolved at Configuration Resolution).
 > Verify the values before dispatching AND persist them for forensics (writes a canonical `PARALLEL_STRIDE_RESOLVED` line to `.agent-run.log`, updates `.appsec-progress.json`, and mirrors to stderr — so a post-mortem can tell at a glance which dispatch path was eligible to fire, without re-deriving it from spawn counts). **The `env APPSEC_PARALLEL_STRIDE=` field MUST be the raw `$PARALLEL_STRIDE_ENV` captured in the resolution block (value or `unset`) — never re-inline a `${APPSEC_PARALLEL_STRIDE:-N}` default here, or the line lies about whether a var was actually set:**
@@ -2195,7 +2198,7 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
 3. **Dispatch the orchestrator.**
 
-   **— Parallel-STRIDE variant (`PARALLEL_STRIDE=true` — Full-M1, the DEFAULT for full/rebuild; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).** Instead of one monolithic analyst that inlines STRIDE serially, split Stage 1 so the skill (Level-0, can fan out) dispatches the per-component STRIDE analyzers in parallel:
+   **— Parallel-STRIDE variant (`PARALLEL_STRIDE=true` — Full-M1, the DEFAULT for full/rebuild; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).** Instead of one monolithic analyst that inlines STRIDE serially, split Stage 1 so the skill (Level-0, can fan out) dispatches the per-component STRIDE analyzers in bounded waves:
 
    3a. **Analyst-A** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on the `Stage 1a - Threat Analysis` task to set `activeForm: "Phases 1–8 — recon → architecture → controls"`. This is the only console signal the user gets while Analyst-A is blocking (its internal per-phase `PHASE_START` lines go to `.agent-run.log`, NOT the parent console — a blocking foreground sub-agent's interior never streams). The three coarse labels in 3a/3c/3d are inserted at the natural dispatch seams the orchestrator already controls — no background dispatch, no Monitor, no `LIVE_PHASE`. (Per-phase live ticking would require backgrounding Analyst-A/B; intentionally out of scope here.) Then: Agent call `description: "Threat Analysis & Triage"`, prompt sets **`STAGE1_PHASE_LIMIT=8`** (+ normal config). It runs Phases 1–8 + the Phase-9 dispatch-prep, writes `.stride-analyst-context.json` + `.dispatch-context/<id>/`, then stops (see `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT=8 — Analyst-A branch").
 
@@ -2213,67 +2216,30 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
    ```
    **On `PS_FAIL=1` → graceful fallback (never hard-fail):** log `PARALLEL_STRIDE_FALLBACK` and dispatch a normal single `STAGE1_PHASE_LIMIT=10b` analyst with `RESUME_FROM_PHASE=9` (it re-runs STRIDE inline per the M1-lite escape clause + the rest of Stage 1). Skip 3c/3d. The default flow is unchanged, so a manifest defect degrades to today's behaviour — no regression.
 
+   When the manifest is valid, initialize the deterministic wave checkpoint.
+   This is a hard gate; do not fall back to an unbounded burst or inline
+   analysis if it fails:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" init \
+       "$OUTPUT_DIR" --concurrency "$STRIDE_CONCURRENCY" || exit $?
+   ```
+
    3b-i. **Surface the component selection to the user (required console output).** The builder above prints a `STRIDE component selection (depth=…)` block — `ANALYZED (N)` each with its selection reason, then `SKIPPED (N)` each with its skip reason (e.g. `out-of-scope at depth=standard`). **Render that block to the user verbatim in your response** as a short banner, so the user sees exactly which components get a STRIDE pass and which are skipped and why, *before* the fan-out runs. (It is the console mirror of the report's §1 Scope + §11 Out of Scope, both built from the same `.stride-selection.json` → `meta.component_selection`.) If the builder's stdout is not in view, re-render it deterministically with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_stride_dispatch_manifest.py" --print-selection "$OUTPUT_DIR"`. Do not summarize it away or drop the skip reasons — the skipped list with reasons is the point.
 
-   3c. **Fan out STRIDE analyzers in parallel.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phase 9 — STRIDE (<N> components)"` where `<N>` is the manifest's `components[]` count. (The per-component `"STRIDE: <NAME>"` Agent rows below render natively in the subagent panel — this label just names the phase group above them.)
+   3c. **Dispatch bounded STRIDE waves.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phase 9 — STRIDE (<N> components, waves of up to <STRIDE_CONCURRENCY>)"`.
 
-   **⚠ HARD CONSTRAINT — ONE MESSAGE, ALL COMPONENTS, NO EXCEPTIONS.** Read `.stride-dispatch-manifest.json`; collect ALL `components[]` entries; issue ALL `Agent` calls to `appsec-advisor:appsec-stride-analyzer` **in a SINGLE message turn** (multiple tool-use blocks in one response). This is NOT optional and NOT sequential: every component must be in the SAME message so Claude Code dispatches them concurrently. **DO NOT send one Agent call, wait for it to finish, then send the next.** That sequential pattern collapses the fan-out to a serial chain, multiplying wall-clock by N (observed in production: 6 components × ~4 min each = 27 min instead of 5 min parallel). Concrete check: if you are about to call Agent for component 2 AFTER component 1 returned, you have already violated this constraint — stop and re-read. The proven model is the Stage-1c abuse-verifier dispatch (SKILL-impl.md §"Stage 1c"): all verifiers dispatched in one message, all run concurrently.
+   Repeatedly run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" claim "$OUTPUT_DIR"` and parse the returned JSON. `status=complete` ends the loop. `status=claimed` contains only the unfinished components in the earliest incomplete wave; issue those Agent calls **together in one message** so the wave runs concurrently, then claim again. Attempt 1 is the normal dispatch and attempt 2 is the only retry. Attempts are persisted in `.dispatch-waves.json`, so resume cannot reset the budget. Exit 1 / `status=blocked` is fatal: stop before Analyst-B rather than publishing a report that silently omitted a selected component.
 
-   **Set each Agent call's `description` to `"STRIDE: <NAME>"`** (the component's `name` from the manifest entry — e.g. `"STRIDE: express-api"`) so the Claude Code subagent panel shows one labelled row per component being analyzed. The component name leads the string because the panel truncates. Map each manifest entry to the analyzer's prompt params (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). **Each dispatch prompt MUST also pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instruct the analyzer to `export OUTPUT_DIR=<value>` as its FIRST Bash call** — `agent_progress.sh` silently no-ops unless `OUTPUT_DIR` is a shell env var, so without the export the analyzer writes `.stride-<id>.json` but skips `.progress/<id>.json`, blinding the watchdog and (pre-fix) false-positiving `check_stride_dispatch.py`. **⚠ Set each Agent call's `model` parameter to the tier alias of `$STRIDE_MODEL` — explicitly, on every component.** The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id: reduce `$STRIDE_MODEL` to its tier (`claude-opus-*`→`opus`, `claude-haiku-*`→`haiku`, else `sonnet`; a bare alias passes through), keeping the full id only in the `(model: …)` log lines. If you omit the `model` param, Claude Code silently runs the analyzer on the agent definition's frontmatter default (`model: sonnet` in `agents/appsec-stride-analyzer.md`), so `--reasoning-model opus` is silently ignored for the entire STRIDE phase — the most expensive, value-defining reasoning runs on Sonnet while the config says Opus. (Verified 2026-06-22 juice-shop: every analyzer fell back to Sonnet because the `model` param was omitted; only triage — which sets it — ran on Opus. The post-run issue aggregation (`aggregate_run_issues.py` → `stride_model_mismatch`) now flags this as a non-blocking run-issue in the completion summary.) Wait for all to return — each writes `.stride-<id>.json` + `.progress/<id>.json`. **Issuing the real per-component `Agent` calls here is what makes the run pass the post-Stage-1 gate.** `check_stride_dispatch.py` requires *count-based* dispatch evidence: at least as many `AGENT_SPAWN appsec-stride-analyzer` lines in `.hook-events.log` as the manifest has components (each `Agent` call emits exactly one). **The manifest's existence alone is NOT proof** — it is built in step 3b *before* this fan-out, so it survives a collapse where you build it and then inline STRIDE instead of dispatching; that is the precise failure the gate now catches (it would silently pass pre-2026-06-05). If the spawn count falls short, the gate falls through to the per-component `.progress/` check — so a genuinely-parallel run whose hooks under-logged is still saved by the `.progress/` files the `export OUTPUT_DIR` above guarantees, while a true inline-collapse (no spawns AND no `.progress/`) trips and aborts the run.
+   **Set each Agent call's `description` to `"STRIDE: <NAME>"`** and map every field from the claimed manifest entries to the analyzer prompt (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). Preserve Group A → B → C order. Pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`; require `export OUTPUT_DIR=<value>` as the analyzer's first Bash call; set `run_in_background: false`; and reduce `$STRIDE_MODEL` to the bare `sonnet`/`opus`/`haiku` Agent model alias. Record each wave's usage with `record_stage_stats.py --accumulate` before claiming the next wave.
 
-   **3c-retry — Stub detection and immediate re-dispatch (before Analyst-B).** After all STRIDE agents return, inspect every `.stride-<id>.json` for stub output BEFORE dispatching Analyst-B:
-
-   ```bash
-   STUB_COMPONENTS=""
-   for f in "$OUTPUT_DIR"/.stride-*.json; do
-     [ -f "$f" ] || continue
-     cid=$(basename "$f" .json | sed 's/^\.stride-//')
-     # A stub has threats=[] OR partial=true — both indicate turn-budget exhaustion.
-     IS_STUB=$(python3 -c "
-   import json, sys
-   try:
-     d = json.load(open('$f'))
-     if 'threats' not in d:
-       print('no')
-       sys.exit()
-     threats = d['threats']
-     partial = d.get('partial', False)
-     print('yes' if (not threats or partial) else 'no')
-   except Exception:
-     print('no')
-   " 2>/dev/null)
-     if [ "$IS_STUB" = "yes" ]; then
-       STUB_COMPONENTS="$STUB_COMPONENTS $cid"
-       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  WARN   skill  STRIDE_STUB   component=$cid threats=0 — queuing for re-dispatch" >> "$OUTPUT_DIR/.agent-run.log"
-     fi
-   done
-   ```
-
-   For each `$cid` in `$STUB_COMPONENTS`, re-dispatch the single `appsec-stride-analyzer` **once** (foreground, `run_in_background: false`) with the same prompt as the original dispatch. Do NOT re-dispatch more than once per component — a second exhaustion signals the component is too large for the current turn budget, and Analyst-B's merge step will carry forward an empty threat set rather than blocking. Dispatch all stub re-runs **simultaneously in one message** when there are multiple stubs.
-
-   **Judge recovery from disk, not from the Agent return (deterministic post-retry gate).** After the retry Agent call(s) return, re-read each retried `.stride-<cid>.json` from disk with the SAME stub predicate used above and only THEN decide the outcome. Do **not** infer the verdict from the Agent return value: when a retry session is interrupted mid-run (parent turn-ceiling cut-off), it returns empty even though the analyzer wrote a full `.stride-<cid>.json`, and the component is also re-dispatched again by Analyst-B's Phase-9 merge — so a return-based verdict logs `STRIDE_STUB_RETRY_FAILED` while the file on disk already carries real threats (observed 2026-07-16 juice-shop: auth-service/data-persistence/frontend-spa logged RETRY_FAILED yet ended with 12/12/9 real threats). Judge STILL-a-stub from the on-disk file:
+   The helper advances only when every component in the wave has a schema-valid output with `partial=false` and `skipped_categories=[]`. `threats=[]` is valid when those completion signals hold; absence of findings is not itself a stub. After the loop, run the final hard gate:
 
    ```bash
-   for cid in $STUB_COMPONENTS; do
-     f="$OUTPUT_DIR/.stride-$cid.json"
-     STILL_STUB=$(python3 -c "
-   import json, sys
-   try:
-     d = json.load(open('$f'))
-     threats = d.get('threats')
-     print('yes' if (not threats or d.get('partial', False)) else 'no')
-   except Exception:
-     print('yes')
-   " 2>/dev/null)
-     if [ "$STILL_STUB" = "yes" ]; then
-       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  WARN   skill  STRIDE_STUB_RETRY_FAILED   component=$cid — still a stub on disk after retry; Analyst-B merge will attempt final recovery" >> "$OUTPUT_DIR/.agent-run.log"
-     else
-       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  INFO   skill  STRIDE_STUB_RETRY_OK   component=$cid — real threats present on disk after retry" >> "$OUTPUT_DIR/.agent-run.log"
-     fi
-   done
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" verify "$OUTPUT_DIR" || exit $?
    ```
 
-   `merge_threats.py` tolerates a genuinely-missing component, so a true still-stub is non-blocking; the point of the on-disk re-read is that `STRIDE_STUB_RETRY_FAILED` now reflects reality instead of an interrupted-return artifact. A component that only Analyst-B recovers is correctly logged `STRIDE_STUB_RETRY_FAILED` here (it IS a stub at this instant) but its later real threats flow into the merge normally — the wording no longer claims the component was dropped.
+   Never start Analyst-B unless this verification succeeds. `check_stride_dispatch.py` repeats the same coverage check in the post-Stage-1 gate and still independently verifies that real analyzer dispatches occurred.
 
    3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis & Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 
@@ -3024,7 +2990,7 @@ This is where the existing `pregenerate_fragments.py || true` + `check_inline_sh
 
 **A stream-watchdog stall counts as a cut-off (any `Agent` dispatch).** A killed call returning a stall/stream error (`no progress … did not recover`) is API latency, not a plugin defect. First emit the shared calm banner — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stall_notice.py" "$OUTPUT_DIR" --stage "<label>"` (never hand-type "stalled … re-dispatching") — then run the detection below; never free-hand a fresh dispatch (it bypasses the `MAX_STAGE1_RESUMES` cap).
 
-Thorough-depth runs whose criteria selection yields the full inventory (commonly ~8 STRIDE analyzers; bounded by the `MAX_STRIDE_COMPONENTS` operational ceiling) routinely touch the Claude Code agent turn budget (observed at ~90 tool calls per agent session in `claude -p` headless mode). When the budget is hit, the Agent call returns control to the skill *before* Phase 11 finalization runs, typically mid-Phase-9 or mid-Phase-10. Two concrete symptoms:
+Thorough-depth runs whose criteria selection yields a large inventory routinely touch the Claude Code agent turn budget even though analyzer execution is split into bounded waves (observed at ~90 tool calls per agent session in `claude -p` headless mode). When the budget is hit, the Agent call returns control to the skill *before* Phase 11 finalization runs, typically mid-Phase-9 or mid-Phase-10. Two concrete symptoms:
 
 1. The agent's final text ends with something like `"All 8 STRIDE files ready. Proceeding to merge."` without a closing `ASSESSMENT_END` log entry.
 2. `$OUTPUT_DIR/threat-model.md` does NOT exist after the Agent call returns — but `$OUTPUT_DIR/.stride-*.json` and `$OUTPUT_DIR/.recon-summary.md` are present.
@@ -3335,6 +3301,7 @@ Pass the following variables to the agent prompt:
 - `RENDER_ROLE=<full|secarch|ms>` (perf 2026-06-05 — only set on Stage 2 dispatch. `full` (default / omit) = single-agent path: author MS + §7 + compose. `secarch` / `ms` = the two parallel split roles (`PARALLEL_RENDER=true`): each authors only its half and does NOT compose; the skill composes after both return. See `agents/appsec-threat-renderer.md` → "Render role — READ FIRST".)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 - `MAX_STRIDE_COMPONENTS=<operational ceiling, default 10>` (safety valve passed to the manifest builder as `--ceiling`; NOT the selection count — components are criteria-selected by `select_stride_components()`)
+- `STRIDE_CONCURRENCY=<1..32, default 8>` (maximum analyzer calls in one bounded wave; does not reduce selected-component coverage)
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
 - `STRIDE_TURNS_MODERATE=<15|22|28>`
 - `STRIDE_TURNS_COMPLEX=<20|31|35>`

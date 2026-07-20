@@ -267,6 +267,10 @@ Instructions live in `agents/phases/`. This table is an orientation aid and a dr
 
 `--assessment-depth quick|standard|thorough` drives STRIDE turns, diagrams, QA depth, and component-selection criteria. Component selection is criteria-based in `scripts/build_stride_dispatch_manifest.py:select_stride_components()`; `max_stride_components` is a flat safety ceiling (`STRIDE_COMPONENT_CEILING = 10`, the same at every depth), not a per-depth target.
 
+Selected components run in resumable waves of up to 8 analyzers by default.
+`APPSEC_STRIDE_CONCURRENCY=1..32` changes execution concurrency only; it never
+removes exposed or otherwise mandatory components from scope.
+
 | Depth | STRIDE turns (simple / moderate / complex) | Diagrams | QA | Re-Render Loop cap |
 |---|---|---|---|---|
 | `quick` | 10 / 15 / 20 | minimal | core only (Stage 3 skipped) | 1 (single quick-fix pass) |

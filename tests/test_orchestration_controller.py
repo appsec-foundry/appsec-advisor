@@ -885,6 +885,7 @@ def test_dispatch_values_supply_runtime_defaults(tmp_path):
     assert values["write_html"] is False
     assert "renderer_model" in values
     assert "abuse_verifier_model" in values
+    assert "stride_concurrency" in values
     assert set(values) == set(controller._DISPATCH_KEYS) | set(controller._DISPATCH_EXTRA_KEYS)
 
 

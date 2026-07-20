@@ -59,7 +59,8 @@ else
        -o -name ".recon-patterns.json" -o -name ".compose-stats.json" \
        -o -name ".context-resolver.stdout" -o -name ".ctx-resolver.pid" \
        -o -name ".recon-scanner.pid" -o -name ".recon-scanner.stdout" \
-       -o -name ".coverage-gaps.json" -o -name ".scan-manifest.txt" \
+       -o -name ".coverage-gaps.json" -o -name ".dispatch-waves.json" \
+       -o -name ".scan-manifest.txt" \
        -o -name ".requirements.yaml" \
        -o -name ".prior-findings-index.json" -o -name ".stage1-resume-count" \
        -o -name ".triage-ranking.json" \

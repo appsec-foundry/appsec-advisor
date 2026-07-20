@@ -7,8 +7,8 @@ description: |
   per-component parameter the `appsec-stride-analyzer` needs into this manifest,
   then stops before Phase 9. The skill (Level-0) reads it, validates it via
   `scripts/validate_dispatch_manifest.py` (hard gate), and dispatches one
-  `appsec-stride-analyzer` per component IN PARALLEL — replacing the serial
-  inline STRIDE that runs today inside a single Level-1 analyst.
+  `appsec-stride-analyzer` per component in bounded parallel waves — replacing
+  serial inline STRIDE without creating an unbounded concurrency burst.
 
   The per-component fields mirror the dispatch parameters documented in
   `agents/phases/phase-group-threats.md` ("For each component, use Agent tool")
