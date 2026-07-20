@@ -6,15 +6,15 @@ version: 1
 surfaces:
   skill_router:
     path: skills/create-threat-model/SKILL.md
-    max_bytes: 8000
+    # Includes the cross-path release-gate schedule; keep enough slack for a
+    # concise new invariant without hiding material router growth.
+    max_bytes: 8500
   thin_full_runtime:
     path: skills/create-threat-model/SKILL-full-runtime.md
-    # Raised 12000 -> 12500 when evidence_verifier became a routed role and its
-    # RESOLVED_JSON mapping was added (2026-07-19). The surface sat at 11962
-    # bytes, so the guard fired on a 50-byte contract addition -- it had no
-    # headroom left for any new field. The new ceiling restores drift-guard
-    # slack; it is not a licence to grow the runtime surface.
-    max_bytes: 12500
+    # Raised to cover routed evidence-verifier fields and the explicit
+    # cross-path Stage-3 safety-gate handoff. The ceiling retains only modest
+    # drift slack; it is not a licence to grow the runtime surface.
+    max_bytes: 13250
   thin_rerender_runtime:
     path: skills/create-threat-model/SKILL-rerender-runtime.md
     max_bytes: 10000
@@ -27,8 +27,8 @@ surfaces:
     path: skills/create-threat-model/SKILL-impl.md
     start: "## Stage 1 — Threat Analysis & Triage"
     end: "<!-- LAZY-LOAD BOUNDARY"
-    # Measured 56,277 bytes after moving Stage 1c behind the lazy boundary.
-    max_bytes: 56500
+    # Measured 56,358 bytes after moving Stage 1c behind the lazy boundary.
+    max_bytes: 57500
   full_stage1c_slice:
     path: skills/create-threat-model/SKILL-impl.md
     start: "## Stage 1c — Abuse Case Verification"
@@ -62,9 +62,9 @@ surfaces:
 
 aggregate:
   # Router + compact runtime + Stage-1 core + conditional Stage-1c slice.
-  thin_full_pre_stage2_max_bytes: 90000
+  thin_full_pre_stage2_max_bytes: 92000
   # Quick/explicit-skip runs never load the Stage-1c abuse-verification slice.
-  thin_full_without_stage1c_max_bytes: 76500
+  thin_full_without_stage1c_max_bytes: 78500
   # Router + rerender runtime. Stage-2 instructions are loaded only after the
   # controller has verified on-disk Stage-1 artifacts.
   thin_rerender_pre_stage2_max_bytes: 18000

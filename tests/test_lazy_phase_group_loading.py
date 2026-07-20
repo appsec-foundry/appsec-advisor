@@ -273,3 +273,55 @@ def test_thin_runtime_loads_stage1c_only_when_enabled():
     assert "Only when\n`SKIP_ABUSE_CASE_VERIFICATION=false`" in runtime
     assert "Verification` to `## Stage 2 - Report Rendering`" in runtime
     assert "Otherwise do not load the Stage-1c slice" in runtime
+
+
+def test_non_dry_stage3_safety_slice_cannot_be_bypassed_by_controller_action():
+    """Quick/no-QA paths may return stage4/complete from the controller, but
+    the depth-independent secret gate still has to run before either action."""
+    router = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md").read_text(encoding="utf-8")
+    full = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(
+        encoding="utf-8"
+    )
+    rerender = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md").read_text(
+        encoding="utf-8"
+    )
+
+    for text in (router, full, rerender):
+        normalized = " ".join(text.split())
+        assert "Stage-3 safety slice" in normalized
+        assert "secret-leak gate" in normalized
+        assert "stage4" in normalized and "complete" in normalized
+
+
+def test_completion_slice_owns_cross_path_release_gates():
+    """Final integrity gates must not live in optional Stage 4: standard runs
+    without architect review jump directly to the Completion slice."""
+    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
+    completion = impl.find("## Completion Summary")
+    hard_link_gate = impl.find("### Hard broken-link gate")
+    error_handling = impl.find("## Error Handling")
+
+    assert 0 < completion < hard_link_gate < error_handling
+    completion_slice = impl[completion:error_handling]
+    assert "reclassify_components.py" in completion_slice
+    assert "qa_checks.py\" toc_closure" in completion_slice
+
+
+def test_stage4_lazy_loads_repair_contract_only_when_required():
+    """A clean Stage-3 fast path must not make architect repair instructions
+    unreachable, while a passing architect review should not pay for them."""
+    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
+    stage4 = impl.find("## Stage 4 - Architect Review")
+    completion = impl.find("## Completion Summary")
+    block = impl[stage4:completion]
+
+    assert ".architect-status.json" in block
+    assert "repair_required" in block
+    assert "Re-Render Loop — enforce strict contract" in block
+    assert "Do not load the repair block when the status is `pass`" in block
+
+
+def test_agents_md_does_not_claim_full_impl_is_resident():
+    agents = AGENTS_MD.read_text(encoding="utf-8")
+    assert "`SKILL-impl.md` is read in full into the orchestrator's resident context" not in agents
+    assert "`SKILL-impl.md` is large and is read in bounded slices" in agents

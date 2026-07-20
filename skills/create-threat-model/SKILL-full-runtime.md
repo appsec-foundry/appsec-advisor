@@ -262,7 +262,10 @@ Read only:
 - 2: `## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs`.
   Failure/cut-off only: through `## Incremental Mode`.
 - 3: `## Stage 3 - QA Review` to `### Stage 3 handoff banner`.
-  QA/semantic repair only: through `## Stage 4 - Architect Review`.
+  Load this safety slice on every non-dry path once the report exists, even
+  when quick / `--no-qa` / PR mode makes `next` return `stage4` or `complete`;
+  those paths run the hard secret-leak gate and skip the remaining QA work.
+  QA/repair only: continue through `## Stage 4 - Architect Review`.
 - 4: `## Stage 4 - Architect Review` to `## Completion Summary`.
 - Done: `## Completion Summary` to `## Error Handling`.
 - Error: `## Error Handling` to EOF on that branch.
@@ -286,8 +289,11 @@ set but no report. Honor the returned `action`/`stage`:
 - `stage=stage2` → the report still does not exist **and** the render fragments
   are missing; (re-)dispatch Stage 2. **Never emit a completion summary in this
   state.**
-- `stage=stage3` / `stage=stage4` → proceed with that stage.
-- `action=complete` → the report exists; proceed to the completion summary.
+- `stage=stage3` → run the Stage-3 safety slice and any enabled QA work.
+- `stage=stage4` → run the Stage-3 safety slice first if it has not run for
+  this report, then proceed with Stage 4.
+- `action=complete` → the report exists; run the Stage-3 safety slice first
+  if it has not run for this report, then proceed to the completion summary.
 
 **Hard invariant:** never emit an "Assessment complete" summary while
 `$OUTPUT_DIR/threat-model.md` is absent. After each major agent return the

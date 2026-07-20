@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Legacy orchestration now loads each post-analysis stage only when it is reached, and runs skip the Stage-1c prompt when abuse-case verification is disabled.
+- Orchestration now loads each post-analysis stage only when it is reached, skips the Stage-1c prompt when abuse-case verification is disabled, and keeps final security and integrity gates active on QA-skip paths.
 - Architecture coverage now reads the target source tree once per run, and standard evidence verification limits its non-Critical sample to 30 findings. Use `--evidence-verifier-cap N` to override the depth-specific limit.
 - Threat merging now preserves every folded finding's location and provenance, keeps distinct architectural categories separate, and requires an explicit shared control scope before consolidating across components.
 - Architecture coverage now confirms stored XSS only when a request field is directly persisted and that stored property reaches an unsanitized HTML sink; isolated sinks remain review hypotheses.

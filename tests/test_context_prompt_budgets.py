@@ -84,6 +84,8 @@ def test_thin_runtime_uses_bounded_stage_reads():
     assert "▶ Stage 1/<TOTAL_STAGES>" in text
     assert "## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs" in text
     assert "## Stage 3 - QA Review` to `### Stage 3 handoff banner" in text
+    assert "Load this safety slice on every non-dry path" in text
+    assert "run the Stage-3 safety slice first" in text
     assert "marker to EOF" not in text
 
 
@@ -94,3 +96,5 @@ def test_thin_rerender_runtime_starts_at_stage2():
     assert "## Stage 2 - Report Rendering" in text
     assert "rerender mode file, Stage 1, or Stage 1c" in text
     assert "RENDERER_MODEL = renderer_model" in text
+    assert "always run the non-dry Stage-3 safety" in text
+    assert "including its final release gates" in text

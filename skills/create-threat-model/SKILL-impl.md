@@ -4123,7 +4123,17 @@ Pass the following variables in the prompt:
 
 The architect reviewer runs with its own turn budget (up to 40 turns) and writes `$OUTPUT_DIR/.architect-review.md` with findings and a single-line verdict. It never modifies the threat model itself.
 
+**Post-dispatch status and conditional repair load.** Read
+`$OUTPUT_DIR/.architect-status.json` after the agent returns. When its status is
+`repair_required`, and the shared `Re-Render Loop — enforce strict contract
+compliance` block was not already loaded during Stage 3, lazy-load that block
+now from its heading to immediately before this Stage-4 heading. Apply its
+Stage-4 branch with `.architect-repair-plan.json` and the separate Stage-4
+iteration counter. Do not load the repair block when the status is `pass`.
+
 **Non-fatal.** If Stage 4 errors out or returns without writing `.architect-review.md`, proceed to the Completion Summary as normal — the threat model is still valid. Log the failure to `.agent-run.log` but do not fail the overall skill.
+
+## Completion Summary
 
 ### Hard broken-link gate
 
@@ -4173,8 +4183,6 @@ the renderers. `qa_checks.py autofix` owns the final presentation-only gray ramp
 (❶ `#111111` → ❷ `#555555` → ❸ `#888888` → ❹ `#bbbbbb`). Keeping this inside
 the authorized final QA mutation means no post-validation script can drift the
 delivered Markdown from the section contract.
-
-## Completion Summary
 
 After the last enabled review stage completes (Stage 3 when QA is enabled, Stage 4 when architect review is enabled, or Stage 2 when QA is skipped), **always** print a final summary. For `DRY_RUN=true`, print the dry-run summary after Stage 2 and skip Stage 3/4. This is the last thing the skill outputs and is critical for headless mode (`claude -p`) where it becomes the entire visible output.
 

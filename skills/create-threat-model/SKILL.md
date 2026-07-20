@@ -96,12 +96,18 @@ handoff:
   skip it for rerender and Stage-2-only recovery paths.
 - Stage 2: `## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs`;
   on failure/cut-off only, continue through `## Incremental Mode`.
-- Stage 3: `## Stage 3 - QA Review` to `### Stage 3 handoff banner`; only when
-  QA dispatch or semantic repair is required, continue through
+- Stage-3 safety slice: `## Stage 3 - QA Review` to `### Stage 3 handoff
+  banner` on every non-dry path once `threat-model.md` exists, including
+  quick / `--no-qa` / PR paths and a controller result of `stage4` or
+  `complete`. When QA is skipped, execute the depth-independent secret-leak
+  gate and then skip the remaining QA work as that slice instructs. Only when
+  QA dispatch or repair is required, continue through
   `## Stage 4 - Architect Review`.
 - Stage 4: `## Stage 4 - Architect Review` to `## Completion Summary`, only
-  when enabled.
-- Completion: `## Completion Summary` to `## Error Handling`.
+  when enabled; it conditionally lazy-loads the shared repair-loop block when
+  the architect status is `repair_required`.
+- Completion: `## Completion Summary` to `## Error Handling`; this slice owns
+  the final broken-link and phantom-component release gates on every path.
 - Error handling: `## Error Handling` to EOF, only on that branch.
 
 The thin runtime applies the same bounded schedule.
