@@ -48,3 +48,16 @@ def test_headless_scans_default_to_untrusted_mode() -> None:
     body = _body()
     assert 'TRUST_MODE="untrusted"' in body
     assert 'trusted|untrusted) TRUST_MODE="$2"' in body
+
+
+def test_bg_wait_ceiling_is_disabled_for_headless() -> None:
+    """Headless must not inherit Claude Code's 600s background-task ceiling.
+
+    Stage 1 (Analyst-A, phases 1-8) routinely outlives 600s, so the default
+    ceiling hard-kills `claude -p` mid-phase before any threat-model.yaml
+    exists — which the compose backstop above cannot salvage, because its own
+    yaml-present gate is false. This was a documented-but-unset knob for a
+    year; the guard exists so it does not silently revert.
+    """
+    body = _body()
+    assert "export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0" in body

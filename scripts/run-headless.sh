@@ -587,6 +587,17 @@ fi
 # proceed on the current session model. See SKILL-impl.md "Orchestrator
 # (session-model) recommendation — interactive prompt".
 export APPSEC_HEADLESS=1
+# Background-task wait ceiling: Claude Code's `-p` mode waits a default 600s for
+# backgrounded tasks and then HARD-KILLS the process. Stage 1 (Analyst-A, phases
+# 1-8) routinely runs longer than that, so the orchestrator's turn ends while
+# Analyst-A is still backgrounded and the run dies mid-phase with no
+# threat-model.yaml — which also means the compose backstop below (gated on that
+# yaml) cannot salvage it. Observed as a nondeterministic ~13m failure: fixture
+# runs 29696937786 (fail, 775s) and 29697943011 (pass, 46m39s) share commit
+# 9b51762, fixture and depth. 0 = wait indefinitely; the bound is the outer
+# `timeout ${MAX_DURATION}s` wrapper above, so headless callers that care about
+# a wall-clock cap must pass --max-duration (CI always does).
+export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 [ "$NO_QA" = "1" ]         && export APPSEC_SKIP_QA=1
 [ "$PR_MODE" = "1" ]       && export APPSEC_PR_MODE=1
 [ -n "$BASE_REF" ]         && export APPSEC_BASE_REF="$BASE_REF"
