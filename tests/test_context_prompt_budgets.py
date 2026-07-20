@@ -43,11 +43,23 @@ def test_each_live_prompt_surface_stays_within_budget():
 
 def test_thin_full_initial_context_is_materially_smaller_than_legacy():
     surfaces = BUDGETS["surfaces"]
-    thin = sum(_slice_bytes(surfaces[name]) for name in ("skill_router", "thin_full_runtime", "full_stage1_slice"))
+    thin = sum(
+        _slice_bytes(surfaces[name])
+        for name in ("skill_router", "thin_full_runtime", "full_stage1_slice", "full_stage1c_slice")
+    )
     legacy = _slice_bytes(surfaces["legacy_initial_slice"])
     aggregate = BUDGETS["aggregate"]
     assert thin <= aggregate["thin_full_pre_stage2_max_bytes"]
     assert thin / legacy <= aggregate["thin_to_legacy_max_ratio"]
+
+
+def test_thin_full_without_abuse_verification_omits_stage1c_budget():
+    surfaces = BUDGETS["surfaces"]
+    thin = sum(
+        _slice_bytes(surfaces[name])
+        for name in ("skill_router", "thin_full_runtime", "full_stage1_slice")
+    )
+    assert thin <= BUDGETS["aggregate"]["thin_full_without_stage1c_max_bytes"]
 
 
 def test_thin_rerender_initial_context_is_bounded():
@@ -59,7 +71,10 @@ def test_thin_rerender_initial_context_is_bounded():
 def test_thin_runtime_uses_bounded_stage_reads():
     text = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
     assert "## Stage 1 — Threat Analysis & Triage" in text
-    assert "<!-- LAZY-LOAD BOUNDARY" in text
+    assert "## Stage 1c — Abuse Case Verification" in text
+    assert "SKIP_ABUSE_CASE_VERIFICATION=false" in text
+    assert "Otherwise do not load the Stage-1c slice" in text
+    assert "## Stage 2 - Report Rendering" in text
     assert "Do not read any earlier part" in text
     assert "### Stage-1 dispatch contract" in text
     assert "APPSEC_TRIAGE_DETERMINISTIC=1" in text

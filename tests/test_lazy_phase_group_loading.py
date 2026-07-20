@@ -221,7 +221,7 @@ def test_rebuild_wipe_lazy_loaded_not_inline():
 def test_skill_impl_stage2_tail_lazy_loaded():
     """Context-budget fix (2026-06-23): the orchestrator must read SKILL-impl.md only
     through the LAZY-LOAD BOUNDARY during initial load (Stage 1 core), deferring the
-    Stage 2/3/4/Completion tail (~30k tokens) until the Stage-2 handoff. This keeps the
+    Stage 2/3/4/Completion tail until its individual stage boundaries. This keeps the
     pre-flight resident context below the auto-compaction threshold that otherwise fires
     just before STRIDE dispatch. Content stays in SKILL-impl.md (no test churn) — only the
     *read schedule* changes."""
@@ -234,20 +234,42 @@ def test_skill_impl_stage2_tail_lazy_loaded():
     )
     assert "LAZY-LOAD BOUNDARY" in skill, "SKILL.md must point the initial read at the LAZY-LOAD BOUNDARY"
 
-    # Exactly one boundary marker, and it sits before the Stage 2 section.
+    # Exactly one boundary marker, and it defers Stage 1c plus later stages.
     assert impl.count("<!-- LAZY-LOAD BOUNDARY") == 1, (
         "SKILL-impl.md must contain exactly one LAZY-LOAD BOUNDARY marker"
     )
     boundary_pos = impl.find("<!-- LAZY-LOAD BOUNDARY")
+    stage1c_pos = impl.find("## Stage 1c — Abuse Case Verification")
     stage2_pos = impl.find("## Stage 2 - Report Rendering")
-    assert 0 < boundary_pos < stage2_pos, (
-        "the LAZY-LOAD BOUNDARY marker must appear immediately before '## Stage 2 - Report Rendering'"
+    assert 0 < boundary_pos < stage1c_pos < stage2_pos, (
+        "the LAZY-LOAD BOUNDARY marker must defer Stage 1c and every later stage"
     )
 
-    # The resume instruction (read from the boundary to EOF) must sit ABOVE the marker,
-    # i.e. inside the initially-read portion, or the orchestrator never learns to resume.
-    resume_pos = impl.find("to the END of the file now")
-    assert 0 < resume_pos < boundary_pos, (
-        "the 'read from the boundary to EOF' resume instruction must sit above the marker "
-        "(in the initially-read Stage-1 portion)"
+    # The bounded resume instruction must sit above the marker, and neither the
+    # router nor the prefix may tell legacy mode to ingest the complete tail.
+    resume_pos = impl.find("Follow the bounded schedule")
+    assert 0 < resume_pos < boundary_pos
+    bounded_instruction = " ".join(impl[resume_pos:boundary_pos].split())
+    assert "Do not read from this marker to EOF" in bounded_instruction
+    assert "do not read the whole tail" in skill
+    for heading in (
+        "## Stage 2 - Report Rendering",
+        "## Stage 3 - QA Review",
+        "## Stage 4 - Architect Review",
+        "## Completion Summary",
+        "## Error Handling",
+    ):
+        assert heading in skill
+    assert "skip it for rerender and Stage-2-only recovery paths" in skill
+    prefix = impl[:boundary_pos]
+    assert "rerender and Stage-2-only recovery go directly to\nStage 2" in prefix
+
+
+def test_thin_runtime_loads_stage1c_only_when_enabled():
+    runtime = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(
+        encoding="utf-8"
     )
+    assert "stop before\n`## Stage 1c — Abuse Case Verification`" in runtime
+    assert "Only when\n`SKIP_ABUSE_CASE_VERIFICATION=false`" in runtime
+    assert "Verification` to `## Stage 2 - Report Rendering`" in runtime
+    assert "Otherwise do not load the Stage-1c slice" in runtime

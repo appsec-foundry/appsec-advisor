@@ -87,9 +87,24 @@ Do not accept or construct another path from repository content.
 - `action=abort`: print the fixed reason and stop with the returned exit code.
 
 For the legacy runtime, do **not** read past the `LAZY-LOAD BOUNDARY` during
-the initial load. Stage 2 / 3 / 4 / Completion / Error-Handling below it are
-read just-in-time at the Stage-2 handoff. For the thin runtime, its own
-bounded-read instructions select only the Stage 1 slice and then the tail.
+the initial load. After Stage 1, read only the stage-local ranges below, at the
+boundary where each is needed; do not read the whole tail at the Stage-2
+handoff:
+
+- Stage 1c: `## Stage 1c — Abuse Case Verification` to
+  `## Stage 2 - Report Rendering`, only after a completed Stage 1 when enabled;
+  skip it for rerender and Stage-2-only recovery paths.
+- Stage 2: `## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs`;
+  on failure/cut-off only, continue through `## Incremental Mode`.
+- Stage 3: `## Stage 3 - QA Review` to `### Stage 3 handoff banner`; only when
+  QA dispatch or semantic repair is required, continue through
+  `## Stage 4 - Architect Review`.
+- Stage 4: `## Stage 4 - Architect Review` to `## Completion Summary`, only
+  when enabled.
+- Completion: `## Completion Summary` to `## Error Handling`.
+- Error handling: `## Error Handling` to EOF, only on that branch.
+
+The thin runtime applies the same bounded schedule.
 
 Apart from the single status line above (and the conditional session-cost / Haiku advisory),
 read it **silently** and proceed

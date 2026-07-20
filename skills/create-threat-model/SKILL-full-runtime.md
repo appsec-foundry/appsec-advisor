@@ -224,9 +224,12 @@ Then emit the normal handoff banner using the controller estimate:
 ## 5. Stage 1 and Stage 1c
 
 Read `SKILL-impl.md` starting exactly at
-`## Stage 1 — Threat Analysis & Triage` and stop at the single
-`<!-- LAZY-LOAD BOUNDARY` marker. Do not read any earlier part of that file.
-Follow the Stage 1 and Stage 1c instructions with the aliases above.
+`## Stage 1 — Threat Analysis & Triage` and stop before
+`## Stage 1c — Abuse Case Verification`. Do not read any earlier part of that
+file. Follow the Stage 1 instructions with the aliases above. Only when
+`SKIP_ABUSE_CASE_VERIFICATION=false`, then read from `## Stage 1c — Abuse Case
+Verification` to `## Stage 2 - Report Rendering` and follow it.
+Otherwise do not load the Stage-1c slice.
 
 If a Stage-1 dispatch returns as a stall/stream-watchdog failure instead of
 completing, it is still a return: emit `stall_notice.py "$OUTPUT_DIR" --stage

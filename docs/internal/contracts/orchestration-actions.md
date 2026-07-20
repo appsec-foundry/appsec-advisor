@@ -44,3 +44,8 @@ the default after the juice-shop standard
 parity A/B held (2026-07-04): Critical severity identical at base (11=11) and
 effective (21=21), remaining deltas attributable to STRIDE-analyzer run
 variance rather than the orchestrator runtime.
+
+Legacy mode also uses bounded post-Stage-1 reads: normal Stage 2, conditional
+recovery, Stage 3, optional Stage 4, completion, and error handling are loaded
+at their own boundaries rather than as one tail. Both runtimes omit the
+Stage-1c slice when abuse-case verification is disabled.

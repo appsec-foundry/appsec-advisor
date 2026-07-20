@@ -27,12 +27,13 @@ surfaces:
     path: skills/create-threat-model/SKILL-impl.md
     start: "## Stage 1 — Threat Analysis & Triage"
     end: "<!-- LAZY-LOAD BOUNDARY"
-    max_bytes: 70000
-  post_stage1_tail:
+    # Measured 56,277 bytes after moving Stage 1c behind the lazy boundary.
+    max_bytes: 56500
+  full_stage1c_slice:
     path: skills/create-threat-model/SKILL-impl.md
-    start: "<!-- LAZY-LOAD BOUNDARY"
-    end: EOF
-    max_bytes: 150000
+    start: "## Stage 1c — Abuse Case Verification"
+    end: "## Stage 2 - Report Rendering"
+    max_bytes: 15000
   stage2_runtime_dispatch_slice:
     path: skills/create-threat-model/SKILL-impl.md
     start: "## Stage 2 - Report Rendering"
@@ -60,9 +61,10 @@ surfaces:
     max_bytes: 155000
 
 aggregate:
-  # Router + compact runtime + Stage-1/1c slice. This is the full/rebuild
-  # resident skill text before the Phase-9 fan-out.
+  # Router + compact runtime + Stage-1 core + conditional Stage-1c slice.
   thin_full_pre_stage2_max_bytes: 90000
+  # Quick/explicit-skip runs never load the Stage-1c abuse-verification slice.
+  thin_full_without_stage1c_max_bytes: 76500
   # Router + rerender runtime. Stage-2 instructions are loaded only after the
   # controller has verified on-disk Stage-1 artifacts.
   thin_rerender_pre_stage2_max_bytes: 18000
