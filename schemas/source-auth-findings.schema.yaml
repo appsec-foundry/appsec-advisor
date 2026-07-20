@@ -4,7 +4,8 @@ title: Source-code authorization scan findings
 description: |
   Output written by `scripts/source_auth_scanner.py` to
   `$OUTPUT_DIR/.source-auth-findings.json`. Contains per-file
-  violations of the rule catalog `data/source-auth-checks.yaml`.
+  violations of the rule catalogs `data/source-auth-checks.yaml`,
+  `data/crypto-checks.yaml`, and `data/credential-lifecycle-checks.yaml`.
 
   Phase 10 may merge these findings into `.threats-merged.json` as
   `F-NNN` entries with `source: "source-scan"`, complementing the
@@ -98,10 +99,10 @@ $defs:
         type: string
         pattern: "^SAF-[0-9]{3,4}$"
       check_id:
-        # AUTHZ-NNN (auth/authz) or INJ-NNN (injection family) from
-        # data/source-auth-checks.yaml
+        # AUTHZ-NNN (authorization), AUTHN-NNN (credential lifecycle),
+        # INJ-NNN (injection), or CRYPTO-NNN from the scanner rule catalogs.
         type: string
-        pattern: "^(?:AUTHZ|INJ)-[0-9]{3}$"
+        pattern: "^(?:(?:AUTHZ|AUTHN|INJ)-[0-9]{3}|CRYPTO-(?:[0-9]{3}|[A-Z]+-[0-9]{3}[A-Z]?|HOMEGROWN-XOR))$"
       finding_type_id:
         type: ["string", "null"]
         pattern: "^FT-[0-9]{3}$|^$"

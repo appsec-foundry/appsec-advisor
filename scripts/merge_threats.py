@@ -388,6 +388,8 @@ _AUTHZ_TO_STRIDE: dict[str, str] = {
     "AUTHZ-006": "Spoofing",  # JWT decode without verify
     "AUTHZ-007": "Spoofing",  # express-jwt without algorithms
     "AUTHZ-008": "Elevation of Privilege",  # Missing auth middleware
+    "AUTHN-001": "Spoofing",  # Security-question-only password recovery
+    "AUTHN-002": "Spoofing",  # Password policy permits short credentials
     "AUTHZ-202": "Elevation of Privilege",  # Spring @RequestBody→entity mass assignment (mass_assignment_scanner.py)
     "AUTHZ-301": "Elevation of Privilege",  # Confirmed IDOR/BOLA (authz_confirm.py)
     "AUTHZ-302": "Elevation of Privilege",  # Confirmed missing route auth (authz_confirm.py)
@@ -668,6 +670,7 @@ _CWE_FAMILY: dict[str, str] = {
     "CWE-306": "authn",
     "CWE-307": "authn",
     "CWE-347": "authn",
+    "CWE-521": "authn",
     "CWE-640": "authn",
     # Injection family
     "CWE-89": "injection",

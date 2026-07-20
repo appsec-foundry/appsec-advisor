@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Added
+
+- Static auth scanning now flags password resets that rely on security-question answers and local password policies that permit fewer than eight characters. Predictable reset tokens remain covered by the existing secure-randomness checks.
+
 ## 0.5.0-beta (2026-07-18)
 
 ### Added

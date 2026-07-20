@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""source_auth_scanner.py — deterministic source-code authorization scanner.
+"""source_auth_scanner.py — deterministic source-code auth/security scanner.
 
 Runs the rule catalog in `data/source-auth-checks.yaml` against every
 matching source file in the repository and emits findings to
@@ -61,10 +61,13 @@ except ImportError:
 DEFAULT_CHECKS_REL = Path("data") / "source-auth-checks.yaml"
 
 # Additional catalogs run through the SAME engine when `--checks` is not given.
-# P3 (weakness-class evidence model): the crypto rule pack lives in its own file
-# for clarity but is a peer catalog — no separate scanner. Missing files are
-# skipped silently, so adding a catalog here is safe.
-DEFAULT_EXTRA_CHECKS_REL = [Path("data") / "crypto-checks.yaml"]
+# Rule packs stay separate where their false-positive boundaries differ, while
+# sharing the same evidence, sidecar, validation, and merge contract. Missing
+# files are skipped silently so an older packaged plugin can still run.
+DEFAULT_EXTRA_CHECKS_REL = [
+    Path("data") / "crypto-checks.yaml",
+    Path("data") / "credential-lifecycle-checks.yaml",
+]
 
 # Hard exclusions on top of per-check exclude_file_patterns (universal):
 # the scanner never reads anything under these paths even if a check's
@@ -619,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         catalog_paths = [plugin_root / DEFAULT_CHECKS_REL]
-        # Peer catalogs (P3 crypto pack) — run through the same engine; skip if absent.
+        # Peer catalogs — run through the same engine; skip if absent.
         catalog_paths += [plugin_root / rel for rel in DEFAULT_EXTRA_CHECKS_REL]
     if not catalog_paths or not catalog_paths[0].is_file():
         print(
