@@ -1896,6 +1896,30 @@ def test_build_threats_skips_info_stubs_and_missing_id():
     assert any("evidence-refuted" in w for w in warnings)
 
 
+def test_build_threats_applies_and_can_override_register_severity_floor():
+    merged = {
+        "threats": [
+            {
+                "t_id": "T-001",
+                "title": "Low-impact diagnostic information disclosure",
+                "component_id": "c1",
+                "likelihood": "Low",
+                "risk": "Low",
+                "effective_severity": "Low",
+                "cwe": "CWE-200",
+                "evidence": {"file": "src/info.py", "line": 4},
+            }
+        ]
+    }
+    default_threats, default_warnings = b.build_threats(merged)
+    assert default_threats == []
+    assert any("below severity floor (medium)" in warning for warning in default_warnings)
+
+    low_threats, low_warnings = b.build_threats(merged, register_floor="low")
+    assert [threat["id"] for threat in low_threats] == ["T-001"]
+    assert not low_warnings
+
+
 def test_build_mitigations_bumps_severity_to_max():
     threats = [
         {"id": "T-001", "risk": "Medium", "mitigation_ids": ["M-001"], "mitigation_title": "Fix it"},

@@ -97,6 +97,12 @@ properties:
         cwe:
           type: string
           pattern: "^CWE-\\d+$"
+        control_scope:
+          # Optional upstream-proven identifier of one shared control/object.
+          # Cross-component catalog consolidation requires it; it is not a
+          # CWE-family or component-name substitute.
+          type: [string, "null"]
+          minLength: 1
         evidence:
           type: [object, "null"]
           required: [file, line]

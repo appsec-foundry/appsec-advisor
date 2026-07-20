@@ -350,6 +350,7 @@ def _config_finding_to_threat(f: dict) -> dict:
         "breach_distance": _BREACH_VECTOR_TO_DISTANCE.get(f.get("breach_vector") or "n/a"),
         "mitigation_title": f.get("recommended_mitigation_title"),
         "finding_type_id": f.get("finding_type_id"),
+        "control_scope": f.get("control_scope"),
     }
     # The merger's category guard applies equally to deterministic findings.
     # Derive the canonical category where the CWE taxonomy is authoritative;
@@ -469,6 +470,7 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         "breach_distance": _BREACH_VECTOR_TO_DISTANCE.get(f.get("breach_vector") or "n/a"),
         "mitigation_title": f.get("recommended_mitigation_title"),
         "finding_type_id": f.get("finding_type_id"),
+        "control_scope": f.get("control_scope"),
     }
     # The crypto catalog establishes a security-relevant use before emitting a
     # row. Preserve that fact explicitly; do not infer a weakness later from a
@@ -719,18 +721,27 @@ def _endpoint_candidate_key(t: dict) -> tuple[str, str] | None:
 
 def _dedupe_exact(threats: list[dict]) -> list[dict]:
     """Collapse threats that are trivially identical. Preserves first-seen
-    order; subsequent duplicates are dropped after appending their
-    component_id into `merged_from`."""
+    order while retaining every folded member as an auditable instance."""
     out: list[dict] = []
     by_key: dict[tuple, dict] = {}
     for t in threats:
-        k = _exact_key(t)
+        category = t.get("threat_category_id")
+        if not isinstance(category, str) or not _TH_ID_RE.match(category):
+            # Do not let an incomplete architectural classification erase a
+            # finding. Validation will surface the bad category downstream.
+            out.append(t)
+            continue
+        k = (*_exact_key(t), category)
         if k in by_key:
             primary = by_key[k]
-            mf = primary.setdefault("merged_from", [primary.get("component_id")])
-            cid = t.get("component_id")
-            if cid and cid not in mf:
-                mf.append(cid)
+            # An identical title/location is not sufficient when upstream
+            # classification assigned distinct architectural threat categories.
+            # Keep the findings separate rather than silently discarding a
+            # category; this matches the guard enforced for LLM decisions.
+            if not _same_primary_threat_category([primary, t]):
+                out.append(t)
+                continue
+            _merge_member_metadata(primary, [primary, t], systemic=False)
             continue
         by_key[k] = t
         out.append(t)
@@ -962,12 +973,26 @@ def _match_consolidation_group(t: dict, groups: tuple) -> dict | None:
 
 
 def _group_bucket_key(t: dict, g: dict) -> tuple:
-    """Bucket identity for a group member. cross-component groups merge across
-    components; per-component (default) keep components apart. ``split_by`` adds
-    arbitrary threat-field dimensions (the severity-zone / distinct-flow escape
-    hatch); an absent field is a no-op ('')."""
+    """Bucket identity for a group member.
+
+    Per-component is the default. A cross-component group may merge only when
+    its catalog entry names ``cross_component_scope_field`` and every member
+    supplies the same non-empty value for it. Without that concrete shared
+    control/object scope, fall back to per-component bucketing. ``split_by``
+    adds arbitrary threat-field dimensions (the severity-zone / distinct-flow
+    escape hatch); an absent field is a no-op ('')."""
     parts: list[str] = [g["id"]]
-    if g.get("scope") != "cross-component":
+    if g.get("scope") == "cross-component":
+        scope_field = g.get("cross_component_scope_field")
+        scope_value = str(t.get(scope_field) or "").strip() if isinstance(scope_field, str) else ""
+        if scope_value:
+            parts.extend(("shared-scope", scope_value.lower()))
+        else:
+            # A CWE, title or scanner rule alone does not establish that two
+            # services share one owner or control. Keep the manifestations
+            # separate until upstream provides a concrete control scope.
+            parts.extend(("component", (t.get("component_id") or t.get("component") or "").strip().lower()))
+    else:
         parts.append((t.get("component_id") or t.get("component") or "").strip().lower())
     for dim in g.get("split_by") or []:
         parts.append(str(t.get(dim) or ""))
@@ -1113,43 +1138,38 @@ def _dedupe_evidence(threats: list[dict]) -> list[dict]:
     reached at all.
 
     Merge policy: the higher-risk member stays primary (tie → first-seen, for
-    order-stable output); the dropped member's ``component_id`` and ``stride``
-    are recorded in ``merged_from`` / ``merged_strides`` for traceability.
-    Component re-attribution is left to the downstream ``reclassify_components``
-    pass, which keys on ``evidence.file``."""
+    order-stable output). Every folded member is retained as an ``instances[]``
+    record. Members with different or missing primary ``threat_category_id``
+    values are deliberately kept apart: a CWE family is not an architectural
+    category, and this deterministic path must enforce the same category guard
+    as LLM merge decisions. Component re-attribution is left to the downstream
+    ``reclassify_components`` pass, which keys on ``evidence.file``."""
     out: list[dict] = []
     by_key: dict[tuple, dict] = {}
     for t in threats:
-        k = _evidence_identity_key(t)
-        if k is None:
+        identity_key = _evidence_identity_key(t)
+        category = t.get("threat_category_id")
+        if identity_key is None or not isinstance(category, str) or not _TH_ID_RE.match(category):
             out.append(t)
             continue
+        # Category participates in the lookup key so multiple valid categories
+        # at one code location can each still deduplicate their own duplicates.
+        k = (*identity_key, category)
         prev = by_key.get(k)
         if prev is None:
             by_key[k] = t
             out.append(t)
             continue
+        if not _same_primary_threat_category([prev, t]):
+            out.append(t)
+            continue
         if _risk_rank(t.get("risk")) < _risk_rank(prev.get("risk")):
-            keep, dropped = t, prev
+            keep = t
             by_key[k] = t
             out[out.index(prev)] = t
         else:
-            keep, dropped = prev, t
-        mf = keep.setdefault("merged_from", [keep.get("component_id")])
-        cid = dropped.get("component_id")
-        if cid and cid not in mf:
-            mf.append(cid)
-        ms = keep.setdefault("merged_strides", [keep.get("stride")])
-        ds = dropped.get("stride")
-        if ds and ds not in ms:
-            ms.append(ds)
-        # The family-keyed merge can now collapse SIBLING CWEs (e.g. CWE-321 +
-        # CWE-798 for the same key). Record the dropped CWE so the surviving
-        # finding still carries every classification facet it absorbed.
-        mc = keep.setdefault("merged_cwes", [keep.get("cwe")])
-        dc = dropped.get("cwe")
-        if dc and dc not in mc:
-            mc.append(dc)
+            keep = prev
+        _merge_member_metadata(keep, [prev, t], systemic=False)
     return out
 
 
@@ -1483,6 +1503,9 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
     mitigation_ids: list[str] = []
     refs: list[str] = []
     component_ids: list[str] = []
+    strides: list[str] = []
+    cwes: list[str] = []
+    additional_categories: list[str] = []
     for member in members:
         prior_components = member.get("merged_from")
         if not isinstance(prior_components, list):
@@ -1511,6 +1534,15 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
         ref = member.get("local_id") or member.get("source_scan_ref") or member.get("config_scan_ref")
         if ref and ref not in refs:
             refs.append(ref)
+        for stride in member.get("merged_strides") or [member.get("stride")]:
+            if isinstance(stride, str) and stride and stride not in strides:
+                strides.append(stride)
+        for cwe in member.get("merged_cwes") or [member.get("cwe")]:
+            if isinstance(cwe, str) and cwe and cwe not in cwes:
+                cwes.append(cwe)
+        for category in member.get("additional_categories") or []:
+            if isinstance(category, str) and category and category not in additional_categories:
+                additional_categories.append(category)
 
     survivor["instances"] = instances
     survivor["affected_files"] = sorted(files)
@@ -1523,6 +1555,12 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
         survivor["consolidated_refs"] = refs
     if component_ids:
         survivor["merged_from"] = component_ids
+    if len(strides) > 1 or survivor.get("merged_strides"):
+        survivor["merged_strides"] = strides
+    if len(cwes) > 1 or survivor.get("merged_cwes"):
+        survivor["merged_cwes"] = cwes
+    if additional_categories:
+        survivor["additional_categories"] = additional_categories
 
 
 def _same_primary_threat_category(members: list[dict]) -> bool:

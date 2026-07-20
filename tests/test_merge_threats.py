@@ -72,10 +72,12 @@ def _threat(**overrides):
 
 class TestExactDedup:
     def test_identical_threats_collapse(self, mt):
-        t1 = _threat()
-        t2 = _threat()  # same everything
+        t1 = _threat(source_scan_ref="SRC-001")
+        t2 = _threat(source_scan_ref="SRC-002")  # same identity, distinct provenance
         result = mt._dedupe_exact([{"component_id": "auth", **t1}, {"component_id": "auth", **t2}])
         assert len(result) == 1
+        assert result[0]["instance_count"] == 2
+        assert [i["source_ref"] for i in result[0]["instances"]] == ["SRC-001", "SRC-002"]
 
     def test_different_components_same_defect_collapse_with_provenance(self, mt):
         t1 = _threat()
@@ -148,6 +150,8 @@ class TestEvidenceDedup:
         # provenance of the dropped member is preserved
         assert set(kept.get("merged_from", [])) == {"b2b-api", "express-backend"}
         assert set(kept.get("merged_strides", [])) == {"Tampering", "Elevation of Privilege"}
+        assert kept["instance_count"] == 2
+        assert [i["file"] for i in kept["instances"]] == ["routes/b2bOrder.ts", "routes/b2bOrder.ts"]
 
     def test_higher_risk_member_wins(self, mt):
         ev = {"file": "routes/x.ts", "line": 9}
@@ -202,6 +206,25 @@ class TestEvidenceDedup:
         kept = result[0]
         assert set(kept.get("merged_cwes", [])) == {"CWE-321", "CWE-798"}
         assert set(kept.get("merged_strides", [])) == {"Spoofing", "Information Disclosure"}
+
+    def test_same_line_family_members_with_different_categories_stay_distinct(self, mt):
+        """A CWE family is not proof of one architectural threat category."""
+        ev = {"file": "lib/insecurity.ts", "line": 21}
+        spoof = _threat(
+            component_id="auth",
+            cwe="CWE-321",
+            stride="Spoofing",
+            evidence=dict(ev),
+            threat_category_id="TH-01",
+        )
+        disclose = _threat(
+            component_id="backend",
+            cwe="CWE-798",
+            stride="Information Disclosure",
+            evidence=dict(ev),
+            threat_category_id="TH-99",
+        )
+        assert len(mt._dedupe_evidence([spoof, disclose])) == 2
 
     def test_same_line_other_family_falls_back_to_exact_cwe(self, mt):
         # Two findings whose CWEs both land in the catch-all "other" family must
@@ -815,10 +838,12 @@ def _jwt(
     title="JWT verify call missing algorithms allowlist",
     component_id="backend-api",
     risk="High",
+    control_scope="shared-jwt-verifier",
     **extra,
 ):
     t = _threat(cwe=cwe, title=title, stride="Spoofing", risk=risk, evidence={"file": file_path, "line": line})
     t["component_id"] = component_id
+    t["control_scope"] = control_scope
     t.update(extra)
     return t
 
@@ -908,7 +933,7 @@ class TestConsolidateByGroup:
         assert len(out) == 1
         assert out[0]["instance_count"] == 2
 
-    def test_idor_consolidates_cross_component(self, mt):
+    def test_idor_consolidates_cross_component_with_shared_control_scope(self, mt):
         # CWE-639 joins the idor-object-authz group (cross-component): broken
         # object-level authz is ONE systemic control gap. Each route survives
         # as an instance, not as a separate Critical. (Reversed 2026-06 from
@@ -920,12 +945,14 @@ class TestConsolidateByGroup:
                 title="Broken authorization attacker-controlled owner ID",
                 evidence={"file": "routes/address.ts", "line": 11},
                 component_id="backend-api",
+                control_scope="shared-authz-middleware",
             ),
             _threat(
                 cwe="CWE-639",
                 title="Broken authorization attacker-controlled owner ID",
                 evidence={"file": "routes/wallet.ts", "line": 12},
                 component_id="frontend-spa",
+                control_scope="shared-authz-middleware",
             ),
         ]
         out = mt._consolidate_by_group([dict(t) for t in idor])
@@ -937,6 +964,14 @@ class TestConsolidateByGroup:
         assert s["instance_count"] == 2
         assert "routes/address.ts" in s["affected_files"]
         assert "routes/wallet.ts" in s["affected_files"]
+
+    def test_idor_without_shared_control_scope_stays_per_component(self, mt):
+        """CWE-639 alone cannot prove two services share one authz control."""
+        rows = [
+            _threat(cwe="CWE-639", component_id="billing", evidence={"file": "billing/a.py", "line": 4}),
+            _threat(cwe="CWE-639", component_id="hr", evidence={"file": "hr/b.py", "line": 8}),
+        ]
+        assert len(mt._consolidate_by_group(rows)) == 2
 
     def test_sql_injection_consolidates_per_component(self, mt):
         # CWE-89 sinks in ONE component share a root cause (raw SQL from
@@ -1117,12 +1152,15 @@ class TestConsolidationGroupMatching:
         assert g is not None and g["id"] == "unauth-websocket-channel"
 
     def test_bucket_key_cross_vs_per_component(self, mt):
-        cross = {"id": "g", "scope": "cross-component"}
+        cross = {"id": "g", "scope": "cross-component", "cross_component_scope_field": "control_scope"}
         per = {"id": "g"}  # default per-component
-        a = {"component_id": "auth"}
-        b = {"component_id": "api"}
-        assert mt._group_bucket_key(a, cross) == mt._group_bucket_key(b, cross)  # merge across components
+        a = {"component_id": "auth", "control_scope": "shared-helper"}
+        b = {"component_id": "api", "control_scope": "shared-helper"}
+        assert mt._group_bucket_key(a, cross) == mt._group_bucket_key(b, cross)  # proven shared scope
         assert mt._group_bucket_key(a, per) != mt._group_bucket_key(b, per)  # kept apart
+        assert mt._group_bucket_key({"component_id": "auth"}, cross) != mt._group_bucket_key(
+            {"component_id": "api"}, cross
+        )
 
     def test_dependabot_file_glob_group_consolidates(self, mt):
         rows = [
@@ -1370,6 +1408,7 @@ class TestConfigFindingToThreat:
             "line": 7,
             "breach_vector": "Internet Anon",
             "check_slug": "cors-wildcard",
+            "control_scope": "edge-cors-policy",
         }
         out = mt._config_finding_to_threat(f)
         assert out["stride"] == "Information Disclosure"
@@ -1377,6 +1416,7 @@ class TestConfigFindingToThreat:
         assert out["cwe"] == "CWE-942"
         assert out["breach_distance"] == 1
         assert out["config_check_slug"] == "cors-wildcard"
+        assert out["control_scope"] == "edge-cors-policy"
 
     def test_defaults_when_missing(self, mt):
         out = mt._config_finding_to_threat({})
@@ -1409,12 +1449,14 @@ class TestSourceAuthFindingToThreat:
             "file": "routes/users.ts",
             "line": 9,
             "breach_vector": "Internet User",
+            "control_scope": "shared-authz-middleware",
         }
         out = mt._source_auth_finding_to_threat(f)
         assert out["stride"] == "Tampering"
         assert out["source"] == "source-scan"
         assert out["component_id"] == "backend-api"
         assert out["breach_distance"] == 2
+        assert out["control_scope"] == "shared-authz-middleware"
 
     def test_unknown_check_id_defaults_tampering(self, mt):
         out = mt._source_auth_finding_to_threat({"check_id": "AUTHZ-999"})

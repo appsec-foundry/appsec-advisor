@@ -540,6 +540,12 @@ Read `shared/cvss-metrics.md` for the conditions, output shape, base-metric deri
 | `evidence: {file, line}` (nested object) | ~~`evidence_file` / `evidence_line`~~ |
 | `mitigation_title` | ~~`title`~~, ~~`recommendation`~~ |
 | `threat_category_id` (REQUIRED) | ~~`category`~~, ~~`pattern`~~, ~~`owasp`~~ |
+| `control_scope` (optional) | ~~component name~~, ~~CWE family~~ |
+
+Set `control_scope` only when the evidence shows that multiple components use
+the same concrete control or object (for example one named gateway middleware
+or JWT verifier). Use its stable identifier and omit the field when the shared
+scope is uncertain; the merger keeps unscoped components separate.
 
 Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
 
@@ -563,6 +569,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
       "local_id": "<COMPONENT_ID>-001",
       "threat_category_id": "<TH-NN — REQUIRED, from data/threat-category-taxonomy.yaml>",
       "additional_categories": ["<TH-NN>", "<TH-NN>"],
+      "control_scope": "<OPTIONAL stable identifier of one evidenced control/object shared across components; omit when unknown, e.g. 'gateway-authz-middleware'>",
       "stride": "<Spoofing | Tampering | Repudiation | Information Disclosure | Denial of Service | Elevation of Privilege>",
       "cwe": "<REQUIRED — primary CWE, e.g. 'CWE-89'. Used for compound-chain detection, severity caps, and breach-distance scoring. Use the most specific applicable CWE, not a pillar.>",
       "title": "<see shared/finding-title-contract.md — canonical form: <Weakness class> (<relative_file_path[:line]>), MAX 80 chars>",

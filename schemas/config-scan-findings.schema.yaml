@@ -106,6 +106,9 @@ $defs:
       finding_type_id:
         # Optional FT-NNN reference into data/finding-types.yaml
         type: ["string", "null"]
+      control_scope:
+        type: ["string", "null"]
+        minLength: 1
       iac_type:
         $ref: "#/$defs/iacType"
       file:

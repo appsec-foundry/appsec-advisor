@@ -149,6 +149,7 @@ class TestResolveAssessmentDepth:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_assessment_depth(ns)
         assert out["assessment_depth"] == "standard"
+        assert out["register_severity_floor"] == "medium"
         # max_stride_components is now the depth-independent operational ceiling,
         # NOT a per-depth selection count (selection is criteria-derived).
         assert out["max_stride_components"] == rc.STRIDE_COMPONENT_CEILING
@@ -192,6 +193,10 @@ class TestResolveAssessmentDepth:
         """The default depth (standard) caps QA repair at a single pass."""
         out = rc.resolve_assessment_depth(rc.build_parser().parse_args([]))
         assert out["max_repair_iterations"] == 1
+
+    def test_register_severity_floor_override(self):
+        ns = rc.build_parser().parse_args(["--register-severity-floor", "low"])
+        assert rc.resolve_assessment_depth(ns)["register_severity_floor"] == "low"
 
 
 class TestResolveReasoningModel:

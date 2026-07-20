@@ -149,6 +149,12 @@ $defs:
             likelihood: { $ref: "#/$defs/likelihood" }
             impact:     { $ref: "#/$defs/impact" }
             risk:       { $ref: "#/$defs/risk" }
+            control_scope:
+              # Optional stable identifier for one concrete control/object
+              # shared across components, e.g. `gateway-authz-middleware`.
+              # Omit it when the shared control cannot be evidenced.
+              type: [string, "null"]
+              minLength: 1
             owasp_llm_ids:
               # Optional, evidence-backed OWASP LLM Top-10 (2025) categories.
               # IDs stay on the finding through merge, YAML, and SARIF export.

@@ -106,6 +106,9 @@ $defs:
       finding_type_id:
         type: ["string", "null"]
         pattern: "^FT-[0-9]{3}$|^$"
+      control_scope:
+        type: ["string", "null"]
+        minLength: 1
       source_type:
         $ref: "#/$defs/sourceType"
       file:
