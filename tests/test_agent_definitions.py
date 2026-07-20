@@ -430,54 +430,6 @@ class TestGitignoreTemplate:
 
 
 # ---------------------------------------------------------------------------
-# Doc-drift: AGENTS.md describes each agent. Catch the case where the
-# documented maxTurns drifts away from the agent frontmatter (this exact bug
-# happened: AGENTS.md said "40 max turns" while the agent had maxTurns: 80).
-# ---------------------------------------------------------------------------
-
-PLUGIN_AGENTS_MD = Path(__file__).parent.parent / "AGENTS.md"
-
-# Regex matches lines like:
-#   `agents/appsec-qa-reviewer.md` — Sonnet, 80 max turns
-_AGENT_TURN_DOC_RE = re.compile(
-    r"`agents/(?P<name>appsec-[a-z-]+)\.md`\s*[—-]\s*Sonnet,\s*(?P<turns>\d+)\s*max\s*turns",
-    re.IGNORECASE,
-)
-
-
-class TestAgentsMdDocDrift:
-    # Note: existence is implicitly asserted by the drift/inventory tests below
-    # (they call read_text() and regex-match; a missing file fails loudly).
-
-    def test_documented_max_turns_matches_frontmatter(self):
-        """Every agent referenced in AGENTS.md with a 'N max turns'
-        annotation must match the agent's actual frontmatter value.
-        """
-        text = PLUGIN_AGENTS_MD.read_text()
-        documented = {m.group("name"): int(m.group("turns")) for m in _AGENT_TURN_DOC_RE.finditer(text)}
-        assert documented, "No agent maxTurns annotations found in AGENTS.md — the doc-drift regex may need updating"
-        mismatches = []
-        for name, doc_turns in documented.items():
-            path = AGENTS_DIR / f"{name}.md"
-            if not path.exists():
-                mismatches.append(f"{name}: documented in AGENTS.md but agent file not found")
-                continue
-            meta, _ = parse_frontmatter(path)
-            actual = meta.get("maxTurns")
-            if actual != doc_turns:
-                mismatches.append(f"{name}: AGENTS.md says {doc_turns} max turns, frontmatter has maxTurns: {actual}")
-        assert not mismatches, "Doc-drift detected:\n  " + "\n  ".join(mismatches)
-
-    def test_all_agents_documented_in_claude_md(self):
-        """Every agent file must be documented in AGENTS.md."""
-        text = PLUGIN_AGENTS_MD.read_text()
-        documented = {m.group("name") for m in _AGENT_TURN_DOC_RE.finditer(text)}
-        present = set(EXPECTED_MAX_TURNS.keys())
-        missing = present - documented
-        assert not missing, f"Agents missing from AGENTS.md (or missing 'N max turns' annotation): {missing}"
-
-
-# ---------------------------------------------------------------------------
 # Logging template centralization (Sprint 1 Item D)
 #
 # The shared/logging-standard.md file is the single source of truth for the

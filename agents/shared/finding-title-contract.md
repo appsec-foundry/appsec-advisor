@@ -14,7 +14,7 @@ Canonical form for every threat's `title` field. Read this before authoring titl
 > file tokens. So a drifted title is corrected at render time — but author it
 > correctly anyway so the normalizer has clean input. Pinned by
 > `tests/test_emit_clean_finding_titles.py`; registered in
-> `AGENTS.md → Drift-Guarded Runtime Contracts → Deliverable presentation
+> `AGENTS.md → Non-obvious Runtime Invariants → Deliverable presentation
 > invariants`. Do not "fix" a title defect in the deliverable — fix the
 > normalizer.
 

@@ -2334,7 +2334,8 @@ def render_run_plan_notes(
 # carries a resolved value in ``cfg`` (concrete id under sonnet-economy, or the
 # bare ``sonnet`` alias otherwise). renderer + abuse_verifier default to the
 # ``sonnet`` alias (host session) but are pinnable via APPSEC_RENDERER_MODEL /
-# APPSEC_ABUSE_VERIFIER_MODEL. Keep in sync with the AGENTS.md routing table.
+# APPSEC_ABUSE_VERIFIER_MODEL. This list is the display source of truth; keep
+# the user-facing rationale in docs/model-selection.md aligned with it.
 _ROUTING_ROWS: list[tuple[str, str | None, str]] = [
     # (display label, cfg key or None, note)
     ("STRIDE (discovery)",       "stride_model",           "reasoning core"),
