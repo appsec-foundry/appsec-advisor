@@ -23,6 +23,8 @@ entry (matched on T-NNN via ``t_id`` OR ``id``):
   * Compare ``stride`` / ``cwe`` / ``component`` (yaml) vs
     ``stride`` / ``cwe`` / ``component_id`` (merged).
   * Compare evidence file+line tuples.
+  * Remove ``cvss_v4`` from both canonical merged threats and output YAML when
+    the source/CWE/evidence combination is not CVSS-eligible.
   * On drift:
       - Default mode: **restore the merged value** in yaml and append a
         ``yaml_invariant_drift`` flag to ``evidence_flags`` plus a
@@ -55,6 +57,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from _atomic_io import atomic_write_json
 from event_log import format_line
 
 _TRACKED_FIELDS = (
@@ -71,6 +74,47 @@ _TRACKED_FIELDS = (
     ("stride", "stride"),
     ("cwe", "cwe"),
 )
+
+
+def _load_cvss_eligible() -> frozenset[str]:
+    """Load the canonical positive CWE list next to the plugin scripts."""
+    path = Path(__file__).resolve().parent.parent / "data" / "cvss-eligible-cwes.yaml"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return frozenset()
+    return frozenset(
+        entry["cwe"]
+        for entry in (doc.get("eligible_cwes") or [])
+        if isinstance(entry, dict) and isinstance(entry.get("cwe"), str)
+    )
+
+
+def _has_file_line_evidence(threat: dict) -> bool:
+    """Return whether any evidence row carries a concrete file and line."""
+    evidence = threat.get("evidence")
+    rows = evidence if isinstance(evidence, list) else [evidence]
+    for row in rows:
+        if not isinstance(row, dict) or not str(row.get("file") or "").strip():
+            continue
+        line = row.get("line")
+        if isinstance(line, int) and not isinstance(line, bool) and line > 0:
+            return True
+        if isinstance(line, str) and line.isdigit() and int(line) > 0:
+            return True
+    return False
+
+
+def _cvss_allowed(threat: dict, eligible_cwes: frozenset[str]) -> bool:
+    """Apply the cross-schema CVSS source/CWE/evidence eligibility rule."""
+    source = threat.get("source")
+    if source in {"known-vuln", "dep-scan"}:
+        return True
+    return (
+        source == "stride"
+        and threat.get("cwe") in eligible_cwes
+        and _has_file_line_evidence(threat)
+    )
 
 
 def _evidence_tuples(threat: dict, prefer_dict: bool) -> list[tuple[str, int | None]]:
@@ -145,11 +189,15 @@ def enforce(output_dir: Path, report_only: bool) -> tuple[int, list[dict]]:
 
     merged_by = _merged_by_tid(mdoc)
     drifts: list[dict] = []
+    yaml_by: dict[str, dict] = {}
     for t in ydoc.get("threats", []) or []:
         if not isinstance(t, dict):
             continue
         tid = t.get("id") or t.get("t_id")
-        if not isinstance(tid, str) or tid not in merged_by:
+        if not isinstance(tid, str):
+            continue
+        yaml_by[tid] = t
+        if tid not in merged_by:
             continue
         m = merged_by[tid]
         per_threat: dict[str, dict] = {}
@@ -224,11 +272,62 @@ def enforce(output_dir: Path, report_only: bool) -> tuple[int, list[dict]]:
             ),
         )
 
+    # CVSS scope is a deterministic data invariant, not a report-review task.
+    # Repair both representations so a later recompose or incremental carry-
+    # forward cannot reintroduce a vector stripped from only one side.
+    eligible_cwes = _load_cvss_eligible()
+    merged_changed = False
+    for tid in sorted(set(yaml_by) | set(merged_by)):
+        ythreat = yaml_by.get(tid)
+        mthreat = merged_by.get(tid)
+        candidates = [t for t in (ythreat, mthreat) if isinstance(t, dict)]
+        invalid = [t for t in candidates if isinstance(t.get("cvss_v4"), dict) and not _cvss_allowed(t, eligible_cwes)]
+        if not invalid:
+            continue
+
+        representative = invalid[0]
+        drift_record = {
+            "threat_id": tid,
+            "fields": {
+                "cvss_v4": {
+                    "yaml": ythreat.get("cvss_v4") if isinstance(ythreat, dict) else None,
+                    "merged": mthreat.get("cvss_v4") if isinstance(mthreat, dict) else None,
+                    "reason": (
+                        "CVSS requires source=known-vuln/dep-scan, or "
+                        "source=stride with an eligible CWE and file:line evidence"
+                    ),
+                }
+            },
+        }
+        drifts.append(drift_record)
+        if report_only:
+            continue
+
+        if isinstance(ythreat, dict):
+            ythreat.pop("cvss_v4", None)
+            flags = list(ythreat.get("evidence_flags") or [])
+            if "cvss_scope_repaired" not in flags:
+                flags.append("cvss_scope_repaired")
+            ythreat["evidence_flags"] = flags
+            ythreat.setdefault("invariant_repaired", []).append(
+                {"at": _now(), "fields": ["cvss_v4"]}
+            )
+        if isinstance(mthreat, dict) and "cvss_v4" in mthreat:
+            mthreat.pop("cvss_v4", None)
+            merged_changed = True
+        _log(
+            output_dir,
+            f"{tid} cvss_v4 removed: source={representative.get('source')!r} "
+            f"cwe={representative.get('cwe')!r} concrete_evidence={_has_file_line_evidence(representative)}",
+        )
+
     if drifts and not report_only:
         yaml_path.write_text(
             yaml.safe_dump(ydoc, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
             encoding="utf-8",
         )
+        if merged_changed:
+            atomic_write_json(merged_path, mdoc)
 
     return len(drifts), drifts
 

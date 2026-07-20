@@ -558,8 +558,8 @@ def test_post_stage1_runs_compact_deterministic_gate_sequence(tmp_path, monkeypa
     assert action["stage"] == "stage1"
     assert scripts == [
         "check_stride_dispatch.py",
-        "validate_intermediate.py",
         "enforce_yaml_invariants.py",
+        "validate_intermediate.py",
         "triage_compute_ranking.py",
         "validate_mitigation_quality.py",
         "assert_completeness.py",

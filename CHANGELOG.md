@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Large full/rebuild scans now dispatch STRIDE analysis in resumable waves of up to eight components. Set `APPSEC_STRIDE_CONCURRENCY=1..32` to tune concurrency; selected components remain in scope, and incomplete component coverage blocks report publication.
+- Stage 3 now validates the post-autofix report once and skips the QA agent for clean runs at every depth. Forced/manual semantic review remains available, while CVSS scope cleanup runs deterministically before YAML validation.
 
 ### Fixed
 

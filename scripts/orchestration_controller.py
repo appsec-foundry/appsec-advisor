@@ -1131,13 +1131,16 @@ def post_stage1(output_dir: Path) -> dict[str, Any]:
     _run_script("check_stride_dispatch.py", [str(output_dir)])
     if not _upgrade_bootstrap_yaml(output_dir, cfg):
         raise ControllerError("Stage 1 left a bootstrap threat-model.yaml that could not be upgraded")
+    receipts: list[str] = []
+    # Normalize cross-artifact invariants before the hard schema/cross-field
+    # gate. In particular, invalid CVSS scope must be repaired before
+    # validate_intermediate evaluates the eligibility rule; the reverse order
+    # would block Stage 2 before the deterministic enforcer could run.
+    _best_effort_script(output_dir, "enforce_yaml_invariants.py", [str(output_dir)], receipts)
     _run_script(
         "validate_intermediate.py",
         ["threat_model_output", str(output_dir / "threat-model.yaml")],
     )
-
-    receipts: list[str] = []
-    _best_effort_script(output_dir, "enforce_yaml_invariants.py", [str(output_dir)], receipts)
     _best_effort_script(
         output_dir,
         "triage_compute_ranking.py",

@@ -21,52 +21,26 @@ def _read(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# E.2 — QA Check 11 depth matrix
+# E.2 — deterministic ownership / dispatch policy
 # ---------------------------------------------------------------------------
 
-CHECK_11_ROW_RE = re.compile(
-    r"^\|\s*11\. Badges & mitigation schema\s*\|\s*(?P<core>[^|]+?)\s*\|\s*"
-    r"(?P<full>[^|]+?)\s*\|\s*(?P<extended>[^|]+?)\s*\|",
-    re.MULTILINE,
-)
-
-
-def parse_check_11_row() -> dict[str, str]:
-    m = CHECK_11_ROW_RE.search(_read(QA_REVIEWER))
-    assert m, "Could not find Check 11 row in QA_DEPTH matrix"
-    return {k: v.strip() for k, v in m.groupdict().items()}
-
-
-class TestCheck11DepthProfile:
-    def test_core_skips_check_11(self):
-        row = parse_check_11_row()
-        assert row["core"].lower() == "skip", (
-            f"Check 11 at core depth should be 'Skip' (Phase-11 render hard-gate "
-            f"handles badge correctness pre-QA); got {row['core']!r}"
-        )
-
-    def test_full_runs_11a_plus_11d_only(self):
-        row = parse_check_11_row()
-        cell = row["full"]
-        assert "11a" in cell and "11d" in cell, f"Check 11 at full should include 11a+11d; got {cell!r}"
-        assert "11b" not in cell and "11c" not in cell, (
-            f"Check 11 at full should NOT include 11b/11c (schema-redundant "
-            f"with Phase-11 render hard-gate); got {cell!r}"
-        )
-
-    def test_extended_runs_all_four(self):
-        row = parse_check_11_row()
-        cell = row["extended"]
-        for sub in ("11a", "11b", "11c", "11d"):
-            assert sub in cell, f"Check 11 at extended must include {sub}; got {cell!r}"
-
-    def test_rationale_is_documented(self):
-        """The depth-profile rationale must be documented so future contributors
-        understand why core skips and full omits 11b/11c."""
+class TestDeterministicQaOwnership:
+    def test_mitigation_shape_is_not_rechecked_by_agent(self):
         text = _read(QA_REVIEWER)
-        assert "Rationale for Check 11 depth profile" in text, (
-            "Rationale for the Check 11 depth profile must be documented in the agent prompt (not only in git history)"
-        )
+        assert "mitigation schema and P1–P4 grouping" in text
+        assert "Do not run `qa_checks.py all`" in text
+
+    def test_extended_depth_does_not_dispatch_clean_agent(self):
+        skill = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
+        reviewer = _read(QA_REVIEWER)
+        assert "regardless of assessment depth" in reviewer
+        assert "Extended depth adds deterministic coverage" in skill
+        assert "- `QA_DEPTH=extended`" not in skill
+
+    def test_forced_review_bypasses_clean_fast_exit(self):
+        text = _read(QA_REVIEWER)
+        assert "APPSEC_FORCE_QA_AGENT != 1" in text
+        assert "explicit force exception" in text
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +80,7 @@ class TestDeterministicFirstQa:
         text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
         assert "deterministic-pre-agent" in text
         assert "skip the QA agent" in text
-        assert ".qa-prepass.json" in text
+        assert "qa_checks.py all" in text
         assert "QA_AGENT_DISPATCHED=false" in text
         assert "do **not** execute any later instruction that invokes `appsec-qa-reviewer`" in text
 

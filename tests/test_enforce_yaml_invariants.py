@@ -62,6 +62,22 @@ class TestEvidenceTuples:
         assert eyi._evidence_tuples({}, prefer_dict=True) == []
 
 
+class TestCvssScopeHelpers:
+    def test_stride_requires_eligible_cwe_and_file_line(self, monkeypatch):
+        eligible = frozenset({"CWE-79"})
+        threat = {
+            "source": "stride",
+            "cwe": "CWE-79",
+            "evidence": {"file": "src/app.py", "line": 12},
+        }
+        assert eyi._cvss_allowed(threat, eligible)
+        assert not eyi._cvss_allowed({**threat, "cwe": "CWE-200"}, eligible)
+        assert not eyi._cvss_allowed({**threat, "evidence": {"file": "src/app.py"}}, eligible)
+
+    def test_known_vulnerability_is_allowed_without_code_evidence(self):
+        assert eyi._cvss_allowed({"source": "known-vuln"}, frozenset())
+
+
 # ---------------------------------------------------------------------------
 # _merged_by_tid
 # ---------------------------------------------------------------------------
@@ -230,6 +246,44 @@ class TestEnforceRepair:
         _write(output_dir, {"threats": [y]}, {"threats": [m]})
         count, _ = eyi.enforce(output_dir, report_only=False)
         assert count == 0
+
+    def test_forbidden_cvss_removed_from_yaml_and_merged(self, output_dir, monkeypatch):
+        cvss = {
+            "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+            "base_score": 9.3,
+            "severity": "Critical",
+            "source": "calculated",
+        }
+        y = {"id": "T-001", "stride": "S", "cwe": "CWE-79", "source": "coverage-gap", "cvss_v4": cvss}
+        m = {"t_id": "T-001", "stride": "S", "cwe": "CWE-79", "source": "coverage-gap", "cvss_v4": cvss}
+        _write(output_dir, {"threats": [y]}, {"threats": [m]})
+
+        count, drifts = eyi.enforce(output_dir, report_only=False)
+
+        assert count == 1
+        assert "cvss_v4" in drifts[0]["fields"]
+        yout = yaml.safe_load((output_dir / "threat-model.yaml").read_text())
+        mout = json.loads((output_dir / ".threats-merged.json").read_text())
+        assert "cvss_v4" not in yout["threats"][0]
+        assert "cvss_v4" not in mout["threats"][0]
+        assert "cvss_scope_repaired" in yout["threats"][0]["evidence_flags"]
+
+    def test_eligible_stride_cvss_is_preserved(self, output_dir, monkeypatch):
+        monkeypatch.setattr(eyi, "_load_cvss_eligible", lambda: frozenset({"CWE-79"}))
+        cvss = {"vector": "CVSS:4.0/AV:N", "base_score": 5.0, "severity": "Medium", "source": "calculated"}
+        base = {
+            "stride": "S",
+            "cwe": "CWE-79",
+            "source": "stride",
+            "evidence": {"file": "src/app.py", "line": 7},
+            "cvss_v4": cvss,
+        }
+        _write(output_dir, {"threats": [{"id": "T-001", **base}]}, {"threats": [{"t_id": "T-001", **base}]})
+
+        count, _ = eyi.enforce(output_dir, report_only=False)
+
+        assert count == 0
+        assert "cvss_v4" in yaml.safe_load((output_dir / "threat-model.yaml").read_text())["threats"][0]
 
     def test_idempotent(self, output_dir):
         y = {"id": "T-001", "stride": "WRONG", "cwe": "CWE-1"}

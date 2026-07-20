@@ -2338,6 +2338,43 @@ class TestRepairPlanFoldedChecks:
         assert actionable is False
 
 
+class TestCanonicalQaGate:
+    def test_gate_applies_autofix_before_building_plan(self, tmp_path, monkeypatch):
+        md = tmp_path / "threat-model.md"
+        md.write_text("# Report\n", encoding="utf-8")
+        calls = []
+
+        monkeypatch.setattr(qa, "_run_autofix", lambda *args: calls.append("autofix") or 0)
+        monkeypatch.setattr(qa, "cmd_repair_plan", lambda *args: calls.append("repair_plan") or 0)
+
+        assert qa.cmd_gate(md, tmp_path, tmp_path, qa.DEFAULT_CONTRACT_PATH) == 0
+        assert calls == ["autofix", "repair_plan"]
+
+    def test_cross_reference_issues_reach_repair_plan(self, tmp_path):
+        md = tmp_path / "threat-model.md"
+        md.write_text(
+            "## 8. Findings Register\n\n"
+            "| ID | Scenario |\n|---|---|\n| T-001 | Existing |\n\n"
+            "A stale reference points to T-999.\n",
+            encoding="utf-8",
+        )
+
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+
+        actions = [a for a in plan["actions"] if a["type"] == "xrefs"]
+        assert actions
+        assert "T-999" in actions[0]["raw_issue"]
+        assert actions[0]["severity"] == "blocking"
+
+    def test_retired_chain_checks_are_not_in_runtime_batteries(self):
+        import inspect
+
+        assert "check_chain_compactness(" not in inspect.getsource(qa.build_repair_plan)
+        assert "check_chain_tid_consistency(" not in inspect.getsource(qa.build_repair_plan)
+        assert "check_chain_compactness(" not in inspect.getsource(qa.cmd_all)
+        assert "check_chain_tid_consistency(" not in inspect.getsource(qa.cmd_all)
+
+
 # ---------------------------------------------------------------------------
 # Triage CLI defensive defaults (Sprint 1B / M3.5)
 #

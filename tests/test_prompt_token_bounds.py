@@ -34,12 +34,10 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # context-resolver/recon-scanner after a stall" rule (real token-waste
     # bugfix, pinned by a drift guard). Measured 7_613; high = ~20% buffer.
     "agents/phases/phase-group-recon.md": (3_000, 9_100),
-    # Lowered 2026-05-28: deterministic-first migration. All mechanical
-    # checks already covered by qa_checks.py (53 check functions) were
-    # collapsed to thin "consume PRE_PASS_JSON" pointers. Detailed §2.4
-    # theme rules and MS layout rules moved to shared/qa-section24-themes.md
-    # and shared/qa-ms-checks.md. Measured 11_096 tokens at the cut.
-    "agents/appsec-qa-reviewer.md": (8_500, 13_500),
+    # Lowered 2026-07-20: the canonical post-autofix gate now owns all
+    # mechanical checks. The exceptional reviewer consumes only a compact
+    # repair plan or an explicitly forced semantic sample.
+    "agents/appsec-qa-reviewer.md": (1_200, 3_000),
     "agents/appsec-threat-analyst.md": (22_000, 45_000),
     # Lowered 2026-05-23 after shared-file extraction (finding-title-contract,
     # supply-chain-patterns, spa-threats, cvss-metrics) and dedup of the

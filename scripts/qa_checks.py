@@ -19,15 +19,17 @@ Usage:
     qa_checks.py contract      <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py final_structure <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py repair_plan   <threat-model.md> <output-dir> [<sections-contract.yaml>]
+    qa_checks.py gate          <threat-model.md> <output-dir> <repo-root> [<sections-contract.yaml>]
     qa_checks.py evidence_integrity <output-dir> <repo-root>
     qa_checks.py unmasked_secrets <threat-model.md> [<output-dir>]
     qa_checks.py relevant_findings <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py all           <threat-model.md> <repo-root>
     qa_checks.py autofix       <threat-model.md> <repo-root>
 
-`autofix` runs only the five in-place mutating passes (links, anchors, MS
-structure, cell-format, heading-attribute strip) without the detector battery
-or pre-pass JSON — the fast-path mutation half of `all`.
+`autofix` runs only the authorized in-place mutation passes (links, anchors,
+MS structure, cell format, heading cleanup, reference annotations, code-token
+formatting, fixed-layout tables, and priority styling) without the detector
+battery or pre-pass JSON.
 
 `all` runs every check in sequence and applies in-place fixes for links,
 anchors, and safe Management Summary structural repairs. It prints a JSON
@@ -38,6 +40,11 @@ summary at the end so the caller can parse it.
 orchestrator can consume in REPAIR_MODE to regenerate the offending fragments
 and re-invoke compose_threat_model.py. Exit 0 means no repairs needed; exit
 1 means a plan was written (caller must re-render); exit 2 means error.
+
+`gate` is the canonical Stage-3 entry point. It first applies the authorized
+autofixes and then builds the repair plan from the persisted post-mutation
+Markdown. This prevents a clean pre-autofix result from being reused after the
+document changed and avoids the duplicate `all` detector pass.
 
 `ms_structure` validates that `## Management Summary` is unnumbered and
 contains exactly these sub-sections, in this order:
@@ -1890,6 +1897,10 @@ BLOCKING_ACTION_TYPES = frozenset(
         "mermaid_syntax",
         "toc_nested_link",
         "toc_closure",
+        "xrefs",
+        "reference_format",
+        "heading_hygiene",
+        "html_nested_finding_link",
         "auth_method_decomposition",
         "validation_approach_first",
         "control_subsection_coverage",
@@ -2000,6 +2011,10 @@ def build_repair_plan(
     # fires for them as well, and each check type has its own action branch
     # below with targeted remediation instructions.
     mermaid_report = check_mermaid_syntax(md_path)
+    xref_report = check_xrefs(md_path)
+    reference_format_report = check_reference_format(md_path)
+    heading_report = check_heading_hygiene(md_path)
+    nested_html_link_report = check_html_nested_finding_link(md_path)
     toc_contract_report = check_toc_contract(md_path, contract_path)
     toc_nested_report = check_toc_nested_links(md_path)
     toc_closure_report = check_toc_closure(md_path)
@@ -2010,8 +2025,6 @@ def build_repair_plan(
     validation_approach_report = check_validation_approach_first(md_path, contract_path)
     posture_report = check_security_posture_structure(md_path)
     compactness_report = check_diagram_compactness(md_path, contract_path)
-    chain_compactness_report = check_chain_compactness(md_path, contract_path)
-    chain_tid_report = check_chain_tid_consistency(md_path, output_dir)
     walkthrough_coverage_report = check_walkthrough_coverage(md_path, output_dir, contract_path)
     walkthrough_depth_report = check_walkthrough_depth(md_path, output_dir, contract_path)
     recon_iam_report = check_recon_iam_bridge(md_path, output_dir, contract_path)
@@ -2025,6 +2038,10 @@ def build_repair_plan(
     placeholder_report = check_placeholders(md_path)
     yaml_md_report = check_yaml_md_consistency(md_path, output_dir / "threat-model.yaml")
     mermaid_issues = list(mermaid_report.issues)
+    xref_issues = list(xref_report.issues)
+    reference_format_issues = list(reference_format_report.issues)
+    heading_issues = list(heading_report.issues)
+    nested_html_link_issues = list(nested_html_link_report.issues)
     toc_contract_issues = list(toc_contract_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     toc_closure_issues = list(toc_closure_report.issues)
@@ -2035,8 +2052,6 @@ def build_repair_plan(
     validation_approach_issues = list(validation_approach_report.issues)
     posture_issues = list(posture_report.issues)
     compactness_issues = list(compactness_report.issues)
-    chain_compactness_issues = list(chain_compactness_report.issues)
-    chain_tid_issues = list(chain_tid_report.issues)
     walkthrough_coverage_issues = list(walkthrough_coverage_report.issues)
     walkthrough_depth_issues = list(walkthrough_depth_report.issues)
     recon_iam_issues = list(recon_iam_report.issues)
@@ -2044,6 +2059,10 @@ def build_repair_plan(
     placeholder_issues = list(placeholder_report.issues)
     yaml_md_issues = list(yaml_md_report.issues)
     report.issues.extend(mermaid_issues)
+    report.issues.extend(xref_issues)
+    report.issues.extend(reference_format_issues)
+    report.issues.extend(heading_issues)
+    report.issues.extend(nested_html_link_issues)
     report.issues.extend(toc_contract_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(toc_closure_issues)
@@ -2053,8 +2072,6 @@ def build_repair_plan(
     report.issues.extend(relevant_findings_issues)
     report.issues.extend(posture_issues)
     report.issues.extend(compactness_issues)
-    report.issues.extend(chain_compactness_issues)
-    report.issues.extend(chain_tid_issues)
     report.issues.extend(walkthrough_coverage_issues)
     report.issues.extend(walkthrough_depth_issues)
     report.issues.extend(recon_iam_issues)
@@ -2073,6 +2090,38 @@ def build_repair_plan(
     report.issues.extend(yaml_md_issues)
 
     actions: list[dict] = []
+    for check_name, issue_list, remediation in (
+        (
+            "xrefs",
+            xref_issues,
+            "Repair the producing fragment or structured source so every finding and mitigation reference resolves bidirectionally, then recompose.",
+        ),
+        (
+            "reference_format",
+            reference_format_issues,
+            "Fix the producer that emitted a non-canonical finding or mitigation reference, then recompose; do not patch the rendered report.",
+        ),
+        (
+            "heading_hygiene",
+            heading_issues,
+            "Fix the source heading or composer transformation, then recompose so heading text and generated anchors stay in lock-step.",
+        ),
+        (
+            "html_nested_finding_link",
+            nested_html_link_issues,
+            "Fix the linkification producer that nested a Markdown finding link inside an HTML anchor, then recompose.",
+        ),
+    ):
+        if issue_list:
+            actions.append(
+                {
+                    "raw_issue": "; ".join(issue_list),
+                    "type": check_name,
+                    "section_id": "cross_references",
+                    "fragments_to_rewrite": [],
+                    "remediation": remediation,
+                }
+            )
     if toc_contract_issues:
         actions.append(
             {
@@ -2394,49 +2443,6 @@ def build_repair_plan(
             }
         )
 
-    for raw in chain_compactness_issues:
-        actions.append(
-            {
-                "raw_issue": raw,
-                "type": "chain_compactness",
-                "section_id": "attack_walkthroughs",
-                "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
-                "remediation": (
-                    "§3.1 Attack Chains must follow the per-chain compactness "
-                    "rules pinned in `data/sections-contract.yaml → "
-                    "chain_compactness`. Each `#### Chain N — <name>` block "
-                    "must contain ONE `graph LR` mermaid block (no subgraphs), "
-                    "≤6 nodes, the audit classDef block (`risk` + `impact`), "
-                    "and at least one T-NNN reference whose §8 entry exists. "
-                    "If a chain exceeds the size limit it should be split into "
-                    "two chains OR moved to §3.2+ as a standalone walkthrough. "
-                    "After editing, re-run compose_threat_model.py."
-                ),
-            }
-        )
-
-    for raw in chain_tid_issues:
-        actions.append(
-            {
-                "raw_issue": raw,
-                "type": "chain_tid_consistency",
-                "section_id": "attack_walkthroughs",
-                "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
-                "remediation": (
-                    "§3.1 chain-overview node label cites a T-NNN whose actual "
-                    "title in `threat-model.yaml` shares no content keyword with "
-                    "the label. The chain diagram is referencing the wrong "
-                    "finding (LLM authoring drift). Two valid fixes:\n"
-                    "  (1) Rewrite the node label so it actually describes the "
-                    "      cited T-NNN's finding (look up the title in "
-                    "      `threat-model.yaml → threats[].title`).\n"
-                    "  (2) Change the T-NNN reference to the threat the label "
-                    "      genuinely describes — and verify §8 has a row for it.\n"
-                    "After editing, re-run compose_threat_model.py."
-                ),
-            }
-        )
-
     for raw in compactness_issues:
         actions.append(
             {
@@ -2463,11 +2469,15 @@ def build_repair_plan(
 
     for raw in report.issues:
         # Skip issues already consumed above (added by mermaid / TOC / infobox
-        # / auth-method / posture / compactness / chain-compactness branches)
+        # / auth-method / posture / compactness branches)
         # so we do not emit both a structural action and an "unclassified"
         # action for the same violation.
         if (
             raw in mermaid_issues
+            or raw in xref_issues
+            or raw in reference_format_issues
+            or raw in heading_issues
+            or raw in nested_html_link_issues
             or raw in toc_contract_issues
             or raw in toc_nested_issues
             or raw in toc_closure_issues
@@ -2477,8 +2487,6 @@ def build_repair_plan(
             or raw in relevant_findings_issues
             or raw in posture_issues
             or raw in compactness_issues
-            or raw in chain_compactness_issues
-            or raw in chain_tid_issues
             or raw in walkthrough_coverage_issues
             or raw in walkthrough_depth_issues
             or raw in recon_iam_issues
@@ -4269,17 +4277,14 @@ def _emit_as_html_table(body_rows: list[str], spec) -> list[str]:
     return html
 
 
-def cmd_autofix(md_path: Path, repo_root: Path) -> int:
-    """Run only the five in-place auto-fixing passes and write the corrected
-    Markdown back: links, anchors, MS structure, cell-format, and the
-    heading-attribute strip.
+def _run_autofix(md_path: Path, repo_root: Path) -> int:
+    """Run the authorized final mutation passes and persist the result.
 
     This is the mutation half of ``cmd_all`` without the detector battery. The
     skill calls it on every run so the persisted Markdown is always clean, and
-    defers the full detector pre-pass (``cmd_all`` -> ``.qa-prepass.json``) to
-    the agent-dispatch path where the JSON is actually consumed. On the clean
-    fast path the QA agent is skipped, so running the ~45 detectors there only
-    populates a file nobody reads. Returns 0 — auto-fixes are not failures.
+    The canonical gate validates the resulting bytes directly. ``cmd_all`` is
+    retained only as the final QA path when Stage 3 is intentionally skipped.
+    Returns the number of mutations applied.
     """
     md = md_path.resolve()
     _PrePass.reset()
@@ -4348,8 +4353,28 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
         + as_converted
         + priority_circle_fixes
     )
+    return fixes
+
+
+def cmd_autofix(md_path: Path, repo_root: Path) -> int:
+    """Apply the authorized final Markdown mutations."""
+    fixes = _run_autofix(md_path, repo_root)
     print(json.dumps({"autofix": {"fix_count": fixes}}, indent=2))
     return 0
+
+
+def cmd_gate(md_path: Path, output_dir: Path, repo_root: Path, contract_path: Path) -> int:
+    """Apply autofixes, then evaluate the persisted post-mutation report.
+
+    This is the canonical Stage-3 gate. Keeping mutation and validation in one
+    process makes their ordering explicit and prevents callers from retaining a
+    pre-autofix exit code after the report bytes have changed.
+    """
+    if not md_path.is_file():
+        print(f"error: {md_path} not found", file=sys.stderr)
+        return 2
+    _run_autofix(md_path, repo_root)
+    return cmd_repair_plan(md_path, output_dir, contract_path)
 
 
 def cmd_all(md_path: Path, repo_root: Path) -> int:
@@ -4426,14 +4451,6 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # and threat-traceability (post-2026-05). Drives Re-Render-Loop when
     # the LLM has bloated either diagram beyond the contract limits.
     compactness_report = check_diagram_compactness(md)
-    # Chain-compactness — §3.1 per-chain limits (graph LR, max blocks,
-    # max nodes per block, classDef, threat-per-block).
-    chain_compactness_report = check_chain_compactness(md)
-    # Chain T-ID consistency — verify chain-overview node labels share at
-    # least one content keyword with the actual finding title in
-    # threat-model.yaml. Catches LLM-authored chain diagrams that
-    # reference completely the wrong threat (P2 — A2).
-    chain_tid_report = check_chain_tid_consistency(md, md.parent)
     # Walkthrough coverage + depth — one §3.x per Critical threat in yaml,
     # with non-trivial body and `alt Current state` / `else After mitigation`
     # branch in each sequenceDiagram. Closes the regression where the renderer
@@ -4508,8 +4525,6 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "yaml_md_consistency": yaml_md_report.as_dict(),
         "posture_structure": posture_report.as_dict(),
         "diagram_compactness": compactness_report.as_dict(),
-        "chain_compactness": chain_compactness_report.as_dict(),
-        "chain_tid_consistency": chain_tid_report.as_dict(),
         "walkthrough_coverage": walkthrough_coverage_report.as_dict(),
         "walkthrough_depth": walkthrough_depth_report.as_dict(),
         "recon_iam_bridge": recon_iam_report.as_dict(),
@@ -10635,6 +10650,15 @@ def main(argv: list[str]) -> int:
             return 2
         contract = Path(argv[4]) if len(argv) == 5 else DEFAULT_CONTRACT_PATH
         return cmd_repair_plan(Path(argv[2]), Path(argv[3]), contract)
+    if sub == "gate":
+        if len(argv) not in (5, 6):
+            print(
+                "usage: qa_checks.py gate <md> <output-dir> <repo-root> [<contract.yaml>]",
+                file=sys.stderr,
+            )
+            return 2
+        contract = Path(argv[5]) if len(argv) == 6 else DEFAULT_CONTRACT_PATH
+        return cmd_gate(Path(argv[2]), Path(argv[3]), Path(argv[4]), contract)
     if sub == "all":
         if len(argv) != 4:
             print("usage: qa_checks.py all <md> <repo-root>", file=sys.stderr)

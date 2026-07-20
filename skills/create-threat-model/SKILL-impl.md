@@ -2410,6 +2410,11 @@ EOF
   exit 2
 fi
 
+# Normalize merged↔YAML drift and CVSS eligibility BEFORE the hard gate. The
+# enforcer is best-effort for IO failures, but any unrepaired structural or
+# cross-field defect is still rejected immediately by validate_intermediate.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/enforce_yaml_invariants.py" "$OUTPUT_DIR" 2>&1 | tail -10 || true
+
 # Hard gate: validate threat-model.yaml schema before dispatching Stage 2.
 # An invalid YAML here means Stage 1 did not fully persist Phase 3-8 data.
 # Stage 2 rendering from an invalid YAML produces silently broken output
@@ -2467,13 +2472,14 @@ If either branch trips, the run exits 2 without dispatching Stage 2. The YAML an
 
 Phase-11 Substep-2 is LLM-driven: it assembles `threat-model.yaml` from `.threats-merged.json` plus working-memory Phases-5-8 context. In practice the LLM silently rewrites threat fields it is supposed to copy verbatim. The 2026-05 juice-shop run mutated 3 of 36 STRIDE categories (T-005 Tampering→Elevation of Privilege, T-024 Information Disclosure→Tampering, T-030 Information Disclosure→Tampering) between merge and yaml, and 29 of 36 titles. Downstream §8 grouping, attack-walkthroughs and mitigation references treated the post-mutation values as authoritative.
 
-`scripts/enforce_yaml_invariants.py` compares `stride` and `cwe` (the fields with semantic downstream impact) between yaml and merged, restores the merged value when they diverge, appends `yaml_invariant_drift` to `evidence_flags`, and writes a `YAML_INVARIANT_DRIFT` audit line to `.agent-run.log`. Idempotent.
+`scripts/enforce_yaml_invariants.py` compares `stride` and `cwe` (the fields with semantic downstream impact) between yaml and merged, restores the merged value when they diverge, and deterministically removes out-of-scope `cvss_v4` blocks from both representations. CVSS is retained only for known-vulnerability/dependency sources or STRIDE findings with an eligible CWE and concrete file:line evidence. Repairs append an evidence flag and write a `YAML_INVARIANT_DRIFT` audit line to `.agent-run.log`. Idempotent.
 
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/enforce_yaml_invariants.py" "$OUTPUT_DIR" 2>&1 | tail -10 || true
-```
+This command already ran immediately before the YAML hard gate above; do not
+run it a second time here.
 
-Runs **before** the auto-emitter pass so that any post-yaml mutation by reclassify_components, sanitize_perimeter_claims etc. operates on a stride/cwe-canonical yaml. `--report-only` is available for CI inspection without rewrite.
+It runs **before validation and before** the auto-emitter pass so that validation
+sees repaired CVSS scope and later mutations operate on a stride/cwe-canonical
+YAML. `--report-only` is available for CI inspection without rewrite.
 
 ### Stage 2 no-op gate (incremental only — skip render when YAML unchanged)
 
@@ -2881,9 +2887,9 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    # doc (2026-06-05 parallel-render gotcha). Exit code is the only honest
    # signal. Retry compose once (mirrors the single-dispatch renderer's
    # Postcondition recovery) before handing off to the recovery path.
-   # Stage 3 runs `qa_checks.py all` for standard/thorough non-PR runs. Let
-   # that authoritative gate own Mermaid parsing once; quick/PR/no-QA paths
-   # retain the compose-time parse because no later full gate is guaranteed.
+   # The Stage-3 canonical gate owns Mermaid parsing for non-PR QA runs.
+   # Quick/PR/no-QA paths retain compose-time parsing because no later gate is
+   # guaranteed.
    COMPOSE_MERMAID_ARG=""
    if [ "$SKIP_QA" != "true" ] && [ "$DRY_RUN" != "true" ] && [ "$PR_MODE" != "true" ]; then
        COMPOSE_MERMAID_ARG="--defer-mermaid-validation"
@@ -3594,7 +3600,7 @@ The previous ~50 lines of inline Bash that tried to replicate the gate logic in 
 
 ### Pre-agent contract gate (deterministic, skill-level)
 
-Before invoking `qa_checks.py`, run the deterministic prose-fix pass — currently this wraps unbacked path-shaped tokens (`lib/insecurity.ts`, `routes/login.ts:42`) in backticks per `prose-style.md → Rule 6`. The renderer prompt asks for this but LLM compliance is patchy; the script is idempotent and shaves a dozen `inline_code_format` warnings off `.qa-prepass.json` for free:
+Before invoking `qa_checks.py`, run the deterministic prose-fix pass — currently this wraps unbacked path-shaped tokens (`lib/insecurity.ts`, `routes/login.ts:42`) in backticks per `prose-style.md → Rule 6`. The renderer prompt asks for this but LLM compliance is patchy; the script is idempotent and prevents those mechanical warnings from reaching the canonical gate:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py" \
@@ -3625,29 +3631,26 @@ if [ "$SECRET_GATE_EXIT" -eq 1 ]; then
 fi
 ```
 
-When the fragment precondition passes, run `qa_checks.py repair_plan` before the agent is dispatched. This builds `.qa-repair-plan.json` from the authoritative Python checker so the agent inherits a clean baseline instead of spending turns rediscovering drift:
+When the fragment precondition passes, run the canonical post-autofix gate.
+`qa_checks.py gate` applies the authorized Markdown mutations first and then
+builds `.qa-repair-plan.json` from the persisted bytes. Keeping both steps in
+one command prevents a pre-autofix exit code from being reused after the report
+has changed and removes the duplicate `qa_checks.py all` detector pass:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" repair_plan \
-    "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" gate \
+    "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" "$REPO_ROOT"
 GATE_EXIT=$?
 ```
 
-Also apply the auto-fixing checks in place so the Markdown already has clean links, anchors, MS structure, and `<br/>`-stacked multi-link cells before the agent even looks at it. The `autofix` subcommand runs **only** the five in-place mutating passes (links, anchors, MS structure, cell-format, heading-attribute strip); it does **not** run the ~45-check detector battery. That battery (`qa_checks.py all` → `.qa-prepass.json`) is deferred to the agent-dispatch path below, because on the clean fast path the QA agent is skipped and nothing consumes the pre-pass JSON:
-
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" autofix \
-    "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"
-```
-
 **Branch logic:**
-- `GATE_EXIT == 0` — contract clean, no repair plan on disk. The `autofix` pass above already applied the in-place fixes; write a compact `$OUTPUT_DIR/.qa-status.json` with `status: "pass"` and `source: "deterministic-pre-agent"`, then skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`. This is the normal fast path: the in-place auto-fixers own links, anchors, MS structure, cell-format; the `repair_plan` **gate** owns contract validation, Mermaid syntax, unfilled placeholders, and YAML↔MD consistency (count + asset cross-reference drift) — each trips the gate (exit 1/3/4) rather than the deferred `all` battery. No LLM session — and no detector pre-pass — is needed when they are clean. (Pre-2026-06-05 `placeholders` and `yaml_md_consistency` lived only in the deferred `all` battery, which never runs on the clean path because the QA agent that consumed it is skipped — so a residual placeholder or a yaml/md count drift could ship silently. They are now folded into `build_repair_plan`.)
+- `GATE_EXIT == 0` — contract clean, no repair plan on disk. Write a compact `$OUTPUT_DIR/.qa-status.json` with `status: "pass"` and `source: "deterministic-pre-agent"`, then skip the QA agent unless `APPSEC_FORCE_QA_AGENT=1`. This is the normal fast path at every depth: the gate owns links, anchors, MS structure, cell format, contract validation, Mermaid syntax, cross-references, canonical reference formatting, heading hygiene, unfilled placeholders, and YAML↔MD consistency. Extended depth adds deterministic coverage and the optional Stage-4 architect review; it does not by itself justify a second LLM reading of a clean report.
 - `GATE_EXIT == 1` — contract drift, `.qa-repair-plan.json` already on disk. Enter the Re-Render Loop below **without** dispatching the QA agent first. The Re-Render Loop dispatches `appsec-fragment-fixer` in REPAIR_MODE, which re-authors the offending fragments and re-renders. The QA agent is dispatched **after** the loop settles (status=pass) so it works on a contract-clean document.
 - `GATE_EXIT == 2` — tool error (bad path, malformed contract). Log and fall back to the old flow: dispatch the agent unconditionally and let its Check 14 write the plan instead.
 - `GATE_EXIT == 3` — `manual_review`: a real defect exists but no **explicitly blocking** action carries a writable fragment target. This includes deterministic yaml↔md drift (a composer/fragment bug rather than LLM drift) and new, unclassified action types: they must be assessed before they are allowed to spend an LLM repair pass. Do **not** enter the Re-Render Loop. Instead dispatch the QA agent **once** for semantic triage — it inherits the on-disk `.qa-repair-plan.json` and decides between a soft edit, a release-blocker, or a `manual_review_items` escalation. Treat it like the `== 2` fallback for dispatch purposes (set `QA_AGENT_DISPATCHED=true`).
-- `GATE_EXIT == 4` — `cosmetic_advisory` (2026-06-22): the only writable-fragment violations are **cosmetic** — `diagram_compactness`, `chain_compactness`, `walkthrough_depth`, `relevant_findings_bullet_list`, `recon_iam_bridge`. Re-rendering them would spend an LLM fragment-fixer pass on readability nits, so do **not** enter the Re-Render Loop and do **not** dispatch the QA agent for them. Treat dispatch exactly like `GATE_EXIT == 0` (fast path: skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`). Write `$OUTPUT_DIR/.qa-status.json` with `status: "pass"`, `source: "deterministic-pre-agent"`, and a `cosmetic_advisories` array copied from `.qa-repair-plan.json → actions[]` (each item: `type` + `raw_issue`) so the Completion Summary can surface them as non-blocking notes. The plan file is intentionally left on disk (it is **not** a release blocker). To force cosmetic findings back to blocking (exit 1 / Re-Render Loop), set `APPSEC_QA_COSMETIC_BLOCKING=1`.
+- `GATE_EXIT == 4` — `cosmetic_advisory` (2026-06-22): the only writable-fragment violations are **cosmetic** — `diagram_compactness`, `walkthrough_depth`, `relevant_findings_bullet_list`, `recon_iam_bridge`. Re-rendering them would spend an LLM fragment-fixer pass on readability nits, so do **not** enter the Re-Render Loop and do **not** dispatch the QA agent for them. Treat dispatch exactly like `GATE_EXIT == 0` (fast path: skip the QA agent unless `APPSEC_FORCE_QA_AGENT=1`). Write `$OUTPUT_DIR/.qa-status.json` with `status: "pass"`, `source: "deterministic-pre-agent"`, and a `cosmetic_advisories` array copied from `.qa-repair-plan.json → actions[]` (each item: `type` + `raw_issue`) so the Completion Summary can surface them as non-blocking notes. The plan file is intentionally left on disk (it is **not** a release blocker). To force cosmetic findings back to blocking (exit 1 / Re-Render Loop), set `APPSEC_QA_COSMETIC_BLOCKING=1`.
 
-**Mandatory dispatch guard.** Set a local `QA_AGENT_DISPATCHED=false` flag before this gate. Only set it to `true` in the explicit agent-dispatch branch below. On the clean deterministic path (`GATE_EXIT == 0` or `GATE_EXIT == 4`, `QA_DEPTH != extended`, and `APPSEC_FORCE_QA_AGENT != 1`), do **not** execute any later instruction that invokes `appsec-qa-reviewer`, starts the Stage-3 heartbeat watchdog, extracts QA-agent usage, or waits for a QA-agent result. Continue directly to Stage 4 (if enabled) or the completion summary. Record Stage 3 stats as a zero-token deterministic gate (`agent=deterministic:qa_checks.py`, model=`none`) when the stats helper is available.
+**Mandatory dispatch guard.** Set a local `QA_AGENT_DISPATCHED=false` flag before this gate. Only set it to `true` in the explicit agent-dispatch branch below. On the clean deterministic path (`GATE_EXIT == 0` or `GATE_EXIT == 4`, and `APPSEC_FORCE_QA_AGENT != 1`), do **not** execute any later instruction that invokes `appsec-qa-reviewer`, starts the Stage-3 heartbeat watchdog, extracts QA-agent usage, or waits for a QA-agent result. Continue directly to Stage 4 (if enabled) or the completion summary. Record Stage 3 stats as a zero-token deterministic gate (`agent=deterministic:qa_checks.py`, model=`none`) when the stats helper is available.
 
 This inverts the pre-M3.2 flow where the agent was the first thing to see the rendered Markdown. Cost win: clean runs avoid the 90 KB Markdown read entirely; non-clean runs give the QA agent a repair-plan-sized input instead of making it rediscover mechanical drift.
 
@@ -3657,7 +3660,6 @@ Run this subsection **only when `QA_AGENT_DISPATCHED=true` is required**:
 
 - `GATE_EXIT == 2` fallback
 - `GATE_EXIT == 3` (`manual_review` — re-render cannot fix; agent triages the on-disk plan)
-- `QA_DEPTH=extended`
 - `APPSEC_FORCE_QA_AGENT=1`
 - the Re-Render Loop settled with a remaining non-empty repair/content-repair plan that requires semantic triage
 
@@ -3674,14 +3676,10 @@ Immediately before dispatching, call `TaskUpdate` on the `Stage 3 - QA Review` t
 
 **Heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` background invocation (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
 
-**Produce the detector pre-pass the agent consumes (dispatch path only).** The `autofix` pass at the gate already cleaned the Markdown in place; now — and only now, because the agent is actually being dispatched — run the full detector battery to write the `.qa-prepass.json` the reviewer loads as `PRE_PASS_JSON`:
-
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
-    "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" > "$OUTPUT_DIR/.qa-prepass.json"
-```
-
-(If this step is ever skipped, the reviewer's own fallback re-runs `qa_checks.py all` once — see `appsec-qa-reviewer.md` "Pre-pass handoff". The skill-level run is preferred so the agent inherits a clean baseline without spending a turn.)
+Do not run `qa_checks.py all` before dispatch. The reviewer consumes the compact
+repair plan and invokes only the specific standalone check needed for a manual
+or forced semantic review. This keeps deterministic work single-pass and avoids
+serializing a large JSON result that no repair action consumes.
 
 Inside this guarded branch, invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`. If `QA_AGENT_DISPATCHED=false`, this invocation is skipped entirely.
 
@@ -3720,12 +3718,12 @@ Pass the following in the prompt body:
 - `OUTPUT_DIR=<absolute output path>` (same value resolved above)
 - `CONTEXT_FILE=$OUTPUT_DIR/.threat-modeling-context.md`
 - `QA_DEPTH=<core|full|extended>`
-- `PRE_PASS_JSON_PATH=$OUTPUT_DIR/.qa-prepass.json` when the deterministic pre-pass wrote one
+- `PRE_PASS_JSON_PATH=none` (legacy-only input; the canonical gate writes a compact repair plan instead)
 - `REPAIR_PLAN_PATH=$OUTPUT_DIR/.qa-repair-plan.json` when a plan exists, otherwise `none`
 
-The QA reviewer runs with its own turn budget and **does not repeat deterministic checks**. It reads the pre-pass summary and any repair plans, classifies structural vs. manual-review vs. content-repair work, performs only semantic checks that Python cannot reliably decide, and writes `$OUTPUT_DIR/.qa-status.json`. It may apply permitted soft edits, but it must not re-read the full Markdown unless the pre-pass or repair plan names a specific semantic ambiguity requiring source context.
+The QA reviewer runs with its own turn budget and **does not repeat deterministic checks**. It reads the repair plan, classifies manual-review vs. content-repair work, performs only semantic checks that Python cannot reliably decide, and writes `$OUTPUT_DIR/.qa-status.json`. It must not re-read the full Markdown unless the repair plan names a specific semantic ambiguity requiring source context.
 
-**Strict contract gate.** The QA reviewer's Check 14 is a **hard gate** — when it detects any `sections-contract.yaml` violation, it writes a structured `.qa-repair-plan.json` under `$OUTPUT_DIR/`. The presence of this file signals the skill to enter the Re-Render Loop below before proceeding to Stage 4 (or to the Completion Summary when Stage 4 is disabled).
+**Strict contract gate.** `qa_checks.py gate` is the hard gate and writes `.qa-repair-plan.json` before any reviewer dispatch. The reviewer never re-runs contract validation.
 
 **Record Stage 3 stats (M3.3).** If `QA_AGENT_DISPATCHED=true`, after the QA Agent returns (and the Re-Render Loop has settled, if invoked), extract the `<usage>` block from the QA Agent's return notification and append the Stage 3 record.
 
