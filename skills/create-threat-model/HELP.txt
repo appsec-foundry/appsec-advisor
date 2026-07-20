@@ -61,6 +61,14 @@ DEPTH & MODEL
                                High/Medium/Low tail to cut tokens; full depth
                                (CVSS, evidence, greps) otherwise unchanged.
                                Off by default.
+  --evidence-verifier-cap <N>  Verify at most N non-Critical findings in
+                               Phase 10a; Critical findings do not count toward
+                               the cap and are selected first.
+                               Defaults: 20 quick, 30 standard, 100 thorough.
+  --register-severity-floor    Keep findings at or above this effective
+                               <critical|high|medium|low|informational>
+                               severity in the report and exports. Default:
+                               medium.
   --reasoning-model <mode>     Model tier for STRIDE analysis:
                                sonnet | opus-cheap | opus | sonnet-economy
                                (haiku-economy = deprecated alias, still accepted)

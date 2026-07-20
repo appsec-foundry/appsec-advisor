@@ -171,6 +171,23 @@ def _read_lines(path: Path) -> list[str]:
         return []
 
 
+# The architecture rules share one repository-wide source view.  Keeping the
+# decoded lines lets each rule retain its own matching semantics without
+# repeatedly traversing and opening the exact same source tree.
+SourceSnapshot = list[tuple[str, list[str]]]
+
+
+def _load_source_snapshot(repo_root: Path) -> SourceSnapshot:
+    snapshot: SourceSnapshot = []
+    for src in _walk_sources(repo_root):
+        lines = _read_lines(src)
+        if not lines:
+            continue
+        rel = str(src.relative_to(repo_root)).replace("\\", "/")
+        snapshot.append((rel, lines))
+    return snapshot
+
+
 def _load_json_or_none(path: Path) -> dict | None:
     if not path.is_file():
         return None
@@ -576,13 +593,14 @@ def _evaluate_inventory_flag_rule(rule: CompiledRule, inventory: dict | None) ->
 # ---------------------------------------------------------------------------
 
 
-def _aggregate_hits_for_rule(repo_root: Path, rule: CompiledRule) -> PatternHits:
+def _aggregate_hits_for_rule(
+    repo_root: Path,
+    rule: CompiledRule,
+    source_snapshot: SourceSnapshot | None = None,
+) -> PatternHits:
     agg = PatternHits()
-    for src in _walk_sources(repo_root):
-        rel = str(src.relative_to(repo_root)).replace("\\", "/")
-        lines = _read_lines(src)
-        if not lines:
-            continue
+    sources = source_snapshot if source_snapshot is not None else _load_source_snapshot(repo_root)
+    for rel, lines in sources:
         hits = _scan_file_for_rule(rel, lines, rule)
         agg.precondition.extend(hits.precondition)
         agg.positive.extend(hits.positive)
@@ -598,11 +616,16 @@ def _evidence_dicts(items: list[tuple[str, int, str]], cap: int = 8) -> list[dic
     return out
 
 
-def _evaluate_hard_rule(rule: CompiledRule, repo_root: Path, inventory: dict | None) -> dict:
+def _evaluate_hard_rule(
+    rule: CompiledRule,
+    repo_root: Path,
+    inventory: dict | None,
+    source_snapshot: SourceSnapshot | None = None,
+) -> dict:
     if rule.rule_id == "ARCH-MGMT-001":
         return _evaluate_mgmt_rule(rule, inventory)
 
-    hits = _aggregate_hits_for_rule(repo_root, rule)
+    hits = _aggregate_hits_for_rule(repo_root, rule, source_snapshot)
     if rule.precondition_patterns and not hits.precondition:
         return {
             "applies": False,
@@ -736,6 +759,7 @@ def _evaluate_hypothesis_rule(
     *,
     assessment_depth: str = "standard",
     db_separation: dict | None = None,
+    source_snapshot: SourceSnapshot | None = None,
 ) -> dict:
     if rule.rule_id == "ARCH-DBSEP-001":
         return _evaluate_db_principal_separation_rule(assessment_depth, db_separation)
@@ -744,7 +768,7 @@ def _evaluate_hypothesis_rule(
     if (rule.inventory_pattern or {}).get("route_flag"):
         return _evaluate_inventory_flag_rule(rule, inventory)
 
-    hits = _aggregate_hits_for_rule(repo_root, rule)
+    hits = _aggregate_hits_for_rule(repo_root, rule, source_snapshot)
     if rule.precondition_patterns and not hits.precondition:
         return {
             "applies": False,
@@ -786,7 +810,11 @@ def _evaluate_hypothesis_rule(
     }
 
 
-def _evaluate_stored_xss_rule(rule: CompiledRule, repo_root: Path) -> dict:
+def _evaluate_stored_xss_rule(
+    rule: CompiledRule,
+    repo_root: Path,
+    source_snapshot: SourceSnapshot | None = None,
+) -> dict:
     """Confirm a narrow, statically traceable stored-XSS path.
 
     This is intentionally not a general taint engine. It accepts only a direct
@@ -802,9 +830,9 @@ def _evaluate_stored_xss_rule(rule: CompiledRule, repo_root: Path) -> dict:
     # First collect every direct request-to-persistence mapping. A second pass
     # below makes the result independent of filesystem traversal order: frontend
     # files commonly sort before routes/ in a monorepo.
-    for src in _walk_sources(repo_root):
-        rel = str(src.relative_to(repo_root)).replace("\\", "/")
-        for line_no, raw_line in enumerate(_read_lines(src), start=1):
+    sources = source_snapshot if source_snapshot is not None else _load_source_snapshot(repo_root)
+    for rel, lines in sources:
+        for line_no, raw_line in enumerate(lines, start=1):
             line = raw_line.strip()
             if not line:
                 continue
@@ -922,13 +950,14 @@ def run(
     warnings: list[str] = []
 
     hyp_counter: dict[str, int] = {}
+    source_snapshot = _load_source_snapshot(repo_root)
 
     for rule_dict in rules_data.get("hard_rules", []) or []:
         rule = _compile_rule(rule_dict, "hard")
         verdict = (
-            _evaluate_stored_xss_rule(rule, repo_root)
+            _evaluate_stored_xss_rule(rule, repo_root, source_snapshot)
             if rule.rule_id == "ARCH-XSS-002"
-            else _evaluate_hard_rule(rule, repo_root, inventory)
+            else _evaluate_hard_rule(rule, repo_root, inventory, source_snapshot)
         )
         decision = _decision_for_hard(rule, verdict)
         rules_evaluated.append(
@@ -1001,6 +1030,7 @@ def run(
             inventory,
             assessment_depth=assessment_depth,
             db_separation=db_separation,
+            source_snapshot=source_snapshot,
         )
         decision = _decision_for_hypothesis(rule, verdict)
 

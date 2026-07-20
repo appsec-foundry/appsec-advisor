@@ -760,6 +760,7 @@ Parse the user's arguments for the following flags:
 | `--quick` | shortcut for `--assessment-depth quick`; also sets `SKIP_QA=true` and `SKIP_ATTACK_WALKTHROUGHS=true` (mutually exclusive with `--thorough`) | n/a |
 | `--thorough` | shortcut for `--assessment-depth thorough` (mutually exclusive with `--quick`) | n/a |
 | `--stride-cap <N>` | opt-in per-category STRIDE threat cap (Critical-safe); emits `stride_profile.max_threats_per_category=N` (label `full (per-category cap N)`). Off by default — full STRIDE depth otherwise preserved. | unset (no cap) |
+| `--evidence-verifier-cap <N>` | Maximum number of non-Critical findings checked by the Phase 10a evidence verifier; Critical findings do not count toward the cap and are selected first. | `20` quick, `30` standard, `100` thorough |
 | `--register-severity-floor <critical\|high\|medium\|low\|informational>` | Exclude findings below this effective severity from the canonical report, SARIF, and pentest-task export. `medium` keeps Critical/High/Medium; pass `low` or `informational` when the deliverable must retain lower-severity findings. | `medium` |
 | `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 4 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
 | `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 4 even at `--assessment-depth thorough` | n/a |
@@ -947,6 +948,7 @@ ABUSE_VERIFIER_MODEL=$(echo  "$RESOLVED_JSON" | python3 -c "import json,sys;prin
 # Evidence-verifier: same `sonnet` alias treatment. Never route this to Haiku —
 # see the routing comment in resolve_config.py (degenerate all-ambiguous batch).
 EVIDENCE_VERIFIER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('evidence_verifier_model','sonnet'))")
+EVIDENCE_VERIFIER_MAX_FINDINGS=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('evidence_verifier_max_findings',30))")
 
 # STRIDE depth profile (Quick-mode A-F reductions, only when
 # --reasoning-model sonnet-economy AND --assessment-depth quick).

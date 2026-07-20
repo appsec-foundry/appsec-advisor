@@ -89,6 +89,8 @@
           "config_scanner_model",
           "context_resolver_model",
           "diagram_depth",
+          "evidence_verifier_max_findings",
+          "evidence_verifier_model",
           "enrich_arch_fragments",
           "estimate_source",
           "estimate_stage1_min",

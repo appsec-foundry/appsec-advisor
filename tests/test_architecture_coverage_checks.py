@@ -103,6 +103,25 @@ def test_every_rule_appears_in_rules_evaluated(tmp_path: Path) -> None:
     assert seen == ALL_RULE_IDS
 
 
+def test_run_reads_the_source_tree_once_for_all_rules(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "app.ts").write_text(
+        "app.use(cors({origin:'*', credentials:true}));\n",
+        encoding="utf-8",
+    )
+    original_walk = acc._walk_sources
+    walks = 0
+
+    def count_walks(repo_root: Path):
+        nonlocal walks
+        walks += 1
+        yield from original_walk(repo_root)
+
+    monkeypatch.setattr(acc, "_walk_sources", count_walks)
+    acc.run(tmp_path, None, acc._load_rules())
+
+    assert walks == 1
+
+
 def test_rules_evaluated_carries_weakness_mechanism_metadata(tmp_path: Path) -> None:
     out = _run_engine(tmp_path)
     assert _verdict(out, "ARCH-SQLI-001")["weakness_mechanism"] == "database-query-concatenation"

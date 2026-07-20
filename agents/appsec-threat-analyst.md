@@ -528,7 +528,7 @@ Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finali
 Pass these context fields in the verifier prompt:
 - `REPO_ROOT`, `OUTPUT_DIR`, `ASSESSMENT_DEPTH` (verbatim from this run)
 - `MODEL_ID=$EVIDENCE_VERIFIER_MODEL` (resolved like every other routed role — `evidence_verifier` in `resolve_config.py`, pinned to the `sonnet` alias at every tier and depth including sonnet-economy. Haiku regressed to stamping **every** sampled finding `ambiguous` (0 verified / 0 refuted, ~57 ms batch with no real per-finding reads), which cascaded into an all-review, zero-P1 Mitigation Register. `guard_evidence_verification.py` is the deterministic safety net if any cheap model repeats this. Override via `APPSEC_EVIDENCE_VERIFIER_MODEL` only with that failure mode in mind.)
-- `EVIDENCE_VERIFIER_MAX_FINDINGS=100` (cap; only override when the operator passed `--evidence-verifier-cap N`)
+- `EVIDENCE_VERIFIER_MAX_FINDINGS=$EVIDENCE_VERIFIER_MAX_FINDINGS` (resolved cap: 20 at quick, 30 at standard, 100 at thorough by default; `--evidence-verifier-cap N` overrides it while keeping every Critical finding in scope)
 
 The verifier is intentionally low-budget (≤40 turns, Sonnet-4.6 — Haiku proved too weak for the verified/refuted discrimination and defaulted everything to `ambiguous`). It MUST NOT modify `risk`, `likelihood`, `impact`, or any field other than `evidence_check` and `evidence_flags`. Phase 10b then reads `evidence_check == refuted` and suppresses chain-elevation for those findings when computing `effective_severity`.
 

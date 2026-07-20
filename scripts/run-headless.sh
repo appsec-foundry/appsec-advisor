@@ -44,6 +44,7 @@
 #   --reasoning-model <t>   Reasoning tier for STRIDE/triage/merger: opus,
 #                           opus-cheap, sonnet, sonnet-economy
 #   --assessment-depth <l>  Assessment depth: quick, standard (default), thorough
+#   --evidence-verifier-cap <n>  Limit Phase-10a non-Critical verification work
 #   --json                  Return structured JSON output
 #   --verbose               Show the full real-time hook event log on stderr
 #   --quiet                 Suppress live progress (default = milestone events)
@@ -113,6 +114,8 @@ Options:
   --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
                              opus, opus-cheap, sonnet, sonnet-economy
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
+  --evidence-verifier-cap <N> Verify at most N non-Critical findings in
+                             Phase 10a; Critical findings do not count toward the cap.
   --trust-mode <mode>         untrusted (default) | trusted. Untrusted mode rejects
                                repo-owned agent configuration before Claude starts.
   --strict-urls               Require APPSEC_URL_ALLOWLIST for remote related-repo fetches
@@ -306,6 +309,13 @@ while [ $# -gt 0 ]; do
             MODEL="$2"; shift 2 ;;
         --reasoning-model)
             SKILL_FLAGS="$SKILL_FLAGS --reasoning-model $2"; shift 2 ;;
+        --evidence-verifier-cap)
+            if [[ "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
+                SKILL_FLAGS="$SKILL_FLAGS --evidence-verifier-cap $2"; shift 2
+            else
+                die "Invalid --evidence-verifier-cap value: ${2:-<missing>} (must be a positive integer)"
+            fi
+            ;;
         --assessment-depth)
             case "$2" in
                 quick|standard|thorough)

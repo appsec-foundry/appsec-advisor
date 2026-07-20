@@ -54,7 +54,7 @@ Every print uses the prefix `[evidence-verifier]`. Print each line immediately b
 - `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
 - `ASSESSMENT_DEPTH` — `quick`, `standard`, or `thorough` (drives sampling strategy)
 - `MODEL_ID` — model identifier for logging (default `claude-sonnet-4-6`)
-- `EVIDENCE_VERIFIER_MAX_FINDINGS` — *(optional)* hard cap on the number of findings to verify, regardless of sampling tier. Defaults to 100. Prevents pathological thorough-mode runs on huge repos from exploding.
+- `EVIDENCE_VERIFIER_MAX_FINDINGS` — hard cap on non-Critical findings to verify. The resolver defaults it to 20 at quick, 30 at standard, and 100 at thorough; `--evidence-verifier-cap N` overrides it. All Critical findings remain in scope even when there are more than the cap.
 
 ## Sampling strategy
 
@@ -62,11 +62,11 @@ Read `.threats-merged.json` and select findings according to the depth:
 
 | Depth | Verify | Rationale |
 |---|---|---|
-| `quick` | All findings with `risk == Critical` + a random 50% of `risk == High` | Quick already paid the speed/cost trade-off; we cover the dangerous tail. Sample size: typically 5–8. |
-| `standard` | All findings with `risk ∈ {Critical, High}` + a random 25% of `risk == Medium` | Sample size: typically 20–30. |
-| `thorough` | All findings except `risk == Low` | Sample size: typically 60–100, capped at `EVIDENCE_VERIFIER_MAX_FINDINGS`. |
+| `quick` | All Critical findings, then a deterministic 50% of High findings until the non-Critical cap is reached | Quick already paid the speed/cost trade-off; we cover the dangerous tail. |
+| `standard` | All Critical findings, then High findings in deterministic `t_id` order, then a deterministic 25% of Medium findings while non-Critical capacity remains | Usually at most 30 non-Critical findings. |
+| `thorough` | All Critical findings, then non-Low findings in deterministic `t_id` order until the non-Critical cap is reached | Usually at most 100 non-Critical findings. |
 
-Findings outside the sample set keep their incoming `evidence_check` value (`unchecked` or `verified-prior`).
+Apply the cap only to non-Critical findings, after selecting all Critical findings. Findings outside the sample set keep their incoming `evidence_check` value (`unchecked` or `verified-prior`).
 
 **Process the sample in severity order — Critical first, then High, then Medium.** Combined with the incremental-flush contract below, this guarantees that if the turn budget runs out before the whole sample is done, the verdicts that DID persist are the highest-severity ones (a partial run that verified all Criticals + most Highs is far more useful than one that verified a random 41 and then lost them). Within a severity tier, process in `t_id` order for determinism.
 

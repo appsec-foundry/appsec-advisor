@@ -575,6 +575,7 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 | Flag | Purpose |
 |---|---|
 | `--assessment-depth quick\|standard\|thorough` | Control coverage, analysis depth, runtime, and cost; see [Threat Modeler](threat-modeler.md#assessment-depth--cost-control) |
+| `--evidence-verifier-cap <N>` | Verify at most `N` non-Critical findings in Phase 10a; Critical findings do not count toward the cap and are selected first. Defaults: 20 quick, 30 standard, 100 thorough. |
 | `--register-severity-floor critical\|high\|medium\|low\|informational` | Keep only findings at or above this effective severity in the canonical report and its SARIF/pentest-task exports; default `medium` excludes Low and Informational findings |
 | `--requirements [<url>]` | Enable the requirements compliance check during the assessment |
 | `--no-requirements` | Skip requirements even when enabled in config |

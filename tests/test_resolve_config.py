@@ -199,6 +199,23 @@ class TestResolveAssessmentDepth:
         assert rc.resolve_assessment_depth(ns)["register_severity_floor"] == "low"
 
 
+class TestEvidenceVerifierCap:
+    def test_depth_defaults_bound_non_critical_work(self):
+        caps = {
+            depth: rc.resolve_evidence_verifier_cap(
+                rc.build_parser().parse_args(["--assessment-depth", depth]), depth
+            )["evidence_verifier_max_findings"]
+            for depth in ("quick", "standard", "thorough")
+        }
+        assert caps == {"quick": 20, "standard": 30, "thorough": 100}
+
+    def test_explicit_cap_overrides_depth_default(self):
+        ns = rc.build_parser().parse_args(["--assessment-depth", "standard", "--evidence-verifier-cap", "12"])
+        out = rc.resolve_evidence_verifier_cap(ns, "standard")
+        assert out["evidence_verifier_max_findings"] == 12
+        assert "--evidence-verifier-cap" in out["evidence_verifier_cap_label"]
+
+
 class TestResolveReasoningModel:
     def test_default_standard_gives_sonnet_economy(self):
         # 2026-06-23: standard default reverted to sonnet-economy. A clean A/B
@@ -802,6 +819,20 @@ class TestCLI:
         assert cfg["reasoning_model"] == "sonnet-economy"  # standard default (2026-06-23)
         assert cfg["architect_review"] is False
         assert cfg["quiet"] is False  # verdict echoed by default
+        assert cfg["evidence_verifier_max_findings"] == 30
+
+    def test_evidence_verifier_cap_flows_to_config(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--evidence-verifier-cap", "12")
+        assert r.returncode == 0
+        cfg = json.loads(r.stdout)
+        assert cfg["evidence_verifier_max_findings"] == 12
+
+    def test_evidence_verifier_cap_rejects_zero(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--evidence-verifier-cap", "0")
+        assert r.returncode == 1
+        assert "must be at least 1" in r.stderr
 
     def test_quiet_flag_flows_to_cfg(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

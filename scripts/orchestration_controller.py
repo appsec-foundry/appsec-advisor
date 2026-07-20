@@ -142,6 +142,8 @@ _DISPATCH_KEYS = (
     "merger_model",
     "renderer_model",
     "abuse_verifier_model",
+    "evidence_verifier_model",
+    "evidence_verifier_max_findings",
     "context_resolver_model",
     "recon_scanner_model",
     "qa_routine_model",

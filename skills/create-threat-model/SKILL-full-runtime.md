@@ -97,6 +97,7 @@ MERGER_MODEL = merger_model
 RENDERER_MODEL = renderer_model
 ABUSE_VERIFIER_MODEL = abuse_verifier_model
 EVIDENCE_VERIFIER_MODEL = evidence_verifier_model
+EVIDENCE_VERIFIER_MAX_FINDINGS = evidence_verifier_max_findings
 CONTEXT_RESOLVER_MODEL = context_resolver_model
 RECON_SCANNER_MODEL = recon_scanner_model
 QA_ROUTINE_MODEL = qa_routine_model

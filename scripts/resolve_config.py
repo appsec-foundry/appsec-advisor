@@ -366,6 +366,28 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
     }
 
 
+def resolve_evidence_verifier_cap(ns: argparse.Namespace, depth: str) -> dict:
+    """Bound Phase 10a work while preserving every Critical finding.
+
+    The verifier prompt applies this cap *after* selecting all Criticals, so a
+    repository with more Criticals than the configured cap still verifies each
+    of them.  The default keeps normal standard runs bounded without reducing
+    the high-risk coverage that makes the phase useful.
+    """
+    requested = getattr(ns, "evidence_verifier_cap", None)
+    if requested is not None:
+        return {
+            "evidence_verifier_max_findings": requested,
+            "evidence_verifier_cap_label": f"{requested} (--evidence-verifier-cap)",
+        }
+    defaults = {"quick": 20, "standard": 30, "thorough": 100}
+    cap = defaults[depth]
+    return {
+        "evidence_verifier_max_findings": cap,
+        "evidence_verifier_cap_label": f"{cap} (depth default)",
+    }
+
+
 def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
     """Resolve ``skip_abuse_case_verification`` + a human-readable label.
 
@@ -1402,6 +1424,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "Trims the High/Medium/Low tail to cut tokens/cost; the "
                         "rest of full depth (CVSS, evidence, verification greps) "
                         "stays intact. Off by default.")
+    p.add_argument("--evidence-verifier-cap", type=int, default=None, metavar="N",
+                   help="Verify at most N non-Critical findings in Phase 10a; "
+                        "Critical findings do not count toward the cap. Defaults: 20 "
+                        "(quick), 30 (standard), 100 (thorough).")
     # Architect
     p.add_argument("--architect-review",   action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
@@ -1651,6 +1677,9 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
 
     depth_info = resolve_assessment_depth(ns)
     cfg.update(depth_info)
+    if ns.evidence_verifier_cap is not None and ns.evidence_verifier_cap < 1:
+        raise SystemExit("Error: --evidence-verifier-cap must be at least 1")
+    cfg.update(resolve_evidence_verifier_cap(ns, depth_info["assessment_depth"]))
 
     quick_depth = depth_info["assessment_depth"] == "quick"
     env_skip_qa = os.environ.get("APPSEC_SKIP_QA") == "1"

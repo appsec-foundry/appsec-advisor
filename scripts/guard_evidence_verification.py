@@ -29,6 +29,12 @@ carry NO prior verdict) re-derives sensible per-line verdicts for §8.
 Degenerate ≡ (sampled >= MIN_SAMPLE) AND (verified == 0) AND (refuted == 0)
              AND (ambiguous / sampled >= AMBIGUOUS_RATIO).
 
+The guard also records a ``fallback_required`` gate when the verifier claims a
+non-trivial sample but returns no verdicts at all. That result is neither a
+healthy sample nor an ambiguity distribution; the deterministic
+``validate_evidence_lines.py`` pass immediately following this guard becomes
+the required evidence backstop for the run.
+
 Requiring 0 verified AND 0 refuted is deliberate: a real verifier run on a
 vulnerable target surfaces plenty of `verified`, so an all-ambiguous-with-zero-
 signal result is a model failure, not a genuinely uncertain codebase.
@@ -49,6 +55,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from event_log import format_line
 
 # Degeneracy thresholds. MIN_SAMPLE guards against tripping on tiny samples
 # (quick mode may verify only a handful of Criticals); AMBIGUOUS_RATIO mirrors
@@ -111,6 +118,31 @@ def summary_degenerate(output_dir: Path) -> bool | None:
     return v == 0 and r == 0 and a >= MIN_SAMPLE
 
 
+def summary_has_no_verdicts(output_dir: Path) -> bool | None:
+    """Return whether a non-trivial verifier sample produced no verdicts.
+
+    ``sampled`` is the verifier's intended/attempted sample count; ``unchecked``
+    may therefore equal it after a turn cut-off.  This is distinct from an
+    all-ambiguous model failure and must not be silently treated as a healthy
+    verification pass.
+    """
+    path = output_dir / ".evidence-verification.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    summary = (data.get("summary") or {}) if isinstance(data, dict) else {}
+    sampled, verified, refuted, ambiguous = (
+        summary.get("sampled"),
+        summary.get("verified"),
+        summary.get("refuted"),
+        summary.get("ambiguous"),
+    )
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in (sampled, verified, refuted, ambiguous)):
+        return None
+    return sampled >= MIN_SAMPLE and verified == 0 and refuted == 0 and ambiguous == 0
+
+
 def _neutralize(threats: list) -> int:
     """Strip ONLY the untrustworthy ``ambiguous`` verdicts (and their flags).
 
@@ -130,14 +162,10 @@ def _neutralize(threats: list) -> int:
     return stripped
 
 
-def _log(output_dir: Path, msg: str) -> None:
-    line = (
-        f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
-        f"  [--------]  WARN   skill  EVIDENCE_VERIFIER_DEGENERATE  {msg}\n"
-    )
+def _log(output_dir: Path, event: str, msg: str) -> None:
     try:
         with (output_dir / ".agent-run.log").open("a", encoding="utf-8") as fh:
-            fh.write(line)
+            fh.write(format_line(event, msg, level="WARN", component="skill"))
     except OSError:
         pass
 
@@ -167,6 +195,27 @@ def _annotate_summary(output_dir: Path, counts: dict) -> None:
         pass
 
 
+def _mark_fallback_required(output_dir: Path) -> None:
+    """Persist the no-verdict gate for QA and run diagnostics."""
+    path = output_dir / ".evidence-verification.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    data["verification_gate"] = "fallback_required"
+    data["verification_gate_reason"] = (
+        "verifier sampled findings but returned no verified, refuted, or ambiguous verdicts; "
+        "validate_evidence_lines.py must provide the deterministic fallback"
+    )
+    data["verification_gate_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def guard(output_dir: Path) -> int:
     yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.is_file():
@@ -182,6 +231,20 @@ def guard(output_dir: Path) -> int:
     threats = data.get("threats") or []
     if not isinstance(threats, list):
         return 0
+
+    no_verdicts = summary_has_no_verdicts(output_dir)
+    if no_verdicts:
+        _mark_fallback_required(output_dir)
+        _log(
+            output_dir,
+            "EVIDENCE_VERIFIER_NO_VERDICTS",
+            "sampled findings but produced no verdicts; deterministic evidence fallback required",
+        )
+        print(
+            "guard_evidence_verification: FALLBACK_REQUIRED — verifier sampled findings but "
+            "produced no verdicts; validate_evidence_lines.py will provide the deterministic backstop",
+            file=sys.stderr,
+        )
 
     counts = _distribution(threats)
     # Prefer the LLM verifier's own summary (uncontaminated by the deterministic
@@ -220,7 +283,7 @@ def guard(output_dir: Path) -> int:
         f"Stripped {stripped} ambiguous verdict(s); floor-derived verified/refuted kept. "
         f"validate_evidence_lines.py re-derives the stripped findings."
     )
-    _log(output_dir, msg)
+    _log(output_dir, "EVIDENCE_VERIFIER_DEGENERATE", msg)
     _annotate_summary(output_dir, counts)
     print(f"guard_evidence_verification: DEGENERATE — {msg}", file=sys.stderr)
     return 0
