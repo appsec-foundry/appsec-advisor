@@ -24,6 +24,7 @@ ALL_RULE_IDS = {
     "ARCH-TLS-001",
     "ARCH-MGMT-001",
     "ARCH-XSS-001",
+    "ARCH-XSS-002",
     "ARCH-SQLI-001",
     "ARCH-AUTHZ-001",
     "ARCH-AUTHN-001",
@@ -410,6 +411,71 @@ def test_xss_hypothesis_does_not_emit_anti_pattern(tmp_path: Path) -> None:
     assert all(c["rule_id"] != "ARCH-XSS-001" for c in out["anti_pattern_candidates"])
     hyp_ids = {h["rule_id"] for h in out["threat_hypotheses"]}
     assert "ARCH-XSS-001" in hyp_ids
+
+
+def test_stored_xss_direct_persist_to_sink_emits_high_confidence_candidate(tmp_path: Path) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "routes" / "comments.ts").write_text(
+        "app.post('/comments', (req, res) => Comment.create({ body: req.body.content }));\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ui" / "comment.tsx").write_text(
+        "export const Comment = ({ comment }) => <div dangerouslySetInnerHTML={{ __html: comment.body }} />;\n",
+        encoding="utf-8",
+    )
+
+    out = _run_engine(tmp_path)
+    candidate = next(c for c in out["anti_pattern_candidates"] if c["rule_id"] == "ARCH-XSS-002")
+    assert candidate["confidence"] == "high"
+    assert candidate["cwe"] == "CWE-79"
+    assert [(e["file"], e["line"]) for e in candidate["evidence"]] == [
+        ("routes/comments.ts", 1),
+        ("ui/comment.tsx", 1),
+    ]
+
+
+def test_stored_xss_sink_without_direct_persistence_stays_a_hypothesis(tmp_path: Path) -> None:
+    (tmp_path / "ui.tsx").write_text(
+        "export const Comment = ({ comment }) => <div dangerouslySetInnerHTML={{ __html: comment.body }} />;\n",
+        encoding="utf-8",
+    )
+
+    out = _run_engine(tmp_path)
+    assert all(c["rule_id"] != "ARCH-XSS-002" for c in out["anti_pattern_candidates"])
+    assert any(h["rule_id"] == "ARCH-XSS-001" for h in out["threat_hypotheses"])
+
+
+def test_stored_xss_sanitized_sink_is_not_confirmed(tmp_path: Path) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "routes" / "comments.ts").write_text(
+        "app.post('/comments', (req, res) => Comment.create({ body: req.body.content }));\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ui" / "comment.tsx").write_text(
+        "export const Comment = ({ comment }) => <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(comment.body) }} />;\n",
+        encoding="utf-8",
+    )
+
+    out = _run_engine(tmp_path)
+    assert all(c["rule_id"] != "ARCH-XSS-002" for c in out["anti_pattern_candidates"])
+
+
+def test_stored_xss_same_field_on_a_different_model_is_not_confirmed(tmp_path: Path) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "routes" / "profiles.ts").write_text(
+        "app.post('/profiles', (req, res) => Profile.create({ body: req.body.content }));\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ui" / "comment.tsx").write_text(
+        "export const Comment = ({ comment }) => <div dangerouslySetInnerHTML={{ __html: comment.body }} />;\n",
+        encoding="utf-8",
+    )
+
+    out = _run_engine(tmp_path)
+    assert all(c["rule_id"] != "ARCH-XSS-002" for c in out["anti_pattern_candidates"])
 
 
 def test_sqli_hypothesis_only_on_concat(tmp_path: Path) -> None:

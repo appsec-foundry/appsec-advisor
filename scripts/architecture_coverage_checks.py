@@ -111,6 +111,25 @@ _SOURCE_EXTS = {
 }
 
 
+# Stored-XSS confirmation is deliberately narrower than the generic XSS
+# hypothesis. A raw HTML sink alone says nothing about where its data came
+# from. We only emit ARCH-XSS-002 when one source line explicitly maps a
+# request field into a persistence call and a separate unsafe HTML sink renders
+# that exact persisted property without a sanitizer on the sink line.
+_REQUEST_FIELD_ASSIGNMENT = re.compile(
+    r"(?i)(?:(?P<property>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?"
+    r"(?:req|request)\.(?:body|json)\.(?P<input>[A-Za-z_][A-Za-z0-9_]*)"
+)
+_PERSISTENCE_MODEL_CALL = re.compile(
+    r"(?i)\b(?P<model>[A-Za-z_][A-Za-z0-9_]*)\.(?:create|insert(?:One|Many)?|save|update|upsert|persist)\s*\("
+)
+_UNSAFE_HTML_SINK = re.compile(
+    r"(?i)(?:\.innerHTML\s*=|insertAdjacentHTML\s*\(|dangerouslySetInnerHTML|"
+    r"bypassSecurityTrustHtml\s*\(|\bv-html\b|\{@html\b)"
+)
+_SINK_SANITIZER = re.compile(r"(?i)(?:DOMPurify\.sanitize|sanitize\s*\(|escapeHtml\s*\()")
+
+
 # ---------------------------------------------------------------------------
 # IO helpers
 # ---------------------------------------------------------------------------
@@ -677,6 +696,82 @@ def _evaluate_hypothesis_rule(rule: CompiledRule, repo_root: Path, inventory: di
     }
 
 
+def _evaluate_stored_xss_rule(rule: CompiledRule, repo_root: Path) -> dict:
+    """Confirm a narrow, statically traceable stored-XSS path.
+
+    This is intentionally not a general taint engine. It accepts only a direct
+    object-field mapping such as ``body: req.body.content`` on the same line as
+    ``Comment.create(...)`` and a later unsafe sink that reads ``comment.body``.
+    Variable indirection, API contracts, serializers, and sanitizer wrappers
+    require the normal STRIDE/abuse-case verification rather than a guessed
+    deterministic finding.
+    """
+    persisted: dict[tuple[str, str], tuple[str, int, str]] = {}
+    source_lines: list[tuple[str, int, str]] = []
+
+    # First collect every direct request-to-persistence mapping. A second pass
+    # below makes the result independent of filesystem traversal order: frontend
+    # files commonly sort before routes/ in a monorepo.
+    for src in _walk_sources(repo_root):
+        rel = str(src.relative_to(repo_root)).replace("\\", "/")
+        for line_no, raw_line in enumerate(_read_lines(src), start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            source_lines.append((rel, line_no, line))
+            model_match = _PERSISTENCE_MODEL_CALL.search(line)
+            if not model_match:
+                continue
+            for match in _REQUEST_FIELD_ASSIGNMENT.finditer(line):
+                field = match.group("property") or match.group("input")
+                key = (model_match.group("model").casefold(), field.casefold())
+                if key not in persisted:
+                    persisted[key] = (
+                        rel,
+                        line_no,
+                        "request field "
+                        f"`{match.group('input')}` is persisted as `{field}` on "
+                        f"`{model_match.group('model')}`: {line}",
+                    )
+
+    sinks: dict[tuple[str, str], tuple[str, int, str]] = {}
+    for rel, line_no, line in source_lines:
+        if not _UNSAFE_HTML_SINK.search(line) or _SINK_SANITIZER.search(line):
+            continue
+        for model, field in persisted:
+            field_ref = re.compile(
+                rf"(?i)\b(?P<object>[A-Za-z_][A-Za-z0-9_]*)\.[ \t]*{re.escape(field)}\b"
+            )
+            field_match = field_ref.search(line)
+            if field_match and field_match.group("object").casefold() == model and (model, field) not in sinks:
+                sinks[(model, field)] = (
+                    rel,
+                    line_no,
+                    f"unsafe HTML sink renders `{model}.{field}`: {line}",
+                )
+
+    matched_fields = sorted(set(persisted) & set(sinks))
+    if not matched_fields:
+        return {
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": "no direct request-field persistence to matching unsafe HTML sink",
+        }
+
+    model, field = matched_fields[0]
+    persistence_evidence = persisted[(model, field)]
+    sink_evidence = sinks[(model, field)]
+    return {
+        "applies": True,
+        "status": "anti_pattern",
+        "confidence": "high",
+        "evidence": _evidence_dicts([persistence_evidence, sink_evidence]),
+        "skip_reason": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Decision mapping
 # ---------------------------------------------------------------------------
@@ -729,7 +824,11 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
 
     for rule_dict in rules_data.get("hard_rules", []) or []:
         rule = _compile_rule(rule_dict, "hard")
-        verdict = _evaluate_hard_rule(rule, repo_root, inventory)
+        verdict = (
+            _evaluate_stored_xss_rule(rule, repo_root)
+            if rule.rule_id == "ARCH-XSS-002"
+            else _evaluate_hard_rule(rule, repo_root, inventory)
+        )
         decision = _decision_for_hard(rule, verdict)
         rules_evaluated.append(
             _with_arch_fields(

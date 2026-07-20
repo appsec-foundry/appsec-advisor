@@ -48,6 +48,46 @@ version: 1
 
 hard_rules:
 
+  - id: ARCH-XSS-002
+    title: "Stored XSS through persisted untrusted HTML"
+    architectural_theme: InputValidation
+    generic_threat_title: "Stored cross-site scripting through persisted untrusted HTML"
+    control: "Output Encoding / HTML Sanitization"
+    weakness_mechanism: persisted-untrusted-html-rendering
+    domain: FrontendSec
+    cwe: CWE-79
+    threat_category_id: TH-11
+    stride: Tampering
+    weak_or_missing_controls:
+      - "Context-aware HTML Sanitization"
+      - "Output Encoding"
+    preconditions: []
+    positive_signals: {}
+    exculpatory_signals:
+      any_pattern: []
+    severity_cap: High
+    output: anti_pattern_candidate
+    review_intent: >
+      Confirm only direct, statically traceable persistence of a request field
+      followed by an unsafe HTML sink for the same stored property. Generic DOM
+      sinks remain ARCH-XSS-001 hypotheses.
+    finding_when:
+      - "A request field is mapped directly into a create/insert/save/update persistence call"
+      - "An unsafe HTML sink later renders that exact persisted model property without a sanitizer on the sink line"
+    not_a_finding_when:
+      - "The value reaches only an escaped framework interpolation or a sanitizer call"
+      - "The source-to-storage mapping uses variable indirection or an external API contract that the deterministic check cannot prove"
+    required_evidence: >
+      Two source locations: the direct request-field persistence mapping and
+      the matching unsafe HTML-rendering sink.
+    severity_reason: >
+      High because every viewer of the stored record can execute attacker
+      markup; chained account takeover remains evaluated separately.
+    reviewer_note: >
+      Do not weaken the direct model-and-field requirement. Data flows with
+      variable indirection or API serialization are resolved by STRIDE review,
+      not this rule.
+
   - id: ARCH-COOKIE-001
     title: "Insecure cookie / session hardening"
     architectural_theme: SessionDesign

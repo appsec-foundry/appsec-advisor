@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Static auth scanning now flags password resets that rely on security-question answers and local password policies that permit fewer than eight characters. Predictable reset tokens remain covered by the existing secure-randomness checks.
 
+### Fixed
+
+- Threat merging now preserves every folded finding's location and provenance, keeps distinct architectural categories separate, and requires an explicit shared control scope before consolidating across components.
+- Architecture coverage now confirms stored XSS only when a request field is directly persisted and that stored property reaches an unsanitized HTML sink; isolated sinks remain review hypotheses.
+
 ## 0.5.0-beta (2026-07-18)
 
 ### Added
