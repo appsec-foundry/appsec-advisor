@@ -26,7 +26,7 @@
     },
     "stage": {
       "type": "string",
-      "enum": ["stage1", "stage2", "stage3", "stage4", "complete"]
+      "enum": ["stage1", "stage1c", "stage2", "stage3", "stage4", "complete"]
     },
     "runtime": {
       "enum": ["thin-full", "thin-rerender", "legacy"]
@@ -183,6 +183,14 @@
         "maxLength": 500
       },
       "maxItems": 50
+    },
+    "candidates": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+      }
     }
   },
   "allOf": [
@@ -215,6 +223,24 @@
         "properties": {
           "action": {
             "const": "dispatch_agent"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "mode",
+          "stage",
+          "instruction_file",
+          "config_path",
+          "dispatch_values"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "dispatch_parallel"
           }
         }
       },

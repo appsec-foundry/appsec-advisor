@@ -517,13 +517,142 @@ def test_next_action_rehydrates_from_filesystem(tmp_path):
     cfg = _cfg(tmp_path)
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
 
-    assert controller.next_action(output)["stage"] == "stage1"
+    stage1 = controller.next_action(output)
+    assert stage1["stage"] == "stage1"
+    assert stage1["instruction_file"] == str(controller.THIN_STAGE1_RUNTIME)
     (output / "threat-model.yaml").write_text("meta: {}\n")
-    assert controller.next_action(output)["stage"] == "stage2"
+    stage2 = controller.next_action(output)
+    assert stage2["stage"] == "stage2"
+    assert stage2["instruction_file"] == str(controller.THIN_STAGE2_RUNTIME)
     (output / "threat-model.md").write_text("# report\n")
     assert controller.next_action(output)["stage"] == "stage3"
     (output / ".qa-status.json").write_text("{}")
     assert controller.next_action(output)["action"] == "complete"
+
+
+def test_post_stage1_runs_compact_deterministic_gate_sequence(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    for name in (".recon-summary.md", ".threats-merged.json", ".triage-flags.json", "threat-model.yaml"):
+        (output / name).write_text("{}", encoding="utf-8")
+    (output / ".appsec-checkpoint").write_text(
+        "phase=10b status=completed need_render=true\n",
+        encoding="utf-8",
+    )
+
+    scripts = []
+    external = []
+
+    def fake_script(name, args, **kwargs):
+        scripts.append(name)
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_run_external", lambda command, **kwargs: external.append(command) or _completed())
+    monkeypatch.setattr(controller, "_upgrade_bootstrap_yaml", lambda output_dir, config: True)
+
+    action = controller.post_stage1(output)
+    assert action["action"] == "run_gate"
+    assert action["stage"] == "stage1"
+    assert scripts == [
+        "check_stride_dispatch.py",
+        "validate_intermediate.py",
+        "enforce_yaml_invariants.py",
+        "triage_compute_ranking.py",
+        "validate_mitigation_quality.py",
+        "assert_completeness.py",
+    ]
+    assert external and external[0][0] == "bash"
+    assert external[0][1].endswith("auto_emitter_pass.sh")
+
+
+def test_post_stage1_fails_closed_on_missing_artifact(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    with pytest.raises(controller.ControllerError, match="required artifacts"):
+        controller.post_stage1(output)
+
+
+def test_post_stage1_rejects_stale_yaml_without_completion_checkpoint(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    for name in (".recon-summary.md", ".threats-merged.json", ".triage-flags.json", "threat-model.yaml"):
+        (output / name).write_text("{}", encoding="utf-8")
+
+    with pytest.raises(controller.ControllerError, match="completion checkpoint"):
+        controller.post_stage1(output)
+
+
+def test_prepare_abuse_returns_bounded_parallel_action(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["skip_abuse_case_verification"] = False
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+    def fake_script(name, args, **kwargs):
+        if "list-candidates" in args:
+            return _completed("AC-T-001\nAC-T-002\ninvalid/id\n")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.prepare_abuse(output)
+    assert action["action"] == "dispatch_parallel"
+    assert action["stage"] == "stage1c"
+    assert action["instruction_file"] == str(controller.THIN_STAGE1C_RUNTIME)
+    assert action["candidates"] == ["AC-T-001", "AC-T-002"]
+    controller._validate_action(action)
+
+
+def test_prepare_abuse_rejects_candidate_overflow_instead_of_truncating(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["skip_abuse_case_verification"] = False
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    candidates = "\n".join(f"AC-{index:03d}" for index in range(65))
+
+    def fake_script(name, args, **kwargs):
+        return _completed(candidates if "list-candidates" in args else "")
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    with pytest.raises(controller.ControllerError, match="maximum is 64"):
+        controller.prepare_abuse(output)
+
+
+def test_prepare_stage2_selects_compact_parallel_runtime(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["enrich_arch_fragments"] = True
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.delenv("APPSEC_PARALLEL_RENDER", raising=False)
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+
+    action = controller.prepare_stage2(output)
+    assert action["action"] == "dispatch_parallel"
+    assert action["instruction_file"] == str(controller.THIN_STAGE2_RUNTIME)
+    controller._validate_action(action)
+
+
+def test_prepare_stage2_retry_uses_single_renderer(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["enrich_arch_fragments"] = True
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / ".inline-shortcut-retry-count").write_text("1\n", encoding="utf-8")
+    monkeypatch.delenv("APPSEC_PARALLEL_RENDER", raising=False)
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+
+    action = controller.prepare_stage2(output)
+    assert action["action"] == "dispatch_agent"
+    assert action["instruction_file"] == str(controller.THIN_STAGE2_RUNTIME)
+    controller._validate_action(action)
 
 
 def test_compose_if_ready_requires_llm_fragments(tmp_path):
@@ -567,6 +696,49 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     assert "emit_general_mitigation_titles.py" in rendered_scripts
     assert "hydrate_mitigation_details.py" in rendered_scripts
     assert "validate_mitigation_quality.py" in rendered_scripts
+    checkpoint = (output / ".appsec-checkpoint").read_text(encoding="utf-8")
+    assert "phase=11 status=completed" in checkpoint
+
+
+def test_next_action_recomposes_stale_report_when_checkpoint_needs_render(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    frag = output / ".fragments"
+    frag.mkdir(parents=True)
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (output / "threat-model.md").write_text("# stale report\n", encoding="utf-8")
+    (output / ".appsec-checkpoint").write_text(
+        "phase=10b status=completed need_render=true\n",
+        encoding="utf-8",
+    )
+    (frag / "ms-verdict.json").write_text("{}", encoding="utf-8")
+    (frag / "security-architecture.md").write_text("## 7\n", encoding="utf-8")
+
+    def fake_run(cmd, **kwargs):
+        if any("compose_threat_model.py" in str(item) for item in cmd):
+            (output / "threat-model.md").write_text("# fresh report\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(controller.subprocess, "run", fake_run)
+
+    action = controller.next_action(output)
+    assert action["stage"] == "stage3"
+    assert (output / "threat-model.md").read_text(encoding="utf-8") == "# fresh report\n"
+    assert "phase=11 status=completed" in (output / ".appsec-checkpoint").read_text(encoding="utf-8")
+
+
+def test_next_action_caps_stage2_fragment_retries(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+
+    first = controller.next_action(output)
+    second = controller.next_action(output)
+    assert first["receipts"] == ["Stage-2 render fragments incomplete; retry 1/2"]
+    assert second["receipts"] == ["Stage-2 render fragments incomplete; retry 2/2"]
+    with pytest.raises(controller.ControllerError, match="after two retries"):
+        controller.next_action(output)
 
 
 def test_next_action_falls_back_to_stage2_when_compose_fails(tmp_path, monkeypatch):
@@ -1061,9 +1233,17 @@ def test_checkpoint_needs_render_true(tmp_path):
     assert controller._checkpoint_needs_render(tmp_path) is True
 
 
-def test_checkpoint_needs_render_false_when_report_present(tmp_path):
-    (tmp_path / ".appsec-checkpoint").write_text("phase=10b need_render=true\n", encoding="utf-8")
+def test_checkpoint_needs_render_true_when_stale_report_present(tmp_path):
+    (tmp_path / ".appsec-checkpoint").write_text(
+        "phase=10b status=completed need_render=true\n",
+        encoding="utf-8",
+    )
     (tmp_path / "threat-model.md").write_text("x", encoding="utf-8")
+    assert controller._checkpoint_needs_render(tmp_path) is True
+
+
+def test_checkpoint_needs_render_requires_completed_status(tmp_path):
+    (tmp_path / ".appsec-checkpoint").write_text("phase=10b need_render=true\n", encoding="utf-8")
     assert controller._checkpoint_needs_render(tmp_path) is False
 
 

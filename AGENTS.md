@@ -49,8 +49,9 @@ Full/rebuild invocations route through `scripts/orchestration_controller.py`
 and `skills/create-threat-model/SKILL-full-runtime.md` by default; opt out with
 `APPSEC_THIN_ORCHESTRATOR=0` to fall back to the legacy runtime. The controller
 owns deterministic preflight and emits schema-valid fixed actions; the skill
-owns Agent/Task calls and reads only the Stage-1 slice plus the current
-stage-local post-boundary slice. Rerender has its own compact Stage-2 runtime;
+owns Agent/Task calls and reads compact Thin Stage-1/1c/2 runtimes plus the
+current post-Stage-2 slice only when reached. It does not load the corresponding
+legacy Stage-1/1c/2 bodies. Rerender has its own compact Stage-2 runtime;
 incremental, resume, dry-run, deadline, and live-phase paths retain the legacy
 runtime. The compact path became the default after the
 juice-shop standard parity A/B held (2026-07-04); `APPSEC_THIN_ORCHESTRATOR=0`
@@ -160,7 +161,7 @@ These are here because a previous run failed in a non-obvious way. Do not undo t
 - **Stage 2 (Phase 11) is split from Stage 1** so `agents/appsec-threat-renderer.md` gets a fresh budget for composition. Re-merging it recreates the old turn-budget failure mode.
 - **Phase group files lazy-load just in time.** Only `phase-group-recon.md` loads during Pre-Phase; the architecture, threats, and finalization groups load immediately before their phases. Bulk-reading them at startup breaks the cache-stable prefix.
 - **Mode-conditional branches lazy-load from `skills/create-threat-model/modes/*.md`.** `SKILL-impl.md` is large and is read in bounded slices, so branches that a standard/full scan never runs (`rerender`, `full-scan-recommendation`, `rebuild-wipe`, …) live in `modes/*.md` and are read just-in-time behind a single gated pointer — not inline. Keep exactly one pointer per mode file, gated on its mode (`only when \`MODE=…\``); the operative bash moves verbatim into the mode file. Drift guard: `tests/test_lazy_phase_group_loading.py`. Do not cite another `modes/<name>.md` path inside a different mode's pointer — the drift guard asserts each path appears exactly once.
-- **Post-Stage-1 skill instructions are stage-local reads.** Legacy and thin runtimes load Stage 1c only when abuse-case verification is enabled, then load normal Stage 2, conditional recovery, Stage 3, optional Stage 4, completion, and error handling only at their own boundaries; never restore a boundary-to-EOF tail read. Drift guards: `tests/test_lazy_phase_group_loading.py` and `tests/test_context_prompt_budgets.py`.
+- **Thin Stage 1/1c/2 use compact dedicated runtimes.** They keep Level-0 Agent/Task calls in the main session while `orchestration_controller.py` owns their deterministic gates and pre-generation. Never point the thin path back at the verbose legacy Stage-1/1c/2 bodies. Stage 1c remains conditional; Stage 3, optional Stage 4, completion, error handling, and failure-only recovery stay stage-local. Drift guards: `tests/test_lazy_phase_group_loading.py` and `tests/test_context_prompt_budgets.py`.
 - **Prompt caching uses Group A -> Group B -> Group C ordering** (stable values, component scalars, volatile paths). Full spec and drift guard: the "Prompt caching contract" section below.
 - **`docs/related-repos.yaml` is the only source for cross-repo findings deep-reads.** Filesystem siblings may annotate C4 diagrams only.
 - **Model routing is role- and depth-specific.** `quick` and `standard` default to `sonnet-economy`; `thorough` defaults to `opus`; `sonnet` and `opus-cheap` are explicit opt-ins. `scripts/resolve_config.py` is authoritative. Before changing a route, update the Runtime model routing table below and the documentation and tests listed in Editing Guidance.

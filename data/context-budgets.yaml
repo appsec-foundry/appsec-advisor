@@ -18,6 +18,15 @@ surfaces:
   thin_rerender_runtime:
     path: skills/create-threat-model/SKILL-rerender-runtime.md
     max_bytes: 10000
+  thin_stage1_runtime:
+    path: skills/create-threat-model/SKILL-thin-stage1.md
+    max_bytes: 6800
+  thin_stage1c_runtime:
+    path: skills/create-threat-model/SKILL-thin-stage1c.md
+    max_bytes: 2600
+  thin_stage2_runtime:
+    path: skills/create-threat-model/SKILL-thin-stage2.md
+    max_bytes: 2700
   legacy_initial_slice:
     path: skills/create-threat-model/SKILL-impl.md
     start: BOF
@@ -61,10 +70,12 @@ surfaces:
     max_bytes: 155000
 
 aggregate:
-  # Router + compact runtime + Stage-1 core + conditional Stage-1c slice.
-  thin_full_pre_stage2_max_bytes: 92000
-  # Quick/explicit-skip runs never load the Stage-1c abuse-verification slice.
-  thin_full_without_stage1c_max_bytes: 78500
+  # Router + compact runtime + compact Stage-1 + conditional Stage-1c.
+  thin_full_pre_stage2_max_bytes: 31000
+  # Quick/explicit-skip runs never load the Stage-1c runtime.
+  thin_full_without_stage1c_max_bytes: 28500
+  # Cumulative thin control prose through the Stage-2 dispatch.
+  thin_full_through_stage2_max_bytes: 34000
   # Router + rerender runtime. Stage-2 instructions are loaded only after the
   # controller has verified on-disk Stage-1 artifacts.
   thin_rerender_pre_stage2_max_bytes: 18000

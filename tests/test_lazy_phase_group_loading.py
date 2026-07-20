@@ -266,22 +266,20 @@ def test_skill_impl_stage2_tail_lazy_loaded():
 
 
 def test_thin_runtime_loads_stage1c_only_when_enabled():
-    runtime = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(
-        encoding="utf-8"
-    )
-    assert "stop before\n`## Stage 1c — Abuse Case Verification`" in runtime
-    assert "Only when\n`SKIP_ABUSE_CASE_VERIFICATION=false`" in runtime
-    assert "Verification` to `## Stage 2 - Report Rendering`" in runtime
-    assert "Otherwise do not load the Stage-1c slice" in runtime
+    runtime = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
+    assert "Read `SKILL-thin-stage1.md` in full" in runtime
+    assert "Only when `SKIP_ABUSE_CASE_VERIFICATION=false`" in runtime
+    assert "read\n`SKILL-thin-stage1c.md` in full" in runtime
+    assert "Otherwise do not load any\nStage-1c instructions" in runtime
+    assert "SKILL-thin-stage2.md" in runtime
+    assert "Do not load the Stage-2 slice" in runtime
 
 
 def test_non_dry_stage3_safety_slice_cannot_be_bypassed_by_controller_action():
     """Quick/no-QA paths may return stage4/complete from the controller, but
     the depth-independent secret gate still has to run before either action."""
     router = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md").read_text(encoding="utf-8")
-    full = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(
-        encoding="utf-8"
-    )
+    full = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
     rerender = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md").read_text(
         encoding="utf-8"
     )
@@ -304,7 +302,7 @@ def test_completion_slice_owns_cross_path_release_gates():
     assert 0 < completion < hard_link_gate < error_handling
     completion_slice = impl[completion:error_handling]
     assert "reclassify_components.py" in completion_slice
-    assert "qa_checks.py\" toc_closure" in completion_slice
+    assert 'qa_checks.py" toc_closure' in completion_slice
 
 
 def test_stage4_lazy_loads_repair_contract_only_when_required():

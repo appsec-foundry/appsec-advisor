@@ -9,6 +9,10 @@ Commands:
 
     orchestration_controller.py route -- <create-threat-model arguments>
     orchestration_controller.py prepare [--force] -- <arguments>
+    orchestration_controller.py post-stage1 --output-dir <path>
+    orchestration_controller.py prepare-abuse --output-dir <path>
+    orchestration_controller.py finalize-abuse --output-dir <path>
+    orchestration_controller.py prepare-stage2 --output-dir <path>
     orchestration_controller.py next --output-dir <path>
 """
 
@@ -41,6 +45,9 @@ from event_log import format_line  # noqa: E402
 ACTION_SCHEMA = PLUGIN_ROOT / "schemas" / "orchestration-action.schema.json"
 THIN_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
 THIN_RERENDER_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
+THIN_STAGE1_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1.md"
+THIN_STAGE1C_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1c.md"
+THIN_STAGE2_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage2.md"
 LEGACY_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 
 _FULL_INTERMEDIATE_NAMES = {
@@ -327,6 +334,37 @@ def _run_script(
     return completed
 
 
+def _run_external(
+    command: list[str],
+    *,
+    acceptable: tuple[int, ...] = (0,),
+) -> subprocess.CompletedProcess[str]:
+    """Run a fixed controller-owned command and keep stdout out of context."""
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode not in acceptable:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise ControllerError(
+            f"{Path(command[0]).name} failed with exit {completed.returncode}: {detail}",
+            completed.returncode if completed.returncode > 0 else 2,
+        )
+    return completed
+
+
+def _load_run_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
+    output_dir = output_dir.resolve()
+    config_path = output_dir / ".skill-config.json"
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControllerError(f"cannot read resolved config {config_path}: {exc}") from exc
+    return output_dir, cfg
+
+
 def _persist_config(cfg: dict[str, Any], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / ".skill-config.json"
@@ -427,15 +465,20 @@ def _cleanup_rebuild(output_dir: Path) -> list[str]:
 
 
 def _checkpoint_needs_render(output_dir: Path) -> bool:
+    """Return whether the durable Stage-1 checkpoint still requires rendering.
+
+    Report-file presence is deliberately irrelevant: a prior run may have left
+    a stale Markdown report beside a newer Stage-1 checkpoint.
+    """
     checkpoint = output_dir / ".appsec-checkpoint"
-    if not checkpoint.is_file() or (output_dir / "threat-model.md").is_file():
+    if not checkpoint.is_file():
         return False
     try:
         line = checkpoint.read_text(encoding="utf-8", errors="replace").splitlines()[0]
     except (OSError, IndexError):
         return False
     fields = dict(token.split("=", 1) for token in line.split() if "=" in token)
-    return fields.get("phase") == "10b" and fields.get("need_render") == "true"
+    return fields.get("phase") == "10b" and fields.get("status") == "completed" and fields.get("need_render") == "true"
 
 
 def _activate_markers(cfg: dict[str, Any]) -> None:
@@ -1041,7 +1084,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "action": "dispatch_agent",
         "mode": cfg["mode"],
         "stage": "stage1",
-        "instruction_file": str(LEGACY_RUNTIME),
+        "instruction_file": str(THIN_STAGE1_RUNTIME),
         "preflight_status": str(cfg.get("preflight_status") or ""),
         "run_plan": run_plan,
         "config_path": str(config_path),
@@ -1051,6 +1094,263 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "orchestrator_recommendation_reason": cfg.get("orchestrator_recommendation_reason", ""),
         "orchestrator_prompt_needed": _orch_prompt_needed,
         "receipts": receipts,
+    }
+
+
+def _best_effort_script(
+    output_dir: Path,
+    name: str,
+    args: list[str],
+    receipts: list[str],
+) -> bool:
+    try:
+        _run_script(name, args)
+        return True
+    except ControllerError as exc:
+        receipts.append(f"{name}: best-effort failure")
+        _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+        return False
+
+
+def post_stage1(output_dir: Path) -> dict[str, Any]:
+    """Run the deterministic thin-path gates after the Stage-1 agents return."""
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+    required = (".recon-summary.md", ".threats-merged.json", ".triage-flags.json", "threat-model.yaml")
+    missing = [name for name in required if not (output_dir / name).is_file()]
+    if missing:
+        raise ControllerError(f"Stage 1 did not produce required artifacts: {', '.join(missing)}")
+    if not _checkpoint_needs_render(output_dir):
+        raise ControllerError(
+            "Stage 1 completion checkpoint is missing or invalid; expected phase=10b status=completed need_render=true"
+        )
+
+    _run_script("check_stride_dispatch.py", [str(output_dir)])
+    if not _upgrade_bootstrap_yaml(output_dir, cfg):
+        raise ControllerError("Stage 1 left a bootstrap threat-model.yaml that could not be upgraded")
+    _run_script(
+        "validate_intermediate.py",
+        ["threat_model_output", str(output_dir / "threat-model.yaml")],
+    )
+
+    receipts: list[str] = []
+    _best_effort_script(output_dir, "enforce_yaml_invariants.py", [str(output_dir)], receipts)
+    _best_effort_script(
+        output_dir,
+        "triage_compute_ranking.py",
+        [str(output_dir), "--force"],
+        receipts,
+    )
+    try:
+        _run_external(
+            [
+                "bash",
+                str(SCRIPT_DIR / "auto_emitter_pass.sh"),
+                str(output_dir),
+                str(cfg.get("repo_root") or output_dir),
+                str(PLUGIN_ROOT),
+                "false",
+            ]
+        )
+    except ControllerError as exc:
+        receipts.append("auto_emitter_pass.sh: best-effort failure")
+        _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+
+    _run_script("validate_mitigation_quality.py", [str(output_dir)])
+    _run_script(
+        "assert_completeness.py",
+        [str(output_dir), "--phase", "build", "--plugin-root", str(PLUGIN_ROOT)],
+    )
+    _append_event(output_dir, "POST_STAGE1_GATES_PASSED", "thin deterministic Stage-1 gates passed")
+    return {
+        "schema_version": 1,
+        "action": "run_gate",
+        "mode": cfg["mode"],
+        "stage": "stage1",
+        "config_path": str(config_path),
+        "receipts": ["Stage-1 artifacts and gates verified", *receipts],
+    }
+
+
+_ABUSE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+def prepare_abuse(output_dir: Path) -> dict[str, Any]:
+    """Match abuse cases and return a bounded verifier fan-out action."""
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+    common = {
+        "schema_version": 1,
+        "mode": cfg["mode"],
+        "stage": "stage1c",
+        "config_path": str(config_path),
+        "dispatch_values": _dispatch_values(cfg),
+    }
+    if cfg.get("skip_abuse_case_verification"):
+        return {**common, "action": "run_gate", "receipts": ["Abuse verification disabled"]}
+
+    repo_root = str(cfg.get("repo_root") or output_dir)
+    args = [
+        "match",
+        "--output-dir",
+        str(output_dir),
+        "--repo-root",
+        repo_root,
+        "--signals",
+        str(output_dir / ".recon-signals.json"),
+    ]
+    if org_profile := str(cfg.get("org_profile_path") or ""):
+        args += ["--org-profile", org_profile]
+    match = _run_script("match_abuse_cases.py", args, acceptable=(0, 1, 2))
+    listed = _run_script(
+        "match_abuse_cases.py",
+        ["list-candidates", "--output-dir", str(output_dir)],
+        acceptable=(0,),
+    )
+    candidates = [item for item in (listed.stdout or "").split() if _ABUSE_ID_RE.fullmatch(item)]
+    if len(candidates) > 64:
+        raise ControllerError(f"abuse verifier fan-out has {len(candidates)} candidates; maximum is 64")
+    receipts = [f"abuse candidates: {len(candidates)}"]
+    if match.returncode != 0:
+        receipts.append(f"matcher returned {match.returncode}; partial candidates retained")
+    if not candidates or (output_dir / ".budget-critical").exists():
+        return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
+    return {
+        **common,
+        "action": "dispatch_parallel",
+        "instruction_file": str(THIN_STAGE1C_RUNTIME),
+        "candidates": candidates,
+        "receipts": receipts,
+    }
+
+
+def finalize_abuse(output_dir: Path) -> dict[str, Any]:
+    """Merge verifier sidecars and materialize the final abuse-case artifacts."""
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+    receipts: list[str] = []
+    for name, args in (
+        ("verify_abuse_cases.py", ["merge", "--output-dir", str(output_dir)]),
+        ("match_abuse_cases.py", ["finalize", "--output-dir", str(output_dir)]),
+        ("promote_verified_abuse_cases.py", ["--output-dir", str(output_dir)]),
+    ):
+        _best_effort_script(output_dir, name, args, receipts)
+
+    verdicts = output_dir / ".abuse-case-verdicts.json"
+    if verdicts.is_file():
+        _best_effort_script(
+            output_dir,
+            "build_threat_model_yaml.py",
+            [
+                str(output_dir),
+                "--repo-root",
+                str(cfg.get("repo_root") or output_dir),
+                "--plugin-root",
+                str(PLUGIN_ROOT),
+            ],
+            receipts,
+        )
+    _run_script("abuse_case_gate.py", ["--output-dir", str(output_dir)])
+    if verdicts.is_file():
+        _best_effort_script(
+            output_dir,
+            "triage_compute_ranking.py",
+            [str(output_dir), "--if-deterministic-owner"],
+            receipts,
+        )
+    render_args = [
+        "--output-dir",
+        str(output_dir),
+        "--repo-root",
+        str(cfg.get("repo_root") or output_dir),
+    ]
+    if org_profile := str(cfg.get("org_profile_path") or ""):
+        render_args += ["--org-profile", org_profile]
+    _best_effort_script(output_dir, "render_abuse_cases.py", render_args, receipts)
+    _append_event(output_dir, "ABUSE_FINALIZE_COMPLETE", "thin abuse-case finalization complete")
+    return {
+        "schema_version": 1,
+        "action": "run_gate",
+        "mode": cfg["mode"],
+        "stage": "stage1c",
+        "config_path": str(config_path),
+        "receipts": ["Abuse-case artifacts finalized", *receipts],
+    }
+
+
+def prepare_stage2(output_dir: Path) -> dict[str, Any]:
+    """Prepare structural fragments and select the compact Stage-2 dispatch."""
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+    receipts: list[str] = []
+    _best_effort_script(
+        output_dir,
+        "pregenerate_fragments.py",
+        [
+            str(output_dir),
+            "--force",
+            "--only",
+            "system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md",
+        ],
+        receipts,
+    )
+    for only in ("security-architecture.md", "ms-critical-attack-tree.json"):
+        _best_effort_script(
+            output_dir,
+            "pregenerate_fragments.py",
+            [str(output_dir), "--only", only],
+            receipts,
+        )
+    _best_effort_script(
+        output_dir,
+        "restore_preserved_sections.py",
+        [
+            str(output_dir),
+            "--current-depth",
+            str(cfg.get("assessment_depth") or "standard"),
+            "--plugin-root",
+            str(PLUGIN_ROOT),
+            "--repo-root",
+            str(cfg.get("repo_root") or output_dir),
+        ],
+        receipts,
+    )
+    for name in (".budget-critical", ".budget-warning"):
+        path = output_dir / name
+        try:
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+        except OSError:
+            pass
+
+    retry_pending = (output_dir / ".inline-shortcut-retry-count").is_file()
+    parallel = (
+        bool(cfg.get("enrich_arch_fragments")) and os.environ.get("APPSEC_PARALLEL_RENDER") != "0" and not retry_pending
+    )
+    action = "dispatch_parallel" if parallel else "dispatch_agent"
+    if parallel:
+        _best_effort_script(
+            output_dir,
+            "log_event.py",
+            [
+                str(output_dir),
+                "phase-start",
+                "[Phase 11/11] Finalization (parallel renderer)",
+                "--agent",
+                "threat-renderer",
+            ],
+            receipts,
+        )
+    _append_event(output_dir, "STAGE2_READY", f"parallel={str(parallel).lower()}")
+    return {
+        "schema_version": 1,
+        "action": action,
+        "mode": cfg["mode"],
+        "stage": "stage2",
+        "instruction_file": str(THIN_STAGE2_RUNTIME),
+        "config_path": str(config_path),
+        "dispatch_values": _dispatch_values(cfg),
+        "receipts": [f"Stage-2 structural fragments prepared; parallel={str(parallel).lower()}", *receipts],
     }
 
 
@@ -1117,16 +1417,17 @@ def _upgrade_bootstrap_yaml(output_dir: Path, cfg: dict[str, Any]) -> bool:
 
 
 def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
-    """Deterministically compose ``threat-model.md`` from on-disk fragments.
+    """Deterministically compose or refresh ``threat-model.md`` from fragments.
 
     Closes the thin-runtime gap where the orchestrator authored the render
     fragments but ended — turn budget, or a skipped skill-level step — before
     issuing ``compose_threat_model.py``, leaving ``threat-model.yaml`` plus a
     full ``.fragments/`` set but no report (2026-07-02 juice-shop thin run).
 
-    Only fires when the LLM-authored fragments are already present, so no agent
-    work is needed; otherwise returns False and the caller falls back to a
-    Stage-2 agent dispatch. Runs the canonical finalization tail
+    Also refreshes a stale report when the checkpoint says Stage 1 still needs
+    rendering. Only fires when the LLM-authored fragments are already present,
+    so no agent work is needed; otherwise returns False and the caller falls
+    back to a Stage-2 agent dispatch. Runs the canonical finalization tail
     (compose --strict → apply_prose_fixes → qa_checks autofix). Fail-safe: any
     error returns False and never raises into ``next``'s JSON output.
     """
@@ -1191,6 +1492,14 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
         return False
     _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
+    try:
+        (output_dir / ".appsec-checkpoint").write_text(
+            f"phase=11 status=completed timestamp={datetime.now(timezone.utc).isoformat()}\n",
+            encoding="utf-8",
+        )
+        _append_event(output_dir, "PHASE_END", "[Phase 11/11] Finalization (controller compose)")
+    except OSError:
+        return False
     return md.is_file()
 
 
@@ -1244,12 +1553,8 @@ def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
 
 
 def next_action(output_dir: Path) -> dict[str, Any]:
-    output_dir = output_dir.resolve()
+    output_dir, cfg = _load_run_config(output_dir)
     config_path = output_dir / ".skill-config.json"
-    try:
-        cfg = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ControllerError(f"cannot read resolved config {config_path}: {exc}")
 
     common = {
         "schema_version": 1,
@@ -1262,7 +1567,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             **common,
             "action": "dispatch_agent",
             "stage": "stage1",
-            "instruction_file": str(LEGACY_RUNTIME),
+            "instruction_file": str(THIN_STAGE1_RUNTIME),
         }
     # A bootstrap stub IS a file but is not a model — upgrade it deterministically
     # before anything downstream treats it as canonical. Unrecoverable ⇒ Stage 1.
@@ -1271,20 +1576,43 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             **common,
             "action": "dispatch_agent",
             "stage": "stage1",
-            "instruction_file": str(LEGACY_RUNTIME),
+            "instruction_file": str(THIN_STAGE1_RUNTIME),
         }
-    if not (output_dir / "threat-model.md").is_file():
+    if not (output_dir / "threat-model.md").is_file() or _checkpoint_needs_render(output_dir):
         # Deterministic compose backstop: when the render fragments are already
         # on disk the remaining work is a pure compose, so finish it here rather
         # than re-dispatching the (expensive) renderer. Only falls through to a
         # Stage-2 agent when the fragments are genuinely missing.
         if not _compose_if_ready(output_dir, str(cfg.get("repo_root") or "")):
+            retry_path = output_dir / ".inline-shortcut-retry-count"
+            try:
+                retry_count = int(retry_path.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                retry_count = 0
+            if retry_count >= 2:
+                raise ControllerError(
+                    "Stage 2 could not produce the required render fragments after two retries; "
+                    f"inspect {output_dir / '.fragments'} and {output_dir / '.agent-run.log'}"
+                )
+            retry_count += 1
+            try:
+                retry_path.write_text(f"{retry_count}\n", encoding="utf-8")
+            except OSError as exc:
+                raise ControllerError(f"cannot persist Stage-2 retry counter: {exc}") from exc
             return {
                 **common,
                 "action": "dispatch_agent",
                 "stage": "stage2",
-                "instruction_file": str(LEGACY_RUNTIME),
+                "instruction_file": str(THIN_STAGE2_RUNTIME),
+                "receipts": [f"Stage-2 render fragments incomplete; retry {retry_count}/2"],
             }
+    for name in (".inline-shortcut-retry-count", ".inline-shortcut-repair-plan.json"):
+        try:
+            (output_dir / name).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
     if not cfg.get("skip_qa") and not (output_dir / ".qa-status.json").is_file():
         return {
             **common,
@@ -1323,6 +1651,14 @@ def main(argv: list[str] | None = None) -> int:
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--force", action="store_true")
     prepare_parser.add_argument("arguments", nargs=argparse.REMAINDER)
+    post_stage1_parser = sub.add_parser("post-stage1")
+    post_stage1_parser.add_argument("--output-dir", required=True)
+    prepare_abuse_parser = sub.add_parser("prepare-abuse")
+    prepare_abuse_parser.add_argument("--output-dir", required=True)
+    finalize_abuse_parser = sub.add_parser("finalize-abuse")
+    finalize_abuse_parser.add_argument("--output-dir", required=True)
+    prepare_stage2_parser = sub.add_parser("prepare-stage2")
+    prepare_stage2_parser.add_argument("--output-dir", required=True)
     next_parser = sub.add_parser("next")
     next_parser.add_argument("--output-dir", required=True)
     args = parser.parse_args(argv)
@@ -1335,6 +1671,14 @@ def main(argv: list[str] | None = None) -> int:
                 _split_remainder(args.arguments),
                 force=args.force,
             )
+        elif args.command == "post-stage1":
+            action = post_stage1(Path(args.output_dir))
+        elif args.command == "prepare-abuse":
+            action = prepare_abuse(Path(args.output_dir))
+        elif args.command == "finalize-abuse":
+            action = finalize_abuse(Path(args.output_dir))
+        elif args.command == "prepare-stage2":
+            action = prepare_stage2(Path(args.output_dir))
         else:
             action = next_action(Path(args.output_dir))
     except (ControllerError, SystemExit, OSError) as exc:

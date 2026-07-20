@@ -10,10 +10,14 @@ the thin full/rebuild and rerender runtimes (the defaults; opt out with
 - `resolve_config.py` remains the source of truth for flags, paths, modes,
   models, depth, and output settings.
 - `orchestration_controller.py` owns thin-runtime selection, full/rebuild
-  preflight mutations, rerender artifact preconditions, fixed next-action
-  classification, and compact dispatch values.
-- `SKILL-full-runtime.md` and `SKILL-rerender-runtime.md` own user-visible
-  preflight output, Task lifecycle, and Level-0 Agent calls for their modes.
+  preflight mutations, Stage-1 post-analysis gates and completion-checkpoint
+  freshness, abuse-case match/finalize, Stage-2 structural preparation,
+  rerender artifact preconditions, fixed next-action classification, and
+  compact dispatch values.
+- `SKILL-full-runtime.md`, `SKILL-thin-stage1.md`,
+  `SKILL-thin-stage1c.md`, `SKILL-thin-stage2.md`, and
+  `SKILL-rerender-runtime.md` own user-visible output, Task lifecycle, and
+  Level-0 Agent calls for their modes.
 - Existing agents, phase groups, deterministic gates, renderer, QA, and
   cleanup remain authoritative for analysis and report quality.
 
@@ -24,6 +28,8 @@ Therefore it adds no cleanup-whitelist or diagnostic-bundle entry.
 ## Security and schema rules
 
 - Action names and stage names are fixed enums.
+- Abuse verifier candidates are bounded data-only identifiers; repository text
+  cannot add commands, tools, paths, or instruction files to an action.
 - `dispatch_values` has an allow-listed key set and bounded scalar/profile
   values; arbitrary command fields are rejected.
 - `instruction_file` is selected only from plugin-owned constants. Repository
@@ -47,5 +53,6 @@ variance rather than the orchestrator runtime.
 
 Legacy mode also uses bounded post-Stage-1 reads: normal Stage 2, conditional
 recovery, Stage 3, optional Stage 4, completion, and error handling are loaded
-at their own boundaries rather than as one tail. Both runtimes omit the
-Stage-1c slice when abuse-case verification is disabled.
+at their own boundaries rather than as one tail. The normal thin path instead
+uses compact dedicated Stage-1/1c/2 runtimes and never reads those legacy
+bodies. Both runtimes omit Stage 1c when abuse-case verification is disabled.
