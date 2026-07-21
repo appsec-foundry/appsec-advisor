@@ -218,6 +218,10 @@ def main() -> int:
             w(f"    ⚠ non-empty session at scan start — {detail}")
         elif event == "SESSION_ABORTED_MIDRUN":
             w(f"    ⛔ aborted mid-run — {detail}")
+        elif event == "BUDGET_CRITICAL":
+            w(f"    ⛔ budget critical — {detail}")
+        elif event in ("BUDGET_WARN", "MAX_TURNS", "AGENT_ERROR", "RENDER_FAILED"):
+            w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "PARALLEL_STRIDE_RESOLVED":
             w(f"   config · {detail}")
         elif event == "ROUTE_INVENTORY_PREPASS":

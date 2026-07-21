@@ -100,6 +100,25 @@ def test_substep2_idle_hard_limit_is_rendered():
     assert "600s" in out
 
 
+def test_budget_and_agent_error_events_are_rendered():
+    """Budget kills, maxTurns terminations and agent errors reach the live
+    monitor via the tailed logs but had no handler — they were silently dropped
+    because render matches event names and ignores the WARN/ERROR column."""
+    out = _render(
+        [
+            "2026-06-20T15:05:00Z  [abcdef12]  WARN   budget-watchdog   BUDGET_CRITICAL  90% budget consumed  turns=250",
+            "2026-06-20T15:06:00Z  [abcdef12]  WARN   budget-watchdog   BUDGET_WARN  75% budget consumed  turns=200",
+            "2026-06-20T15:07:00Z  [abcdef12]  ERROR  threat-analyst  MAX_TURNS  Agent terminated — maxTurns limit reached",
+            "2026-06-20T15:08:00Z  [abcdef12]  ERROR  evidence-verifier  AGENT_ERROR  all sampled findings failed verification",
+        ]
+    )
+    assert "⛔ budget critical —" in out
+    assert "⚠ budget warn —" in out
+    assert "⚠ max turns —" in out
+    assert "⚠ agent error —" in out
+    assert "turns=250" in out
+
+
 def test_assessment_models_line_is_rendered():
     out = _render(
         [
