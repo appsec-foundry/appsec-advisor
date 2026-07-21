@@ -28,6 +28,7 @@ The same command works for local repositories, AppSec-managed scans, and CI pipe
 - [Exit codes and CI semantics](#exit-codes)
 - [Output files](#output-files)
 - [Flag reference](#flag-reference)
+- [Diagnosing a run](#diagnosing-a-run)
 - [Troubleshooting](#troubleshooting)
 - [Deprecated flags](#deprecated-flags)
 
@@ -540,6 +541,7 @@ All files are written to `$OUTPUT_DIR` (default: `<repo>/docs/security/`):
 | `appsec-requirements-report.md` / `.pdf` / `.json` | `--audit-requirements --save-report` | Requirements compliance report |
 | `.agent-run.log` | Always | Progress and errors |
 | `.hook-events.log` | Always | Token and cost events |
+| `.run-issues.json` | After a run (or regenerated on the failure path) | Structured aggregate of the run's execution issues — see [Diagnosing a run](#diagnosing-a-run) |
 | `.appsec-cache/baseline.json` | Always | Baseline for incremental assessments |
 
 Other dotfiles in the output directory are intermediate run data. Do not publish or edit them.
@@ -618,6 +620,64 @@ The session-model default is where headless runs get their ~half-cost economy au
 | `--check-requirements` | Deprecated alias for `--audit-requirements` (see [Deprecated flags](#deprecated-flags)) |
 | `--category <filter>` | Category filter for requirements check (e.g. `SEC-AUTH`) |
 | `--save-report` | Save requirements report (Markdown + PDF + JSON) |
+
+<a id="diagnosing-a-run"></a>
+
+## Diagnosing a run
+
+When a run aborts, stalls, or produces a report that looks wrong, this is how
+to find out what happened.
+
+### Run it so you can see the errors
+
+```bash
+scripts/run-headless.sh --repo /path/to/repo --verbose --max-duration 5400 2>&1 | tee run.log
+```
+
+- `--verbose` prints live progress and errors while the run works.
+- `--max-duration <sec>` stops a run that overruns instead of leaving it to be
+  killed abruptly — a clean stop still gives you the summary below.
+- `2>&1 | tee run.log` keeps a copy, since most of the output is on stderr.
+
+### Where to look
+
+Two log files are always written to `$OUTPUT_DIR`, even on failure:
+
+- **`.agent-run.log`** — progress and errors, one phase at a time. This is the
+  first place to check: it shows where the run got to and where it stopped.
+- **`.hook-events.log`** — token and cost events. Check this when a run stops
+  on the budget or time cap (exit code 2) to see what used up the budget.
+
+### The Run Issues summary
+
+Every run collects its execution problems — dropped components, failed gates,
+budget or time limits — into `$OUTPUT_DIR/.run-issues.json`. A normal run prints
+these as a **Run Issues** summary at the end of the report.
+
+If the run is cut short and never reaches that final step, the summary would
+normally be lost. To prevent that, `run-headless.sh` rebuilds it from the logs
+and prints it anyway whenever the run exits with an error. So you get the same
+summary either way.
+
+### Rebuild the summary yourself
+
+For an earlier run, or to see the more detailed developer view:
+
+```bash
+python3 scripts/aggregate_run_issues.py "$OUTPUT_DIR" --depth standard
+python3 scripts/render_completion_summary.py --issues-only \
+  --output-dir "$OUTPUT_DIR" --repo-root /path/to/repo
+```
+
+Add `--plugin-dev` (or set `APPSEC_PLUGIN_DEV=1`) for the fuller breakdown. Use
+the same `--depth` the run used, so the checks match what that run was expected
+to produce.
+
+### Fixing what it found
+
+The `fix-run-issues` skill applies the safe fixes for the recorded issues and
+tells you which ones need manual work. Use it instead of editing the output
+files by hand — see [never hand-edit final reports](../AGENTS.md).
 
 <a id="troubleshooting"></a>
 
