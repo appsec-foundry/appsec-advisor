@@ -452,10 +452,18 @@ LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
 # The orchestrator holds the largest resident context; on a *very* large repo a
 # small-window session model (Sonnet 4.6 in the harness) risks mid-run compaction,
 # which can drop finalization steps. At/above this source-file count we RECOMMEND the
-# large-window Sonnet 5 as the SESSION model (higher cost, but compaction-safe); below
-# it we recommend Sonnet 4.6 (much cheaper, only very limited orchestrator benefit). Advisory
-# only — the user always chooses (see the interactive prompt in SKILL-impl.md).
-# Calibrated ABOVE Juice-Shop (~641 source files) so a normal app recommends 4.6.
+# large-window Sonnet 5 as the SESSION model (higher cost, for more compaction
+# headroom); below it we recommend Sonnet 4.6 (much cheaper, only very limited
+# orchestrator benefit). Advisory only — the user always chooses (see the
+# interactive prompt in SKILL-impl.md).
+# CALIBRATION CAVEAT: this is a coarse heuristic, not a measured compaction point.
+# We have one calibration repo (Juice-Shop, ~650 source files by the count below);
+# 2500 is simply a margin well above it so a normal app recommends 4.6. Source-file
+# count is a *proxy* — the orchestrator's resident context is really driven by the
+# analyzed component count and finding volume (roughly bounded, not linear in files),
+# so the true compaction point does not track this number precisely. Kept because it
+# is the only cheap signal available pre-recon, and the recommendation is fail-safe
+# (defaults to the cheap model, user overrides).
 ORCHESTRATOR_SONNET5_FILE_THRESHOLD = 2500
 SOURCE_FILE_EXTENSIONS = (
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
@@ -553,9 +561,10 @@ def recommend_orchestrator_model(src_count: int) -> dict:
         reason = (
             f"very large repo ({src_count} source files >= "
             f"{ORCHESTRATOR_SONNET5_FILE_THRESHOLD}) — the orchestrator accumulates a "
-            f"large resident context; Sonnet 5's larger window avoids mid-run "
-            f"compaction (higher cost, but prevents compaction-induced finalization "
-            f"skips)"
+            f"large resident context; Sonnet 5's larger window reduces the risk of "
+            f"mid-run compaction (higher cost). Note: this is a coarse file-count "
+            f"heuristic — a margin above our single calibration repo, not a measured "
+            f"compaction threshold"
         )
     else:
         model = "claude-sonnet-4-6"
