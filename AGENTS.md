@@ -76,7 +76,7 @@ Report prose must be specific, falsifiable, information-dense, and scannable. Le
 
 ### 11. Keep artifacts, code, and checks maintainable
 
-Write code comments, docstrings, commit messages, and repository documentation in English. Security checks must state their inspected signal, trigger, false-positive exclusions, CWE/severity/type mapping, and required evidence. Do not hardcode absolute local paths or introduce hidden network calls.
+Write code comments, docstrings, commit messages, and repository documentation in English. Documentation must prioritize clarity and correctness: explain what a reader needs to understand the behavior, omit unnecessary technical detail, and cut AI-generated filler (redundant restatement, hollow qualifiers, marketing tone). Security checks must state their inspected signal, trigger, false-positive exclusions, CWE/severity/type mapping, and required evidence. Do not hardcode absolute local paths or introduce hidden network calls.
 
 ### 12. Fix at the root cause, not at the symptom
 
