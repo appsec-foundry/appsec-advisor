@@ -43,6 +43,22 @@ def test_artifact_gate_is_fail_closed_on_missing_md() -> None:
     assert '[ ! -s "$RESULT_DIR/threat-model.md" ] && [ ! -s "$RESULT_DIR/threat-model.yaml" ]' not in body
 
 
+def test_failure_branch_surfaces_run_issues() -> None:
+    """On a non-zero exit the rich Run Issues block is normally rendered by the
+    LLM Completion turn, which never runs on an abort/kill. The shell must
+    regenerate .run-issues.json from the logs and render it deterministically so
+    the operator sees WHAT failed, not just `exited with code N`.
+    """
+    body = _body()
+    assert "--issues-only" in body, "failure branch must render the Run Issues block"
+    # Must regenerate the file first — on a hard kill it is stale or absent.
+    assert "aggregate_run_issues.py" in body, (
+        "failure branch must refresh .run-issues.json from the logs before rendering"
+    )
+    # Gated on the log existing so it is a no-op for pre-dispatch failures.
+    assert '[ -f "$RESULT_DIR/.agent-run.log" ]' in body
+
+
 def test_headless_scans_default_to_untrusted_mode() -> None:
     """A repository checkout must opt in before bypassing untrusted preflight."""
     body = _body()

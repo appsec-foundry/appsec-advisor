@@ -1911,12 +1911,27 @@ def main(argv: list[str] | None = None) -> int:
         "(e.g. from Stage 2 where the skill renders the final "
         "summary itself after Stage 3).",
     )
+    p.add_argument(
+        "--issues-only",
+        action="store_true",
+        help="Print only the `-- Run Issues --` block from .run-issues.json and "
+        "exit. Does not require threat-model.md — used by run-headless.sh on the "
+        "failure path, where the LLM Completion turn that normally renders this "
+        "block never runs.",
+    )
     p.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
     args = p.parse_args(argv)
 
     if not args.output_dir.is_dir():
         print(f"error: output_dir not a directory: {args.output_dir}", file=sys.stderr)
         return 2
+
+    if args.issues_only:
+        # Failure-path diagnostics: surface whatever aggregate_run_issues.py
+        # recorded, independent of a rendered report. Errors first, top 2 shown.
+        lines = render_run_issues(extract_run_issues(args.output_dir), plugin_dev=args.plugin_dev)
+        print("\n".join(lines) if lines else "  Run issues          : none recorded")
+        return 0
 
     cfg = {
         "mode": args.mode,

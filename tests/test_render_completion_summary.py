@@ -638,6 +638,49 @@ class TestCLISmoke:
         )
         assert r.returncode == 2
 
+    def test_issues_only_renders_block_without_md(self, tmp_path: Path):
+        """--issues-only surfaces .run-issues.json even when threat-model.md is
+        absent (the abort/kill path run-headless.sh uses). It must NOT hit the
+        md-required gate that exits 2."""
+        (tmp_path / ".run-issues.json").write_text(
+            '{"schema_version": 1, "run_status": "issues", '
+            '"summary": {"errors": 1, "warnings": 0}, '
+            '"issues": [{"severity": "error", "title": "run_incomplete: no deliverable"}]}'
+        )
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--issues-only",
+                "--output-dir",
+                str(tmp_path),
+                "--repo-root",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0
+        assert "Run Issues" in r.stdout
+        assert "run_incomplete: no deliverable" in r.stdout
+
+    def test_issues_only_reports_none_when_no_issues_file(self, tmp_path: Path):
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--issues-only",
+                "--output-dir",
+                str(tmp_path),
+                "--repo-root",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0
+        assert "none recorded" in r.stdout
+
     def test_minimal_full_run(self, tmp_path: Path):
         out = self._minimal_output_dir(tmp_path)
         r = subprocess.run(

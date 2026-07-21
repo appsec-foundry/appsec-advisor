@@ -919,6 +919,21 @@ if [ $EXIT_CODE -eq 0 ]; then
 else
     err "Assessment exited with code $EXIT_CODE"
     [ -n "$ASSESSMENT_DURATION" ] && echo "  Duration: $ASSESSMENT_DURATION"
+
+    # Surface diagnostics on the failure path. The rich Run Issues block is
+    # normally rendered by the LLM Completion turn, which never runs on an
+    # abort / bg-ceiling kill — so regenerate .run-issues.json from the logs
+    # and render it here deterministically. Delivery gap, not detection.
+    if [ "$SKILL" = "create-threat-model" ] && [ -f "$RESULT_DIR/.agent-run.log" ]; then
+        PLUGIN_DEV_FLAG=""
+        [ "${APPSEC_PLUGIN_DEV:-0}" = "1" ] && PLUGIN_DEV_FLAG="--plugin-dev"
+        python3 "$PLUGIN_DIR/scripts/aggregate_run_issues.py" \
+            "$RESULT_DIR" --depth "${ASSESSMENT_DEPTH:-standard}" >/dev/null 2>&1 || true
+        python3 "$PLUGIN_DIR/scripts/render_completion_summary.py" \
+            --issues-only --output-dir "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \
+            $PLUGIN_DEV_FLAG 2>/dev/null || true
+    fi
+
     warn "Check intermediate files or run with --resume to continue."
 fi
 
