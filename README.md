@@ -288,6 +288,7 @@ Start with the [packaging runbook](docs/internal-plugin-packaging.md) and [org p
 - Improve performance on repositories with many components.
 - Expand cross-repository and external context support (e.g. a meta threat model aggregated across several per-repository threat models).
 - Import existing threat models as reference data.
+- Explore whether specifications can be analyzed as first-class input — deriving threats from insecure statements in agent-generated specs (Kiro, BMAD, GSD) and AI specs, so a flaw stated in the spec becomes a finding, not only a code-proven one.
 - Publish a packaged marketplace release after the beta.
 
 ## Related projects
