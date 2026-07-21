@@ -211,6 +211,15 @@ STRICT_URLS=0
 RESUME_REQUESTED=0
 FULL_REQUESTED=0
 
+# Preserve the raw invocation before the parser consumes it, so the failure
+# path can reconstruct a re-run command (see the recovery hint below). POSIX sh
+# has no arrays; args with embedded spaces are rare in headless use and degrade
+# to word-splitting, acceptable for a copy-paste hint.
+ORIG_ARGS=""
+for _a in "$@"; do
+    ORIG_ARGS="${ORIG_ARGS:+$ORIG_ARGS }$_a"
+done
+
 # CI mode auto-detect — when running under a CI runner we prefer silent,
 # deterministic defaults.
 if [ "${CI:-}" = "true" ] || [ -n "${GITHUB_ACTIONS:-}" ] || [ -n "${GITLAB_CI:-}" ]; then
@@ -934,7 +943,35 @@ else
             $PLUGIN_DEV_FLAG 2>/dev/null || true
     fi
 
-    warn "Check intermediate files or run with --resume to continue."
+    # Recovery hint — print a full, paste-ready re-run command. Reconstruct it
+    # from the original invocation (dropping the wrapper-only mode flags it must
+    # not carry) and pick --resume vs --rebuild from what the resume-guard
+    # actually allows, so we never point the user at a resume that will be
+    # refused (the missing-context / incomplete-Stage-1 case) or hide a resume
+    # that would work.
+    if [ "$SKILL" = "create-threat-model" ]; then
+        _rerun_cmd() {  # $1 = mode flag to append
+            _cmd="$0"
+            for _a in $ORIG_ARGS; do
+                case "$_a" in
+                    --resume|--full|--rebuild|--rerender|--incremental) ;;
+                    *) _cmd="$_cmd $_a" ;;
+                esac
+            done
+            printf '%s %s\n' "$_cmd" "$1"
+        }
+        if [ -f "$RESULT_DIR/.appsec-checkpoint" ] \
+           && python3 "$PLUGIN_DIR/scripts/check_state.py" "$RESULT_DIR" \
+                --resume-guard --max-age-seconds 900 >/dev/null 2>&1; then
+            warn "Resume from the last checkpoint:"
+            printf '    %s\n' "$(_rerun_cmd --resume)"
+        else
+            warn "This run cannot be resumed cleanly — start fresh:"
+            printf '    %s\n' "$(_rerun_cmd --rebuild)"
+        fi
+    else
+        warn "Check intermediate files or run with --resume to continue."
+    fi
 fi
 
 # ── Exact-value secret redaction ───────────────────────────────────

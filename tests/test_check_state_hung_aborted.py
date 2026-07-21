@@ -136,6 +136,29 @@ def test_resume_guard_refuses_completed_checkpoint_missing_context(tmp_path: Pat
     assert "WITHOUT --resume" in msg
 
 
+def test_resume_guard_allows_stage1_complete_missing_context(tmp_path: Path):
+    # Stage 1 fully finished (threat-model.yaml on disk) but runtime_cleanup
+    # reaped the context cache. Resume re-enters at Phase-11 compose/render only,
+    # which never reads the cache — the artifact gate must NOT fire, or it would
+    # discard the paid-for STRIDE + merge + triage work.
+    (tmp_path / ".appsec-checkpoint").write_text(
+        "phase=10b status=completed need_render=true\n"
+    )
+    (tmp_path / "threat-model.yaml").write_text("meta: {}\n")
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+    assert code == 0
+
+
+def test_resume_guard_refuses_late_phase_missing_context_before_yaml(tmp_path: Path):
+    # Killed after merge but before triage produced threat-model.yaml, with the
+    # context cache already reaped. Even at a late checkpoint phase a resume
+    # would re-enter the cache-reading phases, so the refusal must still hold.
+    (tmp_path / ".appsec-checkpoint").write_text("phase=10 status=completed\n")
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+    assert code == 3
+    assert "threat-modeling-context.md is missing" in msg
+
+
 def test_resume_guard_missing_context_started_also_refused(tmp_path: Path):
     (tmp_path / ".appsec-checkpoint").write_text("phase=9 status=started\n")
     code, msg = check_state._resume_guard_result(tmp_path, 900)

@@ -707,16 +707,31 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
     # is missing, resume offers nothing safe — force an honest fresh run.
     context_md = output_dir / ".threat-modeling-context.md"
     phase_ord = _phase_ordinal(phase)
-    if phase_ord is not None and phase_ord >= 1 and not context_md.is_file():
+    # The analyst context cache is read only by the Stage-1 phases (context
+    # resolver, actor discovery, STRIDE analysers + merger). Once Stage 1 is
+    # fully finished — threat-model.yaml on disk — a resume re-enters at
+    # Phase-11 compose/render only (SKILL-impl.md "need_render" state), and none
+    # of the remaining consumers read the cache: appsec-triage-validator.md
+    # explicitly refuses it, and the secarch/ms renderers + compose never
+    # reference it. Requiring the cache there needlessly discards the paid-for
+    # STRIDE + merge + triage work. Before Stage 1 is complete a resume would
+    # re-enter the cache-reading early phases, so the refusal still holds.
+    stage1_complete = (output_dir / "threat-model.yaml").is_file()
+    if (
+        phase_ord is not None
+        and phase_ord >= 1
+        and not context_md.is_file()
+        and not stage1_complete
+    ):
         return (
             3,
             (
                 f"Refusing to resume: checkpoint says phase={phase} but "
-                f"{context_md.name} is missing — resume cannot skip the early "
-                "phases and would re-run them from scratch (rebuilding the full "
-                "analyst context each attempt). Re-run WITHOUT --resume "
-                "(auto-cleans the stale checkpoint) or use --rebuild for a "
-                "clean fresh run."
+                f"{context_md.name} is missing and Stage 1 never produced "
+                "threat-model.yaml — resume cannot skip the early phases and "
+                "would re-run them from scratch (rebuilding the full analyst "
+                "context each attempt). Re-run WITHOUT --resume (auto-cleans "
+                "the stale checkpoint) or use --rebuild for a clean fresh run."
             ),
         )
     if status == "completed":

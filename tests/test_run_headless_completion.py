@@ -59,6 +59,22 @@ def test_failure_branch_surfaces_run_issues() -> None:
     assert '[ -f "$RESULT_DIR/.agent-run.log" ]' in body
 
 
+def test_failure_branch_prints_full_recovery_command() -> None:
+    """The failure hint must print a paste-ready re-run command, and choose
+    --resume vs --rebuild from what the resume-guard actually allows — never a
+    bare 'run with --resume' that the guard would then refuse."""
+    body = _body()
+    # Raw invocation is preserved before the parser consumes it.
+    assert 'ORIG_ARGS=""' in body, "must capture the original invocation for the hint"
+    # The re-run command is reconstructed (mode flags stripped, one appended).
+    assert "_rerun_cmd" in body
+    # The resume/rebuild choice is delegated to the resume-guard, not guessed.
+    assert "--resume-guard" in body, (
+        "hint must consult the resume-guard before suggesting --resume"
+    )
+    assert "_rerun_cmd --resume" in body and "_rerun_cmd --rebuild" in body
+
+
 def test_headless_scans_default_to_untrusted_mode() -> None:
     """A repository checkout must opt in before bypassing untrusted preflight."""
     body = _body()
