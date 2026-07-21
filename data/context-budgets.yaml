@@ -18,15 +18,31 @@ surfaces:
   thin_rerender_runtime:
     path: skills/create-threat-model/SKILL-rerender-runtime.md
     max_bytes: 10000
+  # The stage runtimes must stay small, but they are the ONLY copy of their
+  # script invocations -- SKILL-thin-stage1.md:4 forbids reading Stage 1 out of
+  # SKILL-impl.md, where the verbatim commands still live. The 2026-07-20
+  # juice-shop run compacted these surfaces to 93-96% of the previous ceilings
+  # and the detail that got squeezed out was exactly the executable syntax:
+  # log_event.py was invoked three times before it succeeded, and every
+  # record_stage_stats.py call tripped the --subagent-type/--since-iso pairing
+  # warning. These ceilings carry the headroom needed to state a command
+  # exactly; test_thin_runtimes_have_headroom_for_operational_detail keeps a
+  # >=10% margin so the next compaction pass cannot silently reclaim it.
   thin_stage1_runtime:
     path: skills/create-threat-model/SKILL-thin-stage1.md
-    max_bytes: 6800
+    # Raised 8600->9200 (2026-07-21): the STRIDE wave-dispatch imperative was
+    # compacted to a single descriptive sentence in the 71eeb70 thin-orchestrator
+    # rebuild, and the headless run then dispatched the wave serially (~66 min vs
+    # ~10 min parallel). The restored HARD-CONSTRAINT prose (one-message =
+    # concurrent + concrete anti-serial check) is load-bearing operational
+    # detail, the same category the headroom guard protects -- not discretionary.
+    max_bytes: 9200
   thin_stage1c_runtime:
     path: skills/create-threat-model/SKILL-thin-stage1c.md
-    max_bytes: 2600
+    max_bytes: 3400
   thin_stage2_runtime:
     path: skills/create-threat-model/SKILL-thin-stage2.md
-    max_bytes: 2700
+    max_bytes: 3600
   legacy_initial_slice:
     path: skills/create-threat-model/SKILL-impl.md
     start: BOF
@@ -70,12 +86,18 @@ surfaces:
     max_bytes: 155000
 
 aggregate:
+  # These three absorb ~2.4 KB of restored script invocations (log_event.py and
+  # record_stage_stats.py in all three stage runtimes). Compacting them back out
+  # is what broke the 2026-07-20 juice-shop run: the stage files are the only
+  # copy of those commands, because SKILL-thin-stage1.md:4 forbids reading Stage
+  # 1 out of SKILL-impl.md. Executable syntax is not discretionary prose -- trim
+  # explanation before trimming a command line.
   # Router + compact runtime + compact Stage-1 + conditional Stage-1c.
-  thin_full_pre_stage2_max_bytes: 31000
+  thin_full_pre_stage2_max_bytes: 33000
   # Quick/explicit-skip runs never load the Stage-1c runtime.
-  thin_full_without_stage1c_max_bytes: 28500
+  thin_full_without_stage1c_max_bytes: 30000
   # Cumulative thin control prose through the Stage-2 dispatch.
-  thin_full_through_stage2_max_bytes: 34000
+  thin_full_through_stage2_max_bytes: 36500
   # Router + rerender runtime. Stage-2 instructions are loaded only after the
   # controller has verified on-disk Stage-1 artifacts.
   thin_rerender_pre_stage2_max_bytes: 18000

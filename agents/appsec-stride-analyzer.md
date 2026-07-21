@@ -3,10 +3,10 @@ name: appsec-stride-analyzer
 description: "INTERNAL — invoked by appsec-threat-analyst after Phase 7, one instance per major component. Performs focused STRIDE threat analysis for a single component and writes findings to $OUTPUT_DIR/.stride-<component-id>.json."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 40
+maxTurns: 56
 ---
 
-<!-- maxTurns=40 is the hard harness ceiling; soft target is `MAX_TURNS` passed in the prompt (see scripts/resolve_config.py → DEPTH_PARAMS). The harness cap MUST stay ≥ the highest skill-level value, plus a small buffer for retries. -->
+<!-- maxTurns=56 is the hard harness ceiling; soft target is `MAX_TURNS` passed in the prompt (see scripts/resolve_config.py → DEPTH_PARAMS). The harness cap MUST stay ≥ the highest skill-level value plus a retry buffer. Raised 40→56 (2026-07-20): the highest skill-level value is now the file-footprint floor in classify_component._footprint_turn_floor (cap 48), not the thorough/complex tier (35). 48 + 8 buffer = 56. -->
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after trust boundary analysis, once per major component.
 
@@ -238,10 +238,13 @@ Print each file: `[stride | <COMPONENT_NAME>]   ↳ Reading <filepath>…`
 
 **As the FIRST write action of this dispatch — at the end of Step 1, BEFORE you read any source files in Step 2 — `Write` an initial valid `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`** containing the required top-level fields (`component_id`, `component_name`, `analyzed_at`, `threats`) plus:
 - `"partial": true`
+- `"seed_only": true` — this write carries no analysis yet.
 - `"skipped_categories": ["Spoofing","Tampering","Repudiation","Information Disclosure","Denial of Service","Elevation of Privilege"]`
 - `"threats": []` — empty at this point; Step 2 (source reading) has not run yet.
 
 Then re-write the file as you go: after Step 2 add any threats already obvious from the source reads, and **as each STRIDE category completes in Step 3, OVERWRITE the same file** with the accumulated threats and remove that category from `skipped_categories`. On the final Step-4 write, set `"partial": false` and `"skipped_categories": []`.
+
+**Drop `seed_only` (or set it `false`) on the first overwrite carrying any real analysis**, including a Step-2 write that only adds obvious threats. It marks exactly one state: the pre-seed exists, nothing has been analyzed yet. The dispatch gate uses it to tell a component that died before starting — which fails identically on retry unless its turn budget grows — from one that ran and honestly reported partial coverage, which is worth retrying as-is.
 
 This guarantees a valid `.stride-<COMPONENT_ID>.json` exists from the very start of the dispatch — **including throughout the Step-2 source-reading phase**, which is itself budget-heavy on large components — so a turn-budget cut-off at ANY point degrades to a **partial-but-valid** file instead of a **missing** one. Two historic failure modes this prevents: (a) a budget-cut analyzer wrote `.progress/<id>.json` but never `.stride-<id>.json` because it intended to write "after this category" and ran out of turns first (juice-shop 2026-06: file-upload-service); (b) a component cut off **mid-Step-2 (Reading source files)** — before any pre-seed under the old "write before Step 3" rule — left no file at all and forced a full re-dispatch (juice-shop 2026-06-16: data-layer). Pre-seeding before Step 2 closes both. This mirrors the **write-first** contract the `appsec-abuse-case-verifier` already follows (it pre-seeds before any investigation). The reactive `## Budget-critical wrap-up` below is the secondary guard; this proactive early write is the primary one — do **not** rely on the budget-critical flag firing in time.
 
@@ -671,7 +674,7 @@ Do **not** invent new TH-IDs. The taxonomy is the single authoritative source.
 
 ## Budget-critical wrap-up
 
-The watchdog (`scripts/budget_watchdog.py`, fired by the PostToolUse hook) writes `$OUTPUT_DIR/.budget-critical` when ANY agent — orchestrator or sub-agent — crosses 90% of its `maxTurns`. The signal is shared: if it exists, the orchestrator will soon wind down, so finer-grained stride analysis is wasted budget that the merger will never read.
+The watchdog (`scripts/budget_watchdog.py`, fired by the PostToolUse hook) writes `$OUTPUT_DIR/.budget-critical` when ANY agent — orchestrator or sub-agent — crosses 90% of its `maxTurns`. Its bare existence is the trigger, which is safe because the watchdog only writes the flag for a session that owns this run's `.appsec-lock` — a concurrent foreign session sharing `OUTPUT_DIR` can no longer raise it (see `budget_watchdog._write_flag`). If it exists, this run's orchestrator will soon wind down, so finer-grained stride analysis is wasted budget that the merger will never read.
 
 **Check at every STRIDE-category boundary** (between Spoofing → Tampering → Repudiation → InfoDisclosure → DoS → EoP). Combine the check with the Bash call that prints `↳ Checking <category>…`, e.g.:
 

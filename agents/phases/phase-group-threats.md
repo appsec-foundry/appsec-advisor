@@ -419,7 +419,7 @@ When no obvious priority files are derivable (rare, e.g. brand-new component wit
 - data-persistence: 170 s → ~80 s by reading the ORM model + raw-query route directly.
 
 
-Dispatch in bounded waves of at most `$STRIDE_CONCURRENCY` components (`8` by default). Within each wave, issue all calls together with `run_in_background: true`; wait for the wave before starting the next one. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and the `model` parameter set to the **tier alias** of `$STRIDE_MODEL` — overrides the agent's frontmatter default. **The Agent tool's `model` parameter accepts ONLY the bare tier aliases `sonnet` / `opus` / `haiku`; a full version id (`claude-sonnet-4-6`, `claude-opus-4-7`, …) is rejected.** Reduce `$STRIDE_MODEL` to its tier for the parameter: any `claude-opus-*` / `opus*` → `opus`, any `claude-haiku-*` / `haiku*` → `haiku`, anything else (incl. `claude-sonnet-*`) → `sonnet`; a value that is already a bare alias passes through unchanged. Keep the full `$STRIDE_MODEL` id ONLY in the `(model: …)` log lines (below) so cost accounting stays exact. This same tier-alias reduction applies to **every** Agent-tool `model` parameter in this skill (triage, recon, context, config, actor, abuse, renderer). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
+Dispatch in bounded waves of at most `$STRIDE_CONCURRENCY` components (`8` by default). Within each wave, issue all calls together with `run_in_background: true`; wait for the wave before starting the next one. (`run_in_background: true` is correct **here** and is NOT in conflict with the `false` in `SKILL-thin-stage1.md`: this analyst-orchestrated path relies on the deterministic progress watcher below, which reads `.progress/*.json` from backgrounded sub-agents. The skill-orchestrated default path — Analyst-A stops at Phase 8 and never reaches this dispatch — fans out foreground with `false` instead. The two are never co-resident in one context.) **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and the `model` parameter set to the **tier alias** of `$STRIDE_MODEL` — overrides the agent's frontmatter default. **The Agent tool's `model` parameter accepts ONLY the bare tier aliases `sonnet` / `opus` / `haiku`; a full version id (`claude-sonnet-4-6`, `claude-opus-4-7`, …) is rejected.** Reduce `$STRIDE_MODEL` to its tier for the parameter: any `claude-opus-*` / `opus*` → `opus`, any `claude-haiku-*` / `haiku*` → `haiku`, anything else (incl. `claude-sonnet-*`) → `sonnet`; a value that is already a bare alias passes through unchanged. Keep the full `$STRIDE_MODEL` id ONLY in the `(model: …)` log lines (below) so cost accounting stays exact. This same tier-alias reduction applies to **every** Agent-tool `model` parameter in this skill (triage, recon, context, config, actor, abuse, renderer). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
 
 **STRIDE_PROFILE forwarding (M3.5).** The `STRIDE_PROFILE_JSON` env var (set by the skill from `.skill-config.json → stride_profile`) is forwarded verbatim into Group A of every per-component dispatch prompt. When the user runs with `--reasoning-model sonnet-economy --assessment-depth quick` the JSON encodes the A-F depth-reduction flags. With the opt-in `--stride-cap N` flag the JSON is `{"max_threats_per_category": N, "stride_profile_label": "full (per-category cap N)"}` — full depth except the key-gated per-category cap. Otherwise it is `{"stride_profile_label":"full"}` and the analyzer runs at full depth. Emit the line as:
 
@@ -1581,11 +1581,24 @@ Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage dispatch below
 
 **Failure handling — non-fatal.** If the verifier fails to produce `.evidence-verification.json`, log a warning and continue to Phase 10b. The downstream triage will fall back to the legacy "no refutation signal" code path, which is the pre-M2 behaviour. The run does not abort.
 
+A missing file is not the only degenerate outcome. The write-first pre-seed is a valid, schema-clean file with every count at zero, so an existence check passes even when the verifier produced nothing — on 2026-07-20 it sampled 38 findings, ran six minutes, logged `AGENT_DONE`, and left the untouched pre-seed behind. Phase 10b then computed `effective_severity` for all 60 findings with no refutation signal, silently. `guard_evidence_verification.py` already detects this shape, but it runs in the Stage-2 emitter pass — minutes after the triage that depends on it. Run the content check here, where the consumer is:
+
 ```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/guard_evidence_verification.py" "$OUTPUT_DIR" 2>/dev/null || true
+
 if [ ! -f "$OUTPUT_DIR/.evidence-verification.json" ]; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  AGENT_ERROR   evidence-verifier did not produce .evidence-verification.json — continuing without refutation signal" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+elif python3 -c "
+import json,sys
+d=json.load(open('$OUTPUT_DIR/.evidence-verification.json')).get('summary',{})
+resolved=d.get('verified',0)+d.get('refuted',0)+d.get('ambiguous',0)
+sys.exit(0 if d.get('sampled',0)>=5 and resolved==0 else 1)
+" 2>/dev/null; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  AGENT_ERROR   evidence-verifier: all sampled findings unchecked (0 verified/refuted) — continuing without refutation signal" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 fi
 ```
+
+When that second branch fires, Phase 10b MUST NOT let a compound chain elevate any finding's `effective_severity`: the signal that would stop a *refuted* finding from elevating never existed, so elevation would rest on unverified evidence. Rate on base severity and record the gap in the triage flags.
 
 **Print when done:**
 ```

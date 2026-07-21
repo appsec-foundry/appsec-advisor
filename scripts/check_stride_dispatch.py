@@ -4,7 +4,9 @@
 Exit codes
 ----------
 0   No bypass detected. STRIDE was dispatched to sub-agents (or every
-    component is a trivial stub / carry-forward). Skill may proceed.
+    component is a trivial stub / carry-forward). Skill may proceed. A
+    serially-dispatched wave also exits 0 but prints a DEGRADED warning:
+    the analysis is correct, only its wall-clock is pathological.
 2   Inline-shortcut detected — the orchestrator authored one or more
     real ``.stride-<id>.json`` files itself instead of dispatching the
     ``appsec-stride-analyzer`` sub-agents the design mandates.
@@ -45,10 +47,16 @@ Positive dispatch evidence that suppresses the signal is **count-based**:
 at least as many dispatched ``appsec-stride-analyzer`` analyzers in
 ``.hook-events.log`` as the ``.stride-dispatch-manifest.json`` planned
 components (or, with no manifest, any dispatch). A dispatch is proven by
-EITHER an ``AGENT_SPAWN`` (PreToolUse) OR an ``AGENT_INVOKE`` (PostToolUse)
-line — both are emitted per analyzer, and the harness occasionally logs only
-one of the pair, so counting both (deduped by ``COMPONENT_ID``) avoids the
-false-trip seen on 2026-06-12 (1 SPAWN + 4 INVOKE for a real 4-way fan-out).
+EITHER an ``AGENT_SPAWN`` OR an ``AGENT_INVOKE`` line — both are emitted per
+analyzer, and the harness occasionally logs only one of the pair, so counting
+both (deduped by ``COMPONENT_ID``) avoids the false-trip seen on 2026-06-12
+(1 SPAWN + 4 INVOKE for a real 4-way fan-out).
+
+Both events fire at **dispatch** time; ``AGENT_INVOKE`` is NOT a completion
+event despite the name (2026-07-20 juice-shop logged both for web3-nft at the
+identical 15:45:52). They are therefore usable only as dispatch *evidence*,
+never as an interval bound — see ``_dispatch_intervals``, which reads
+``.agent-run.log`` instead.
 The manifest's *mere
 existence* is deliberately NOT proof — it is written by
 ``build_stride_dispatch_manifest.py`` from Analyst-A's output *before* the
@@ -266,6 +274,88 @@ def detect_inlined_components(output_dir: Path) -> list[str]:
     return inlined
 
 
+# The analyzer brackets its own work in ``.agent-run.log``: a STEP_START
+# ``[<cid>] Starting STRIDE analysis`` and a STEP_END ``[<cid>] STRIDE analysis
+# complete``. Both carry a free-text tail (component name, wrap-up reason,
+# threat count), so only the fixed prefix is anchored.
+#
+# The hook log is deliberately NOT the source here. ``AGENT_SPAWN`` and
+# ``AGENT_INVOKE`` both fire at dispatch time — on 2026-07-20 web3-nft logged
+# both at the identical 15:45:52 — so the pair brackets nothing, and the
+# headless run emitted zero AGENT_INVOKE lines at all. Only these two events
+# mark a real start and a real end.
+_STEP_START_RE = re.compile(r"\[([^\]\s]+)\]\s+Starting STRIDE analysis")
+_STEP_END_RE = re.compile(r"\[([^\]\s]+)\]\s+STRIDE analysis complete")
+
+
+def _dispatch_intervals(output_dir: Path, since: str | None = None) -> dict[str, dict[str, str]]:
+    """Per-component ``{"start": ts, "end": ts}`` from ``.agent-run.log``.
+
+    Only components carrying BOTH events are returned — a component that never
+    reported an end (killed, aborted, log rotated mid-run) cannot be placed on
+    a timeline and must not be guessed at.
+    """
+    try:
+        text = (output_dir / ".agent-run.log").read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    spans: dict[str, dict[str, str]] = {}
+    for line in text.splitlines():
+        if "stride-analyzer" not in line:
+            continue
+        m = _STEP_START_RE.search(line)
+        key = "start"
+        if m is None:
+            m = _STEP_END_RE.search(line)
+            key = "end"
+        if m is None:
+            continue
+        ts = line.split("  ", 1)[0].strip()
+        if since is not None and ts < since:
+            continue  # stale dispatch from an earlier run
+        # Keep the FIRST start and the LAST end: a retried component is one span
+        # from its earliest start to its final return, which can only widen the
+        # interval and therefore only make an overlap easier to observe.
+        span = spans.setdefault(m.group(1), {})
+        if key == "start":
+            span["start"] = min(span.get("start", ts), ts)
+        else:
+            span["end"] = max(span.get("end", ts), ts)
+    return {cid: s for cid, s in spans.items() if "start" in s and "end" in s}
+
+
+def detect_serial_dispatch(output_dir: Path) -> list[str]:
+    """Component ids, in dispatch order, when a wave ran strictly serially.
+
+    The skill (``SKILL-thin-stage1.md``) tells the orchestrator to issue a
+    wave's Agent calls together in ONE assistant message, which runs the
+    analyzers concurrently. Nothing mechanical enforced that: an orchestrator
+    that emits one Agent call per assistant message produces the identical
+    artifacts, the identical ``.progress/`` files and the identical dispatch
+    COUNT, so ``detect_inlined_components`` and the wave plan both pass. The
+    only observable difference is wall-clock — the 2026-07-20 juice-shop run
+    took ~66 min for a wave of 8 that should have taken ~10.
+
+    Signal: sort the analyzers by start time and look for ANY overlap
+    (``start[i+1] < end[i]``). A genuine fan-out overlaps heavily — the harness
+    starts the calls seconds apart while each runs for minutes. A serial run
+    never overlaps: every analyzer starts after the previous one finished.
+
+    Returns ``[]`` (no finding) whenever the answer is not conclusive: fewer
+    than two fully-paired components, or any overlap at all. Being blind is
+    strictly preferable to false-tripping a healthy parallel run.
+    """
+    manifest = _read_manifest(output_dir)
+    spans = _dispatch_intervals(output_dir, since=manifest.get("generated_at"))
+    if len(spans) < 2:
+        return []  # nothing to compare — cannot distinguish serial from single
+    ordered = sorted(spans.items(), key=lambda kv: kv[1]["start"])
+    for (_, cur), (_, nxt) in zip(ordered, ordered[1:]):
+        if nxt["start"] < cur["end"]:
+            return []  # overlap observed — the fan-out is real
+    return [cid for cid, _ in ordered]
+
+
 def selected_coverage_errors(output_dir: Path) -> list[dict[str, str]]:
     """Return strict completion failures when bounded-wave state is present."""
     plan_path = output_dir / stride_dispatch_waves.PLAN_NAME
@@ -296,6 +386,31 @@ def _print_coverage_banner(errors: list[dict[str, str]]) -> None:
     print("", file=sys.stderr)
 
 
+def _print_serial_banner(ordered: list[str]) -> None:
+    bar = "═" * 62
+    print("", file=sys.stderr)
+    print(bar, file=sys.stderr)
+    print("  RUN DEGRADED — STRIDE wave dispatched SERIALLY", file=sys.stderr)
+    print(bar, file=sys.stderr)
+    print("", file=sys.stderr)
+    print("  Every analyzer below started only after the previous one", file=sys.stderr)
+    print("  returned — no two ran concurrently:", file=sys.stderr)
+    print("", file=sys.stderr)
+    for cid in ordered:
+        print(f"    • {cid}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("  The analysis is complete and correct, so this does not fail", file=sys.stderr)
+    print("  the run — but it costs roughly N× the wall-clock a wave of N", file=sys.stderr)
+    print("  should take, and each long gap risks a standard-tier stall.", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("  Cause: the orchestrator emitted one Agent tool call per", file=sys.stderr)
+    print("  assistant message. A wave's calls MUST be issued together in", file=sys.stderr)
+    print("  ONE assistant message — see SKILL-thin-stage1.md → 'Never", file=sys.stderr)
+    print("  dispatch them sequentially'.", file=sys.stderr)
+    print(bar, file=sys.stderr)
+    print("", file=sys.stderr)
+
+
 def _print_banner(inlined: list[str], output_dir: Path) -> None:
     bar = "═" * 62
     print("", file=sys.stderr)
@@ -319,8 +434,9 @@ def _print_banner(inlined: list[str], output_dir: Path) -> None:
     print("  watchdog is blind because no .progress/ files exist).", file=sys.stderr)
     print("", file=sys.stderr)
     print("  Fix: re-run the assessment. The orchestrator MUST issue one", file=sys.stderr)
-    print("  Agent tool call per component (run_in_background: true) — see", file=sys.stderr)
-    print("  phase-group-threats.md → 'STRIDE dispatch is mandatory'. If", file=sys.stderr)
+    print("  Agent tool call per component — see the dispatch rule for the", file=sys.stderr)
+    print("  active path (SKILL-thin-stage1.md, or phase-group-threats.md", file=sys.stderr)
+    print("  → 'STRIDE dispatch is mandatory' on the analyst path). If", file=sys.stderr)
     print("  this reproduces, the Phase-9 dispatch rule needs enforcing", file=sys.stderr)
     print("  harder in the orchestrator prompt.", file=sys.stderr)
     print(bar, file=sys.stderr)
@@ -360,11 +476,18 @@ def main(argv: list[str] | None = None) -> int:
         return 4
 
     inlined = detect_inlined_components(output_dir)
-    if not inlined:
-        return 0
+    if inlined:
+        _print_banner(inlined, output_dir)
+        return 2
 
-    _print_banner(inlined, output_dir)
-    return 2
+    # Non-fatal: a serial fan-out still produces a correct, complete analysis,
+    # so failing the run here would destroy real work over a latency problem.
+    # It is reported loudly because it is otherwise invisible — every other
+    # gate passes on a serial wave.
+    serial = detect_serial_dispatch(output_dir)
+    if serial:
+        _print_serial_banner(serial)
+    return 0
 
 
 if __name__ == "__main__":

@@ -9,13 +9,21 @@ Authoritative only for `thin-full` full/rebuild runs. Forwarding is resident in
   never inline STRIDE.
 - Every analyst dispatch receives every non-null alias from the parent runtime
   plus `APPSEC_TRIAGE_DETERMINISTIC=1` and the branch-specific values below.
-- Issue each wave in one assistant message with `run_in_background: false` and
-  an explicit Agent `model`.
+- Issue each wave as multiple Agent tool-use blocks in ONE assistant message
+  (never one call per message), with `run_in_background: false` and an explicit
+  Agent `model`.
 - Agent returns contain only status, paths, and blockers; they must not reproduce artifact bodies or evidence lists.
 - The filesystem is authoritative after every Agent return.
 
-Log `PARALLEL_STRIDE_RESOLVED` via `scripts/log_event.py`, including
-`PARALLEL_STRIDE`, `LIVE_PHASE`, `MODE`, and raw `PARALLEL_STRIDE_ENV`.
+Log the resolved dispatch mode with exactly this call. `log_event.py` rejects an
+event name in the kind position; `info` takes `<dir> info <event-name> <detail>`:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info \
+    PARALLEL_STRIDE_RESOLVED \
+    "PARALLEL_STRIDE=$PARALLEL_STRIDE LIVE_PHASE=$LIVE_PHASE (mode=$MODE, env APPSEC_PARALLEL_STRIDE=$PARALLEL_STRIDE_ENV)" \
+    --agent skill 2>/dev/null || true
+```
 
 Before the first Agent dispatch, snapshot the prior deliverables for the
 failure-only recovery range and reset its per-invocation counter:
@@ -66,10 +74,17 @@ Use this path when `PARALLEL_STRIDE=true`.
    - `status=complete` ends the loop.
    - Exit 1 / `status=blocked` means the persisted two-attempt budget is
      exhausted; stop before Analyst-B.
-   - `status=claimed` returns exactly one wave's unfinished `components[]` and
-     its one-based attempt counts. Dispatch only those components, all together
-     in one assistant message. Attempt 1 is the normal pass; attempt 2 is the
-     single retry. Persisted attempts survive parent-session resume.
+   - `status=claimed` returns one whole wave's unfinished `components[]` —
+     usually all of them at once — with per-component attempt counts. Issue
+     ALL their Agent calls in one assistant message — multiple tool-use blocks
+     in a single response — so Claude Code
+     runs them concurrently. NOT sequential: do NOT send one call, wait for it
+     to return, then send the next. That collapses the wave to a serial chain
+     and multiplies wall-clock by N (juice-shop 2026-07-20: 8 components serial
+     ≈ 66 min vs ~10 min parallel). Concrete check — if you are about to
+     dispatch component 2 AFTER component 1 returned, you have already violated
+     this; stop. Attempt 1 is the normal pass; attempt 2 is the single retry.
+     Persisted attempts survive parent-session resume.
 
    Each component uses `appsec-advisor:appsec-stride-analyzer`, description
    `STRIDE: <NAME>`, and the complete manifest mapping: `COMPONENT_ID`, `NAME`,
@@ -90,8 +105,24 @@ Use this path when `PARALLEL_STRIDE=true`.
    `RESUME_FROM_PHASE=9-merge`, and `STAGE1_PHASE_LIMIT=10b`. Record its usage
    with `--accumulate`.
 
-Accumulated stats use stage `1`, name `Threat Analysis & Triage`, actual usage,
-and `--since-iso $STAGE1_START_ISO`; use each group's actual subagent type.
+Record every group with exactly this call. `output_dir` is **positional** (there
+is no `--output-dir`), and `--subagent-type`/`--since-iso` must be passed
+**together** or dispatch derivation is silently skipped — the `${VAR:+...}`
+expansion below makes that pairing impossible to violate. Always pass `--model`:
+omitting it defaults to `"—"`, which the recorder reads as a deterministic-stage
+marker and warns about. Substitute the group's own subagent type and model.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+    --stage 1 --name "Threat Analysis & Triage" \
+    --agent appsec-advisor:appsec-threat-analyst --model "$ORCHESTRATOR_MODEL" \
+    --duration-ms <ms> --tool-uses <n> --tokens <n> --accumulate \
+    ${STAGE1_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst \
+      --since-iso "$STAGE1_START_ISO"} 2>/dev/null || true
+```
+
+For the STRIDE waves pass `--agent appsec-advisor:appsec-stride-analyzer`,
+`--model "$STRIDE_MODEL"` and the same subagent type, summing the wave's usage.
 Stats failures are non-blocking.
 
 ## Serial fallback
