@@ -56,6 +56,24 @@ The threat modeler treats the repository as the primary evidence source for secu
 
 The output is a starting point for security review, not a release verdict. An AppSec engineer or security architect should validate findings before they drive remediation, exceptions, or risk acceptance.
 
+## Why this isn't a SAST tool
+
+It reads your code, but it does so to understand how the system is built, not to grade the code line by line.
+
+A SAST tool asks whether a given line is vulnerable. The threat modeler asks what an attacker could do to the system as a whole, and what in the design allows it. STRIDE, trust boundaries, and attack paths are its vocabulary; the finding is a threat, not a lint hit.
+
+For that question, the code plays two roles, and neither is the subject.
+
+As an indicator, it points to where risk may sit — an exposed entry point, a component reaching across a trust zone, a control that looks thin.
+
+As evidence, it is the most reliable record of how the system is actually built, and it confirms or rules out each threat instead of leaving it a guess.
+
+From the code, it builds an architecture model — components, trust zones, data flows — and reasons about threats against that model, not the source directly. That model is the subject under review; the code grounds it.
+
+That distinction is what lets it find issues a scanner cannot. A scanner reports what is present — a risky pattern, a tainted input. It cannot report a missing authorization check, an absent trust boundary, or an over-trusted central component, because none of those exists as a line of code.
+
+Those weaknesses of absence — a control that was never built, a boundary no one drew — are exactly what threat modeling exists to surface. Grounding that work in the code is what keeps the model honest and current instead of a whiteboard sketch that drifts from what was actually shipped.
+
 ## Intended use
 
 `appsec-advisor` is intended for internal enterprise security review workflows.
