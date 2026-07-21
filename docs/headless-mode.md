@@ -9,6 +9,7 @@ The same command works for local repositories, AppSec-managed scans, and CI pipe
 - [Choose a workflow](#decision-matrix)
 - [Minimal CI example](#minimal-example)
 - [Prerequisites](#prerequisites)
+- [Running from an installed plugin](#installed-plugin)
 - [Part A — Non-interactive local & ops runs](#part-a)
   - [A1. Scan your own repository](#a1-scan-your-own-repository)
   - [A2. AppSec team scans an external repository](#a2-appsec-team-scans-an-external-repository)
@@ -76,6 +77,22 @@ This example runs an incremental assessment with cost and duration limits and wr
 3. The plugin repository cloned locally (or installed into `~/.claude/plugins/`).
 
 The script auto-detects billing mode from `ANTHROPIC_API_KEY`. When API billing is active without `--max-budget`, a warning is printed.
+
+<a id="installed-plugin"></a>
+
+## Running from an installed plugin
+
+`run-headless.sh` ships inside the plugin, so it runs the same whether you call it from a repository clone or from a plugin installed through a marketplace. Installed plugins live under `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`; invoke the wrapper by its full path:
+
+```bash
+# Locate the installed wrapper, then run it like any other assessment
+RH="$(find ~/.claude/plugins/cache -path '*appsec-advisor*/scripts/run-headless.sh' | head -1)"
+"$RH" --repo /path/to/repo
+```
+
+The script locates its own plugin directory and loads the plugin for the run — no extra setup is needed. There is no `make` shortcut in an installed plugin; always call the script by path. (`CLAUDE_PLUGIN_DIR=<install-path>` pins it explicitly if `find` is ambiguous.)
+
+**Repackaged under a different name.** If your organization repackages the plugin under its own name (see [internal packaging](internal-plugin-packaging.md)), the same command applies — the built wrapper already targets your package's command namespace, so no flags change. After a build, a quick `grep create-threat-model <build>/scripts/run-headless.sh` confirms it points at `/<your-name>:create-threat-model`.
 
 <a id="part-a"></a>
 
@@ -490,7 +507,7 @@ Headless runs support API-key and subscription authentication:
 Two ways to run unattended:
 
 - **API key** — inject `ANTHROPIC_API_KEY` as a CI secret. Per-token billing, decoupled from any personal quota, rotatable, and `--max-budget` applies.
-- **Subscription OAuth token** — generate once with `claude setup-token` and store the `sk-ant-oat01-…` value as a CI secret exposed as `CLAUDE_CODE_OAUTH_TOKEN`. The run bills against the subscription (draws on its rate limit). When this variable is set the script skips the interactive-login preflight (`claude auth status` only reflects stored credentials and would false-negative on a fresh runner). Do **not** also set `ANTHROPIC_API_KEY` — it takes precedence and would switch billing to per-token.
+- **Subscription OAuth token** — generate once with `claude setup-token` and store the `sk-ant-oat01-…` value as a CI secret exposed as `CLAUDE_CODE_OAUTH_TOKEN`. The run bills against your subscription. Do **not** also set `ANTHROPIC_API_KEY` — it takes precedence and switches billing to per-token.
 
 Interactive `claude auth login` stores a browser-obtained refresh token in `~/.claude/` and is for local/TTY use only.
 
@@ -550,7 +567,7 @@ Other dotfiles in the output directory are intermediate run data. Do not publish
 
 ## Flag reference
 
-Not every `create-threat-model` flag is accepted by the wrapper. This table lists everything `run-headless.sh` exposes today.
+This table lists the flags `run-headless.sh` accepts.
 
 ### Scope & targeting
 
@@ -590,10 +607,10 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 
 | Flag | Purpose |
 |---|---|
-| `--model <model>` | Session (main-loop) model. **Defaults to `claude-sonnet-4-6` (economy)** — the biggest cost lever; it drives cache-read cost and the alias-following agents (renderer, abuse-verifier, orchestrator, content-QA). Override per run with an explicit id. |
+| `--model <model>` | Session model. **Defaults to `claude-sonnet-4-6` (economy)** — the main cost lever. Override per run with an explicit model id. |
 | `--reasoning-model <tier>` | Reasoning tier for STRIDE/triage/merger: `opus`, `opus-cheap`, `sonnet`, `sonnet-economy` |
 
-The session-model default is where headless runs get their ~half-cost economy automatically. Buy back quality per stage with `--triage-model claude-sonnet-5` and the `APPSEC_RENDERER_MODEL` / `APPSEC_ABUSE_VERIFIER_MODEL` env vars — see *Session Model* in `docs/threat-modeler.md`.
+The economy default keeps headless runs at roughly half the cost. To raise quality for specific stages, use `--triage-model claude-sonnet-5` or the `APPSEC_RENDERER_MODEL` / `APPSEC_ABUSE_VERIFIER_MODEL` env vars — see *Session Model* in `docs/threat-modeler.md`.
 
 ### Gates & caps
 
@@ -637,6 +654,10 @@ make analyze REPO=/path/to/repo
 This runs the assessment with live progress and keeps a copy of the output in a
 log file, so you can see errors as they happen and read back over them later.
 Add `BG=1` to run it in the background and keep working in the same shell.
+
+`make analyze` is a shortcut available from a repository checkout. From an
+installed plugin there is no `make`; run the script directly with `--verbose`
+instead — see [Running from an installed plugin](#installed-plugin).
 
 ### Let Claude monitor the run for you
 
@@ -715,7 +736,7 @@ The pipeline is trying to use subscription auth with no credentials on the runne
 Incremental needs `threat-model.yaml` from a prior run as baseline. In CI, the workspace is clean every run — restore the prior `docs/security/` via CI cache or `--restore-from`. See [B7](#b7-ci-cache). Also check that you are not passing `--no-yaml` earlier in the pipeline — that breaks the baseline.
 
 **`.appsec-lock` exists and blocks the run.**
-A previous run may still be active, or it crashed after writing a fresh heartbeat. `run-headless.sh --resume` now checks `$OUTPUT_DIR` before starting `claude -p` and refuses with the inspected path when an active lock is present. First verify you are using the same `--output` as the interrupted run; `--repo /path/to/repo` defaults to `/path/to/repo/docs/security`, which is not the same as `--output /path/to/repo`. If no assessment is running, inspect or clean the state with `python3 scripts/check_state.py "$OUTPUT_DIR" --clean`.
+A previous run is still active, or it crashed and left the lock behind. First check you are using the same `--output` as the interrupted run — `--repo /path/to/repo` defaults to `/path/to/repo/docs/security`, which is not the same as `--output /path/to/repo`. If no run is active, clean the state with `python3 scripts/check_state.py "$OUTPUT_DIR" --clean`.
 
 **Script exits with code 2 "budget exhausted" in the middle of a run.**
 This is expected when the cap is reached. Re-run with `--resume` on the same `$OUTPUT_DIR`, or raise `--max-budget`.
