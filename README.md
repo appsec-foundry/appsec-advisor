@@ -58,15 +58,11 @@ The output is a starting point for security review, not a release verdict. An Ap
 
 ## Why this isn't a SAST tool
 
-A SAST tool asks whether a given line is vulnerable. The threat modeler asks what an attacker could do to the system as a whole, and what in the design allows it — STRIDE, trust boundaries, and attack paths are its vocabulary, and the finding is a threat, not a lint hit. It reads your code, but for that question the code is never the subject: it plays two roles. As an *indicator*, it points to where risk may sit — an exposed entry point, a component reaching across a trust zone, a control that looks thin. As *evidence*, it is the most reliable record of how the system is actually built, confirming or ruling out each threat instead of leaving it a guess. From it the tool builds an architecture model — components, trust zones, data flows — and reasons about threats against that model, which is what is under review.
+A SAST tool checks whether a specific line of code is vulnerable. The threat modeler looks at the system as a whole: what an attacker could do, which design choices make that possible, and where trust boundaries or attack paths create risk. Its output is a threat, not just a code warning.
 
-That distinction is what lets it find issues a scanner cannot. A scanner reports what is present — a risky pattern, a tainted input — but cannot report a missing authorization check, an absent trust boundary, or an over-trusted central component, because none of those exists as a line of code. Those weaknesses of absence — a control that was never built, a boundary no one drew — are exactly what threat modeling exists to surface, and grounding that work in the code is what keeps the model honest and current instead of a whiteboard sketch that drifts from what was actually shipped.
+The code supports this analysis in two ways. It shows where risks may exist and confirms how the system is actually built. From it, the tool identifies components, trust zones, and data flows, then evaluates threats against that architecture.
 
-## Intended use
-
-`appsec-advisor` is intended for internal enterprise security review workflows.
-
-AppSec and security architecture teams own the plugin configuration, defaults, templates, and review policy. Engineering teams run threat models during design work, review preparation, major changes, or release readiness checks, and use the requirements audit and developer helpers for ongoing compliance checks and change review.
+This allows it to find problems that scanners often miss. A scanner can detect risky code patterns, but not controls that are missing entirely, such as an absent authorization check, an unclear trust boundary, or a component with too much trust. Threat modeling is designed to uncover these gaps, while the code keeps the model accurate and aligned with the real system.
 
 ## Security notes
 
