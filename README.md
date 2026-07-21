@@ -281,10 +281,12 @@ Start with the [packaging runbook](docs/internal-plugin-packaging.md) and [org p
 
 ## Roadmap
 
+- Explore whether analyzing branches, merge, and pull requests — not just the checked-out working tree — is worthwhile, so a threat model could be produced for proposed changes before they land.
+- Extend beyond Claude Code to other coding agents (OpenAI Codex, GitHub Copilot, and similar), keeping the analysis engine agent-agnostic.
 - Test against more languages, architectures, and deployment models.
 - Move the developer tools from experimental to supported status.
 - Improve performance on repositories with many components.
-- Expand cross-repository and external context support.
+- Expand cross-repository and external context support (e.g. a meta threat model aggregated across several per-repository threat models).
 - Import existing threat models as reference data.
 - Publish a packaged marketplace release after the beta.
 
