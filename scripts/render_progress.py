@@ -94,6 +94,7 @@ def main() -> int:
     cur_when = None  # datetime of the line being processed
     status_shown = False  # a transient \r heartbeat line is on screen
     last_perm = None  # datetime of the last permanent (scrolling) line
+    last_pct_shown = None  # last RUN_PROGRESS percentage given a permanent line
     _CLEAR = "\r\033[K"  # carriage-return + clear-to-end-of-line
 
     # Heartbeats are pure liveness — on a TTY they update one in-place status
@@ -207,7 +208,26 @@ def main() -> int:
         elif event == "RUN_RESUMED":
             w(f"    ↻ resumed — {detail}")
         elif event == "RUN_PROGRESS":
-            w(f"    ◷ progress · {detail}")
+            # The watchdog's `phase=` token is read from `.appsec-checkpoint`,
+            # which is only written at phase *end* and therefore lags the live
+            # PHASE_START banner by one phase. The banners are authoritative
+            # here, so show the phase we tracked from them.
+            if cur_phase:
+                detail = re.sub(r"\bphase=\S+", f"phase={cur_phase.split('/')[0]}", detail)
+            # The percentage is phase-granular: it sits flat for the whole of a
+            # long phase (Phase 9 / STRIDE runs ~20m). Only a *changed* reading
+            # earns a permanent line; the repeats carry no new progress and go
+            # through the heartbeat channel instead. They can't be dropped —
+            # the watchdog emits no HEARTBEAT of its own, so this line is the
+            # run's only liveness signal during those flat stretches.
+            m_pct = re.match(r"~(\d+)%", detail)
+            pct = m_pct.group(1) if m_pct else None
+            line = f"    ◷ progress · {detail}"
+            if pct is None or pct != last_pct_shown:
+                last_pct_shown = pct
+                w(line)
+            else:
+                heartbeat(line)
         elif event in ("STRIDE_STALE", "STRIDE_CANARY_TIMEOUT", "STRIDE_COMPONENT_TIMEOUT"):
             w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "SUBSTEP2_IDLE":

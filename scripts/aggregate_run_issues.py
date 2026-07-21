@@ -320,7 +320,20 @@ def _read_log(path: Path) -> list[tuple[int, str]]:
 _RUN_WINDOW_SECONDS = 5400  # 1.5 h — outer envelope of the longest thorough run
 
 
-def _scope_to_current_run(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
+def _run_start_epoch(output_dir: Path) -> int | None:
+    """Exact run-start epoch from ``.scan-start-epoch``, or None when absent."""
+    try:
+        raw = (output_dir / ".scan-start-epoch").read_text(encoding="utf-8").strip()
+        value = int(raw)
+    except (OSError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _scope_to_current_run(
+    lines: list[tuple[int, str]],
+    run_root: Path | None = None,
+) -> list[tuple[int, str]]:
     """Limit the log slice to events from the current run only.
 
     Both ``.hook-events.log`` and ``.agent-run.log`` are append-only audit
@@ -365,7 +378,17 @@ def _scope_to_current_run(lines: list[tuple[int, str]]) -> list[tuple[int, str]]
     if latest_ts is None:
         return lines
 
-    cutoff = latest_ts - _RUN_WINDOW_SECONDS
+    # Prefer the authoritative run boundary over the sliding-window heuristic.
+    # The window assumed "the longest thorough run is ~40 min"; the 2026-07-20
+    # juice-shop run spanned 147 min, so its own AGENT_ERROR (93 min before the
+    # last entry) fell outside the 90-minute window and was dropped before any
+    # extractor saw it -- events from the first half of a long run were silently
+    # invisible to issue aggregation. `.scan-start-epoch` is written once per
+    # invocation and is exact; cutoff_cause.py already reads it for the same
+    # purpose. The heuristic stays as the fallback for logs with no marker.
+    cutoff = _run_start_epoch(run_root) if run_root else None
+    if cutoff is None:
+        cutoff = latest_ts - _RUN_WINDOW_SECONDS
     out = []
     for ln, raw in lines:
         ev = _parse_event_line(raw)
@@ -519,7 +542,19 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
 
 
 def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, str]]) -> list[dict]:
-    """TOOL_ERROR, MAX_TURNS, RENDER_FAILED."""
+    """TOOL_ERROR, MAX_TURNS, RENDER_FAILED, AGENT_ERROR.
+
+    RENDER_FAILED and AGENT_ERROR were listed in the module docstring but absent
+    from the match tuple, so they were parsed and silently dropped. The 2026-07-20
+    juice-shop run logged ``AGENT_ERROR evidence-verifier: all sampled findings
+    unchecked (0 verified/refuted)`` and still reported a clean run.
+    """
+    categories = {
+        "MAX_TURNS": "max_turns_subagent",
+        "TOOL_ERROR": "tool_error",
+        "RENDER_FAILED": "render_failed",
+        "AGENT_ERROR": "agent_error",
+    }
     issues: list[dict] = []
     for source_path, lines in (("hook-events.log", hook_log), ("agent-run.log", agent_log)):
         for ln, raw in lines:
@@ -527,10 +562,10 @@ def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, 
             if not ev:
                 continue
             event = ev["event"]
-            if event in ("TOOL_ERROR", "MAX_TURNS"):
+            if event in ("TOOL_ERROR", "MAX_TURNS", "RENDER_FAILED", "AGENT_ERROR"):
                 issues.append(
                     {
-                        "category": "max_turns_subagent" if event == "MAX_TURNS" else "tool_error",
+                        "category": categories[event],
                         "severity": "error",
                         "title": f"{event}: {_clip(ev['detail'], 80)}",
                         "evidence": {
@@ -1206,6 +1241,58 @@ def _now_iso_z() -> str:
 SCHEMA_VERSION = 1
 
 
+def _extract_run_outcome(agent_log: list[tuple[int, str]], output_dir: Path) -> list[dict]:
+    """Turn the run's terminal outcome into an issue.
+
+    Every other extractor is log-pattern driven, so a run could die without a
+    deliverable and still aggregate to "clean" -- which is exactly what the
+    2026-07-20 juice-shop abort reported. `reconcile_recovered_events` already
+    computes the outcome, but it was only ever called after `summary` had been
+    frozen and its result went solely into a `RUN_RECONCILED` log line that no
+    extractor reads back. A run that produced nothing is the loudest possible
+    issue; it belongs in `issues[]`.
+    """
+    try:
+        rec = reconcile_recovered_events(agent_log, output_dir)
+    except Exception:
+        return []
+    if rec.get("run_completed"):
+        return []
+    # The run reached no deliverable. Flag it whenever analysis actually started
+    # — not only when there were unrecovered abort/FATAL events. A clean external
+    # stop (budget or subscription usage-limit kill) leaves neither a
+    # SESSION_ABORTED_MIDRUN nor a build FATAL, so `unrecovered` is 0; gating on
+    # it alone (the prior bug) reported these no-deliverable runs as "clean". The
+    # `started` guard keeps a dry-run or an empty output directory from tripping:
+    # a run that reached the STRIDE merge left .threats-merged.json, and any real
+    # assessment logs ASSESSMENT_START.
+    started = (output_dir / ".threats-merged.json").exists() or any(
+        (_parse_event_line(raw) or {}).get("event") in ("ASSESSMENT_START", "SCAN_START")
+        for _ln, raw in agent_log
+    )
+    if not started:
+        return []
+    unrecovered = rec.get("unrecovered", 0)
+    return [
+        {
+            "category": "run_incomplete",
+            "severity": "error",
+            "title": "Run did not reach completion — no threat-model.md produced",
+            "evidence": {
+                "log_file": ".agent-run.log",
+                "log_line": 0,
+                "raw_event": (
+                    f"unrecovered={unrecovered} "
+                    f"mid_run_stops={rec.get('mid_run_stops', 0)} "
+                    f"run_completed={rec.get('run_completed')}"
+                ),
+                "timestamp_iso": "",
+                "source_agent": "skill",
+            },
+        }
+    ]
+
+
 def reconcile_recovered_events(agent_log: list[tuple[int, str]], output_dir: Path) -> dict:
     """Post-hoc all-clear for transient-but-recovered forensic events.
 
@@ -1290,8 +1377,8 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     # Scope to the current run only — these audit logs are append-only and
     # accumulate across runs. See ``_scope_to_current_run`` docstring for
     # the heuristic.
-    agent_log = _scope_to_current_run(agent_log_full)
-    hook_log = _scope_to_current_run(hook_log_full)
+    agent_log = _scope_to_current_run(agent_log_full, output_dir)
+    hook_log = _scope_to_current_run(hook_log_full, output_dir)
     phase_durs = _extract_phase_durations(agent_log)
 
     # Sprint 4B: scale per-phase budgets by repo size before passing them
@@ -1318,6 +1405,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_stride_ceiling_events(output_dir))
     issues.extend(_extract_gate_events(output_dir))
     issues.extend(_extract_stride_model_mismatch(output_dir, hook_log, agent_log))
+    issues.extend(_extract_run_outcome(agent_log, output_dir))
 
     # Assign deterministic IDs (ordered by category then evidence line).
     issues.sort(key=lambda i: (i["category"], i["evidence"].get("log_line", 0)))

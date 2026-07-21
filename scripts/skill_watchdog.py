@@ -552,11 +552,16 @@ def _resolve_depth(output_dir: Path) -> str:
 def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int, str] | None:
     """Return ``(percent, phase_token)`` from ``.appsec-checkpoint``, or None.
 
-    The percentage is the cumulative weight of all *completed* phases (those
-    strictly before the current phase position) over the total — a deliberate
-    lower bound that never overstates and is phase-granular (it jumps at phase
-    boundaries and sits flat within a long phase such as Phase 9 / STRIDE). The
-    caller clamps it monotonically so resume/incremental can't move it back.
+    The percentage is the cumulative weight of all *completed* phases over the
+    total — a deliberate lower bound that never overstates and is phase-granular
+    (it jumps at phase boundaries and sits flat within a long phase such as
+    Phase 9 / STRIDE). The caller clamps it monotonically so resume/incremental
+    can't move it back.
+
+    ``status=completed`` is a **per-phase** marker (``batch_checkpoint.py``
+    writes it at every phase end), not a run-terminal one — it means phase
+    ``token`` itself is done, so its weight counts toward the numerator. Only at
+    the last phase in the weight table does it mean the run is over.
     """
     try:
         text = (output_dir / ".appsec-checkpoint").read_text(encoding="utf-8")
@@ -566,17 +571,18 @@ def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int
     if not m:
         return None
     token = m.group(1)
-    # Terminal checkpoint — the phase token (e.g. `11`) is still mid-table but
-    # the run is done; saturate to 100 rather than the 96% the weights imply.
-    if re.search(r"status=completed", text):
-        return 100, token
     pos = _phase_position(token)
     if pos is None:
         return None
     total = sum(weights.values())
     if total <= 0:
         return None
-    done = sum(w for p, w in weights.items() if p < pos)
+    phase_done = re.search(r"status=completed", text) is not None
+    # Terminal checkpoint — the last phase reported completed; saturate to 100
+    # rather than the 96% the weights imply.
+    if phase_done and pos >= max(weights):
+        return 100, token
+    done = sum(w for p, w in weights.items() if (p <= pos if phase_done else p < pos))
     pct = max(0, min(100, round(100 * done / total)))
     return pct, token
 

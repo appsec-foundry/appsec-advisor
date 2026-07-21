@@ -483,6 +483,77 @@ def _guess_repo_root(output_dir: Path) -> Path:
     return cur
 
 
+def _auth_evidence_files(output_dir: Path) -> list[str]:
+    """Files the deterministic source-auth scanner flagged, or [] if unavailable."""
+    try:
+        raw = json.loads((output_dir / ".source-auth-findings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    findings = raw.get("findings", raw) if isinstance(raw, dict) else raw
+    if not isinstance(findings, list):
+        return []
+    return sorted({f.get("file", "") for f in findings if isinstance(f, dict) and f.get("file")})
+
+
+def _evidence_complexity_floor(paths: list, auth_files: list[str], claimed: str) -> tuple[str, str]:
+    """Raise a component's complexity when it owns authentication code.
+
+    The complexity that reaches this module comes from `.components.json`, which
+    is authored by the analyst LLM -- so it is a judgement, not a measurement,
+    and it drifts between runs of the same commit. On 2026-07-20 the component
+    holding JWT signing, password hashing, login and 2FA was named `auth-service`
+    and rated *moderate*; an earlier run of the same repo rated the same code
+    *complex*. The smaller tier gave it the smaller turn budget, and it stalled.
+
+    Naming rules cannot fix this: the next inventory may call it
+    `identity-provider` or `session-manager`. `.source-auth-findings.json` is
+    produced by a deterministic scanner during pre-flight, before any of this
+    runs, so "does this component own authentication code" is answerable from
+    evidence rather than from what the component was called.
+    """
+    if not auth_files or claimed == "complex":
+        return claimed, ""
+    owned = [f for f in auth_files if _path_owns(paths, f)]
+    if not owned:
+        return claimed, ""
+    sample = ", ".join(owned[:2]) + (" …" if len(owned) > 2 else "")
+    return "complex", f"auth evidence in {len(owned)} file(s) ({sample})"
+
+
+def _component_max_turns(repo_root: Path, patterns, tier_turns: int) -> int:
+    """Turn budget for one component: complexity tier raised by file footprint.
+
+    Globbing is best-effort -- an unreadable or pathological pattern falls back
+    to the tier budget rather than failing manifest construction.
+    """
+    try:
+        import classify_component  # noqa: PLC0415
+
+        file_count = len(_glob_files(repo_root, _expand_recursive(patterns or [])))
+        floored, _ = classify_component._footprint_turn_floor(file_count, tier_turns)
+        return int(floored)
+    except Exception:
+        return int(tier_turns)
+
+
+def _expand_recursive(patterns) -> list[str]:
+    """Rewrite a trailing bare ``**`` to ``**/*`` so files are counted.
+
+    ``Path.glob("routes/**")`` yields only DIRECTORIES -- the recursive wildcard
+    matches path segments, not the entries inside them. Since ``_glob_files``
+    keeps only ``is_file()`` hits, a bare ``**`` pattern counts zero. Component
+    inventories use exactly that form (``routes/**``, ``frontend/**``), so the
+    footprint floor was blind to the widest components: backend-api counted 2
+    files instead of ~700, frontend-spa 0 instead of 637.
+    """
+    expanded: list[str] = []
+    for pattern in patterns:
+        expanded.append(pattern)
+        if pattern.endswith("**"):
+            expanded.append(f"{pattern}/*")
+    return expanded
+
+
 def _glob_files(repo_root: Path, patterns) -> list[str]:
     hits: set[str] = set()
     for pat in patterns:
@@ -904,6 +975,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     # the selector here, the STRIDE fan-out, AND the downstream threat-model.yaml
     # / heatmap / §1 scope (build_threat_model_yaml reads .components.json).
     repo_root = _guess_repo_root(output_dir)
+    auth_evidence = _auth_evidence_files(output_dir)
     all_components, injected = reconcile_inventory(all_components, repo_root)
     if injected:
         payload = dict(cj) if isinstance(cj, dict) else {}
@@ -966,6 +1038,12 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
 
         tax = output_dir / ".taxonomy-slices" / cid
         raw_paths = c.get("paths") or []
+        # The claimed complexity is an LLM judgement and drifts between runs;
+        # scanner evidence is not. A component that owns authentication code is
+        # rated complex whatever the inventory called it.
+        complexity, floor_reason = _evidence_complexity_floor(raw_paths, auth_evidence, complexity)
+        if floor_reason:
+            sys.stderr.write(f"FLOOR: {cid} → complex ({floor_reason})\n")
         if not raw_paths:
             sys.stderr.write(
                 f"WARN: {cid} has no paths in .components.json — using ['**'] (broad fallback). "
@@ -977,7 +1055,16 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             "component_description": c.get("description", ""),
             "component_paths": raw_paths or ["**"],
             "component_complexity": complexity if complexity in ("simple", "moderate", "complex") else "moderate",
-            "max_turns": int(turns.get(complexity, turns.get("moderate", 22))),
+            # Turn budget is max(complexity budget, file-footprint floor). The
+            # complexity tier is a risk signal and says nothing about how many
+            # files the analyzer has to read; a mid-size component whose paths
+            # span more files than its tier allows turns for cannot finish. See
+            # classify_component._footprint_turn_floor.
+            "max_turns": _component_max_turns(
+                repo_root,
+                raw_paths,
+                int(turns.get(complexity, turns.get("moderate", 22))),
+            ),
             "trust_boundaries": _trust_boundaries_for(cid, boundaries),
             "taxonomy_slice_dir": str(tax) if tax.is_dir() else str(plugin_root / "data"),
             # Carry the selection-criteria inputs through to the manifest so the

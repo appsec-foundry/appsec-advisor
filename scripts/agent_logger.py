@@ -284,9 +284,67 @@ def _write_trace(event: str, detail: str, sid: str = "") -> None:
         pass  # never crash a hook
 
 
-# In-memory store for agent dispatch timestamps, keyed by sid[:8].
-# Used to compute wall-time per agent invocation.
+# Store for agent dispatch timestamps, keyed by sid[:8], used to compute
+# wall-time per agent invocation.
+#
+# This MUST be disk-backed. hooks.json runs `python3 agent_logger.py` as a fresh
+# process for every event, so the PreToolUse process that records the dispatch
+# time and the Stop process that reads it share no memory. A plain module-level
+# dict is therefore always empty at read time -- the 2026-07-20 juice-shop run
+# emitted wall_secs=? on 211 of 211 AGENT_COMPLETE trace lines. The in-memory
+# dict is kept as a same-process fast path; the sidecar is the source of truth.
 _DISPATCH_TIMES: dict[str, float] = {}
+_DISPATCH_TIMES_FILE = "dispatch-times.json"
+
+
+def _dispatch_time_path() -> str:
+    """Sidecar holding dispatch timestamps across hook process boundaries."""
+    return os.path.join(_active_tools_dir(), _DISPATCH_TIMES_FILE)
+
+
+def _read_dispatch_times() -> dict[str, float]:
+    try:
+        with open(_dispatch_time_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        return {k: float(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _record_dispatch_time(key: str, when: float) -> None:
+    """Persist one dispatch timestamp; best-effort and never raises."""
+    _DISPATCH_TIMES[key] = when
+    try:
+        os.makedirs(_active_tools_dir(), exist_ok=True)
+        times = _read_dispatch_times()
+        times[key] = when
+        # Bound growth: a run has far fewer than 200 dispatches.
+        if len(times) > 200:
+            times = dict(sorted(times.items(), key=lambda kv: kv[1])[-200:])
+        path = _dispatch_time_path()
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(times, fh)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _take_dispatch_time(key: str) -> float | None:
+    """Pop a dispatch timestamp, preferring the sidecar over in-process state."""
+    when = _DISPATCH_TIMES.pop(key, None)
+    try:
+        times = _read_dispatch_times()
+        if key in times:
+            when = times.pop(key)
+            path = _dispatch_time_path()
+            tmp = f"{path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(times, fh)
+            os.replace(tmp, path)
+    except Exception:
+        pass
+    return when
 
 
 # ---------------------------------------------------------------------------
@@ -1802,7 +1860,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         context_chars = len(prompt_str)
         context_ktok = round(context_chars / 3500, 1)  # ~3.5 chars/token
         max_turns_val = _extract_param(prompt_str, "MAX_TURNS") or "?"
-        _DISPATCH_TIMES[(sid or "")[:8]] = time.time()
+        _record_dispatch_time((sid or "")[:8], time.time())
         _write_trace(
             "AGENT_DISPATCH",
             f"agent={_AGENT_SHORT_NAMES.get(subtype.split(':')[-1], subtype.split(':')[-1])}  "
@@ -2021,8 +2079,9 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     if _TRACING and agent_name:
         wall_secs = "?"
         dispatch_key = (sid or "")[:8]
-        if dispatch_key in _DISPATCH_TIMES:
-            wall_secs = str(round(time.time() - _DISPATCH_TIMES.pop(dispatch_key)))
+        dispatched_at = _take_dispatch_time(dispatch_key)
+        if dispatched_at is not None:
+            wall_secs = str(round(time.time() - dispatched_at))
         turns_used = "?"
         if transcript:
             try:

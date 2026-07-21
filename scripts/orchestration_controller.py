@@ -1115,10 +1115,58 @@ def _best_effort_script(
         return False
 
 
+def _selected_coverage_errors(output_dir: Path) -> list[dict[str, str]]:
+    """Blocked bounded-wave components, or [] when the gate does not apply.
+
+    Delegates to check_stride_dispatch.selected_coverage_errors so the early
+    diagnosis in post_stage1 and the hard gate below it can never disagree.
+    Import failures are non-fatal: the hard gate still runs as a subprocess.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import check_stride_dispatch  # noqa: PLC0415
+
+        return check_stride_dispatch.selected_coverage_errors(output_dir)
+    except Exception:
+        return []
+
+
 def post_stage1(output_dir: Path) -> dict[str, Any]:
     """Run the deterministic thin-path gates after the Stage-1 agents return."""
     output_dir, cfg = _load_run_config(output_dir)
     config_path = output_dir / ".skill-config.json"
+
+    # Bounded-wave coverage is checked FIRST, before the artifact precondition.
+    #
+    # SKILL-thin-stage1.md tells the orchestrator to stop before Analyst-B when
+    # the wave plan reports `blocked`. Analyst-B is what produces
+    # .threats-merged.json / .triage-flags.json / threat-model.yaml, so an
+    # orchestrator that obeys that instruction used to land on the artifact
+    # precondition below and be told "Stage 1 did not produce required
+    # artifacts" -- which reads as its own failure and pushes it into the
+    # cut-off recovery path. Running that recovery produces the artifacts, and
+    # then check_stride_dispatch.py (further down) hard-fails with exit 4
+    # anyway. Both branches aborted, and the second one only after paying for a
+    # full merge+triage pass (2026-07-20 juice-shop: ~20 min / $5.75 spent
+    # after the run was already doomed).
+    #
+    # Reporting the real cause here keeps the two gates consistent: an
+    # orchestrator that correctly stopped gets the correct diagnosis instead of
+    # being blamed for the artifacts it was forbidden to create.
+    coverage_errors = _selected_coverage_errors(output_dir)
+    if coverage_errors:
+        detail = "; ".join(f"{e['component_id']}: {e['reason']}" for e in coverage_errors)
+        raise ControllerError(
+            "Selected STRIDE coverage is incomplete after the bounded retry budget "
+            f"({detail}). Merge and triage were correctly skipped -- the report must "
+            "not claim coverage for these components. Attempt counts persist across "
+            "resume, so a plain --resume hits the same block. Recover by fixing what "
+            "made the component fail (a turn budget too small for its file footprint "
+            "is the common cause) and then granting one more attempt with "
+            "APPSEC_STRIDE_MAX_ATTEMPTS=3; a fresh --full run also resets the counts "
+            "but discards the merge and triage already produced."
+        )
+
     required = (".recon-summary.md", ".threats-merged.json", ".triage-flags.json", "threat-model.yaml")
     missing = [name for name in required if not (output_dir / name).is_file()]
     if missing:
@@ -1649,6 +1697,36 @@ def _split_remainder(values: list[str]) -> list[str]:
     return values[1:] if values and values[0] == "--" else values
 
 
+def _aggregate_issues_on_abort(output_dir: Any, reason: str) -> None:
+    """Populate .run-issues.json when the controller aborts the run.
+
+    aggregate_run_issues.py has exactly one call site: the Completion step in
+    SKILL-impl.md. An aborted run never reaches it, so the very runs that most
+    need a diagnostic bundle are the ones that produce none -- `report-error`
+    and `diagnose-bundle` then read a stale file from a previous run, or none at
+    all. The 2026-07-20 juice-shop abort left `.run-issues.json` reporting a
+    clean run for a run that died without a deliverable.
+
+    Best-effort in every direction: no output dir, an unreadable one, or an
+    aggregator failure must never mask the real abort reason.
+    """
+    if not output_dir:
+        return
+    try:
+        path = Path(output_dir)
+        if not path.is_dir():
+            return
+        _append_event(path, "RUN_ABORTED", reason, level="WARN")
+        subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "aggregate_run_issues.py"), str(path)],
+            capture_output=True,
+            timeout=120,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1695,6 +1773,7 @@ def main(argv: list[str] | None = None) -> int:
             "reason": str(exc),
             "exit_code": code,
         }
+        _aggregate_issues_on_abort(getattr(args, "output_dir", None), str(exc))
     return _emit(action)
 
 

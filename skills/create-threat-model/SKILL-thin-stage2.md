@@ -36,9 +36,22 @@ handoff.
      description `Threat Model Renderer (Stage 2)` and `RENDER_ROLE=full`.
 
 4. Send the final heartbeat, stop the watchdog, mark the Stage-2 task
-   completed, and record Stage-2 stats. For parallel rendering, sum tokens and
-   tool uses but use the larger duration; pass both specialist subagent types
-   and `--since-iso $STAGE2_START_ISO`.
+   completed, and record Stage-2 stats with `record_stage_stats.py`
+   (`output_dir` is positional). For parallel rendering, sum tokens and tool
+   uses but use the larger duration. `--subagent-type` takes **one
+   comma-separated value** — repeating the flag keeps only the last one and
+   silently under-counts the dispatch; it must be paired with `--since-iso`:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+       --stage 2 --name "Report Rendering" \
+       --agent appsec-advisor:appsec-threat-renderer \
+       --model "$RENDERER_MODEL" \
+       --duration-ms <ms> --tool-uses <n> --tokens <n> \
+       ${STAGE2_START_ISO:+--subagent-type \
+         "appsec-advisor:appsec-secarch-renderer,appsec-advisor:appsec-ms-renderer" \
+         --since-iso "$STAGE2_START_ISO"} 2>/dev/null || true
+   ```
 5. Run the mandatory controller transition:
 
    ```bash

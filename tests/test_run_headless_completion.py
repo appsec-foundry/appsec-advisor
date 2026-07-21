@@ -93,3 +93,33 @@ def test_bg_wait_ceiling_is_disabled_for_headless() -> None:
     """
     body = _body()
     assert "export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0" in body
+
+
+# ── Untrusted-preflight abort message ───────────────────────────────────
+# 2026-07-20: the abort named the problem ("preflight findings present") and
+# pointed at preflight_untrusted.py for details, but never mentioned that
+# --trust-mode trusted exists. An operator whose own .claude/ setup tripped the
+# check was left to hunt for an override with no guidance on when it is
+# appropriate — the failure mode that guidance is supposed to prevent.
+
+
+def test_preflight_abort_names_the_trust_mode_escape_hatch() -> None:
+    body = _body()
+    assert "--trust-mode trusted" in body, "the untrusted-preflight abort must name the flag that unblocks it"
+
+
+def test_preflight_abort_scopes_when_the_override_is_appropriate() -> None:
+    """Naming the flag without the caveat turns a control into a speed bump."""
+    body = _body()
+    assert "do NOT use that flag" in body, "the abort offers --trust-mode trusted but never says when not to use it"
+    assert "third-party" in body, "the abort must distinguish own vs third-party repos"
+
+
+def test_preflight_abort_offers_a_non_override_remedy() -> None:
+    """There must be a way forward that keeps the check armed."""
+    body = _body()
+    assert ".claude.off" in body, "no remedy offered that preserves the safety check"
+    assert "ls-files" in body, (
+        "the abort should show how to tell own files from repo-owned ones, since "
+        "that is the fact the choice actually turns on"
+    )

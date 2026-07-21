@@ -1347,6 +1347,7 @@ For inline phases (3–8, 8b, 9 merge, 10–11), log `STEP_START` entries before
 
 1. **Step counter `[k/N]`** — every substep that belongs to an enumerable set (the C4 diagrams in Phase 3, the control domains in Phase 8, the STRIDE components in Phase 9, the merge/coverage/output steps in Phase 11, etc.) MUST be prefixed with a `[k/N]` counter where `N` is the total planned for that phase and `k` is the 1-based index of this substep. Decide `N` at phase start and keep it stable; if a substep is skipped, still advance `k` so the last print shows `[N/N]`.
 2. **Elapsed time `(+MMmSSs)`** — every substep print MUST include an elapsed-time suffix showing how long the current phase has been running. Compute it from the `.phase-epoch` file (see below).
+3. **Name the concrete item, never a bare ordinal** — the `<step description>` MUST identify *which* item of the set is being worked on by its real name, because the `[k/N]` prefix already carries the ordinal. Restating it as prose ("Rating control domain 7") tells the reader nothing. Use the control-category name in Phase 8, the diagram name in Phase 3, the component name in Phase 9, the step name in Phase 11. `[7/11] Rating Browser and Cross-Origin Controls` ✅ — `[7/11] Rating control domain 7` ❌.
 
 **Phase-epoch capture — combine with every `▶` phase-start Bash call:**
 

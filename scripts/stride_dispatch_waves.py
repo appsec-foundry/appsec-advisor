@@ -32,6 +32,29 @@ MAX_CONCURRENCY = 32
 PLAN_NAME = ".dispatch-waves.json"
 _COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
+# Per-component dispatch attempts: the initial call plus retries. Two is right
+# for a transient stall -- an identical third attempt rarely behaves
+# differently. But when the cause is structural (a component whose turn budget
+# was too small for its file footprint, fixed by raising the budget), the run
+# was left with no way forward at all: attempts persist across resume, and the
+# only documented escape was a full --rebuild that discards the merge and triage
+# already paid for. This override exists for that case -- after changing what
+# made the component fail, not as a way to retry the same thing harder.
+DEFAULT_MAX_ATTEMPTS = 2
+MAX_ATTEMPTS_CEILING = 5
+
+
+def max_attempts() -> int:
+    """Per-component attempt budget, overridable via APPSEC_STRIDE_MAX_ATTEMPTS."""
+    raw = os.environ.get("APPSEC_STRIDE_MAX_ATTEMPTS", "").strip()
+    if not raw:
+        return DEFAULT_MAX_ATTEMPTS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_ATTEMPTS
+    return max(DEFAULT_MAX_ATTEMPTS, min(value, MAX_ATTEMPTS_CEILING))
+
 
 class WavePlanError(ValueError):
     """The manifest or persisted wave plan violates the scheduling contract."""
@@ -112,8 +135,12 @@ def validate_plan(plan: dict[str, Any], manifest: dict[str, Any]) -> None:
     attempts = plan.get("attempts")
     if not isinstance(attempts, dict) or set(attempts) != set(expected):
         raise WavePlanError("wave plan attempts must cover every manifest component exactly once")
-    if any(not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 2 for value in attempts.values()):
-        raise WavePlanError("wave plan attempt counts must be integers between 0 and 2")
+    ceiling = MAX_ATTEMPTS_CEILING
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= ceiling
+        for value in attempts.values()
+    ):
+        raise WavePlanError(f"wave plan attempt counts must be integers between 0 and {ceiling}")
     waves = plan.get("waves")
     if not isinstance(waves, list) or not waves:
         raise WavePlanError("wave plan waves must be a non-empty array")
@@ -151,6 +178,19 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
     if data.get("component_id") != component_id:
         return f"component_id mismatch: {data.get('component_id')!r}"
     if data.get("partial") is not False:
+        # Separate "never got past the write-first pre-seed" from "ran and
+        # honestly reported partial coverage". Both are identical on the
+        # partial / skipped_categories / threats fields, but they need opposite
+        # responses: a genuine partial is worth retrying as-is, whereas a
+        # never-started component reproduces the same result until its turn
+        # budget grows. Conflating them sent the 2026-07-20 run through two
+        # identical 40-turn failures into a dead end.
+        if data.get("seed_only") is True:
+            return (
+                "analyzer never progressed past the write-first pre-seed (no STRIDE "
+                "category completed) — an unchanged retry will repeat this; the "
+                "component likely needs a larger turn budget"
+            )
         return "partial is not false"
     if data.get("skipped_categories") != []:
         return "skipped_categories is not empty"
@@ -212,17 +252,19 @@ def status(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> 
 def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> tuple[dict[str, Any], bool]:
     """Reserve the next incomplete wave and persist per-component attempts.
 
-    Returns ``(payload, changed)``. A component gets at most two claims (initial
-    dispatch plus one retry), including across parent-session resumes.
+    Returns ``(payload, changed)``. A component gets ``max_attempts()`` claims
+    (default 2: initial dispatch plus one retry), including across
+    parent-session resumes.
     """
     current = status(plan, manifest, output_dir)
     next_wave = current["next_wave"]
     if next_wave is None:
         return current, False
+    budget = max_attempts()
     blocked = [
         component["component_id"]
         for component in next_wave["components"]
-        if plan["attempts"][component["component_id"]] >= 2
+        if plan["attempts"][component["component_id"]] >= budget
     ]
     if blocked:
         return {
@@ -319,7 +361,11 @@ def main(argv: list[str] | None = None) -> int:
                 elif payload["status"] == "blocked":
                     print(json.dumps(payload, indent=2))
                     print(
-                        "stride_dispatch_waves: retry budget exhausted; selected-component coverage is incomplete",
+                        "stride_dispatch_waves: retry budget exhausted; selected-component "
+                        f"coverage is incomplete (budget={max_attempts()}). Fix the cause "
+                        "first -- a turn budget too small for the component's file "
+                        "footprint is the common one -- then set "
+                        "APPSEC_STRIDE_MAX_ATTEMPTS=3 to grant one more attempt.",
                         file=sys.stderr,
                     )
                     return 1

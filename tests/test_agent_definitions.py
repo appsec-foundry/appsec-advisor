@@ -36,7 +36,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst": 300,
     "appsec-context-resolver": 25,
     "appsec-recon-scanner": 25,
-    "appsec-stride-analyzer": 40,  # B2a fix: bumped from 31 to cover thorough/complex (35 + 5 buffer)
+    "appsec-stride-analyzer": 56,  # 2026-07-20: covers the file-footprint turn floor (cap 48 + 8 buffer); was 40 for thorough/complex (35 + 5)
     "appsec-triage-validator": 20,
     "appsec-threat-merger": 12,
     "appsec-threat-renderer": 80,
@@ -46,7 +46,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
-    "appsec-evidence-verifier": 40,  # Phase 10a evidence re-check (30→40 2026-06-13: per-finding incremental flush + Critical→High→Medium ordering need headroom to finish standard-depth samples; cut-off now degrades gracefully)
+    "appsec-evidence-verifier": 60,  # Phase 10a evidence re-check (40→60 2026-07-20: N reads + 2*ceil(N/5) flushes; a 38-finding standard sample needs ~57 turns and produced zero verdicts at 40)
     "appsec-abuse-case-verifier": 28,  # Phase 10c: one agent per abuse-case candidate (24→28 2026-06-13: complex IDOR/middleware-ordering traces still hit 24 mid-investigation; paired with write-before-investigate per-step contract)
     "appsec-fragment-fixer": 30,  # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE)
     "appsec-reviewer": 40,  # embeddable diff-scoped security reviewer (requirements or best-practices); skill/CLI/direct

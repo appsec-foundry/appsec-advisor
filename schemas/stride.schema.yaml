@@ -95,6 +95,13 @@ $defs:
       # additionalProperties:false tightening will not silently break it.
       started_at:     { type: [string, "null"] }
       partial:        { type: boolean }
+      # True only in the write-first pre-seed; cleared on the first overwrite
+      # carrying real analysis. Without it a pre-seed (partial=true, all six
+      # categories skipped, threats=[]) is byte-identical to a genuine
+      # zero-coverage partial, so the completeness gate cannot tell "died before
+      # starting" from "honestly found nothing" -- and the retry budget burns on
+      # a component that needs a bigger budget, not another identical attempt.
+      seed_only:      { type: boolean }
       skipped_categories:
         type: array
         items: { $ref: "#/$defs/stride_category" }

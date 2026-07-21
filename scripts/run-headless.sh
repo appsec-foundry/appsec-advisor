@@ -186,6 +186,7 @@ REQUIREMENTS_INFO=""
 REQUIREMENTS_SRC=""
 MAX_BUDGET=""
 MODEL=""
+REASONING_TIER=""
 OUTPUT_FORMAT="text"
 VERBOSE=""
 QUIET=""
@@ -317,6 +318,7 @@ while [ $# -gt 0 ]; do
         --model)
             MODEL="$2"; shift 2 ;;
         --reasoning-model)
+            REASONING_TIER="$2"
             SKILL_FLAGS="$SKILL_FLAGS --reasoning-model $2"; shift 2 ;;
         --evidence-verifier-cap)
             if [[ "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
@@ -427,7 +429,26 @@ if [ "$TRUST_MODE" = "untrusted" ]; then
         die "preflight script not found: $PREFLIGHT_SCRIPT"
     fi
     if ! python3 "$PREFLIGHT_SCRIPT" --repo-root "$REPO_PATH" --strict --strict-urls --format text --output - >/dev/null; then
-        die "preflight findings present — refusing to scan in untrusted mode (run preflight_untrusted.py manually for details)"
+        # The findings are printed above. Name the two ways forward here --
+        # without them the operator is told what is wrong but not what to do,
+        # and the usual reaction is to go looking for a flag to silence the
+        # check without understanding what it protects.
+        printf '\n' >&2
+        printf 'The paths above are loaded by the host tool BEFORE this plugin runs, so a\n' >&2
+        printf 'repository you do not control could use them to steer the assessment.\n' >&2
+        printf '\n' >&2
+        printf 'If those paths are yours (your own Claude Code setup, or a repo you trust):\n' >&2
+        printf '    --trust-mode trusted        skips this preflight, changes nothing else\n' >&2
+        printf '\n' >&2
+        printf 'If you did not write them, or the repo is third-party, do NOT use that flag.\n' >&2
+        printf 'Move them out of the repo instead, then re-run:\n' >&2
+        printf '    mv %s/.claude %s/.claude.off\n' "$REPO_PATH" "$REPO_PATH" >&2
+        printf '\n' >&2
+        printf 'Check ownership first — untracked files are usually yours, committed ones\n' >&2
+        printf 'come from the repository:\n' >&2
+        printf '    git -C %s ls-files .claude\n' "$REPO_PATH" >&2
+        printf '\n' >&2
+        die "preflight findings present — refusing to scan in untrusted mode"
     fi
     info "preflight: clean"
 fi
@@ -631,8 +652,18 @@ echo ""
 info "AppSec Plugin — Headless Mode"
 echo "  Skill      : $SKILL"
 echo "  Billing    : $BILLING_MODE"
-[ -n "$MODEL" ]            && echo "  Model      : $MODEL"
 echo "  Depth      : ${ASSESSMENT_DEPTH:-standard}"
+# Every model the run will use, grouped by model with the roles it drives.
+# A bare "Model: <session>" line read as "the whole assessment runs on this",
+# which is wrong and misleading in the direction that costs money: the session
+# model is the dominant cost lever but drives orchestration, not analysis depth.
+# Falls back to the session model alone if the lineup cannot be resolved.
+MODEL_LINEUP=""
+[ -n "$MODEL" ] && MODEL_LINEUP="$(python3 "$SCRIPT_DIR/model_lineup.py" \
+    --session "$MODEL" \
+    ${REASONING_TIER:+--reasoning "$REASONING_TIER"} \
+    --depth "${ASSESSMENT_DEPTH:-standard}" 2>/dev/null || printf '%s' "$MODEL")"
+[ -n "$MODEL_LINEUP" ]     && echo "  Models     : $MODEL_LINEUP"
 echo "  Context    : $CONTEXT_INFO"
 echo "  Plugin     : $PLUGIN_DIR"
 [ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"

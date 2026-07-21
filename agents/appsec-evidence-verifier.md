@@ -3,8 +3,10 @@ name: appsec-evidence-verifier
 description: "INTERNAL — invoked by appsec-threat-analyst between Phase 10 (Merge) and Phase 10b (Triage). Reads .threats-merged.json, samples findings per depth strategy, re-reads each sampled finding's evidence.file ±5 lines, and writes `evidence_check` ∈ {verified, refuted, ambiguous} plus an `evidence_flags` annotation. Refuted findings flow into triage's effective_severity decision so a refuted finding cannot elevate a compound chain."
 tools: Read, Grep, Bash, Write
 model: sonnet
-maxTurns: 40
+maxTurns: 60
 ---
+
+<!-- Budget must satisfy: N reads + 2*ceil(N/5) flush writes + pre-seed + startup, where N is the resolved sample (Criticals uncapped, non-Criticals capped by evidence_verifier_max_findings = 20/30/100 by depth). Raised 40→60 on 2026-07-20: a standard run sampled 38 (8 Critical + 30 capped) needing ~57 turns against a 40 ceiling — it produced zero verdicts and left the untouched pre-seed, so triage rated all 60 findings with no refutation signal. Re-check this arithmetic whenever the depth caps change. -->
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after Phase 10 finalize (`.threats-merged.json` written with global T-IDs) and before Phase 10b triage validation.
 
@@ -97,7 +99,7 @@ Your verdicts are only valuable if they reach disk. A turn-budget cut-off must d
 
 1. **Pre-seed first (before any Read).** Immediately after building the sample set, `Write` `$OUTPUT_DIR/.evidence-verification.json` with `summary.total_threats`, `summary.sampled=<N>`, all counts 0, `summary.unchecked=<N>`, and `flags: []`. This guarantees a side-channel file with real coverage numbers exists even if you are cut off on the next turn.
 2. **Flush every 5 resolved findings (and on the LAST finding).** Keep the loaded `.threats-merged.json` in memory; after every 5th verdict, re-`Write` `.threats-merged.json` (annotations so far) AND re-`Write` `.evidence-verification.json` (running counts + flags so far). A cut-off then loses at most the last <5 verdicts, not all of them. This costs ~`ceil(N/5)` extra Bash calls — budgeted for.
-3. **Turn-budget guard at ~⅔ of maxTurns (≈ turn 20 of 30).** If you reach two-thirds of your budget and the sample is not finished, STOP sampling, do one final flush of both files with `summary.sampled` set to the count actually resolved (remaining stay `unchecked`), emit the `BASH_WARN` from the failure-modes section, and exit. Never spend the last turns reading more findings at the cost of flushing what you have.
+3. **Turn-budget guard at ~⅔ of maxTurns (≈ turn 40 of 60).** If you reach two-thirds of your budget and the sample is not finished, STOP sampling, do one final flush of both files with `summary.sampled` set to the count actually resolved (remaining stay `unchecked`), emit the `BASH_WARN` from the failure-modes section, and exit. Never spend the last turns reading more findings at the cost of flushing what you have.
 
 ## Verification procedure (per sampled finding)
 

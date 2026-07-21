@@ -49,10 +49,21 @@ Stage-1c body from `SKILL-impl.md`.
    Require `action=run_gate`, `stage=stage1c`. The controller owns merge,
    finalize, verified-finding promotion, YAML rebuild, configured release gate,
    ranking fold, and §9 rendering.
-5. Send the final heartbeat, stop the watchdog, record the aggregated stats as
-   stage `1`, variant `abuse-verification`, and mark the task completed. With no
-   candidates, record a zero-token deterministic row using
-   `deterministic:match_abuse_cases.py` and model `none`.
+5. Send the final heartbeat, stop the watchdog, record the aggregated stats with
+   `record_stage_stats.py` (`output_dir` is positional), and mark the task
+   completed:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+       --stage 1 --variant abuse-verification --name "Abuse Case Verification" \
+       --agent appsec-advisor:appsec-abuse-case-verifier \
+       --model "$ABUSE_VERIFIER_MODEL" \
+       --duration-ms <ms> --tool-uses <n> --tokens <n> 2>/dev/null || true
+   ```
+
+   With no candidates, record a zero-token deterministic row instead: same call
+   with `--agent deterministic:match_abuse_cases.py --model none
+   --duration-ms 0 --tool-uses 0 --tokens 0`.
 
 Any configured abuse-case release-gate failure is fatal. Other matcher/verifier
 pipeline failures remain visible in controller receipts and the event log.

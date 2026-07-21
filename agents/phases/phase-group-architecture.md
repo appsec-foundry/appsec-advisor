@@ -1374,7 +1374,7 @@ The `enforcement` value should describe the **observed** enforcement mechanism (
 
 **⚠ Token-saving rule: Reuse Phase 2 findings — do NOT re-grep what the recon-scanner already found.**
 
-**Single-read rule (mandatory):** Read Section 7 of `$OUTPUT_DIR/.recon-summary.md` **exactly once** at the start of this phase and keep the parsed content in working memory. Iterate the 14 control domains in a single pass against that snapshot — do not re-read `.recon-summary.md` per domain. The recon-scanner has already scanned 24 security categories with file:line references and observations and that data is authoritative for Phase 8.
+**Single-read rule (mandatory):** Read Section 7 of `$OUTPUT_DIR/.recon-summary.md` **exactly once** at the start of this phase and keep the parsed content in working memory. Iterate the 11 control categories (listed below) in a single pass against that snapshot — do not re-read `.recon-summary.md` per domain. The recon-scanner has already scanned 24 security categories with file:line references and observations and that data is authoritative for Phase 8.
 
 **Architecture coverage pre-population (arch.md §Phase-8-Bruecke).** Phase 2.6 produces `$OUTPUT_DIR/.architecture-coverage.json` which carries `control_assessments[]` — one entry per evaluated architecture-coverage rule with status in {partial, weak, missing, anti_pattern}. **Before running the per-domain control loop**, pre-populate `security_controls[]` with one row per `control_assessment`:
 
@@ -1412,6 +1412,8 @@ The mechanism-discovery loop then **adds anything BEYOND this architectural base
 4. **Disambiguation by grep is forbidden.** A ⚠️ Partial vs ✅ Adequate judgement call is resolved downward to ⚠️ Partial, never upward via a new grep. The recon baseline is the single source of truth for observable presence.
 
 Control categories: Identity and Authentication; Session and Token Controls; Authorization Controls; Query Construction and Data Access Controls; Input Boundary Validation Controls; Output Encoding and Rendering Controls; Browser and Cross-Origin Controls (framework config, sanitizer usage, DOM sink exposure, CSP and CORS — use recon 7.8, 7.18, 7.19, 7.24 as applicable); Cryptography, Secrets and Data Protection; File, Parser and Outbound Request Controls; Operations, Runtime and Supply Chain Controls; Real-time and Not Applicable Controls. Derive `### 6.13 Defense-in-Depth Summary` from those category ratings instead of treating it as an independent control domain.
+
+**Step-label rule:** these eleven categories are this phase's `[k/N]` set — `N`=**11** (§6.1 and §6.13 are overview/summary, not rated domains). Every `STEP_START` MUST name the category: `[7/11] Rating Browser and Cross-Origin Controls` ✅, `[7/13] Rating control domain 7` ❌.
 
 Rate each: 🟢 Adequate | 🟡 Partial | 🟠 Weak | 🔴 Unsafe | 🔴 Missing — these tokens are the single source of truth, mirrored from `data/sections-contract.yaml → verdict_icons`. The legacy `✅/⚠️/🔶/❌` mapping is retired; do not emit those forms.
 

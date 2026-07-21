@@ -1020,6 +1020,40 @@ def test_append_reconciliation_silent_when_nothing_transient(tmp_path):
     assert log_path.read_text(encoding="utf-8") == "existing\n"  # untouched
 
 
+# ---------------------------------------------------------------------------
+# _extract_run_outcome — a run that produced no deliverable must be flagged even
+# without an abort/FATAL log signature. Regression for the 2026-07-21 juice-shop
+# run: a subscription usage-limit kill left neither SESSION_ABORTED_MIDRUN nor a
+# build FATAL, so `unrecovered` was 0 and the run aggregated to "clean" despite
+# producing no threat-model.md.
+# ---------------------------------------------------------------------------
+
+
+def test_run_outcome_flags_external_stop_after_analysis_started(tmp_path):
+    # A clean external kill: no abort, no FATAL. The run reached the STRIDE
+    # merge (.threats-merged.json) but produced no report.
+    (tmp_path / ".threats-merged.json").write_text("{}", encoding="utf-8")
+    log = [(1, _line("2026-07-21T07:01:00Z", "ASSESSMENT_START", "mode=full"))]
+    out = agg._extract_run_outcome(log, tmp_path)
+    assert len(out) == 1
+    assert out[0]["category"] == "run_incomplete"
+    assert out[0]["severity"] == "error"
+    assert "no threat-model.md" in out[0]["title"]
+
+
+def test_run_outcome_silent_when_completed(tmp_path):
+    (tmp_path / "threat-model.md").write_text("# report", encoding="utf-8")
+    (tmp_path / ".threats-merged.json").write_text("{}", encoding="utf-8")
+    log = [(1, _line("2026-07-21T07:01:00Z", "ASSESSMENT_START", "mode=full"))]
+    assert agg._extract_run_outcome(log, tmp_path) == []
+
+
+def test_run_outcome_silent_when_no_analysis_started(tmp_path):
+    # Empty output dir / dry-run: no merged threats and no ASSESSMENT_START must
+    # not flag, or every scope preview would trip the gate.
+    assert agg._extract_run_outcome([], tmp_path) == []
+
+
 def test_append_reconciliation_warns_on_unrecovered(tmp_path):
     log_path = tmp_path / ".agent-run.log"
     log_path.write_text("", encoding="utf-8")

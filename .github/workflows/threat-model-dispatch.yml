@@ -321,6 +321,35 @@ jobs:
 
           cp -f effective-permissions.json "$OUT/" 2>/dev/null || true
 
+      # 7b) Put the readable part of the report on the run page itself, so the
+      #     common case ("what did it find?") needs no artifact download at all.
+      #     Only the Management Summary: the full report is ~109 KB and its
+      #     Mermaid/SVG figures do not render in a job summary, while the
+      #     summary section is ~14 KB and is what a reader wants first.
+      #     Never fatal — a failed scan still uploads its artifact below.
+      - name: Publish report digest to job summary
+        if: always()
+        run: |
+          set -uo pipefail
+          REPORT="$PWD/${{ steps.preset.outputs.output_path }}/threat-model.md"
+          if [ ! -s "$REPORT" ]; then
+            echo "No threat-model.md — scan did not produce a report." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "# Threat Model — ${{ steps.preset.outputs.use_case }}"
+            echo
+            python3 scripts/extract_report_section.py "$REPORT" \
+                --section "Management Summary" \
+                --section "Critical Attack Tree" \
+                --skip-missing \
+              || echo "_(digest unavailable — see the artifact for the full report)_"
+            echo
+            echo "---"
+            echo
+            echo "Full report, YAML and SARIF: artifact \`threat-model-${{ steps.preset.outputs.use_case }}\` below."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # 8) Publish the report (md / yaml / sarif / run log / permissions).
       - name: Upload report artifact
         if: always()

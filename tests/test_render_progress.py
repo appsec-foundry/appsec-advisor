@@ -72,6 +72,50 @@ def test_run_progress_line_is_rendered():
     assert "net=10m55s" in out
 
 
+def test_run_progress_phase_token_follows_the_live_banner():
+    """The watchdog reads `phase=` from `.appsec-checkpoint`, written only at
+    phase end — so it lags the banner by one phase. The banner wins."""
+    out = _render(
+        [
+            "2026-06-06T17:21:26Z  [--------]  INFO   threat-analyst    PHASE_START"
+            "   [Phase 9/11] STRIDE Enumeration",
+            "2026-06-06T17:25:37Z  [--------]  INFO   skill-watchdog      RUN_PROGRESS"
+            "        ~40%  phase=8  elapsed=10m55s  net=10m55s",
+        ]
+    )
+    assert "phase=9" in out
+    assert "phase=8" not in out
+
+
+def _progress_lines(pcts: list[str], start_min: int = 0) -> list[str]:
+    return [
+        f"2026-06-06T17:{start_min + i:02d}:00Z  [--------]  INFO   skill-watchdog      RUN_PROGRESS"
+        f"        ~{p}%  phase=9  elapsed={i}m00s  net={i}m00s"
+        for i, p in enumerate(pcts)
+    ]
+
+
+def test_repeated_identical_percentage_is_not_relogged():
+    """The percentage is phase-granular and sits flat through a long phase.
+    Off-TTY, an unchanged reading must not scroll a fresh line every minute —
+    but it must not go fully silent either: the watchdog emits no HEARTBEAT of
+    its own, so this line is the only liveness signal during flat stretches.
+    Twelve minutes of flat readings → 1 permanent line + a 300s-throttled tick
+    at minutes 5 and 10, instead of 12 lines."""
+    out = _render(_progress_lines(["40"] * 12))
+    assert out.count("progress · ") == 3
+    assert "elapsed=5m00s" in out and "elapsed=10m00s" in out  # ticks kept
+    assert "elapsed=3m00s" not in out  # in-between repeats dropped
+
+
+def test_each_changed_percentage_gets_its_own_line():
+    """Dedup must not swallow real movement — every step still scrolls."""
+    out = _render(_progress_lines(["18", "22", "25", "40"]))
+    assert out.count("progress · ") == 4
+    for pct in ("~18%", "~22%", "~25%", "~40%"):
+        assert pct in out
+
+
 def test_stride_stall_and_timeout_warnings_are_rendered():
     out = _render(
         [

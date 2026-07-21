@@ -882,6 +882,26 @@ def test_progress_snapshot_percent_is_completed_lower_bound(out_dir):
     assert pct_term == 100
 
 
+def test_progress_snapshot_mid_run_completed_is_not_terminal(out_dir):
+    """`status=completed` is a per-phase marker (batch_checkpoint.py writes it
+    at every phase end). Reading it as run-terminal pinned the live progress
+    line at ~100% from Phase 3 onward for the whole run."""
+    sw = _load()
+    weights = sw._PROGRESS_WEIGHTS["standard"]
+    # Phase 8 done, Phase 9 running → phases 1..8 count, not 100%.
+    (out_dir / ".appsec-checkpoint").write_text("phase=8 status=completed\n")
+    pct, token = sw._progress_snapshot(out_dir, weights)
+    assert token == "8"
+    assert pct == 40  # same numerator as "phase=9 in_progress"
+    # And it advances stepwise rather than sitting flat.
+    seen = []
+    for n in (3, 5, 8):
+        (out_dir / ".appsec-checkpoint").write_text(f"phase={n} status=completed\n")
+        seen.append(sw._progress_snapshot(out_dir, weights)[0])
+    assert seen == sorted(seen) and len(set(seen)) == 3
+    assert max(seen) < 100
+
+
 def test_progress_snapshot_none_without_checkpoint(out_dir):
     sw = _load()
     weights = sw._PROGRESS_WEIGHTS["standard"]
