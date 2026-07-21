@@ -667,11 +667,11 @@ have Claude Code watch it while you work on something else. Step by step:
 1. **Ask Claude to start and monitor it.** Name the repo so it knows which log
    to read:
 
-   > Analyze /home/mrohr/juice-shop in the background and monitor the run. Tell
+   > Analyze /path/to/repo in the background and monitor the run. Tell
    > me on a phase change, an error, if it stalls, or when it finishes — then
    > with the Run Issues summary and where the report is.
 
-2. **Claude starts the run** with `make analyze REPO=/home/mrohr/juice-shop BG=1`
+2. **Claude starts the run** with `make analyze REPO=/path/to/repo BG=1`
    and begins watching the log. You do not pass `BG=1` or a `tail` command
    yourself — Claude handles it.
 
