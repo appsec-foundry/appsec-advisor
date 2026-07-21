@@ -171,6 +171,29 @@ inspect-bundle:  ## Print a triage summary of a diagnostic bundle: make inspect-
 	@$(PYTHON) scripts/diagnostic_bundle.py inspect --bundle "$(BUNDLE)"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Ad-hoc headless analysis against an arbitrary target repo
+#
+# Thin wrapper around scripts/run-headless.sh for maintainer spot-checks
+# (e.g. juice-shop). Streams to the terminal AND a log file by default; set
+# BG=1 to detach via nohup so this session is free to work in parallel.
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: analyze
+analyze:  ## Headless threat-model against any repo: make analyze REPO=<path> [BG=1] [LOG=<file>] [MAX_DURATION=9000] [EXTRA="--assessment-depth thorough"]
+	@test -n "$(REPO)" || { echo "ERROR: set REPO=<path to repo to analyze>, e.g. make analyze REPO=/home/mrohr/juice-shop"; exit 2; }
+	@log="$(or $(LOG),$(HOME)/appsec-$(notdir $(patsubst %/,%,$(REPO))).log)"; \
+	cmd='APPSEC_PLUGIN_DEV=1 $(PLUGIN_ROOT)scripts/run-headless.sh --repo "$(REPO)" --verbose --max-duration $(or $(MAX_DURATION),9000) $(EXTRA)'; \
+	if [ -n "$(BG)" ]; then \
+		nohup sh -c "$$cmd" >"$$log" 2>&1 & \
+		echo "▶ analyzing $(REPO) in background (PID $$!)"; \
+		echo "  log:  $$log"; \
+		echo "  tail: tail -f $$log"; \
+	else \
+		echo "▶ analyzing $(REPO) (log → $$log)"; \
+		sh -c "$$cmd" 2>&1 | tee "$$log"; \
+	fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Help
 # ─────────────────────────────────────────────────────────────────────────────
 

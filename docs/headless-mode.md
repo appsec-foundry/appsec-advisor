@@ -631,13 +631,38 @@ to find out what happened.
 ### Run it so you can see the errors
 
 ```bash
-scripts/run-headless.sh --repo /path/to/repo --verbose --max-duration 5400 2>&1 | tee run.log
+make analyze REPO=/path/to/repo
 ```
 
-- `--verbose` prints live progress and errors while the run works.
-- `--max-duration <sec>` stops a run that overruns instead of leaving it to be
-  killed abruptly — a clean stop still gives you the summary below.
-- `2>&1 | tee run.log` keeps a copy, since most of the output is on stderr.
+This runs the assessment with live progress and keeps a copy of the output in a
+log file, so you can see errors as they happen and read back over them later.
+Add `BG=1` to run it in the background and keep working in the same shell.
+
+### Let Claude monitor the run for you
+
+A run takes over an hour, so you usually want to start it in the background and
+have Claude Code watch it while you work on something else. Step by step:
+
+1. **Ask Claude to start and monitor it.** Name the repo so it knows which log
+   to read:
+
+   > Analyze /home/mrohr/juice-shop in the background and monitor the run. Tell
+   > me on a phase change, an error, if it stalls, or when it finishes — then
+   > with the Run Issues summary and where the report is.
+
+2. **Claude starts the run** with `make analyze REPO=/home/mrohr/juice-shop BG=1`
+   and begins watching the log. You do not pass `BG=1` or a `tail` command
+   yourself — Claude handles it.
+
+3. **Keep working.** Claude stays quiet and checks the log in the background.
+
+4. **You hear back when it matters** — on each phase change, on an error or a
+   budget/time limit, if the run stalls, and when it finishes, with the Run
+   Issues summary and the path to the report.
+
+If you want progress updates while you are away from the keyboard, add "wake
+yourself up to check even if I go quiet" — otherwise the checks happen the next
+time you message Claude.
 
 ### Where to look
 
