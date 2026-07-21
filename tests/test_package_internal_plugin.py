@@ -771,6 +771,40 @@ def test_check_namespace_leaks_skips_non_utf8(tmp_path):
     pkg.check_namespace_leaks(src)
 
 
+def test_rewrite_namespace_covers_scripts_sh_and_py(tmp_path):
+    # Regression: run-headless.sh and .py helpers hardcode `<namespace>:<skill>`
+    # command references (the `claude -p` prompt, `/…:fix-run-issues` hints).
+    # Excluding .sh/.py from the rewrite shipped a repackaged plugin whose
+    # headless wrapper dispatched the upstream namespace — a broken headless run.
+    build = tmp_path / "b"
+    (build / "scripts").mkdir(parents=True)
+    (build / "scripts" / "run-headless.sh").write_text(
+        'PROMPT="/appsec-advisor:create-threat-model"\n', encoding="utf-8"
+    )
+    (build / "scripts" / "helper.py").write_text(
+        'HINT = "/appsec-advisor:fix-run-issues"\n', encoding="utf-8"
+    )
+    pkg.rewrite_namespace(build, "acme")
+    sh = (build / "scripts" / "run-headless.sh").read_text()
+    py = (build / "scripts" / "helper.py").read_text()
+    assert "appsec-advisor:" not in sh and "acme:create-threat-model" in sh
+    assert "appsec-advisor:" not in py and "acme:fix-run-issues" in py
+
+
+def test_check_namespace_leaks_covers_scripts(tmp_path):
+    # The leak-check safety net must scan scripts/ too, not only skills/agents —
+    # otherwise a script the rewrite missed ships silently.
+    build = tmp_path / "b"
+    (build / "scripts").mkdir(parents=True)
+    (build / "skills").mkdir()
+    (build / "agents").mkdir()
+    (build / "scripts" / "run-headless.sh").write_text(
+        'PROMPT="/appsec-advisor:create-threat-model"\n', encoding="utf-8"
+    )
+    with pytest.raises(SystemExit):
+        pkg.check_namespace_leaks(build)
+
+
 # ---------------------------------------------------------------------------
 # write_archive / remove_stale_archive
 # ---------------------------------------------------------------------------

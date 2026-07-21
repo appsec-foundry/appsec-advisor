@@ -18,7 +18,12 @@ import tarfile
 from pathlib import Path
 
 UPSTREAM_NAMESPACE = "appsec-advisor"
-TEXT_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml"}
+# Namespace rewriting + leak detection must reach the script surfaces too:
+# scripts/run-headless.sh and many .py helpers hardcode `<namespace>:<skill>`
+# command references (e.g. the `claude -p` prompt, `/…:fix-run-issues` hints).
+# Excluding .sh/.py left a repackaged plugin dispatching the upstream namespace
+# — a broken headless wrapper that check_namespace_leaks never saw.
+TEXT_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml", ".sh", ".py"}
 TOP_LEVEL_EXCLUDES = {
     ".agents",
     ".cache",
@@ -548,7 +553,7 @@ def rewrite_namespace(build: Path, name: str) -> None:
 def check_namespace_leaks(build: Path) -> None:
     needle = f"{UPSTREAM_NAMESPACE}:"
     leaks: list[str] = []
-    for root_name in ("skills", "agents"):
+    for root_name in ("skills", "agents", "scripts"):
         root = build / root_name
         if not root.exists():
             continue
