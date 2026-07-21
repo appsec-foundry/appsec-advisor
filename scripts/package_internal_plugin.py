@@ -532,9 +532,25 @@ def apply_package_surface_policy(
     write_surface_manifest(build, policy_path, skills, hooks, upstream_url, mcp_servers)
 
 
+def _has_shebang(path: Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            return fh.read(2) == b"#!"
+    except OSError:
+        return False
+
+
 def _text_files(root: Path):
     for path in root.rglob("*"):
-        if path.is_file() and path.suffix.lower() in TEXT_SUFFIXES:
+        if not path.is_file():
+            continue
+        if path.suffix.lower() in TEXT_SUFFIXES:
+            yield path
+        elif not path.suffix and _has_shebang(path):
+            # Extensionless executables (CLI shims like scripts/appsec-reviewer-cli)
+            # hardcode `<namespace>:<skill>` command references too, but match no
+            # suffix. Detect them by shebang so the namespace rewrite and the leak
+            # check reach them — without hardcoding shim names.
             yield path
 
 
