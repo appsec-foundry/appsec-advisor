@@ -58,7 +58,7 @@ The yaml is the **single structured baseline** for incremental runs. It is alway
 **Hard invariants** (enforced by baseline_state.py and by incremental logic in Phase 9):
 
 1. `meta.schema_version` is 1. Bump it only alongside a migration path.
-2. T-IDs, M-IDs, and E-IDs are **stable across runs**. A carried-forward component must keep every one of its T-IDs. New IDs come from `.appsec-cache/baseline.json.id_counters`.
+2. T-IDs and E-IDs are **stable across incremental runs**. A carried-forward component must keep every one of its T-IDs. New IDs come from `.appsec-cache/baseline.json.id_counters`. M-IDs remain public anchors within each report but may be regenerated; changelog continuity uses mitigation-title fingerprints rather than M-ID equality.
 3. `changelog[]` is **append-only**. Never rewrite or delete historical entries, even on a full rebuild — instead, prepend a new `mode: full` entry.
 4. `components[].paths` is the source of truth for the Phase 9 dirty-set mapping. Keep it in sync with the actual directory layout.
 5. `meta.git.commit_sha` MUST be set to `git rev-parse HEAD` at the end of Phase 11, on every write. This is what the next run uses as baseline.

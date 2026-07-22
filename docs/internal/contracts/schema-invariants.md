@@ -4,30 +4,29 @@ Detailed schema and pipeline invariants for `threat-model.md` and `threat-model.
 
 ## §4a. Cross-reference labelling invariant
 
-Every ID class in `threat-model.md` (`T-NNN`, `F-NNN`, `M-NNN`, `TH-NN`, plus `C-NN` / `AF-NNN` covered by `compose`) MUST render as `[ID](#anchor) — <short-title>` when referenced outside its declaration site: the §8 Threat Register ID column, §9 `#### M-NNN — …` headings, and §8 / §7.2 TH-NN anchor cell. Bare `[ID](#anchor)` links make the report unreadable on first pass.
+Reader-facing references normally render as `[ID](#anchor) — <short-title>`. This applies to `T-NNN`, `F-NNN`, `M-NNN`, `W-NNN`, `TH-NN`, and the `C-NN` / deprecated `AF-NNN` classes covered by the composer. Use a shorter form only where the layout or sentence already provides the meaning: declaration sites, ID columns, headings, narrow tables, inline citations, the Verdict citation form, Top Weaknesses proof lists, and the Critical Attack Tree findings pointer. These exceptions are deliberate and must stay narrow; ordinary table and list references need a title.
 
 Three things must stay aligned for the invariant to hold:
 
 1. **Schema source of truth.** `schemas/threat-model.output.schema.yaml`
    declares `title` as **required** on `threats[]` (`minLength: 10`, `maxLength: 60`) and on `mitigations[]`. Do NOT make it optional or raise the 60-char ceiling; longer titles wrap in tables. Phase 11 (`agents/phases/phase-group-finalization.md` substep 2) MUST copy `.threats-merged.json[].title` verbatim or the report degrades into `(untitled)` cross-references.
 
-2. **Single linkifier.** `scripts/qa_checks.py:linkify_anchors` is the
-   only legal producer of titled cross-references. It runs from `qa_checks.py all` and is idempotent. Its invariants:
+2. **Deterministic link owners.** `scripts/qa_checks.py:linkify_anchors` is the
+   only legal normalizer for T/F/M/TH/C cross-references. It runs from `qa_checks.py all` and is idempotent. `scripts/compose_threat_model.py` owns the context-specific full, compact, and inline forms and emits titled W-NNN references directly from `weaknesses[]`; QA does not infer W-NNN labels. Their invariants:
    - `_load_label_index` builds T-NNN and F-NNN aliases for the same numeric suffix.
    - `_load_th_label_index` parses TH-NN titles from §8 / §7.2 declarations (`<a id="th-NN"></a>TH-NN — Title`); TH titles do not live in yaml.
    - The bare-ref pass covers `sub_t`, `sub_f`, `sub_m`, `sub_th`; a new ID class needs its own substitution function.
    - The idempotent suffix regex matches `[FTM]-` AND `TH-`, so existing un-suffixed `[F-NNN](#f-nnn)` / `[TH-NN](#th-nn)` links gain `— Title` on rerun.
 
 3. **Tests pin the invariant.**
-   `tests/test_qa_checks.py:TestCrossReferenceLabellingInvariant` exercises each ID class; `tests/test_p4_cross_reference_coverage.py:TestCrossReferenceTitleCoverageEndToEnd` verifies that end-to-end `linkify_anchors` produces zero un-suffixed cross-references outside declaration sites. Removing either guard requires an explicit migration justification.
+   `tests/test_qa_checks.py:TestCrossReferenceLabellingInvariant` and `tests/test_p4_cross_reference_coverage.py:TestCrossReferenceTitleCoverageEndToEnd` cover ordinary QA-owned references. Composer and QA tests cover compact citations, inline labels, the weakness register, §7 rewrites, Top Weaknesses, and the Critical Attack Tree pointer. Removing or broadening an exception requires an explicit migration justification.
 
 Failure modes to watch for in PR review:
 - A schema PR that drops `title` from `threats[].required` → bare links
   ship silently because `_load_label_index` returns empty entries.
 - An LLM author hand-formatting `[T-001 — Custom Title](#t-001)` in a
   fragment → bypasses single-source-of-truth and drifts on rerun.
-- A new ID class introduced without adding it to the linkifier → that
-  class ships as bare links on every rendered MD.
+- A new ID class introduced without assigning it to the composer or linkifier → that class ships as bare links on every rendered MD.
 
 ## §4b. Mitigation synthesis invariant
 

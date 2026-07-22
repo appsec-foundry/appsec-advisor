@@ -1323,9 +1323,9 @@ For each merged M-NNN entry:
 
 ### Cross-reference linking rule (all sections)
 
-When writing `threat-model.md`, every T-NNN and M-NNN that appears in the report falls into exactly one of two categories:
+When writing report fragments, distinguish labelled references from the compact forms owned by the composer. Do not expand a compact form merely to make every link look alike.
 
-### 1. As an ID (no label)
+### 1. As an identifier or compact citation (no label)
 
 When T-NNN or M-NNN appears in a column named **"ID"** in a table, it is an **identifier** — just the bare link, no description. The adjacent column (Title, Description, Summary, Threat Scenario) already describes the item.
 
@@ -1335,17 +1335,17 @@ When T-NNN or M-NNN appears in a column named **"ID"** in a table, it is an **id
 | [T-001](#t-001) | SQL injection — authentication bypass | ...
 ```
 
-This applies to: Top Findings table (# column — rank, not ID), Critical Attack Tree Findings pointer (T-NNN links), Attack Walkthrough summary table (ID column), Threat Register (ID column).
+This applies to ID columns, narrow summary cells, the Critical Attack Tree Findings pointer, and other compact contexts named in `agents/shared/qa-crossref-rules.md`.
 
 Also no label on: anchor definition sites (`<a id="t-001"></a>T-001`), inside Mermaid diagram blocks (node labels carry their own text), Mitigation Register headings (`### M-001 — <full title>`).
 
-### 2. As a reference (always with label)
+### 2. As an ordinary table or list reference (with label)
 
-When T-NNN or M-NNN appears in **any other column** (Mitigation, Addresses, Enables, Linked Threats, Controls in Place) or **in prose**, it is a **reference** — always with a short description.
+When T-NNN or M-NNN appears in a normal reference column (Mitigation, Addresses, Enables, Linked Threats, Controls in Place) or a reference list, include a short description.
 
-**Format (uniform reference schema):** `[X-NNN](#x-nnn) — <short label>` — applies identically to every linked entity with an anchor: findings (`F-NNN`), architectural findings (`AF-NNN`), threats (`T-NNN`), threat categories (`TH-NN`), mitigations (`M-NNN`), and components (`C-NN`). One em-dash, one space on each side, short label ≤50 chars. No legacy variants (bare space, colon, `>`, `<br/><small>`) — these are auto-repaired by QA Check 3f.
+**Default labelled format:** `[X-NNN](#x-nnn) — <short label>` for findings (`F-NNN`), architectural findings (`AF-NNN`), threats (`T-NNN`), threat categories (`TH-NN`), mitigations (`M-NNN`), and components (`C-NN`). Use one em-dash with one space on each side and keep the label to 50 characters. QA Check 3f normalizes legacy bare-space and colon variants in contexts that require labels.
 
-**In prose:** `...the hardcoded RSA private key ([T-005](#t-005) — Hardcoded RSA key) enables...`
+**In inline prose:** `...the hardcoded RSA private key [T-005](#t-005) (Hardcoded RSA key) enables...`
 
 **In table cells with a single reference:**
 ```
@@ -1377,11 +1377,11 @@ When listing linked threats outside of table cells (e.g. after `**Linked threats
 
 This applies to all `**Linked threats:**` blocks in the architecture assessment themes (2.5.3–2.5.9). The label is on its own line preceded by `**Linked threats:**` as a standalone paragraph, followed by a blank line, then the bullet list.
 
-**Consistency rule:** Each T-NNN or M-NNN MUST use the **same short label everywhere** it appears in the report. The label is a 2–5 word summary of the threat or mitigation title. Decide the label once (during Phase 9 when composing the Threat Register) and reuse it verbatim in every subsequent reference — Management Summary, Critical Attack Tree, Architecture Assessment, Assets, Attack Surface, Trust Boundaries, Controls, Threat Register (Mitigations column), and Mitigation Register (Addresses field).
+**Consistency rule:** Wherever a T-NNN or M-NNN label is shown, derive the same 2–5 word label from the canonical title. Compact contexts omit the label rather than inventing a different one.
 
 **Mitigation Register `**Addresses:**` field — special case.** The Mitigation Register lives under `## 9.` (prose/list context, not inside a table). The `**Addresses:**` line therefore MUST follow the "outside tables" rule — render every addressed threat as a Markdown bullet on its own line, each shaped `- [T-NNN](#t-NNN) — <short label>`. When exactly one threat is addressed, a single inline form `[T-NNN](#t-NNN) — <short label>` on the same line as `**Addresses:**` is acceptable. **Never** emit bare `T-NNN`, **never** emit comma-separated prose lists. The QA reviewer's Check 3c enforces this and auto-repairs violations.
 
-**Prose references — rendering exception.** When a short-label reference is embedded inside a sentence (e.g. "…the hardcoded RSA private key ([T-005](#t-005) — Hardcoded RSA key) enables…"), wrap the reference in parentheses so the reading flow is preserved. This is the only place where the "bullet list outside tables" rule is relaxed — a parenthetical short-label reference in a sentence is treated as inline.
+**Inline prose exception.** The composer renders a reference embedded in a sentence as `[X-NNN](#x-nnn) (<short label>)`, or as a compact link when the sentence already supplies the meaning. Do not turn an inline citation into a bullet list.
 
 ### Build Management Summary — MANDATORY at all depth levels
 
