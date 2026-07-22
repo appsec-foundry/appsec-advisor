@@ -21,8 +21,7 @@ Agents handle discovery and prose. Deterministic Python owns validation, renderi
 - Every structured artifact exchanged between pipeline stages or delivered to users needs a defined shape and a validation path. Use a schema for contracted artifacts. Before changing behavior, trace the producer, contract, consumer, validation, tests, and permission or cleanup impact.
 - Fix incorrect findings and report output in the plugin component that creates them: the producer, prompt, heuristic, renderer, or deterministic enforcer.
 - Do not hide a defect by patching the rendered report, weakening schemas or QA, or changing fixture expectations. Do not ship LLM-authored placeholder comments.
-- A QA autofix is a secondary backstop, not the primary fix. Add one only when an important invariant cannot be guaranteed upstream; document and test both layers.
-- Examples: fix link formatting in the composer or linkifier, unclear prose in its producing prompt, and invalid Mermaid in the template or source data. Mask sensitive values in their producer; use `scripts/secret_scan.py` only as an additional safeguard.
+- A deterministic renderer or QA autofix may own normalization only when the relevant contract assigns that responsibility to it. Otherwise, fix the upstream cause first and use a new QA autofix only as a secondary backstop for an important invariant that cannot be guaranteed reliably upstream. Document and test both layers.
 - Change report structure atomically across `data/sections-contract.yaml`, templates, schemas, producer/cell-builder, composer, QA, and tests. Trace each Jinja value to its producer, schema field, and section registration.
 
 ### Protect trust and compatibility
