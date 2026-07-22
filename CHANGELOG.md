@@ -11,21 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Thorough assessments now inspect whether explicitly named privileged and unprivileged database clients share a high-privilege principal. Opaque secret references remain review hypotheses, and the scan never writes credential values or connection strings.
-- Static auth scanning now flags password resets that rely on security-question answers and local password policies that permit fewer than eight characters. Predictable reset tokens remain covered by the existing secure-randomness checks.
+- Thorough assessments now flag explicitly named database clients that share an overly privileged account.
+- Authentication scans now detect security-question password resets and password policies that allow fewer than eight characters.
+- `ask-threat-model` can now filter findings by severity, component, and evidence state.
+- Scans of agentic applications now check Claude Code permissions and hooks for unsafe behavior.
 
 ### Changed
 
-- Large full/rebuild scans now dispatch STRIDE analysis in resumable waves of up to eight components. Set `APPSEC_STRIDE_CONCURRENCY=1..32` to tune concurrency; selected components remain in scope, and incomplete component coverage blocks report publication.
-- Stage 3 now validates the post-autofix report once and skips the QA agent for clean runs at every depth. Forced/manual semantic review remains available, while CVSS scope cleanup runs deterministically before YAML validation.
+- Large scans now analyze components in resumable batches, improving speed without sacrificing coverage.
+- Clean reports now skip redundant semantic review, reducing run time and cost.
+- Architecture and evidence checks are now faster on larger repositories.
+- Supply-chain scoring now focuses on exploitable risks and better recognizes common Python and npm safeguards.
+- Attack walkthroughs now present attacker actions in a clearer order and format technical details more consistently.
 
 ### Fixed
 
-- Full and rebuild runs now keep Stage 1, abuse verification, and report rendering on compact Thin runtime instructions; deterministic gates run through the controller instead of loading the large legacy stage bodies into Sonnet's context.
-- Orchestration now loads each post-analysis stage only when it is reached, skips the Stage-1c prompt when abuse-case verification is disabled, and keeps final security and integrity gates active on QA-skip paths.
-- Architecture coverage now reads the target source tree once per run, and standard evidence verification limits its non-Critical sample to 30 findings. Use `--evidence-verifier-cap N` to override the depth-specific limit.
-- Threat merging now preserves every folded finding's location and provenance, keeps distinct architectural categories separate, and requires an explicit shared control scope before consolidating across components.
-- Architecture coverage now confirms stored XSS only when a request field is directly persisted and that stored property reaches an unsanitized HTML sink; isolated sinks remain review hypotheses.
+- Full and rebuild scans are now more reliable on long runs without weakening final checks.
+- Evidence results are no longer lost while abuse cases are processed.
+- Merged findings now retain their locations and sources, while unrelated architectural risks remain separate.
+- Stored XSS is now reported as confirmed only when data is persisted and later reaches an unsafe HTML output.
+- Headless runs can resume after analysis and provide clearer failure details and recovery guidance.
+- Component analysis no longer runs serially by mistake, and concurrent runs no longer interfere with each other.
+- Packaged plugins now work correctly with custom namespaces in headless mode.
+- Security Architecture reports no longer contain empty control sections or broken two-factor authentication links.
+- Report validation now catches broken internal links and incomplete models, while secret masking no longer corrupts code examples.
+- Container diagrams now stay within their size limit on larger models.
 
 ## 0.5.0-beta (2026-07-18)
 
