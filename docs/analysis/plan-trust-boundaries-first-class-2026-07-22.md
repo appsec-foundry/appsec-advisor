@@ -615,9 +615,12 @@ them to invent topology.
    current dependence on undeclared `crossing_enforcement`.
 3. Add a dedicated `BOUNDARY_CANDIDATE_LIMITS` constant in
    `scripts/resolve_config.py` (`quick=2`, `standard=4`, `thorough=6`) and emit
-   the resolved value as `max_boundary_candidates_per_component`. Do not mix it
-   into `_FALLBACK_DEPTH_PARAMS`, which intentionally contains only STRIDE turn
-   budgets. The preparer imports the dedicated constant and writes eligible,
+   the resolved value as `max_boundary_candidates_per_component`. Keep it
+   separate from `resolve_config.py`'s own `DEPTH_PARAMS` and from
+   `build_stride_dispatch_manifest.py`'s `_FALLBACK_DEPTH_PARAMS`; both
+   intentionally carry only depth/QA and STRIDE turn budgets, and the latter
+   lives in the dispatch builder, not in `resolve_config.py`. The preparer
+   imports the dedicated constant and writes eligible,
    selected, and omitted IDs plus focus reasons into each context file;
    `build_threat_model_yaml.py` aggregates that audit into a declared
    `meta.boundary_selection` object in the output schema. Do not rely on
