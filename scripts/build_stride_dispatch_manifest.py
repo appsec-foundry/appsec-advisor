@@ -1117,8 +1117,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
         collapsed = len(orig_components) - len(all_components) + len(injected)
         if collapsed > 0:
             sys.stderr.write(
-                f"RECONCILE: collapsed {collapsed} duplicate same-id component "
-                "entry(ies) into their canonical card.\n"
+                f"RECONCILE: collapsed {collapsed} duplicate same-id component entry(ies) into their canonical card.\n"
             )
 
     # Seed the LLM role onto components from analyst-context / Cat-13 recon
