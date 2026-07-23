@@ -270,6 +270,7 @@ For the contributor-level path map and the tests required for each kind of chang
 - Import third-party threat models as non-authoritative context and aggregate per-repository models into cross-repository views.
 - Analyze specifications as first-class input, emitting clearly labeled design findings only for explicit insecure statements.
 - Make trust boundaries stable and directly linkable from findings, including the violated assumption and attacker impact.
+- Let users override recon's component assessment (exposure, sensitivity, type) via a `.appsec/components.yaml` overlay to parametrize STRIDE coverage — escalation-only first, de-escalation logged and surfaced.
 - Publish a packaged marketplace release after the beta.
 
 ## Related projects

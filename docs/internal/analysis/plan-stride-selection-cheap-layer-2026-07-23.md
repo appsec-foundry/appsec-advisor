@@ -112,7 +112,14 @@ the only saving available when the thin layer is off (e.g. standard monoliths).
 
 ## 6. Decisions to make
 
-### D1 — Data-store / infrastructure type-anchor  · **recommended**
+### D1 — Data-store / infrastructure type-anchor  · **DONE**
+> **Implemented.** `_is_datastore` added to `build_stride_dispatch_manifest.py`, wired into `_in_scope`
+> (standard+), `_priority` (3, crown-jewel-class), `_selection_reasons`, and the `_is_internal_only`
+> `not(...)` exclusion; tests in `test_dispatch_manifest.py`. **Deviation from the spec below:** the real
+> `.components.json` carries **no `component_type`/`type` field** (only `id/name/framework/tier/
+> deployment_zones/handles_sensitive_data`), so matching `component_type` alone would be inert. The
+> predicate matches the store signal on `id/name` (via `_component_text`) + the structured `framework`
+> and `tech_stack` engine tokens, and `component_type` too for forward-compat with recon hints.
 **Problem:** in-scope-ness of a data tier rests solely on `_is_crown_jewel` (the `handles_sensitive_data`
 flag) or `_is_exposed`. There is **no `_is_datastore` predicate**. If recon under-tags a SQL DB as
 non-sensitive *and* it sits internal, it is **dropped at `standard`** — yet SQL-injection, tampering

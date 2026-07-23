@@ -1318,6 +1318,7 @@ def test_priority_ladder_full_ordering():
     assert bm._priority(_c("f", tier="client")) == 1  # frontend
     assert bm._priority(_c("e", zones=["internet"])) == 2  # exposed
     assert bm._priority(_c("c", zones=["internal-network"], sensitive=True)) == 3  # crown-jewel
+    assert bm._priority(_c("orders-db", zones=["internal-network"])) == 3  # data-store (type anchor)
     assert bm._priority(_c("p", zones=["ci-cd-runtime"])) == 4  # ci-cd
     assert bm._priority(_c("w", zones=["internal-network"])) == 5  # internal-only
 
@@ -1488,6 +1489,39 @@ def test_is_file_upload_detects_and_guards():
     )
     for cid in ("backend-api", "load-balancer", "download-cache", "payload-router"):
         assert bm._is_file_upload(_c(cid)) is False, cid
+
+
+def test_is_datastore_detects_and_guards():
+    # id / name signals
+    assert bm._is_datastore(_c("user-store")) is True
+    assert bm._is_datastore(_c("postgres-db")) is True
+    assert bm._is_datastore(_c("svc", name="Redis Cache")) is True
+    # structured signals: framework / tech_stack / component_type (real inventory
+    # carries no `type` field — the engine lives in framework / tech_stack)
+    assert bm._is_datastore({"id": "orders", "name": "Orders", "framework": "postgresql"}) is True
+    assert bm._is_datastore({"id": "queue", "name": "Q", "tech_stack": ["RabbitMQ"]}) is True
+    assert bm._is_datastore({"id": "x", "name": "X", "component_type": "data-store"}) is True
+    # false-positive guards — bare tokens must not fire inside unrelated words
+    for cid in ("backend-api", "load-balancer", "payload-router", "dashboard-ui", "auth-service"):
+        assert bm._is_datastore(_c(cid)) is False, cid
+
+
+def test_datastore_selected_at_standard_even_when_not_sensitive_tagged():
+    """D1: an internal, NON-sensitive-tagged data-store is STRIDE-relevant (SQLi /
+    tampering / info-disclosure) and must be selected at standard — a plain
+    internal util with no store signal still drops."""
+    comps = [
+        _c("backend-api", zones=["internet"]),
+        # internal SQL DB that recon UNDER-tagged as non-sensitive (no sensitive flag)
+        _c("orders-db", zones=["prod-write-db"], tier="data"),
+        _c("plain-worker", zones=["internal-network"]),  # no store signal → internal-only
+    ]
+    selected, report = bm.select_stride_components(comps, "standard")
+    assert {c["id"] for c in selected} == {"backend-api", "orders-db"}
+    assert {e["id"] for e in report["excluded"]} == {"plain-worker"}
+    assert bm._is_internal_only(_c("orders-db", zones=["prod-write-db"])) is False
+    reasons = {s["id"]: s["reasons"] for s in report["selected"]}
+    assert any("data-store" in r for r in reasons["orders-db"])
 
 
 def test_file_upload_and_realtime_mandatory_at_standard_even_if_internal():

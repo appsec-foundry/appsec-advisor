@@ -330,6 +330,39 @@ def _is_file_upload(c: dict) -> bool:
     return bool(_FILE_UPLOAD_RE.search(_component_text(c)) or _FILE_UPLOAD_RE.search(stack))
 
 
+# Data-store / persistence / secrets / queue role. A component that stores or
+# brokers data carries STRIDE-relevant risk — SQL/NoSQL injection, tampering,
+# information disclosure, and (for secrets stores / queues) credential exposure
+# and message spoofing — REGARDLESS of the `handles_sensitive_data` flag. Recon
+# under-tagging a SQL DB as non-sensitive must NOT drop it: a type-anchor exactly
+# like _is_file_upload (CWE-434), independent of the crown-jewel flag. The real
+# .components.json carries no `component_type`/`type` field, so the store signal
+# lives in id/name (via _component_text) and the structured `framework` /
+# `tech_stack` engine tokens — component_type is matched too for forward-compat
+# with recon component-hints. Description is excluded (same over-match rule as
+# the other role predicates). Word-boundary matched so short tokens (`db`, `mq`)
+# do not fire inside unrelated words.
+_DATASTORE_RE = re.compile(
+    r"\b(store|datastore|data-?layer|data-?persistence|persistence|database|db"
+    r"|message-?queue|mq|rabbitmq|kafka|sqs|secrets?-?(?:store|manager)|vault"
+    r"|cache|redis|memcached|postgres(?:ql)?|mysql|mariadb|sqlite|mssql"
+    r"|sql-?server|oracle-?db|mongo(?:db)?|dynamo(?:db)?|cassandra)\b",
+    re.I,
+)
+
+
+def _is_datastore(c: dict) -> bool:
+    structured = " ".join(
+        str(x)
+        for x in (
+            *(c.get("tech_stack") or []),
+            c.get("framework") or "",
+            c.get("component_type") or "",
+        )
+    )
+    return bool(_DATASTORE_RE.search(_component_text(c)) or _DATASTORE_RE.search(structured))
+
+
 def _is_exposed(c: dict) -> bool:
     return bool(_zones(c) & EXPOSED_ZONES)
 
@@ -350,6 +383,7 @@ def _is_internal_only(c: dict) -> bool:
         _is_exposed(c)
         or _is_cicd(c)
         or _is_crown_jewel(c)
+        or _is_datastore(c)
         or _is_auth(c)
         or _is_frontend(c)
         or _is_llm(c)
@@ -368,8 +402,8 @@ def _priority(c: dict) -> int:
         return 2  # AI/LLM surface — OWASP LLM Top-10 risk, never drop
     if _is_exposed(c):
         return 2  # directly reachable by an external actor — never drop (cap lifts)
-    if _is_crown_jewel(c):
-        return 3
+    if _is_crown_jewel(c) or _is_datastore(c):
+        return 3  # crown-jewel / data-store — SQLi/tampering/info-disclosure, never drop
     if _is_file_upload(c) or _is_realtime(c):
         return 3  # untrusted-input entry point (upload parser / realtime channel) — never drop
     if _is_cicd(c):
@@ -391,6 +425,8 @@ def _selection_reasons(c: dict, depth: str) -> list:
         reasons.append("ci-cd / deployment (supply-chain boundary)")
     if depth != "quick" and _is_crown_jewel(c):
         reasons.append("crown-jewel (credentials/PII/payment/secrets)")
+    if depth != "quick" and _is_datastore(c) and not _is_crown_jewel(c):
+        reasons.append("data-store (SQLi/tampering/info-disclosure — type anchor, sensitive-flag-independent)")
     if depth != "quick" and _is_file_upload(c):
         reasons.append("file-upload surface (CWE-434 / zip-path traversal / XXE / parser RCE, mandatory)")
     if depth != "quick" and _is_realtime(c):
@@ -424,7 +460,7 @@ def _in_scope(c: dict, depth: str) -> bool:
         # Proven-internal / ci-cd / crown-jewel are deferred to standard+.
         return False
     # standard + thorough
-    if _is_cicd(c) or _is_crown_jewel(c) or _is_file_upload(c) or _is_realtime(c):
+    if _is_cicd(c) or _is_crown_jewel(c) or _is_datastore(c) or _is_file_upload(c) or _is_realtime(c):
         return True
     # Reachability zones present but none exposed/cicd → internal-only: thorough only.
     return depth == "thorough"
