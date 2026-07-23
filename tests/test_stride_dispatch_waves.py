@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 import stride_dispatch_waves as waves
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
 
 def _component(component_id: str) -> dict:
     return {
@@ -106,6 +108,41 @@ def test_partial_skipped_and_mismatched_results_fail_closed(tmp_path: Path, payl
     path.write_text(json.dumps(payload), encoding="utf-8")
 
     assert reason in (waves.completion_error(tmp_path, "service-01") or "")
+
+
+def _stride_component_with(cwe: str, tcid: str) -> dict:
+    """A schema-valid stride component whose sole threat carries the given
+    CWE and threat_category_id — built from the shared valid_stride fixture."""
+    data = json.loads((FIXTURES / "valid_stride.json").read_text(encoding="utf-8"))
+    data["component_id"] = "service-01"
+    data["partial"] = False
+    data["skipped_categories"] = []
+    data["threats"][0]["cwe"] = cwe
+    data["threats"][0]["threat_category_id"] = tcid
+    return data
+
+
+def test_completion_accepts_th_unclassified_when_cwe_is_mappable(tmp_path: Path) -> None:
+    """A component whose only defect is a TH-UNCLASSIFIED sentinel on a threat
+    with a taxonomy-mappable CWE is accepted — the deterministic CWE→TH backfill
+    runs BEFORE the schema gate, so the run no longer aborts on a defect it can
+    fix. The file is rewritten canonically so merge sees the resolved id."""
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(_stride_component_with("CWE-601", "TH-UNCLASSIFIED")), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    repaired = json.loads(path.read_text(encoding="utf-8"))
+    assert repaired["threats"][0]["threat_category_id"] == "TH-18"
+
+
+def test_completion_rejects_th_unclassified_when_cwe_is_unmappable(tmp_path: Path) -> None:
+    """A genuinely unmappable CWE keeps the sentinel and stays fatal — the
+    backfill must not mask real classification gaps."""
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(_stride_component_with("CWE-99999", "TH-UNCLASSIFIED")), encoding="utf-8")
+
+    reason = waves.completion_error(tmp_path, "service-01")
+    assert reason is not None and "TH-UNCLASSIFIED" in reason
 
 
 def test_plan_fingerprint_rejects_changed_manifest() -> None:

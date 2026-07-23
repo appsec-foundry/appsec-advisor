@@ -99,6 +99,27 @@ def _threat_category_id_for(t: dict) -> str | None:
     return mapping.get(cwe)
 
 
+def backfill_threat_category_id(threat: dict) -> bool:
+    """Deterministically set ``threat_category_id`` from the CWE→TH taxonomy
+    when it is missing or left as the ``TH-UNCLASSIFIED`` sentinel.
+
+    Returns ``True`` when a value was written. A genuinely unmappable CWE is
+    left untouched so downstream validation still surfaces it. The STRIDE
+    analyzer is an LLM and sometimes emits the sentinel even when the threat's
+    CWE has a deterministic mapping; this is the single backstop for that,
+    applied both here (merge) and at the per-component dispatch gate — so a
+    repairable component is never fatally rejected before merge can fix it.
+    """
+    tcid = threat.get("threat_category_id")
+    if isinstance(tcid, str) and _TH_ID_RE.match(tcid):
+        return False
+    derived = _threat_category_id_for(threat)
+    if derived:
+        threat["threat_category_id"] = derived
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # IO helpers
 # ---------------------------------------------------------------------------
@@ -229,11 +250,7 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
             # rather than trusting the LLM to apply the map it was handed.
             # If the CWE is genuinely unmappable the sentinel is left intact
             # so validation still surfaces it.
-            tcid = t.get("threat_category_id")
-            if not tcid or not _TH_ID_RE.match(str(tcid)):
-                derived = _threat_category_id_for(t)
-                if derived:
-                    t["threat_category_id"] = derived
+            backfill_threat_category_id(t)
             # M-18 (configuration-defect tail): if the source ended up as
             # `configuration-defect` and the threat has no LLM-authored
             # mitigation_title yet, stamp a review-shaped hint so the §1
