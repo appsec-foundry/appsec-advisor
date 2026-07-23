@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Standard scans now analyze internal data stores even when they are not flagged as handling sensitive data, closing a coverage gap for injection, tampering, and information-disclosure risks.
 - Large scans now analyze components in resumable batches, improving speed without sacrificing coverage.
 - Clean reports now skip redundant semantic review, reducing run time and cost.
 - Architecture and evidence checks are now faster on larger repositories.
