@@ -10961,6 +10961,28 @@ _REF_TRAILING_LOC_RE = re.compile(
 )
 
 
+_ID_IN_LINK_TEXT_RE = re.compile(r"\[([FTM]-\d+)\s*[—–-]\s*([^\]]*)\]\(#([ftm]-\d+)\)")
+
+
+def _delink_id_in_link_text(md: str) -> str:
+    """Rewrite a reference whose visible text pulls the title INTO the link —
+    ``[F-NNN — Title](#f-nnn)`` — back to the canonical ``[F-NNN](#f-nnn) — Title``
+    shape the reference-format linter (``check_reference_format._ID_IN_LINK``)
+    requires. LLM fragment authors — notably the §6 Security Architecture
+    renderer citing findings in narrative bullets — emit the id-in-link-text
+    form; normalising it deterministically here keeps the anchor intact while
+    moving the title out of the link, so link syntax is never trusted to the
+    LLM. Idempotent: a bare ``[F-NNN](#f-nnn)`` carries no in-link title and is
+    left untouched."""
+
+    def _repl(m: re.Match[str]) -> str:
+        fid, title, anchor = m.group(1), m.group(2).strip(), m.group(3)
+        link = f"[{fid}](#{anchor})"
+        return f"{link} — {title}" if title else link
+
+    return _ID_IN_LINK_TEXT_RE.sub(_repl, md)
+
+
 def _normalize_reference_locators(md: str) -> str:
     """Backtick + basename an un-backticked locator that trails a finding/
     mitigation reference. Fragment-agnostic catch-all for cross-references that
@@ -17364,6 +17386,11 @@ def render(
     # render, fragment injection, and T→F bridge, so any reference-trailing
     # `(path/file:line)` (incl. §3/§9 and MS leaderboard cells produced past the
     # per-section pass) ends up backticked + basenamed exactly once.
+    # De-link id-in-link-text references (`[F-NNN — Title](#f-nnn)`, emitted by
+    # LLM fragment authors such as the §6 SecArch renderer) to the canonical
+    # `[F-NNN](#f-nnn) — Title` FIRST, so the trailing-locator pass then sees a
+    # normal `[ID](#id) — label` tail.
+    rendered = _apply_outside_changelog(rendered, _delink_id_in_link_text)
     rendered = _apply_outside_changelog(rendered, _normalize_reference_locators)
 
     # Report-integrity manifest: certify which sections rendered and which
