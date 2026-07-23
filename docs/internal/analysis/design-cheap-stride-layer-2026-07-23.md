@@ -9,29 +9,34 @@ coverage** — same Sonnet model throughout.
 
 ## 1. Cost model (what "cheap" can actually move)
 
-Per dispatched component the cost is:
+The total cost is:
 
 ```
-cost_i  ≈  F  +  V_i
+Total  ≈  D  +  Σ (F + V_i)
 ```
 
+- **D — dispatch-orchestration overhead.** The single large Stage-1 analyst turn that carries the
+  Phase 1–8 context (~180k tokens) and composes/dispatches the STRIDE fan-out. Paid **once per run**
+  (per wave), independent of component count. At standard tier this turn is **latency-heavy and
+  cache-cold-prone** — see constraint 5. Not a per-component cost at all.
 - **F — fixed per-dispatch overhead.** Skill/agent system prompt + injected context
   (`prior-findings`, `known-threats`, `cross-repo`, `requirements-violations`, `relevant-actors`,
   `trust_boundaries`, taxonomy slice) + the reserve baked into the budget floor
-  (`_MANDATORY_CONTEXT_READS = 8` + `_WRITE_AND_LOGGING_RESERVE = 10`). Paid **once per dispatch**,
-  independent of depth.
+  (`_MANDATORY_CONTEXT_READS = 8` + `_WRITE_AND_LOGGING_RESERVE = 10`). Paid **once per dispatched
+  component**, independent of depth.
 - **V_i — variable analysis.** Turns actually *used*, bounded above by `max_turns`. `max_turns` is a
   **ceiling, not a consumption figure**: a component that finishes early spends less than its budget.
 
-Total ≈ `Σ (F + V_i)`. Three distinct knobs fall out — and they are **not** interchangeable:
+Four distinct knobs fall out — and they are **not** interchangeable:
 
 | Knob | Attacks | Helps when |
 |---|---|---|
-| Lower `max_turns` (turn-tiering) | V | the component is *turn-bound* (hits its ceiling) |
+| Shrink / chunk the Stage-1 dispatch context | D | dispatch stalls / cold re-prefill dominate (see #5) |
 | Fewer F-payments (batching K comps/dispatch) | F × N | N is large |
 | Leaner context/prompt for low-value comps | F | a low-value population exists |
+| Lower `max_turns` (turn-tiering) | V | the component is *turn-bound* (hits its ceiling) |
 
-## 2. Measured constraints (2026-07-23, `insecure-large-spring-app`)
+## 2. Measured / observed constraints (2026-07-23, Spring-app runs)
 
 These kill the obvious levers before any code is written:
 
@@ -51,6 +56,15 @@ These kill the obvious levers before any code is written:
    `ESTIMATED_THREAT_COUNT=low` → "skip optional verification greps; skip LLM/Supply-Chain
    sub-blocks; finish 6 STRIDE letters in ≤6 turns." Variable cost for thin components is *already*
    trimmed.
+5. **The STRIDE-dispatch turn (D) is itself a large, recurring cost — observed 3× (`observed`).**
+   Every full-run attempt (once on `insecure-large-spring-app`, twice on `insecure-spring-app`)
+   **stalled 9–11+ min at the Phase 8→9 boundary** — the single Stage-1 analyst turn that composes
+   the fan-out — *before any component was analysed*. The watchdog attributes it to standard-tier
+   API latency, and warns explicitly: **a wait past the 5-min cache TTL forces the recovered turn to
+   re-prefill the whole ~180k-token context COLD** — a token spike on top of the wall-clock loss. So
+   a meaningful slice of "cost per run" lives in the monolithic dispatch turn, **not** in the
+   analysis. (This is also why the quantitative F/V measurement in §5 could not be completed — the
+   blocker is itself the finding.)
 
 **Where a genuinely large, genuinely low-value population actually exists:** at **`thorough`** (the
 internal/transitive tail is selected) and in true **microservice estates** (many small deployable
@@ -64,6 +78,15 @@ units). Not in standard-depth monoliths.
 | **2. Batch the proven-internal tail** (K comps/dispatch, shared budget) | F × N | high at large N | med (isolation loss, stall) | high | thorough / microservice estates | **Primary** |
 | **3. Leaner F for low-value comps** (drop cross-repo / reqs / partial taxonomy; lean prompt) | F | modest per comp | med (less context → weaker) | med | thorough tail | **Secondary** |
 | **4. Do nothing at standard** | — | — | none | none | standard monoliths | **Accept as-is** |
+| **5. Shrink / chunk the Stage-1 dispatch context** | D | high (cuts stall + cold re-prefill) | low–med | med | every depth, every repo | **Co-primary** |
+
+**Option 5 detail.** The one cost that showed up empirically (constraint 5) is the monolithic Stage-1
+dispatch turn, not per-component analysis. Reducing what that turn must carry when it composes the
+fan-out — e.g. hand the dispatcher a compact manifest/index instead of the full Phase 1–8 narrative,
+or split the fan-out compose into smaller turns so no single turn holds ~180k tokens — attacks D
+directly and shrinks the >5-min-stall / cold-re-prefill exposure. It applies at **every** depth and
+repo shape (unlike batching, whose population only exists at thorough/microservices), which makes it
+the broadest-reach lever we have evidence for.
 
 **Option 2 detail + caution.** Batching amortises F: one agent analyses K low-value components,
 paying F once instead of K times — the only lever that scales against the dominant term at large N.
@@ -80,22 +103,37 @@ for cost. The empty light-tail is a *correct* consequence of a conservative orde
 ## 4. Recommendation
 
 1. **Drop turn-tiering as the lever.** It targets an empty population and a ceiling, not spend.
-2. **Re-aim the cheap layer at `thorough` (and large microservice inventories):** batch
-   `_is_internal_only` components into bounded, combined-budget dispatches (Option 2), keeping every
+2. **Attack the dispatch turn D first (Option 5)** — it is the only cost the runs actually
+   *demonstrated* (three 9–11-min stalls + cold re-prefill), and it applies at every depth and repo
+   shape, including the standard-depth monolith where batching has no population. Shrink/chunk what
+   the Stage-1 fan-out turn carries. Broadest reach for the evidence we have.
+3. **Batching (Option 2) as the large-inventory lever** at `thorough` / microservice estates: batch
+   `_is_internal_only` components into bounded, combined-budget dispatches, keeping every
    positively-selected unit (crown-jewel/exposed/auth/frontend/llm/ci-cd) in its own deep dispatch.
-   This is the lever the original proposal explicitly deferred — and the evidence says it is the
-   *only* one with real leverage.
-3. **Lean-F (Option 3) as a cheap add-on** once batching exists; reuse the existing
+   The original proposal deferred this; it is the lever that scales with N — but only where the tail
+   exists.
+4. **Lean-F (Option 3) as a cheap add-on** once batching exists; reuse the existing
    `ESTIMATED_THREAT_COUNT=low` pacing rather than inventing a new tier.
-4. **Leave standard-depth monoliths alone** — recon coarse-segmentation + ceiling + waves already
-   bound their cost.
+5. **Leave standard-depth monoliths' analysis alone** — recon coarse-segmentation + ceiling + waves
+   already bound the *analysis* cost; the win there is D (Option 5), not the fan-out.
 
 ## 5. The measurement still missing
 
 Choosing batching over turn-tiering is directionally settled by the cost model + the empty-population
-finding. The **magnitude** (how large is F relative to V?) is still unmeasured — both 2026-07-23 runs
-were aborted before STRIDE completed, so there is no `turns_used`-vs-budget data. Before building
-Option 2, capture it from **one completed `thorough` run** on a multi-component repo:
-per-component `turns_used` (from `.agent-run.log` STEP_END counts) vs `max_turns` (manifest), plus the
-per-dispatch fixed token count. If F ≫ V on the tail → batching wins decisively; if V dominates → even
-batching's headroom is small and the honest answer is option 4 everywhere.
+finding. The **magnitude** (how large is F relative to V?) is still unmeasured. It was **attempted
+four times on 2026-07-23** and never reached a completed STRIDE fan-out — blocked in turn by a mode
+mixup (incremental reused a prior baseline; fixed with `--full`), a hit account session limit, and
+finally — twice — the **dispatch stall of constraint 5** (the run sat 11+ min at Phase 8→9 and never
+dispatched). That the F/V probe keeps dying at the dispatch turn is itself corroboration that D, not
+per-component analysis, is where the time goes.
+
+To capture F/V when a run does complete: per-component `turns_used` (pair `.agent-run.log`
+STEP_START/STEP_END by `[<component-id>]`, or count tool-call events per `AGENT_SPAWN`→`COMPONENT_ID`
+session) vs `max_turns` (manifest), plus the per-dispatch fixed token count and the Stage-1 dispatch
+turn's tokens. If F ≫ V on the tail → batching wins; if V dominates → even batching's headroom is
+small. Either way, D (Option 5) is already justified by the observed stalls independent of this probe.
+
+> En route, verifying the selection surfaced and fixed a real bug (`ea623c4`): off-vocabulary
+> `deployment_zones` (`application-zone`/`data-zone`/`build-zone`) matched no zone set, so the zonal
+> exposure/ci-cd signal was silently inert and off-vocab components were mis-read as proven-internal.
+> Not a cheap-STRIDE lever, but it was corrupting the very selection this analysis reads.
