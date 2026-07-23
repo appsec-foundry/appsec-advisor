@@ -96,6 +96,12 @@ try:
 except Exception:  # pragma: no cover
     _PROGRESS_WEIGHTS = None  # type: ignore[assignment]
 
+# The weight table ends at the last Stage-1 phase; Stage-2 (render/compose/QA/
+# repair) is unmodeled, so the phase-weight percentage must never assert a full
+# 100 while a run is still in Stage-2. Cap the finalization region here — a true
+# 100 would require Stage-2 to be weighted and to emit its own checkpoints.
+_FINALIZATION_CAP_PCT = 99
+
 
 _LOG_NAME = ".agent-run.log"
 _HOOK_LOG_NAME = ".hook-events.log"
@@ -578,12 +584,16 @@ def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int
     if total <= 0:
         return None
     phase_done = re.search(r"status=completed", text) is not None
-    # Terminal checkpoint — the last phase reported completed; saturate to 100
-    # rather than the 96% the weights imply.
-    if phase_done and pos >= max(weights):
-        return 100, token
     done = sum(w for p, w in weights.items() if (p <= pos if phase_done else p < pos))
     pct = max(0, min(100, round(100 * done / total)))
+    # Finalization region: phase 11 (max weight) reported completed, or any
+    # non-numeric Stage-2/repair token (pos → 99). The weight table stops at
+    # Stage 1, so the raw sum saturates to 100 while Stage-2 render + QA are
+    # still running — which read as "done" during a ~5-min render + QA on the
+    # 2026-07-23 juice-shop run. Cap below 100 so the bar never claims completion
+    # before the run actually ends; the watchdog exiting is the true done signal.
+    if pos >= max(weights):
+        pct = min(pct, _FINALIZATION_CAP_PCT)
     return pct, token
 
 
