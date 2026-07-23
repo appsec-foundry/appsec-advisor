@@ -127,7 +127,10 @@ risk anchor exactly like the existing `_is_file_upload` (CWE-434) anchor.
 - Tests: an internal, non-sensitive-tagged `data-store` is selected at `standard`; a plain internal
   util still drops.
 
-### D2 — Count-dependent internal handling (threshold N)  · **decide**
+### D2 — Count-dependent internal handling (threshold N)  · **decide · reframed by D5**
+> With D5 the internal tail is **screened, not dropped**, so D2 no longer decides *whether* internal
+> is covered — only whether, above `N`, the screening tail is additionally batched (D3) vs. run as
+> individual screening dispatches. Keep this section for the threshold; read it through D5.
 **Today:** internal-only is dropped at `standard` **unconditionally** — 5 components or 40, the 2
 internal ones are skipped. At small N the saving is ~zero and it only creates blind spots.
 **Option:** below a small threshold (e.g. `N ≤ 10`) include the internal tail even at `standard`
@@ -137,10 +140,10 @@ per-component `_in_scope`.
 **Trade-off:** coverage vs. a small cost bump at small inventories — err toward coverage, since the
 cost there is trivial. This is the "activation threshold N" the original proposal left open.
 
-### D3 — Batch the internal tail (thin layer)  · **large-inventory only**
-Where Gate 1 passes (thorough / microservice estates with ≥ ~4 internal): batch `_is_internal_only`
-components, K small, combined `max_turns ≥ Σ footprint floors`, per-component `.stride-<id>.json`
-output. **Caution:** batching is the controlled form of `bug_stride_inline_shortcut` (collapsed
+### D3 — Batch the internal tail (thin layer)  · **large-inventory only · batches the D5 screening tail**
+Where Gate 1 passes (thorough / microservice estates with ≥ ~4 internal): batch the **D5
+screening-scope** `_is_internal_only` components, K small, combined `max_turns ≥ Σ footprint floors`,
+per-component `.stride-<id>.json` output. **Caution:** batching is the controlled form of `bug_stride_inline_shortcut` (collapsed
 context → stall) — bound K, isolate output, never batch the earned/deep set.
 
 ### D4 — Reduce dispatch overhead D  · **broadest reach**
@@ -148,6 +151,33 @@ Shrink/chunk what the Stage-1 fan-out turn carries (compact manifest/index inste
 Phase 1–8 narrative; or split the compose into smaller turns so no single turn holds ~180k tokens).
 Applies at every depth/repo, including the standard monolith where D3 has no population. Justified
 independently by the three observed stalls.
+
+### D5 — STRIDE **scope ladder** (graceful degradation instead of select-or-drop)  · **recommended; reframes D2/D3**
+**Today it is binary:** selected → full STRIDE; not selected → nothing. But a reduced-scope STRIDE
+**already exists** — `ESTIMATED_THREAT_COUNT=low` (from `classify_component`) makes the analyzer do
+**all six STRIDE letters in ≤6 turns**, skipping optional verification greps + LLM/Supply-Chain
+sub-blocks, reading only `FOCUS_PATHS` (`agents/appsec-stride-analyzer.md`). Drive that scope by the
+**risk tier** and replace "drop internal" with "screen internal":
+
+| Scope | Tier | What runs |
+|---|---|---|
+| **Deep** | exposed / crown-jewel / data-store (prio 0–3) | 6 categories + verification + LLM/SC sub-blocks, full budget |
+| **Standard** | ci-cd (prio 4) | 6 categories, normal budget |
+| **Screening** | internal-only (prio 5) | 6 categories, ≤6 turns, no sub-blocks, `FOCUS_PATHS` only |
+| **Skip** | no signal + trivial | — |
+
+**Hard constraint:** all **six STRIDE categories stay in every scope** — dropping categories loses
+threats (rejected). "Scope" = analysis *depth per category*, never fewer categories.
+
+**Effect:**
+- Internal is **screened, not dropped** → no whole-component blind spot, at ~`F` + minimal `V` cost.
+- **Subsumes D2:** no binary drop; small vs. large `N` differ only in whether the screening tail is
+  additionally *batched* (D3), not in whether it is covered.
+- **Reframes D3:** batching becomes "batch the *screening-scope* components", not "batch the dropped
+  tail".
+- Implementation: map tier → `ESTIMATED_THREAT_COUNT`/scope in `classify_component` /
+  `build_stride_dispatch_manifest`; the analyzer already honours the low/medium/high scope. Keep the
+  Deep-tier floor (crown-jewel/exposed/data-store never fall to Screening).
 
 ### Rejected — turn-tiering by priority
 Empty population (finding 1) + ceiling ≠ spend (finding 3). Do not build. Do **not** reorder
