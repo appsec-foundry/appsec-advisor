@@ -1,9 +1,82 @@
 # Proposal — security-priority STRIDE depth tiering (standard depth, large inventories)
 
-**Status:** design, not started. Author decision needed on the three open parameters below.
+**Status:** design **blocked** by the 2026-07-23 baseline measurement below — the Light tier has
+no population at `standard`. Author decision needed before proceeding (supersedes the three open
+parameters).
 **Goal:** cover repos with many components (30–50+) at `standard` depth without linear
 cost blow-up, by spending analysis effort proportional to a component's security value —
 **same Sonnet model throughout, no model downgrade.**
+
+---
+
+## Measurement result (2026-07-23) — the Light tier has no population at `standard`
+
+A baseline `standard` run was started against `insecure-large-spring-app` (88 Java files) to size
+the tail, then **aborted at the STRIDE-selection checkpoint** (cheap, pre-dispatch) because the
+selection already refutes the design's core assumption:
+
+- Recon yields **5 components total** (`.components.json`), not 30–50; `excluded=0`, `ceiling` (10)
+  not reached, `lifted=false`. This repo is not a large-inventory case at all.
+- All 5 selected are **priority 0–3** (1 auth · 1 frontend · 3 crown-jewel), footprint-floored to
+  24–48 turns. **Zero priority 4–5** (ci-cd / internal-only) — the exact set the Light tier
+  targets is empty.
+
+This is not a quirk of the repo. At `standard` depth the internal / transitively-reachable tail
+(priority 5) is **by design never selected**: `_selection_reasons` adds "transitively reachable"
+only when `depth == "thorough"`. Therefore:
+
+> **The two gates do not overlap on the population that matters.** The Light tier's named
+> population (internal-only / transitive, priority 5) exists **only at `thorough`**, but the tier
+> is gated to `standard`. At `standard` the tier can touch at most **ci-cd (priority 4)** — never
+> the internal tail — because standard-depth selection is already a security filter that drops the
+> tail.
+
+**Consequence for the thesis.** At `standard`, a 30–50-component inventory is 30–50
+*positively-selected* components (auth/frontend/exposed/llm/crown-jewel/upload/realtime/ci-cd) —
+all Deep or Standard tier, none Light. Turn-tiering saves little there; the lever that scales with
+such an inventory is the **fixed per-dispatch overhead × N** (≥18-turn reserve —
+`_MANDATORY_CONTEXT_READS=8` + `_WRITE_AND_LOGGING_RESERVE=10` — plus system/context per agent),
+which only **batching** (explicitly out-of-scope here) reduces.
+
+**Author decision now required (supersedes open params 1–3):**
+- **(a)** Move the Light gate to `thorough`, where the tail exists — contradicts "thorough keeps
+  everything Deep"; resolve that contradiction first.
+- **(b)** Redefine the standard-depth Light population to what is actually selectable (ci-cd,
+  and/or large-but-lower-value attack surface) — accepting the risk of under-budgeting attack
+  surface.
+- **(c)** Reframe the proposal around **batching / fixed-overhead** as the primary economic lever
+  for standard-depth large inventories, with turn-tiering as a secondary refinement.
+
+A real large-inventory measurement (turns_used vs. budget) still needs either a genuinely larger
+repo or a `thorough` run — `insecure-large-spring-app` at `standard` cannot exercise it.
+
+### Follow-up run (2026-07-23, same repo re-segmented to 8 components)
+
+The repo was re-shaped to yield more deployable units. Recon then produced **8** components
+including a `data-tier` (data-zone) and a `ci-cd-pipeline` (build-zone) — natural Light-tier
+candidates. The actual selection was still:
+
+```
+selected=8  excluded=0  lifted=False  ceiling=10
+priority tally: {0: 1, 3: 7}      Light-tier candidates (prio 4/5): 0
+```
+
+**Root cause — the Light tier is structurally near-empty regardless of depth or component count.**
+`_is_crown_jewel(c) = bool(c["handles_sensitive_data"])`, and recon tags sensitive data broadly
+(here 8/8). In `_priority`, **crown-jewel (3) is evaluated *before* ci-cd (4) and internal (5)**, so
+any component touching secrets/PII — *including the ci-cd pipeline (holds secrets) and the data
+tier* — resolves to priority 3, never 4/5. For the Light tier to have a population a component must
+be **both** low-value **and** `handles_sensitive_data=False`, which the ci-cd/data/internal tail
+rarely is. This is a second, independent reason (on top of the standard-vs-thorough gate above) that
+turn-tiering the "light tail" has almost nothing to act on in real repos — reinforcing option **(c)**:
+the standard-depth economic lever is fixed-overhead / batching, not per-component turn-tiering.
+
+> Aside — a real bug surfaced while verifying this run: the analyst emitted off-vocabulary
+> `deployment_zones` (`application-zone`/`data-zone`/`build-zone`) that matched no zone set, so the
+> zonal exposure/ci-cd classification was silently inert (a Spring web API was not flagged
+> `internet`-exposed; ci-cd was only caught by a text-hint). Fixed separately in
+> `build_stride_dispatch_manifest.py` (off-vocab zones now fail-safe to exposure-unknown + a
+> `ZONE_DRIFT` warning) and the recon prompt (canonical-zone enumeration). Not part of this proposal.
 
 ---
 
