@@ -671,9 +671,7 @@ def _evaluate_hard_rule(
     }
 
 
-def _evaluate_db_principal_separation_rule(
-    assessment_depth: str, db_separation: dict | None
-) -> dict:
+def _evaluate_db_principal_separation_rule(assessment_depth: str, db_separation: dict | None) -> dict:
     """Translate the thorough-only DB separation sidecar into one rule verdict.
 
     The sidecar is not consulted below thorough depth, including when a stale
@@ -697,6 +695,7 @@ def _evaluate_db_principal_separation_rule(
             "evidence": [],
             "skip_reason": "database principal separation sidecar is unavailable",
         }
+
     def combined_evidence(records: list[dict]) -> list[dict]:
         """Keep this architecture rule to one finding, not one per principal.
 
@@ -857,9 +856,7 @@ def _evaluate_stored_xss_rule(
         if not _UNSAFE_HTML_SINK.search(line) or _SINK_SANITIZER.search(line):
             continue
         for model, field in persisted:
-            field_ref = re.compile(
-                rf"(?i)\b(?P<object>[A-Za-z_][A-Za-z0-9_]*)\.[ \t]*{re.escape(field)}\b"
-            )
+            field_ref = re.compile(rf"(?i)\b(?P<object>[A-Za-z_][A-Za-z0-9_]*)\.[ \t]*{re.escape(field)}\b")
             field_match = field_ref.search(line)
             if field_match and field_match.group("object").casefold() == model and (model, field) not in sinks:
                 sinks[(model, field)] = (

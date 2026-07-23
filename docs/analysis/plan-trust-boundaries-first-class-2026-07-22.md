@@ -40,6 +40,13 @@ attack path, or treat an unknown control as an absent control. Existing,
 independently evidenced rating rules such as `architectural_violation` remain
 separate and unchanged.
 
+Trust-boundary enrichment is an optional, best-effort architecture aid. It must
+not make the core STRIDE assessment materially more expensive, consume an
+additional analyzer turn, expand an incremental STRIDE dispatch set, trigger a
+retry, or block an otherwise valid report. When the economy gate below cannot
+be met, ship normalization, stable IDs, and the deterministic catalogue without
+analyzer-facing boundary contexts or `boundary_refs[]`.
+
 ## Decisions
 
 | Question | Decision | Reason |
@@ -51,18 +58,21 @@ separate and unchanged.
 | Where is the documentation shown? | A compact `### Trust Boundaries` subsection inside §1 plus boundary links on finding cards. | §2.x Trust Boundaries is forbidden and the old numbered §6 intentionally remains absent. The §1 view is visible without restoring duplicated sections. |
 | Show boundaries in Figure 1? | Only resolved, confirmed external-entry IDs may be appended to the existing global internet-exposure legend text. No new nodes, arrows, subgraphs, or layout rules. | This exposes the highest-value topological boundaries without turning the executive figure into an incomplete topology engine. Internal, inferred, and outbound boundaries remain in §1/§2 and machine output. |
 | Allow repository declarations? | Yes, through optional `.appsec/trust-boundaries.yaml`; declarations add or clarify boundaries but cannot suppress detected rows, claim a control is effective, or affect ratings. | Deployment and tenancy intent is often not provable from source. A strict data-only input supplies that truth without becoming an instruction or risk-policy channel. |
+| May boundary drift expand incremental analysis? | No. Boundary-only catalogue, declaration, ranking, or context changes recompose deterministic outputs but never add a component to the STRIDE dispatch set. | Boundary links are optional enrichment. Paying for source-clean component analysis solely to refresh them is disproportionate; a later source-triggered, full, or rebuild run refreshes the links. |
+| What is the runtime cost contract? | No new agent calls, no extra analyzer model turn, unchanged full/rebuild component dispatch count, zero STRIDE dispatches for a boundary-only incremental change, and no more than 5% measured API-equivalent cost growth at the Milestone-2 rollout gate. | Structural gates prevent nonlinear retry/redispatch costs; the measured gate catches prompt and cache growth that call-count checks miss. |
 
 ## Review verdict and complexity budget
 
-The design is useful only as a staged change. It is **low runtime complexity**
-(no new agent, category, rating pass, or unbounded prompt) but **medium-high
-implementation complexity** because a public cross-reference touches several
-schemas and deterministic consumers.
+The design is useful only as a staged change. It targets **low runtime
+complexity** (no new agent, category, rating pass, unbounded prompt, analyzer
+turn, or incremental fan-out) but has **medium-high implementation complexity**
+because a public cross-reference touches several schemas and deterministic
+consumers. Low runtime complexity is an acceptance condition, not an assumption.
 
 | Scope | Value | Implementation complexity | Decision |
 |---|---|---|---|
 | Contract normalization, endpoint resolution, SVG correctness | Removes current drift and false exposure inference even without finding links. | Medium | Required foundation. |
-| Stable IDs and bounded candidate contexts | Makes later links auditable while capping every analyzer at 2/4/6 rows. | Medium | Implement with the foundation through one shared helper. |
+| Stable IDs and bounded candidate contexts | Makes later links auditable while capping every analyzer at 2/4/6 rows and batching the optional read into its existing Step-1 context turn. | Medium | Implement with the foundation through one shared helper. |
 | Optional repository declarations | Adds deployment/ownership truth that source analysis cannot reliably infer. | Medium because provenance, conflicts, and identity precedence must be deterministic. | Include after normalization, before finding links. |
 | Evidence-backed `boundary_refs[]` | Improves finding explanation and remediation scope. | Medium-high because merge/carry-forward validation is required. | Experimental milestone with stop/go gate. |
 | §1 catalogue and finding-card row | Makes successful references useful to readers. | Medium due sections-contract, renderer, ToC, QA, and escaping. | Implement only after the reference-quality gate passes. |
@@ -369,9 +379,13 @@ mean the boundary is safe.
 
 The 2/4/6 values are initial operational defaults and must be calibrated in the
 Milestone-2 replay, but `thorough` must not exceed six without a separate
-evidence-backed design change. Boundary selection creates no new agent calls
-and no extra STRIDE categories; it adds one bounded context read to agents that
-the existing component selector already dispatches.
+evidence-backed design change. Boundary selection creates no new agent calls,
+no extra STRIDE categories, and no additional model turn. A non-empty boundary
+file is read in parallel with the analyzer's other Step-1 context files in the
+same assistant turn. When no candidate is selected, the manifest uses `none`
+and the analyzer performs no boundary read. If the 2/4/6 caps do not pass the
+cost gate, calibrate them downward; never raise them to make the feature appear
+more useful.
 
 ## Verified risks and required controls
 
@@ -385,10 +399,10 @@ the existing component selector already dispatches.
 | Public `tb-N` references churn or are reused. | Phase 7 says IDs are LLM-chosen; `reserve_ids.py` has no boundary ID type; `baseline_state.py` persists only T/M high-watermarks. Multiple integrations may share one endpoint pair. | Capture the prior canonical catalogue before the sidecar is overwritten; persist `next_trust_boundary_id` in the baseline; match declaration key, compatible prior ID, endpoint+name, then unique endpoint; allocate only from the high-watermark. `--rebuild` deliberately resets both catalogue and counter. | A rename among several boundaries sharing endpoints may intentionally receive a new ID rather than risk a wrong match. |
 | Contract drift produces write-only fields again. | Fragment schema, Phase-7 examples, output schema, dispatch consumer, query tool, and legacy pregenerator read different field sets. | Land producer, both schemas, normalizer, consumers, Python validation, permissions, and tests atomically; reject unknown canonical properties; maintain a contract matrix in schema invariants. | Legacy inputs remain a compatibility surface until their migration window closes. |
 | Untrusted fields break prompts/Markdown or steer file access. | Repository/imported context is untrusted; the proposed catalogue would newly render boundary names/assumptions and expose evidence paths to STRIDE. The current sanitizer runs after canonical YAML construction—too late for dispatch. | Sanitize name/assumption during normalization, canonicalize evidence paths under the target repo, reject traversal/URLs, treat context files as untrusted data, and escape pipes/HTML/anchors in the renderer. Boundary strings/paths never determine commands or write targets. Keep the later sanitizer as a backstop and add injection-shaped fixtures. | Semantically misleading but syntactically safe prose still requires confidence/evidence review. |
-| Prompt size and cache stability regress. | `TRUST_BOUNDARIES` is currently an inline Group-B dispatch scalar and has no dedicated size budget. | Apply the depth-aware 2/4/6 candidate cap, write validated `.dispatch-context/<component>/trust-boundaries.json` files, and pass only their Group-C paths. Keep records compact, measure file/manifest growth, and reject oversized selected records rather than silently truncating them. | Each analyzer performs one additional bounded context read. |
+| Prompt size, cache stability, or turn count regresses. | `TRUST_BOUNDARIES` is currently an inline Group-B dispatch scalar and has no dedicated size budget. The analyzer already reads several Group-C files in Step 1, so a separately sequenced boundary read would add a full model round-trip and re-read resident context. | Apply the depth-aware 2/4/6 candidate cap, write validated `.dispatch-context/<component>/trust-boundaries.json` files only for non-empty selections, pass only their Group-C paths, and batch all non-`none` Step-1 context reads in one parallel tool-call turn. Keep records compact, measure file/manifest/cache growth, and omit an oversized optional context with an audited reason rather than truncating it or blocking STRIDE. | The bounded tool result still grows resident context; the rollout cost gate measures that residual. |
 | Boundary focus omits a useful internal crossing. | The requested hard cap intentionally reduces breadth, and focus classification consumes producer-authored `kind`/confidence plus deterministic endpoint/component facts. | Prefer prior verified gaps, explicit external entries, evidenced identity/privilege transitions, and sensitive data-origin transitions; disclose every omitted ID/reason and keep it in YAML/query. Never interpret omission as safety. | A catalog-only or over-budget boundary can be missed by STRIDE; this is the explicit trade-off for bounded complexity. |
-| Late component reconciliation leaves a component without boundary context. | `build_stride_dispatch_manifest.py` can inject security-relevant components after the Phase-3/Phase-7 inventory has been authored. | Normalize the catalogue after Phase 7, but generate component contexts only after the final component reconciliation immediately before dispatch. Use the same idempotent helper in parallel and serial paths. | A newly injected component may have no modeled adjacent boundary; it receives a valid empty context plus an audited reason, never another component's context. |
-| Incremental mode misses boundary-input drift. | The baseline currently hashes STRIDE files and actor slices, but no trust-boundary declaration or component context. A source-clean run could therefore reuse analysis after `.appsec/trust-boundaries.yaml` changes. | Normalize on every full/incremental run, fingerprint declaration inputs, persist per-component boundary-context hashes, and add changed context components to incremental STRIDE re-dispatch. Catalogue-only changes still force canonical recomposition but not unrelated analyzer work. | A ranking change can legitimately re-dispatch a component even when its source is unchanged. |
+| Late component reconciliation leaves a component without boundary context. | `build_stride_dispatch_manifest.py` can inject security-relevant components after the Phase-3/Phase-7 inventory has been authored. | Normalize the catalogue after Phase 7, but generate component contexts only after the final component reconciliation immediately before dispatch. Use the same idempotent helper in parallel and serial paths. | A newly injected component may have no modeled adjacent boundary; its manifest uses `none` plus an audited reason, never another component's context. |
+| Boundary input drift creates disproportionate incremental spend. | The current actor-slice delta path proves that a context-hash change can re-dispatch a source-clean component. Applying the same rule to optional boundary context could turn one central declaration or ranking change into a near-full STRIDE run. | Normalize on every full/incremental run and fingerprint declaration inputs for deterministic recomposition, but never add a component to `SECURITY_RELEVANT_COMPONENTS` or the STRIDE dispatch set because of a boundary-only change. Generate contexts only for components already selected for fresh STRIDE analysis. Revalidate or drop carried refs deterministically; otherwise defer link enrichment until a later source-triggered, full, or rebuild run. | Boundary links may lag catalogue changes, which is acceptable for optional enrichment and must be disclosed in the selection audit. |
 | A post-build component rewrite invalidates a reference. | `auto_emitter_pass.sh` runs `reclassify_components.py` after canonical YAML validation and can change both YAML and `.threats-merged.json`. | Make reclassification reconcile `origin_component_id` and adjacency atomically: retain only if the resolved boundary is adjacent to the new component and evidence survives; otherwise remove the optional ref with an audited warning. Run the boundary integrity check again after all mutations. | A corrected component can legitimately lose optional traceability; the finding itself remains. |
 | Current selection drops a valid carried reference. | The prompt cap is 2/4/6, while one component may have more prior verified relations than fit in a new analyzer context. | Apply candidate membership only to refs newly authored in the current dispatch. Validate carried refs by existence, resolved/confirmed status, adjacency, origin, and surviving evidence; selection is a prompt budget, not a relation-retention policy. | A carried ref may not be re-reviewed in the current shallow run; its prior verification state stays explicit. |
 | Legacy incomplete boundaries affect reachability. | `figure1_svg.py` currently treats an empty `from` value as external; the fragment schema requires only `id` and `name`. | Classify resolution with one shared endpoint predicate; exclude unresolved legacy records from adjacency, exposure, links, and other semantic consumers. Change exposure derivation to require explicit `from: external`. | Old unresolved records remain documentation-only until a future scan resolves them. |
@@ -462,7 +476,8 @@ Goal: produce one trustworthy boundary array before STRIDE dispatch.
      validation; and
    - `contexts`, invoked immediately before STRIDE dispatch after the final
      component reconciliation, owns focus selection and bounded files under the
-     existing `.dispatch-context/` directory.
+     existing `.dispatch-context/` directory for components already selected
+     for fresh STRIDE analysis. It must not expand that selection.
    The parallel manifest builder calls the shared `contexts` function after its
    deterministic component injections. The serial Phase-9 path invokes the
    same CLI operation. Do not implement a second selection algorithm in either
@@ -497,9 +512,11 @@ Goal: produce one trustworthy boundary array before STRIDE dispatch.
    highest row retires; `--rebuild` is the deliberate reset that permits
    reassignment. Bound the numeric suffix and add validation plus three-run
    retirement tests.
-   In the same baseline migration, add a declaration-input fingerprint and a
-   map of per-component boundary-context hashes. Preserve them through normal
-   cleanup and updates; `--rebuild` remains the intentional reset.
+   In the same baseline migration, add a declaration-input fingerprint so a
+   declaration-only change can trigger deterministic normalization and
+   recomposition. Do not add per-component boundary-context hashes to the
+   incremental dispatch decision; boundary drift is not an authorization to
+   spend STRIDE budget on a source-clean component.
 8. Treat LLM-authored IDs as provisional input. Reject duplicate final IDs,
    but allow multiple named external integrations to touch the same component;
    do not collapse Stripe, GitHub, and another external peer merely because all
@@ -550,10 +567,10 @@ Goal: produce one trustworthy boundary array before STRIDE dispatch.
     pregenerator paths must use normalized fields or remain explicitly
     display-only with regression coverage.
 14. Register the new command/path permissions in
-    `data/required-permissions.yaml`, place the context-hash manifest under the
-    existing `.dispatch-context/` runtime directory, and update the cleanup
-    contract if its current directory rule does not already cover the file.
-    Extend `tests/test_check_permissions.py` and
+    `data/required-permissions.yaml`, keep the selection audit and any non-empty
+    context files under the existing `.dispatch-context/` runtime directory,
+    and update the cleanup contract if its current directory rule does not
+    already cover them. Extend `tests/test_check_permissions.py` and
     `tests/test_runtime_cleanup.py`.
 
 Acceptance criteria:
@@ -566,9 +583,10 @@ Acceptance criteria:
   reuses the retired ID; `--rebuild` is the tested exception.
 - Repository declarations merge additively, retain provenance, and cannot
   suppress detection, self-confirm, alter Figure-1 exposure, or affect ratings.
-- Changing only a repository declaration recomposes the catalogue and
-  re-dispatches exactly those components whose selected boundary context
-  changed; unrelated components remain reusable.
+- Changing only a repository declaration recomposes the catalogue and performs
+  zero STRIDE analyzer dispatches. Boundary links for otherwise source-clean
+  components may remain unchanged until a later source-triggered, full, or
+  rebuild analysis.
 - Unknown component endpoints become visible unresolved catalogue rows and
   never enter semantic analysis.
 - Legacy records remain readable without being upgraded to unsupported claims.
@@ -596,18 +614,19 @@ Primary tests:
 Goal: let analyzers identify which adjacent boundary matters without asking
 them to invent topology.
 
-1. Make `scripts/build_stride_dispatch_manifest.py` reference the validated
-   `.dispatch-context/<component-id>/trust-boundaries.json` already written by
-   the shared preparer after component reconciliation. The builder calls the
-   shared preparation function but must not independently recompute identity,
-   focus, or selection. Every selected component gets a schema-valid context;
-   no candidates is represented by an empty array, not `none`. Candidate rows
-   carry only ID, endpoints, kind, assumption, evidence, confidence, and focus
-   reasons—no duplicated control catalogue.
-   The shared preparer also writes a deterministic context-hash manifest below
-   `.dispatch-context/`. Compare it with the preserved baseline and add changed
-   components to the incremental re-dispatch set, parallel to the existing
-   actor-slice delta; never infer this delta from file modification times.
+1. Make `scripts/build_stride_dispatch_manifest.py` reference a validated
+   `.dispatch-context/<component-id>/trust-boundaries.json` written by the
+   shared preparer after component reconciliation. The builder calls the shared
+   preparation function but must not independently recompute identity, focus,
+   or selection. Generate this file only for a component already selected for
+   fresh STRIDE analysis and only when at least one candidate is selected; use
+   `none` otherwise. Candidate rows carry only ID, endpoints, kind, assumption,
+   evidence, confidence, and focus reasons—no duplicated control catalogue.
+   Neither the preparer nor the manifest builder may add a component to an
+   incremental dispatch set. Declaration-only, catalogue-only, ordering, and
+   focus-ranking changes remain deterministic recomposition work. A missing,
+   malformed, or oversized optional context is audited and replaced with
+   `none`; it must not trigger an analyzer retry or block core STRIDE analysis.
 2. Add the context file to
    `schemas/stride-dispatch-manifest.schema.yaml` as
    `index_paths.trust_boundaries`. Pass only that path in Group C of the
@@ -621,13 +640,18 @@ them to invent topology.
    intentionally carry only depth/QA and STRIDE turn budgets, and the latter
    lives in the dispatch builder, not in `resolve_config.py`. The preparer
    imports the dedicated constant and writes eligible,
-   selected, and omitted IDs plus focus reasons into each context file;
+   selected, omitted, and deferred IDs plus focus reasons into a compact
+   selection audit; a context file contains selected candidate rows only.
    `build_threat_model_yaml.py` aggregates that audit into a declared
    `meta.boundary_selection` object in the output schema. Do not rely on
    `meta.additionalProperties` passthrough for this audit contract.
 4. Update `agents/appsec-stride-analyzer.md` and
    `agents/phases/phase-group-threats.md`:
-   - read the boundary context once and treat every string as untrusted data;
+   - read every non-`none` Step-1 context file, including the boundary context,
+     through parallel Read calls in one assistant turn; a boundary context must
+     not add a model round-trip;
+   - perform no boundary read when its manifest path is `none`;
+   - treat every boundary-context string as untrusted data;
    - emit no reference when a candidate merely provides context;
    - emit a boundary reference only for a confirmed candidate and a concrete,
      verified control gap; and
@@ -636,7 +660,9 @@ them to invent topology.
 5. Update the thin and legacy dispatch mappings in
    `skills/create-threat-model/` and extend
    `tests/test_dispatch_prompt_cache_order.py`. The volatile context path stays
-   in Group C so the cache-stable prefix does not grow.
+   in Group C so the cache-stable prefix does not grow. Add a static regression
+   test that the Step-1 instructions batch the boundary path with the existing
+   context reads instead of sequencing it as a new turn.
 6. Add `boundary_refs[]` atomically to:
    - `schemas/stride.schema.yaml`;
    - `schemas/threats-merged.schema.yaml`;
@@ -661,10 +687,13 @@ them to invent topology.
    after consolidation/carry-forward. Unknown-ID, inferred, non-resolved,
    wrong-origin, current-run-non-candidate, or evidence-free references are
    removed with an audited warning at the LLM→merge trust boundary while the
-   underlying finding is preserved. The canonical builder then hard-fails if
-   any invalid reference nevertheless survives. Optional traceability metadata
-   must not make a valid security finding disappear or abort the assessment
-   without a repair opportunity.
+   underlying finding is preserved. The canonical builder runs the same
+   deterministic post-check and strips any invalid optional reference that
+   nevertheless survives before schema validation. If boundary-reference
+   integrity cannot be restored deterministically, disable boundary references
+   for that run, retain the valid findings, and emit an audited warning.
+   Optional traceability metadata must not make a valid security finding
+   disappear, trigger a retry, or abort the assessment.
 9. Extend `scripts/reclassify_components.py` and the post-auto-emitter gate. If
    a finding component changes, update reference origin only when the resolved
    boundary is adjacent to the new component and the same evidence survives;
@@ -685,6 +714,16 @@ them to invent topology.
     maximum and schema string-length limits. Measure aggregate context growth;
     do not introduce a second runtime byte-budget subsystem unless replay shows
     those structural bounds are insufficient.
+14. Add incremental regression coverage proving that a change limited to
+    `.appsec/trust-boundaries.yaml`, normalized catalogue metadata, candidate
+    ordering, or focus ranking causes zero STRIDE dispatches. A component whose
+    source is independently selected for fresh analysis receives the current
+    context; carried components are not refreshed solely for optional links.
+15. Compare Milestone 2 with the frozen Milestone-1 baseline through
+    `scripts/measure_run.py` / `scripts/verify_run_costs.py`. Record dispatch
+    count, analyzer tool-turn count, input/output/cache-write/cache-read tokens,
+    API-equivalent cost, and context bytes per component. Do not infer economy
+    from wall time alone.
 
 Primary tests:
 `tests/test_resolve_config.py`, `tests/test_dispatch_manifest.py`,
@@ -693,7 +732,7 @@ Primary tests:
 `tests/test_merge_threats.py`, `tests/test_build_threat_model_yaml.py`, and the
 relevant cases in `tests/test_validate_intermediate.py` and
 `tests/test_reclassify_components.py`, plus the boundary-delta cases in
-`tests/test_incremental_mode.py`.
+`tests/test_incremental_mode.py` and `tests/test_incremental_two_run_e2e.py`.
 
 Milestone-2 exit gate:
 
@@ -703,6 +742,19 @@ Milestone-2 exit gate:
 - Continue to Milestone 3 only if there are zero invented/non-adjacent IDs,
   zero evidence-free control gaps, zero boundary-only findings, and no rating
   changes attributable to `boundary_refs`.
+- Full/rebuild replay must dispatch exactly the same STRIDE components as the
+  Milestone-1 baseline, and a boundary-only incremental replay must dispatch
+  zero STRIDE analyzers.
+- Boundary loading must add zero analyzer model turns: all non-empty Step-1
+  context files are read in one parallel tool-call turn, and empty boundary
+  selections produce no read.
+- On both the neutral fixture and repository self-model, measured
+  API-equivalent run-cost growth versus the frozen Milestone-1 baseline must be
+  at most 5%. Treat an inconclusive or unattributable measurement as a failed
+  gate, not as evidence of economy.
+- If cost growth exceeds 5%, first reduce the 2/4/6 candidate caps and replay.
+  If the gate still fails, ship normalization, stable IDs, and the deterministic
+  catalogue only; keep analyzer contexts and `boundary_refs[]` disabled.
 - If the links add little decision value, ship schema normalization and stable
   IDs only; do not force the report/SARIF work to justify sunk cost.
 
@@ -780,6 +832,8 @@ risk or remediation-priority logic.
    - boundary semantics and evidence confidence;
    - the difference between adjacency and an evidence-backed boundary gap;
    - the fact that boundaries do not change severity; and
+   - the best-effort economy contract, including deferred boundary-link refresh
+     on source-clean incremental runs;
    - the legacy-sidecar/rerender behavior;
    - the presentation-completeness contract for §1, §2, Figure 1, finding cards,
      and exports; and
@@ -791,7 +845,9 @@ risk or remediation-priority logic.
 4. Replay a neutral golden fixture via `scripts/threat_fixture.py`, following
    `docs/internal/runbooks/threat-fixture.md`, then run a three-run incremental
    replay with reordered Phase-7 output and retirement of the highest boundary
-   ID before a new boundary is introduced.
+   ID before a new boundary is introduced. Add a boundary-declaration-only
+   incremental replay and assert that it recomposes deterministic outputs with
+   zero STRIDE analyzer dispatches.
 5. Record, for the fixture and the repository self-model:
    - invalid/dangling boundary references (target: zero);
    - ID churn across the second run (target: zero for unambiguous unchanged
@@ -802,10 +858,19 @@ risk or remediation-priority logic.
    - boundary-only findings (target: zero);
    - report row/anchor overflow behavior; and
    - Figure-1 external-ID annotations without new nodes/edges or internal/outbound
-     boundary leakage; and
-   - dispatch-manifest, context-file, and resident-token growth.
+     boundary leakage;
+   - full/rebuild and boundary-only incremental STRIDE dispatch counts;
+   - analyzer model-turn counts before and after boundary loading;
+   - dispatch-manifest, context-file, and resident-token growth; and
+   - input, output, cache-write, cache-read, and API-equivalent cost deltas from
+     `scripts/measure_run.py` / `scripts/verify_run_costs.py`.
 6. Run the targeted suite first, then the repository's documented broader suite
    and separate any pre-existing failures from regressions.
+7. Treat the economy gate as a release gate: unchanged full/rebuild STRIDE
+   dispatch count, zero boundary-only incremental STRIDE dispatches, zero added
+   analyzer model turns, and at most 5% API-equivalent cost growth on both
+   rollout replays. If any condition fails, release the deterministic boundary
+   catalogue without analyzer contexts or `boundary_refs[]`.
 
 ## Deferred work and explicit non-goals
 

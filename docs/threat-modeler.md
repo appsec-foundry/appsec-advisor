@@ -7,6 +7,7 @@
 ## Contents
 
 - [What you get](#what-you-get)
+- [Threat model lifecycle](#threat-model-lifecycle)
 - [Example report: OWASP Juice Shop](#example-report-owasp-juice-shop)
 - [What it checks](#what-it-checks)
 - [Usage examples](#usage-examples)
@@ -55,6 +56,51 @@ SARIF and pentest tasks are generated from `threat-model.yaml` without model cal
 ```
 
 Use `--no-mermaid` to export PDF or HTML without rendered diagrams. To enable strict Mermaid validation during assessments, install the optional parser with `npm install --prefix "$CLAUDE_PLUGIN_ROOT/scripts"`.
+
+## Threat model lifecycle
+
+A threat model is a continuing security-review workflow, not just a generated report. Create it once, then ask questions, make decisions, implement selected changes, and reassess as the repository evolves.
+
+```mermaid
+flowchart LR
+    create["Create model"] --> model["Validated<br/>Markdown + YAML"]
+    model --> choose{"Use the model"}
+    choose --> ask["Ask directly<br/>Read-only answers"]
+    choose --> review["Review and decide<br/>Fix, accept, defer, or plan"]
+    choose --> share["Export or publish<br/>Optional"]
+    ask -->|Act on a finding| review
+    review --> change["Implement selected fixes"]
+    review --> plan["Remediation plan<br/>or accepted risk"]
+    change --> update["Update model<br/>Changed components"]
+    update --> model
+```
+
+### Create or update the model
+
+Run `/appsec-advisor:create-threat-model` for the first assessment. It analyzes repository evidence and produces validated Markdown and YAML. After code changes, `/appsec-advisor:update-threat-model` re-analyzes affected components and preserves finding identity across runs. It stops with guidance when no prior model exists, so an update cannot become an accidental first full scan.
+
+### Ask about the model directly
+
+You do not need a command to explore an existing model. Ask a natural-language question in the Claude Code console:
+
+```text
+what are the most critical findings?
+does the model cover SSRF?
+what is the mitigation for F-003?
+is the threat model still current?
+```
+
+The `ask-threat-model` workflow reads the structured model without rescanning the repository or changing files. Answers are grounded in the model, cite finding IDs, and say when the model does not contain the requested information. The explicit `/appsec-advisor:ask-threat-model <question>` form is also available. Use `/appsec-advisor:show-threat-model` when you want the fixed overview block rather than an answer to a specific question.
+
+### Review, decide, or implement
+
+Run `/appsec-advisor:review-threat-model` when you want to act on findings. Its modes support read-only browsing, recording fix, accept-risk, or defer decisions across selected findings, applying chosen code fixes one at a time, and building a remediation plan with owners and targets.
+
+Triage decisions live separately from the generated model and survive reassessment. The review workflow never regenerates or re-scores `threat-model.yaml`; source changes happen only after an explicit implementation choice.
+
+### Export or publish
+
+`/appsec-advisor:export-threat-model` generates PDF, HTML, SARIF, or pentest tasks from an existing assessment without another repository analysis. `/appsec-advisor:publish-threat-model` is the separate, deliberate path for making reviewed report files trackable in version control after its publication checks pass.
 
 ## Example report: OWASP Juice Shop
 
@@ -373,6 +419,8 @@ Use these commands after an assessment or to recover an interrupted run.
 
 | Command | Purpose |
 |---|---|
+| `/appsec-advisor:ask-threat-model <question>` | Answer a free-form question from the structured model without rescanning or writing files. Natural-language questions about the model route here even when the command is omitted. |
+| `/appsec-advisor:show-threat-model` | Print the fixed read-only overview with scan identity, severity mix, mitigation backlog, worst-case scenarios, control posture, and freshness. |
 | `/appsec-advisor:update-threat-model` | Incrementally update an existing threat model — alias for `create-threat-model --incremental`, re-analyzing only changed components. Aborts with guidance when no model exists yet (never bootstraps a first full scan). An explicit `--full`/`--rebuild`/`--rerender`/`--resume` is honored instead. |
 | `/appsec-advisor:review-threat-model` | Open a triage console over an existing report — a one-screen verdict (severity mix, hottest areas and components, mitigation coverage), then drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with owner and target) on a whole selection at once; writes a prioritised `remediation-plan.md`. Runs independently of the assessment and only reads the model. |
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |

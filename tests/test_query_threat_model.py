@@ -50,7 +50,15 @@ def _write_model(output_dir: Path, body: str) -> Path:
     meta.setdefault("generated", "2026-05-08T00:00:00Z")
     meta.setdefault("mode", "full")
     meta.setdefault("model", "sonnet")
-    for key in ("components", "assets", "attack_surface", "trust_boundaries", "security_controls", "threats", "mitigations"):
+    for key in (
+        "components",
+        "assets",
+        "attack_surface",
+        "trust_boundaries",
+        "security_controls",
+        "threats",
+        "mitigations",
+    ):
         data.setdefault(key, [])
     for threat in data["threats"]:
         threat.setdefault("scenario", "A test scenario with grounded evidence.")

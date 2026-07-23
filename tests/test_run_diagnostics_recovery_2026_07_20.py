@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 import subprocess
 import sys
@@ -51,7 +50,16 @@ def test_scoping_keeps_events_from_a_long_run(tmp_path: Path) -> None:
     (tmp_path / ".scan-start-epoch").write_text("1784560995", encoding="utf-8")
     lines = [
         (1, _log("2026-07-20T15:25:00Z", "INFO", "threat-analyst", "PHASE_START", "[Phase 1/11]")),
-        (2, _log("2026-07-20T16:20:10Z", "WARN", "threat-analyst", "AGENT_ERROR", "evidence-verifier: all sampled findings unchecked")),
+        (
+            2,
+            _log(
+                "2026-07-20T16:20:10Z",
+                "WARN",
+                "threat-analyst",
+                "AGENT_ERROR",
+                "evidence-verifier: all sampled findings unchecked",
+            ),
+        ),
         (3, _log("2026-07-20T17:52:46Z", "INFO", "threat-analyst", "SESSION_STOP", "stop_reason=unknown")),
     ]
     scoped = agg._scope_to_current_run(lines, tmp_path)
@@ -89,8 +97,14 @@ def test_scoping_falls_back_when_marker_absent(tmp_path: Path) -> None:
 def test_incomplete_run_becomes_an_error_issue(tmp_path: Path) -> None:
     """No threat-model.md + unrecovered aborts must not aggregate to 'clean'."""
     agent_log = [
-        (1, _log("2026-07-20T16:24:12Z", "WARN", "threat-analyst", "SESSION_ABORTED_MIDRUN", "phase=11 reason=unknown")),
-        (2, _log("2026-07-20T16:25:12Z", "WARN", "threat-analyst", "SESSION_ABORTED_MIDRUN", "phase=11 reason=unknown")),
+        (
+            1,
+            _log("2026-07-20T16:24:12Z", "WARN", "threat-analyst", "SESSION_ABORTED_MIDRUN", "phase=11 reason=unknown"),
+        ),
+        (
+            2,
+            _log("2026-07-20T16:25:12Z", "WARN", "threat-analyst", "SESSION_ABORTED_MIDRUN", "phase=11 reason=unknown"),
+        ),
     ]
     issues = agg._extract_run_outcome(agent_log, tmp_path)
     assert issues, "a run with no deliverable produced no issue"
@@ -102,7 +116,10 @@ def test_completed_run_produces_no_outcome_issue(tmp_path: Path) -> None:
     """A run that produced its deliverable must stay quiet."""
     (tmp_path / "threat-model.md").write_text("# report", encoding="utf-8")
     agent_log = [
-        (1, _log("2026-07-20T16:24:12Z", "WARN", "threat-analyst", "SESSION_ABORTED_MIDRUN", "phase=11 reason=unknown")),
+        (
+            1,
+            _log("2026-07-20T16:24:12Z", "WARN", "threat-analyst", "SESSION_ABORTED_MIDRUN", "phase=11 reason=unknown"),
+        ),
     ]
     assert agg._extract_run_outcome(agent_log, tmp_path) == []
 

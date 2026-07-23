@@ -69,9 +69,7 @@ def test_failure_branch_prints_full_recovery_command() -> None:
     # The re-run command is reconstructed (mode flags stripped, one appended).
     assert "_rerun_cmd" in body
     # The resume/rebuild choice is delegated to the resume-guard, not guessed.
-    assert "--resume-guard" in body, (
-        "hint must consult the resume-guard before suggesting --resume"
-    )
+    assert "--resume-guard" in body, "hint must consult the resume-guard before suggesting --resume"
     assert "_rerun_cmd --resume" in body and "_rerun_cmd --rebuild" in body
 
 

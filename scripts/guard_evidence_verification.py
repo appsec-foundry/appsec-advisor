@@ -138,7 +138,9 @@ def summary_has_no_verdicts(output_dir: Path) -> bool | None:
         summary.get("refuted"),
         summary.get("ambiguous"),
     )
-    if not all(isinstance(value, int) and not isinstance(value, bool) for value in (sampled, verified, refuted, ambiguous)):
+    if not all(
+        isinstance(value, int) and not isinstance(value, bool) for value in (sampled, verified, refuted, ambiguous)
+    ):
         return None
     return sampled >= MIN_SAMPLE and verified == 0 and refuted == 0 and ambiguous == 0
 

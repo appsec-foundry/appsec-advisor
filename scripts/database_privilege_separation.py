@@ -29,17 +29,53 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 from validate_intermediate import validate_db_privilege_separation  # noqa: E402
 
-_EXTENSIONS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".java", ".kt", ".cs", ".properties", ".yaml", ".yml", ".json", ".toml", ".env", ".sql"}
+_EXTENSIONS = {
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".py",
+    ".java",
+    ".kt",
+    ".cs",
+    ".properties",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".env",
+    ".sql",
+}
 _EXCLUDED = {".git", "node_modules", "vendor", "dist", "build", "target", "out", ".venv", "venv", "__pycache__"}
-_CLIENT = re.compile(r"(?i)\b(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:await\s+)?(?:createPool|createConnection|create_engine|new\s+Sequelize|new\s+DataSource|new\s+SqlConnection|PrismaClient)\b")
-_PRIVILEGED_ALIAS = re.compile(r"(?i)(?:^|[_-])(admin|administrator|management|internal|privileged|owner)(?:[_-]|$)|(?:admin|management|privileged|owner)(?:db|data|source|pool|client)")
-_UNPRIVILEGED_ALIAS = re.compile(r"(?i)(?:^|[_-])(public|user|customer|client|frontend|app)(?:[_-]|$)|(?:public|user|customer|client|app)(?:db|data|source|pool|client)")
-_PRIVILEGED_CONTEXT = re.compile(r"(?i)(?:^|/)(?:admin|management|internal)(?:/|$)|(?:hasRole|requireRole|PreAuthorize|Authorize)\s*\([^\n]{0,120}(?:ADMIN|MANAGE|OWNER)|\b(?:admin|management)_?(?:only|route|endpoint)\b")
-_ROUTE_CONTEXT = re.compile(r"(?i)\b(?:app|router)\.(?:get|post|put|patch|delete|use)\s*\(|@(?:Get|Post|Put|Patch|Delete|Request)Mapping\b|\bMap(?:Get|Post|Put|Patch|Delete)\s*\(|@app\.(?:get|post|put|patch|delete|route)\s*\(")
-_REF_PRINCIPAL = re.compile(r"(?i)(?:process\.env\.|System\.getenv\s*\(\s*['\"]|os\.environ\s*\[\s*['\"]|\$\{)(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
-_LITERAL_PRINCIPAL = re.compile(r"(?i)\b(?:user(?:name)?|db_user|database_user|principal)\s*[:=]\s*['\"](?P<value>[A-Za-z_][A-Za-z0-9_.-]{0,127})['\"]")
-_GRANT_ALL = re.compile(r"(?is)\bGRANT\s+ALL(?:\s+PRIVILEGES)?\s+.*?\s+TO\s+(?P<principal>[A-Za-z_][A-Za-z0-9_.-]{0,127})")
-_ROLE_PRIVILEGE = re.compile(r"(?is)\bALTER\s+(?:ROLE|USER)\s+(?P<principal>[A-Za-z_][A-Za-z0-9_.-]{0,127})\s+(?:WITH\s+)?(?:SUPERUSER|BYPASSRLS)\b")
+_CLIENT = re.compile(
+    r"(?i)\b(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:await\s+)?(?:createPool|createConnection|create_engine|new\s+Sequelize|new\s+DataSource|new\s+SqlConnection|PrismaClient)\b"
+)
+_PRIVILEGED_ALIAS = re.compile(
+    r"(?i)(?:^|[_-])(admin|administrator|management|internal|privileged|owner)(?:[_-]|$)|(?:admin|management|privileged|owner)(?:db|data|source|pool|client)"
+)
+_UNPRIVILEGED_ALIAS = re.compile(
+    r"(?i)(?:^|[_-])(public|user|customer|client|frontend|app)(?:[_-]|$)|(?:public|user|customer|client|app)(?:db|data|source|pool|client)"
+)
+_PRIVILEGED_CONTEXT = re.compile(
+    r"(?i)(?:^|/)(?:admin|management|internal)(?:/|$)|(?:hasRole|requireRole|PreAuthorize|Authorize)\s*\([^\n]{0,120}(?:ADMIN|MANAGE|OWNER)|\b(?:admin|management)_?(?:only|route|endpoint)\b"
+)
+_ROUTE_CONTEXT = re.compile(
+    r"(?i)\b(?:app|router)\.(?:get|post|put|patch|delete|use)\s*\(|@(?:Get|Post|Put|Patch|Delete|Request)Mapping\b|\bMap(?:Get|Post|Put|Patch|Delete)\s*\(|@app\.(?:get|post|put|patch|delete|route)\s*\("
+)
+_REF_PRINCIPAL = re.compile(
+    r"(?i)(?:process\.env\.|System\.getenv\s*\(\s*['\"]|os\.environ\s*\[\s*['\"]|\$\{)(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+)
+_LITERAL_PRINCIPAL = re.compile(
+    r"(?i)\b(?:user(?:name)?|db_user|database_user|principal)\s*[:=]\s*['\"](?P<value>[A-Za-z_][A-Za-z0-9_.-]{0,127})['\"]"
+)
+_GRANT_ALL = re.compile(
+    r"(?is)\bGRANT\s+ALL(?:\s+PRIVILEGES)?\s+.*?\s+TO\s+(?P<principal>[A-Za-z_][A-Za-z0-9_.-]{0,127})"
+)
+_ROLE_PRIVILEGE = re.compile(
+    r"(?is)\bALTER\s+(?:ROLE|USER)\s+(?P<principal>[A-Za-z_][A-Za-z0-9_.-]{0,127})\s+(?:WITH\s+)?(?:SUPERUSER|BYPASSRLS)\b"
+)
 
 
 @dataclass(frozen=True)
@@ -112,10 +148,16 @@ def _bindings(repo_root: Path) -> tuple[list[Binding], list[tuple[str, int, str]
             ref = _REF_PRINCIPAL.search(window)
             literal = _LITERAL_PRINCIPAL.search(window)
             if ref:
-                definitions.append(Definition(client.group("alias"), _safe_reference(ref.group("name")), "reference", None, rel, line_no))
+                definitions.append(
+                    Definition(
+                        client.group("alias"), _safe_reference(ref.group("name")), "reference", None, rel, line_no
+                    )
+                )
             elif literal:
                 value = literal.group("value")
-                definitions.append(Definition(client.group("alias"), _literal_key(value), "literal", value, rel, line_no))
+                definitions.append(
+                    Definition(client.group("alias"), _literal_key(value), "literal", value, rel, line_no)
+                )
 
     bindings: list[Binding] = []
     for definition in definitions:
@@ -126,7 +168,17 @@ def _bindings(repo_root: Path) -> tuple[list[Binding], list[tuple[str, int, str]
             if key in seen:
                 return
             seen.add(key)
-            bindings.append(Binding(definition.alias, classification, definition.principal_key, definition.principal_kind, definition.literal, file, line))
+            bindings.append(
+                Binding(
+                    definition.alias,
+                    classification,
+                    definition.principal_key,
+                    definition.principal_kind,
+                    definition.literal,
+                    file,
+                    line,
+                )
+            )
 
         alias_classification = _classification(definition.alias)
         if alias_classification:
@@ -151,7 +203,16 @@ def _evidence(binding: Binding, signal: str) -> dict:
 
 def assess(repo_root: Path, assessment_depth: str) -> dict:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    result = {"version": 1, "generated_at": now, "assessment_depth": assessment_depth, "skipped": assessment_depth != "thorough", "skip_reason": None, "confirmed_findings": [], "hypotheses": [], "warnings": []}
+    result = {
+        "version": 1,
+        "generated_at": now,
+        "assessment_depth": assessment_depth,
+        "skipped": assessment_depth != "thorough",
+        "skip_reason": None,
+        "confirmed_findings": [],
+        "hypotheses": [],
+        "warnings": [],
+    }
     if assessment_depth != "thorough":
         result["skip_reason"] = "database principal separation is assessed only at thorough depth"
         return result
@@ -167,17 +228,38 @@ def assess(repo_root: Path, assessment_depth: str) -> dict:
             continue
         serial += 1
         literal = next((b.literal for b in group if b.literal), None)
-        matching_grants = [(file, line) for file, line, principal in grants if literal and principal.casefold() == literal.casefold()]
-        evidence = [_evidence(b, f"{b.classification} database client uses the same principal reference") for b in (privileged[:2] + unprivileged[:2])]
+        matching_grants = [
+            (file, line) for file, line, principal in grants if literal and principal.casefold() == literal.casefold()
+        ]
+        evidence = [
+            _evidence(b, f"{b.classification} database client uses the same principal reference")
+            for b in (privileged[:2] + unprivileged[:2])
+        ]
         if matching_grants:
             for file, line in matching_grants[:2]:
-                evidence.append({"file": file, "line": line, "signal": "visible high-privilege database grant matches the shared principal"})
+                evidence.append(
+                    {
+                        "file": file,
+                        "line": line,
+                        "signal": "visible high-privilege database grant matches the shared principal",
+                    }
+                )
             destination = result["confirmed_findings"]
             title = "Shared high-privilege database principal across privileged and unprivileged clients"
         else:
             destination = result["hypotheses"]
             title = "Database principal separation requires grant review"
-        destination.append({"local_id": f"DBSEP-{serial:03d}", "title": title, "cwe": "CWE-284", "principal_kind": privileged[0].principal_kind, "privileged_aliases": sorted({b.alias for b in privileged}), "unprivileged_aliases": sorted({b.alias for b in unprivileged}), "evidence": evidence})
+        destination.append(
+            {
+                "local_id": f"DBSEP-{serial:03d}",
+                "title": title,
+                "cwe": "CWE-284",
+                "principal_kind": privileged[0].principal_kind,
+                "privileged_aliases": sorted({b.alias for b in privileged}),
+                "unprivileged_aliases": sorted({b.alias for b in unprivileged}),
+                "evidence": evidence,
+            }
+        )
     return result
 
 

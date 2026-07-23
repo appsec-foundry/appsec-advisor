@@ -141,9 +141,7 @@ def test_resume_guard_allows_stage1_complete_missing_context(tmp_path: Path):
     # reaped the context cache. Resume re-enters at Phase-11 compose/render only,
     # which never reads the cache — the artifact gate must NOT fire, or it would
     # discard the paid-for STRIDE + merge + triage work.
-    (tmp_path / ".appsec-checkpoint").write_text(
-        "phase=10b status=completed need_render=true\n"
-    )
+    (tmp_path / ".appsec-checkpoint").write_text("phase=10b status=completed need_render=true\n")
     (tmp_path / "threat-model.yaml").write_text("meta: {}\n")
     code, msg = check_state._resume_guard_result(tmp_path, 900)
     assert code == 0

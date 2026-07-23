@@ -77,8 +77,7 @@ def test_run_progress_phase_token_follows_the_live_banner():
     phase end — so it lags the banner by one phase. The banner wins."""
     out = _render(
         [
-            "2026-06-06T17:21:26Z  [--------]  INFO   threat-analyst    PHASE_START"
-            "   [Phase 9/11] STRIDE Enumeration",
+            "2026-06-06T17:21:26Z  [--------]  INFO   threat-analyst    PHASE_START   [Phase 9/11] STRIDE Enumeration",
             "2026-06-06T17:25:37Z  [--------]  INFO   skill-watchdog      RUN_PROGRESS"
             "        ~40%  phase=8  elapsed=10m55s  net=10m55s",
         ]

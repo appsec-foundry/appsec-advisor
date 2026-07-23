@@ -218,9 +218,9 @@ class TestResolveStrideConcurrency:
 class TestEvidenceVerifierCap:
     def test_depth_defaults_bound_non_critical_work(self):
         caps = {
-            depth: rc.resolve_evidence_verifier_cap(
-                rc.build_parser().parse_args(["--assessment-depth", depth]), depth
-            )["evidence_verifier_max_findings"]
+            depth: rc.resolve_evidence_verifier_cap(rc.build_parser().parse_args(["--assessment-depth", depth]), depth)[
+                "evidence_verifier_max_findings"
+            ]
             for depth in ("quick", "standard", "thorough")
         }
         assert caps == {"quick": 20, "standard": 30, "thorough": 100}

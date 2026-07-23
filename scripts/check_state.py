@@ -717,12 +717,7 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
     # STRIDE + merge + triage work. Before Stage 1 is complete a resume would
     # re-enter the cache-reading early phases, so the refusal still holds.
     stage1_complete = (output_dir / "threat-model.yaml").is_file()
-    if (
-        phase_ord is not None
-        and phase_ord >= 1
-        and not context_md.is_file()
-        and not stage1_complete
-    ):
+    if phase_ord is not None and phase_ord >= 1 and not context_md.is_file() and not stage1_complete:
         return (
             3,
             (

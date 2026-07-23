@@ -845,10 +845,7 @@ def _validate_output_contract(data: dict) -> list[str]:
         errors = sorted(Draft202012Validator(schema).iter_errors(data), key=lambda error: list(error.absolute_path))
     except Exception as exc:  # noqa: BLE001 -- validation must fail closed for Q&A correctness
         return [f"could not validate the threat-model output contract: {exc}"]
-    return [
-        f"{'.'.join(str(part) for part in error.absolute_path) or 'root'}: {error.message}"
-        for error in errors
-    ]
+    return [f"{'.'.join(str(part) for part in error.absolute_path) or 'root'}: {error.message}" for error in errors]
 
 
 def _emit_no_model(output_dir: Path, as_json: bool) -> None:

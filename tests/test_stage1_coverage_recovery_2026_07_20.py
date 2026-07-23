@@ -25,7 +25,6 @@ import classify_component  # noqa: E402
 import orchestration_controller as oc  # noqa: E402
 import stride_dispatch_waves as waves  # noqa: E402
 
-
 # --------------------------------------------------------------------------
 # D2a — turn budget must account for how much reading a component requires
 # --------------------------------------------------------------------------

@@ -781,9 +781,7 @@ def test_rewrite_namespace_covers_scripts_sh_and_py(tmp_path):
     (build / "scripts" / "run-headless.sh").write_text(
         'PROMPT="/appsec-advisor:create-threat-model"\n', encoding="utf-8"
     )
-    (build / "scripts" / "helper.py").write_text(
-        'HINT = "/appsec-advisor:fix-run-issues"\n', encoding="utf-8"
-    )
+    (build / "scripts" / "helper.py").write_text('HINT = "/appsec-advisor:fix-run-issues"\n', encoding="utf-8")
     pkg.rewrite_namespace(build, "acme")
     sh = (build / "scripts" / "run-headless.sh").read_text()
     py = (build / "scripts" / "helper.py").read_text()

@@ -44,9 +44,7 @@ def test_session_model_change_does_not_move_analysis_roles() -> None:
     """
     opus = model_lineup.lineup("claude-opus-4-8")
     assert "claude-opus-4-8 (session/orchestrator" in opus
-    assert "claude-sonnet-4-6 (STRIDE" in opus, (
-        "STRIDE must still be shown on its own model when the session is Opus"
-    )
+    assert "claude-sonnet-4-6 (STRIDE" in opus, "STRIDE must still be shown on its own model when the session is Opus"
 
 
 def test_reasoning_tier_is_reflected() -> None:
@@ -91,8 +89,7 @@ def test_headless_banner_shows_the_lineup_not_just_the_session_model() -> None:
     body = HEADLESS.read_text(encoding="utf-8")
     assert "model_lineup.py" in body, "headless banner does not resolve the model lineup"
     assert 'echo "  Model      : $MODEL"' not in body, (
-        "the bare session-model banner line is back; it reads as 'everything runs "
-        "on this model', which is wrong"
+        "the bare session-model banner line is back; it reads as 'everything runs on this model', which is wrong"
     )
 
 

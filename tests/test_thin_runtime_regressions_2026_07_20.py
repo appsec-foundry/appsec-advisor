@@ -12,8 +12,6 @@ docs/internal/analysis/analysis-thin-runtime-regressions-2026-07-20.md
 from __future__ import annotations
 
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent

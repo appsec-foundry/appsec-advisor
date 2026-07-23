@@ -24,6 +24,7 @@ def _read(path: Path) -> str:
 # E.2 — deterministic ownership / dispatch policy
 # ---------------------------------------------------------------------------
 
+
 class TestDeterministicQaOwnership:
     def test_mitigation_shape_is_not_rechecked_by_agent(self):
         text = _read(QA_REVIEWER)

@@ -61,9 +61,7 @@ def test_password_policy_below_eight_characters_is_flagged_in_javascript(tmp_pat
     _write(
         tmp_path,
         "registration.js",
-        "function register(password) {\n"
-        "  if (password.length < 7) throw new Error('too short');\n"
-        "}\n",
+        "function register(password) {\n  if (password.length < 7) throw new Error('too short');\n}\n",
     )
 
     assert "AUTHN-002" in _ids(tmp_path)
@@ -73,9 +71,7 @@ def test_password_policy_below_eight_characters_is_flagged_in_python(tmp_path: P
     _write(
         tmp_path,
         "registration.py",
-        "def register(password):\n"
-        "    if len(password) <= 6:\n"
-        "        raise ValueError('too short')\n",
+        "def register(password):\n    if len(password) <= 6:\n        raise ValueError('too short')\n",
     )
 
     assert "AUTHN-002" in _ids(tmp_path)
@@ -85,9 +81,7 @@ def test_eight_character_password_policy_is_not_flagged(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "registration.js",
-        "function register(password) {\n"
-        "  if (password.length < 8) throw new Error('too short');\n"
-        "}\n",
+        "function register(password) {\n  if (password.length < 8) throw new Error('too short');\n}\n",
     )
 
     assert "AUTHN-002" not in _ids(tmp_path)
