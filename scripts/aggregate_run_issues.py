@@ -1258,21 +1258,18 @@ def _extract_run_outcome(agent_log: list[tuple[int, str]], output_dir: Path) -> 
         return []
     if rec.get("run_completed"):
         return []
-    # The run reached no deliverable. Flag it whenever analysis actually started
-    # — not only when there were unrecovered abort/FATAL events. A clean external
-    # stop (budget or subscription usage-limit kill) leaves neither a
-    # SESSION_ABORTED_MIDRUN nor a build FATAL, so `unrecovered` is 0; gating on
-    # it alone (the prior bug) reported these no-deliverable runs as "clean". The
-    # `started` guard keeps a dry-run or an empty output directory from tripping:
-    # a run that reached the STRIDE merge left .threats-merged.json, and any real
-    # assessment logs ASSESSMENT_START.
-    started = (output_dir / ".threats-merged.json").exists() or any(
-        (_parse_event_line(raw) or {}).get("event") in ("ASSESSMENT_START", "SCAN_START")
-        for _ln, raw in agent_log
-    )
+    unrecovered = rec.get("unrecovered", 0)
+    # The run reached no deliverable. Flag it only when there is positive evidence
+    # it did real work: it reached the STRIDE merge (.threats-merged.json), or it
+    # left unrecovered abort/FATAL events. A clean external stop (budget or
+    # subscription usage-limit kill) after the merge is caught by the first clause
+    # even though `unrecovered` is 0. A bare ASSESSMENT_START is deliberately NOT
+    # enough — a dry-run, a scope preview, or an empty output directory logs it
+    # too, and flagging those was the false-positive that reported clean runs as
+    # incomplete.
+    started = (output_dir / ".threats-merged.json").exists() or unrecovered > 0
     if not started:
         return []
-    unrecovered = rec.get("unrecovered", 0)
     return [
         {
             "category": "run_incomplete",
