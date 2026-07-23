@@ -585,6 +585,41 @@ def test_select_runtime_only_zone_is_exposure_unknown_not_internal():
     assert "exposure-unknown (fail-safe inclusion)" in reasons_q["b2b-api"]
 
 
+def test_select_offvocab_zone_is_exposure_unknown_not_internal():
+    """A component tagged with an off-vocabulary zone the analyst invented
+    (``application-zone`` — not in EXPOSED/CICD/INTERNAL/RUNTIME vocab) carries no
+    recognised reachability signal, so it must hit the exposure-unknown fail-safe
+    (included at standard+), NOT be mis-read as proven-internal and dropped.
+    Regression for 2026-07-23 spring-app: the analyst emitted ``application-zone``
+    / ``data-zone`` / ``build-zone``, none of which matched any zone set, so the
+    entire zonal exposure/ci-cd classification was silently inert and an off-vocab
+    component was treated as proven-internal."""
+    comps = [
+        _c("backend-api", zones=["internet"]),
+        _c("mystery-svc", zones=["application-zone"]),  # off-vocab, not sensitive
+        _c("internal-worker", zones=["internal-network"]),  # genuine internal → still out
+    ]
+    selected, report = bm.select_stride_components(comps, "standard")
+    ids = {c["id"] for c in selected}
+    assert "mystery-svc" in ids, "off-vocabulary zone must fail-safe to inclusion at standard"
+    assert "internal-worker" not in ids, "genuine internal-network zone still shed at standard"
+    assert bm._is_internal_only(_c("mystery-svc", zones=["application-zone"])) is False
+    reasons = {s["id"]: s["reasons"] for s in report["selected"]}
+    assert "exposure-unknown (fail-safe inclusion)" in reasons["mystery-svc"]
+
+
+def test_offvocab_zones_are_reported_as_drift():
+    """Off-vocabulary deployment_zones are surfaced by ``_unknown_zone_tokens`` (not
+    silently accepted) so the upstream recon/analyst output gets corrected. Known
+    canonical and runtime-only tokens are NOT flagged."""
+    assert bm._unknown_zone_tokens(_c("x", zones=["application-zone", "data-zone"])) == {
+        "application-zone",
+        "data-zone",
+    }
+    assert bm._unknown_zone_tokens(_c("x", zones=["internet", "internal-network"])) == set()
+    assert bm._unknown_zone_tokens(_c("x", zones=["docker-container"])) == set()
+
+
 def test_select_ceiling_sheds_only_internal_never_earned():
     """The ceiling may shed ONLY genuinely-internal components — never anything
     earned by exposure/ci-cd/crown-jewel/auth/frontend. Live-run regression

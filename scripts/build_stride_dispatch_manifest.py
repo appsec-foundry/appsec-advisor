@@ -149,6 +149,11 @@ EXPOSED_ZONES = frozenset(
     }
 )
 CICD_ZONES = frozenset({"ci-cd-runtime", "ci-cd-secrets", "build-pipeline", "deployment-pipeline"})
+# Canonical NON-exposed placement zones from the access-zone vocabulary
+# (data/actors/default-library.yaml / schemas/fragments/components.schema.json).
+# A component tagged with one of these has a KNOWN internal placement — it is
+# "proven-internal" (sheddable at the ceiling), NOT exposure-unknown.
+INTERNAL_ZONES = frozenset({"internal-network", "peer-service", "prod-env", "prod-write-db"})
 # Pure runtime / where-it-runs zones carry NO internet-reachability signal. A
 # component tagged ONLY with these is exposure-UNKNOWN for selection purposes
 # and must hit the fail-safe inclusion branch, not be treated as "internal-only"
@@ -188,15 +193,36 @@ def _zones(c: dict) -> set:
     return {str(x).strip().lower() for x in z if str(x).strip()}
 
 
+# Zone tokens that carry a RECOGNISED placement/reachability signal. A token
+# outside this vocabulary tells us nothing about reachability and must NOT be
+# read as "proven internal".
+_REACHABILITY_VOCAB = EXPOSED_ZONES | CICD_ZONES | INTERNAL_ZONES
+
+
 def _reachability_zones(c: dict) -> set:
     """Deployment zones that actually carry an internet-reachability signal.
 
-    Runtime/where-it-runs tags (``RUNTIME_ONLY_ZONES``) are filtered out: a
-    component tagged only with those is exposure-UNKNOWN, so the selection's
-    fail-safe inclusion branch must fire rather than the "zones present →
-    treat as internal-only" path that silently drops it.
+    Only tokens in the canonical zone vocabulary count. Two kinds of token are
+    filtered out so the selection's exposure-UNKNOWN fail-safe fires instead of
+    the "zones present → treat as internal-only" path that silently drops a
+    component:
+
+    * runtime/where-it-runs tags (``RUNTIME_ONLY_ZONES``) — a component tagged
+      only ``docker-container`` is exposure-unknown, not internal (2026-06-12
+      b2b-api regression);
+    * off-vocabulary labels the LLM invented (e.g. ``application-zone`` /
+      ``data-zone`` / ``build-zone``) — these matched no zone set, so the whole
+      zonal exposure/ci-cd signal was silently inert and an off-vocab component
+      was mis-read as proven-internal (2026-07-23 spring-app regression).
     """
-    return _zones(c) - RUNTIME_ONLY_ZONES
+    return _zones(c) & _REACHABILITY_VOCAB
+
+
+def _unknown_zone_tokens(c: dict) -> set:
+    """Zone tokens matching no known vocabulary (neither a placement/reachability
+    zone nor a runtime tag). These are analyst drift and make the zonal exposure
+    signal silently inert — surfaced so the upstream output gets corrected."""
+    return _zones(c) - _REACHABILITY_VOCAB - RUNTIME_ONLY_ZONES
 
 
 def _is_auth(c: dict) -> bool:
@@ -1048,6 +1074,15 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             sys.stderr.write(
                 f"WARN: {cid} has no paths in .components.json — using ['**'] (broad fallback). "
                 "Set explicit paths in the component inventory to narrow scope.\n"
+            )
+        drift_zones = _unknown_zone_tokens(c)
+        if drift_zones:
+            sys.stderr.write(
+                f"ZONE_DRIFT: {cid} has off-vocabulary deployment_zones {sorted(drift_zones)} — "
+                "not in the canonical access-zone vocabulary, so the zonal exposure/ci-cd signal "
+                "is inert and the component is treated as exposure-unknown (fail-safe). Fix the "
+                "recon/analyst output to use canonical zones (internet, dmz, internal-network, "
+                "ci-cd-runtime, build-pipeline, prod-write-db, …).\n"
             )
         comp = {
             "component_id": cid,
