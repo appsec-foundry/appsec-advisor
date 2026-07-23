@@ -383,3 +383,71 @@ number nobody would recognise as wrong. `?` is the honest answer until the key i
 - **`aggregate_run_issues.py` docstring** still claims `.appsec-trace.log` is an input; it
   has never been read (0 references). The trace log is where the 23-dispatch / 211-complete
   mismatch and the `wall_secs` data live, so wiring it in would add real signal.
+
+---
+
+## Follow-up e2e run 2026-07-23 (juice-shop) — coverage recovered, QA-blocked
+
+This run completed Stage-1 and produced a report where the 2026-07-20 dead end did not: the
+`APPSEC_STRIDE_MAX_ATTEMPTS` escalation (D8) let it self-heal and cover all 9 selected
+components. But two producer defects surfaced, and the delivered report was QA-blocked as
+non-releasable. Both root-caused and fixed.
+
+### R1 — STRIDE `TH-UNCLASSIFIED` aborts a run the pipeline can already repair (fixed `8925c38`)
+
+`express-backend-008` (CWE-601, Open Redirect) was written with
+`threat_category_id: "TH-UNCLASSIFIED"`. The per-component gate
+`stride_dispatch_waves.completion_error` → `validate_intermediate.validate_stride` rejects
+that sentinel (`^TH-[0-9]{2}$` required for `source=stride`), so the component burned its
+whole retry budget and hard-aborted the run — **even though CWE-601 → TH-18 is in
+`data/threat-category-taxonomy.yaml` and `merge_threats._threat_category_id_for` returns it
+deterministically.** The repair existed; it just ran *after* the gate (in merge), which the
+gate blocks the run from ever reaching.
+
+**Fix:** extracted `merge_threats.backfill_threat_category_id`; `completion_error` now
+applies it before `validate_stride` and persists the canonical id. Genuinely unmappable CWEs
+keep the sentinel and still fail. Not a taxonomy gap — an ordering defect
+(validation-before-backfill). Cost this run: express-backend dispatched 3× (~44% STRIDE
+retry waste) on a defect the pipeline already knew how to fix.
+
+### R2 — §6 SecArch renderer emits id-in-link-text references (fixed `5de7021`)
+
+The §6 Security Architecture narrative cites findings as `[F-NNN — Title](#f-nnn)`, pulling
+the title into the link text. `check_reference_format._ID_IN_LINK` (tightened in `27a0d9f`)
+forbids exactly that shape → 53 violations → QA `repair_required`, non-releasable. No pass
+converted it (`_bulletize_relevant_findings` only handles the bare `[F-NNN](#f-nnn)` form).
+
+**Fix:** deterministic `compose._delink_id_in_link_text` (inverse of the linter regex)
+rewrites to canonical `[F-NNN](#f-nnn) — Title` in the final reference pass, before locator
+normalisation. Verified on the run's report: 53 → 0. Link syntax is normalised
+deterministically, never trusted to the LLM.
+
+### `web3-nft: missing output` — a wave-gating artifact, not a failure (covered by R1)
+
+The abort listed `web3-nft: missing output` and hypothesised "turn budget too small for its
+file footprint". Both misleading. `.dispatch-waves.json`: 9 components at concurrency 8 →
+wave 1 = 8, **wave 2 = `[web3-nft]` alone**. `status()` only advances `next_wave` past a wave
+with zero incomplete (`stride_dispatch_waves.py:245`), so wave 2 never dispatched while wave 1
+was blocked by express-backend's `TH-UNCLASSIFIED` (R1). `all_incomplete` collects across
+*all* waves (`:237`), so a never-dispatched wave-2 component reads as "missing output",
+indistinguishable from a real failure. Proof: `attempts.web3-nft == 1` — one dispatch,
+immediately successful (7 threats) once R1 unblocked wave 1. R1 removes this run's trigger; a
+4-file / 22-turn component was never budget-starved.
+
+**Diagnosed, not fixed — the abort conflates not-reached with failed.** D1's fix names blocked
+components but does not distinguish "dispatched & failed" (express-backend) from "never
+reached, gated behind an earlier wave" (web3-nft), and appends a generic turn-budget
+hypothesis that is wrong for wave-gated components. This misdirects operators — it misdirected
+this investigation. A fix would label wave-gated incompletes "not reached — blocked by wave N".
+Deferred: cosmetic, touches the `status()` payload + abort builder + tests, low urgency.
+
+### Not a defect — `toc_closure` SAF anchors
+
+The QA plan flagged 4 unresolved `#saf-016/025/027/001` anchors. **The final report has
+`check_toc_closure == 0`.** The secarch fragment uses `SAF-NNN` as plain-text labels (zero
+`](#saf` links). The QA plan (`.qa-repair-plan.json`, 06:05Z) linted a render superseded by
+the fragment + md rewrite 7 min later (06:12Z). No broken anchor ships.
+
+**Adjacent observation (not chased):** the QA verdict mixed a real issue still in the final md
+(R2 reference_format) with one already gone (SAF). QA may lint a non-final render — a
+freshness / ordering question worth a separate look if it recurs.
