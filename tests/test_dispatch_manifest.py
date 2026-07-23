@@ -937,6 +937,56 @@ def test_reconcile_no_evidence_no_injection(tmp_path):
     assert injected == []
 
 
+def test_reconcile_merges_same_id_duplicate_into_canonical_card(tmp_path):
+    """A reconciliation entry from an earlier pass and a later LLM-enumerated twin
+    can share the canonical id; the inventory must collapse them into ONE merged
+    card, not two duplicate C-NN rows. Regression for the juice-shop
+    auth/realtime/web3 duplicates the QA reviewer caught (2026-07-23)."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    comps = [
+        {"id": "backend-api", "name": "Backend", "description": "api", "paths": ["routes/**"], "tier": "application"},
+        {  # reconciliation entry from an earlier pass — contextual fields only
+            "id": "auth",
+            "name": "Authentication & Session Surface",
+            "description": "reconciled",
+            "paths": ["lib/insecurity.ts"],
+            "tier": "application",
+            "deployment_zones": ["internet"],
+            "framework": "passport",
+            "origin": "reconciliation",
+        },
+        {  # later LLM-enumerated twin — same canonical id, semantic fields
+            "id": "auth",
+            "name": "Authentication Service",
+            "description": "authored",
+            "paths": ["routes/login.ts"],
+            "tier": "application",
+            "type": "process",
+            "responsibilities": ["JWT issuance"],
+            "complexity": "complex",
+        },
+    ]
+    augmented, injected = bm.reconcile_inventory(comps, empty)
+    assert injected == []  # empty repo → nothing new injected; this is a pure merge
+    auth = [c for c in augmented if c["id"] == "auth"]
+    assert len(auth) == 1, "same-id duplicates must collapse to one card"
+    card = auth[0]
+    # the enumerated entry is the base and wins scalar conflicts
+    assert card["name"] == "Authentication Service"
+    assert card["type"] == "process"
+    assert card["responsibilities"] == ["JWT issuance"]
+    assert card["complexity"] == "complex"
+    # reconciliation-only context is filled in, not lost
+    assert card["framework"] == "passport"
+    assert card["deployment_zones"] == ["internet"]
+    # paths from both authorings are unioned for coverage
+    assert set(card["paths"]) == {"lib/insecurity.ts", "routes/login.ts"}
+    # the duplicate's reconciliation stamp is not merged onto the enumerated base
+    assert card.get("origin") != "reconciliation"
+    assert len(augmented) == 2  # backend-api + single merged auth
+
+
 # --- web3/wallet/NFT reconciliation (2026-06-21 juice-shop: standard folded the
 #     whole /rest/web3/ surface into backend-api and missed the Critical
 #     hardcoded BIP-39 mnemonic; thorough carved out web3-nft and found it) ----

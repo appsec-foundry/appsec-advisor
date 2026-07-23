@@ -870,15 +870,70 @@ _RECONCILE_DETECTORS = (
 )
 
 
+def _nonempty(value: object) -> bool:
+    """True for a value worth carrying — a real datum, not a blank/empty container.
+    ``False``/``0`` count (meaningful flags); ``None``/``""``/``[]``/``{}`` do not."""
+    return value is not None and value != "" and value != [] and value != {}
+
+
+def _merge_component_group(entries: list) -> dict:
+    """Collapse ≥2 components that share an ``id`` into one. The enumerated entry
+    (the analyst's own — identified by NOT carrying ``origin: "reconciliation"``)
+    is the base and wins scalar conflicts; fields it left blank are filled from the
+    duplicate, and ``paths`` are unioned so file coverage from both authorings is
+    kept. This is how a reconciliation-injected unit and its later-enumerated twin
+    for the same canonical id become one card instead of duplicate C-NN rows."""
+    base = next((e for e in entries if e.get("origin") != "reconciliation"), entries[0])
+    out = dict(base)
+    for entry in entries:
+        if entry is base:
+            continue
+        for key, value in entry.items():
+            if key == "origin":
+                continue  # the duplicate's audit stamp, not merged onto the base
+            if key == "paths" and isinstance(value, list) and isinstance(out.get(key), list):
+                out[key] = out[key] + [p for p in value if p not in out[key]]
+            elif not _nonempty(out.get(key)) and _nonempty(value):
+                out[key] = value
+    return out
+
+
+def _merge_same_id_components(components: list) -> list:
+    """Return ``components`` with same-``id`` duplicates collapsed, order-preserving
+    (merged at the first occurrence). Entries without an ``id`` pass through. This
+    is the guard reconcile_inventory's inject-time checks cannot provide: those
+    prevent a NEW duplicate injection, but a same-id twin already present in the
+    inventory (e.g. a reconciliation entry from an earlier pass plus a later
+    LLM-enumerated one) survives to compose as duplicate rows unless collapsed."""
+    groups: dict = {}
+    for c in components:
+        if isinstance(c, dict) and _nonempty(c.get("id")):
+            groups.setdefault(c["id"], []).append(c)
+    out: list = []
+    emitted: set = set()
+    for c in components:
+        if not isinstance(c, dict) or not _nonempty(c.get("id")):
+            out.append(c)
+            continue
+        cid = c["id"]
+        if cid in emitted:
+            continue
+        emitted.add(cid)
+        group = groups[cid]
+        out.append(group[0] if len(group) == 1 else _merge_component_group(group))
+    return out
+
+
 def reconcile_inventory(components: list, repo_root: Path) -> tuple:
     """Inject security-relevant deployable units that hard repo evidence shows
     exist but Phase-3 did not enumerate as their own role-bearing component.
 
     Returns ``(augmented_components, injected)``. Idempotent: a role already
     carried by an enumerated (or already-injected) component is never added
-    twice. Injected components carry ``origin: "reconciliation"`` for audit.
+    twice, and same-``id`` duplicates already in the inventory are collapsed into
+    one. Injected components carry ``origin: "reconciliation"`` for audit.
     """
-    existing = [c for c in components if isinstance(c, dict)]
+    existing = _merge_same_id_components([c for c in components if isinstance(c, dict)])
     augmented = list(existing)
     injected: list[dict] = []
     for role_pred, detect in _RECONCILE_DETECTORS:
@@ -1038,8 +1093,13 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     # / heatmap / §1 scope (build_threat_model_yaml reads .components.json).
     repo_root = _guess_repo_root(output_dir)
     auth_evidence = _auth_evidence_files(output_dir)
+    orig_components = all_components
     all_components, injected = reconcile_inventory(all_components, repo_root)
-    if injected:
+    # Persist when reconciliation injected a unit OR collapsed same-id duplicates —
+    # both change the canonical inventory that compose / build_threat_model_yaml
+    # read. Gating on `injected` alone left pre-existing duplicates un-deduped in
+    # .components.json (duplicate C-NN rows in §arch).
+    if injected or all_components != orig_components:
         payload = dict(cj) if isinstance(cj, dict) else {}
         payload.setdefault("schema_version", 1)
         payload["components"] = all_components
@@ -1047,12 +1107,19 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             (output_dir / ".components.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except OSError:
             pass
-        sys.stderr.write(
-            "RECONCILE: injected "
-            + ", ".join(c["id"] for c in injected)
-            + " — security-relevant unit(s) evidenced in repo but absent from "
-            "Phase-3 enumeration (role-folded). Now in scope.\n"
-        )
+        if injected:
+            sys.stderr.write(
+                "RECONCILE: injected "
+                + ", ".join(c["id"] for c in injected)
+                + " — security-relevant unit(s) evidenced in repo but absent from "
+                "Phase-3 enumeration (role-folded). Now in scope.\n"
+            )
+        collapsed = len(orig_components) - len(all_components) + len(injected)
+        if collapsed > 0:
+            sys.stderr.write(
+                f"RECONCILE: collapsed {collapsed} duplicate same-id component "
+                "entry(ies) into their canonical card.\n"
+            )
 
     # Seed the LLM role onto components from analyst-context / Cat-13 recon
     # BEFORE selection, so a folded chatbot is floored into STRIDE scope.
