@@ -110,8 +110,13 @@ def _cvss_allowed(threat: dict, eligible_cwes: frozenset[str]) -> bool:
     source = threat.get("source")
     if source in {"known-vuln", "dep-scan"}:
         return True
+    # `configuration-defect` is a STRIDE finding that merge_threats relabelled for
+    # a hardcoded-secret title (_classify_stride_source — requires an evidence
+    # file). It is the same evidence grade as `stride`, so it earns CVSS on the
+    # same CWE+evidence bar; excluding it stripped valid scores purely for the
+    # cosmetic source change (juice-shop T-004/014/016, CWE-798).
     return (
-        source == "stride"
+        source in {"stride", "configuration-defect"}
         and threat.get("cwe") in eligible_cwes
         and _has_file_line_evidence(threat)
     )
@@ -309,9 +314,7 @@ def enforce(output_dir: Path, report_only: bool) -> tuple[int, list[dict]]:
             if "cvss_scope_repaired" not in flags:
                 flags.append("cvss_scope_repaired")
             ythreat["evidence_flags"] = flags
-            ythreat.setdefault("invariant_repaired", []).append(
-                {"at": _now(), "fields": ["cvss_v4"]}
-            )
+            ythreat.setdefault("invariant_repaired", []).append({"at": _now(), "fields": ["cvss_v4"]})
         if isinstance(mthreat, dict) and "cvss_v4" in mthreat:
             mthreat.pop("cvss_v4", None)
             merged_changed = True

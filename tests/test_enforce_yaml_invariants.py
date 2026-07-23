@@ -74,6 +74,22 @@ class TestCvssScopeHelpers:
         assert not eyi._cvss_allowed({**threat, "cwe": "CWE-200"}, eligible)
         assert not eyi._cvss_allowed({**threat, "evidence": {"file": "src/app.py"}}, eligible)
 
+    def test_configuration_defect_relabel_keeps_cvss_on_eligible_cwe(self):
+        """A STRIDE hardcoded-secret finding relabelled to configuration-defect
+        (merge_threats._classify_stride_source) is evidence-grade and must keep
+        CVSS on the same CWE+evidence bar as stride — not be stripped for the
+        cosmetic source change (juice-shop T-004/014/016, CWE-798)."""
+        eligible = frozenset({"CWE-798"})
+        threat = {
+            "source": "configuration-defect",
+            "cwe": "CWE-798",
+            "evidence": {"file": "config/prod.yaml", "line": 7},
+        }
+        assert eyi._cvss_allowed(threat, eligible)
+        # still gated: ineligible CWE or a missing line is rejected
+        assert not eyi._cvss_allowed({**threat, "cwe": "CWE-200"}, eligible)
+        assert not eyi._cvss_allowed({**threat, "evidence": {"file": "config/prod.yaml"}}, eligible)
+
     def test_known_vulnerability_is_allowed_without_code_evidence(self):
         assert eyi._cvss_allowed({"source": "known-vuln"}, frozenset())
 
