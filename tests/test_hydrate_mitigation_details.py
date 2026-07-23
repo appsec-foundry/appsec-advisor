@@ -7,17 +7,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "scripts" / "hydrate_mitigation_details.py"
+GATE_SCRIPT = ROOT / "scripts" / "validate_mitigation_quality.py"
 
 
-def _load():
-    spec = importlib.util.spec_from_file_location("hydrate_mitigation_details", SCRIPT)
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader
     spec.loader.exec_module(mod)
     return mod
 
 
-hydrate = _load()
+hydrate = _load("hydrate_mitigation_details", SCRIPT)
+gate = _load("validate_mitigation_quality", GATE_SCRIPT)
 
 
 def test_hydrate_promotes_details_from_addressed_findings():
@@ -142,6 +144,53 @@ def test_hydrate_keeps_orphan_review_card_and_orphan_fix_with_steps():
 
     assert hydrate.hydrate(data) == 0
     assert [m["id"] for m in data["mitigations"]] == ["M-1", "M-2"]
+
+
+def test_hydrate_synthesizes_verification_for_urgent_fix_without_source():
+    """An auto-emitted P2 finding-fix card whose addressed threat has steps but no
+    verification (and no scanner check for backfill to key off) must get a
+    synthesized concrete verification, so the P1/P2 quality gate is satisfiable by
+    the producer instead of a downstream hand-patch (M-084/T-088 abort-loop)."""
+    data = {
+        "threats": [
+            {
+                "id": "T-088",
+                "remediation": {"effort": "Low", "steps": ["Redirect HTTP to HTTPS", "Add HSTS header"]},
+            }
+        ],
+        "mitigations": [
+            {
+                "id": "M-084",
+                "kind": "fix",
+                "priority": "P2",
+                "threat_ids": ["T-088"],
+                "prevents": ["CWE-319"],
+            }
+        ],
+    }
+
+    assert hydrate.hydrate(data) == 1
+    card = data["mitigations"][0]
+    assert card["steps"] == ["Redirect HTTP to HTTPS", "Add HSTS header"]
+    assert "CWE-319" in card["verification"]
+    # The whole point: the P1/P2 quality gate now passes for this card.
+    assert gate.validate(data) == []
+
+
+def test_hydrate_does_not_synthesize_verification_for_non_urgent_fix():
+    """Synthesis is scoped to P1/P2 — the gate only enforces verification there,
+    so a P3 fix must be left untouched (surgical blast radius)."""
+    data = {
+        "threats": [
+            {"id": "T-050", "remediation": {"steps": ["Do the thing", "Add a test"]}},
+        ],
+        "mitigations": [
+            {"id": "M-050", "kind": "fix", "priority": "P3", "threat_ids": ["T-050"], "prevents": ["CWE-200"]},
+        ],
+    }
+
+    assert hydrate.hydrate(data) == 1  # steps still hydrated
+    assert "verification" not in data["mitigations"][0]
 
 
 def test_hydrate_reverse_linked_stepless_fix_card_is_not_orphan():
