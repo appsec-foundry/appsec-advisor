@@ -77,6 +77,7 @@ from pathlib import Path
 from typing import Any
 
 from event_log import format_line
+from stride_outputs import stride_output_files
 
 # Reuse the central phase budgets so per-component-timeout defaults stay
 # in sync with the rest of the toolchain.
@@ -429,7 +430,11 @@ def _refresh_heartbeat(plugin_root: Path, lock_path: Path) -> None:
 
 def _scan_stride(output_dir: Path) -> dict[str, Any]:
     """Snapshot the STRIDE-output state in one stat-only pass."""
-    stride_files = sorted(output_dir.glob(".stride-*.json"))
+    # Per-component results only — the `.stride-` sidecars (dispatch manifest,
+    # selection, analyst context) land BEFORE the fan-out, so counting them
+    # would keep `stride_count` permanently > 0 and silently disable the
+    # `sc == 0` Phase-9 canary below.
+    stride_files = stride_output_files(output_dir)
     stride_count = len(stride_files)
     stride_bytes = 0
     for f in stride_files:

@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security Architecture reports no longer contain empty control sections or broken two-factor authentication links.
 - Report validation now catches broken internal links and incomplete models, while secret masking no longer corrupts code examples.
 - Container diagrams now stay within their size limit on larger models.
+- Component progress and stall detection now count only real component analyses, so live progress no longer overstates how many components are finished and a wedged analysis phase is detected again.
 
 ## 0.5.0-beta (2026-07-18)
 

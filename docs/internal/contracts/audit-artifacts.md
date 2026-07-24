@@ -7,7 +7,7 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.threat-modeling-context.md` | Captured project context (recon summary + scope) |
 | `.recon-summary.md` | Recon-scanner output — input to STRIDE |
 | `.dep-scan.json` | Dependency scan findings |
-| `.stride-*.json` | Per-component STRIDE fragments |
+| `.stride-*.json` | Per-component STRIDE fragments, plus the three pre-fan-out sidecars below |
 | `.threats-merged.json` | Canonical merged threat set |
 | `.triage-flags.json` | Triage-validator verdicts |
 | `.architect-review.md` | Stage-4 advisory output |
@@ -17,6 +17,26 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.appsec-cache/baseline.json` | **Critical** — incremental anchor; deleting forces cold full scan and breaks T-ID stability |
 
 Canonical enforcement: `scripts/runtime_cleanup.py` (the cleanup script must never list these), drift-guarded by `tests/test_runtime_cleanup.py`.
+
+## The `.stride-` prefix is shared
+
+Only `.stride-<component-id>.json` is a STRIDE result (`schemas/stride.schema.yaml`).
+Three sidecars share the prefix and are written **before** the Phase-9 fan-out:
+
+| Path | What it really is |
+|------|-------------------|
+| `.stride-dispatch-manifest.json` | Dispatch plan (`schemas/stride-dispatch-manifest.schema.yaml`) |
+| `.stride-selection.json` | Component-selection report (`build_stride_dispatch_manifest.py`) |
+| `.stride-analyst-context.json` | Analyst-A per-component context |
+
+Cleanup and never-publish lists keep the broad `.stride-*.json` pattern on
+purpose. Anything that **reads or counts** per-component results must go
+through `scripts/stride_outputs.py` — a bare glob counts the sidecars as
+finished components (it disabled the watchdog's Phase-9 canary, inflated the
+progress widget, and put `dispatch-manifest` / `analyst-context` into the
+merge audit trail and the incremental baseline). A new sidecar must be added
+to `RESERVED_SIDECARS` in the same change; `tests/test_stride_outputs.py`
+guards both halves.
 
 ## Rebuild exception
 

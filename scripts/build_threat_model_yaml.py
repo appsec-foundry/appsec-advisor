@@ -63,6 +63,7 @@ sys.path.insert(0, str(_SCRIPT_DIR))
 
 from _atomic_io import atomic_write_text  # noqa: E402
 from merge_threats import normalize_cvss_v4 as _normalize_cvss_v4  # noqa: E402
+from stride_outputs import is_stride_output  # noqa: E402
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -431,6 +432,12 @@ def _reanalyzed_component_ids(output_dir: Path) -> set[str] | None:
     changed: set[str] = set()
     for cid, rec in prior_hashes.items():
         sfile = output_dir / f".stride-{cid}.json"
+        if not is_stride_output(sfile):
+            # Baselines written before the `.stride-` sidecars were excluded
+            # carry `dispatch-manifest` / `selection` / `analyst-context` as
+            # component ids. Their content changes almost every run, so they
+            # would show up as changed components forever.
+            continue
         if not sfile.is_file():
             continue  # removed component — handled by the removal path, not here
         actual = "sha256:" + hashlib.sha256(sfile.read_bytes()).hexdigest()

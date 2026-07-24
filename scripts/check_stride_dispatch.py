@@ -99,6 +99,7 @@ import sys
 from pathlib import Path
 
 import stride_dispatch_waves
+from stride_outputs import stride_output_files
 
 # Extracts the dispatched component from a hook line's trailing
 # ``[… COMPONENT_ID=<id> …]`` payload. Both AGENT_SPAWN and AGENT_INVOKE
@@ -265,7 +266,7 @@ def detect_inlined_components(output_dir: Path) -> list[str]:
         return []
     progress_dir = output_dir / ".progress"
     inlined: list[str] = []
-    for stride_path in sorted(output_dir.glob(".stride-*.json")):
+    for stride_path in stride_output_files(output_dir):
         cid = _component_id(stride_path)
         if not _stride_has_real_threats(stride_path):
             continue  # stub or empty — legitimately inline / no work

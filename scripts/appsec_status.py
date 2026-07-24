@@ -39,6 +39,8 @@ try:
 except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
+from stride_outputs import stride_output_files  # noqa: E402
+
 
 def _emit_table(title: str, rows: list[tuple[str, str]]) -> str:
     out = [f"\n{title}"]
@@ -333,7 +335,7 @@ def _cutoff_verdict(output_dir: Path) -> dict | None:
         # Mirror the banner defaults: no STRIDE files yet ⇒ the early-cut-off
         # branch (session_death default); STRIDE present but no compose ⇒ the
         # Phase-11 branch (budget default).
-        default = "budget" if list(output_dir.glob(".stride-*.json")) else "session_death"
+        default = "budget" if stride_output_files(output_dir) else "session_death"
         kind, block = cutoff_cause.cause_for(output_dir, default)
         return {"kind": kind, "block": block}
     except Exception:
@@ -654,7 +656,7 @@ def _live_snapshot(output_dir: Path) -> dict:
             )
     progress.sort(key=lambda e: e.get("age_s", 0), reverse=True)
 
-    stride_count = len(list(output_dir.glob(".stride-*.json")))
+    stride_count = len(stride_output_files(output_dir))
 
     return {
         "ts": now,

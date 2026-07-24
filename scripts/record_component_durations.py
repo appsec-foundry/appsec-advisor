@@ -25,6 +25,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from stride_outputs import component_id as _stride_component_id  # noqa: E402
+from stride_outputs import stride_output_files  # noqa: E402
+
 
 def _read_phase_9_start(log_path: Path) -> int | None:
     """Return Unix-epoch seconds of the most recent Phase 9 PHASE_START line."""
@@ -134,8 +138,8 @@ def _self_reported_durations(output_dir: Path) -> dict[str, int]:
     not). This is the canonical source when present.
     """
     durations: dict[str, int] = {}
-    for path in sorted(output_dir.glob(".stride-*.json")):
-        comp_id = path.stem.lstrip(".").removeprefix("stride-")
+    for path in stride_output_files(output_dir):
+        comp_id = _stride_component_id(path)
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -178,8 +182,8 @@ def _stride_durations(output_dir: Path, phase_9_start: int) -> dict[str, int]:
     if durations:
         return durations
     # Legacy fallback — mtime-based heuristic.
-    for path in sorted(output_dir.glob(".stride-*.json")):
-        comp_id = path.stem.lstrip(".").removeprefix("stride-")
+    for path in stride_output_files(output_dir):
+        comp_id = _stride_component_id(path)
         try:
             mtime = int(path.stat().st_mtime)
         except OSError:

@@ -39,6 +39,10 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from stride_outputs import component_id as _stride_component_id  # noqa: E402
+from stride_outputs import stride_output_files  # noqa: E402
+
 STALE_SECONDS = 180  # progress file is considered stale after 3 minutes
 HEARTBEAT_TICKS = 6  # force a reprint every N unchanged polls (~2 min at 20 s cadence)
 
@@ -161,8 +165,8 @@ def main(argv: list[str]) -> int:
 
     marks = _markers()
     progress_dir = output_dir / ".progress"
-    ready_files = sorted(output_dir.glob(".stride-*.json"))
-    ready_ids = {p.stem.removeprefix(".stride-") for p in ready_files}
+    ready_files = stride_output_files(output_dir)
+    ready_ids = {_stride_component_id(p) for p in ready_files}
 
     progress_files = sorted(progress_dir.glob("*.json")) if progress_dir.exists() else []
     now = time.time()

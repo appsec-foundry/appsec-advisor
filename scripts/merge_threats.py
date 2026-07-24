@@ -45,6 +45,8 @@ from typing import Any
 import yaml
 from _atomic_io import atomic_write_json, atomic_write_text
 from _shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
+from stride_outputs import component_id as _stride_component_id
+from stride_outputs import stride_output_files
 from weakness_classifier import classify_cwe, classify_threat, load_weakness_classes
 
 # Stable ordering for the T-NNN deterministic sort.
@@ -203,7 +205,9 @@ def strip_ineligible_cvss_v4(threat: dict) -> bool:
 
 
 def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
-    """Return [(component_id, parsed_json), ...] for every .stride-*.json.
+    """Return [(component_id, parsed_json), ...] for every per-component
+    .stride-<id>.json (the `.stride-` sidecars listed in stride_outputs.py are
+    not STRIDE results and are excluded).
 
     On invalid JSON: print a context window around the failure and the
     canonical recovery instruction, then exit 1. The orchestrator must
@@ -213,9 +217,9 @@ def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
     after one component emitted invalid JSON).
     """
     pairs: list[tuple[str, dict]] = []
-    for path in sorted(output_dir.glob(".stride-*.json")):
+    for path in stride_output_files(output_dir):
         # .stride-auth-service.json → component_id="auth-service"
-        comp_id = path.stem[len(".stride-") :]
+        comp_id = _stride_component_id(path)
         try:
             raw = path.read_text()
             data = json.loads(raw)
@@ -1908,7 +1912,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     payload = {
         "version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source_files": [p.name for p in sorted(out_dir.glob(".stride-*.json"))],
+        "source_files": [p.name for p in stride_output_files(out_dir)],
         "threat_count_raw": len(flat),
         "threat_count_after_exact_dedup": len(deduped),
         "candidate_group_count": len(candidates),
