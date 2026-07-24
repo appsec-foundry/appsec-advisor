@@ -200,6 +200,11 @@ analyze:  ## Headless threat-model against any repo: make analyze REPO=<path> [B
 		sh -c "$$cmd" 2>&1 | tee "$$log"; \
 	fi
 
+.PHONY: analyze-resume
+analyze-resume:  ## Resume an interrupted analyze from its checkpoint — reuses .stride-*.json (no re-scan). Refuses if a run still holds the lock; kill it first, then: make analyze-resume REPO=<path> [BG=1] [LOG=<file>]
+	@test -n "$(REPO)" || { echo "ERROR: set REPO=<path to repo to resume>, e.g. make analyze-resume REPO=/home/mrohr/juice-shop"; exit 2; }
+	@$(MAKE) --no-print-directory analyze REPO="$(REPO)" BG="$(BG)" LOG="$(LOG)" MAX_DURATION="$(MAX_DURATION)" EXTRA="--resume $(EXTRA)"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Help
 # ─────────────────────────────────────────────────────────────────────────────
