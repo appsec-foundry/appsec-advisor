@@ -832,7 +832,7 @@ def test_attack_surface_dict_bad_path_and_missing_auth():
     }
     errs = vi._check_attack_surface_shape(data)
     assert any("missing required" in e for e in errs)
-    assert any("ADVISORY" in e for e in errs)
+    assert any(e.startswith("[advisory] ") for e in errs)
 
 
 def test_attack_surface_list_form():

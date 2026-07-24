@@ -797,7 +797,7 @@ def _check_attack_surface_shape(data: dict) -> list[str]:
         )
     if missing_auth:
         errors.append(
-            f"ADVISORY: attack_surface has {missing_auth} entries where `auth_required` "
+            f"[advisory] attack_surface has {missing_auth} entries where `auth_required` "
             f"is null. The §5 generator cannot split unauthenticated vs authenticated "
             f"entry points — §5.2 will render '(0)'. Set `auth_required: true/false` "
             f"on every attack_surface entry."
