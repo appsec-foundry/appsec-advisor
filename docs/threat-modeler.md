@@ -247,6 +247,8 @@ These OWASP Juice Shop runs are all on plugin **v0.5.0-beta** with the Claude Co
 
 Phase 10a evidence verification is capped at 20 non-Critical findings in quick mode, 30 in standard mode, and 100 in thorough mode. Use `--evidence-verifier-cap N` to change that limit; Critical findings do not count toward the cap and are selected first.
 
+`--cheap-stride` is an opt-in cost lever for repos with a long internal tail. Components that carry the attack surface — authentication, frontend, LLM, internet-exposed, file-upload, and realtime components — keep full STRIDE depth. Every other selected component gets a screening pass instead: a flat 8-turn budget with `ESTIMATED_THREAT_COUNT=low`, which skips verification greps and file re-reads. All six STRIDE categories are still covered; the flag is a budget and pacing lever, never a reduction in category coverage. Screened components are disclosed as such — `Screened` in the §3 component table, a separate clause in the Management Summary scope line, and `analysis_depth: screening` in `.stride-selection.json`. Off by default.
+
 `--register-severity-floor` controls which effective severities enter the canonical report and its SARIF and pentest-task exports. The default, `medium`, excludes Low and Informational findings to keep the register actionable. Use `--register-severity-floor low` or `informational` when a complete lower-severity export is required.
 
 ### Reasoning model

@@ -1465,8 +1465,8 @@ def build_parser() -> argparse.ArgumentParser:
     # auto-default (that needs reliable exposure classification).
     p.add_argument("--cheap-stride", action="store_true", dest="cheap_stride",
                    help="Opt-in: screening-depth STRIDE (~8 turns, all 6 "
-                        "categories kept) for non-exposed / non-role-floor "
-                        "components; exposed, auth, frontend, and LLM components "
+                        "categories kept) for the internal tail; exposed, auth, "
+                        "frontend, LLM, file-upload, and realtime components "
                         "keep full depth. Trims tokens on the internal tail. "
                         "Off by default.")
     # Architect

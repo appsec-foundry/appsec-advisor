@@ -286,6 +286,9 @@ def test_builder_cheap_stride_screens_internal_tail(tmp_path):
     be = by_id["backend-api"]
     assert be["max_turns"] == bm.CHEAP_STRIDE_TURNS
     assert be["estimated_threat_count"] == 3  # "low"
+    # The analyzer paces on the LABEL, not the integer — without it a cheapened
+    # component runs `moderate` pacing inside an 8-turn budget.
+    assert be["estimated_threat_count_label"] == "low"
     assert be["cheap_stride"] is True
     # frontend-spa: _is_frontend -> priority 1 -> spared, full simple depth
     fe = by_id["frontend-spa"]
@@ -306,6 +309,63 @@ def test_builder_cheap_stride_off_keeps_full_depth(tmp_path):
     by_id = {c["component_id"]: c for c in manifest["components"]}
     assert by_id["backend-api"]["max_turns"] == 31  # full complex budget
     assert all("cheap_stride" not in c for c in manifest["components"])
+
+
+def test_builder_cheap_stride_spares_untrusted_input_entry_points(tmp_path):
+    """file-upload and realtime components share priority 3 with the crown-jewel /
+    data-store anchors, but they ARE the attack surface — never screened."""
+    (tmp_path / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {"id": "file-upload-service", "name": "Uploads", "paths": ["up/**"], "complexity": "moderate"},
+                    {"id": "websocket-gateway", "name": "Realtime", "paths": ["ws/**"], "complexity": "moderate"},
+                    {"id": "report-generator", "name": "Reports", "paths": ["rep/**"], "complexity": "moderate"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    by_id = {c["component_id"]: c for c in manifest["components"]}
+    assert "cheap_stride" not in by_id["file-upload-service"]
+    assert "cheap_stride" not in by_id["websocket-gateway"]
+    assert by_id["report-generator"]["cheap_stride"] is True
+
+
+def test_builder_cheap_stride_discloses_screening_in_selection(tmp_path):
+    """A screened component is not a fully-analyzed one — the selection sidecar
+    (source of §1 Scope, the §3 Scope column and the console banner) says so."""
+    _seed_output_dir(tmp_path)
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
+    bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    sel = json.loads((tmp_path / ".stride-selection.json").read_text(encoding="utf-8"))
+    # Entries are dicts in mode=criteria and bare ids in the passthrough fail-safe;
+    # a screened one is always promoted to a dict so the disclosure survives both.
+    by_id = {(e["id"] if isinstance(e, dict) else e): e for e in sel["selected"]}
+    assert by_id["backend-api"]["analysis_depth"] == "screening"
+    assert any("--cheap-stride" in r for r in by_id["backend-api"]["reasons"])
+    assert by_id["frontend-spa"] == "frontend-spa" or "analysis_depth" not in by_id["frontend-spa"]
+    assert "(screening)" in bm.format_selection_console(sel)
+
+
+def test_builder_etc_label_bands_analyst_supplied_counts(tmp_path):
+    """The label is derived from the integer for every component, not just the
+    cheapened ones — it is the only form the analyzer's pacing rules read."""
+    _seed_output_dir(tmp_path)
+    manifest = bm.build(tmp_path, "standard", {"backend-api": {"estimated_threat_count": 9}}, PLUGIN_ROOT)
+    by_id = {c["component_id"]: c for c in manifest["components"]}
+    assert by_id["backend-api"]["estimated_threat_count_label"] == "high"
+    # No analyst count -> no label; the analyzer keeps its documented `moderate` default.
+    assert "estimated_threat_count_label" not in by_id["frontend-spa"]
+    assert (bm._etc_label(3), bm._etc_label(4), bm._etc_label(7), bm._etc_label(8)) == (
+        "low",
+        "moderate",
+        "moderate",
+        "high",
+    )
 
 
 def test_builder_index_paths_none_when_absent_else_path(tmp_path):

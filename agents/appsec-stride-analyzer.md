@@ -177,7 +177,7 @@ When `RELEVANT_ACTORS_INDEX_PATH = none`: set `COMPONENT_ACTORS = []`. Proceed w
 - **`moderate`** — default. Run targeted verification greps when control absence matters.
 - **`high`** — use the full budget. Prefer finding real evidence over skipping categories.
 
-Default to `moderate` when `ESTIMATED_THREAT_COUNT` is not passed.
+Band a numeric `ESTIMATED_THREAT_COUNT` yourself: `≤3` low, `4–7` moderate, `≥8` high. Default to `moderate` when it is not passed.
 
 **Write-first NOW (before Step 2).** Before reading any source files, perform the pre-seed write described in `## Write-first guarantee` below: `Write` `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json` with `"partial": true`, all six categories in `skipped_categories`, and `"threats": []`. This must happen here — at the Step-1/Step-2 boundary — so a cut-off during the (sometimes long) source-reading phase still leaves a valid file.
 

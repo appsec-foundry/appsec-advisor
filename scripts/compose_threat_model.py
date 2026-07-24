@@ -2721,16 +2721,30 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     # system was assessed when only a criteria-selected subset was.
     scope_coverage = ""
     cs = (ctx.yaml_data.get("meta") or {}).get("component_selection")
-    if isinstance(cs, dict) and (cs.get("excluded") or []):
+    # Screening-depth components (--cheap-stride) were analyzed, but not at full
+    # depth — counting them as "full STRIDE analysis" would overstate coverage,
+    # so they get their own clause and are subtracted from the full-depth count.
+    n_screen = sum(
+        1 for e in ((cs or {}).get("selected") or []) if isinstance(e, dict) and e.get("analysis_depth") == "screening"
+    )
+    if isinstance(cs, dict) and ((cs.get("excluded") or []) or n_screen):
         analyzed = cs.get("analyzed", 0)
         total_comp = cs.get("total", analyzed)
         n_exc = len(cs.get("excluded") or [])
         scope_coverage = (
-            f"**Scope:** {analyzed} of {total_comp} components received full STRIDE analysis — "
+            f"**Scope:** {analyzed - n_screen} of {total_comp} components received full STRIDE analysis — "
             f"the externally-reachable, authentication-bearing, and business-critical surface. "
-            f"The other {n_exc} (lower-priority / internal) were not individually assessed at this depth "
-            f"(see [§1 Scope](#scope))."
         )
+        if n_screen:
+            scope_coverage += (
+                f"{n_screen} further internal component(s) received a reduced-budget screening pass "
+                f"(all six STRIDE categories, no verification greps). "
+            )
+        if n_exc:
+            scope_coverage += (
+                f"The other {n_exc} (lower-priority / internal) were not individually assessed at this depth "
+            )
+        scope_coverage += "(see [§1 Scope](#scope))."
     # Badge worst-case bullets whose findings anchor a code-verified
     # (fully_viable) abuse chain. Data-level (per bullet.refs) — no fuzzy
     # markdown parsing. Empty suffix when no viable chain / abuse skipped.
@@ -10112,18 +10126,25 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     # and don't inherit a redundant em-dash column.
     has_runtime = any(isinstance(c, dict) and (c.get("runtime") or "").strip() for c in components)
     # Scope column — only when a criteria-based selection actually excluded some
-    # components (meta.component_selection.excluded). Marks each row Analyzed vs
-    # Out of scope so the reader can see which components received a STRIDE pass.
+    # components (meta.component_selection.excluded) or screened some at reduced
+    # depth. Marks each row Analyzed / Screened / Out of scope so the reader can
+    # see which components received a STRIDE pass, and at which depth.
     # Absent in passthrough/legacy runs → original column layout is preserved.
     cs = (ctx.yaml_data.get("meta") or {}).get("component_selection")
     excluded_ids = set()
+    screened_ids = set()
     if isinstance(cs, dict):
         excluded_ids = {
             (e.get("id") or "").strip()
             for e in (cs.get("excluded") or [])
             if isinstance(e, dict) and (e.get("id") or "").strip()
         }
-    show_scope = bool(excluded_ids)
+        screened_ids = {
+            (e.get("id") or "").strip()
+            for e in (cs.get("selected") or [])
+            if isinstance(e, dict) and e.get("analysis_depth") == "screening" and (e.get("id") or "").strip()
+        }
+    show_scope = bool(excluded_ids or screened_ids)
     scope_hdr = " Scope |" if show_scope else ""
     scope_sep = "-------|" if show_scope else ""
     if has_runtime:
@@ -10204,7 +10225,10 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         else:
             row = f"| {id_cell} | {name} | {kind} | {paths_cell} | {th_cell} |"
         if show_scope:
-            row += " Out of scope |" if raw in excluded_ids else " Analyzed |"
+            if raw in excluded_ids:
+                row += " Out of scope |"
+            else:
+                row += " Screened |" if raw in screened_ids else " Analyzed |"
         table_lines.append(row)
     table_lines.append("")
     insertion = "\n".join(table_lines)

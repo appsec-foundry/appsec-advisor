@@ -572,7 +572,13 @@ def build_component_selection(sel: dict | None, components: list) -> dict | None
     def _norm_sel(e: object) -> dict:
         if isinstance(e, dict):
             cid = e.get("id")
-            return {"id": cid, "name": _name(cid), "reasons": list(e.get("reasons") or [])}
+            row = {"id": cid, "name": _name(cid), "reasons": list(e.get("reasons") or [])}
+            # Carry the per-component analysis depth (currently only "screening",
+            # set by --cheap-stride) so §1 Scope and the Management Summary can
+            # say screened instead of implying a full STRIDE pass.
+            if e.get("analysis_depth"):
+                row["analysis_depth"] = e["analysis_depth"]
+            return row
         return {"id": e, "name": _name(e), "reasons": []}
 
     def _norm_exc(e: object) -> dict:

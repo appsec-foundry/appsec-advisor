@@ -599,6 +599,7 @@ This table lists the flags `run-headless.sh` accepts.
 |---|---|
 | `--assessment-depth quick\|standard\|thorough` | Control coverage, analysis depth, runtime, and cost; see [Threat Modeler](threat-modeler.md#assessment-depth--cost-control) |
 | `--evidence-verifier-cap <N>` | Verify at most `N` non-Critical findings in Phase 10a; Critical findings do not count toward the cap and are selected first. Defaults: 20 quick, 30 standard, 100 thorough. |
+| `--cheap-stride` | Opt-in: screening-depth STRIDE (flat 8-turn pass, all six categories kept) for the internal tail; auth, frontend, LLM, internet-exposed, file-upload, and realtime components keep full depth. Screened components are marked as such in the report. Off by default. |
 | `--register-severity-floor critical\|high\|medium\|low\|informational` | Keep only findings at or above this effective severity in the canonical report and its SARIF/pentest-task exports; default `medium` excludes Low and Informational findings |
 | `--requirements [<url>]` | Enable the requirements compliance check during the assessment |
 | `--no-requirements` | Skip requirements even when enabled in config |

@@ -411,6 +411,19 @@ def _priority(c: dict) -> int:
     return 5  # internal-only / transitively-reachable — drop first
 
 
+def _cheap_stride_target(c: dict) -> bool:
+    """Is this component in the --cheap-stride screening set (the internal tail)?
+
+    Spared at full depth: priority <=2 (auth / frontend / LLM / internet-exposed)
+    AND the two priority-3 entries that are untrusted-input ENTRY POINTS —
+    file-upload parsers and realtime channels. They share priority 3 with the
+    crown-jewel / data-store anchors, but those are impact anchors reached
+    THROUGH the surface, whereas an upload parser is the surface: screening it is
+    exactly the tradeoff this flag is not meant to make.
+    """
+    return _priority(c) > 2 and not (_is_file_upload(c) or _is_realtime(c))
+
+
 def _selection_reasons(c: dict, depth: str) -> list:
     reasons = []
     if _is_auth(c):
@@ -588,6 +601,28 @@ def _evidence_complexity_floor(paths: list, auth_files: list[str], claimed: str)
 # documented thin-component path (phase-group-threats.md: "MAX_TURNS=8 +
 # ESTIMATED_THREAT_COUNT=low"). 8, not 6, to keep the ≥2-turn write reserve.
 CHEAP_STRIDE_TURNS = 8
+
+
+def _etc_label(count: object) -> str:
+    """Band an ``estimated_threat_count`` integer into the analyzer's pacing label.
+
+    The manifest schema stores the count as an integer, but the analyzer's turn
+    budget self-regulation branches on the LABEL (`appsec-stride-analyzer.md` —
+    ``low`` ≤3 / ``moderate`` 4–7 / ``high`` ≥8) and silently falls back to
+    ``moderate`` for anything it does not recognise. Emitting the label next to
+    the count is what makes the count actually reach the pacing rules; without it
+    a cheapened component runs `moderate` pacing (verification greps) inside an
+    8-turn budget and dies on the write-first pre-seed.
+    """
+    try:
+        n = int(count)
+    except (TypeError, ValueError):
+        return "moderate"
+    if n <= 3:
+        return "low"
+    if n <= 7:
+        return "moderate"
+    return "high"
 
 
 def _component_max_turns(repo_root: Path, patterns, tier_turns: int, cheap: bool = False) -> int:
@@ -1162,6 +1197,26 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             sys.stderr.write(f"ACTOR_SLICES: could not build actor slices: {e}\n")
 
     components, selection_report = select_stride_components(all_components, depth, ceiling)
+    # Resolve the --cheap-stride screening set once, before the selection sidecar
+    # is written: a screened component is NOT a fully-analyzed one, so the
+    # rationale the report and the console banner are built from has to say so.
+    cheap_ids = {
+        c.get("id")
+        for c in components
+        if cheap_stride and isinstance(c, dict) and c.get("id") and _cheap_stride_target(c)
+    }
+    selected_entries = selection_report.get("selected") or []
+    for i, entry in enumerate(selected_entries):
+        entry_id = entry.get("id") if isinstance(entry, dict) else entry
+        if entry_id not in cheap_ids:
+            continue
+        if not isinstance(entry, dict):
+            # mode=passthrough persists a flat id list; screening applies there
+            # too, so promote the entry rather than losing the disclosure.
+            entry = {"id": entry_id, "reasons": []}
+            selected_entries[i] = entry
+        entry["analysis_depth"] = "screening"
+        entry["reasons"] = [*(entry.get("reasons") or []), "screening depth (--cheap-stride)"]
     # Persist the selection rationale so a run is auditable (which components were
     # analyzed and why) and so EXPOSURE_CAP_LIFT can be post-hoc verified.
     try:
@@ -1208,10 +1263,9 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                 "ci-cd-runtime, build-pipeline, prod-write-db, …).\n"
             )
         # --cheap-stride (Variant 1): screen the internal tail, spare the
-        # exposed/role-floor set. _priority <=2 == auth/frontend/llm/exposed
-        # (kept at full depth); >2 == crown-jewel/datastore/ci-cd/internal-only.
-        # Keyed on priority, NOT on the over-tagged handles_sensitive_data flag.
-        cheap_this = cheap_stride and _priority(c) > 2
+        # attack surface — see _cheap_stride_target. Keyed on exposure/role, NOT
+        # on the over-tagged handles_sensitive_data flag.
+        cheap_this = cid in cheap_ids
         comp = {
             "component_id": cid,
             "component_name": c.get("name", cid),
@@ -1305,6 +1359,11 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             # its intended use, not a truth-claim. Override any analyst value.
             comp["estimated_threat_count"] = 3  # "low" (matches _etc_map["low"])
             comp["cheap_stride"] = True  # manifest audit marker
+        # The dispatch prompt passes the LABEL (the analyzer's pacing rules do not
+        # read the integer). Emit it only when a count exists — an absent count
+        # keeps the analyzer's documented `moderate` default.
+        if "estimated_threat_count" in comp:
+            comp["estimated_threat_count_label"] = _etc_label(comp["estimated_threat_count"])
         out_components.append(comp)
 
     return {
@@ -1333,7 +1392,15 @@ def format_selection_console(sel: dict) -> str:
     lines = [f"STRIDE component selection (depth={depth}, mode={mode}):"]
 
     if mode == "passthrough":
-        ids = [s if isinstance(s, str) else s.get("id", "?") for s in selected]
+        # A --cheap-stride entry is promoted to a dict carrying analysis_depth —
+        # mark it so the banner never presents a screened component as fully
+        # analyzed, even in the un-migrated fail-safe mode.
+        ids = [
+            s
+            if isinstance(s, str)
+            else s.get("id", "?") + (" (screening)" if s.get("analysis_depth") == "screening" else "")
+            for s in selected
+        ]
         lines.append(f"  ANALYZED ({len(ids)}): " + (", ".join(ids) or "(none)"))
         lines.append(
             "  SKIPPED (0): per-component criteria unavailable — un-migrated "

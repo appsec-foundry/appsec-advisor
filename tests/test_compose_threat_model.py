@@ -3907,6 +3907,81 @@ def test_verdict_scope_coverage_line(tmp_path: Path) -> None:
     assert "other 2 (lower-priority / internal) were not individually assessed" in out
 
 
+def test_verdict_scope_coverage_counts_screening_separately(tmp_path: Path) -> None:
+    """A --cheap-stride screening pass is not full STRIDE depth — it must not be
+    counted into the full-analysis figure the executive verdict states."""
+    frag = tmp_path / ".fragments"
+    frag.mkdir(parents=True)
+    (frag / "ms-verdict.json").write_text(
+        json.dumps(
+            {
+                "severity": "red",
+                "opening": "Not production-ready. The application leaves its most sensitive operations open.",
+                "bullets": [
+                    {
+                        "title": "Anyone can act as admin",
+                        "body": "An unauthenticated caller reaches every privileged action.",
+                        "refs": ["F-001"],
+                    },
+                    {
+                        "title": "Customer data is reachable",
+                        "body": "Any logged-in user can read other customers' records.",
+                        "refs": ["F-002"],
+                    },
+                ],
+                "closing": "Address authentication and authorization before any production use.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    cs = _cs_with_exclusions()
+    cs["selected"][1]["analysis_depth"] = "screening"
+    yaml_data = {"meta": {"component_selection": cs}, "threats": []}
+    ctx = compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={}, fragments_dir=frag)
+    env = compose._build_jinja_env(ctx)
+    section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
+    out = compose._render_verdict(ctx, env, section)
+    assert "**Scope:** 1 of 4 components received full STRIDE analysis" in out
+    assert "1 further internal component(s) received a reduced-budget screening pass" in out
+    assert "other 2 (lower-priority / internal) were not individually assessed" in out
+
+
+def test_components_table_scope_column_marks_screened(tmp_path: Path) -> None:
+    """Screening-depth components get their own Scope value — with nothing
+    excluded the column still appears, because Analyzed alone would overstate."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    comps = [
+        {"id": "api", "name": "API", "tier": "application", "paths": ["src/api"]},
+        {"id": "worker", "name": "Worker", "tier": "application", "paths": ["src/worker"]},
+    ]
+    meta = {
+        "component_selection": {
+            "selected": [
+                {"id": "api", "name": "API", "reasons": ["internet-exposed"]},
+                {
+                    "id": "worker",
+                    "name": "Worker",
+                    "reasons": ["screening depth (--cheap-stride)"],
+                    "analysis_depth": "screening",
+                },
+            ],
+            "excluded": [],
+        }
+    }
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={"components": comps, "threats": [], "meta": meta},
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
+    out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n")
+    rows = [ln for ln in out.splitlines() if ln.startswith("|") and ("API" in ln or "Worker" in ln)]
+    assert next(ln for ln in rows if "Worker" in ln).rstrip().endswith("Screened |")
+    assert next(ln for ln in rows if "API" in ln and "Worker" not in ln).rstrip().endswith("Analyzed |")
+
+
 def _verdict_ctx_with_abuse(tmp_path: Path, bullets: list[dict], abuse_cases: list[dict] | None):
     """Build a RenderContext + section for _render_verdict, writing the verdict
     fragment and (optionally) the abuse-cases.json sidecar."""

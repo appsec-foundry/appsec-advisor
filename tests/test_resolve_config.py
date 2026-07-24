@@ -123,6 +123,13 @@ class TestCheapStride:
         ns = rc.build_parser().parse_args(["--cheap-stride"])
         assert ns.cheap_stride is True
 
+    def test_reaches_resolved_config(self, tmp_path):
+        """Parser-level is not enough — the manifest builder reads the RESOLVED
+        cfg (via .skill-config.json), so the key has to survive resolve()."""
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        assert rc.resolve([*base, "--cheap-stride"], REPO_ROOT)["cheap_stride"] is True
+        assert rc.resolve(base, REPO_ROOT)["cheap_stride"] is False
+
 
 class TestResolveRequirements:
     def test_no_requirements_flag(self):

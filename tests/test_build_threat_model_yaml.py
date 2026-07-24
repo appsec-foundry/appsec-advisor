@@ -707,6 +707,25 @@ def test_component_selection_passthrough_no_exclusions():
     assert cs["analyzed"] == 1 and cs["total"] == 1 and cs["excluded"] == []
 
 
+def test_component_selection_carries_screening_depth():
+    """--cheap-stride marks screened components in .stride-selection.json; the
+    marker has to survive into meta so §1 Scope, §3 and the verdict can say so."""
+    m = _load()
+    comps = [{"id": "web", "name": "Web"}, {"id": "worker", "name": "Worker"}]
+    sel = {
+        "mode": "criteria",
+        "selected": [
+            {"id": "web", "reasons": ["internet-exposed"]},
+            {"id": "worker", "reasons": ["screening depth (--cheap-stride)"], "analysis_depth": "screening"},
+        ],
+        "excluded": [],
+    }
+    cs = m.build_component_selection(sel, comps)
+    by_id = {s["id"]: s for s in cs["selected"]}
+    assert by_id["worker"]["analysis_depth"] == "screening"
+    assert "analysis_depth" not in by_id["web"]
+
+
 def test_component_selection_none_when_absent():
     m = _load()
     assert m.build_component_selection(None, []) is None

@@ -77,6 +77,19 @@ properties:
         estimated_threat_count:
           type: integer
           minimum: 0
+        estimated_threat_count_label:
+          description: |
+            Pacing band for `estimated_threat_count`, derived deterministically by
+            the builder (low ≤3 / moderate 4–7 / high ≥8). This — not the integer —
+            is what the dispatch prompt passes as `ESTIMATED_THREAT_COUNT`, because
+            the analyzer's turn-budget self-regulation branches on the label.
+          type: string
+          enum: [low, moderate, high]
+        cheap_stride:
+          description: |
+            Audit marker — true when `--cheap-stride` put this component in the
+            screening set (flat 8-turn six-category pass). Absent otherwise.
+          type: boolean
         interfaces:
           description: Component interfaces (entry points / exposed surfaces) from Phase 6.
           oneOf: [ { type: string }, { type: array } ]

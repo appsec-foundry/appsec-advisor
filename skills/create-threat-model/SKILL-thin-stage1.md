@@ -88,7 +88,8 @@ Use this path when `PARALLEL_STRIDE=true`.
 
    Each component uses `appsec-advisor:appsec-stride-analyzer`, description
    `STRIDE: <NAME>`, and the complete manifest mapping: `COMPONENT_ID`, `NAME`,
-   `DESCRIPTION`, `PATHS`, `COMPLEXITY`, `MAX_TURNS`, `INTERFACES`,
+   `DESCRIPTION`, `PATHS`, `COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`,
+   `INTERFACES`,
    `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and every
    `index_paths.*` entry. Preserve Group A → B → C ordering. Each prompt also
    passes `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instructs the
