@@ -121,3 +121,27 @@ def test_preflight_abort_offers_a_non_override_remedy() -> None:
         "the abort should show how to tell own files from repo-owned ones, since "
         "that is the fact the choice actually turns on"
     )
+
+
+def test_interrupt_arms_timed_escalation_watchdog() -> None:
+    """A single Ctrl-C must guarantee teardown even when the script runs under
+    `make ... | tee`: make dies on the same SIGINT and hands the shell prompt
+    back, orphaning this script so no further Ctrl-C can reach the manual
+    TERM/KILL escalation. The graceful first interrupt therefore arms a timed
+    watchdog that escalates SIGTERM→SIGKILL on its own, and it is cancelled once
+    claude exits so it never lingers or signals a reused process group."""
+    body = _body()
+    assert "start_escalation_watchdog()" in body, "no timed escalation watchdog"
+    # timed escalation sequence: sleep → SIGTERM → sleep → SIGKILL
+    assert 'sleep "$INTERRUPT_TERM_SECS"' in body
+    assert 'sleep "$INTERRUPT_KILL_SECS"' in body
+    # armed from the graceful first interrupt AND on TERM/HUP (def + ≥2 call sites)
+    assert body.count("start_escalation_watchdog") >= 3, (
+        "watchdog must be armed from on_interrupt's graceful branch and on_terminate"
+    )
+    # delays are env-overridable so a stuck orphan can never hang un-escalated
+    # (and tests can run fast)
+    assert "APPSEC_INTERRUPT_TERM_SECS" in body
+    assert "APPSEC_INTERRUPT_KILL_SECS" in body
+    # cancelled after claude exits — no lingering sleeper, no reused-pgroup signal
+    assert 'kill "$ESCALATION_WATCHDOG_PID"' in body

@@ -812,6 +812,34 @@ set +e
 # on a terminal read (SIGTTIN).
 CLAUDE_PID=""
 SIGINT_COUNT=0
+ESCALATION_WATCHDOG_PID=""
+# Auto-escalation delays (seconds). Overridable so tests can run fast.
+INTERRUPT_TERM_SECS="${APPSEC_INTERRUPT_TERM_SECS:-10}"
+INTERRUPT_KILL_SECS="${APPSEC_INTERRUPT_KILL_SECS:-10}"
+
+# After a graceful first interrupt, claude may not stop — a stalled or already
+# -aborted turn ignores a single SIGINT. And when this script runs under
+# `make ... | tee`, `make` dies on the SAME Ctrl-C and hands the shell prompt
+# back, orphaning us: no further Ctrl-C can reach the manual TERM/KILL
+# escalation below (those keystrokes now go to the shell). Arm a timed watchdog
+# so a SINGLE interrupt still guarantees teardown — escalate to SIGTERM, then
+# SIGKILL, on a timer regardless of any further signals. Idempotent: armed once.
+start_escalation_watchdog() {
+    [ -n "$ESCALATION_WATCHDOG_PID" ] && return
+    [ -n "$CLAUDE_PID" ] || return
+    (
+        sleep "$INTERRUPT_TERM_SECS"
+        kill -0 "-$CLAUDE_PID" 2>/dev/null || exit 0
+        warn "claude still running ${INTERRUPT_TERM_SECS}s after interrupt — sending SIGTERM to its process group."
+        kill -TERM "-$CLAUDE_PID" 2>/dev/null || true
+        sleep "$INTERRUPT_KILL_SECS"
+        kill -0 "-$CLAUDE_PID" 2>/dev/null || exit 0
+        warn "claude ignored SIGTERM — sending SIGKILL to its process group."
+        kill -KILL "-$CLAUDE_PID" 2>/dev/null || true
+    ) &
+    ESCALATION_WATCHDOG_PID=$!
+}
+
 on_interrupt() {
     SIGINT_COUNT=$((SIGINT_COUNT + 1))
     [ -n "$CLAUDE_PID" ] || return
@@ -822,13 +850,15 @@ on_interrupt() {
         warn "Second interrupt — sending SIGTERM to the claude process group."
         kill -TERM "-$CLAUDE_PID" 2>/dev/null || true
     else
-        warn "Interrupt — forwarding SIGINT to claude (graceful abort may take a few seconds; press Ctrl-C again to escalate)."
+        warn "Interrupt — forwarding SIGINT to claude (auto-escalates to SIGTERM in ${INTERRUPT_TERM_SECS}s, then SIGKILL after a further ${INTERRUPT_KILL_SECS}s if it is ignored; press Ctrl-C again to escalate now)."
         kill -INT "-$CLAUDE_PID" 2>/dev/null || true
+        start_escalation_watchdog
     fi
 }
 on_terminate() {
     [ -n "$CLAUDE_PID" ] || return
     kill -TERM "-$CLAUDE_PID" 2>/dev/null || true
+    start_escalation_watchdog
 }
 
 # Print a paste-ready re-run command, choosing --resume vs --rebuild from what
@@ -879,6 +909,13 @@ while [ "$EXIT_CODE" -gt 128 ] && kill -0 "$CLAUDE_PID" 2>/dev/null; do
     wait "$CLAUDE_PID"
     EXIT_CODE=$?
 done
+
+# claude has exited — cancel the escalation watchdog if it is still counting
+# down, so it never lingers past the run or signals a reused process group.
+if [ -n "$ESCALATION_WATCHDOG_PID" ]; then
+    kill "$ESCALATION_WATCHDOG_PID" 2>/dev/null || true
+    ESCALATION_WATCHDOG_PID=""
+fi
 
 # Restore the tail-cleanup trap that the verbose/default branches installed.
 trap 'cleanup_tails' INT TERM HUP
