@@ -28,7 +28,12 @@ TOLERANCE = 0.20
 # bloat. Both bounds include the TOLERANCE buffer documented above.
 _BOUNDS: dict[str, tuple[int, int]] = {
     "agents/phases/phase-group-finalization.md": (32_000, 60_000),
-    "agents/phases/phase-group-architecture.md": (25_000, 45_000),
+    # Raised 2026-07-24: mirrored the canonical-zone hard constraint from
+    # appsec-recon-scanner.md into the actual .components.json writer — the
+    # analyst was free-texting off-vocab `*-zone` labels (application-zone/…)
+    # that silently disable the STRIDE exposure/ci-cd selector (real
+    # mis-classification bugfix). Measured 45_052; high = ~2% buffer.
+    "agents/phases/phase-group-architecture.md": (25_000, 46_000),
     "agents/phases/phase-group-threats.md": (24_000, 45_000),
     # Raised 2026-06-26: commit 77721d7 added the ⛔ "never re-dispatch
     # context-resolver/recon-scanner after a stall" rule (real token-waste
