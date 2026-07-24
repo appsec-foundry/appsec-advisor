@@ -66,6 +66,13 @@ e2e-full-keep:  ## Re-run assertions against the previous _last-run/ output (no 
 	 APPSEC_E2E_OUTPUT_DIR="$(PWD)/tests/fixtures/e2e/_last-run" \
 	 $(PYTHON) -m pytest tests/test_full_run_e2e.py -v --tb=short
 
+.PHONY: analyze-verify
+analyze-verify:  ## Full pipeline + structural assertions against ANY repo (recall/oracle checks self-skip): make analyze-verify REPO=<path> [DEPTH=quick|standard|thorough]
+	@command -v claude >/dev/null 2>&1 || { \
+		echo "ERROR: 'claude' CLI not on PATH. Install Claude Code first."; exit 3; }
+	@test -n "$(REPO)" || { echo "ERROR: set REPO=<path to repo to verify>, e.g. make analyze-verify REPO=/home/mrohr/juice-shop"; exit 2; }
+	@./tests/e2e/run-full.sh --repo "$(REPO)" --depth "$(or $(DEPTH),quick)"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Fast unit tests (the per-PR safety net — runs in CI too)
 # ─────────────────────────────────────────────────────────────────────────────

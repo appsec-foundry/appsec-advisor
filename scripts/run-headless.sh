@@ -831,6 +831,37 @@ on_terminate() {
     kill -TERM "-$CLAUDE_PID" 2>/dev/null || true
 }
 
+# Print a paste-ready re-run command, choosing --resume vs --rebuild from what
+# the resume-guard actually allows (an interrupt before Stage-1 checkpoints
+# cannot resume → point at --rebuild instead). Reused by both the Ctrl-C abort
+# path and the non-zero-exit failure path so the hint is never only on one.
+print_recovery_hint() {
+    _rh_dir="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+    if [ "$SKILL" != "create-threat-model" ]; then
+        warn "Check intermediate files or run with --resume to continue."
+        return
+    fi
+    _rerun_cmd() {  # $1 = mode flag to append
+        _cmd="$0"
+        for _a in $ORIG_ARGS; do
+            case "$_a" in
+                --resume|--full|--rebuild|--rerender|--incremental) ;;
+                *) _cmd="$_cmd $_a" ;;
+            esac
+        done
+        printf '%s %s\n' "$_cmd" "$1"
+    }
+    if [ -f "$_rh_dir/.appsec-checkpoint" ] \
+       && python3 "$PLUGIN_DIR/scripts/check_state.py" "$_rh_dir" \
+            --resume-guard --max-age-seconds 900 >/dev/null 2>&1; then
+        warn "Resume from the last checkpoint:"
+        printf '    %s\n' "$(_rerun_cmd --resume)"
+    else
+        warn "This run cannot be resumed cleanly — start fresh:"
+        printf '    %s\n' "$(_rerun_cmd --rebuild)"
+    fi
+}
+
 set -m
 eval "$CLAUDE_CMD" < /dev/null &
 CLAUDE_PID=$!
@@ -859,6 +890,7 @@ cleanup_tails
 # artifact parsing — the user asked to abort.
 if [ "$SIGINT_COUNT" -gt 0 ]; then
     warn "Run aborted by user (exit $EXIT_CODE). Skipping post-run parsing."
+    print_recovery_hint
     exit "$EXIT_CODE"
 fi
 
@@ -980,29 +1012,7 @@ else
     # actually allows, so we never point the user at a resume that will be
     # refused (the missing-context / incomplete-Stage-1 case) or hide a resume
     # that would work.
-    if [ "$SKILL" = "create-threat-model" ]; then
-        _rerun_cmd() {  # $1 = mode flag to append
-            _cmd="$0"
-            for _a in $ORIG_ARGS; do
-                case "$_a" in
-                    --resume|--full|--rebuild|--rerender|--incremental) ;;
-                    *) _cmd="$_cmd $_a" ;;
-                esac
-            done
-            printf '%s %s\n' "$_cmd" "$1"
-        }
-        if [ -f "$RESULT_DIR/.appsec-checkpoint" ] \
-           && python3 "$PLUGIN_DIR/scripts/check_state.py" "$RESULT_DIR" \
-                --resume-guard --max-age-seconds 900 >/dev/null 2>&1; then
-            warn "Resume from the last checkpoint:"
-            printf '    %s\n' "$(_rerun_cmd --resume)"
-        else
-            warn "This run cannot be resumed cleanly — start fresh:"
-            printf '    %s\n' "$(_rerun_cmd --rebuild)"
-        fi
-    else
-        warn "Check intermediate files or run with --resume to continue."
-    fi
+    print_recovery_hint
 fi
 
 # ── Exact-value secret redaction ───────────────────────────────────
