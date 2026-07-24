@@ -2206,3 +2206,75 @@ def test_load_design_signals_fallback_generates_from_coverage(mt, tmp_path):
     signals = mt._load_design_signals(tmp_path)
     assert len(signals) == 1
     assert signals[0]["weakness_class"] == "injection"
+
+
+# ---------------------------------------------------------------------------
+# cvss_v4 shape canonicalisation (backfill_threat_cvss_v4 / normalize_cvss_v4)
+# ---------------------------------------------------------------------------
+
+_DRIFTED_CVSS = {
+    "version": "4.0",
+    "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N",
+    "score": 9.3,
+    "severity": "Critical",
+}
+_CANONICAL_CVSS = {
+    "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N",
+    "base_score": 9.3,
+    "severity": "Critical",
+    "source": "stride-analyzer",
+}
+
+
+def test_normalize_cvss_v4_coerces_drifted_shape(mt):
+    assert mt.normalize_cvss_v4(_DRIFTED_CVSS) == _CANONICAL_CVSS
+
+
+def test_normalize_cvss_v4_keeps_valid_source(mt):
+    raw = {**_DRIFTED_CVSS, "source": "nvd"}
+    assert mt.normalize_cvss_v4(raw)["source"] == "nvd"
+
+
+def test_normalize_cvss_v4_drops_unsalvageable(mt):
+    assert mt.normalize_cvss_v4(None) is None
+    assert mt.normalize_cvss_v4({"vector": "not-cvss", "score": 5}) is None
+    assert mt.normalize_cvss_v4({"vector": "CVSS:4.0/AV:N", "severity": "Bogus", "score": 5}) is None
+
+
+def test_backfill_cvss_v4_mutates_and_reports_change(mt):
+    threat = {"cvss_v4": dict(_DRIFTED_CVSS)}
+    assert mt.backfill_threat_cvss_v4(threat) is True
+    assert threat["cvss_v4"] == _CANONICAL_CVSS
+    # idempotent: a second pass over the canonical form is a no-op
+    assert mt.backfill_threat_cvss_v4(threat) is False
+
+
+def test_backfill_cvss_v4_noop_without_field(mt):
+    threat = {"title": "no cvss here"}
+    assert mt.backfill_threat_cvss_v4(threat) is False
+    assert "cvss_v4" not in threat
+
+
+def test_backfill_cvss_v4_drops_unsalvageable(mt):
+    threat = {"cvss_v4": {"vector": "not-cvss", "score": 5}}
+    assert mt.backfill_threat_cvss_v4(threat) is True
+    assert "cvss_v4" not in threat
+
+
+def test_strip_ineligible_cvss_removes_ineligible_stride(mt):
+    # CWE-284 (access control) is not CVSS-eligible → the rogue-analyzer score
+    # must be dropped so the merged artifact passes validate_intermediate.
+    t = {"source": "stride", "cwe": "CWE-284", "evidence": {"line": 5}, "cvss_v4": dict(_CANONICAL_CVSS)}
+    assert mt.strip_ineligible_cvss_v4(t) is True
+    assert "cvss_v4" not in t
+
+
+def test_strip_ineligible_cvss_keeps_eligible_stride(mt):
+    # CWE-89 (SQLi) with evidence.line is eligible → the score stays.
+    t = {"source": "stride", "cwe": "CWE-89", "evidence": {"line": 5}, "cvss_v4": dict(_CANONICAL_CVSS)}
+    assert mt.strip_ineligible_cvss_v4(t) is False
+    assert t["cvss_v4"] == _CANONICAL_CVSS
+
+
+def test_strip_ineligible_cvss_noop_without_cvss(mt):
+    assert mt.strip_ineligible_cvss_v4({"source": "stride", "cwe": "CWE-284"}) is False

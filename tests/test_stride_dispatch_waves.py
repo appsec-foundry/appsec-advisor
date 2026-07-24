@@ -145,6 +145,33 @@ def test_completion_rejects_th_unclassified_when_cwe_is_unmappable(tmp_path: Pat
     assert reason is not None and "TH-UNCLASSIFIED" in reason
 
 
+def test_completion_normalizes_drifted_cvss_v4_shape(tmp_path: Path) -> None:
+    """A component whose only defect is a cvss_v4 in the analyzer's common
+    drifted shape ({version, score} instead of {base_score, source}) is
+    accepted — the deterministic cvss_v4 canonicaliser runs BEFORE the schema
+    gate, mirroring the CWE→TH backfill, so the run no longer aborts on a defect
+    the merge step would fix. The file is rewritten canonically so merge and any
+    resume see the schema-valid form."""
+    data = _stride_component_with("CWE-89", "TH-09")
+    data["threats"][0]["cvss_v4"] = {
+        "version": "4.0",
+        "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N",
+        "score": 9.3,
+        "severity": "Critical",
+    }
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    repaired = json.loads(path.read_text(encoding="utf-8"))["threats"][0]["cvss_v4"]
+    assert repaired == {
+        "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N",
+        "base_score": 9.3,
+        "severity": "Critical",
+        "source": "stride-analyzer",
+    }
+
+
 def test_plan_fingerprint_rejects_changed_manifest() -> None:
     original = _manifest(3)
     plan = waves.build_plan(original, concurrency=2)

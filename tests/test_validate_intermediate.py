@@ -1056,6 +1056,101 @@ def test_validate_source_auth_findings_dup_local_id():
     assert any("duplicated" in e for e in errs)
 
 
+def _find_pattern(node, key):
+    """Return the `pattern` of the first property named `key` found anywhere in
+    a schema tree (handles the $defs / oneOf nesting)."""
+    if isinstance(node, dict):
+        prop = node.get(key)
+        if isinstance(prop, dict) and "pattern" in prop:
+            return prop["pattern"]
+        for v in node.values():
+            r = _find_pattern(v, key)
+            if r:
+                return r
+    elif isinstance(node, list):
+        for v in node:
+            r = _find_pattern(v, key)
+            if r:
+                return r
+    return None
+
+
+def test_source_auth_check_id_pattern_covers_catalog():
+    """Every check id defined in data/source-auth-checks.yaml must satisfy the
+    schema's check_id pattern. The schema drifted behind the catalog once —
+    language-infixed ids (INJ-JAVA-003, AUTHZ-PHP-001, MOBILE-IOS-002) were
+    rejected — so this locks the two in sync against future additions."""
+    import re
+
+    catalog = yaml.safe_load((REPO_ROOT / "data" / "source-auth-checks.yaml").read_text())
+    ids: list[str] = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            if isinstance(o.get("id"), str):
+                ids.append(o["id"])
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(catalog)
+    assert ids, "no check ids found in source-auth-checks.yaml"
+    schema = yaml.safe_load((SCHEMAS_DIR / "source-auth-findings.schema.yaml").read_text())
+    pattern = _find_pattern(schema, "check_id")
+    rx = re.compile(pattern)
+    unmatched = sorted({i for i in ids if not rx.match(i)})
+    assert not unmatched, f"catalog check ids not covered by schema pattern: {unmatched}"
+
+
+def test_config_scan_accepts_check_slug_and_null_check_id():
+    """A synthesised config finding (not in config-iac-checks.yaml) carries
+    check_id:null + a kebab-case check_slug — per agents/appsec-config-scanner.md.
+    The schema must accept that shape (it once rejected both)."""
+    finding = {
+        "local_id": "CFG-001",
+        "check_id": None,
+        "check_slug": "secrets-in-dockerfile",
+        "iac_type": "Dockerfile",
+        "file": "Dockerfile",
+        "title": "Hardcoded secret in Dockerfile",
+        "severity": "High",
+    }
+    doc = {
+        "version": 1,
+        "generated_at": "2026-07-24T00:00:00Z",
+        "checks_run": 1,
+        "violations": 1,
+        "findings": [finding],
+    }
+    ok, errs = vi.validate_config_scan_findings(doc)
+    assert ok, errs
+
+
+def test_config_scan_rejects_bad_check_slug():
+    """check_slug must stay kebab-case — a value with spaces/uppercase fails."""
+    doc = {
+        "version": 1,
+        "generated_at": "2026-07-24T00:00:00Z",
+        "checks_run": 1,
+        "violations": 1,
+        "findings": [
+            {
+                "local_id": "CFG-001",
+                "check_id": None,
+                "check_slug": "Secrets In Dockerfile",
+                "iac_type": "Dockerfile",
+                "file": "Dockerfile",
+                "title": "Hardcoded secret in Dockerfile",
+                "severity": "High",
+            }
+        ],
+    }
+    ok, errs = vi.validate_config_scan_findings(doc)
+    assert not ok
+
+
 # ===========================================================================
 # CLI main() via subprocess — exercise dispatch, advisories, yaml/json paths
 # ===========================================================================

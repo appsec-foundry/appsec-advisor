@@ -99,10 +99,13 @@ $defs:
         type: string
         pattern: "^SAF-[0-9]{3,4}$"
       check_id:
+        # From the scanner rule catalogs (data/source-auth-checks.yaml):
         # AUTHZ-NNN (authorization), AUTHN-NNN (credential lifecycle),
-        # INJ-NNN (injection), or CRYPTO-NNN from the scanner rule catalogs.
+        # INJ-NNN (injection), MOBILE-NNN, each with an OPTIONAL uppercase
+        # language segment (e.g. INJ-JAVA-003, AUTHZ-PHP-001, MOBILE-IOS-002),
+        # or CRYPTO-NNN and its variants.
         type: string
-        pattern: "^(?:(?:AUTHZ|AUTHN|INJ)-[0-9]{3}|CRYPTO-(?:[0-9]{3}|[A-Z]+-[0-9]{3}[A-Z]?|HOMEGROWN-XOR))$"
+        pattern: "^(?:(?:AUTHZ|AUTHN|INJ|MOBILE)-(?:[A-Z]+-)?[0-9]{3}|CRYPTO-(?:[0-9]{3}|[A-Z]+-[0-9]{3}[A-Z]?|HOMEGROWN-XOR))$"
       finding_type_id:
         type: ["string", "null"]
         pattern: "^FT-[0-9]{3}$|^$"

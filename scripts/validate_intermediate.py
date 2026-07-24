@@ -158,6 +158,33 @@ def _eligible_cwes() -> frozenset[str]:
     return frozenset(e["cwe"] for e in entries if isinstance(e, dict) and "cwe" in e)
 
 
+def cvss_v4_permitted(threat: dict) -> bool:
+    """Whether a cvss_v4 *already present* on ``threat`` is permitted by the
+    eligibility rules — source-forbidden, or source=stride on an ineligible /
+    evidence-less CWE. Does NOT cover the known-vuln "required" case or the
+    severity-band coherence warning (those are not permit/strip decisions).
+
+    Single source of truth for the permit decision: _check_cvss_eligibility
+    (below) enforces it as an error, and merge_threats.strip_ineligible_cvss_v4
+    enforces it as a deterministic repair — so the check and the strip can never
+    diverge. test_cvss_eligibility pins that equivalence.
+    """
+    source = threat.get("source")
+    if source in _CVSS_FORBIDDEN_SOURCES:
+        return False
+    if source == "stride":
+        cwe = threat.get("cwe")
+        evidence = threat.get("evidence") or {}
+        line = evidence.get("line") if isinstance(evidence, dict) else None
+        if not (isinstance(cwe, str) and _CWE_RE.match(cwe)):
+            return False
+        if cwe not in _eligible_cwes():
+            return False
+        if line is None:
+            return False
+    return True
+
+
 def _check_cvss_eligibility(data: dict, skip_cvss_required: bool = False) -> list[str]:
     """Enforce CVSS v4 eligibility rules on merged threats:
 

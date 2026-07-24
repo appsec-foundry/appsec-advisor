@@ -101,8 +101,18 @@ $defs:
         type: string
         pattern: "^CFG-\\d{3,}$"
       check_id:
-        # ID from data/config-iac-checks.yaml (e.g. IAC-001)
-        type: string
+        # Canonical IAC-NNN / CFG-NNN from data/config-iac-checks.yaml when the
+        # violation maps there; null for a synthesised runtime-config finding
+        # (CORS wildcard, missing CSP/HSTS, hardcoded secret, …) — those carry
+        # `check_slug` instead. See agents/appsec-config-scanner.md.
+        type: ["string", "null"]
+      check_slug:
+        # Stable kebab-case identifier for a synthesised finding not covered by
+        # config-iac-checks.yaml (e.g. cors-wildcard, secrets-in-dockerfile);
+        # set when check_id is null so emit_config_scan_mitigations.py can
+        # resolve a remediation from its slug map.
+        type: ["string", "null"]
+        pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
       finding_type_id:
         # Optional FT-NNN reference into data/finding-types.yaml
         type: ["string", "null"]

@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from merge_threats import backfill_threat_category_id
+from merge_threats import backfill_threat_category_id, backfill_threat_cvss_v4
 from validate_intermediate import validate_stride
 
 DEFAULT_CONCURRENCY = 8
@@ -197,16 +197,23 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
         return "skipped_categories is not empty"
     if not isinstance(data.get("threats"), list):
         return "threats is not an array"
-    # Deterministically repair TH-UNCLASSIFIED sentinels whose CWE has a
-    # taxonomy mapping BEFORE the schema gate. Otherwise a component the merge
-    # step could fix deterministically (e.g. CWE-601 → TH-18) is fatally
-    # rejected here and burns its whole retry budget on a repairable defect.
-    # A genuinely unmappable CWE keeps the sentinel and still fails below.
-    # Persist the repaired output so merge and any resume see the canonical id.
+    # Deterministically repair defects the merge step could fix anyway BEFORE
+    # the schema gate — otherwise a repairable component is fatally rejected
+    # here and burns its whole retry budget:
+    #   * TH-UNCLASSIFIED sentinels whose CWE has a taxonomy mapping
+    #     (e.g. CWE-601 → TH-18); a genuinely unmappable CWE keeps the
+    #     sentinel and still fails below.
+    #   * cvss_v4 in the analyzer's drifted {version, score} shape, coerced to
+    #     the canonical {vector, base_score, severity, source}; an unsalvageable
+    #     one is dropped (the field is optional).
+    # Persist the repaired output so merge and any resume see the canonical form.
     repaired = False
     for threat in data["threats"]:
-        if isinstance(threat, dict) and backfill_threat_category_id(threat):
-            repaired = True
+        if isinstance(threat, dict):
+            if backfill_threat_category_id(threat):
+                repaired = True
+            if backfill_threat_cvss_v4(threat):
+                repaired = True
     if repaired:
         _atomic_write_json(path, data)
     ok, errors = validate_stride(data)

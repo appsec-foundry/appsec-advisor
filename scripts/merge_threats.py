@@ -120,6 +120,83 @@ def backfill_threat_category_id(threat: dict) -> bool:
     return False
 
 
+_CVSS_V4_SOURCES = {"stride-analyzer", "dep-scan", "nvd", "osv", "known-vuln", "manual"}
+_CVSS_V4_SEVERITIES = {"None", "Low", "Medium", "High", "Critical"}
+
+
+def normalize_cvss_v4(v4):
+    """Coerce an analyzer-emitted cvss_v4 to the canonical schema shape
+    ({vector, base_score, severity, source}, additionalProperties:false), or
+    return None to drop it.
+
+    The STRIDE analyzer is an LLM and commonly writes the "natural" CVSS JSON
+    shape ``{version, vector, score, severity}`` — ``score`` instead of
+    ``base_score``, a redundant ``version``, and no ``source`` — which matches
+    no schema. This is the single canonicaliser for that drift, shared by the
+    per-component dispatch gate, the merge step, and the yaml builder.
+    """
+    if not isinstance(v4, dict):
+        return None
+    vector = v4.get("vector")
+    if not isinstance(vector, str) or not vector.startswith("CVSS:4.0"):
+        return None
+    score = v4.get("base_score", v4.get("score"))
+    sev = v4.get("severity")
+    if not isinstance(score, (int, float)) or sev not in _CVSS_V4_SEVERITIES:
+        return None
+    src = v4.get("source")
+    return {
+        "vector": vector,
+        "base_score": float(score),
+        "severity": sev,
+        "source": src if src in _CVSS_V4_SOURCES else "stride-analyzer",
+    }
+
+
+def backfill_threat_cvss_v4(threat: dict) -> bool:
+    """Canonicalise ``threat['cvss_v4']`` in place before the schema gate.
+
+    Mirrors backfill_threat_category_id's contract: returns ``True`` iff the
+    threat was mutated. An unsalvageable cvss_v4 (missing vector/score, non-4.0
+    vector, bogus severity) is dropped — the schema treats the field as
+    optional, so dropping it is preferable to fatally rejecting a component
+    over a repairable shape defect that merge would fix anyway.
+    """
+    if not isinstance(threat, dict) or "cvss_v4" not in threat:
+        return False
+    original = threat["cvss_v4"]
+    canonical = normalize_cvss_v4(original)
+    if canonical is None:
+        threat.pop("cvss_v4", None)
+        return original is not None
+    if canonical != original:
+        threat["cvss_v4"] = canonical
+        return True
+    return False
+
+
+def strip_ineligible_cvss_v4(threat: dict) -> bool:
+    """Drop a cvss_v4 the eligibility rules forbid on this threat — a forbidden
+    source, or source=stride on a CWE that is not on the CVSS-eligible list (or
+    carries no evidence.line). The rogue-analyzer failure mode is over-attaching
+    CVSS to design/config-class CWEs (access-control, cleartext-storage, …) that
+    policy does not CVSS-score; left in place they fail validate_intermediate at
+    merge. The threat and its risk rating stay — only the policy-invalid score
+    is removed. Decision is delegated to validate_intermediate.cvss_v4_permitted
+    (the single source of truth), so the strip and the check never diverge.
+    Must run AFTER source classification and evidence list→object coercion.
+    Returns True iff a cvss_v4 was removed.
+    """
+    if not isinstance(threat, dict) or not isinstance(threat.get("cvss_v4"), dict):
+        return False
+    from validate_intermediate import cvss_v4_permitted
+
+    if not cvss_v4_permitted(threat):
+        threat.pop("cvss_v4", None)
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # IO helpers
 # ---------------------------------------------------------------------------
@@ -251,6 +328,16 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
             # If the CWE is genuinely unmappable the sentinel is left intact
             # so validation still surfaces it.
             backfill_threat_category_id(t)
+            # Same rationale for cvss_v4: the analyzer sometimes emits the
+            # drifted {version, score} shape; canonicalise it deterministically
+            # so the merged artifact meets the schema rather than trusting the
+            # LLM to have written {base_score, source}.
+            backfill_threat_cvss_v4(t)
+            # Eligibility strip: the analyzer sometimes over-attaches CVSS to
+            # design/config-class CWEs that policy does not score. Drop those
+            # deterministically here (source + evidence are now final) so the
+            # merged artifact passes validate_intermediate instead of aborting.
+            strip_ineligible_cvss_v4(t)
             # M-18 (configuration-defect tail): if the source ended up as
             # `configuration-defect` and the threat has no LLM-authored
             # mitigation_title yet, stamp a review-shaped hint so the §1

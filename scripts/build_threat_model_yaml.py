@@ -62,6 +62,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
 from _atomic_io import atomic_write_text  # noqa: E402
+from merge_threats import normalize_cvss_v4 as _normalize_cvss_v4  # noqa: E402
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -693,30 +694,6 @@ def _clamp_title(title: str, limit: int = _TITLE_MAXLEN) -> str:
         if keep >= 8:
             return f"{head[:keep].rstrip()}… {tail}"
     return title[: limit - 1].rstrip() + "…"
-
-
-def _normalize_cvss_v4(v4):
-    """Coerce a STRIDE-emitted cvss_v4 to the output-schema shape
-    ({vector, base_score, severity, source}, additionalProperties:false) or
-    return None to drop it. Analyzers commonly write ``score`` instead of
-    ``base_score`` and omit ``source``."""
-    if not isinstance(v4, dict):
-        return None
-    vector = v4.get("vector")
-    if not isinstance(vector, str) or not vector.startswith("CVSS:4.0"):
-        return None
-    score = v4.get("base_score", v4.get("score"))
-    sev = v4.get("severity")
-    if not isinstance(score, (int, float)) or sev not in ("None", "Low", "Medium", "High", "Critical"):
-        return None
-    src = v4.get("source")
-    valid_src = {"stride-analyzer", "dep-scan", "nvd", "osv", "known-vuln", "manual"}
-    return {
-        "vector": vector,
-        "base_score": float(score),
-        "severity": sev,
-        "source": src if src in valid_src else "stride-analyzer",
-    }
 
 
 def _clean_title(raw: str) -> str:

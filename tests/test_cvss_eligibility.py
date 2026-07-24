@@ -222,3 +222,59 @@ class TestSeverityBand:
             ]
         }
         assert vi._check_cvss_eligibility(data) == []
+
+
+# ---------------------------------------------------------------------------
+# cvss_v4_permitted — the per-threat predicate shared as the single source of
+# truth between _check_cvss_eligibility (error) and the merge-stage stripper
+# merge_threats.strip_ineligible_cvss_v4 (repair). They must never disagree.
+# ---------------------------------------------------------------------------
+
+_CANON_CVSS = {
+    "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:H/SI:H/SA:N",
+    "base_score": 9.3,
+    "severity": "High",
+    "source": "stride-analyzer",
+}
+
+
+class TestCvssPermittedPredicate:
+    def test_stride_eligible_cwe_with_line_permitted(self, vi):
+        assert vi.cvss_v4_permitted(_stride_threat(cwe="CWE-89", cvss_v4=dict(_CANON_CVSS))) is True
+
+    def test_stride_ineligible_cwe_not_permitted(self, vi):
+        assert vi.cvss_v4_permitted(_stride_threat(cwe="CWE-284", cvss_v4=dict(_CANON_CVSS))) is False
+
+    def test_stride_missing_evidence_line_not_permitted(self, vi):
+        t = _stride_threat(cwe="CWE-89", evidence={"file": "x"}, cvss_v4=dict(_CANON_CVSS))
+        assert vi.cvss_v4_permitted(t) is False
+
+    def test_stride_invalid_cwe_not_permitted(self, vi):
+        assert vi.cvss_v4_permitted(_stride_threat(cwe=None, cvss_v4=dict(_CANON_CVSS))) is False
+
+    def test_forbidden_source_not_permitted(self, vi):
+        t = _stride_threat(source="requirements-compliance", cvss_v4=dict(_CANON_CVSS))
+        assert vi.cvss_v4_permitted(t) is False
+
+    def test_known_vuln_permitted(self, vi):
+        t = {"id": "T-1", "source": "known-vuln", "risk": "High", "cvss_v4": dict(_CANON_CVSS)}
+        assert vi.cvss_v4_permitted(t) is True
+
+    def test_predicate_matches_eligibility_check(self, vi):
+        """cvss_v4_permitted(t) must be False exactly when _check_cvss_eligibility
+        raises a permit/require error — otherwise the stripper and the validator
+        disagree and a stripped run could still fail (or a valid score be lost)."""
+        cases = [
+            _stride_threat(cwe="CWE-89", cvss_v4=dict(_CANON_CVSS)),
+            _stride_threat(cwe="CWE-284", cvss_v4=dict(_CANON_CVSS)),
+            _stride_threat(cwe="CWE-89", evidence={"file": "x"}, cvss_v4=dict(_CANON_CVSS)),
+            _stride_threat(cwe=None, cvss_v4=dict(_CANON_CVSS)),
+            _stride_threat(source="requirements-compliance", cvss_v4=dict(_CANON_CVSS)),
+        ]
+        for t in cases:
+            permitted = vi.cvss_v4_permitted(t)
+            errs = vi._check_cvss_eligibility({"threats": [t]})
+            permit_err = any(
+                ("not permitted" in e) or ("requires a valid CWE" in e) or ("requires evidence.line" in e) for e in errs
+            )
+            assert permitted != permit_err, (t.get("cwe"), t.get("source"), errs)
