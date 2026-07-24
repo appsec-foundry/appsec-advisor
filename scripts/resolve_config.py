@@ -2995,11 +2995,27 @@ def _format_stride_cap(cfg: dict) -> str:
     triage profile (cap 1). When absent, standard/thorough keep full STRIDE
     depth. Shown in both states so the user always sees, before any tokens are
     spent, whether the per-component threat count is bounded.
+
+    ``--cheap-stride`` is appended here rather than getting its own row: it is
+    the other lever on the same question, and leaving it out would let this row
+    claim "full STRIDE depth" for a run whose internal tail is screened.
     """
     cap = (cfg.get("stride_profile") or {}).get("max_threats_per_category")
+    cheap = bool(cfg.get("cheap_stride"))
     if cap:
-        return f"≤{cap} per STRIDE category per component (Criticals always kept)"
-    return "none — full STRIDE depth (all threats kept)"
+        base = f"≤{cap} per STRIDE category per component (Criticals always kept)"
+    elif cheap:
+        # "full STRIDE depth" would contradict the clause appended right below.
+        base = "none — no per-category cap (all threats kept)"
+    else:
+        base = "none — full STRIDE depth (all threats kept)"
+    if cheap:
+        base += (
+            "; --cheap-stride: screening depth (~8 turns, all 6 categories) for the "
+            "internal tail — auth / frontend / LLM / exposed / file-upload / realtime "
+            "keep full depth"
+        )
+    return base
 
 
 def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:

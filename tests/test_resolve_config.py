@@ -2345,6 +2345,26 @@ class TestStrideCapDisplay:
         out = rc.render_configuration_summary(_base_cfg())
         assert "STRIDE cap" in out
 
+    def test_cheap_stride_qualifies_the_depth_claim(self):
+        """Without this the row claims 'full STRIDE depth' for a run whose
+        internal tail is screened — the one place the user sees depth before
+        any tokens are spent."""
+        cfg = _base_cfg(stride_profile={"stride_profile_label": "full"}, cheap_stride=True)
+        s = rc._format_stride_cap(cfg)
+        assert "--cheap-stride" in s and "screening depth" in s
+        cfg_run = _base_cfg(
+            incremental=False,
+            baseline_state="empty",
+            stride_profile={"stride_profile_label": "full"},
+            cheap_stride=True,
+        )
+        assert "--cheap-stride" in rc.render_run_plan(cfg_run, None, None, None)
+        assert "--cheap-stride" in rc.render_configuration_summary(cfg_run)
+        # Off (default) → the row stays exactly as before.
+        assert rc._format_stride_cap(_base_cfg(stride_profile={"stride_profile_label": "full"})) == (
+            "none — full STRIDE depth (all threats kept)"
+        )
+
     def test_cap_not_duplicated_in_active_options(self, monkeypatch):
         # A pure cap label must NOT appear as a separate "STRIDE" active-options
         # row — the dedicated STRIDE cap line owns it.
