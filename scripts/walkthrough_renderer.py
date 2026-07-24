@@ -1569,29 +1569,27 @@ def render_attack_walkthroughs_md(
         return "\n".join(out).rstrip() + "\n"
 
     if _capped:
-        intro = (
-            f"This section walks through how the highest-risk findings are "
-            f"exploited. To keep the section focused, it covers the "
-            f"**{_n_walked} highest-priority of {_n_critical_total} Critical "
-            f"findings** (chain entry points and the findings closest to a "
-            f"breach); every remaining Critical still has a full "
-            f"[§8 Findings Register](#8-findings-register) row with the same "
-            f"evidence, impact, and fix. Each walkthrough has attack steps, a "
-            f"focused sequence diagram, and the primary mitigation."
+        out.append(
+            f"This section walks through how the **{_n_walked} highest-priority "
+            f"of {_n_critical_total} Critical findings** are exploited — the "
+            f"chain entry points and those closest to a breach. Each walkthrough "
+            f"has attack steps, a focused sequence diagram, and the primary "
+            f"mitigation. How weaknesses combine toward the worst-case goal is "
+            f"in the [Critical Attack Tree](#critical-attack-tree); every other "
+            f"Critical, plus full per-finding context (severity rationale, "
+            f"assets, detection signals), is in the "
+            f"[§8 Findings Register](#8-findings-register)."
         )
     else:
-        intro = (
+        out.append(
             "This section walks through how the highest-risk findings are "
             "exploited — one short walkthrough per Critical, each with attack "
-            "steps, a focused sequence diagram, and the primary mitigation."
+            "steps, a focused sequence diagram, and the primary mitigation. How "
+            "weaknesses combine toward the worst-case goal is in the "
+            "[Critical Attack Tree](#critical-attack-tree); full per-finding "
+            "context (severity rationale, assets, detection signals) is in the "
+            "[§8 Findings Register](#8-findings-register)."
         )
-    out.append(
-        intro + " The cross-finding view (which weaknesses combine toward the "
-        "worst-case goal, and where one fix severs several paths) is in the "
-        "[Critical Attack Tree](#critical-attack-tree). Full per-finding "
-        "context — severity rationale, assets, detection signals — is in the "
-        "[§8 Findings Register](#8-findings-register) row for each finding."
-    )
     out.append("")
 
     # §3.1+ per-finding walkthroughs (the cross-finding chain overview was
