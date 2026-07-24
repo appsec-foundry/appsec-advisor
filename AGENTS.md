@@ -31,6 +31,7 @@ Agents handle discovery and prose. Deterministic Python owns validation, renderi
 - Treat `T-NNN` / `F-NNN`, `M-NNN`, and `W-NNN` as public report anchors. Preserve T/F identity across incremental runs; M-IDs may be regenerated, while W-IDs follow ranked display order. Change allocation or renumbering behavior only through an explicit, tested migration because reports and deep links depend on these anchors.
 - Preserve audit artifacts and `.appsec-cache/baseline.json` during normal full and incremental cleanup. `--rebuild` is the deliberate exception: it archives the changelog audit, then clears the prior model and cache so IDs may be reassigned.
 - Use titled links such as `[F-001](#f-001) — Short title` where the title helps the reader. Compact tables, inline citations, headings, declaration sites, and ID columns use their documented shorter forms. The format and exceptions for `T/F`, `M`, `W`, `TH`, and `C` references live in `docs/internal/contracts/schema-invariants.md` §4a and `agents/shared/qa-crossref-rules.md`.
+- Be conservative with severity. Rate from demonstrated evidence and the caps in `data/severity-caps.yaml` and `data/critical-criteria.yaml`. Do not inflate a finding to draw attention to it.
 - Assign CVSS only to evidence-backed dependency/known-vulnerability findings and eligible STRIDE CWEs with file-and-line evidence. Architectural, requirements, and coverage-gap findings do not receive CVSS.
 - New commands, shell assignment prefixes, or Read/Write/Edit targets require updates to `data/required-permissions.yaml` and permission tests.
 - Production behavior must work for arbitrary repositories. Keep fixture-specific names and exclusions in fixtures or scoped tests.
@@ -125,6 +126,7 @@ The canonical layout is in `agents/phases/phase-group-threats.md` → Dispatch. 
 ## Before finishing
 
 - Run the relevant subset from `CONTRIBUTING.md` → Targeted tests. If the repository is already red, capture a failing baseline and distinguish it from regressions.
+- Then run `make lint` and `make test`. `make check` adds the format, config, and drift gates and is the right call when a change reaches beyond a single module.
 - Add a matching `tests/test_*.py` for every new `scripts/` module. Cover core behavior and failure paths.
 - For heuristic or scanner changes, use application-agnostic signals, neutral fixtures, and explicit false-positive exclusions.
 - For deterministic-tail or source-scanner changes, replay a golden fixture with `scripts/threat_fixture.py`; follow `docs/internal/runbooks/threat-fixture.md`.
