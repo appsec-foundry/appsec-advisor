@@ -114,6 +114,16 @@ class TestResolveWriteYaml:
         assert out["write_yaml"] is False
 
 
+class TestCheapStride:
+    def test_off_by_default(self):
+        ns = rc.build_parser().parse_args([])
+        assert ns.cheap_stride is False
+
+    def test_flag_sets_true(self):
+        ns = rc.build_parser().parse_args(["--cheap-stride"])
+        assert ns.cheap_stride is True
+
+
 class TestResolveRequirements:
     def test_no_requirements_flag(self):
         ns = rc.build_parser().parse_args(["--no-requirements"])

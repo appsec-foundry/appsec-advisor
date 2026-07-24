@@ -274,6 +274,40 @@ def test_builder_max_turns_from_complexity(tmp_path):
     assert by_id["frontend-spa"]["max_turns"] == 15  # standard/simple
 
 
+def test_builder_cheap_stride_screens_internal_tail(tmp_path):
+    """--cheap-stride (Variant 1): selection-priority >2 components get the flat
+    CHEAP_STRIDE_TURNS budget + forced low estimate + audit marker; the
+    exposed/role-floor set (priority <=2) is spared at full depth."""
+    _seed_output_dir(tmp_path)
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    by_id = {c["component_id"]: c for c in manifest["components"]}
+    # backend-api: no auth/frontend/llm/exposed signal -> priority 5 -> cheapened
+    be = by_id["backend-api"]
+    assert be["max_turns"] == bm.CHEAP_STRIDE_TURNS
+    assert be["estimated_threat_count"] == 3  # "low"
+    assert be["cheap_stride"] is True
+    # frontend-spa: _is_frontend -> priority 1 -> spared, full simple depth
+    fe = by_id["frontend-spa"]
+    assert fe["max_turns"] == 15  # standard/simple, unchanged
+    assert "cheap_stride" not in fe
+    # manifest with the extra cheap fields still validates (additionalProperties)
+    mpath = tmp_path / ".stride-dispatch-manifest.json"
+    mpath.write_text(json.dumps(manifest), encoding="utf-8")
+    ok, errors, _ = vm.validate(mpath, tmp_path)
+    assert ok, errors
+
+
+def test_builder_cheap_stride_off_keeps_full_depth(tmp_path):
+    """Flag off (default) -> no component cheapened, full complexity budgets."""
+    _seed_output_dir(tmp_path)
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": False}), encoding="utf-8")
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    by_id = {c["component_id"]: c for c in manifest["components"]}
+    assert by_id["backend-api"]["max_turns"] == 31  # full complex budget
+    assert all("cheap_stride" not in c for c in manifest["components"])
+
+
 def test_builder_index_paths_none_when_absent_else_path(tmp_path):
     _seed_output_dir(tmp_path)
     dc = tmp_path / ".dispatch-context" / "backend-api"

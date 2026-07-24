@@ -1458,6 +1458,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Verify at most N non-Critical findings in Phase 10a; "
                         "Critical findings do not count toward the cap. Defaults: 20 "
                         "(quick), 30 (standard), 100 (thorough).")
+    # Opt-in screening-depth STRIDE for the internal tail (cost lever). OFF by
+    # default. Exposed / auth / frontend / LLM components (selection priority
+    # <=2) keep full depth; everything else gets a flat ~8-turn six-category
+    # screening pass. A user-asserted breadth-over-depth tradeoff — NOT an
+    # auto-default (that needs reliable exposure classification).
+    p.add_argument("--cheap-stride", action="store_true", dest="cheap_stride",
+                   help="Opt-in: screening-depth STRIDE (~8 turns, all 6 "
+                        "categories kept) for non-exposed / non-role-floor "
+                        "components; exposed, auth, frontend, and LLM components "
+                        "keep full depth. Trims tokens on the internal tail. "
+                        "Off by default.")
     # Architect
     p.add_argument("--architect-review",   action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
@@ -1723,6 +1734,10 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         cfg["skip_qa_label"] = "skipped (auto - quick depth)"
     else:
         cfg["skip_qa_label"] = "enabled"
+
+    # Opt-in cheap-stride screening tier. Read by build_stride_dispatch_manifest
+    # from .skill-config.json; applies to selection-priority >2 components only.
+    cfg["cheap_stride"] = bool(getattr(ns, "cheap_stride", False))
 
     # Quick-depth post-override for requirements — force off unless the
     # user explicitly opted in via --requirements.

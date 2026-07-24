@@ -582,12 +582,27 @@ def _evidence_complexity_floor(paths: list, auth_files: list[str], claimed: str)
     return "complex", f"auth evidence in {len(owned)} file(s) ({sample})"
 
 
-def _component_max_turns(repo_root: Path, patterns, tier_turns: int) -> int:
+# Flat screening budget for --cheap-stride components. Deliberately bypasses the
+# footprint floor: the analyzer runs the ESTIMATED_THREAT_COUNT=low pacing (all
+# six STRIDE letters, skip verification greps, no file re-reads) within it — the
+# documented thin-component path (phase-group-threats.md: "MAX_TURNS=8 +
+# ESTIMATED_THREAT_COUNT=low"). 8, not 6, to keep the ≥2-turn write reserve.
+CHEAP_STRIDE_TURNS = 8
+
+
+def _component_max_turns(repo_root: Path, patterns, tier_turns: int, cheap: bool = False) -> int:
     """Turn budget for one component: complexity tier raised by file footprint.
+
+    Under ``cheap`` (--cheap-stride, priority >2 components) the component gets a
+    flat CHEAP_STRIDE_TURNS screening budget that intentionally skips the
+    footprint floor — cheapening is the whole point, so a wide footprint must not
+    re-inflate the budget.
 
     Globbing is best-effort -- an unreadable or pathological pattern falls back
     to the tier budget rather than failing manifest construction.
     """
+    if cheap:
+        return CHEAP_STRIDE_TURNS
     try:
         import classify_component  # noqa: PLC0415
 
@@ -1086,6 +1101,12 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     # a given run (read from the resolved skill-config; "unknown" if absent).
     stride_model = _read_json(output_dir / ".skill-config.json", {}).get("stride_model") or "unknown"
 
+    # Opt-in --cheap-stride: screening-depth pass for the internal tail. Applies
+    # to selection-priority >2 components (i.e. NOT auth/frontend/llm/exposed) —
+    # flat CHEAP_STRIDE_TURNS budget + forced estimated_threat_count=low, keeping
+    # all six STRIDE categories. Full depth on the exposed/role-floor set.
+    cheap_stride = bool(_read_json(output_dir / ".skill-config.json", {}).get("cheap_stride", False))
+
     # Enumeration-completeness reconciliation: restore security-relevant units
     # (auth / ci-cd / real-time) that Phase-3 folded into a coarser parent. The
     # augmented inventory is persisted so it is the single source of truth for
@@ -1186,6 +1207,11 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                 "recon/analyst output to use canonical zones (internet, dmz, internal-network, "
                 "ci-cd-runtime, build-pipeline, prod-write-db, …).\n"
             )
+        # --cheap-stride (Variant 1): screen the internal tail, spare the
+        # exposed/role-floor set. _priority <=2 == auth/frontend/llm/exposed
+        # (kept at full depth); >2 == crown-jewel/datastore/ci-cd/internal-only.
+        # Keyed on priority, NOT on the over-tagged handles_sensitive_data flag.
+        cheap_this = cheap_stride and _priority(c) > 2
         comp = {
             "component_id": cid,
             "component_name": c.get("name", cid),
@@ -1201,6 +1227,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                 repo_root,
                 raw_paths,
                 int(turns.get(complexity, turns.get("moderate", 22))),
+                cheap=cheap_this,
             ),
             "trust_boundaries": _trust_boundaries_for(cid, boundaries),
             "taxonomy_slice_dir": str(tax) if tax.is_dir() else str(plugin_root / "data"),
@@ -1270,6 +1297,14 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                 if supplement:
                     comp["known_llm_patterns"] = (existing + "; " + supplement).lstrip("; ") if existing else supplement
         comp["model"] = stride_model
+        if cheap_this:
+            # Drive the analyzer's thin-component pace (all six STRIDE letters in
+            # ≤6 turns, skip verification greps, no re-reads). estimated_threat_count
+            # is advisory pacing only — the analyzer may still record more when
+            # evidence warrants (phase-group-threats.md) — so setting it here is
+            # its intended use, not a truth-claim. Override any analyst value.
+            comp["estimated_threat_count"] = 3  # "low" (matches _etc_map["low"])
+            comp["cheap_stride"] = True  # manifest audit marker
         out_components.append(comp)
 
     return {
