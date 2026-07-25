@@ -455,3 +455,59 @@ def test_secrets_in_non_mermaid_fences_still_fire(secret_scan):
 def test_quoted_keyword_echo_and_opaque_values_still_flag(secret_scan):
     assert secret_scan.scan_text('password = "password"') != []
     assert secret_scan.scan_text("secret: deadbeef1234") != []
+
+
+# --- Special-character credentials: mask must consume the WHOLE value --------
+# Regression for the 2026-07-25 juice-shop run: the value charset stopped at the
+# first character outside [A-Za-z0-9_\-+/=.], so only the alnum head was masked
+# and the rest of the password shipped in cleartext after the mask marker.
+
+
+def test_mask_consumes_whole_special_character_password(secret_scan):
+    """The full credential is replaced — no cleartext tail survives the mask,
+    and the reported length matches the real password length."""
+    pw = "J6aVjTgOpRs@?5l!Zkq2AYnCE@RF$P"
+    masked, applied = secret_scan.mask_text(f"  password: '{pw}'")
+    assert "generic_credential_assignment" in applied
+    assert f"**** ({len(pw)} chars)" in masked
+    # No fragment of the secret may survive anywhere in the output.
+    for tail in ("@?5l!", "Zkq2AYnCE", "@RF$P", "J6aVjTgOpRs"):
+        assert tail not in masked
+
+
+def test_masked_special_character_password_has_no_residual_leak(secret_scan):
+    """End-to-end: the masked document must be clean under the detector AND
+    contain no substring of the original secret. The gate shares this regex, so
+    an under-capture would be invisible to it — this asserts the value itself."""
+    pw = "Tr0ub4dor#%3xK"
+    masked, _ = secret_scan.mask_text(f'password = "{pw}"')
+    assert secret_scan.scan_text(masked) == []
+    assert pw not in masked
+    assert "#%3xK" not in masked
+
+
+def test_special_character_password_is_detected_at_full_length(secret_scan):
+    hits = secret_scan.scan_text("password: 'A9x!c@dE#f$g%h?j'")
+    assert [h.value for h in hits] == ["A9x!c@dE#f$g%h?j"]
+
+
+def test_unquoted_env_and_anchor_references_are_not_credentials(secret_scan):
+    """The widened charset admits ``$`` and ``#``; unquoted values that are
+    plainly references (env/template vars, markdown anchors) must not be
+    flagged — masking them would blind-replace the reference document-wide."""
+    assert secret_scan.scan_text("password: $DATABASE_PASSWORD") == []
+    assert secret_scan.scan_text("secret: #section-anchor-name") == []
+
+
+def test_quoted_dollar_value_still_flags(secret_scan):
+    """A quoted value is an intentional literal even when it looks like a
+    variable — the reference carve-out is unquoted-only, as for code refs."""
+    assert secret_scan.scan_text("password: '$DATABASE_PASSWORD'") != []
+
+
+def test_widened_charset_does_not_swallow_markup_or_urls(secret_scan):
+    """Markdown-active characters and ``:`` stay out of the charset so the
+    blind exact-value redactor can never rewrite prose, links, or URLs."""
+    assert secret_scan.scan_text("token: *placeholder-value*") == []
+    assert secret_scan.scan_text("secret: [see the docs](secrets.md)") == []
+    assert secret_scan.scan_text("auth: https://example.com/path?x=1") == []

@@ -84,7 +84,26 @@ _PATTERNS: list[_Pattern] = [
             r"(?ix)"
             r"\b(?P<kw>password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
             r"\s*(?P<op>[=:])\s*"
-            r"(?P<q>['\"])?(?P<val>[A-Za-z0-9_\-+/=\.]{8,})"
+            # The value charset must cover password punctuation. It previously
+            # stopped at the first character outside [A-Za-z0-9_\-+/=.], so a
+            # credential like ``'J6aVjTgOpRs@?5l!…'`` matched only its 11-char
+            # alnum head — and _mask_match() then replaced just that head,
+            # shipping the remaining 19 characters in cleartext right after the
+            # ``**** (11 chars)`` marker (2026-07-25 juice-shop run). Because
+            # scan_text() re-checks with this same regex, the residual tail no
+            # longer sits behind a credential keyword and the release gate
+            # reported zero issues on a leaking document. Only alnum passwords
+            # masked correctly; every password with a special character leaked
+            # its tail.
+            #
+            # Whitespace, quotes, backticks, backslash, ``:``, ``<>``, ``{}``
+            # and the markdown-active characters ``*()~&^`` stay OUT: the value
+            # is consumed by redact_known_secrets' blind document-wide
+            # ``text.replace(value, mask)``, so a capture that can swallow a
+            # sentence, a URL (``:``), or markdown emphasis would corrupt the
+            # report — the failure mode already recorded in
+            # _is_keyword_echo_value below.
+            r"(?P<q>['\"])?(?P<val>[A-Za-z0-9_\-+/=\.!@#$%?]{8,})"
         ),
         False,
     ),
@@ -103,6 +122,8 @@ _CODE_REFERENCE_RE = re.compile(
     r"|[a-z]+[A-Z][A-Za-z]*"  # camelCase:    publicKey
     r"|[A-Z][a-z]+[A-Z][A-Za-z]*"  # PascalCase:   PublicKey
     r"|[a-z]+(?:_[a-z]+)+"  # snake_case:   read_unsigned_jwt_claims
+    r"|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"  # env/template: $DB_PASS, ${DB_PASS}
+    r"|#[A-Za-z0-9][A-Za-z0-9-]*"  # markdown anchor: #section-anchor
     r")$"
 )
 
