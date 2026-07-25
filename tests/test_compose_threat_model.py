@@ -3942,7 +3942,12 @@ def test_verdict_scope_coverage_counts_screening_separately(tmp_path: Path) -> N
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
     out = compose._render_verdict(ctx, env, section)
     assert "**Scope:** 1 of 4 components received full STRIDE analysis" in out
-    assert "1 further internal component(s) received a reduced-budget screening pass" in out
+    # Never "internal component(s)": the screening set is not necessarily internal
+    # (a crown-jewel API with runtime-only zones used to land in it), and claiming
+    # so would misreport where the depth tradeoff was made.
+    assert "1 further component(s) received a reduced-budget screening pass" in out
+    assert "internal component(s) received a reduced-budget" not in out
+    assert "marked `Screened` in the component table" in out
     assert "other 2 (lower-priority / internal) were not individually assessed" in out
 
 

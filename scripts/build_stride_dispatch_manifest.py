@@ -274,6 +274,20 @@ def _is_frontend(c: dict) -> bool:
     return any(h in t for h in _FRONTEND_HINTS)
 
 
+# A central request-handling backend — the API/gateway layer every other
+# component is reached THROUGH. Matched on id/name/type like the other role
+# anchors (never on the prose description, which over-matches). Deliberately
+# tight: "service" and "core" are omitted because they name half the components
+# in a microservice repo and would spare everything. "server" is omitted too —
+# it is a runtime word ("report-server"), not a role.
+_CORE_BACKEND_HINTS = ("api", "gateway", "backend", "rest", "graphql", "bff", "monolith")
+
+
+def _is_core_backend(c: dict) -> bool:
+    t = _component_text(c)
+    return any(h in t for h in _CORE_BACKEND_HINTS)
+
+
 def _is_cicd(c: dict) -> bool:
     if _zones(c) & CICD_ZONES:
         return True
@@ -452,13 +466,51 @@ def _cheap_stride_target(c: dict) -> bool:
     """Is this component in the --cheap-stride screening set (the internal tail)?
 
     Spared at full depth: priority <=2 (auth / frontend / LLM / internet-exposed)
-    AND the two priority-3 entries that are untrusted-input ENTRY POINTS —
-    file-upload parsers and realtime channels. They share priority 3 with the
-    crown-jewel / data-store anchors, but those are impact anchors reached
-    THROUGH the surface, whereas an upload parser is the surface: screening it is
-    exactly the tradeoff this flag is not meant to make.
+    plus four role anchors — file-upload parsers and realtime channels
+    (untrusted-input ENTRY POINTS), data stores, and the central request-handling
+    backend (``_is_core_backend``: the API / gateway layer everything else is
+    reached through). Auth is already covered by its priority-0 floor, so the two
+    roles a reviewer would never accept at screening depth — authentication and
+    the core API — are both unconditionally at full depth.
+
+    The data-store carve-out is measured, not precautionary
+    (docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md):
+    screening the juice-shop datastores at 8 turns kept the "data at rest"
+    findings but lost every model-DESIGN finding the same code yielded at full
+    depth (conditional-sanitize bypass, DB file placement, missing query
+    timeouts) — that class is what the verification round buys. ``_is_datastore``
+    is a type anchor (component_type / tech_stack / framework), independent of
+    the sensitivity flag, so sparing on it stays selective: 2 of 11 components in
+    that run, 1 of 8 in the standard run.
+
+    Crown-jewel is deliberately NOT a spare criterion. ``_is_crown_jewel`` reads
+    the analyst's ``handles_sensitive_data`` flag, which over-tags — 6 of 11 and
+    6 of 8 components carried it in the two juice-shop runs. Sparing on it would
+    leave ci-cd as the only screenable component and make the flag inert. The
+    same A/B measured no coverage loss for the screened crown-jewel API (18
+    findings, 4 Criticals at 8 turns), so the evidence does not ask for it.
+
+    Exposure-UNKNOWN is never screened — the same fail-safe ``_droppable_at_ceiling``
+    already applies to ceiling drops, extended to depth. Screening claims a
+    component is tail; absent reachability zones nothing has been *proven* internal,
+    so the claim is unfounded. This is what put juice-shop's internet-facing REST
+    API into the screening set: the analyst wrote the runtime tier (``server``, a
+    RUNTIME_ONLY zone) instead of a reachability zone, so `_is_exposed` stayed
+    False. The comparison run tagged the same component ``internet-facing`` and it
+    was spared — depth must not hinge on which synonym the analyst picked.
+
+    ci-cd is the one exception: it is identified by ROLE (``_is_cicd``), not by
+    reachability, and the same A/B measured ~zero loss for screening it (its
+    substance comes from the deterministic config-scanner, not from STRIDE).
     """
-    return _priority(c) > 2 and not (_is_file_upload(c) or _is_realtime(c))
+    # Role-identified tail, measured safe — survives an absent zone vocabulary.
+    if _is_cicd(c) and not _is_exposed(c):
+        return True
+    if not _reachability_zones(c):
+        return False
+    return _priority(c) > 2 and not (
+        _is_file_upload(c) or _is_realtime(c) or _is_datastore(c) or _is_core_backend(c)
+    )
 
 
 def _selection_reasons(c: dict, depth: str) -> list:
@@ -665,7 +717,7 @@ def _etc_label(count: object) -> str:
 def _component_max_turns(repo_root: Path, patterns, tier_turns: int, cheap: bool = False) -> int:
     """Turn budget for one component: complexity tier raised by file footprint.
 
-    Under ``cheap`` (--cheap-stride, priority >2 components) the component gets a
+    Under ``cheap`` (--cheap-stride, see _cheap_stride_target) the component gets a
     flat CHEAP_STRIDE_TURNS screening budget that intentionally skips the
     footprint floor — cheapening is the whole point, so a wide footprint must not
     re-inflate the budget.
@@ -1174,9 +1226,10 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     stride_model = _read_json(output_dir / ".skill-config.json", {}).get("stride_model") or "unknown"
 
     # Opt-in --cheap-stride: screening-depth pass for the internal tail. Applies
-    # to selection-priority >2 components (i.e. NOT auth/frontend/llm/exposed) —
-    # flat CHEAP_STRIDE_TURNS budget + forced estimated_threat_count=low, keeping
-    # all six STRIDE categories. Full depth on the exposed/role-floor set.
+    # to selection-priority >2 components minus the file-upload / realtime / data-store
+    # anchors — flat CHEAP_STRIDE_TURNS budget + forced estimated_threat_count=low,
+    # keeping all six STRIDE categories. See _cheap_stride_target for which anchors
+    # spare a component and why crown-jewel is not one of them.
     cheap_stride = bool(_read_json(output_dir / ".skill-config.json", {}).get("cheap_stride", False))
 
     # Enumeration-completeness reconciliation: restore security-relevant units
@@ -1242,6 +1295,18 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
         for c in components
         if cheap_stride and isinstance(c, dict) and c.get("id") and _cheap_stride_target(c)
     }
+    # A no-op lever must say so. The flag is a user-asserted cost tradeoff; when
+    # every selected component bears surface or has unknown reachability, nothing
+    # qualifies and the run costs exactly as much as without the flag. Silence
+    # would read as "the tail was cheapened" — which is what ZONE_DRIFT repos get.
+    if cheap_stride and not cheap_ids:
+        sys.stderr.write(
+            "CHEAP_STRIDE_INERT: --cheap-stride screened no component — every selected "
+            "component either carries attack surface / holds data, or has no canonical "
+            "reachability zone (exposure-unknown is never screened). The run pays full "
+            "depth throughout. Fix deployment_zones to use canonical access-zone tokens "
+            "if an internal tail was expected.\n"
+        )
     selected_entries = selection_report.get("selected") or []
     for i, entry in enumerate(selected_entries):
         entry_id = entry.get("id") if isinstance(entry, dict) else entry

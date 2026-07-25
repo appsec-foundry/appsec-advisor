@@ -87,8 +87,10 @@ properties:
           enum: [low, moderate, high]
         cheap_stride:
           description: |
-            Audit marker — true when `--cheap-stride` put this component in the
+            Audit marker — true when cheap-stride put this component in the
             screening set (flat 8-turn six-category pass). Absent otherwise.
+            Cheap-stride is on by default at quick/standard depth, off at
+            thorough; `--cheap-stride` / `--no-cheap-stride` override.
           type: boolean
         interfaces:
           description: Component interfaces (entry points / exposed surfaces) from Phase 6.

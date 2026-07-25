@@ -274,16 +274,39 @@ def test_builder_max_turns_from_complexity(tmp_path):
     assert by_id["frontend-spa"]["max_turns"] == 15  # standard/simple
 
 
-def test_builder_cheap_stride_screens_internal_tail(tmp_path):
-    """--cheap-stride (Variant 1): selection-priority >2 components get the flat
-    CHEAP_STRIDE_TURNS budget + forced low estimate + audit marker; the
-    exposed/role-floor set (priority <=2) is spared at full depth."""
+def _seed_zoned_pair(tmp_path: Path):
+    """A screenable tail component (batch-worker) plus frontend-spa on the edge.
+
+    Every field is load-bearing. The zone proves the component is tail — without it
+    the worker is exposure-unknown and spared, and the test would pass for the wrong
+    reason. ``handles_sensitive_data`` is what earns it *selection* at all: a
+    provably-internal component with no positive criterion is excluded from the
+    STRIDE fan-out rather than screened, so the screening set in criteria mode is
+    always drawn from components that earned selection some other way. And the id
+    must not read as an API — ``_is_core_backend`` spares those by role."""
     _seed_output_dir(tmp_path)
+    comps = json.loads((tmp_path / ".components.json").read_text(encoding="utf-8"))
+    for c in comps["components"]:
+        if c["id"] == "backend-api":
+            c["id"] = "batch-worker"
+            c["name"] = "Nightly batch worker"
+            c["deployment_zones"] = ["internal-network"]
+            c["handles_sensitive_data"] = True
+        else:
+            c["deployment_zones"] = ["browser"]
+    (tmp_path / ".components.json").write_text(json.dumps(comps), encoding="utf-8")
+
+
+def test_builder_cheap_stride_screens_internal_tail(tmp_path):
+    """--cheap-stride (Variant 1): a provably-internal component gets the flat
+    CHEAP_STRIDE_TURNS budget + forced low estimate + audit marker; everything
+    carrying surface (priority <=2) is spared at full depth."""
+    _seed_zoned_pair(tmp_path)
     (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
     manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
     by_id = {c["component_id"]: c for c in manifest["components"]}
-    # backend-api: no auth/frontend/llm/exposed signal -> priority 5 -> cheapened
-    be = by_id["backend-api"]
+    # batch-worker: internal-network, no role anchor -> cheapened
+    be = by_id["batch-worker"]
     assert be["max_turns"] == bm.CHEAP_STRIDE_TURNS
     assert be["estimated_threat_count"] == 3  # "low"
     # The analyzer paces on the LABEL, not the integer — without it a cheapened
@@ -318,10 +341,32 @@ def test_builder_cheap_stride_spares_untrusted_input_entry_points(tmp_path):
         json.dumps(
             {
                 "schema_version": 1,
+                # All three provably internal, so the ROLE anchors are what decide.
                 "components": [
-                    {"id": "file-upload-service", "name": "Uploads", "paths": ["up/**"], "complexity": "moderate"},
-                    {"id": "websocket-gateway", "name": "Realtime", "paths": ["ws/**"], "complexity": "moderate"},
-                    {"id": "report-generator", "name": "Reports", "paths": ["rep/**"], "complexity": "moderate"},
+                    {
+                        "id": "file-upload-service",
+                        "name": "Uploads",
+                        "paths": ["up/**"],
+                        "complexity": "moderate",
+                        "deployment_zones": ["internal-network"],
+                        "handles_sensitive_data": True,  # earns selection
+                    },
+                    {
+                        "id": "websocket-gateway",
+                        "name": "Realtime",
+                        "paths": ["ws/**"],
+                        "complexity": "moderate",
+                        "deployment_zones": ["internal-network"],
+                        "handles_sensitive_data": True,  # earns selection
+                    },
+                    {
+                        "id": "report-generator",
+                        "name": "Reports",
+                        "paths": ["rep/**"],
+                        "complexity": "moderate",
+                        "deployment_zones": ["internal-network"],
+                        "handles_sensitive_data": True,  # earns selection
+                    },
                 ],
             }
         ),
@@ -335,19 +380,227 @@ def test_builder_cheap_stride_spares_untrusted_input_entry_points(tmp_path):
     assert by_id["report-generator"]["cheap_stride"] is True
 
 
+def test_builder_cheap_stride_spares_datastores_not_crown_jewels(tmp_path):
+    """Data stores keep full depth; a crown-jewel-only component does not.
+
+    Regression for the juice-shop A/B (analysis-cheap-stride-vs-standard-2026-07-25):
+    the screened datastore pair kept its data-at-rest findings but lost every
+    model-design finding the same code yielded at full depth, so ``_is_datastore``
+    (a type anchor) spares. ``handles_sensitive_data`` must NOT spare — it was set
+    on 6 of 11 and 6 of 8 components in the two runs, so honouring it would leave
+    ci-cd as the only screenable component and make the flag inert."""
+    (tmp_path / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {
+                        "id": "core-api",
+                        "name": "Core REST API",
+                        "paths": ["api/**"],
+                        "complexity": "complex",
+                        # Exposure-unknown on purpose: 'server' says where it runs,
+                        # never how reachable it is (RUNTIME_ONLY_ZONES). Crown-jewel
+                        # only — the over-tagged flag must not buy full depth.
+                        "deployment_zones": ["server"],
+                        "handles_sensitive_data": True,
+                    },
+                    {
+                        "id": "primary-db",
+                        "name": "Primary Database",
+                        "paths": ["models/**"],
+                        "complexity": "moderate",
+                        "component_type": "datastore",
+                        "deployment_zones": ["internal-network"],
+                        "handles_sensitive_data": True,
+                    },
+                    {
+                        "id": "batch-worker",
+                        "name": "Nightly batch worker",
+                        "paths": ["worker/**"],
+                        "complexity": "moderate",
+                        "deployment_zones": ["internal-network"],
+                        # Over-tagged the way the analyst over-tags in practice.
+                        "handles_sensitive_data": True,
+                    },
+                    {
+                        "id": "release-pipeline",
+                        "name": "CI/CD Pipeline",
+                        "paths": [".github/**"],
+                        "complexity": "simple",
+                        "deployment_zones": ["ci-cd-runtime"],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    by_id = {c["component_id"]: c for c in manifest["components"]}
+    # Type anchor spares: the design-finding class needs the verification round.
+    assert "cheap_stride" not in by_id["primary-db"]
+    assert by_id["primary-db"]["max_turns"] > bm.CHEAP_STRIDE_TURNS
+    # handles_sensitive_data alone must not spare — otherwise nothing is screenable.
+    assert by_id["batch-worker"]["cheap_stride"] is True
+    assert by_id["batch-worker"]["max_turns"] == bm.CHEAP_STRIDE_TURNS
+    assert by_id["release-pipeline"]["cheap_stride"] is True
+    assert by_id["release-pipeline"]["max_turns"] == bm.CHEAP_STRIDE_TURNS
+    # Exposure-unknown (runtime tier written into the zone field) is never screened:
+    # nothing proves it is tail. This is the juice-shop main-API regression.
+    assert "cheap_stride" not in by_id["core-api"]
+    assert by_id["core-api"]["max_turns"] > bm.CHEAP_STRIDE_TURNS
+
+
+def test_builder_cheap_stride_spares_auth_and_core_backend(tmp_path):
+    """Authentication and the central request-handling backend are never screened.
+
+    Auth rides its priority-0 floor; the core API / gateway layer gets its own
+    role anchor (`_is_core_backend`). These are the two roles a reviewer would not
+    accept at screening depth regardless of what the cost lever says — and in the
+    juice-shop A/B the main REST API had landed in the screening set."""
+    (tmp_path / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                # Provably internal + crown-jewel so all three earn selection and the
+                # ROLE anchors are what decide depth.
+                "components": [
+                    {
+                        "id": "payments-api",
+                        "name": "Payments API",
+                        "type": "process",
+                        "paths": ["api/**"],
+                        "complexity": "complex",
+                        "deployment_zones": ["internal-network"],
+                        "handles_sensitive_data": True,
+                    },
+                    {
+                        "id": "auth-svc",
+                        "name": "Auth Service",
+                        "type": "process",
+                        "paths": ["auth/**"],
+                        "complexity": "moderate",
+                        "deployment_zones": ["internal-network"],
+                        "handles_sensitive_data": True,
+                    },
+                    {
+                        "id": "batch-worker",
+                        "name": "Nightly batch worker",
+                        "type": "process",
+                        "paths": ["worker/**"],
+                        "complexity": "moderate",
+                        "deployment_zones": ["internal-network"],
+                        "handles_sensitive_data": True,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    by_id = {c["component_id"]: c for c in manifest["components"]}
+    assert "cheap_stride" not in by_id["payments-api"]
+    assert by_id["payments-api"]["max_turns"] > bm.CHEAP_STRIDE_TURNS
+    assert "cheap_stride" not in by_id["auth-svc"]
+    assert by_id["auth-svc"]["max_turns"] > bm.CHEAP_STRIDE_TURNS
+    # The genuine tail still pays the screening budget — the anchors are not a
+    # blanket exemption.
+    assert by_id["batch-worker"]["cheap_stride"] is True
+
+
+def test_builder_cheap_stride_never_screens_exposure_unknown(tmp_path):
+    """No canonical reachability zone → never screened, and the no-op is announced.
+
+    Screening claims a component is tail. With zones absent or off-vocabulary
+    nothing has been proven internal, so the claim is unfounded — the same
+    fail-safe `_droppable_at_ceiling` applies to ceiling drops. A run where that
+    leaves nothing screenable must say so rather than silently cost full price."""
+    (tmp_path / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {"id": "core-api", "name": "API", "paths": ["api/**"], "complexity": "complex"},
+                    {
+                        "id": "invoice-svc",
+                        "name": "Invoices",
+                        "paths": ["inv/**"],
+                        "complexity": "moderate",
+                        "deployment_zones": ["application-zone"],  # off-vocabulary
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    assert all("cheap_stride" not in c for c in manifest["components"])
+
+
+def test_builder_cheap_stride_announces_inert_run(tmp_path, capsys):
+    """A lever that screened nothing is reported — silence would read as a
+    cheapened tail on exactly the repos whose zone vocabulary drifted."""
+    _seed_output_dir(tmp_path)  # no deployment_zones → all exposure-unknown
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
+    bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    assert "CHEAP_STRIDE_INERT" in capsys.readouterr().err
+
+
+def test_builder_cheap_stride_inert_note_silent_when_screening_happened(tmp_path, capsys):
+    """The note is a no-op signal, not a banner — it must not fire on a run that
+    did screen something."""
+    _seed_zoned_pair(tmp_path)
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
+    bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    assert "CHEAP_STRIDE_INERT" not in capsys.readouterr().err
+
+
 def test_builder_cheap_stride_discloses_screening_in_selection(tmp_path):
     """A screened component is not a fully-analyzed one — the selection sidecar
     (source of §1 Scope, the §3 Scope column and the console banner) says so."""
-    _seed_output_dir(tmp_path)
+    _seed_zoned_pair(tmp_path)
     (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
     bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
     sel = json.loads((tmp_path / ".stride-selection.json").read_text(encoding="utf-8"))
     # Entries are dicts in mode=criteria and bare ids in the passthrough fail-safe;
     # a screened one is always promoted to a dict so the disclosure survives both.
     by_id = {(e["id"] if isinstance(e, dict) else e): e for e in sel["selected"]}
-    assert by_id["backend-api"]["analysis_depth"] == "screening"
-    assert any("--cheap-stride" in r for r in by_id["backend-api"]["reasons"])
+    assert by_id["batch-worker"]["analysis_depth"] == "screening"
+    assert any("--cheap-stride" in r for r in by_id["batch-worker"]["reasons"])
     assert by_id["frontend-spa"] == "frontend-spa" or "analysis_depth" not in by_id["frontend-spa"]
+    # In criteria mode the console carries the disclosure as a selection reason.
+    assert "screening depth (--cheap-stride)" in bm.format_selection_console(sel)
+
+
+def test_builder_cheap_stride_discloses_screening_in_passthrough_console(tmp_path):
+    """The un-migrated fail-safe (no deployment_zones anywhere → mode=passthrough)
+    persists a flat id list, so a screened entry is promoted to a dict and the
+    console marks it — a screened component must never read as fully analyzed.
+
+    ci-cd is the component that can still be screened without zones: it is
+    identified by role, so the exposure-unknown guard does not apply to it."""
+    (tmp_path / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {"id": "core-api", "name": "API", "paths": ["api/**"], "complexity": "complex"},
+                    {"id": "ci-cd-pipeline", "name": "CI/CD Pipeline", "paths": [".github/**"], "complexity": "simple"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"cheap_stride": True}), encoding="utf-8")
+    bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    sel = json.loads((tmp_path / ".stride-selection.json").read_text(encoding="utf-8"))
+    assert sel["mode"] == "passthrough"
+    by_id = {(e["id"] if isinstance(e, dict) else e): e for e in sel["selected"]}
+    assert by_id["ci-cd-pipeline"]["analysis_depth"] == "screening"
+    assert by_id["core-api"] == "core-api"  # exposure-unknown → untouched, full depth
     assert "(screening)" in bm.format_selection_console(sel)
 
 

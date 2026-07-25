@@ -96,6 +96,8 @@ The canonical layout is in `agents/phases/phase-group-threats.md` → Dispatch. 
 
 `scripts/resolve_config.py` owns `--reasoning-model`. Canonical values are `sonnet-economy`, `opus-cheap`, `sonnet`, and `opus`; `haiku-economy` remains a deprecated alias for `sonnet-economy`. Keep defaults and rationale in `docs/model-selection.md`.
 
+Cheap-stride is the per-component STRIDE **depth** tier — on by default at quick and standard, off at thorough, overridable with `--cheap-stride` / `--no-cheap-stride` (`resolve_cheap_stride`). Screened components get a flat 8-turn pass with `ESTIMATED_THREAT_COUNT=low`; all six STRIDE categories stay mandatory, so this is a pacing lever, never a coverage cut. `build_stride_dispatch_manifest._cheap_stride_target` decides who qualifies and is the only place to change it: auth, frontend, LLM, internet-exposed, file-upload, realtime, data-store and core-backend components keep full depth, and so does anything whose reachability is unknown — the same fail-safe the ceiling-drop rule uses. Do not key the spare list on `handles_sensitive_data`; it over-tags. Rationale and the measured cost/coverage tradeoff: `docs/threat-modeler.md` and `docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md`.
+
 ## Runtime rules
 
 ### Orchestration and context

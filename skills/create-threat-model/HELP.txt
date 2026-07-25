@@ -61,12 +61,18 @@ DEPTH & MODEL
                                High/Medium/Low tail to cut tokens; full depth
                                (CVSS, evidence, greps) otherwise unchanged.
                                Off by default.
-  --cheap-stride               Opt-in cost lever: screening-depth STRIDE for the
-                               internal tail (flat 8-turn pass, all six
-                               categories kept). Auth, frontend, LLM,
-                               internet-exposed, file-upload and realtime
-                               components keep full depth. Screened components
-                               are marked as such in the report. Off by default.
+  --cheap-stride               Cost lever: screening-depth STRIDE for the internal
+                               tail (flat 8-turn pass, all six categories kept).
+                               Auth, frontend, LLM, internet-exposed, file-upload,
+                               realtime, data-store and core-backend (API/gateway)
+                               components keep full depth, as does anything whose
+                               reachability is unknown (ci-cd excepted). Auth and
+                               the core API are never screened. Screened
+                               components are marked as such in the report.
+                               DEFAULT: on at quick/standard, off at thorough.
+                               This flag forces it on at any depth.
+  --no-cheap-stride            Full STRIDE depth on every selected component,
+                               including the provably-internal tail and ci-cd.
   --evidence-verifier-cap <N>  Verify at most N non-Critical findings in
                                Phase 10a; Critical findings do not count toward
                                the cap and are selected first.

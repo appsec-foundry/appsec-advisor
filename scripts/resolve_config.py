@@ -294,6 +294,7 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("quick",        "thorough",        "--quick and --thorough cannot be used together."),
     ("enrich_arch",  "no_enrich_arch",  "--enrich-arch and --no-enrich-arch cannot be used together."),
     ("abuse_cases",  "no_abuse_cases",  "--abuse-cases and --no-abuse-cases cannot be used together."),
+    ("cheap_stride", "no_cheap_stride", "--cheap-stride and --no-cheap-stride cannot be used together."),
 ]
 
 
@@ -430,6 +431,32 @@ def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
                 "abuse_case_label": "skipped (auto - quick depth)"}
     return {"skip_abuse_case_verification": False,
             "abuse_case_label": "enabled"}
+
+
+def resolve_cheap_stride(ns: argparse.Namespace, depth: str) -> dict:
+    """Resolve ``cheap_stride`` + a human-readable label.
+
+    Default: ON at quick and standard depth, OFF at thorough. Screening depth is
+    a cost/pacing tier for components that are *proven* side-of-the-house, and
+    ``build_stride_dispatch_manifest._cheap_stride_target`` is what decides that:
+    auth, frontend, LLM, internet-exposed, file-upload, realtime, data-store and
+    core-backend components always keep full depth, and so does anything whose
+    reachability is unknown. Only ci-cd and provably-internal components qualify,
+    which is why this is safe to default — it can only ever trim the tail.
+    Thorough keeps full depth everywhere by definition: it is the mode a user
+    picks when depth matters more than cost.
+
+    ``--cheap-stride`` forces it on at any depth (incl. thorough);
+    ``--no-cheap-stride`` forces it off at any depth. The two flags are mutually
+    exclusive (see ``CONFLICT_PAIRS``).
+    """
+    if getattr(ns, "no_cheap_stride", False):
+        return {"cheap_stride": False, "cheap_stride_label": "off (--no-cheap-stride)"}
+    if getattr(ns, "cheap_stride", False):
+        return {"cheap_stride": True, "cheap_stride_label": "on (--cheap-stride)"}
+    if depth == "thorough":
+        return {"cheap_stride": False, "cheap_stride_label": "off (auto - thorough depth)"}
+    return {"cheap_stride": True, "cheap_stride_label": f"on (auto - {depth} depth)"}
 
 
 # B2c — repo-size auto-cap thresholds.
@@ -1458,17 +1485,23 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Verify at most N non-Critical findings in Phase 10a; "
                         "Critical findings do not count toward the cap. Defaults: 20 "
                         "(quick), 30 (standard), 100 (thorough).")
-    # Opt-in screening-depth STRIDE for the internal tail (cost lever). OFF by
-    # default. Exposed / auth / frontend / LLM components (selection priority
-    # <=2) keep full depth; everything else gets a flat ~8-turn six-category
-    # screening pass. A user-asserted breadth-over-depth tradeoff — NOT an
-    # auto-default (that needs reliable exposure classification).
+    # Screening-depth STRIDE for the internal tail (cost lever). ON by default at
+    # quick/standard, OFF at thorough — see resolve_cheap_stride. Exposed / auth /
+    # frontend / LLM (priority <=2) plus the file-upload / realtime / data-store /
+    # core-backend anchors keep full depth, and so does every exposure-unknown
+    # component (ci-cd excepted — role-identified); the rest gets a flat ~8-turn
+    # six-category screening pass. Defaulting it is only safe BECAUSE of the
+    # exposure-unknown fail-safe: unreliable zone tags cost budget, never depth.
     p.add_argument("--cheap-stride", action="store_true", dest="cheap_stride",
-                   help="Opt-in: screening-depth STRIDE (~8 turns, all 6 "
-                        "categories kept) for the internal tail; exposed, auth, "
-                        "frontend, LLM, file-upload, and realtime components "
-                        "keep full depth. Trims tokens on the internal tail. "
-                        "Off by default.")
+                   help="Force screening-depth STRIDE (~8 turns, all 6 categories "
+                        "kept) for the internal tail at any depth; exposed, auth, "
+                        "frontend, LLM, file-upload, realtime, data-store and "
+                        "core-backend (API/gateway) components keep full depth, as "
+                        "does anything exposure-unknown. Default: on at "
+                        "quick/standard, off at thorough.")
+    p.add_argument("--no-cheap-stride", action="store_true", dest="no_cheap_stride",
+                   help="Full STRIDE depth on every selected component, including "
+                        "the provably-internal tail and ci-cd.")
     # Architect
     p.add_argument("--architect-review",   action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
@@ -1735,9 +1768,9 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     else:
         cfg["skip_qa_label"] = "enabled"
 
-    # Opt-in cheap-stride screening tier. Read by build_stride_dispatch_manifest
-    # from .skill-config.json; applies to selection-priority >2 components only.
-    cfg["cheap_stride"] = bool(getattr(ns, "cheap_stride", False))
+    # Cheap-stride screening tier. Read by build_stride_dispatch_manifest from
+    # .skill-config.json; the manifest decides which components qualify.
+    cfg.update(resolve_cheap_stride(ns, cfg["assessment_depth"]))
 
     # Quick-depth post-override for requirements — force off unless the
     # user explicitly opted in via --requirements.
@@ -2996,9 +3029,12 @@ def _format_stride_cap(cfg: dict) -> str:
     depth. Shown in both states so the user always sees, before any tokens are
     spent, whether the per-component threat count is bounded.
 
-    ``--cheap-stride`` is appended here rather than getting its own row: it is
-    the other lever on the same question, and leaving it out would let this row
-    claim "full STRIDE depth" for a run whose internal tail is screened.
+    Cheap-stride is appended here rather than getting its own row: it is the other
+    lever on the same question, and leaving it out would let this row claim "full
+    STRIDE depth" for a run whose internal tail is screened. It carries its own
+    resolved label because it is now a depth-dependent DEFAULT (on at
+    quick/standard, off at thorough) — the row has to say whether the user asked
+    for it or the depth did.
     """
     cap = (cfg.get("stride_profile") or {}).get("max_threats_per_category")
     cheap = bool(cfg.get("cheap_stride"))
@@ -3010,10 +3046,12 @@ def _format_stride_cap(cfg: dict) -> str:
     else:
         base = "none — full STRIDE depth (all threats kept)"
     if cheap:
+        label = cfg.get("cheap_stride_label") or "on"
         base += (
-            "; --cheap-stride: screening depth (~8 turns, all 6 categories) for the "
-            "internal tail — auth / frontend / LLM / exposed / file-upload / realtime "
-            "keep full depth"
+            f"; cheap-stride {label}: screening depth (~8 turns, all 6 categories) for "
+            "the internal tail — auth / frontend / LLM / exposed / file-upload / realtime "
+            "/ data-store / core-backend keep full depth, as does anything "
+            "exposure-unknown"
         )
     return base
 

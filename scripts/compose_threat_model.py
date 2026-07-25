@@ -2737,8 +2737,9 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
         )
         if n_screen:
             scope_coverage += (
-                f"{n_screen} further internal component(s) received a reduced-budget screening pass "
-                f"(all six STRIDE categories, no verification greps). "
+                f"{n_screen} further component(s) received a reduced-budget screening pass "
+                f"(all six STRIDE categories, no verification greps) and are marked "
+                f"`Screened` in the component table. "
             )
         if n_exc:
             scope_coverage += (

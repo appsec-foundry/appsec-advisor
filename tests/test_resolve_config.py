@@ -115,9 +115,13 @@ class TestResolveWriteYaml:
 
 
 class TestCheapStride:
-    def test_off_by_default(self):
+    def test_flags_unset_without_arguments(self):
+        """The FLAGS default to unset; the depth default is applied in resolve() so
+        that --no-cheap-stride can distinguish "user said no" from "user said
+        nothing"."""
         ns = rc.build_parser().parse_args([])
         assert ns.cheap_stride is False
+        assert ns.no_cheap_stride is False
 
     def test_flag_sets_true(self):
         ns = rc.build_parser().parse_args(["--cheap-stride"])
@@ -128,7 +132,41 @@ class TestCheapStride:
         cfg (via .skill-config.json), so the key has to survive resolve()."""
         base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
         assert rc.resolve([*base, "--cheap-stride"], REPO_ROOT)["cheap_stride"] is True
-        assert rc.resolve(base, REPO_ROOT)["cheap_stride"] is False
+        assert rc.resolve([*base, "--no-cheap-stride"], REPO_ROOT)["cheap_stride"] is False
+
+    def test_default_on_at_quick_and_standard_off_at_thorough(self, tmp_path):
+        """Screening only ever reaches components proven to be side-of-the-house
+        (build_stride_dispatch_manifest._cheap_stride_target), so quick and standard
+        take it by default. Thorough is the mode a user picks when depth outweighs
+        cost, so it keeps full depth everywhere."""
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        assert rc.resolve(base, REPO_ROOT)["cheap_stride"] is True
+        assert rc.resolve([*base, "--quick"], REPO_ROOT)["cheap_stride"] is True
+        assert rc.resolve([*base, "--thorough"], REPO_ROOT)["cheap_stride"] is False
+
+    def test_explicit_flags_beat_the_depth_default(self, tmp_path):
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        forced_on = rc.resolve([*base, "--thorough", "--cheap-stride"], REPO_ROOT)
+        assert forced_on["cheap_stride"] is True
+        assert forced_on["cheap_stride_label"] == "on (--cheap-stride)"
+        forced_off = rc.resolve([*base, "--quick", "--no-cheap-stride"], REPO_ROOT)
+        assert forced_off["cheap_stride"] is False
+        assert forced_off["cheap_stride_label"] == "off (--no-cheap-stride)"
+
+    def test_label_names_the_source_of_the_decision(self, tmp_path):
+        """The pre-flight has to say whether the user asked for screening depth or
+        the depth default did — otherwise a surprised user cannot tell."""
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        assert rc.resolve(base, REPO_ROOT)["cheap_stride_label"] == "on (auto - standard depth)"
+        assert rc.resolve([*base, "--quick"], REPO_ROOT)["cheap_stride_label"] == "on (auto - quick depth)"
+        assert (
+            rc.resolve([*base, "--thorough"], REPO_ROOT)["cheap_stride_label"]
+            == "off (auto - thorough depth)"
+        )
+
+    def test_conflicting_flags_are_rejected(self):
+        ns = rc.build_parser().parse_args(["--cheap-stride", "--no-cheap-stride"])
+        assert "cannot be used together" in (rc.detect_conflicts(ns) or "")
 
 
 class TestResolveRequirements:
@@ -2314,7 +2352,9 @@ class TestStrideCapDisplay:
         assert "Criticals always kept" in s
 
     def test_format_uncapped(self):
-        cfg = _base_cfg(stride_profile={"stride_profile_label": "full"})
+        # cheap_stride is on by default at standard depth, so "full STRIDE depth"
+        # is only claimable once screening is explicitly off.
+        cfg = _base_cfg(stride_profile={"stride_profile_label": "full"}, cheap_stride=False)
         s = rc._format_stride_cap(cfg)
         assert s == "none — full STRIDE depth (all threats kept)"
 
@@ -2324,7 +2364,12 @@ class TestStrideCapDisplay:
         assert "none" in rc._format_stride_cap(cfg)
 
     def test_run_plan_shows_uncapped_line(self):
-        cfg = _base_cfg(incremental=False, baseline_state="empty", stride_profile={"stride_profile_label": "full"})
+        cfg = _base_cfg(
+            incremental=False,
+            baseline_state="empty",
+            stride_profile={"stride_profile_label": "full"},
+            cheap_stride=False,  # else the row correctly qualifies the depth claim
+        )
         out = rc.render_run_plan(cfg, None, None, None)
         assert "STRIDE cap" in out
         assert "full STRIDE depth" in out
@@ -2348,22 +2393,35 @@ class TestStrideCapDisplay:
     def test_cheap_stride_qualifies_the_depth_claim(self):
         """Without this the row claims 'full STRIDE depth' for a run whose
         internal tail is screened — the one place the user sees depth before
-        any tokens are spent."""
-        cfg = _base_cfg(stride_profile={"stride_profile_label": "full"}, cheap_stride=True)
+        any tokens are spent. Since screening is a depth-dependent DEFAULT, the
+        row must also name who decided: the user or the depth."""
+        cfg = _base_cfg(
+            stride_profile={"stride_profile_label": "full"},
+            cheap_stride=True,
+            cheap_stride_label="on (--cheap-stride)",
+        )
         s = rc._format_stride_cap(cfg)
-        assert "--cheap-stride" in s and "screening depth" in s
+        assert "cheap-stride on (--cheap-stride)" in s and "screening depth" in s
+        auto = rc._format_stride_cap(
+            _base_cfg(
+                stride_profile={"stride_profile_label": "full"},
+                cheap_stride=True,
+                cheap_stride_label="on (auto - standard depth)",
+            )
+        )
+        assert "cheap-stride on (auto - standard depth)" in auto
         cfg_run = _base_cfg(
             incremental=False,
             baseline_state="empty",
             stride_profile={"stride_profile_label": "full"},
             cheap_stride=True,
         )
-        assert "--cheap-stride" in rc.render_run_plan(cfg_run, None, None, None)
-        assert "--cheap-stride" in rc.render_configuration_summary(cfg_run)
-        # Off (default) → the row stays exactly as before.
-        assert rc._format_stride_cap(_base_cfg(stride_profile={"stride_profile_label": "full"})) == (
-            "none — full STRIDE depth (all threats kept)"
-        )
+        assert "cheap-stride" in rc.render_run_plan(cfg_run, None, None, None)
+        assert "cheap-stride" in rc.render_configuration_summary(cfg_run)
+        # Explicitly off → the row makes the unqualified full-depth claim again.
+        assert rc._format_stride_cap(
+            _base_cfg(stride_profile={"stride_profile_label": "full"}, cheap_stride=False)
+        ) == ("none — full STRIDE depth (all threats kept)")
 
     def test_cap_not_duplicated_in_active_options(self, monkeypatch):
         # A pure cap label must NOT appear as a separate "STRIDE" active-options
