@@ -166,3 +166,21 @@ def test_partial_rules_for_other_directories_are_ignored(tmp_path):
     repo, out = _repo(tmp_path, "docs/other/**\nbuild/\n")
     assert ensure(out) is not None
     assert _ignored(repo, "docs/security/.recon-summary.md")
+
+
+def test_publish_honours_a_custom_output_directory(tmp_path):
+    """patch_gitignore hardcoded "docs/security", so a run with --output wrote
+    negations for a path that did not exist while the real output directory
+    stayed ignored — leaving no way to publish at all."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    out = tmp_path / "reports" / "appsec"
+    out.mkdir(parents=True)
+    (out / "threat-model.md").write_text("deliverable")
+    (out / ".recon-summary.md").write_text("raw credential")
+
+    ensure(out)
+    patch_gitignore(tmp_path / ".gitignore", out, [out / "threat-model.md"])
+
+    assert not _ignored(tmp_path, "reports/appsec/threat-model.md")
+    assert _ignored(tmp_path, "reports/appsec/.recon-summary.md")
+    assert "docs/security" not in (tmp_path / ".gitignore").read_text()

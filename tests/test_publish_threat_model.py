@@ -43,6 +43,14 @@ class TestScanForSecrets:
 
 
 class TestPatchGitignore:
+    def _out(self, tmp_path: Path) -> Path:
+        """The directory the run wrote to. patch_gitignore derives its patterns
+        from this, so it must be a real subdirectory — passing the repo root
+        used to be masked by the hardcoded "docs/security" prefix."""
+        out = tmp_path / "docs" / "security"
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+
     def _make_gitignore(self, tmp_path: Path, content: str) -> Path:
         gi = tmp_path / ".gitignore"
         gi.write_text(content)
@@ -51,7 +59,7 @@ class TestPatchGitignore:
     def test_adds_negation_after_docs_security_line(self, tmp_path):
         gi = self._make_gitignore(tmp_path, "node_modules/\ndocs/security/\n")
         files = [tmp_path / "threat-model.md", tmp_path / "threat-model.yaml"]
-        ptm.patch_gitignore(gi, tmp_path, files)
+        ptm.patch_gitignore(gi, self._out(tmp_path), files)
         text = gi.read_text()
         assert "!docs/security/threat-model.md" in text
         assert "!docs/security/threat-model.yaml" in text
@@ -63,28 +71,28 @@ class TestPatchGitignore:
     def test_idempotent(self, tmp_path):
         gi = self._make_gitignore(tmp_path, "docs/security/\n")
         files = [tmp_path / "threat-model.md"]
-        ptm.patch_gitignore(gi, tmp_path, files)
+        ptm.patch_gitignore(gi, self._out(tmp_path), files)
         first = gi.read_text()
-        ptm.patch_gitignore(gi, tmp_path, files)
+        ptm.patch_gitignore(gi, self._out(tmp_path), files)
         second = gi.read_text()
         assert first == second
 
     def test_never_publish_guards_added_once(self, tmp_path):
         gi = self._make_gitignore(tmp_path, "docs/security/\n")
-        ptm.patch_gitignore(gi, tmp_path, [tmp_path / "threat-model.md"])
+        ptm.patch_gitignore(gi, self._out(tmp_path), [tmp_path / "threat-model.md"])
         text = gi.read_text()
         assert "never-publish guards" in text
         assert text.count("never-publish guards") == 1
 
     def test_pentest_tasks_always_in_never_list(self, tmp_path):
         gi = self._make_gitignore(tmp_path, "docs/security/\n")
-        ptm.patch_gitignore(gi, tmp_path, [])
+        ptm.patch_gitignore(gi, self._out(tmp_path), [])
         text = gi.read_text()
         assert "pentest-tasks.yaml" in text
 
     def test_creates_gitignore_when_missing(self, tmp_path):
         gi = tmp_path / ".gitignore"
-        ptm.patch_gitignore(gi, tmp_path, [tmp_path / "threat-model.md"])
+        ptm.patch_gitignore(gi, self._out(tmp_path), [tmp_path / "threat-model.md"])
         assert gi.exists()
         assert "!docs/security/threat-model.md" in gi.read_text()
 
@@ -97,7 +105,7 @@ class TestPatchGitignore:
             + "\n".join(f"docs/security/{n}  # never publish" for n in ptm.NEVER_PUBLISH)
             + "\n",
         )
-        result = ptm.patch_gitignore(gi, tmp_path, [tmp_path / "threat-model.md"])
+        result = ptm.patch_gitignore(gi, self._out(tmp_path), [tmp_path / "threat-model.md"])
         assert result is False
 
 
@@ -391,7 +399,10 @@ class TestMain:
         out_dir.mkdir()
         self._write_yaml(out_dir)
         (out_dir / "threat-model.md").write_text("clean\n")
-        (tmp_path / ".gitignore").write_text("docs/security/\n")
+        # The negation must address the directory the run actually used, not a
+        # hardcoded "docs/security" — otherwise --output leaves the deliverable
+        # ignored with no way to publish it.
+        (tmp_path / ".gitignore").write_text("out/**\n")
         ns = self._args(out_dir, tmp_path, json_out=True)
         self._patch_args(monkeypatch, ns)
         monkeypatch.setattr(ptm, "check_repo_visibility", lambda r: (False, ""))
@@ -402,7 +413,7 @@ class TestMain:
         parsed = __import__("json").loads(capsys.readouterr().out)
         assert parsed["gitignore_patched"] is True
         assert parsed["committed"] is False
-        assert "!docs/security/threat-model.md" in (tmp_path / ".gitignore").read_text()
+        assert "!out/threat-model.md" in (tmp_path / ".gitignore").read_text()
 
     def test_commit_success(self, tmp_path, monkeypatch, capsys):
         out_dir = tmp_path / "out"

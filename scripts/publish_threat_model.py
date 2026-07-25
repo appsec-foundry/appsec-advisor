@@ -99,11 +99,24 @@ def patch_gitignore(gitignore_path: Path, output_dir: Path, files_to_publish: li
     """
     text = gitignore_path.read_text() if gitignore_path.exists() else ""
 
+    # Address the directory the run actually used. This was hardcoded to
+    # "docs/security", so a run with --output wrote negations for a path that
+    # did not exist while the real output directory stayed ignored, leaving no
+    # way to publish at all. Harmless before the output directory was ignored
+    # by default, because then nothing needed lifting out.
+    try:
+        rel = output_dir.resolve().relative_to(gitignore_path.parent.resolve()).as_posix()
+    except ValueError:
+        rel = "docs/security"
+    # An output directory that IS the repository root leaves no prefix; "./name"
+    # is not a pattern git matches the way it reads.
+    prefix = "" if rel in ("", ".") else f"{rel}/"
+
     # Collect names already negated (strip trailing comments like "# published …")
     existing_negations = set()
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped.startswith("!docs/security/") or stripped.startswith("! docs/security/"):
+        if stripped.startswith(f"!{prefix}") or stripped.startswith(f"! {prefix}"):
             # normalize: drop leading "!" and any trailing "  # …" comment
             base = stripped.lstrip("!").split("#")[0].strip()
             existing_negations.add(base)
@@ -120,7 +133,7 @@ def patch_gitignore(gitignore_path: Path, output_dir: Path, files_to_publish: li
     # ignored and publishing silently did nothing. This went unnoticed while no
     # base rule for the directory existed, because then nothing was ignored in
     # the first place.
-    pending = [f"!docs/security/{f.name}" for f in files_to_publish if f"docs/security/{f.name}" not in existing_negations]
+    pending = [f"!{prefix}{f.name}" for f in files_to_publish if f"{prefix}{f.name}" not in existing_negations]
     if pending:
         new_lines.append(f"# published {today}")
         new_lines.extend(pending)
@@ -131,16 +144,16 @@ def patch_gitignore(gitignore_path: Path, output_dir: Path, files_to_publish: li
         new_lines.append("")
         new_lines.append(never_marker)
         for name in NEVER_PUBLISH:
-            new_lines.append(f"docs/security/{name}")
+            new_lines.append(f"{prefix}{name}")
 
     if not new_lines:
         return False
 
-    # Insert after the "docs/security/" ignore line
+    # Insert after the base ignore rule for the output directory
     lines = text.splitlines()
     insert_idx = None
     for i, line in enumerate(lines):
-        if line.strip() in ("docs/security/", "docs/security/**"):
+        if line.strip() in (f"{rel}/", f"{rel}/**", f"{rel}/*"):
             insert_idx = i + 1
             break
 
