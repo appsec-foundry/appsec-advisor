@@ -511,3 +511,39 @@ def test_widened_charset_does_not_swallow_markup_or_urls(secret_scan):
     assert secret_scan.scan_text("token: *placeholder-value*") == []
     assert secret_scan.scan_text("secret: [see the docs](secrets.md)") == []
     assert secret_scan.scan_text("auth: https://example.com/path?x=1") == []
+
+
+# --- Env-style credential assignments ---------------------------------------
+# A bare \b rejects a keyword preceded by "_", so DB_PASSWORD= and friends were
+# never detected — the canonical shape in .env files, docker-compose, and k8s
+# manifests. A report quoting one passed the release gate in cleartext.
+
+
+def test_env_style_credential_assignments_are_detected(secret_scan):
+    for line in (
+        "DB_PASSWORD=Pr0dDbP4ss!2024",
+        "export DB_PASSWORD=Pr0dDbP4ss!2024",
+        "MYSQL_ROOT_PASSWORD: Pr0dDbP4ss!24",
+        "SPRING_DATASOURCE_PASSWORD=Sup3rS3cretDb",
+        "X_AUTH_TOKEN=abcdef1234567890",
+        "ANTHROPIC_API_KEY=sk-ant-abcdef123456",
+    ):
+        assert secret_scan.scan_text(line), f"missed env-style credential: {line}"
+
+
+def test_env_style_credential_is_masked_in_a_report(secret_scan):
+    """The release gate reads the rendered report — a quoted env credential must
+    not survive masking, which is the path that shipped cleartext before."""
+    report = "The manifest hardcodes it:\n\n    DB_PASSWORD=Pr0dDbP4ss!2024\n"
+    masked, applied = secret_scan.mask_text(report)
+    assert "generic_credential_assignment" in applied
+    assert "Pr0dDbP4ss!2024" not in masked
+    assert secret_scan.scan_text(masked) == []
+
+
+def test_keyword_ending_a_word_is_not_a_credential(secret_scan):
+    """Only "_" is admitted before the keyword. Dropping the word boundary
+    entirely would mask ordinary headings and prose whose last word happens to
+    end in a credential keyword."""
+    assert secret_scan.scan_text("## OAuth: Configuration Options") == []
+    assert secret_scan.scan_text("See reauth: Documentation for details") == []

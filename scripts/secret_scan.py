@@ -82,7 +82,19 @@ _PATTERNS: list[_Pattern] = [
         "generic_credential_assignment",
         re.compile(
             r"(?ix)"
-            r"\b(?P<kw>password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
+            # ``(?<=_)`` admits the keyword as the tail of an env-style
+            # identifier — ``DB_PASSWORD=``, ``MYSQL_ROOT_PASSWORD:``,
+            # ``X_AUTH_TOKEN=`` — which a bare ``\b`` rejects because ``_`` is a
+            # word character. Those are the canonical shapes in .env files,
+            # docker-compose, and k8s manifests, so a report quoting one used to
+            # pass the release gate with the credential in cleartext.
+            #
+            # Only ``_`` is admitted. Dropping ``\b`` outright would also match
+            # a keyword ending any word, re-opening the false-positive class the
+            # guards below exist for: a heading like ``## OAuth: Configuration``
+            # would be masked as a secret. A two-line k8s ``name:``/``value:``
+            # pair remains out of reach of this single-line pattern.
+            r"(?:\b|(?<=_))(?P<kw>password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
             r"\s*(?P<op>[=:])\s*"
             # The value charset must cover password punctuation. It previously
             # stopped at the first character outside [A-Za-z0-9_\-+/=.], so a
