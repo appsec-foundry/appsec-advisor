@@ -39,7 +39,7 @@ Agents handle discovery and prose. Deterministic Python owns validation, renderi
 
 ### Keep the repository maintainable
 
-- Write code comments, docstrings, commits, and all repository documentation, including `CHANGELOG.md`, in English.
+- Write code comments, docstrings, commits, and all repository documentation in English. This covers `CHANGELOG.md`, the user-facing docs, and every internal document under `docs/internal/` — analyses, plans, proposals, runbooks, and contracts included. Discuss a change in whatever language the task uses, but write the file itself in English.
 - Make documentation clear, easy to follow, and complete enough to explain behavior. Remove unnecessary technical detail and AI-generated filler.
 - Keep report prose specific, falsifiable, concise, and engineer-to-engineer. Keep the shared prose references wired into report-producing prompts.
 - Security checks must state the inspected signal, trigger, false-positive exclusions, CWE/severity/type mapping, and required evidence.
@@ -49,7 +49,8 @@ Agents handle discovery and prose. Deterministic Python owns validation, renderi
 ## Preferred defaults
 
 - Prefer a deterministic emitter when it can own a threat category.
-- Keep changelog bullets short, plain, user-visible, and consistent with the surrounding released entries.
+- Record only changes that matter to a user in `CHANGELOG.md`: new capabilities, changed behavior, and fixes someone could notice in a run or its output. Leave out internal refactors, test-only work, doc edits, and routine maintenance. When in doubt, leave it out.
+- Keep changelog bullets short, plain, user-visible, and consistent with the surrounding released entries. One bullet per change, stating what is different now — not the root cause, the code path, or the history behind it. That detail belongs in the commit message.
 - When uncertain, preserve the deterministic pipeline and make the LLM do less.
 
 ## Where to make changes
