@@ -275,13 +275,19 @@ For the contributor-level path map and the tests required for each kind of chang
 
 ## Related projects
 
-- **[matthiasrohr/appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template)**: Template for an internal package with organization defaults and requirements.
+- **[matthiasrohr/appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template)**: Template for an internal package with organization defaults and requirements. It distributes `appsec-advisor` rather than competing with it.
 
-- **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)**: Agent-based threat modeling from architecture descriptions.
+- **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)**: Claude Code harness that runs multi-agent STRIDE and AI threat analysis over an architecture description, which you write or have it generate from the codebase. Its focus is that description as the unit of analysis, which keeps it stack-agnostic, whereas `appsec-advisor` analyzes the repository itself and ties each finding to evidence in the code.
 
-- **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)**: STRIDE threat modeling from text descriptions.
+- **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)**: LLM-generated STRIDE threat models and attack trees from a short application description. Its focus is a model in minutes for a security engineer, whereas `appsec-advisor` is a repeatable pipeline with schema-validated artifacts and CI gates. The overlap is larger here; the useful split is by stage, with a description-based model at design time and a code-derived one once the repository exists.
 
-- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)**: Anthropic's repository vulnerability scanner for Enterprise plans.
+- **[OWASP pytm](https://github.com/OWASP/pytm)**: Shift-left framework that generates diagrams and threats from a system defined in Python. Its focus is a model developers author and version by hand, whereas `appsec-advisor` derives it from the repository.
+
+- **[OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/)**: Self-hosted web application for team-based threat modeling sessions on shared data flow diagrams. Its focus is the workshop and its record, whereas `appsec-advisor` keeps a code-derived model current between sessions. The two combine well: bring the derived components, trust boundaries, and data flows into the session instead of drawing them from memory.
+
+- **[OWASP Precogly](https://github.com/precogly/precogly)**: Self-hosted platform with a DFD editor, curated library packs, and compliance traceability, for architects running a threat modeling program. Its focus is the program-wide system of record, whereas `appsec-advisor` generates the per-repository model next to the code. Both combine well: the generated model is a starting point for the maintained DFD, and findings can be tracked against the program's requirements.
+
+- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)**: Anthropic's codebase vulnerability scanner for Enterprise plans. Its focus is exploitable implementation flaws, whereas `appsec-advisor` covers what has no vulnerable line to point at, such as missing authorization or an undefined trust boundary.
 
 ## Contributing
 
