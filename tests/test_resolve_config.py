@@ -159,10 +159,7 @@ class TestCheapStride:
         base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
         assert rc.resolve(base, REPO_ROOT)["cheap_stride_label"] == "on (auto - standard depth)"
         assert rc.resolve([*base, "--quick"], REPO_ROOT)["cheap_stride_label"] == "on (auto - quick depth)"
-        assert (
-            rc.resolve([*base, "--thorough"], REPO_ROOT)["cheap_stride_label"]
-            == "off (auto - thorough depth)"
-        )
+        assert rc.resolve([*base, "--thorough"], REPO_ROOT)["cheap_stride_label"] == "off (auto - thorough depth)"
 
     def test_conflicting_flags_are_rejected(self):
         ns = rc.build_parser().parse_args(["--cheap-stride", "--no-cheap-stride"])

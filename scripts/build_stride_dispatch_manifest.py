@@ -508,9 +508,7 @@ def _cheap_stride_target(c: dict) -> bool:
         return True
     if not _reachability_zones(c):
         return False
-    return _priority(c) > 2 and not (
-        _is_file_upload(c) or _is_realtime(c) or _is_datastore(c) or _is_core_backend(c)
-    )
+    return _priority(c) > 2 and not (_is_file_upload(c) or _is_realtime(c) or _is_datastore(c) or _is_core_backend(c))
 
 
 def _selection_reasons(c: dict, depth: str) -> list:

@@ -155,6 +155,7 @@ def _cwe_code(value: object) -> str:
     hit = _CWE_ID_RE.search(value)
     return hit.group(1) if hit else ""
 
+
 # These CWEs describe a weakness class that commonly spans unrelated domains.
 # A finding with only one of them is useful triage input, but is not sufficient
 # evidence that a particular abuse-case mechanism exists. For example, CWE-347
