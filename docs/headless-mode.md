@@ -282,6 +282,23 @@ In the same standard benchmark, full Opus reasoning cost $40.78 compared with $3
 
 Use `--dry-run` for a new repository and set `--max-budget` and `--max-duration` on every CI job. The [Threat Modeler cost section](threat-modeler.md#assessment-depth--cost-control) contains the full comparison and model overrides.
 
+#### What the run actually spent
+
+Every run ends with a per-model token and cost breakdown:
+
+```
+  Token usage & cost — Claude Code accounting, same source as /cost
+    model                input  output  cache read  cache write   cost
+    claude-sonnet-4-6   12,043  38,221   1,204,880      420,113  $3.10
+    claude-haiku-4-5       812   2,004      44,120       12,000  $0.31
+    ───────────────────────────────────────────────────────────────────
+    total               12,855  40,225   1,249,000      432,113  $3.41
+```
+
+These figures come from the result object that `claude -p` emits when it finishes: Claude Code's own accounting, the same numbers the interactive `/cost` command reports, and the only readout that includes sub-agent spend. No local pricing table is involved. On a subscription the amount is the API-equivalent list price, not what you are billed.
+
+The result object only exists when the process exits on its own. A `--max-duration` timeout, a `SIGKILL`, or Ctrl-C truncates it, and the wrapper then falls back to the `.hook-events.log` figure and labels it `ESTIMATE`. That fallback covers the host session only, so it is a lower bound — sub-agent spend, which dominates a threat-model run, is missing from it.
+
 <a id="b3-github-actions"></a>
 
 ### B3. GitHub Actions
@@ -590,7 +607,7 @@ This table lists the flags `run-headless.sh` accepts.
 | `--yaml` | (no-op — YAML is written by default) |
 | `--no-yaml` | Suppress `threat-model.yaml` — **breaks incremental mode** |
 | `--sarif` | Also write `threat-model.sarif.json` (SARIF v2.1.0) |
-| `--json` | Return structured JSON output on stdout (useful for piping into CI steps) |
+| `--json` | Echo the raw `claude -p` result object on stdout (useful for piping into CI steps). The token and cost breakdown is printed either way — see [B2](#b2-cost--duration-planning) |
 | `--verbose` | Stream real-time hook event log on stderr |
 
 ### Analysis scope

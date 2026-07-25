@@ -45,7 +45,8 @@
 #                           opus-cheap, sonnet, sonnet-economy
 #   --assessment-depth <l>  Assessment depth: quick, standard (default), thorough
 #   --evidence-verifier-cap <n>  Limit Phase-10a non-Critical verification work
-#   --json                  Return structured JSON output
+#   --json                  Echo the raw `claude -p` result object on stdout
+#                           (the run's token/cost readout is printed either way)
 #   --verbose               Show the full real-time hook event log on stderr
 #   --quiet                 Suppress live progress (default = milestone events)
 #
@@ -119,7 +120,7 @@ Options:
   --trust-mode <mode>         untrusted (default) | trusted. Untrusted mode rejects
                                repo-owned agent configuration before Claude starts.
   --strict-urls               Require APPSEC_URL_ALLOWLIST for remote related-repo fetches
-  --json                     Return structured JSON output
+  --json                     Echo the raw claude result object on stdout
   --verbose                  Show the full real-time hook event log on stderr
   --quiet                    Suppress live progress output (default shows
                              milestone events: phases, agent spawns, heartbeat)
@@ -187,7 +188,7 @@ REQUIREMENTS_SRC=""
 MAX_BUDGET=""
 MODEL=""
 REASONING_TIER=""
-OUTPUT_FORMAT="text"
+EMIT_RAW_JSON=0
 VERBOSE=""
 QUIET=""
 SKILL="create-threat-model"
@@ -337,7 +338,7 @@ while [ $# -gt 0 ]; do
             esac
             ;;
         --json)
-            OUTPUT_FORMAT="json"; shift ;;
+            EMIT_RAW_JSON=1; shift ;;
         --verbose)
             VERBOSE="--verbose"; shift ;;
         --quiet)
@@ -603,7 +604,12 @@ CLAUDE_CMD="claude -p \"$PROMPT\""
 CLAUDE_CMD="$CLAUDE_CMD --plugin-dir \"$PLUGIN_DIR\""
 CLAUDE_CMD="$CLAUDE_CMD --allowedTools \"Read,Write,Glob,Grep,Bash,Agent\""
 CLAUDE_CMD="$CLAUDE_CMD --permission-mode bypassPermissions"
-CLAUDE_CMD="$CLAUDE_CMD --output-format $OUTPUT_FORMAT"
+# Always `json`, never `text`. The JSON result object is the only readout that
+# carries the run's authoritative token/cost accounting (total_cost_usd +
+# per-model modelUsage, sub-agents included) — see headless_usage.py. Its
+# `result` field holds exactly the text that `--output-format text` would have
+# printed, so nothing user-visible is lost; the wrapper re-emits it below.
+CLAUDE_CMD="$CLAUDE_CMD --output-format json"
 CLAUDE_CMD="$CLAUDE_CMD --no-session-persistence"
 
 # Optional arguments
@@ -793,6 +799,54 @@ else
 fi
 echo ""
 
+# Capture claude's stdout instead of letting it reach the terminal directly.
+# stdout is now a single JSON result object, which is machine data, not a
+# progress view — live progress comes from the hook-log monitor on stderr and
+# is unaffected. Redirecting a plain `>` keeps claude a direct child, so the
+# process-group signal handling below (kill -SIG -$CLAUDE_PID) still works; a
+# pipe would make $! the reader's PID and break escalation.
+RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+mkdir -p "$RESULT_DIR" 2>/dev/null || true
+RESULT_CAPTURE="$RESULT_DIR/.headless-result.json"
+: > "$RESULT_CAPTURE" 2>/dev/null || RESULT_CAPTURE=""
+
+# Print the run's token/cost readout. Two tiers, never blended:
+#   1. The result object — Claude Code's own accounting, the same source the
+#      interactive /cost reports, and the only one that includes sub-agent
+#      spend. Exact; printed with a per-model breakdown.
+#   2. Nothing survived (timeout, SIGKILL, Ctrl-C truncate the capture) — fall
+#      back to the hook-log figure and label it an estimate. That figure covers
+#      the host session only, so it is a lower bound and must never be shown
+#      as if it were the run's cost.
+print_usage_summary() {
+    [ -n "$RESULT_CAPTURE" ] || return 0
+    if python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" 2>/dev/null; then
+        return 0
+    fi
+    _usage_est=$(python3 "$SCRIPT_DIR/cost_running_total.py" "$RESULT_DIR" \
+        --format banner 2>/dev/null || true)
+    case "$_usage_est" in
+        ""|*"n/a"*) return 0 ;;
+    esac
+    warn "Token usage & cost — ESTIMATE (the run did not exit cleanly, so no result object)."
+    echo "  Host session only, from .hook-events.log — sub-agent spend is NOT included (lower bound)."
+    printf '%s\n' "$_usage_est"
+}
+
+# The capture is wrapper-owned scratch, not a run artifact: it is read out by
+# print_usage_summary and holds the assistant's final text, which can quote
+# repository content. Drop it once consumed. An unparseable capture is KEPT so
+# the raw object stays available for diagnosis; --keep-runtime-files keeps it
+# unconditionally, matching the runtime_cleanup opt-out.
+discard_capture_if_consumed() {
+    [ -n "$RESULT_CAPTURE" ] && [ -f "$RESULT_CAPTURE" ] || return 0
+    [ "${KEEP_RUNTIME_FILES:-}" != "true" ] || return 0
+    if [ ! -s "$RESULT_CAPTURE" ] \
+       || python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" --format json >/dev/null 2>&1; then
+        rm -f "$RESULT_CAPTURE"
+    fi
+}
+
 # Allow the claude subprocess to fail without tripping `set -e` so the
 # trap cleanup still runs and we can surface the real exit code.
 set +e
@@ -893,7 +947,11 @@ print_recovery_hint() {
 }
 
 set -m
-eval "$CLAUDE_CMD" < /dev/null &
+if [ -n "$RESULT_CAPTURE" ]; then
+    eval "$CLAUDE_CMD" < /dev/null > "$RESULT_CAPTURE" &
+else
+    eval "$CLAUDE_CMD" < /dev/null &
+fi
 CLAUDE_PID=$!
 set +m
 
@@ -923,11 +981,33 @@ set -e
 
 cleanup_tails
 
+# Re-emit what claude's stdout used to show. `result` holds the final assistant
+# text verbatim (what `--output-format text` printed); --json additionally dumps
+# the raw object for machine consumers. Both are no-ops on a truncated capture.
+if [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ]; then
+    if python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" --result-text 2>/dev/null; then
+        [ "$EMIT_RAW_JSON" -eq 1 ] && cat "$RESULT_CAPTURE"
+    else
+        # No result object. The CLI wrote something else to stdout — an error it
+        # does not route to stderr, an unrecognised format, a stubbed binary.
+        # Pass it through rather than swallowing it; capturing stdout must not
+        # cost us diagnosability. Truncated JSON is the one exception: a killed
+        # run leaves a half-written object with nothing readable in it.
+        case "$(head -c 1 "$RESULT_CAPTURE")" in
+            "{"|"[") ;;
+            *) cat "$RESULT_CAPTURE" ;;
+        esac
+    fi
+fi
+
 # If the run was interrupted by Ctrl-C, stop here instead of proceeding to
 # artifact parsing — the user asked to abort.
 if [ "$SIGINT_COUNT" -gt 0 ]; then
     warn "Run aborted by user (exit $EXIT_CODE). Skipping post-run parsing."
+    echo ""
+    print_usage_summary
     print_recovery_hint
+    discard_capture_if_consumed
     exit "$EXIT_CODE"
 fi
 
@@ -1052,6 +1132,10 @@ else
     print_recovery_hint
 fi
 
+# Token/cost readout on both paths — a failed run still spent the tokens.
+echo ""
+print_usage_summary
+
 # ── Exact-value secret redaction ───────────────────────────────────
 # Pattern-based masking (upstream + postscan below) only neutralises a secret
 # in the form it can match; an LLM author who copies a raw secret VALUE into
@@ -1160,5 +1244,7 @@ PY
         err "PR gate triggered — new threats at or above '$FAIL_ON' severity."
     fi
 fi
+
+discard_capture_if_consumed
 
 exit $EXIT_CODE

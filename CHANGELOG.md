@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Authentication scans now detect security-question password resets and password policies that allow fewer than eight characters.
 - `ask-threat-model` can now filter findings by severity, component, and evidence state.
 - Scans of agentic applications now check Claude Code permissions and hooks for unsafe behavior.
+- Headless runs now end with a per-model token and cost breakdown, taken from Claude Code's own accounting and matching what `/cost` reports in an interactive session.
 
 ### Changed
 

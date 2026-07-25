@@ -1,7 +1,8 @@
 # Plan: headless progress + runtime + cost (analysis, NOT implemented)
 
 Status: Element 1+2 **IMPLEMENTED** 2026-06-20 (branch feature/skill-impl-sonnet-cleanup),
-Element 3 still **deferred** (dry token pipe). Three display elements in a
+Element 3 **IMPLEMENTED** 2026-07-25 from a different source than this plan assumed
+(`scripts/headless_usage.py`, see that section). Three display elements in a
 periodic headless liner + end summary: (1) rough percent progress, (2) net
 runtime (total − standby), (3) cost (actual + API-equivalent).
 
@@ -124,6 +125,17 @@ regardless of the signal. Only element 1 (percent) + 2 (runtime). Cost exclusive
 in the end summary, there tier 1/2/3 per the signal above.
 
 ## Element 3 — cost: ONLY at the end, ONLY /cost-accurate  (effort: MEDIUM — blocked by the source)
+
+**RESOLVED 2026-07-25 — `scripts/headless_usage.py`.** The blocker below is about
+the *hook* source. It was never the only source: `claude -p --output-format json`
+ends with a result object carrying `total_cost_usd` and a per-model `modelUsage`
+breakdown, produced by Claude Code itself. That satisfies the policy in this
+document directly — no pricing table, no reconstruction, sub-agents included, so
+parity with `/cost` is not an approximation to be proven but the same number.
+`run-headless.sh` captures the object and prints a per-model table at the end.
+The rest of this section stands as the record of why the hook-log route was
+rejected: `cost_running_total.py` remains the fallback for runs that are killed
+before the object exists, and is labelled `ESTIMATE` there.
 
 ### What already exists AND is wired
 - Pricing table: `config.json:7-11` + `verify_run_costs.py:49-68` `PRICING_MODELS`
