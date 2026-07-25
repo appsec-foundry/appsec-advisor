@@ -225,12 +225,12 @@ Thorough increases both component coverage and per-component analysis depth.
 
 ### Cost by depth
 
-These OWASP Juice Shop runs are all on plugin **v0.5.0-beta** with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. They compare modes but do not predict the exact bill for another repository.
+These OWASP Juice Shop runs are all on plugin **v0.5.1-dev** (quick/thorough on v0.5.0-beta) with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. They compare modes but do not predict the exact bill for another repository.
 
 | Mode | Best fit | Review depth | API cost (USD) and time |
 |---|---|---|---|
 | **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | $18.03 and 68 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick-v0.5.md)) |
-| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $33.21 and ~130 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.md)) |
+| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $30.83 and 89 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.md)) |
 | **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | $48.01 and ~138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.md)) |
 
 > [!NOTE]
@@ -240,7 +240,7 @@ These OWASP Juice Shop runs are all on plugin **v0.5.0-beta** with the Claude Co
 
 | Repo | Stack | Mode | Plugin | Session | Threats | API cost |
 |---|---|---|---|---|---|---|
-| OWASP Juice Shop | Node/Angular | standard | v0.5.0-beta | Sonnet 4.6 | 54 | $33.21 |
+| OWASP Juice Shop | Node/Angular | standard | v0.5.1-dev | Sonnet 4.6 | 60 | $30.83 |
 | insecure-spring-app | Spring Boot | standard | v0.5.0-beta | Sonnet 4.6 | 49 | $24.65 |
 
 `--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the standard benchmark, a cap of 2 trims the finding count by roughly a third and saves roughly $4. The selected cap is recorded in the report.
