@@ -55,7 +55,13 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # 2026-07-19: + the "Authoring attack_steps" contract, so §3 walkthroughs
     # are authored attacker-first instead of being sentence-split out of
     # `scenario`. Measured 15_130; high = ~3% buffer above the new size.
-    "agents/appsec-stride-analyzer.md": (6_500, 15_600),
+    # Raised 2026-07-25: four commits grew the prompt past that ~3% buffer
+    # without bumping the bound — 5dc8683 (AI-agent threat hardening),
+    # dd412c5 (evidence preservation in the merger contract), 83ce818
+    # (anti-serial dispatch rules) and 402aa99 (cheap-stride pacing signal).
+    # Measured 15_574, i.e. 26 tokens below the old ceiling, so the next
+    # single added line would have failed the gate. high = ~5% buffer.
+    "agents/appsec-stride-analyzer.md": (6_500, 16_400),
     # Parallel Stage-2 specialists intentionally keep only role-local
     # instructions. They load their relevant legacy contract slice on demand.
     "agents/appsec-secarch-renderer.md": (500, 1_200),
