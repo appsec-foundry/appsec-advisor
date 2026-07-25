@@ -114,10 +114,16 @@ def patch_gitignore(gitignore_path: Path, output_dir: Path, files_to_publish: li
 
     today = date.today().isoformat()
 
-    for f in files_to_publish:
-        rel = f"docs/security/{f.name}"
-        if rel not in existing_negations:
-            new_lines.append(f"!{rel}  # published {today}")
+    # Comments must stand on their own line. git only treats "#" as a comment
+    # at the start of a line, so a trailing "  # published <date>" became part
+    # of the pattern and the negation matched nothing — the deliverable stayed
+    # ignored and publishing silently did nothing. This went unnoticed while no
+    # base rule for the directory existed, because then nothing was ignored in
+    # the first place.
+    pending = [f"!docs/security/{f.name}" for f in files_to_publish if f"docs/security/{f.name}" not in existing_negations]
+    if pending:
+        new_lines.append(f"# published {today}")
+        new_lines.extend(pending)
 
     # Never-publish explicit guards (add once, idempotent)
     never_marker = "# appsec-advisor: never-publish guards (do not remove)"
@@ -125,8 +131,7 @@ def patch_gitignore(gitignore_path: Path, output_dir: Path, files_to_publish: li
         new_lines.append("")
         new_lines.append(never_marker)
         for name in NEVER_PUBLISH:
-            rel = f"docs/security/{name}"
-            new_lines.append(f"docs/security/{name}  # never publish")
+            new_lines.append(f"docs/security/{name}")
 
     if not new_lines:
         return False

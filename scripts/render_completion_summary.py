@@ -1463,7 +1463,10 @@ def render_security_notice(output_dir: Path) -> list[str]:
     lines.append("  Warning: threat-model.md is NOT git-ignored and may be committed.")
     lines.append("  Threat reports contain sensitive vulnerability details,")
     lines.append("  attack vectors, and architecture weaknesses.")
-    lines.append("  Add docs/security/ to .gitignore to keep them out of git.")
+    # "docs/security/**", not "docs/security/". git cannot re-include a file
+    # whose parent directory is excluded, so the plain directory form would
+    # leave publish-threat-model unable to lift the deliverable back out.
+    lines.append("  Add docs/security/** to .gitignore to keep them out of git.")
     lines.append("  To publish deliberately (private repo, policy permits it):")
     lines.append("    /appsec-advisor:publish-threat-model")
     lines.append("  The publish skill runs pre-flight checks and patches .gitignore.")

@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supply-chain scoring now focuses on exploitable risks and better recognizes common Python and npm safeguards.
 - Attack walkthroughs now present attacker actions in a clearer order and format technical details more consistently.
 - The pre-flight now reports the STRIDE threat cap and tail screening in one shorter `STRIDE depth` row.
+- The output directory is now git-ignored by default, so a scan no longer leaves intermediate files ready to commit. `publish-threat-model` lifts the deliverables back out when you choose to publish.
 
 ### Fixed
 

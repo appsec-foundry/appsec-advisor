@@ -39,6 +39,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import check_permissions  # noqa: E402
 import detect_session_model  # noqa: E402
+import ensure_output_gitignore  # noqa: E402
 import resolve_config  # noqa: E402
 from event_log import format_line  # noqa: E402
 
@@ -370,6 +371,12 @@ def _load_run_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
 
 def _persist_config(cfg: dict[str, Any], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
+    # The redaction sweep covers the deliverables and the finding pipeline; the
+    # intermediates it walks past stay unredacted because they are never meant
+    # to be published. Establish that assumption here rather than relying on
+    # it — publish-threat-model then lifts individual deliverables back out.
+    # No-op when a rule already exists or the directory is not in a work tree.
+    ensure_output_gitignore.ensure(output_dir)
     path = output_dir / ".skill-config.json"
     if path.is_symlink():
         path.unlink()
