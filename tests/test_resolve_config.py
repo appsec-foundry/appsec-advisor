@@ -2264,8 +2264,8 @@ class TestRenderRunPlan:
         assert "Threat Model — Pre-flight" in out
         assert "Configuration" in out
         assert "Verdict" in out
-        # The STRIDE cap row is always present (capped or not).
-        assert "STRIDE cap" in out
+        # The STRIDE depth row is always present (capped or not).
+        assert "STRIDE depth" in out
 
     def test_dirty_incremental_renders_files_and_why(self):
         cfg = _base_cfg(incremental=True, mode="incremental")
@@ -2336,9 +2336,10 @@ class TestRenderRunPlan:
         assert "Unmapped (possible new component)" in out
 
 
-class TestStrideCapDisplay:
-    """The per-component STRIDE cap is surfaced in the pre-flight in BOTH
-    states (set / unset), and never double-shown via the active-options row."""
+class TestStrideDepthDisplay:
+    """The pre-flight answers "how much STRIDE do I get per component?" in one
+    row that always states BOTH levers (per-category cap, screening depth) in
+    both states, and never double-shows the cap via the active-options row."""
 
     def test_format_capped(self):
         cfg = _base_cfg(
@@ -2347,21 +2348,28 @@ class TestStrideCapDisplay:
                 "max_threats_per_category": 2,
             }
         )
-        s = rc._format_stride_cap(cfg)
+        s = rc._format_stride_depth(cfg)
         assert "≤2 per STRIDE category per component" in s
         assert "Criticals always kept" in s
 
     def test_format_uncapped(self):
-        # cheap_stride is on by default at standard depth, so "full STRIDE depth"
-        # is only claimable once screening is explicitly off.
-        cfg = _base_cfg(stride_profile={"stride_profile_label": "full"}, cheap_stride=False)
-        s = rc._format_stride_cap(cfg)
-        assert s == "none — full STRIDE depth (all threats kept)"
+        # Both clauses print: no cap AND no screening is the only state that may
+        # read as unqualified full depth.
+        cfg = _base_cfg(
+            stride_profile={"stride_profile_label": "full"},
+            cheap_stride=False,
+            cheap_stride_label="off (--no-cheap-stride)",
+        )
+        s = rc._format_stride_depth(cfg)
+        assert s == (
+            "no per-category cap (all threats kept); "
+            "cheap-stride off (--no-cheap-stride) — every component at full depth"
+        )
 
     def test_format_missing_profile(self):
         cfg = _base_cfg()
         cfg.pop("stride_profile", None)
-        assert "none" in rc._format_stride_cap(cfg)
+        assert "no per-category cap" in rc._format_stride_depth(cfg)
 
     def test_run_plan_shows_uncapped_line(self):
         cfg = _base_cfg(
@@ -2371,8 +2379,9 @@ class TestStrideCapDisplay:
             cheap_stride=False,  # else the row correctly qualifies the depth claim
         )
         out = rc.render_run_plan(cfg, None, None, None)
-        assert "STRIDE cap" in out
-        assert "full STRIDE depth" in out
+        assert "STRIDE depth" in out
+        assert "no per-category cap" in out
+        assert "every component at full depth" in out
 
     def test_run_plan_shows_capped_line(self):
         cfg = _base_cfg(
@@ -2386,23 +2395,23 @@ class TestStrideCapDisplay:
         out = rc.render_run_plan(cfg, None, None, None)
         assert "≤2 per STRIDE category per component" in out
 
-    def test_config_summary_shows_cap_line(self):
+    def test_config_summary_shows_depth_line(self):
         out = rc.render_configuration_summary(_base_cfg())
-        assert "STRIDE cap" in out
+        assert "STRIDE depth" in out
 
     def test_cheap_stride_qualifies_the_depth_claim(self):
-        """Without this the row claims 'full STRIDE depth' for a run whose
-        internal tail is screened — the one place the user sees depth before
-        any tokens are spent. Since screening is a depth-dependent DEFAULT, the
-        row must also name who decided: the user or the depth."""
+        """Without this the row would imply full depth for a run whose internal
+        tail is screened — the one place the user sees depth before any tokens
+        are spent. Since screening is a depth-dependent DEFAULT, the row must
+        also name who decided: the user or the depth."""
         cfg = _base_cfg(
             stride_profile={"stride_profile_label": "full"},
             cheap_stride=True,
             cheap_stride_label="on (--cheap-stride)",
         )
-        s = rc._format_stride_cap(cfg)
+        s = rc._format_stride_depth(cfg)
         assert "cheap-stride on (--cheap-stride)" in s and "screening depth" in s
-        auto = rc._format_stride_cap(
+        auto = rc._format_stride_depth(
             _base_cfg(
                 stride_profile={"stride_profile_label": "full"},
                 cheap_stride=True,
@@ -2418,14 +2427,30 @@ class TestStrideCapDisplay:
         )
         assert "cheap-stride" in rc.render_run_plan(cfg_run, None, None, None)
         assert "cheap-stride" in rc.render_configuration_summary(cfg_run)
-        # Explicitly off → the row makes the unqualified full-depth claim again.
-        assert rc._format_stride_cap(
+        # Explicitly off → the row says so instead of staying silent.
+        assert "every component at full depth" in rc._format_stride_depth(
             _base_cfg(stride_profile={"stride_profile_label": "full"}, cheap_stride=False)
-        ) == ("none — full STRIDE depth (all threats kept)")
+        )
+
+    def test_cap_and_screening_both_stated_when_both_active(self):
+        """The two levers are independent: a capped run may still screen its
+        tail. Neither clause may swallow the other."""
+        s = rc._format_stride_depth(
+            _base_cfg(
+                stride_profile={
+                    "stride_profile_label": "full (per-category cap 2)",
+                    "max_threats_per_category": 2,
+                },
+                cheap_stride=True,
+                cheap_stride_label="on (auto - standard depth)",
+            )
+        )
+        assert "≤2 per STRIDE category per component" in s
+        assert "cheap-stride on (auto - standard depth)" in s
 
     def test_cap_not_duplicated_in_active_options(self, monkeypatch):
         # A pure cap label must NOT appear as a separate "STRIDE" active-options
-        # row — the dedicated STRIDE cap line owns it.
+        # row — the dedicated STRIDE depth line owns it.
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
         rows = dict(

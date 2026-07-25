@@ -2309,7 +2309,7 @@ def render_run_plan(
         lines.append("Configuration")
         lines.extend(kv("Depth", _format_depth_summary(cfg)))
         lines.extend(kv("Reasoning", _format_reasoning_summary(cfg)))
-        lines.extend(kv("STRIDE cap", _format_stride_cap(cfg)))
+        lines.extend(kv("STRIDE depth", _format_stride_depth(cfg)))
         active = _summary_active_options(cfg)
         for label, value in active:
             lines.extend(kv(label, value))
@@ -2935,7 +2935,7 @@ def _render_summary_box(cfg: dict) -> list[str]:
     lines.extend(_box_kv("Depth", _format_depth_summary(cfg), width))
     lines.extend(_box_kv("Pipeline", _format_pipeline_summary(cfg), width))
     lines.extend(_box_kv("Reasoning", _format_reasoning_summary(cfg), width))
-    lines.extend(_box_kv("STRIDE cap", _format_stride_cap(cfg), width))
+    lines.extend(_box_kv("STRIDE depth", _format_stride_depth(cfg), width))
 
     active_options = _summary_active_options(cfg)
     if active_options:
@@ -3020,40 +3020,41 @@ def _format_reasoning_summary(cfg: dict) -> str:
     return f"{mode}; {prefix}STRIDE {stride}; triage {triage}; merge {merge}"
 
 
-def _format_stride_cap(cfg: dict) -> str:
-    """Always-on pre-flight row: how many threats STRIDE keeps per category.
+def _format_stride_depth(cfg: dict) -> str:
+    """Always-on pre-flight row: how much STRIDE this run buys per component.
 
-    Sourced from the resolved ``stride_profile.max_threats_per_category`` — set
-    either by ``--stride-cap N`` at any depth, or implicitly by the quick
-    triage profile (cap 1). When absent, standard/thorough keep full STRIDE
-    depth. Shown in both states so the user always sees, before any tokens are
-    spent, whether the per-component threat count is bounded.
+    Two independent levers answer that one question, so the row states both in
+    a fixed order and never lets one imply the other:
 
-    Cheap-stride is appended here rather than getting its own row: it is the other
-    lever on the same question, and leaving it out would let this row claim "full
-    STRIDE depth" for a run whose internal tail is screened. It carries its own
-    resolved label because it is now a depth-dependent DEFAULT (on at
-    quick/standard, off at thorough) — the row has to say whether the user asked
-    for it or the depth did.
+      1. ``stride_profile.max_threats_per_category`` — how many threats survive
+         per STRIDE category. Set by ``--stride-cap N`` at any depth, or
+         implicitly by the quick triage profile (cap 1).
+      2. ``cheap_stride`` — whether the internal tail runs at screening depth.
+         It carries its own resolved label because it is a depth-dependent
+         DEFAULT (on at quick/standard, off at thorough), so the row has to say
+         whether the user asked for it or the depth did.
+
+    Both clauses print in both states: the user sees the full picture before any
+    tokens are spent, and a "no cap" run can never read as "full depth" while
+    its tail is screened. Which components qualify for screening is run-invariant
+    policy — the pre-flight runs before component discovery — so that list stays
+    in ``docs/threat-modeler.md`` and ``HELP.txt`` instead of in every run's box.
     """
     cap = (cfg.get("stride_profile") or {}).get("max_threats_per_category")
     cheap = bool(cfg.get("cheap_stride"))
     if cap:
-        base = f"≤{cap} per STRIDE category per component (Criticals always kept)"
-    elif cheap:
-        # "full STRIDE depth" would contradict the clause appended right below.
-        base = "none — no per-category cap (all threats kept)"
+        cap_part = f"≤{cap} per STRIDE category per component (Criticals always kept)"
     else:
-        base = "none — full STRIDE depth (all threats kept)"
+        cap_part = "no per-category cap (all threats kept)"
+    label = cfg.get("cheap_stride_label") or ("on" if cheap else "off")
     if cheap:
-        label = cfg.get("cheap_stride_label") or "on"
-        base += (
-            f"; cheap-stride {label}: screening depth (~8 turns, all 6 categories) for "
-            "the internal tail — auth / frontend / LLM / exposed / file-upload / realtime "
-            "/ data-store / core-backend keep full depth, as does anything "
-            "exposure-unknown"
+        depth_part = (
+            f"cheap-stride {label} — internal tail at screening depth "
+            "(~8 turns, all 6 categories)"
         )
-    return base
+    else:
+        depth_part = f"cheap-stride {label} — every component at full depth"
+    return f"{cap_part}; {depth_part}"
 
 
 def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
@@ -3106,7 +3107,7 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
 
     # Depth-reduced STRIDE profiles (quick) still surface their label here.
     # The per-category cap is NOT shown via this row — it has its own always-on
-    # "STRIDE cap" line in the Configuration block, so a "full (per-category
+    # "STRIDE depth" line in the Configuration block, so a "full (per-category
     # cap N)" label would only duplicate it.
     sp_label = (cfg.get("stride_profile") or {}).get(
         "stride_profile_label", "full"
