@@ -192,6 +192,18 @@
         "type": "string",
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
       }
+    },
+    "candidate_titles": {
+      "description": "Short display titles keyed by candidate id, for dispatch labels. Advisory: a dispatcher falls back to the bare id when an entry is absent.",
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 60
+      }
     }
   },
   "allOf": [

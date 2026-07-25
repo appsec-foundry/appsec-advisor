@@ -1470,13 +1470,44 @@ def _write_assessment_summary(sid: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _stride_tier(component_id: str) -> str:
+    """``screening`` / ``full`` for a dispatched STRIDE component, else ``''``.
+
+    Read from the dispatch manifest's ``cheap_stride`` marker rather than from
+    the prompt: the tier is already deterministic there, so the orchestrator
+    cannot forget to pass it, and the analyzer prompt — which sits at its size
+    budget — pays nothing for the disclosure. Best-effort; any failure leaves
+    the tier unstated rather than guessed.
+    """
+    if not component_id:
+        return ""
+    try:
+        path = os.path.join(_output_dir(), ".stride-dispatch-manifest.json")
+        with open(path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        for comp in manifest.get("components") or []:
+            if isinstance(comp, dict) and comp.get("component_id") == component_id:
+                return "screening" if comp.get("cheap_stride") else "full"
+    except Exception:
+        pass
+    return ""
+
+
 def _agent_params(prompt: str) -> dict:
-    """Extract well-known KEY=value pairs from an agent prompt."""
+    """Extract well-known KEY=value pairs from an agent prompt.
+
+    STRIDE dispatches additionally carry ``ANALYSIS_DEPTH``, resolved from the
+    manifest by ``_stride_tier``, so ``.agent-run.log`` and the headless
+    progress view record which components ran at screening depth.
+    """
     params = {}
     for key in ("REPO_ROOT", "COMPONENT_ID", "MANIFESTS", "CONTEXT_FILE"):
         val = _extract_param(prompt, key)
         if val:
             params[key] = val
+    tier = _stride_tier(params.get("COMPONENT_ID", ""))
+    if tier:
+        params["ANALYSIS_DEPTH"] = tier
     return params
 
 

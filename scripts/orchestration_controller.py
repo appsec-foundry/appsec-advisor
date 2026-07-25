@@ -1274,8 +1274,37 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
         "action": "dispatch_parallel",
         "instruction_file": str(THIN_STAGE1C_RUNTIME),
         "candidates": candidates,
+        "candidate_titles": _abuse_candidate_titles(output_dir, candidates),
         "receipts": receipts,
     }
+
+
+_ABUSE_TITLE_MAX = 60
+
+
+def _abuse_candidate_titles(output_dir: Path, candidates: list[str]) -> dict[str, str]:
+    """``{AC-ID: short title}`` from the matcher sidecar, for dispatch labels.
+
+    The verifier fan-out is otherwise a column of bare ids in the agent list.
+    Titles come from the catalogue via ``.abuse-case-matches.json``; they are
+    truncated here so one long scenario name cannot push the console line into
+    a wrap. Best-effort: a missing or unreadable sidecar simply yields no
+    titles, and the dispatcher falls back to the id alone.
+    """
+    try:
+        doc = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    wanted = set(candidates)
+    titles: dict[str, str] = {}
+    for match in doc.get("matches") or []:
+        if not isinstance(match, dict):
+            continue
+        ac_id = match.get("abuse_case_id")
+        title = str(match.get("title") or "").strip()
+        if ac_id in wanted and title:
+            titles[ac_id] = title if len(title) <= _ABUSE_TITLE_MAX else title[: _ABUSE_TITLE_MAX - 1].rstrip() + "…"
+    return titles
 
 
 def finalize_abuse(output_dir: Path) -> dict[str, Any]:

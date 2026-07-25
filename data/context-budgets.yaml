@@ -36,7 +36,11 @@ surfaces:
     # ~10 min parallel). The restored HARD-CONSTRAINT prose (one-message =
     # concurrent + concrete anti-serial check) is load-bearing operational
     # detail, the same category the headroom guard protects -- not discretionary.
-    max_bytes: 9200
+    # Raised 9200->9400 (2026-07-25): the dispatch description now names the
+    # analysis tier (`STRIDE screening: <NAME>` for a cheap_stride entry) so the
+    # agent list says which components run at screening depth. At 9200 the file
+    # sat at 89.8%, leaving 14 bytes -- less than any wording of that rule costs.
+    max_bytes: 9400
   thin_stage1c_runtime:
     path: skills/create-threat-model/SKILL-thin-stage1c.md
     max_bytes: 3400

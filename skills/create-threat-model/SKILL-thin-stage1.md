@@ -87,7 +87,8 @@ Use this path when `PARALLEL_STRIDE=true`.
      Persisted attempts survive parent-session resume.
 
    Each component uses `appsec-advisor:appsec-stride-analyzer`, description
-   `STRIDE: <NAME>`, and the complete manifest mapping: `COMPONENT_ID`, `NAME`,
+   `STRIDE: <NAME>` — `STRIDE screening: <NAME>` when the entry has
+   `cheap_stride` — and the complete manifest mapping: `COMPONENT_ID`, `NAME`,
    `DESCRIPTION`, `PATHS`, `COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`,
    `INTERFACES`,
    `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and every
@@ -102,7 +103,7 @@ Use this path when `PARALLEL_STRIDE=true`.
    "$OUTPUT_DIR"`; any non-zero result is fatal and Analyst-B must not run.
 5. After verification, set Stage-1a to `Phases 9–10b — merge → triage` and
    dispatch Analyst-B foreground with description
-   `Threat Analysis & Triage (merge+triage)`, all aliases,
+   `Threat Analysis and Triage (merge+triage)`, all aliases,
    `RESUME_FROM_PHASE=9-merge`, and `STAGE1_PHASE_LIMIT=10b`. Record its usage
    with `--accumulate`.
 
@@ -130,7 +131,7 @@ Stats failures are non-blocking.
 
 When `PARALLEL_STRIDE=false`, dispatch one foreground
 `appsec-advisor:appsec-threat-analyst` with description
-`Threat Analysis & Triage`, all aliases, and `STAGE1_PHASE_LIMIT=10b`. Record
+`Threat Analysis and Triage`, all aliases, and `STAGE1_PHASE_LIMIT=10b`. Record
 one non-accumulating Stage-1 stats row from its usage.
 
 ## Close and gate

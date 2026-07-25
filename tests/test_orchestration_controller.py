@@ -608,6 +608,59 @@ def test_prepare_abuse_returns_bounded_parallel_action(tmp_path, monkeypatch):
     controller._validate_action(action)
 
 
+def test_prepare_abuse_carries_candidate_titles_for_dispatch_labels(tmp_path, monkeypatch):
+    """Without titles the verifier fan-out is a column of bare AC-ids in the
+    agent list. Titles are advisory: an id with none stays unlabelled rather
+    than blocking the dispatch."""
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["skip_abuse_case_verification"] = False
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    long_title = "Account takeover through " + "chained password reset " * 4
+    (output / ".abuse-case-matches.json").write_text(
+        json.dumps(
+            {
+                "matches": [
+                    {"abuse_case_id": "AC-T-001", "title": "Stored XSS to admin session theft"},
+                    {"abuse_case_id": "AC-T-002", "title": long_title},
+                    {"abuse_case_id": "AC-T-003", "title": "not a candidate"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_script(name, args, **kwargs):
+        if "list-candidates" in args:
+            return _completed("AC-T-001\nAC-T-002\n")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.prepare_abuse(output)
+    titles = action["candidate_titles"]
+    assert titles["AC-T-001"] == "Stored XSS to admin session theft"
+    assert len(titles["AC-T-002"]) <= 60 and titles["AC-T-002"].endswith("…")
+    assert "AC-T-003" not in titles  # not dispatched → not labelled
+    controller._validate_action(action)
+
+
+def test_prepare_abuse_titles_absent_without_matcher_sidecar(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["skip_abuse_case_verification"] = False
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+    def fake_script(name, args, **kwargs):
+        return _completed("AC-T-001\n" if "list-candidates" in args else "")
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.prepare_abuse(output)
+    assert action["candidate_titles"] == {}
+    controller._validate_action(action)
+
+
 def test_prepare_abuse_rejects_candidate_overflow_instead_of_truncating(tmp_path, monkeypatch):
     output = tmp_path / "out"
     output.mkdir()

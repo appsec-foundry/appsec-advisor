@@ -60,8 +60,21 @@ def _parse_ts(ts: str):
 
 
 def _kv(detail: str, key: str) -> str:
-    m = re.search(rf"\b{re.escape(key)}=([^\s,\]]+)", detail)
+    # `)` terminates a value too: the orchestrator's own echoes put pairs inside
+    # parentheses (`… (model: sonnet, MAX_TURNS=8, depth=screening)`), and
+    # without it the closing paren is captured as part of the value.
+    m = re.search(rf"\b{re.escape(key)}=([^\s,\])]+)", detail)
     return m.group(1) if m else ""
+
+
+def _agent_tag(model: str, depth: str = "") -> str:
+    """Parenthesised suffix for an agent line: model, plus the STRIDE tier.
+
+    ``depth`` is empty for every agent that is not a STRIDE analyzer, so the
+    tag stays exactly as it was for them.
+    """
+    parts = [p for p in (model, depth) if p]
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 def _mins(start, now) -> str:
@@ -168,18 +181,28 @@ def main() -> int:
             # SPAWN: agent name leads the detail, model in a model= field.
             agent = detail.split()[0] if detail else "?"
             model = _kv(detail, "model")
+            # The trailing [KEY=value …] block is stripped as noise below, so lift
+            # the STRIDE tier out of it first: in the default (non-verbose) headless
+            # view this line is the only per-component record the user gets, and a
+            # screened component must not read like a full-depth one.
+            depth = _kv(detail, "ANALYSIS_DEPTH")
             task = re.sub(r"\s*\[REPO_ROOT=[^\]]*\]\s*$", "", detail)
             task = re.sub(rf"^{re.escape(agent)}\s+model=\S+\s*", "", task).strip()
-            tag = f" ({model})" if model else ""
-            w(f"    ↳ {agent.split(':')[-1]}{tag}: {task}")
+            w(f"    ↳ {agent.split(':')[-1]}{_agent_tag(model, depth)}: {task}")
 
         elif event == "AGENT_INVOKE":
             # INVOKE: agent name is the component, model in a "(model: x)" suffix.
-            m = re.search(r"\(model:\s*(\w+)\)", detail)
+            # The suffix may carry more pairs (`(model: sonnet, MAX_TURNS=8,
+            # depth=screening)`), so match up to the comma as well as the paren —
+            # anchoring on `)` alone dropped the model for every STRIDE line.
+            m = re.search(r"\(model:\s*(\w+)[,)]", detail)
             model = m.group(1) if m else ""
-            task = re.sub(r"\s*\(model:\s*\w+\)\s*$", "", detail).strip()
-            tag = f" ({model})" if model else ""
-            w(f"    ↳ {comp.split(':')[-1]}{tag}: {task}")
+            # Hook-emitted lines carry ANALYSIS_DEPTH=; the orchestrator's own
+            # per-component echo carries depth= (background agents do not always
+            # reach the hook, which is why that echo exists).
+            depth = _kv(detail, "depth") or _kv(detail, "ANALYSIS_DEPTH")
+            task = re.sub(r"\s*\(model:[^)]*\)\s*$", "", detail).strip()
+            w(f"    ↳ {comp.split(':')[-1]}{_agent_tag(model, depth)}: {task}")
 
         elif event == "AGENT_DONE":
             w(f"    ✓ {comp.split(':')[-1]} done — {detail}")

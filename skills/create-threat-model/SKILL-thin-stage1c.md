@@ -21,7 +21,9 @@ Stage-1c body from `SKILL-impl.md`.
 3. When the action is `dispatch_parallel`, issue one foreground
    `appsec-advisor:appsec-abuse-case-verifier` Agent call for every
    `candidates[]` entry in a single assistant message. Never dispatch them
-   sequentially. Description: `Abuse case: <AC-ID>`. Each prompt contains:
+   sequentially. Description: `Abuse case: <AC-ID> — <title>`, taking the title
+   from `candidate_titles[<AC-ID>]`; use `Abuse case: <AC-ID>` when it has none.
+   Each prompt contains:
 
    ```text
    ABUSE_CASE_ID=<AC-ID>

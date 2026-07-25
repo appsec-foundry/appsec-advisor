@@ -181,13 +181,13 @@ For unknown types, `slice_taxonomy.py` writes a full passthrough slice (exit 1, 
 
 ### Dispatch
 
-**Pre-dispatch echo (user-visible manifest, once per run — mandatory):** Immediately before the parallel `Agent` dispatch block (and together with the `AGENT_INVOKE` batch below), print **one purpose line plus one line per component** so the user sees exactly what is about to be analyzed in parallel. The per-component line includes id, complexity tier, and turn budget so the expected wall-clock differences are visible up front.
+**Pre-dispatch echo (user-visible manifest, once per run — mandatory):** Immediately before the parallel `Agent` dispatch block (and together with the `AGENT_INVOKE` batch below), print **one purpose line plus one line per component** so the user sees exactly what is about to be analyzed in parallel. The per-component line includes id, complexity tier, turn budget, and analysis depth so the expected wall-clock differences — and which components are only screened — are visible up front.
 
 Format:
 ```
   ⟶ Dispatching stride-analyzer × <N> components (parallel) — per component: enumerate Spoofing/Tampering/Repudiation/Information-Disclosure/DoS/EoP threats with CWE + file:line evidence → .stride-<id>.json
-     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>)
-     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>)
+     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>, <screening|full>)
+     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>, <screening|full>)
      …
 ```
 
@@ -199,7 +199,7 @@ Batch the echoes with the `AGENT_INVOKE` Bash call below so no extra turn is spe
 
 For each component, use Agent tool:
 - `subagent_type`: `appsec-advisor:appsec-stride-analyzer`
-- `description`: `STRIDE analysis for <COMPONENT_NAME>`
+- `description`: `STRIDE analysis for <COMPONENT_NAME>` — prefix it as `STRIDE screening analysis for <COMPONENT_NAME>` when the manifest entry carries `cheap_stride: true`, so the agent list shows which components run at screening depth. Prefix, not suffix: the console truncates long names on the right.
 - `run_in_background`: `true`
 - `prompt`: **emit the parameters in the order below.** The three groups are ordered by cache-friendliness — stable values across all dispatches come first so the Claude Code prompt-cache prefix covers them; component-specific values come next; volatile context file paths come last. See AGENTS.md → "Prompt caching contract" for the full rationale.
 
@@ -450,7 +450,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_ST
 ```bash
 # Before dispatch — one line per component (batch all into one Bash call):
 for cid in <comp-id-1> <comp-id-2> <comp-id-n>; do
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_INVOKE   STRIDE analysis for $cid (model: $STRIDE_MODEL, MAX_TURNS=$TURNS)" >> "$OUTPUT_DIR/.agent-run.log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_INVOKE   STRIDE analysis for $cid (model: $STRIDE_MODEL, MAX_TURNS=$TURNS, depth=$DEPTH)" >> "$OUTPUT_DIR/.agent-run.log"
 done
 ```
 

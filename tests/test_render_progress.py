@@ -194,6 +194,41 @@ def test_agent_spawn_strips_repo_root_and_model_field():
     assert "REPO_ROOT" not in out
 
 
+def test_agent_spawn_surfaces_stride_tier_from_stripped_param_block():
+    """The [KEY=value] block is stripped as noise, but in the default headless
+    view this line is the only per-component record — so the tier must be
+    lifted out before the strip, not discarded with it."""
+    out = _render(
+        [
+            "2026-06-06T17:20:13Z  [067fff5c]  INFO   AGENT_SPAWN"
+            "         appsec-advisor:appsec-stride-analyzer         model=sonnet"
+            "  STRIDE screening: CI/CD Pipeline"
+            "  [REPO_ROOT=/workspace/juice-shop  COMPONENT_ID=ci-cd  ANALYSIS_DEPTH=screening]",
+        ]
+    )
+    assert "↳ appsec-stride-analyzer (sonnet, screening): STRIDE screening: CI/CD Pipeline" in out
+    assert "COMPONENT_ID" not in out
+
+
+def test_agent_invoke_surfaces_depth_from_orchestrator_echo():
+    """Background agents do not always reach the hook, so the orchestrator
+    echoes its own AGENT_INVOKE with depth= — that form must render too."""
+    out = _render(
+        [
+            "2026-06-06T17:21:26Z  [--------]  INFO   stride-analyzer   AGENT_INVOKE"
+            "  STRIDE analysis for ci-cd (model: sonnet, MAX_TURNS=8, depth=screening)",
+        ]
+    )
+    assert "↳ stride-analyzer (sonnet, screening): STRIDE analysis for ci-cd" in out
+    # The pairs are shown in the tag, so the raw suffix must not be repeated.
+    assert "MAX_TURNS=8" not in out
+
+
+def test_agent_tag_unchanged_for_agents_without_a_tier():
+    assert rp._agent_tag("haiku", "") == " (haiku)"
+    assert rp._agent_tag("", "") == ""
+
+
 def test_heartbeat_anchored_to_current_phase():
     out = _render(
         [
