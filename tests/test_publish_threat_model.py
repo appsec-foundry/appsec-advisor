@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import publish_threat_model as ptm
 
@@ -35,6 +37,13 @@ class TestScanForSecrets:
 
     def test_missing_file_returns_empty(self, tmp_path):
         assert ptm.scan_for_secrets(tmp_path / "nonexistent.md") == []
+
+    def test_hits_name_the_file_they_came_from(self, tmp_path):
+        """The pre-flight scans every publishable file, so a hit must say which
+        one it is in."""
+        y = tmp_path / "threat-model.yaml"
+        y.write_text('snippet: "password: supersecret123"\n')
+        assert all("threat-model.yaml" in h for h in ptm.scan_for_secrets(y))
 
 
 # ---------------------------------------------------------------------------
@@ -478,3 +487,51 @@ class TestMain:
         assert rc == 0
         out = capsys.readouterr().out
         assert "Files to publish" in out
+
+
+class TestPreflightScansEveryPublishableFile:
+    """The secret scan covered threat-model.md alone while threat-model.yaml,
+    the SARIF export and .architect-review.md were published unscanned — they
+    carry the same evidence snippets, so a credential in one of them reached
+    git with the pre-flight reporting no blockers."""
+
+    def _output_dir(self, tmp_path: Path) -> Path:
+        out = tmp_path / "docs" / "security"
+        out.mkdir(parents=True)
+        (out / "threat-model.md").write_text("# Report\n\nAll clean here.\n")
+        (out / "threat-model.yaml").write_text("meta:\n  version: 1\n")
+        (out / "threat-model.sarif.json").write_text('{"text":"clean"}')
+        (out / ".architect-review.md").write_text("Looks fine.\n")
+        return out
+
+    def _scan_publishable(self, out: Path) -> list[str]:
+        files = [out / n for n in ptm.TIER1 + ptm.TIER2 if (out / n).exists()]
+        hits: list[str] = []
+        for f in files:
+            if f.suffix.lower() in ptm._BINARY_SUFFIXES:
+                continue
+            hits.extend(ptm.scan_for_secrets(f))
+        return hits
+
+    def test_clean_publish_set_has_no_hits(self, tmp_path):
+        assert self._scan_publishable(self._output_dir(tmp_path)) == []
+
+    @pytest.mark.parametrize(
+        "name,content",
+        [
+            ("threat-model.yaml", 'evidence:\n  snippet: "password: Pr0dP4ss!2024xyz"\n'),
+            ("threat-model.sarif.json", '{"text":"DB_PASSWORD=Pr0dP4ss!2024xyz"}'),
+            (".architect-review.md", "Observed `api_key: AKIAIOSFODNN7EXAMPLE`\n"),
+        ],
+    )
+    def test_a_secret_in_any_published_file_is_found(self, tmp_path, name, content):
+        out = self._output_dir(tmp_path)
+        (out / name).write_text(content)
+        hits = self._scan_publishable(out)
+        assert hits, f"secret in {name} went undetected"
+        assert any(name in h for h in hits)
+
+    def test_binary_deliverables_are_not_scanned_as_text(self, tmp_path):
+        out = self._output_dir(tmp_path)
+        (out / "threat-model.pdf").write_bytes(b"%PDF-1.4 password=binarynoise123 \xff\xfe")
+        assert self._scan_publishable(out) == []

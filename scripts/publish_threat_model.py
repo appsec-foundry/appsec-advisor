@@ -82,13 +82,19 @@ def check_repo_visibility(repo_root: Path) -> tuple[bool, str]:
     return False, ""  # gh not available — skip silently
 
 
-def scan_for_secrets(md_path: Path) -> list[str]:
+# Published as bytes — reading them as text yields noise, not evidence.
+_BINARY_SUFFIXES = {".pdf"}
+
+
+def scan_for_secrets(path: Path) -> list[str]:
     """Return formatted warning lines for any unmasked secret hits.
 
     Delegates to ``secret_scan.scan_file``. Properly masked snippets
-    (``AIza****``, ``**** (12 chars)``, ``[REDACTED]``) are ignored.
+    (``AIza****``, ``**** (12 chars)``, ``[REDACTED]``) are ignored. The file
+    name travels with each hit because the pre-flight scans every publishable
+    file, not only the report.
     """
-    return [f"   Possible secret near: {hit.render()}" for hit in _scan_file_for_secrets(md_path)]
+    return [f"   {path.name} — possible secret near: {hit.render()}" for hit in _scan_file_for_secrets(path)]
 
 
 def patch_gitignore(gitignore_path: Path, output_dir: Path, files_to_publish: list[Path]) -> bool:
@@ -276,18 +282,6 @@ def main() -> int:
     if vis_msg:
         results["warnings"].append(vis_msg)
 
-    # --- Secret scan ---
-    secret_hits = scan_for_secrets(md_path)
-    if secret_hits:
-        results["blockers"].append(
-            "Possible secrets detected in threat-model.md:\n" + "\n".join(secret_hits) + "\n"
-            "   Review and redact before publishing."
-        )
-
-    if results["blockers"]:
-        _print_results(results, args.json_out)
-        return 1
-
     # --- Determine files to publish ---
     files_to_publish: list[Path] = []
     for name in TIER1:
@@ -301,6 +295,28 @@ def main() -> int:
             files_to_publish.append(p)
 
     results["files_to_publish"] = [str(f) for f in files_to_publish]
+
+    # --- Secret scan ---
+    # Every publishable file, not just the report. The scan used to cover
+    # threat-model.md alone while threat-model.yaml, the SARIF export and
+    # .architect-review.md were published unscanned — and those carry the same
+    # evidence snippets the report does, so a credential in one of them reached
+    # git with the pre-flight reporting no blockers. Runs after the publish set
+    # is known so the two can never drift apart again.
+    secret_hits: list[str] = []
+    for candidate in files_to_publish:
+        if candidate.suffix.lower() in _BINARY_SUFFIXES:
+            continue
+        secret_hits.extend(scan_for_secrets(candidate))
+    if secret_hits:
+        results["blockers"].append(
+            "Possible secrets detected in files staged for publication:\n" + "\n".join(secret_hits) + "\n"
+            "   Review and redact before publishing."
+        )
+
+    if results["blockers"]:
+        _print_results(results, args.json_out)
+        return 1
 
     if args.check_only:
         _print_results(results, args.json_out)
