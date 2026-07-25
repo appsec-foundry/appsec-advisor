@@ -11,23 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Thorough assessments now flag explicitly named database clients that share an overly privileged account.
 - Authentication scans now detect security-question password resets and password policies that allow fewer than eight characters.
 - `ask-threat-model` can now filter findings by severity, component, and evidence state.
-- Scans of agentic applications now check Claude Code permissions and hooks for unsafe behavior.
 - Headless runs now end with a per-model token and cost breakdown, taken from Claude Code's own accounting and matching what `/cost` reports in an interactive session.
 - New screening depth tier that analyzes the internal tail on a smaller budget while everything carrying attack surface or data keeps full depth — on by default in quick and standard scans, off in thorough, overridable with `--cheap-stride` and `--no-cheap-stride`. On the reference OWASP Juice Shop at standard depth this reduced the API cost from $33.21 to $30.83.
+- Scans of agentic applications now check Claude Code permissions and hooks for unsafe behavior.
 
 ### Changed
 
-- Standard scans now analyze internal data stores even when they are not flagged as handling sensitive data, closing a coverage gap for injection, tampering, and information-disclosure risks.
 - Large scans now analyze components in resumable batches, improving speed without sacrificing coverage.
+- Supply-chain scoring now focuses on exploitable risks and better recognizes common Python and npm safeguards.
 - Clean reports now skip redundant semantic review, reducing run time and cost.
 - Architecture and evidence checks are now faster on larger repositories.
-- Supply-chain scoring now focuses on exploitable risks and better recognizes common Python and npm safeguards.
 - Attack walkthroughs now present attacker actions in a clearer order and format technical details more consistently.
 - The pre-flight now reports the STRIDE threat cap and tail screening in one shorter `STRIDE depth` row.
-- The output directory is now git-ignored by default, so a scan no longer leaves intermediate files ready to commit. `publish-threat-model` lifts the deliverables back out when you choose to publish.
 
 ### Fixed
 
@@ -38,10 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Headless runs can resume after analysis and provide clearer failure details and recovery guidance.
 - Component analysis no longer runs serially by mistake, and concurrent runs no longer interfere with each other.
 - Packaged plugins now work correctly with custom namespaces in headless mode.
-- Security Architecture reports no longer contain empty control sections or broken two-factor authentication links.
-- Report validation now catches broken internal links and incomplete models, while secret masking no longer corrupts code examples.
+- Security architecture reports no longer contain empty control sections or broken two-factor authentication links.
 - Container diagrams now stay within their size limit on larger models.
-- Component progress and stall detection now count only real component analyses, so live progress no longer overstates how many components are finished and a wedged analysis phase is detected again.
 
 ## 0.5.0-beta (2026-07-18)
 
