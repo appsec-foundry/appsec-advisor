@@ -135,6 +135,26 @@ def _pattern_specificity(pat: str) -> int:
 
 _CWE_ID_RE = re.compile(r"CWE-(\d+)", re.IGNORECASE)
 
+
+def _is_code_sink_pattern(pat: str) -> bool:
+    """Whether a sink pattern targets source code rather than prose or a CWE.
+
+    Catalog sink patterns come in three flavours: a ``CWE-(...)`` alternation,
+    a case-insensitive ``(?i)`` English phrase, and a case-sensitive code
+    token or shape (``innerHTML``, ``req\\.user\\.role``). Only the last kind
+    can meaningfully be searched for in application source."""
+    if "CWE-" in pat.upper():
+        return False
+    return "(?i)" not in pat
+
+
+def _cwe_code(value: object) -> str:
+    """Bare numeric CWE code from a ``CWE-639`` style field, else ``""``."""
+    if not isinstance(value, str):
+        return ""
+    hit = _CWE_ID_RE.search(value)
+    return hit.group(1) if hit else ""
+
 # These CWEs describe a weakness class that commonly spans unrelated domains.
 # A finding with only one of them is useful triage input, but is not sufficient
 # evidence that a particular abuse-case mechanism exists. For example, CWE-347
@@ -223,12 +243,27 @@ def _source_probe(step: dict, repo_root: Path | None) -> dict | None:
     if repo_root is None or not repo_root.is_dir():
         return None
     probe = step.get("probe") or {}
-    sinks = _compile(probe.get("sink_patterns") or [])
+    # Probe source with the CODE patterns only. A CWE code never appears in
+    # application source, and a case-insensitive prose phrase matches any file
+    # that merely discusses the topic — juice-shop 2026-07-24 returned an
+    # Arabic i18n string for "privilege escalation" as evidence of a role-claim
+    # sink. Catalog prose patterns are authored `(?i)` precisely because they
+    # target English text; code patterns are case-sensitive. Keeping only the
+    # latter makes this a sink probe again rather than a full-text search.
+    sinks = _compile([p for p in (probe.get("sink_patterns") or []) if _is_code_sink_pattern(p)])
     if not sinks:
         return None
     hints = [p for p in (_safe_repo_glob(v) for v in (probe.get("entry_points") or {}).get("file_hints", [])) if p]
     for path in _repo_source_files(repo_root):
         rel = path.relative_to(repo_root)
+        rel_str = str(rel).replace("\\", "/")
+        # Apply the same evidence policy the rest of the matcher uses. Without
+        # it the probe walked the assessment's OWN output directory and
+        # returned a line out of `docs/security/.abuse-case-matches.json` as
+        # "source evidence" for a role-claim step (juice-shop 2026-07-24) —
+        # the scan quoting its own prior output back at itself.
+        if not _is_runtime_surface_evidence(rel_str):
+            continue
         if hints and not _glob_matches(rel, hints):
             continue
         try:
@@ -279,21 +314,34 @@ def match_step(
     raw_sinks = probe.get("sink_patterns") or []
     sinks = _compile(raw_sinks)
     controls = _compile(probe.get("control_patterns") or [])
+    # The catalog declares the CWE this chain step is ABOUT. A finding carrying
+    # exactly that CWE is the intended target; one that merely falls inside the
+    # step's CWE-family alternation is not.
+    step_cwe = _cwe_code((step.get("finding") or {}).get("cwe"))
 
     matched_id = None
     matched_evidence = None
     controls_found: list[str] = []
     best_key: tuple | None = None
+    best_is_weak = False
+    top_score = 0
+    weak_tie_ids: set[str] = set()
     for idx, finding in enumerate(findings):
         text = _finding_text(finding)
         cwe_field = (finding.get("cwe") or "").strip()
         score = 0
         has_mechanism_match = False
         has_context_dependent_cwe_match = False
+        # Distinct from has_mechanism_match, which is also set for a plain
+        # CWE-field hit: this is true only when a NON-CWE pattern matched, i.e.
+        # the step's actual code shape or phrasing was found in the finding.
+        has_non_cwe_match = False
         for raw, rx in zip(raw_sinks, sinks):
             if not rx.search(text):
                 continue
             spec = _pattern_specificity(raw)
+            if spec != 5:
+                has_non_cwe_match = True
             # A CWE pattern only earns its strong bonus when it matches the
             # finding's OWN cwe field, not a CWE named in passing in the prose.
             if spec == 5 and not (cwe_field and rx.search(cwe_field)):
@@ -308,10 +356,27 @@ def match_step(
         if score <= 0:
             continue
         fid = _finding_id(finding)
-        # Maximise: score, then prefer a not-yet-consumed finding, then earliest.
-        key = (score, fid not in exclude_ids, -idx)
+        exact_cwe = bool(step_cwe) and _cwe_code(cwe_field) == step_cwe
+        # A match resting ONLY on a multi-CWE family alternation — no mechanism
+        # pattern, and not the step's own declared CWE — is not evidence that
+        # THIS finding implements THIS step. Several unrelated findings share a
+        # family, so the pre-2026-07-24 tie-break (finding list order) picked
+        # one arbitrarily: juice-shop AC-T-003 step 2 ("role claim trusted from
+        # token") bound to a chatbot discount-coupon finding because both are
+        # CWE-862, and the verifier then burned its whole turn budget
+        # discovering the binding was nonsense.
+        weak = not has_non_cwe_match and not exact_cwe
+        if score > top_score:
+            top_score = score
+            weak_tie_ids = {fid} if weak else set()
+        elif score == top_score and weak:
+            weak_tie_ids.add(fid)
+        # Maximise: score, the step's own CWE, real mechanism evidence, then
+        # prefer a not-yet-consumed finding, then earliest.
+        key = (score, exact_cwe, has_non_cwe_match, fid not in exclude_ids, -idx)
         if best_key is None or key > best_key:
             best_key = key
+            best_is_weak = weak
             matched_id = fid
             ev = finding.get("evidence") or {}
             matched_evidence = {
@@ -320,6 +385,15 @@ def match_step(
             }
             ctext = _controls_text(finding)
             controls_found = [rx.pattern for rx in controls if rx.search(ctext)]
+
+    # Ambiguous family-only tie: drop the binding entirely rather than guess.
+    # The step then falls through to the source probe below, which greps the
+    # repository for the step's own mechanism patterns — strictly better
+    # evidence than an arbitrarily chosen same-family finding.
+    if matched_id is not None and best_is_weak and len(weak_tie_ids) > 1:
+        matched_id = None
+        matched_evidence = None
+        controls_found = []
 
     direct_evidence = None
     if matched_id is None:

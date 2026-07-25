@@ -347,6 +347,45 @@ def _take_dispatch_time(key: str) -> float | None:
     return when
 
 
+def _take_dispatch_time_for_agent(agent_short: str) -> float | None:
+    """Pop the OLDEST pending dispatch timestamp recorded for ``agent_short``.
+
+    The sid-keyed lookup above cannot work for a subagent: the timestamp is
+    recorded in the PreToolUse hook under the *parent* session id, while the
+    Stop hook runs in the *child* session under a different id, so the key
+    never matched and `wall_secs` stayed `?` for every dispatched agent
+    (juice-shop 2026-07-24). The agent short name is derived identically at
+    both ends, which makes it the one key both sides share.
+
+    Timestamps are stored under ``agent:<short>:<ts>`` so that a parallel
+    fan-out (8 concurrent STRIDE analyzers) keeps one entry per dispatch;
+    popping the oldest matches them FIFO. With equal-duration siblings that is
+    exact, and with uneven ones it still bounds the true value — far better
+    than reporting nothing."""
+    if not agent_short:
+        return None
+    prefix = f"agent:{agent_short}:"
+    try:
+        times = _read_dispatch_times()
+    except Exception:
+        return None
+    keys = sorted((k for k in times if k.startswith(prefix)), key=lambda k: times[k])
+    if not keys:
+        return None
+    key = keys[0]
+    when = times.pop(key)
+    _DISPATCH_TIMES.pop(key, None)
+    try:
+        path = _dispatch_time_path()
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(times, fh)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+    return when
+
+
 # ---------------------------------------------------------------------------
 # Log rotation — rotate when file exceeds threshold
 # ---------------------------------------------------------------------------
@@ -1860,7 +1899,15 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         context_chars = len(prompt_str)
         context_ktok = round(context_chars / 3500, 1)  # ~3.5 chars/token
         max_turns_val = _extract_param(prompt_str, "MAX_TURNS") or "?"
-        _record_dispatch_time((sid or "")[:8], time.time())
+        _dispatch_ts = time.time()
+        _record_dispatch_time((sid or "")[:8], _dispatch_ts)
+        # Also index by agent short name: the Stop hook runs in the CHILD
+        # session, whose id differs from the parent id used above, so the
+        # sid key alone can never be redeemed for a dispatched subagent.
+        _record_dispatch_time(
+            f"agent:{_AGENT_SHORT_NAMES.get(subtype.split(':')[-1], subtype.split(':')[-1])}:{_dispatch_ts}",
+            _dispatch_ts,
+        )
         _write_trace(
             "AGENT_DISPATCH",
             f"agent={_AGENT_SHORT_NAMES.get(subtype.split(':')[-1], subtype.split(':')[-1])}  "
@@ -1975,8 +2022,59 @@ def _usage_from_transcript(transcript_path: str) -> dict:
     return totals if found_any else {}
 
 
+def _stop_reason_from_transcript(transcript_path: str) -> str:
+    """Terminal ``stop_reason`` of the last assistant turn in the transcript.
+
+    The Stop/SubagentStop hook payload does not carry a stop reason, but every
+    assistant record in the JSONL transcript does. The LAST non-null value is
+    the terminal one and separates the two cases we care about:
+
+    * ``end_turn`` / ``stop_sequence`` — the session finished on its own;
+    * ``tool_use`` — the session was still in its tool loop when it stopped,
+      i.e. it was cut off (turn ceiling, cancellation, transport death).
+
+    Returns ``""`` when the transcript is missing, unreadable, or carries no
+    assistant record, so the caller keeps its ``unknown`` fallback rather than
+    inventing a verdict."""
+    if not transcript_path:
+        return ""
+    last = ""
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or not line.startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                msg = obj.get("message") or obj
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                reason = msg.get("stop_reason")
+                if isinstance(reason, str) and reason:
+                    last = reason
+    except Exception:
+        return ""
+    return last
+
+
 def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
-    reason = data.get("stop_reason", "unknown")
+    reason = data.get("stop_reason", "") or ""
+    if not reason:
+        # The Claude Code Stop/SubagentStop payload carries no `stop_reason`
+        # key at all — juice-shop 2026-07-24 logged `stop=unknown` on 325 of
+        # 325 sessions. That made every downstream consumer blind:
+        # `_CLEAN_STOP_REASONS` never matched, so SESSION_ABORTED_MIDRUN fired
+        # on EVERY stop (11 false WARNs on a fully successful run) and
+        # rewrote the live checkpoint to status=aborted; and the `max_turns`
+        # branch below was unreachable, so two abuse-case verifiers that
+        # demonstrably burned their turn ceiling were never flagged.
+        # The transcript does carry it, and it discriminates cleanly: a
+        # session that finished ends on `end_turn`, one cut off mid-tool-loop
+        # ends on `tool_use`.
+        reason = _stop_reason_from_transcript(data.get("transcript_path", "")) or "unknown"
     level = "ERROR" if reason == "max_turns" else "INFO "
 
     # ------------------------------------------------------------------
@@ -2080,6 +2178,11 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         wall_secs = "?"
         dispatch_key = (sid or "")[:8]
         dispatched_at = _take_dispatch_time(dispatch_key)
+        if dispatched_at is None:
+            # Subagent: the dispatch was recorded under the parent session id,
+            # so fall back to the agent-name index (see
+            # _take_dispatch_time_for_agent).
+            dispatched_at = _take_dispatch_time_for_agent(agent_name)
         if dispatched_at is not None:
             wall_secs = str(round(time.time() - dispatched_at))
         turns_used = "?"

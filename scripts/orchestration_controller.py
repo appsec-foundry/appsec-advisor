@@ -1485,9 +1485,47 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     (compose --strict → apply_prose_fixes → qa_checks autofix). Fail-safe: any
     error returns False and never raises into ``next``'s JSON output.
     """
-    frag_dir = output_dir / ".fragments"
-    if not all((frag_dir / name).is_file() for name in _REQUIRED_RENDER_FRAGMENTS):
+    blocked_path = output_dir / ".compose-blocked.json"
+
+    def _block(step: str, detail: str) -> bool:
+        """Persist WHY the compose tail stopped, then report failure.
+
+        Every one of this function's exit points used to collapse into a bare
+        ``False`` that the caller labelled "Stage-2 render fragments
+        incomplete" — even though the fragment check is only the FIRST of a
+        dozen. On juice-shop 2026-07-24 both required fragments were present
+        and correct; the tail aborted in a mitigation helper, and the bogus
+        receipt made the orchestrator discard two finished specialist renders
+        and re-dispatch the full renderer for ~9 minutes to redo work already
+        on disk. Recording the real step and its stderr makes that
+        misdiagnosis impossible."""
+        try:
+            blocked_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "blocked_at": datetime.now(timezone.utc).isoformat(),
+                        "step": step,
+                        "detail": detail[-2000:],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
         return False
+
+    try:
+        blocked_path.unlink()
+    except (FileNotFoundError, OSError):
+        pass
+
+    frag_dir = output_dir / ".fragments"
+    missing = [name for name in _REQUIRED_RENDER_FRAGMENTS if not (frag_dir / name).is_file()]
+    if missing:
+        return _block("required-fragments", f"missing render fragment(s): {', '.join(missing)}")
     md = output_dir / "threat-model.md"
 
     def _run(*cmd: str) -> bool:
@@ -1499,25 +1537,38 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
                 text=True,
                 timeout=600,
             )
+            if proc.returncode != 0:
+                _run.last_error = (  # type: ignore[attr-defined]
+                    f"exit {proc.returncode}\n{(proc.stderr or proc.stdout or '').strip()}"
+                )
             return proc.returncode == 0
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError) as exc:
+            _run.last_error = f"{type(exc).__name__}: {exc}"  # type: ignore[attr-defined]
             return False
+
+    _run.last_error = ""  # type: ignore[attr-defined]
+
+    def _step(script: str, *args: str) -> bool:
+        """Run a mandatory tail step, recording the real blocker on failure."""
+        if _run(str(SCRIPT_DIR / script), *args):
+            return True
+        return _block(script, _run.last_error)  # type: ignore[attr-defined]
 
     # Complete the canonical mitigation cards before any fragment or report is
     # rendered. The normal skill path already ran these idempotent helpers; the
     # thin-runtime recovery path can reach this point after a turn cut-off, so
     # it must not bypass the developer-actionability contract.
-    if not _run(str(SCRIPT_DIR / "emit_general_mitigation_titles.py"), str(output_dir)):
+    if not _step("emit_general_mitigation_titles.py", str(output_dir)):
         return False
     # Scanner findings carry only a one-line mitigation_title; synthesise a
     # structured remediation block (steps + verification) from the check library
     # before hydration so the P1/P2 quality gate is satisfiable on the recovery
     # path too (mirrors the auto-emitter pass ordering).
-    if not _run(str(SCRIPT_DIR / "backfill_scanner_remediation.py"), str(output_dir)):
+    if not _step("backfill_scanner_remediation.py", str(output_dir)):
         return False
-    if not _run(str(SCRIPT_DIR / "hydrate_mitigation_details.py"), str(output_dir)):
+    if not _step("hydrate_mitigation_details.py", str(output_dir)):
         return False
-    if not _run(str(SCRIPT_DIR / "validate_mitigation_quality.py"), str(output_dir)):
+    if not _step("validate_mitigation_quality.py", str(output_dir)):
         return False
 
     # Mechanical structural fragments (idempotent backstop), then the strict
@@ -1534,16 +1585,21 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     # gap: the thin renderer often skips it, so the "AI / LLM Exposure" MS
     # callout silently vanishes even though the yaml carries an LLM surface
     # (2026-07-02). Deriving it here from the yaml guarantees the section.
+    # ms-verdict.json joins the floor: compose HARD-fails without it, and it is
+    # the one MANDATORY MS fragment neither prepare_stage2 nor this pass used to
+    # regenerate — so an MS-renderer cut-off before its first Write forced a
+    # full re-dispatch. The generator is idempotent and preserves a
+    # renderer-authored (richer) copy already on disk.
     _run(
         str(SCRIPT_DIR / "pregenerate_fragments.py"),
         str(output_dir),
         "--only",
-        "ms-ai-exposure.json,ms-critical-attack-tree.json",
+        "ms-ai-exposure.json,ms-critical-attack-tree.json,ms-verdict.json",
     )
-    if not _run(str(SCRIPT_DIR / "compose_threat_model.py"), "--output-dir", str(output_dir), "--strict"):
+    if not _step("compose_threat_model.py", "--output-dir", str(output_dir), "--strict"):
         return False
     if not md.is_file():
-        return False
+        return _block("compose_threat_model.py", "compose returned 0 but threat-model.md is absent")
     _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
     try:
@@ -1552,8 +1608,8 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
             encoding="utf-8",
         )
         _append_event(output_dir, "PHASE_END", "[Phase 11/11] Finalization (controller compose)")
-    except OSError:
-        return False
+    except OSError as exc:
+        return _block("checkpoint-write", f"{type(exc).__name__}: {exc}")
     return md.is_file()
 
 
@@ -1653,12 +1709,28 @@ def next_action(output_dir: Path) -> dict[str, Any]:
                 retry_path.write_text(f"{retry_count}\n", encoding="utf-8")
             except OSError as exc:
                 raise ControllerError(f"cannot persist Stage-2 retry counter: {exc}") from exc
+            # Name the step that actually blocked. "fragments incomplete" is
+            # reserved for the required-fragment existence check; any other
+            # blocker (a mitigation gate, a strict-compose failure) reports
+            # itself, so the operator is not sent to inspect a fragment set
+            # that was complete all along.
+            try:
+                blocked = json.loads((output_dir / ".compose-blocked.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                blocked = {}
+            step = str(blocked.get("step") or "") if isinstance(blocked, dict) else ""
+            if step == "required-fragments":
+                receipt = f"Stage-2 render fragments incomplete; retry {retry_count}/2"
+            elif step:
+                receipt = f"Stage-2 compose blocked at {step}; retry {retry_count}/2 (see .compose-blocked.json)"
+            else:
+                receipt = f"Stage-2 compose did not complete; retry {retry_count}/2"
             return {
                 **common,
                 "action": "dispatch_agent",
                 "stage": "stage2",
                 "instruction_file": str(THIN_STAGE2_RUNTIME),
-                "receipts": [f"Stage-2 render fragments incomplete; retry {retry_count}/2"],
+                "receipts": [receipt],
             }
     for name in (".inline-shortcut-retry-count", ".inline-shortcut-repair-plan.json"):
         try:

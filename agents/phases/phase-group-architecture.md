@@ -1411,7 +1411,9 @@ The mechanism-discovery loop then **adds anything BEYOND this architectural base
    - A specific sub-aspect is genuinely not covered by any of the 24 recon patterns (e.g., OAuth PKCE enforcement details) — document which sub-aspect in a one-line comment next to the grep
 4. **Disambiguation by grep is forbidden.** A ⚠️ Partial vs ✅ Adequate judgement call is resolved downward to ⚠️ Partial, never upward via a new grep. The recon baseline is the single source of truth for observable presence.
 
-Control categories: Identity and Authentication; Session and Token Controls; Authorization Controls; Query Construction and Data Access Controls; Input Boundary Validation Controls; Output Encoding and Rendering Controls; Browser and Cross-Origin Controls (framework config, sanitizer usage, DOM sink exposure, CSP and CORS — use recon 7.8, 7.18, 7.19, 7.24 as applicable); Cryptography, Secrets and Data Protection; File, Parser and Outbound Request Controls; Operations, Runtime and Supply Chain Controls; Real-time and Not Applicable Controls. Derive `### 6.13 Defense-in-Depth Summary` from those category ratings instead of treating it as an independent control domain.
+Control categories — write the `domain` field **exactly** as spelled here; these are the canonical §6 titles from `data/sections-contract.yaml` and they are **comma-free**. A comma variant ("Operations, Runtime and Supply Chain Controls") is not a recognised domain, so `enforce_control_taxonomy.py` treats it as unknown and re-routes the control to whatever its name infers — juice-shop 2026-07-24 moved `Rate Limiting` from §6.11 into §6.2 IAM for exactly this reason.
+
+Identity and Authentication; Session and Token Controls; Authorization Controls; Query Construction and Data Access Controls; Input Boundary Validation Controls; Output Encoding and Rendering Controls; Browser and Cross-Origin Controls (framework config, sanitizer usage, DOM sink exposure, CSP and CORS — use recon 7.8, 7.18, 7.19, 7.24 as applicable); Cryptography Secrets and Data Protection; File Parser and Outbound Request Controls; Operations Runtime and Supply Chain Controls; Real-time and Not Applicable Controls. Derive `### 6.13 Defense-in-Depth Summary` from those category ratings instead of treating it as an independent control domain.
 
 **Step-label rule:** these eleven categories are this phase's `[k/N]` set — `N`=**11** (§6.1 and §6.13 are overview/summary, not rated domains). Every `STEP_START` MUST name the category: `[7/11] Rating Browser and Cross-Origin Controls` ✅, `[7/13] Rating control domain 7` ❌.
 
@@ -1746,7 +1748,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/assess_supply_chain_controls.py" \
 4. Derive the domain's overall effectiveness from the sub-control ratings per the rule below.
 5. Augment the domain entry with any **runtime hardening**, **logging**, and **CI/CD permission** evidence that the script cannot detect (those are LLM-territory — check recon-summary sections 7.14–7.17, 7.26–7.28 for relevant signals).
 
-This domain feeds `### 6.11 Operations, Runtime and Supply Chain Controls` and requires checking **all** of the following supply-chain sub-controls, plus any observable runtime hardening, logging, and CI/CD permission evidence from the recon baseline. Use recon-summary sections 7.14–7.17, 7.26, 7.27, and 7.28 as baseline (same token-saving rule as other domains).
+This domain feeds `### 6.11 Operations Runtime and Supply Chain Controls` (comma-free — the canonical spelling) and requires checking **all** of the following supply-chain sub-controls, plus any observable runtime hardening, logging, and CI/CD permission evidence from the recon baseline. Use recon-summary sections 7.14–7.17, 7.26, 7.27, and 7.28 as baseline (same token-saving rule as other domains).
 
 | Sub-control | 🟢 Adequate | 🟡 Partial | 🔴 Missing |
 |-------------|-----------|------------|-----------|

@@ -148,7 +148,27 @@ EXPOSED_ZONES = frozenset(
         "web-browser",
     }
 )
-CICD_ZONES = frozenset({"ci-cd-runtime", "ci-cd-secrets", "build-pipeline", "deployment-pipeline"})
+# CI/CD zones. Same synonym rule as EXPOSED_ZONES above: the architecture phase
+# writes these free-text, so a run that tagged its GitHub-Actions component `ci`
+# matched none of the canonical tokens and lost the zonal supply-chain signal
+# (juice-shop 2026-07-24 — it survived only because _is_cicd falls back to text
+# hints). Match the common shorthands, not just the canonical token.
+CICD_ZONES = frozenset(
+    {
+        "ci-cd-runtime",
+        "ci-cd-secrets",
+        "build-pipeline",
+        "deployment-pipeline",
+        "ci",
+        "cicd",
+        "ci-cd",
+        "ci-runner",
+        "build",
+        "build-server",
+        "pipeline",
+        "release-pipeline",
+    }
+)
 # Canonical NON-exposed placement zones from the access-zone vocabulary
 # (data/actors/default-library.yaml / schemas/fragments/components.schema.json).
 # A component tagged with one of these has a KNOWN internal placement — it is
@@ -160,6 +180,12 @@ INTERNAL_ZONES = frozenset({"internal-network", "peer-service", "prod-env", "pro
 # and dropped. (2026-06-12: b2b-api — a JWT-protected /b2b/v2 REST API with a
 # vm.runInContext RCE — was tagged only `docker-container` and silently excluded
 # at standard depth, leaving the whole component unanalyzed.)
+# (2026-07-24 juice-shop: the analyst tagged 7 of 11 components `server` — the
+# server-vs-browser TIER, which is a separate field — so every one of them fell
+# off-vocabulary. The exposure fail-safe still included them, but nothing could
+# be proven internal either, so the operational ceiling had to be lifted. These
+# tokens say "where it runs", never "how reachable it is", so they belong here:
+# recognised, but still exposure-UNKNOWN.)
 RUNTIME_ONLY_ZONES = frozenset(
     {
         "docker-container",
@@ -175,6 +201,17 @@ RUNTIME_ONLY_ZONES = frozenset(
         "host",
         "process",
         "runtime",
+        "server",
+        "server-side",
+        "backend",
+        "app-server",
+        "application-server",
+        "service",
+        "worker",
+        "daemon",
+        "on-premise",
+        "on-prem",
+        "cloud",
     }
 )
 _AUTH_HINTS = ("auth", "identity", "login", "session", "jwt", "oauth", "iam", "2fa", "mfa")

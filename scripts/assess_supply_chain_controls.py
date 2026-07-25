@@ -982,7 +982,12 @@ def assess(output_dir: str, repo_root: str | None) -> dict[str, Any]:
 
     return {
         "schema_version": 1,
-        "domain": "Operations, Runtime and Supply Chain Controls",
+        # Comma-free — matches the canonical §6.11 title in
+        # sections-contract.yaml. The comma form emitted here until 2026-07-24
+        # was not a known domain string, so enforce_control_taxonomy treated
+        # the domain as unknown and re-routed controls out of it on the
+        # inferred token alone ("Rate Limiting" landed in §6.2 IAM).
+        "domain": "Operations Runtime and Supply Chain Controls",
         "sub_controls": sub_controls,
         "overall_effectiveness": overall_effectiveness,
         "overall_reason": overall_reason,
