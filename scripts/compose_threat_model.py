@@ -9246,7 +9246,18 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             # criticality inline (same 🔴/🟠/🟡/🟢 vocabulary as the §8/§9
             # indices). Keep it BEFORE the non-breaking link unit; the ` — `
             # title separator downstream passes key on is preserved.
-            f_emoji = _TOP_THREATS_SEVERITY_EMOJI.get((t.get("risk") or t.get("severity") or "").strip().lower(), "")
+            # Severity must come from the SAME source every other section uses —
+            # `ctx.severity_for_ref`, which prefers post-triage
+            # `effective_severity` (incl. abuse-chain elevation) over raw `risk`.
+            # Reading `risk` directly here made one finding render two different
+            # severities inside one document (2026-07-25 insecure-spring-app:
+            # F-024 was 🟠 High in this table and 🔴 Critical in the Management
+            # Summary, component table, attack-surface table and roadmap — 7 of
+            # 49 findings had risk != effective_severity).
+            f_emoji = _TOP_THREATS_SEVERITY_EMOJI.get(
+                (ctx.severity_for_ref(visible) or t.get("risk") or t.get("severity") or "").strip().lower(),
+                "",
+            )
             f_prefix = f"{f_emoji}&nbsp;" if f_emoji else ""
             # No leading `•` bullet — each finding sits on its own line (joined
             # by <br/> below); a bullet inside a table cell reads as clutter
@@ -9263,10 +9274,16 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
                 f'<span style="white-space:nowrap">→&nbsp;[{c_anchor}](#{c_anchor.lower()})</span>{_c_suffix}'
             )
 
-        # Risk = max severity across member findings.
+        # Risk = max severity across member findings — read through the same
+        # canonical resolver as the per-finding dots above, so the path's own
+        # rating can never contradict the findings it is aggregating.
+        def _member_severity(t: dict[str, Any]) -> str:
+            ref = (t.get("t_id") or t.get("id") or "").strip()
+            return (ctx.severity_for_ref(ref) or t.get("risk") or t.get("severity") or "").strip()
+
         if member_threats:
-            top_t = min(member_threats, key=lambda t: _severity_rank(t.get("risk") or t.get("severity")))
-            risk_word = (top_t.get("risk") or top_t.get("severity") or "").strip()
+            top_t = min(member_threats, key=lambda t: _severity_rank(_member_severity(t)))
+            risk_word = _member_severity(top_t)
         else:
             risk_word = ""
         risk_emoji = _TOP_THREATS_SEVERITY_EMOJI.get(risk_word.lower(), "")

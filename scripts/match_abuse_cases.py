@@ -86,9 +86,23 @@ def _finding_text(finding: dict) -> str:
 
 
 def _controls_text(finding: dict) -> str:
-    parts = [finding.get("controls_in_place", "")]
-    parts.append(str(finding.get("controls_absent_evidence", "")))
-    return "\n".join(p for p in parts if p)
+    """Text to probe for PRESENT controls.
+
+    ``controls_absent_evidence`` documents the controls a finding proves are
+    MISSING, so folding it in here inverted the probe: a finding whose absent-
+    evidence read "no ownership check on this path" matched the ``ownership``
+    control pattern and was recorded as a control *found* (2026-07-25
+    insecure-spring-app AC-T-002 step 1 → chain wrongly finalized
+    partially_blocked). Only `controls_in_place` may feed a controls-present
+    probe.
+
+    This probe stays a coarse substring heuristic either way — `controls_in_place`
+    prose can still name a control while negating it ("None on the detail page —
+    edit and delete use loadAllowedOrder() which does enforce ownership"). That
+    residual imprecision is contained downstream: ``finalize_verdict`` treats this
+    value as a hint only and lets the verifier's empirical observation override it.
+    """
+    return finding.get("controls_in_place", "") or ""
 
 
 def load_findings(path: Path) -> list[dict]:
@@ -497,66 +511,89 @@ _BLOCKED = "blocked"
 _INCONCLUSIVE = "inconclusive"
 
 
-def _is_untouched_preseed_step(step: dict) -> bool:
-    """True when a single step is an untouched write-first pre-seed.
+def _step_controls(step_match: dict, step_verdict: dict | None) -> list:
+    """Controls observed for one step — the verifier overrides the matcher.
 
-    Mirrors ``verify_abuse_cases._is_untouched_preseed_step`` (the source of
-    truth for the predicate) so the chain-verdict computation stays a pure
-    function of ``step_verdicts`` without cross-importing that CLI module. A step
-    still ``inconclusive`` with no non-empty ``reason`` and no non-empty evidence
-    ``excerpt`` is one the verifier never re-wrote — the turn ceiling hit before
-    it recorded a finding. Keep this in sync with the verify-side definition.
+    The matcher's ``controls_found`` is a static substring probe over finding
+    prose (``_step_match`` → ``_controls_text``); the verifier's is an empirical
+    reading of the source at that step. When the verifier assessed the step it
+    emits ``controls_found`` unconditionally (`[]` when it found none — see
+    ``agents/appsec-abuse-case-verifier.md``), so a PRESENT key means the
+    verifier has spoken and its observation is authoritative.
+
+    OR-ing the two instead let a stale keyword guess outrank a code reading:
+    2026-07-25 insecure-spring-app AC-T-002 step 1 — the verifier reported
+    ``controls_found: []`` and "no ownership check; edit endpoint uses
+    loadAllowedOrder() but detail endpoint does not", yet the matcher's
+    ``['ownership']`` forced the chain to partially_blocked.
+
+    The matcher hint is still used when the verifier never assessed the step
+    (no verdict row, or a row that omits the key entirely) — there it is the
+    only signal available.
     """
-    if (step.get("verdict") or "") != "inconclusive":
-        return False
-    if (step.get("reason") or "").strip():
-        return False
-    excerpt = ((step.get("evidence") or {}).get("excerpt") or "").strip()
-    return not excerpt
+    if step_verdict is not None and "controls_found" in step_verdict:
+        return step_verdict.get("controls_found") or []
+    return step_match.get("controls_found") or []
 
 
 def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     """Compute the chain verdict from per-step verifier verdicts.
 
-    all required steps confirmed, no controls        -> fully_viable
+    all required steps confirmed, nothing unresolved -> fully_viable
     >=1 required confirmed AND >=1 step has a control -> partially_blocked
     all required steps blocked                        -> mitigated
-    any required step inconclusive (and not viable)   -> inconclusive
+    any ASSESSED step inconclusive                    -> inconclusive
+
+    ``fully_viable`` is a positive claim of end-to-end exploitability, so it
+    requires every step the verifier actually assessed to be ``confirmed`` —
+    not merely the ``required`` subset. See the inconclusive cap below.
     """
     by_step = {v.get("step"): v for v in step_verdicts}
-    required_steps = [s for s in case_match.get("step_matches", []) if s.get("required", True)]
+    step_matches = case_match.get("step_matches", [])
+    required_steps = [s for s in step_matches if s.get("required", True)]
     if not required_steps:
         return "not_applicable"
 
-    verdicts = []
-    any_control = False
-    for s in required_steps:
-        v = by_step.get(s.get("step")) or {}
-        verdicts.append(v.get("verdict", _INCONCLUSIVE))
-        if v.get("controls_found") or s.get("controls_found"):
-            any_control = True
-    # non-required steps can still contribute a control observation
-    for s in case_match.get("step_matches", []):
-        if not s.get("required", True):
-            v = by_step.get(s.get("step")) or {}
-            if v.get("controls_found") or s.get("controls_found"):
-                any_control = True
+    verdicts = [(by_step.get(s.get("step")) or {}).get("verdict", _INCONCLUSIVE) for s in required_steps]
+    # Controls from EVERY step (required or not) — a control anywhere on the
+    # chain impedes it. Per step the verifier's reading wins over the matcher's.
+    any_control = any(_step_controls(s, by_step.get(s.get("step"))) for s in step_matches)
 
     if all(v == _BLOCKED for v in verdicts):
         return "mitigated"
     if any(v == _INCONCLUSIVE for v in verdicts):
         return "inconclusive"
-    # A step left as an untouched write-first pre-seed (inconclusive, no reason,
-    # no excerpt) was never actually verified — e.g. a mid-chain turn-ceiling
-    # cut-off. Such a chain must not positively finalize as fully_viable /
-    # partially_blocked even when the untouched step is NON-required: the
-    # required-only scan above silently drops it otherwise, so an identical pair
-    # of chains diverges purely on the matcher's `required` flag (2026-07-16
-    # juice-shop: AC-T-003 step 2 required=False untouched → wrongly fully_viable
-    # while AC-T-002 step 2 required=True untouched → inconclusive). Genuinely
-    # reasoned inconclusive steps on non-required legs are NOT caught here (they
-    # carry a reason) — the attack can still be viable through the required path.
-    if any(_is_untouched_preseed_step(s) for s in step_verdicts):
+    # An inconclusive step ANYWHERE on the chain caps the verdict, whether the
+    # matcher flagged that leg `required` or not, and whether the verifier left
+    # it untouched (turn-ceiling cut-off) or examined it and recorded a reason.
+    #
+    # The pre-2026-07-25 rule capped only UNTOUCHED pre-seeds and deliberately
+    # let a reasoned inconclusive on a non-required leg stand as fully_viable,
+    # on the theory that "the attack is still viable through the required path".
+    # That theory does not hold for the chain shapes this catalog actually
+    # declares: every `required: false` step in data/abuse-cases is the chain's
+    # PAYOFF, not an optional alternative leg —
+    #   AC-T-001 step 3  "Stolen token accepted for a new session"
+    #   AC-T-003 step 2  "Role claim trusted from token without re-fetch"
+    #   AC-T-005 step 2  "Stolen material is accepted by the verification path"
+    # They carry `required: false` because they are rarely evidenced as their own
+    # finding, not because the attack succeeds without them. So the required path
+    # is the SETUP and the non-required step is where the attack pays off.
+    #
+    # 2026-07-25 insecure-spring-app AC-T-005: step 1 confirmed (JWT_SIGNING_KEY
+    # hardcoded at Dockerfile:13), step 2 inconclusive because SignedJwtService
+    # generates a random in-memory key — the exposed secret is NOT the one the
+    # server trusts, so the bypass does not follow. The old rule still published
+    # "⚠ Fully viable · 🔴 Critical" and counted it among the viable chains,
+    # while aggregate_run_issues.py concurrently flagged the same chain as "not
+    # verified end-to-end". A chain whose payoff was never established must not
+    # carry a positive viability claim.
+    #
+    # `inconclusive` loses nothing: §9 still renders the case with every step and
+    # its individual verdict, `_combined_risk` simply stops applying the
+    # fully-viable severity escalation, and triage_compute_ranking stops
+    # elevating the member findings off an unproven chain.
+    if any(v.get("verdict") == _INCONCLUSIVE for v in step_verdicts):
         return "inconclusive"
     confirmed = [v == _CONFIRMED for v in verdicts]
     if all(confirmed):

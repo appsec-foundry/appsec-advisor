@@ -547,3 +547,65 @@ def test_keyword_ending_a_word_is_not_a_credential(secret_scan):
     end in a credential keyword."""
     assert secret_scan.scan_text("## OAuth: Configuration Options") == []
     assert secret_scan.scan_text("See reauth: Documentation for details") == []
+
+
+# ---------------------------------------------------------------------------
+# Demonstrated attacker input is not secret material
+# ---------------------------------------------------------------------------
+
+
+def test_sqli_tautology_payload_is_not_a_credential(secret_scan):
+    """Regression (2026-07-25 insecure-spring-app): the §3 walkthrough and the
+    finding's Verification line quote the request that reproduces the SQLi, and
+    its ``password=`` query parameter carries the tautology payload — the loose
+    credential-assignment shape without a credential. The gate hard-failed
+    (exit 2; headless aborts the whole run), and masking to clear it left
+    ``?username=x&password=**** (21 chars)`` — a reproduction step that no
+    longer reproduces anything."""
+    for line in (
+        "An attacker sends `GET /api/legacy-sqlite/login-raw?username=x&password=%27+OR+%271%27%3D%271`.",
+        'curl "http://host/login?password=%27%20OR%20%271%27%3D%271"',
+        "POST /login with password=' OR '1'='1",
+        "password=%22+OR+1%3D1--",
+    ):
+        assert secret_scan.scan_text(line) == [], f"SQLi payload flagged as a secret: {line}"
+
+
+def test_unsigned_alg_none_jwt_is_not_a_credential(secret_scan):
+    """An ``alg:none`` JWT has no signature by construction — anyone can mint
+    one, and quoting it is what demonstrates the missing verification. It holds
+    no secret material, so masking it only destroys the PoC."""
+    token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4Iiwicm9sZSI6IkFETUlOIn0."
+    line = f"Send `GET /api/legacy-admin/audit?token={token}` — must return HTTP 401 or 403."
+    assert secret_scan.scan_text(line) == [], "unsigned alg:none demo token flagged as a secret"
+
+
+def test_signed_jwt_is_still_flagged(secret_scan):
+    """The alg:none carve-out must not extend to a real signed token — that one
+    carries a signature produced with the server's key and stays a leak."""
+    signed = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abcdefghijklmnopqrst"
+    hits = secret_scan.scan_text(f"token={signed}")
+    assert hits, "signed JWT must still be flagged"
+    assert "jwt" in {h.pattern for h in hits}
+
+
+def test_demo_payload_carveout_does_not_leak_real_credentials(secret_scan):
+    """Precision guard: the carve-out is decided structurally on the value, so a
+    genuine credential sitting on a walkthrough line is still caught."""
+    line = "An attacker sends `GET /login?password=Pr0dDbP4ss!2024` to the endpoint."
+    assert secret_scan.scan_text(line), "real credential in a walkthrough must still flag"
+
+
+def test_masker_preserves_demo_payloads(secret_scan):
+    """mask_text is the detector's masking twin and mirrors every skip rule. If
+    the demo-payload guard lived only in scan_text, the composer's masking pass
+    would still rewrite the PoC — the gate would go green while the walkthrough
+    stayed destroyed. Both halves must agree."""
+    walkthrough = (
+        "1. An attacker sends `GET /login-raw?username=x&password=%27+OR+%271%27%3D%271`.\n"
+        "2. Send `GET /audit?token=eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.` — expect HTTP 401.\n"
+    )
+    masked, applied = secret_scan.mask_text(walkthrough)
+    assert masked == walkthrough, f"masker rewrote a demo payload: {masked}"
+    assert applied == []
+    assert secret_scan.scan_text(masked) == []

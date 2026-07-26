@@ -17,10 +17,14 @@ Run as a script for ad-hoc scans:
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote_plus
 
 # Markers that indicate a value has already been masked / redacted.
 # A loose-pattern match whose captured value contains any of these is skipped.
@@ -204,6 +208,69 @@ def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool
     return bool(re.search(r"[A-Za-z]{2,}\s+$", before))
 
 
+# A JWT header segment that decodes to ``{"alg":"none"}``. An unsigned token
+# carries NO signature and therefore no secret material — anyone can mint one
+# from scratch, which is the entire point of quoting it. See
+# ``_is_non_secret_demo_payload``.
+_JWT_SEGMENT_RE = re.compile(r"^eyJ[A-Za-z0-9_\-]+")
+
+# A SQL-injection tautology, percent-decoded: ``' OR '1'='1``, ``" OR 1=1--``,
+# ``') OR ('a'='a``. An attack payload, never a credential.
+_SQLI_TAUTOLOGY_RE = re.compile(
+    r"""(?ix)
+    ['"\)\s]                # payload boundary: quote / paren / space
+    \s*(?:OR|AND)\s+        # the tautology conjunction
+    (?:
+        ['"]?[A-Za-z0-9]{1,8}['"]?\s*=\s*['"]?[A-Za-z0-9]{1,8}['"]?
+      | \d+\s*=\s*\d+
+    )
+    """
+)
+
+
+def _is_non_secret_demo_payload(value: str) -> bool:
+    """A value that is provably NOT secret material, only demonstrated attacker input.
+
+    The abuse-case walkthroughs and per-finding verification steps quote the
+    exact request that reproduces a finding, and those requests carry
+    ``token=``/``password=`` query parameters — the loose credential-assignment
+    shape — without ever carrying a credential. Masking them is not a harmless
+    over-reaction: it destroys the one value the reader needs. On the 2026-07-25
+    insecure-spring-app run the gate hard-failed (exit 2, and in headless mode
+    the whole run aborts with no remediation path), and masking to satisfy it
+    left ``?username=x&password=**** (21 chars)`` in both the §3 walkthrough and
+    the finding's Verification line — a reproduction step that no longer
+    reproduces anything.
+
+    Both shapes below are decided structurally, not by context, so this can never
+    hide a real leak:
+
+    * **Unsigned JWT** — the header decodes to ``alg: none``. Such a token has no
+      signature by construction; it is forgeable by anyone and proves the
+      *absence* of signing, so it holds no secret. A signed JWT (any other
+      ``alg``) is untouched and still caught by the strict ``jwt`` pattern.
+    * **SQL-injection tautology** — percent-decoded, the value is an ``OR 1=1``
+      style predicate. That is attacker input, not a credential.
+    """
+    if not value:
+        return False
+
+    seg = _JWT_SEGMENT_RE.match(value)
+    if seg:
+        header = seg.group(0)
+        # urlsafe_b64decode needs the padding the JWT encoding strips.
+        padded = header + "=" * (-len(header) % 4)
+        try:
+            claims = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8", "replace"))
+        except (ValueError, binascii.Error):
+            claims = None
+        if isinstance(claims, dict) and str(claims.get("alg", "")).strip().lower() == "none":
+            return True
+
+    decoded = unquote_plus(value)
+    return bool(_SQLI_TAUTOLOGY_RE.search(decoded))
+
+
 def _is_identifier_suffix_keyword(text: str, start: int, op_start: int) -> bool:
     """A credential keyword that is the trailing segment of a SCREAMING-KEBAB
     identifier — e.g. ``SEC-USER-AUTH: Authenticate users…`` in a requirements
@@ -317,6 +384,11 @@ def scan_text(text: str) -> list[SecretHit]:
                 # redactor from corrupting prose/anchors document-wide.
                 if _is_keyword_echo_value(value, groups.get("kw"), bool(groups.get("q"))):
                     continue
+                # Demonstrated attacker input (unsigned alg:none JWT, SQLi
+                # tautology) quoted in a walkthrough / verification step — an
+                # attack payload, never secret material.
+                if _is_non_secret_demo_payload(value):
+                    continue
             snippet = matched[:80].replace("\n", " ")
             hits.append(SecretHit(pattern=pat.name, snippet=snippet, line=line_of(m.start()), value=value))
     return hits
@@ -386,6 +458,11 @@ def mask_text(text: str) -> tuple[str, list[str]]:
                 # Mirror the detector's keyword-echo guard so masking never
                 # corrupts a doc example like "password=password".
                 if _is_keyword_echo_value(value, groups.get("kw"), bool(groups.get("q"))):
+                    return m.group(0)
+                # Mirror the detector's demo-payload guard so masking never
+                # destroys the reproduction step in a walkthrough / verification
+                # line ("?username=x&password=' OR '1'='1").
+                if _is_non_secret_demo_payload(value):
                     return m.group(0)
             applied.append(_pat.name)
             return _mask_match(_pat, m)

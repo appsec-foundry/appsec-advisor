@@ -67,16 +67,36 @@ def test_mix_confirmed_and_blocked_is_partially_blocked():
     assert mac.finalize_verdict(cm, sv) == "partially_blocked"
 
 
-def test_control_on_step_match_counts_even_without_verdict_controls():
-    # control observed by the matcher (step_matches), not repeated in step verdict
+def test_control_on_step_match_counts_when_verdict_omits_controls():
+    # Control observed by the matcher (step_matches) and genuinely NOT spoken to by
+    # the verifier — the `controls_found` key is absent from the step verdict, so
+    # the matcher hint is the only signal and must count.
     cm = {
         "step_matches": [
             {"step": 1, "required": True, "controls_found": []},
             {"step": 2, "required": True, "controls_found": ["HttpOnly"]},
         ]
     }
-    sv = [_sv(1, "confirmed"), _sv(2, "confirmed")]
+    sv = [{"step": 1, "verdict": "confirmed"}, {"step": 2, "verdict": "confirmed"}]
     assert mac.finalize_verdict(cm, sv) == "partially_blocked"
+
+
+def test_explicit_empty_verdict_controls_override_matcher_preseed():
+    # Regression (2026-07-25 insecure-spring-app AC-T-002): the matcher's static
+    # keyword probe scraped 'ownership' out of prose that NEGATED the control
+    # ("None on the detail page — edit and delete use loadAllowedOrder() which does
+    # enforce ownership"). The verifier read the source, reported controls_found=[]
+    # and confirmed both steps, yet OR-ing the two still downgraded the chain to
+    # partially_blocked. An explicit — even empty — verifier list is that step's
+    # authoritative observation and overrides the matcher's guess.
+    cm = {
+        "step_matches": [
+            {"step": 1, "required": True, "controls_found": ["ownership"]},
+            {"step": 2, "required": True, "controls_found": []},
+        ]
+    }
+    sv = [_sv(1, "confirmed"), _sv(2, "confirmed")]
+    assert mac.finalize_verdict(cm, sv) == "fully_viable"
 
 
 def test_no_required_steps_is_not_applicable():

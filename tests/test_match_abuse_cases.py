@@ -88,6 +88,19 @@ def test_step_records_controls_found():
     assert m["controls_found"] == ["DomSanitizer"]
 
 
+def test_absent_control_evidence_is_not_a_control_found():
+    # Regression (2026-07-25): `controls_absent_evidence` documents controls the
+    # finding proves are MISSING. Probing it for controls PRESENT inverted the
+    # signal — a finding evidencing "no DomSanitizer anywhere" was recorded as
+    # having found DomSanitizer, which then downgraded the abuse chain to
+    # partially_blocked. Only `controls_in_place` may feed this probe.
+    finding = _finding("T-001", "innerHTML sink", controls="")
+    finding["controls_absent_evidence"] = [{"pattern": "DomSanitizer", "search_paths": ["src/"], "hit_count": 0}]
+    m = mac.match_step(_step(1, "innerHTML", controls=["DomSanitizer"]), [finding])
+    assert m["matched"]
+    assert m["controls_found"] == []
+
+
 def test_invalid_regex_falls_back_to_literal():
     findings = [_finding("T-001", "value is a[b (unbalanced)")]
     m = mac.match_step(_step(1, "a[b ("), findings)  # invalid regex
@@ -559,17 +572,59 @@ def test_finalize_non_required_untouched_preseed_caps_at_inconclusive():
     assert mac.finalize_verdict(cm, sv) == "inconclusive"
 
 
-def test_finalize_non_required_reasoned_inconclusive_stays_viable():
-    # Precision guard: a GENUINELY inconclusive non-required step (verifier examined
-    # it and recorded a reason) must NOT downgrade the chain — the attack is still
-    # viable through the required path. Only untouched (never-verified) pre-seeds
-    # trigger the inconclusive cap above.
+def test_finalize_non_required_reasoned_inconclusive_caps_at_inconclusive():
+    # Regression (2026-07-25 insecure-spring-app AC-T-005): a REASONED inconclusive
+    # on a non-required leg used to stand as fully_viable, on the theory that the
+    # attack is still viable through the required path. Every `required: false`
+    # step in data/abuse-cases is the chain's PAYOFF, not an optional side leg, so
+    # that theory inverts the risk: AC-T-005 step 1 confirmed (signing key
+    # hardcoded in the Dockerfile) + step 2 inconclusive (SignedJwtService uses a
+    # random in-memory key, so the exposed secret is not the one the server
+    # trusts) shipped as "Fully viable · Critical". fully_viable is a positive
+    # end-to-end claim and must not survive an unresolved step anywhere.
     cm = _cm([{"step": 1, "required": True}, {"step": 2, "required": False}])
     sv = [
         {"step": 1, "verdict": "confirmed"},
         {"step": 2, "verdict": "inconclusive", "reason": "control present but bypass unclear"},
     ]
+    assert mac.finalize_verdict(cm, sv) == "inconclusive"
+
+
+def test_finalize_verifier_empty_controls_overrides_matcher_preseed():
+    # Regression (2026-07-25 insecure-spring-app AC-T-002): the matcher's static
+    # keyword probe pre-seeded controls_found=['ownership'] from finding prose that
+    # NEGATED the control ("None on the detail page — edit and delete use
+    # loadAllowedOrder() which does enforce ownership"). The verifier read the
+    # source, reported controls_found=[] and confirmed both steps, but the OR with
+    # the stale guess still downgraded the chain to partially_blocked. An explicit
+    # (even empty) verifier list is authoritative for that step.
+    cm = _cm(
+        [
+            {"step": 1, "required": True, "controls_found": ["ownership"]},
+            {"step": 2, "required": True, "controls_found": []},
+        ]
+    )
+    sv = [
+        {"step": 1, "verdict": "confirmed", "controls_found": []},
+        {"step": 2, "verdict": "confirmed", "controls_found": []},
+    ]
     assert mac.finalize_verdict(cm, sv) == "fully_viable"
+
+
+def test_finalize_verifier_control_overrides_empty_matcher_preseed():
+    # The override cuts both ways: a control the verifier found but the matcher's
+    # probe missed must downgrade the chain, not be lost.
+    cm = _cm([{"step": 1, "required": True, "controls_found": []}])
+    sv = [{"step": 1, "verdict": "confirmed", "controls_found": ["csrf-token"]}]
+    assert mac.finalize_verdict(cm, sv) == "partially_blocked"
+
+
+def test_finalize_matcher_preseed_used_when_verifier_silent_on_controls():
+    # The matcher hint remains the only signal when the verifier never spoke about
+    # controls for that step (key absent, not merely empty) — keep using it.
+    cm = _cm([{"step": 1, "required": True, "controls_found": ["ownership"]}])
+    sv = [{"step": 1, "verdict": "confirmed"}]
+    assert mac.finalize_verdict(cm, sv) == "partially_blocked"
 
 
 # ---------------------------------------------------------------------------

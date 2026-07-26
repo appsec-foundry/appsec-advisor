@@ -530,6 +530,69 @@ def test_figure1_caps_tier_width_for_complex_apps(tmp_path: Path) -> None:
     assert "Critical/High finding in §8" in fig1, "capped Crit/High components must be named in the muted note"
 
 
+def test_attack_paths_table_uses_effective_severity(tmp_path: Path, monkeypatch) -> None:
+    """Regression (2026-07-25 insecure-spring-app): the attack-paths table read
+    the raw ``risk`` field while every other section resolves severity through
+    ``ctx.severity_for_ref`` (which prefers post-triage ``effective_severity``,
+    incl. abuse-chain elevation). One finding therefore rendered two different
+    severities inside one report — F-024 was 🟠 High in this table and 🔴
+    Critical in the Management Summary, component table, attack-surface table and
+    roadmap. 7 of that run's 49 findings had risk != effective_severity.
+
+    Both the per-finding dot AND the path's aggregate Risk cell must follow the
+    canonical resolver, so a path can never be rated below a member finding.
+    """
+    out = tmp_path / "out"
+    (out / ".fragments").mkdir(parents=True)
+    ctx = compose.RenderContext(
+        output_dir=out,
+        contract={},
+        yaml_data={
+            "components": [{"id": "C-04", "name": "Legacy Admin Console", "tier": "application"}],
+            "threats": [
+                # Elevated by triage: raw risk High, effective Critical.
+                {
+                    "id": "F-024",
+                    "t_id": "T-024",
+                    "title": "Unauthenticated Account Deletion",
+                    "component": "C-04",
+                    "risk": "High",
+                    "effective_severity": "Critical",
+                },
+                {
+                    "id": "F-035",
+                    "t_id": "T-035",
+                    "title": "Unauthenticated Full User Listing",
+                    "component": "C-04",
+                    "risk": "Medium",
+                },
+            ],
+        },
+        triage={},
+        fragments_dir=out / ".fragments",
+    )
+    monkeypatch.setattr(
+        compose,
+        "_load_attack_class_taxonomy",
+        lambda: {"classes": [{"id": "privilege-escalation", "threat_label": "Broken Authorization", "stride": "E"}]},
+    )
+    monkeypatch.setattr(
+        compose,
+        "_load_attack_paths_fragment",
+        lambda c, tax, thr: {
+            "attack_paths": [{"class": "privilege-escalation", "findings": ["F-024", "F-035"], "impact": []}]
+        },
+    )
+    rows = compose._compute_top_threats_rows(ctx)
+    assert rows, "expected a Top Threats row"
+    cell = rows[0]["findings_cell"]
+    # The elevated finding carries its effective Critical dot, not raw-risk High.
+    before_ref = cell.split("[F-024]")[0]
+    assert "🔴" in before_ref[-40:], f"F-024 must render its effective Critical severity: {cell[:400]}"
+    # The path's aggregate Risk must not sit below its worst member finding.
+    assert "critical" in (rows[0]["risk_cell"] or "").strip().lower(), rows[0]["risk_cell"]
+
+
 def test_components_table_scope_column_marks_out_of_scope(tmp_path: Path) -> None:
     """§2.3 gains a Scope column when meta.component_selection excluded some
     components — each row marked Analyzed / Out of scope for completeness."""

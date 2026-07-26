@@ -75,13 +75,13 @@ Process the steps in order. For each step:
 4. **Check controls.** Grep/Read for `probe.control_patterns`. Honour `probe.control_sufficiency`:
    - `any` — a single matching control blocks the step.
    - `all` — every listed control must be present to block the step.
-   Record the controls you found in `controls_found`.
+   Record the controls you found in `controls_found`. Always emit the key, `[]` included — the matcher pre-seeds a coarse keyword guess per step, and your reading of the source overrides it only on steps where you emit the key.
 5. **Emit the step verdict:**
    - `confirmed` — sink reachable with attacker input AND no sufficient control found.
    - `blocked` — a sufficient control breaks this step.
    - `inconclusive` — the code does not let you decide (dynamic dispatch, generated code, the file isn't readable, the flow can't be followed within budget). Default here when unsure.
 
-A step marked `required: false` in the case still gets a verdict, but a non-required `blocked`/`inconclusive` does not by itself sink the chain (the deterministic finalizer in `match_abuse_cases.py` applies that logic — you do not).
+A step marked `required: false` still gets a verdict, and it counts. In this catalog the non-required step is typically the chain's *payoff* — the point where the attack actually succeeds — not an optional side leg, so an `inconclusive` there stops the chain from being published as fully viable. Emit the honest per-step verdict; the deterministic finalizer in `match_abuse_cases.py` folds it into the chain verdict — you never pre-compute one.
 
 ## Budget discipline — write-first, never return empty
 
