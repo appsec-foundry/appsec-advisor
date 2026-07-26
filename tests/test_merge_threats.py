@@ -105,6 +105,36 @@ class TestExactDedup:
         )
         assert len(result) == 2
 
+    def test_boundary_provenance_over_cap_blocks_exact_merge(self, mt):
+        def refs(*ids):
+            return [
+                {
+                    "boundary_id": boundary_id,
+                    "origin_component_id": "auth",
+                    "rationale": "The verified defect occurs at this crossing.",
+                    "evidence_locations": [{"file": "src/auth/login.py", "line": 42}],
+                }
+                for boundary_id in ids
+            ]
+
+        first = {"component_id": "auth", **_threat(boundary_refs=refs("tb-1", "tb-2"))}
+        second = {"component_id": "auth", **_threat(boundary_refs=refs("tb-3"))}
+        result = mt._dedupe_exact([first, second])
+        assert len(result) == 2
+
+    def test_candidate_member_carries_boundary_provenance(self, mt):
+        threat = _threat(
+            boundary_refs=[
+                {
+                    "boundary_id": "tb-1",
+                    "origin_component_id": "auth",
+                    "rationale": "The verified defect occurs at this crossing.",
+                    "evidence_locations": [{"file": "src/auth/login.py", "line": 42}],
+                }
+            ]
+        )
+        assert mt._candidate_member(threat)["boundary_refs"] == threat["boundary_refs"]
+
 
 # ---------------------------------------------------------------------------
 # Evidence-identity dedup (cross-STRIDE / cross-component same-location dup)

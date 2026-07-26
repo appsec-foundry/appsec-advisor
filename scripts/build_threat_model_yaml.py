@@ -138,6 +138,72 @@ def _carry_forward(prior_yaml: dict | None, field: str, sidecar_name: str) -> An
     sys.exit(4)
 
 
+def _display_only_legacy_boundaries(rows: Any) -> list[dict]:
+    """Adapt legacy rows for rerender without granting semantic meaning.
+
+    Existing numeric IDs are retained (case-normalized); rows without one are
+    omitted rather than minting a public anchor during a display-only run.
+    """
+    result: list[dict] = []
+    seen: set[str] = set()
+    for raw in rows if isinstance(rows, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        match = re.fullmatch(r"(?i)tb-(\d+)", str(raw.get("id") or ""))
+        if not match:
+            continue
+        boundary_id = f"tb-{int(match.group(1))}"
+        if boundary_id in seen:
+            continue
+        seen.add(boundary_id)
+        item: dict[str, Any] = {
+            "id": boundary_id,
+            "name": str(raw.get("name") or "Legacy trust boundary")[:100],
+            "kind": "network",
+            "assumption": "Assumption not recorded in legacy model",
+            "evidence": [],
+            "confidence": "unknown",
+            "resolution_status": "unresolved",
+            "sources": ["legacy"],
+        }
+        for endpoint in ("from", "to"):
+            value = raw.get(endpoint)
+            if isinstance(value, str) and value.strip():
+                item[endpoint] = value.strip()[:128]
+        result.append(item)
+    return result
+
+
+def build_trust_boundaries(sidecar: dict | None, prior_yaml: dict | None) -> list[dict]:
+    """Return authoritative normalized boundaries, preserving present-empty."""
+    if isinstance(sidecar, dict) and sidecar.get("schema_version") == 2:
+        rows = sidecar.get("trust_boundaries")
+        if isinstance(rows, list):
+            return rows
+    if sidecar is not None:
+        sys.stderr.write(
+            "  WARN: legacy trust-boundary sidecar accepted through display-only "
+            "compatibility; run a fresh assessment for semantic v2 boundaries.\n"
+        )
+        return _display_only_legacy_boundaries(sidecar.get("trust_boundaries"))
+    prior_rows = (prior_yaml or {}).get("trust_boundaries")
+    if isinstance(prior_rows, list):
+        if all(
+            isinstance(row, dict)
+            and row.get("resolution_status") in {"resolved", "unresolved", "conflicted"}
+            and re.fullmatch(r"tb-\d+", str(row.get("id") or ""))
+            for row in prior_rows
+        ):
+            return prior_rows
+        sys.stderr.write("  WARN: legacy prior trust boundaries are display-only until a fresh assessment.\n")
+        return _display_only_legacy_boundaries(prior_rows)
+    sys.stderr.write(
+        "FATAL: neither .trust-boundaries.json nor prior threat-model.yaml has "
+        "'trust_boundaries'. Phase 7 must write and normalize the sidecar.\n"
+    )
+    sys.exit(4)
+
+
 # ─── Incremental threat reconciliation (depth-downgrade preservation) ──────
 #
 # When a DIRTY component is re-scanned at a SHALLOWER depth than the run that
@@ -2037,10 +2103,43 @@ def main() -> int:
     component_selection = build_component_selection(_load_json(od / ".stride-selection.json"), components)
     if component_selection:
         meta["component_selection"] = component_selection
+    boundary_selection = _load_json(od / ".dispatch-context" / "trust-boundary-selection.json")
+    if isinstance(boundary_selection, dict):
+        audit = {
+            key: boundary_selection[key]
+            for key in ("depth", "max_candidates_per_component", "components")
+            if key in boundary_selection
+        }
+        if {"depth", "max_candidates_per_component", "components"} <= audit.keys():
+            meta["boundary_selection"] = audit
     assets = (sidecar_assets or {}).get("assets") or _carry_forward(prior_yaml, "assets", ".assets.json")
-    trust_boundaries = (sidecar_tb or {}).get("trust_boundaries") or _carry_forward(
-        prior_yaml, "trust_boundaries", ".trust-boundaries.json"
-    )
+    trust_boundaries = build_trust_boundaries(sidecar_tb, prior_yaml)
+    # Optional boundary traceability is fail-open: remove invalid metadata while
+    # retaining the security finding. This is the final deterministic backstop
+    # after merge/carry-forward and before schema validation.
+    try:
+        from prepare_trust_boundary_context import validate_finding_boundary_refs
+
+        for threat in threats:
+            if not threat.get("boundary_refs"):
+                continue
+            refs, ref_warnings = validate_finding_boundary_refs(
+                threat,
+                boundaries=trust_boundaries,
+                origin_component_id=None,
+                candidate_ids=None,
+                require_candidate=False,
+            )
+            if refs:
+                threat["boundary_refs"] = refs
+            else:
+                threat.pop("boundary_refs", None)
+            for warning in ref_warnings:
+                sys.stderr.write(f"  TRUST_BOUNDARY_REF_WARN: {threat.get('id')}: {warning}\n")
+    except Exception as exc:
+        for threat in threats:
+            threat.pop("boundary_refs", None)
+        sys.stderr.write(f"  TRUST_BOUNDARY_REF_WARN: disabled optional references for this run: {exc}\n")
     security_controls = (sidecar_sc or {}).get("security_controls") or _carry_forward(
         prior_yaml, "security_controls", ".security-controls.json"
     )

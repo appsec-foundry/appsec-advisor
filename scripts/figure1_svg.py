@@ -118,7 +118,7 @@ def _data_stores(trust_boundaries: list) -> list[str]:
     """Pretty data-store names referenced by trust-boundary endpoints."""
     names: list[str] = []
     for tb in trust_boundaries or []:
-        if not isinstance(tb, dict):
+        if not isinstance(tb, dict) or tb.get("resolution_status") != "resolved":
             continue
         to = (tb.get("to") or "").strip().lower()
         if not to:
@@ -160,7 +160,11 @@ def _ghost_reason(tier: str, components: list, trust_boundaries: list) -> str:
         stores = _data_stores(trust_boundaries)
         if stores:
             return f"data embedded in-process ({', '.join(stores[:3])}) — no separate tier"
-        hay = " ".join((tb.get("to") or "").lower() for tb in (trust_boundaries or []) if isinstance(tb, dict))
+        hay = " ".join(
+            (tb.get("to") or "").lower()
+            for tb in (trust_boundaries or [])
+            if isinstance(tb, dict) and tb.get("resolution_status") == "resolved"
+        )
         if any(h in hay for h in _DB_HINT):
             return "data embedded in-process — no separate tier"
         return "no separate data tier"
@@ -440,11 +444,11 @@ def build_figure1_svg(
     # listener) is reached THROUGH the app, never by a direct attacker arrow.
     exposed = set()
     for tb in yaml_data.get("trust_boundaries") or []:
-        if isinstance(tb, dict) and (tb.get("from") or "").strip().lower() in (
-            "",
-            "external",
-            "internet",
-            "public-internet",
+        if (
+            isinstance(tb, dict)
+            and tb.get("resolution_status") == "resolved"
+            and tb.get("confidence") == "confirmed"
+            and (tb.get("from") or "").strip().lower() == "external"
         ):
             to = (tb.get("to") or "").strip()
             if to in comp:

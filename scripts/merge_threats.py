@@ -39,6 +39,7 @@ import hashlib
 import json
 import re
 import sys
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,15 @@ _STRIDE_ORDER = {
     "Denial of Service": 4,
     "Elevation of Privilege": 5,
 }
+
+
+def _read_json_file(path: Path, default: Any = None) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
 _STRIDE_LETTER = {
     "Spoofing": "S",
     "Tampering": "T",
@@ -292,9 +302,13 @@ def _json_error_context(raw: str, pos: int, radius: int = 60) -> str:
     return f"{snippet[:marker_offset]}»{snippet[marker_offset : marker_offset + 1]}«{snippet[marker_offset + 1 :]}"
 
 
-def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
+def _flatten_threats(pairs: list[tuple[str, dict]], output_dir: Path | None = None) -> list[dict]:
     """Collect all threat records with component provenance attached."""
     out: list[dict] = []
+    boundary_rows: list[dict] = []
+    if output_dir is not None:
+        boundary_doc = _read_json_file(output_dir / ".trust-boundaries.json", default={})
+        boundary_rows = boundary_doc.get("trust_boundaries", []) if isinstance(boundary_doc, dict) else []
     for comp_id, data in pairs:
         threats = data.get("threats") or []
         if not isinstance(threats, list):
@@ -319,6 +333,46 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
             ev = t.get("evidence")
             if isinstance(ev, list):
                 t["evidence"] = ev[0] if ev and isinstance(ev[0], dict) else None
+            if t.get("boundary_refs"):
+                try:
+                    from prepare_trust_boundary_context import validate_finding_boundary_refs
+
+                    context = (
+                        _read_json_file(
+                            output_dir / ".dispatch-context" / comp_id / "trust-boundaries.json",
+                            default={},
+                        )
+                        if output_dir is not None
+                        else {}
+                    )
+                    candidate_ids = {
+                        row.get("id")
+                        for row in context.get("adjacent_trust_boundaries", [])
+                        if isinstance(row, dict) and row.get("id")
+                    }
+                    carried = t.get("evidence_check") in {
+                        "verified-prior",
+                        "carried-unverified-shallower-depth",
+                    }
+                    refs, diagnostics = validate_finding_boundary_refs(
+                        t,
+                        boundaries=boundary_rows,
+                        origin_component_id=comp_id,
+                        candidate_ids=candidate_ids,
+                        require_candidate=not carried,
+                    )
+                    if refs:
+                        t["boundary_refs"] = refs
+                    else:
+                        t.pop("boundary_refs", None)
+                    for diagnostic in diagnostics:
+                        print(f"TRUST_BOUNDARY_REF_WARN: {comp_id}: {diagnostic}", file=sys.stderr)
+                except Exception as exc:
+                    t.pop("boundary_refs", None)
+                    print(
+                        f"TRUST_BOUNDARY_REF_WARN: {comp_id}: disabled optional references: {exc}",
+                        file=sys.stderr,
+                    )
             # architectural_violation: required field — default False.
             t.setdefault("architectural_violation", False)
             # threat_category_id: required for source=stride; derive from
@@ -849,6 +903,9 @@ def _dedupe_exact(threats: list[dict]) -> list[dict]:
             if not _same_primary_threat_category([primary, t]):
                 out.append(t)
                 continue
+            if not _can_merge_boundary_refs([primary, t]):
+                out.append(t)
+                continue
             _merge_member_metadata(primary, [primary, t], systemic=False)
             continue
         by_key[k] = t
@@ -960,6 +1017,9 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
         if len(members) == 1:
             out.append(members[0])
             continue
+        if not _can_merge_boundary_refs(members):
+            out.extend(members)
+            continue
         # Highest-risk member is the survivor base (tie → first-seen, stable).
         survivor = dict(sorted(members, key=lambda m: _risk_rank(m.get("risk")))[0])
         instances: list[dict] = []
@@ -978,6 +1038,9 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
         survivor["affected_files"] = sorted(files)
         survivor["instance_count"] = len(instances)
         survivor["systemic"] = True
+        boundary_refs = _boundary_ref_union(members)
+        if boundary_refs:
+            survivor["boundary_refs"] = boundary_refs
         survivor["title"] = _declassify_config_title(survivor.get("title", ""))
         # Record the consolidated local_ids for traceability.
         refs = [m.get("config_scan_ref") for m in members if m.get("config_scan_ref")]
@@ -1156,6 +1219,7 @@ def _candidate_member(threat: dict) -> dict:
         "scenario_excerpt": scenario,
         "evidence": threat.get("evidence"),
         "instances": _instances_of(threat),
+        "boundary_refs": deepcopy(threat.get("boundary_refs") or []),
         "risk": threat.get("risk"),
         "cwe": threat.get("cwe"),
         "stride": threat.get("stride"),
@@ -1202,6 +1266,9 @@ def _consolidate_by_group(threats: list[dict]) -> list[dict]:
         if len(members) == 1:
             out.append(members[0])  # lone match → not systemic, leave as-is
             continue
+        if not _can_merge_boundary_refs(members):
+            out.extend(members)
+            continue
         g = bucket_group[bkey]
         survivor = dict(sorted(members, key=lambda m: _risk_rank(m.get("risk")))[0])
         instances: list[dict] = []
@@ -1231,6 +1298,9 @@ def _consolidate_by_group(threats: list[dict]) -> list[dict]:
             survivor["mitigation_ids"] = mids
         if refs:
             survivor["consolidated_refs"] = refs
+        boundary_refs = _boundary_ref_union(members)
+        if boundary_refs:
+            survivor["boundary_refs"] = boundary_refs
         out.append(survivor)
     return out
 
@@ -1269,6 +1339,9 @@ def _dedupe_evidence(threats: list[dict]) -> list[dict]:
             out.append(t)
             continue
         if not _same_primary_threat_category([prev, t]):
+            out.append(t)
+            continue
+        if not _can_merge_boundary_refs([prev, t]):
             out.append(t)
             continue
         if _risk_rank(t.get("risk")) < _risk_rank(prev.get("risk")):
@@ -1604,6 +1677,26 @@ def _decision_positions(decision: dict, member_indices: list[int]) -> list[int] 
     return list(requested)
 
 
+def _boundary_ref_union(members: list[dict]) -> list[dict]:
+    refs: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for member in members:
+        for ref in member.get("boundary_refs") or []:
+            if not isinstance(ref, dict):
+                continue
+            key = (str(ref.get("boundary_id") or ""), str(ref.get("origin_component_id") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            refs.append(deepcopy(ref))
+    return refs
+
+
+def _can_merge_boundary_refs(members: list[dict]) -> bool:
+    """A valid optional relation must never be discarded to force a merge."""
+    return len(_boundary_ref_union(members)) <= 2
+
+
 def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: bool) -> None:
     """Preserve every merged location, scenario and mitigation on survivor."""
     instances: list[dict] = []
@@ -1669,6 +1762,9 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
         survivor["merged_cwes"] = cwes
     if additional_categories:
         survivor["additional_categories"] = additional_categories
+    boundary_refs = _boundary_ref_union(members)
+    if boundary_refs:
+        survivor["boundary_refs"] = boundary_refs
 
 
 def _same_primary_threat_category(members: list[dict]) -> bool:
@@ -1789,9 +1885,11 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
                 continue
             survivor = member_indices[target]
             selected = [member_indices[pos] for pos in positions]
-            if not _highest_risk_target(
-                target, positions, member_indices, threats
-            ) or not _same_primary_threat_category([threats[idx] for idx in selected]):
+            if (
+                not _highest_risk_target(target, positions, member_indices, threats)
+                or not _same_primary_threat_category([threats[idx] for idx in selected])
+                or not _can_merge_boundary_refs([threats[idx] for idx in selected])
+            ):
                 continue
             _merge_member_metadata(threats[survivor], [threats[idx] for idx in selected], systemic=False)
             drop.update(idx for idx in selected if idx != survivor)
@@ -1818,9 +1916,11 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
                 continue
             survivor = member_indices[target]
             selected = [member_indices[pos] for pos in positions]
-            if not _highest_risk_target(
-                target, positions, member_indices, threats
-            ) or not _same_primary_threat_category([threats[idx] for idx in selected]):
+            if (
+                not _highest_risk_target(target, positions, member_indices, threats)
+                or not _same_primary_threat_category([threats[idx] for idx in selected])
+                or not _can_merge_boundary_refs([threats[idx] for idx in selected])
+            ):
                 continue
             surv = threats[survivor]
             surv["title"] = new_title.strip()
@@ -1865,7 +1965,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         return 1
 
     resolved_prior = _collect_resolved_prior_findings(pairs)
-    flat = _flatten_threats(pairs)
+    flat = _flatten_threats(pairs, out_dir)
     # Phase 2.5 — append config/IaC findings as additional threats with
     # source='config-scan' so the downstream dedup/grouping/T-ID assignment
     # treats them uniformly with STRIDE-source threats.

@@ -55,7 +55,7 @@ required:
 
   # --- File access — scoped to target repo, output dir, and plugin only ---
   - entry: "Read(${REPO_ROOT}/**)"
-    reason: "agents read all files in the scanned repo (recon, STRIDE evidence, context)"
+    reason: "agents and deterministic resolvers read scanned-repository evidence and optional data-only inputs such as .appsec/trust-boundaries.yaml"
     category: file
 
   - entry: "Read(${PLUGIN_ROOT}/**)"
@@ -71,15 +71,15 @@ required:
     category: file
 
   - entry: "Read(${OUTPUT_DIR}/.*)"
-    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.recon-summary.md, .threat-modeling-context.md, .stride-*.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.recon-summary.md, .trust-boundaries.json, .stride-*.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"
-    reason: "compose_threat_model.py, fragment writers, annotators all write under OUTPUT_DIR (non-dotfile paths and dot-subdirectory files like .fragments/*.md)"
+    reason: "deterministic preparers, compose_threat_model.py, fragment writers, and annotators write under OUTPUT_DIR, including .dispatch-context/<component>/trust-boundaries.json"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"
-    reason: "agents write direct dotfile sidecars (.recon-summary.md, .threat-modeling-context.md, .stride-*.json, .components.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents and preparers write direct dotfile sidecars (.recon-summary.md, .trust-boundaries.json, .stride-*.json, .components.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/**)"
@@ -143,5 +143,5 @@ required:
   #   containment boundary. Real containment lives in the guard scripts — see the
   #   header comment at the top of this file.
   - entry: "Bash(*)"
-    reason: "all shell commands used by agents, deterministic orchestration_controller.py invocations, mitigation-quality gates, scripts, and phase-group files; per-command entries cannot cover compound commands and variable-assignment chains — see comment above"
+    reason: "all shell commands used by agents, deterministic orchestration_controller.py and prepare_trust_boundary_context.py invocations, mitigation-quality gates, scripts, and phase-group files; per-command entries cannot cover compound commands and variable-assignment chains — see comment above"
     category: shell

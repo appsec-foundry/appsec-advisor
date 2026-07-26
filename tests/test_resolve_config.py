@@ -2053,6 +2053,15 @@ class TestRunPlanVerdictIncremental:
         assert v["will_run"] is True
         assert "AMBIGUOUS" in v["verdict"]
 
+    def test_changed_boundary_declaration_recomposes_without_stride(self):
+        pre = {"status": "changed"}
+        ds = {"decision": "boundary_recompose", "dirty_component_ids": []}
+        v = rc._run_plan_verdict(self._icfg(), pre, ds, None)
+        assert v["will_run"] is True
+        assert "trust-boundary catalogue changed" in v["verdict"]
+        assert "STRIDE" not in v["pipeline"]
+        assert "zero STRIDE dispatches" in v["reason"]
+
     def test_changed_dirty_components(self):
         pre = {"status": "changed", "plugin_version": {"tier": "minor"}}
         ds = {"decision": "dirty", "dirty_component_ids": ["c1", "c2", "c3", "c4"]}

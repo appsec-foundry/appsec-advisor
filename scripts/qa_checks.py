@@ -9679,6 +9679,66 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
     if schema_ver != 1:
         report.issues.append(f"meta.schema_version expected 1, got {schema_ver!r}")
 
+    # Trust-boundary integrity: canonical YAML owns IDs and finding links, while
+    # Markdown owns only their presentation. Keep this check beside the other
+    # YAML/Markdown drift checks so both the full QA path and the repair-plan
+    # gate execute it.
+    boundary_rows = [row for row in (yaml_data.get("trust_boundaries") or []) if isinstance(row, dict)]
+    boundary_ids = [str(row.get("id") or "") for row in boundary_rows]
+    boundary_id_set = {boundary_id for boundary_id in boundary_ids if boundary_id}
+    for boundary_id in sorted(boundary_id_set):
+        count = boundary_ids.count(boundary_id)
+        if count > 1:
+            report.issues.append(f"duplicate trust-boundary id in yaml: {boundary_id} appears {count} times")
+
+    boundary_anchors = re.findall(r'<a\s+id="(tb-\d+)"></a>', md_text, re.IGNORECASE)
+    anchor_counts: dict[str, int] = {}
+    for boundary_id in boundary_anchors:
+        key = boundary_id.lower()
+        anchor_counts[key] = anchor_counts.get(key, 0) + 1
+    for boundary_id, count in sorted(anchor_counts.items()):
+        if count > 1:
+            report.issues.append(f"duplicate trust-boundary catalogue anchor: #{boundary_id} appears {count} times")
+        if boundary_id not in boundary_id_set:
+            report.issues.append(f"trust-boundary catalogue anchor is absent from canonical yaml: #{boundary_id}")
+
+    boundary_links = re.findall(
+        r"\[(tb-\d+)\]\(#(tb-\d+)\)",
+        md_text,
+        re.IGNORECASE,
+    )
+    for label, target in boundary_links:
+        label = label.lower()
+        target = target.lower()
+        if label != target:
+            report.issues.append(f"trust-boundary link label/target mismatch: {label} points to #{target}")
+        if label not in boundary_id_set:
+            report.issues.append(f"rendered trust-boundary reference is absent from canonical yaml: {label}")
+        if target not in anchor_counts:
+            report.issues.append(f"rendered trust-boundary reference has no catalogue anchor: #{target}")
+
+    canonical_boundary_refs = {
+        str(ref.get("boundary_id") or "").lower()
+        for threat in yaml_threats_all
+        if isinstance(threat, dict)
+        for ref in (threat.get("boundary_refs") or [])
+        if isinstance(ref, dict) and ref.get("boundary_id")
+    }
+    rendered_boundary_refs: set[str] = set()
+    for card in re.findall(
+        r"\*\*Trust boundary gap:\*\*(.*?)(?=<br>\*\*|$)",
+        md_text,
+        re.IGNORECASE | re.MULTILINE,
+    ):
+        rendered_boundary_refs.update(
+            boundary_id.lower() for boundary_id in re.findall(r"\btb-\d+\b", card, re.IGNORECASE)
+        )
+    if canonical_boundary_refs != rendered_boundary_refs:
+        report.issues.append(
+            "trust-boundary finding-reference drift: "
+            f"yaml={sorted(canonical_boundary_refs)} md={sorted(rendered_boundary_refs)}"
+        )
+
     # Asset linked_threats cross-reference: every asset's linked_threats[] in
     # YAML must match the T-NNN set rendered in the MD Assets table (Section 4).
     # The MD section ends at the next ## heading.

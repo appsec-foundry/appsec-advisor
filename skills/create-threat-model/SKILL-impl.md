@@ -1207,16 +1207,19 @@ d = json.load(sys.stdin)
 for f in d.get("security_relevant_changes", []) or []:
     print(f)
 ')
+  set +e
   DIRTY_SET_OUTPUT=$(printf '%s\n' "$REL_FILES" \
     | python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" dirty-set \
-        --output-dir "$OUTPUT_DIR" 2>/dev/null || true)
+        --output-dir "$OUTPUT_DIR" 2>/dev/null)
   DIRTY_SET_EXIT=$?
-  case "$DIRTY_SET_EXIT" in
-    0)  DIRTY_SET_DECISION=dirty ;;
-    2)  DIRTY_SET_DECISION=noop_global_only ;;
-    3)  DIRTY_SET_DECISION=ambiguous ;;
-    *)  DIRTY_SET_DECISION=skip ;;
-  esac
+  set -e
+  DIRTY_SET_DECISION=$(printf '%s' "$DIRTY_SET_OUTPUT" | python3 -c '
+import json, sys
+try:
+    print((json.load(sys.stdin).get("decision") or "skip").strip())
+except Exception:
+    print("skip")
+')
 fi
 export DIRTY_SET_OUTPUT DIRTY_SET_EXIT DIRTY_SET_DECISION
 ```
@@ -1275,6 +1278,7 @@ skill bypasses the Bash call and follows the same template inline.
 | `plugin-drift`| (n/a)              | `PLUGIN-DRIFT — plugin upgraded (B → C, tier=T)` | `PROMPT (interactive) / ABORT (CI)` | no (interactive prompt below) |
 | `changes`     | `noop_global_only` | `NO-OP — relevant changes touch no component` | `SKIPPED (no agents will run)` | no |
 | `changes`     | `noop_empty_input` | `NO-OP — relevant list empty after mapping`   | `SKIPPED (no agents will run)` | no |
+| `changes`     | `boundary_recompose` | `RUN — trust-boundary catalogue changed`    | `normalize boundaries -> carry findings -> render -> QA` | yes, zero STRIDE |
 | `changes`     | `dirty`            | `RUN — N component(s) dirty`                  | `change check -> recon -> STRIDE delta (<ids>) -> triage -> render -> QA` | yes |
 | `changes`     | `ambiguous`        | `AMBIGUOUS — possible new component`          | `change check -> recon -> STRIDE delta -> triage -> render -> QA` | yes |
 | `changes`     | `skip` (error)     | `RUN — incremental (delta scope unresolved)`  | (incremental pipeline)                                                   | yes |
@@ -2232,7 +2236,7 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
    Repeatedly run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" claim "$OUTPUT_DIR"` and parse the returned JSON. `status=complete` ends the loop. `status=claimed` contains only the unfinished components in the earliest incomplete wave; issue those Agent calls **together in one message** so the wave runs concurrently, then claim again. Attempt 1 is the normal dispatch and attempt 2 is the only retry. Attempts are persisted in `.dispatch-waves.json`, so resume cannot reset the budget. Exit 1 / `status=blocked` is fatal: stop before Analyst-B rather than publishing a report that silently omitted a selected component.
 
-   **Set each Agent call's `description` to `"STRIDE: <NAME>"` — or `"STRIDE screening: <NAME>"` when the manifest entry carries `cheap_stride: true`**, so the agent list names the analysis tier per component (prefix, not suffix: the console truncates long names on the right). Map every field from the claimed manifest entries to the analyzer prompt (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT` (pass the manifest's `estimated_threat_count_label` — the analyzer paces on the `low`/`moderate`/`high` band, not on the integer; omit the parameter when the entry has no label), `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). Preserve Group A → B → C order. Pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`; require `export OUTPUT_DIR=<value>` as the analyzer's first Bash call; set `run_in_background: false`; and reduce `$STRIDE_MODEL` to the bare `sonnet`/`opus`/`haiku` Agent model alias. Record each wave's usage with `record_stage_stats.py --accumulate` before claiming the next wave.
+   **Set each Agent call's `description` to `"STRIDE: <NAME>"` — or `"STRIDE screening: <NAME>"` when the manifest entry carries `cheap_stride: true`**, so the agent list names the analysis tier per component (prefix, not suffix: the console truncates long names on the right). Map every field from the claimed manifest entries to the analyzer prompt (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT` (pass the manifest's `estimated_threat_count_label` — the analyzer paces on the `low`/`moderate`/`high` band, not on the integer; omit the parameter when the entry has no label), `INTERFACES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`, including `TRUST_BOUNDARIES_INDEX_PATH=index_paths.trust_boundaries`). Preserve Group A → B → C order. Pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`; require `export OUTPUT_DIR=<value>` as the analyzer's first Bash call; set `run_in_background: false`; and reduce `$STRIDE_MODEL` to the bare `sonnet`/`opus`/`haiku` Agent model alias. Record each wave's usage with `record_stage_stats.py --accumulate` before claiming the next wave.
 
    The helper advances only when every component in the wave has a schema-valid output with `partial=false` and `skipped_categories=[]`. `threats=[]` is valid when those completion signals hold; absence of findings is not itself a stub. After the loop, run the final hard gate:
 
@@ -2360,7 +2364,14 @@ On exit 2 the script prints a full banner to stderr naming the inlined component
 
 **This is the critical enforcement point.** The finalization agent is instructed to run `validate_intermediate.py` internally, but under turn-budget pressure it may skip or incompletely execute that step — the instruction is an LLM prompt, not a hard technical barrier. This skill-level gate closes that gap: it runs `validate_intermediate.py` directly in the skill's Bash context, outside any agent, and **blocks Stage 2 dispatch if the YAML is structurally invalid**.
 
-The most common failure mode observed in production: `attack_surface`, `trust_boundaries`, and `security_controls` are held in the orchestrator's working memory but never written to the YAML. The schema requires all three as non-empty arrays; their absence causes `(0)` empty tables across §2.4, §5, §7, and §9 regardless of how correct Stage 2's rendering is. No amount of LLM instruction in Stage 2 can recover content that was never persisted to the YAML.
+The most common failure mode observed in production: `attack_surface`,
+`trust_boundaries`, and `security_controls` are held in the orchestrator's
+working memory but never written to the YAML. The schema requires all three
+properties; `attack_surface` and `security_controls` retain their documented
+non-empty gates, while a normalized v2 `trust_boundaries: []` is authoritative
+and valid. Their absence causes empty report surfaces regardless of how correct
+Stage 2's rendering is. No amount of LLM instruction in Stage 2 can recover
+content that was never persisted to the YAML.
 
 **Bootstrap-stub special case.** `triage_compute_ranking.py --bootstrap-yaml` (invoked by `appsec-triage-validator`) writes a minimal stub when Phase 11 Substep 2's full yaml-write never ran — it carries `meta._bootstrap: true` as a marker and uses the merged-threats shape (`t_id`/`component_id`) rather than the output shape (`id`/`component`). The stub is, by design, NOT output-schema-valid; it exists only so the deterministic triage script has something to read. When the gate detects the stub, it MUST NOT block — the actual production failure here is "Stage 1 never reached Phase 11 Substeps 1–3", and the user-facing remediation is the same as `--rebuild` regardless. The gate prints a distinct diagnostic and exits 2; it does NOT treat the stub as a normal schema failure.
 

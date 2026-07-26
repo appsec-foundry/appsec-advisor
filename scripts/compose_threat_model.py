@@ -53,6 +53,7 @@ from __future__ import annotations
 import argparse
 import base64
 import functools
+import html
 import importlib.util
 import json
 import re
@@ -2365,11 +2366,13 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
         display_title = _strip_label_code(display_title)
         anchor = sec.get("anchor") or _anchor_from_heading(heading)
         children = _toc_children_for_section(ctx, sid, sec)
-        # Identified Actors renders as an unnumbered `### Identified Actors`
-        # subsection of §1 System Overview (peer of "### Scope"). Nest it under
-        # the preceding system_overview ToC entry instead of emitting a
-        # top-level bullet with a half-step "1.5" number that reads as a gap.
-        if sid == "identified_actors" and entries and entries[-1].get("_sid") == "system_overview":
+        # Computed §1 subsections fold below System Overview. Either may be
+        # absent, so this is an explicit parent rule rather than adjacency.
+        if (
+            sid in {"identified_actors", "trust_boundary_catalog"}
+            and entries
+            and entries[-1].get("_sid") == "system_overview"
+        ):
             entries[-1]["children"].append({"title": display_title, "anchor": anchor})
             continue
         entries.append(
@@ -6551,12 +6554,14 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
 
     _tb_name: dict[tuple[str, str], str] = {}
     for _tb in ctx.yaml_data.get("trust_boundaries") or []:
-        if not isinstance(_tb, dict):
+        if not isinstance(_tb, dict) or _tb.get("resolution_status") != "resolved":
             continue
         _frm = (_tb.get("from") or "").strip()
         _to = (_tb.get("to") or "").strip()
-        _ft = "external" if _frm in ("", "external") else comp_tier.get(_frm, "external")
-        _tt = "external" if _to in ("", "external") else comp_tier.get(_to, "application")
+        _ft = "external" if _frm == "external" else comp_tier.get(_frm)
+        _tt = "external" if _to == "external" else comp_tier.get(_to)
+        if _ft is None or _tt is None:
+            continue
         if _ft == _tt:
             continue
         _nm = _fig1_label((_tb.get("name") or _tb.get("id") or "").split("|")[0].strip())
@@ -14845,6 +14850,26 @@ def _build_threat_card(
         _wlabel = f" — {_wtitle}" if _wtitle else ""
         weakness_card = f"**Weakness:** [{_wid}](#{_wid.lower()}){_wlabel}"
 
+    boundary_card = ""
+    refs = [ref for ref in t.get("boundary_refs") or [] if isinstance(ref, dict)]
+    if refs:
+        by_id = {
+            row.get("id"): row
+            for row in ctx.yaml_data.get("trust_boundaries") or []
+            if isinstance(row, dict) and row.get("id")
+        }
+        visible_boundary_ids = {row.get("id") for row in _ordered_trust_boundaries(ctx)[:20]}
+        rendered_refs: list[str] = []
+        for ref in refs[:2]:
+            boundary_id = str(ref.get("boundary_id") or "")
+            boundary = by_id.get(boundary_id) or {}
+            name = _safe_boundary_text(boundary.get("name"))
+            rationale = _safe_boundary_text(ref.get("rationale"))
+            label = f"[{boundary_id}](#{boundary_id})" if boundary_id in visible_boundary_ids else boundary_id
+            rendered_refs.append(f"{label} — {name}: {rationale}")
+        if rendered_refs:
+            boundary_card = "**Trust boundary gap:** " + "<br>".join(rendered_refs)
+
     # Instances — for a systemic finding consolidated from N per-file / per-stage
     # hits of one config check (see merge_threats._consolidate_config_checks),
     # surface every hit so the single card still names all affected locations.
@@ -14955,6 +14980,8 @@ def _build_threat_card(
     fields = [meta_line]
     if weakness_card:
         fields.append(weakness_card)
+    if boundary_card:
+        fields.append(boundary_card)
     if instances_card:
         fields.append(instances_card)
     if issue_card:
@@ -15088,6 +15115,119 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         lines.append(f"| {name} | {role} | {reach} | {counts.get(a, 0)} | {comps} |")
     lines.append("")
 
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _tb_number(boundary: dict) -> tuple[int, str]:
+    value = str(boundary.get("id") or "")
+    match = re.fullmatch(r"tb-(\d+)", value)
+    return (int(match.group(1)), value) if match else (10**9, value)
+
+
+def _safe_boundary_text(value: Any, *, table: bool = False) -> str:
+    text = html.escape(" ".join(str(value or "").split()), quote=False)
+    # Imported/repository-authored strings remain text in Markdown and cannot
+    # create links, HTML, anchors or extra table columns.
+    for char in ("\\", "[", "]", "(", ")"):
+        text = text.replace(char, "\\" + char)
+    if table:
+        text = text.replace("|", "\\|")
+    return text or "—"
+
+
+def _boundary_link_index(ctx: RenderContext) -> dict[str, list[str]]:
+    linked: dict[str, list[str]] = {}
+    for threat in ctx.yaml_data.get("threats") or []:
+        if not isinstance(threat, dict):
+            continue
+        tid = str(threat.get("id") or threat.get("t_id") or "")
+        match = re.fullmatch(r"T-(\d+)", tid, re.IGNORECASE)
+        visible = f"F-{match.group(1)}" if match else tid
+        for ref in threat.get("boundary_refs") or []:
+            if not isinstance(ref, dict) or not ref.get("boundary_id"):
+                continue
+            linked.setdefault(ref["boundary_id"], [])
+            if visible and visible not in linked[ref["boundary_id"]]:
+                linked[ref["boundary_id"]].append(visible)
+    return linked
+
+
+def _ordered_trust_boundaries(ctx: RenderContext) -> list[dict]:
+    rows = [row for row in ctx.yaml_data.get("trust_boundaries") or [] if isinstance(row, dict)]
+    linked = _boundary_link_index(ctx)
+    selection = ((ctx.yaml_data.get("meta") or {}).get("boundary_selection") or {}).get("components") or {}
+    selected_primary: set[str] = set()
+    for audit in selection.values() if isinstance(selection, dict) else []:
+        if not isinstance(audit, dict):
+            continue
+        reasons = audit.get("focus_reasons") or {}
+        for boundary_id in audit.get("selected_ids") or []:
+            reason_text = " ".join(reasons.get(boundary_id) or []).lower()
+            if any(
+                marker in reason_text
+                for marker in ("external", "identity", "privilege", "tenant", "third-party", "build", "prior verified")
+            ):
+                selected_primary.add(boundary_id)
+
+    def key(row: dict) -> tuple:
+        boundary_id = row.get("id")
+        return (
+            0 if linked.get(boundary_id) else 1,
+            0 if row.get("resolution_status") in {"conflicted", "unresolved"} else 1,
+            0 if boundary_id in selected_primary else 1,
+            0 if row.get("confidence") == "confirmed" else 1,
+            _tb_number(row),
+        )
+
+    return sorted(rows, key=key)
+
+
+def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    rows = _ordered_trust_boundaries(ctx)
+    if not rows:
+        return ""
+    linked = _boundary_link_index(ctx)
+    shown = rows[:20]
+    lines = [
+        "### Trust Boundaries",
+        "",
+        "Canonical boundary crossings and the assumptions that must hold at each interface. "
+        "Adjacency is context only; a linked finding denotes an evidence-backed control gap "
+        "and does not change severity.",
+        "",
+        "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |",
+        "|---|---|---|---|---|---|",
+    ]
+    for row in shown:
+        boundary_id = row["id"]
+        crossing = f"{row.get('from') or '?'} → {row.get('to') or '?'}"
+        boundary = (
+            f"**{_safe_boundary_text(row.get('name'), table=True)}**<br>{_safe_boundary_text(crossing, table=True)}"
+        )
+        kind_status = (
+            f"{_safe_boundary_text(row.get('kind'), table=True)} / "
+            f"{_safe_boundary_text(row.get('resolution_status'), table=True)}"
+        )
+        assumption = (
+            f"{_safe_boundary_text(row.get('assumption'), table=True)}<br>"
+            f"_{_safe_boundary_text(row.get('confidence'), table=True)}_"
+        )
+        sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
+        finding_links = (
+            ", ".join(f"[{finding_id}](#{finding_id.lower()})" for finding_id in linked.get(boundary_id, [])) or "—"
+        )
+        lines.append(
+            f'| <a id="{boundary_id}"></a>{boundary_id} | {boundary} | {kind_status} | '
+            f"{assumption} | {sources} | {finding_links} |"
+        )
+    if len(rows) > len(shown):
+        lines.extend(
+            [
+                "",
+                f"_{len(rows) - len(shown)} additional trust boundary row(s) are available in "
+                "`threat-model.yaml` and `query_threat_model.py`._",
+            ]
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -16717,6 +16857,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "critical_attack_tree": _render_critical_attack_tree,
         "verdict": _render_verdict,
         "identified_actors": _render_identified_actors,
+        "trust_boundary_catalog": _render_trust_boundary_catalog,
         "assets": _render_assets,
         "security_posture_at_a_glance": _render_security_posture_at_a_glance,
         "skipped_sections_placeholder": _render_skipped_sections_placeholder,
@@ -17089,6 +17230,7 @@ def render(
             "has_resolved_actors": any(
                 (t.get("vektor") or "").strip() for t in (yaml_data.get("threats") or []) if isinstance(t, dict)
             ),
+            "has_trust_boundaries": bool(yaml_data.get("trust_boundaries")),
             # Quick-mode §7 gate. False suppresses §7 in both TOC and body
             # (resolver returned `""` — current depth is quick and no rich
             # prior content was found). True keeps §7 — either via the

@@ -2,7 +2,21 @@
 
 **Date:** 2026-07-22
 
-**Status:** planned / not started
+**Status:** implementation candidate complete; deterministic verification
+passed; live Milestone-2 economy replay pending
+
+**Implementation note (2026-07-26):** Milestones 1–3 and the deterministic
+parts of Milestone 4 are implemented on the feature branch. Contracts,
+normalization, stable IDs, repository declarations, bounded component
+contexts, optional evidence-constrained finding references, catalogue
+rendering, QA, query, and SARIF propagation are wired atomically. Static and
+offline tests prove unchanged dispatch membership, zero boundary-only
+incremental STRIDE dispatches, and no second analyzer context-read turn.
+
+The rollout is not approved by this note. The required neutral-fixture and
+self-model before/after agent replays, manual reference review, and measured
+API-equivalent cost comparison have not been run in this implementation
+workspace. Per the gate below, an inconclusive cost result is not a pass.
 
 **Supersedes:** the implementation sequence in
 `analysis-trust-boundary-first-class-2026-07-21.md` where that sequence assumes

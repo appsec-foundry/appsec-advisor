@@ -1,0 +1,699 @@
+#!/usr/bin/env python3
+"""Normalize trust boundaries and prepare bounded per-component STRIDE context.
+
+``normalize`` is the sole semantic bridge from provisional/legacy Phase-7 data
+and optional repository declarations to the strict v2 sidecar.
+``contexts`` derives adjacency candidates only for components that the existing
+STRIDE selector already chose; it never expands the dispatch set.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import sys
+from collections import Counter, defaultdict
+from copy import deepcopy
+from pathlib import Path
+from typing import Any, Iterable
+
+import jsonschema
+import yaml
+from _atomic_io import atomic_write_json
+from reserve_ids import ensure_counter_at_least, reserve
+from sanitize_perimeter_claims import sanitize_perimeter_prose
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+NORMALIZED_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "trust-boundaries.schema.json"
+REPO_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundaries-repo.schema.yaml"
+KINDS = {"network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"}
+LEGACY_FIELDS = {"controls", "description", "enforcement", "crossing_enforcement", "trust_level", "weakness"}
+NEUTRAL_LEGACY_ASSUMPTION = "Assumption not recorded in legacy model"
+MAX_BOUNDARY_ID = 999_999_999
+_ID_RE = re.compile(r"^tb-(\d+)$")
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _read_json(path: Path | None, default: Any = None) -> Any:
+    if path is None or not path.is_file():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _read_yaml(path: Path | None, default: Any = None) -> Any:
+    if path is None or not path.is_file():
+        return default
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return default
+
+
+def _warn(message: str, warnings: list[str]) -> None:
+    warnings.append(message)
+    print(f"TRUST_BOUNDARY_WARN: {message}", file=sys.stderr)
+
+
+def _clean_text(value: Any, *, fallback: str, limit: int) -> str:
+    text = _CONTROL_RE.sub("", str(value or "")).strip()
+    text, _removed = sanitize_perimeter_prose(text)
+    text = " ".join(text.split())
+    return (text or fallback)[:limit]
+
+
+def _endpoint(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = _CONTROL_RE.sub("", value).strip()
+    if not value or len(value) > 128:
+        return None
+    return value
+
+
+def _canonical_evidence(repo_root: Path, values: Any, warnings: list[str], label: str) -> list[dict]:
+    result: list[dict] = []
+    seen: set[tuple[str, int | None]] = set()
+    root = repo_root.resolve()
+    for raw in values if isinstance(values, list) else []:
+        if not isinstance(raw, dict) or not isinstance(raw.get("file"), str):
+            _warn(f"{label}: ignored malformed evidence entry", warnings)
+            continue
+        rel_text = raw["file"].replace("\\", "/").strip()
+        rel = Path(rel_text)
+        if not rel_text or len(rel_text) > 512 or rel.is_absolute() or ".." in rel.parts or "://" in rel_text:
+            _warn(f"{label}: rejected unsafe evidence path {rel_text!r}", warnings)
+            continue
+        candidate = (root / rel).resolve()
+        try:
+            canonical_rel = candidate.relative_to(root).as_posix()
+        except ValueError:
+            _warn(f"{label}: rejected out-of-repository evidence path {rel_text!r}", warnings)
+            continue
+        if not candidate.is_file():
+            _warn(f"{label}: rejected missing/non-regular evidence file {canonical_rel!r}", warnings)
+            continue
+        line = raw.get("line")
+        if line is not None:
+            if not isinstance(line, int) or isinstance(line, bool) or line < 1:
+                _warn(f"{label}: rejected invalid evidence line for {canonical_rel!r}", warnings)
+                continue
+            try:
+                line_count = sum(1 for _ in candidate.open("r", encoding="utf-8", errors="ignore"))
+            except OSError:
+                continue
+            if line > max(line_count, 1):
+                _warn(f"{label}: rejected out-of-range line {line} for {canonical_rel!r}", warnings)
+                continue
+        key = (canonical_rel, line)
+        if key in seen:
+            continue
+        seen.add(key)
+        item = {"file": canonical_rel}
+        if line is not None:
+            item["line"] = line
+        result.append(item)
+        if len(result) == 5:
+            break
+    return result
+
+
+def _component_ids(sidecar: dict | None, prior: dict | None) -> set[str]:
+    rows = (sidecar or {}).get("components")
+    if not isinstance(rows, list):
+        rows = (prior or {}).get("components") or []
+    return {str(row["id"]) for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]}
+
+
+def _normalize_row(
+    raw: Any,
+    *,
+    repo_root: Path,
+    known_components: set[str],
+    legacy_input: bool,
+    warnings: list[str],
+    source: str,
+) -> dict | None:
+    if not isinstance(raw, dict):
+        _warn("ignored non-object boundary row", warnings)
+        return None
+    name = _clean_text(raw.get("name"), fallback="Unnamed trust boundary", limit=100)
+    label = str(raw.get("id") or raw.get("key") or name)
+    from_ep, to_ep = _endpoint(raw.get("from")), _endpoint(raw.get("to"))
+    kind = raw.get("kind") if raw.get("kind") in KINDS else "network"
+    assumption_raw = raw.get("assumption")
+    is_legacy = legacy_input or bool(LEGACY_FIELDS.intersection(raw))
+    assumption = _clean_text(
+        assumption_raw,
+        fallback=NEUTRAL_LEGACY_ASSUMPTION if is_legacy else "Trust assumption requires review",
+        limit=240,
+    )
+    evidence = _canonical_evidence(repo_root, raw.get("evidence"), warnings, label)
+    sources = raw.get("sources") if isinstance(raw.get("sources"), list) else []
+    sources = [s for s in sources if s in {"detected", "repo-declared", "legacy"}]
+    required_source = "legacy" if is_legacy else source
+    if required_source not in sources:
+        sources.append(required_source)
+    confidence = raw.get("confidence") if raw.get("confidence") in {"confirmed", "inferred", "unknown"} else "inferred"
+    if is_legacy and not assumption_raw:
+        confidence = "unknown"
+    elif source == "repo-declared" and "detected" not in sources:
+        confidence = "inferred"
+    elif confidence == "confirmed" and (not evidence or "detected" not in sources):
+        confidence = "inferred"
+    valid_from = from_ep == "external" or from_ep in known_components
+    valid_to = to_ep == "external" or to_ep in known_components
+    resolution = "resolved" if valid_from and valid_to else "unresolved"
+    if resolution == "unresolved":
+        _warn(f"{label}: unresolved endpoint(s) from={from_ep!r} to={to_ep!r}", warnings)
+    if LEGACY_FIELDS.intersection(raw):
+        _warn(f"{label}: discarded legacy fields {sorted(LEGACY_FIELDS.intersection(raw))}", warnings)
+    row: dict[str, Any] = {
+        "name": name,
+        "kind": kind,
+        "assumption": assumption,
+        "evidence": evidence,
+        "confidence": confidence,
+        "resolution_status": resolution,
+        "sources": list(dict.fromkeys(sources)),
+    }
+    if from_ep:
+        row["from"] = from_ep
+    if to_ep:
+        row["to"] = to_ep
+    key = raw.get("declaration_key") or (raw.get("key") if source == "repo-declared" else None)
+    if isinstance(key, str) and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", key) and len(key) <= 80:
+        row["declaration_key"] = key
+    authored_id = raw.get("id")
+    if isinstance(authored_id, str) and _ID_RE.fullmatch(authored_id):
+        row["_authored_id"] = authored_id
+    # A prior normalized sidecar is a trusted cached artifact, not fresh LLM
+    # authorship. This marker enables idempotent re-normalization.
+    if (
+        not legacy_input
+        and raw.get("resolution_status") in {"resolved", "unresolved", "conflicted"}
+        and isinstance(authored_id, str)
+    ):
+        row["_normalized_id"] = authored_id
+    return row
+
+
+def _load_declarations(
+    repo_root: Path, known_components: set[str], warnings: list[str]
+) -> tuple[list[dict], str | None]:
+    path = repo_root / ".appsec" / "trust-boundaries.yaml"
+    if not path.is_file():
+        return [], None
+    try:
+        raw_bytes = path.read_bytes()
+    except OSError as exc:
+        _warn(f"rejected complete repository declaration input {path}: {exc}", warnings)
+        return [], None
+    fingerprint = "sha256:" + hashlib.sha256(raw_bytes).hexdigest()
+    try:
+        data = yaml.safe_load(raw_bytes) or {}
+        schema = yaml.safe_load(REPO_SCHEMA.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator(schema).validate(data)
+        keys = [row.get("key") for row in data.get("boundaries", []) if isinstance(row, dict)]
+        if len(keys) != len(set(keys)):
+            raise jsonschema.ValidationError("boundaries[].key values must be unique")
+    except (OSError, yaml.YAMLError, jsonschema.ValidationError) as exc:
+        _warn(f"rejected complete repository declaration input {path}: {exc}", warnings)
+        return [], fingerprint
+    rows = [
+        row
+        for raw in data.get("boundaries", [])
+        if (
+            row := _normalize_row(
+                raw,
+                repo_root=repo_root,
+                known_components=known_components,
+                legacy_input=False,
+                warnings=warnings,
+                source="repo-declared",
+            )
+        )
+    ]
+    return rows, fingerprint
+
+
+def _merge_evidence(left: list[dict], right: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for item in [*left, *right]:
+        key = (item.get("file"), item.get("line"))
+        if key not in seen:
+            seen.add(key)
+            out.append(item)
+    return out[:5]
+
+
+def _merge_declarations(
+    detected: list[dict],
+    declared: list[dict],
+    prior_rows: list[dict],
+    warnings: list[str],
+) -> list[dict]:
+    rows = deepcopy(detected)
+    for declaration in declared:
+        key = declaration.get("declaration_key")
+        keyed = [r for r in rows if r.get("declaration_key") == key] if key else []
+        if key and not keyed:
+            prior_keyed = [row for row in prior_rows if isinstance(row, dict) and row.get("declaration_key") == key]
+            if len(prior_keyed) == 1:
+                prior = prior_keyed[0]
+                prior_exact = [
+                    row
+                    for row in rows
+                    if (row.get("from"), row.get("to"), row.get("name", "").casefold())
+                    == (prior.get("from"), prior.get("to"), str(prior.get("name", "")).casefold())
+                ]
+                prior_endpoint = [
+                    row for row in rows if (row.get("from"), row.get("to")) == (prior.get("from"), prior.get("to"))
+                ]
+                inherited = (
+                    prior_exact[0] if len(prior_exact) == 1 else prior_endpoint[0] if len(prior_endpoint) == 1 else None
+                )
+                if inherited is not None:
+                    inherited["declaration_key"] = key
+                    keyed = [inherited]
+        exact_name = [
+            r
+            for r in rows
+            if (r.get("from"), r.get("to"), r.get("name").casefold())
+            == (declaration.get("from"), declaration.get("to"), declaration.get("name").casefold())
+        ]
+        endpoint = [r for r in rows if (r.get("from"), r.get("to")) == (declaration.get("from"), declaration.get("to"))]
+        target = (
+            keyed[0]
+            if len(keyed) == 1
+            else exact_name[0]
+            if len(exact_name) == 1
+            else endpoint[0]
+            if len(endpoint) == 1
+            else None
+        )
+        if (
+            keyed
+            and target
+            and (target.get("from"), target.get("to")) != (declaration.get("from"), declaration.get("to"))
+        ):
+            target["resolution_status"] = "conflicted"
+            target["sources"] = list(dict.fromkeys([*target["sources"], "repo-declared"]))
+            declaration["resolution_status"] = "conflicted"
+            _warn(f"declaration {key!r} conflicts with detected/prior endpoints; retained both rows", warnings)
+            rows.append(declaration)
+            continue
+        if target is None:
+            rows.append(declaration)
+            continue
+        target["name"] = declaration["name"]
+        target["kind"] = declaration["kind"]
+        target["assumption"] = declaration["assumption"]
+        target["evidence"] = _merge_evidence(target["evidence"], declaration["evidence"])
+        target["sources"] = list(dict.fromkeys([*target["sources"], "repo-declared"]))
+        target["declaration_key"] = key
+        # Declaration prose/evidence cannot self-confirm. Existing independently
+        # detected confirmation may survive.
+        if "detected" not in target["sources"]:
+            target["confidence"] = "inferred"
+    return rows
+
+
+def _compatible(left: dict, right: dict) -> bool:
+    for field in ("from", "to"):
+        if left.get(field) and right.get(field) and left.get(field) != right.get(field):
+            return False
+    return True
+
+
+def _numeric_id(value: Any) -> int:
+    match = _ID_RE.fullmatch(str(value or ""))
+    return int(match.group(1)) if match else 0
+
+
+def _assign_ids(rows: list[dict], prior_rows: list[dict], output_dir: Path, warnings: list[str]) -> None:
+    trusted_prior = [r for r in prior_rows if isinstance(r, dict) and _ID_RE.fullmatch(str(r.get("id") or ""))]
+    max_prior = max((_numeric_id(r.get("id")) for r in trusted_prior), default=0)
+    ensure_counter_at_least(output_dir, "trust_boundary", max_prior + 1)
+    prior_by_id = {r["id"]: r for r in trusted_prior}
+    prior_by_key: dict[str, list[dict]] = defaultdict(list)
+    prior_by_exact: dict[tuple, list[dict]] = defaultdict(list)
+    prior_by_endpoint: dict[tuple, list[dict]] = defaultdict(list)
+    for prior in trusted_prior:
+        if prior.get("declaration_key"):
+            prior_by_key[prior["declaration_key"]].append(prior)
+        prior_by_exact[(prior.get("from"), prior.get("to"), str(prior.get("name", "")).casefold())].append(prior)
+        prior_by_endpoint[(prior.get("from"), prior.get("to"))].append(prior)
+    current_endpoint_counts = Counter((r.get("from"), r.get("to")) for r in rows)
+    used: set[str] = set()
+    for row in rows:
+        candidates: list[dict] = []
+        key = row.get("declaration_key")
+        if key and len(prior_by_key[key]) == 1:
+            candidates = prior_by_key[key]
+        authored = row.pop("_authored_id", None)
+        normalized = row.pop("_normalized_id", None)
+        if not candidates and authored in prior_by_id and _compatible(row, prior_by_id[authored]):
+            candidates = [prior_by_id[authored]]
+        if not candidates:
+            candidates = prior_by_exact[(row.get("from"), row.get("to"), str(row.get("name", "")).casefold())]
+        if not candidates:
+            endpoint_key = (row.get("from"), row.get("to"))
+            prior_endpoint = prior_by_endpoint[endpoint_key]
+            if len(prior_endpoint) == 1 and current_endpoint_counts[endpoint_key] == 1:
+                candidates = prior_endpoint
+        chosen = next((p for p in candidates if p["id"] not in used and _compatible(row, p)), None)
+        if chosen:
+            row["id"] = chosen["id"]
+            used.add(chosen["id"])
+            continue
+        # Idempotence for an already normalized cached sidecar when no separate
+        # prior YAML is available. It is accepted only if unique and advances
+        # the shared counter; fresh LLM rows lack the deterministic marker.
+        if normalized and _ID_RE.fullmatch(normalized) and normalized not in used:
+            row["id"] = normalized
+            used.add(normalized)
+            ensure_counter_at_least(output_dir, "trust_boundary", _numeric_id(normalized) + 1)
+            continue
+        if candidates:
+            _warn(f"ambiguous prior identity for {row.get('name')!r}; allocated a new ID", warnings)
+        new_id = reserve(output_dir, "trust_boundary", 1)[0]
+        row["id"] = new_id
+        used.add(new_id)
+
+
+def _prior_boundaries(prior_model: Path | None) -> tuple[dict | None, list[dict]]:
+    prior = _read_yaml(prior_model, {}) if prior_model else {}
+    if not isinstance(prior, dict):
+        return None, []
+    rows = prior.get("trust_boundaries")
+    return prior, rows if isinstance(rows, list) else []
+
+
+def _write_declaration_fingerprint(output_dir: Path, fingerprint: str | None) -> None:
+    cache = output_dir / ".appsec-cache" / "baseline.json"
+    state = _read_json(cache, {}) or {}
+    if fingerprint is None:
+        state.pop("trust_boundary_declaration_fingerprint", None)
+    else:
+        state["trust_boundary_declaration_fingerprint"] = fingerprint
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(cache, state)
+
+
+def normalize(
+    *,
+    repo_root: Path,
+    sidecar: Path,
+    prior_model: Path | None,
+    output_dir: Path,
+) -> tuple[dict, list[str]]:
+    repo_root, output_dir = repo_root.resolve(), output_dir.resolve()
+    raw = _read_json(sidecar, None)
+    if not isinstance(raw, dict) or not isinstance(raw.get("trust_boundaries"), list):
+        raise ValueError(f"sidecar is missing or malformed: {sidecar}")
+    prior, prior_rows = _prior_boundaries(prior_model)
+    components_data = _read_json(output_dir / ".components.json", {})
+    known_components = _component_ids(components_data, prior)
+    warnings: list[str] = []
+    legacy = raw.get("schema_version") != 2
+    detected = [
+        row
+        for item in raw["trust_boundaries"]
+        if (
+            row := _normalize_row(
+                item,
+                repo_root=repo_root,
+                known_components=known_components,
+                legacy_input=legacy,
+                warnings=warnings,
+                source="detected",
+            )
+        )
+    ]
+    declarations, fingerprint = _load_declarations(repo_root, known_components, warnings)
+    merged = _merge_declarations(detected, declarations, prior_rows, warnings)
+    _assign_ids(merged, prior_rows, output_dir, warnings)
+    if len({row["id"] for row in merged}) != len(merged):
+        raise ValueError("normalization produced duplicate trust-boundary IDs")
+    merged.sort(key=lambda row: _numeric_id(row["id"]))
+    result = {"schema_version": 2, "trust_boundaries": merged}
+    schema = json.loads(NORMALIZED_SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(result)
+    atomic_write_json(sidecar, result, sort_keys=False)
+    _write_declaration_fingerprint(output_dir, fingerprint)
+    return result, warnings
+
+
+def _component_map(output_dir: Path) -> dict[str, dict]:
+    data = _read_json(output_dir / ".components.json", {}) or {}
+    return {
+        row["id"]: row for row in data.get("components", []) if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+
+
+def _prior_boundary_refs(output_dir: Path) -> set[tuple[str, str]]:
+    model = _read_yaml(output_dir / "threat-model.yaml", {}) or {}
+    result: set[tuple[str, str]] = set()
+    for finding in model.get("threats", []) if isinstance(model, dict) else []:
+        if not isinstance(finding, dict):
+            continue
+        for ref in finding.get("boundary_refs", []) or []:
+            if isinstance(ref, dict) and ref.get("boundary_id") and ref.get("origin_component_id"):
+                result.add((ref["boundary_id"], ref["origin_component_id"]))
+    return result
+
+
+def _focus(boundary: dict, component: dict, prior_refs: set[tuple[str, str]]) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    cid = component.get("id")
+    if boundary.get("confidence") == "unknown" or boundary.get("assumption") == NEUTRAL_LEGACY_ASSUMPTION:
+        return "catalog-only", ["unknown legacy assumption or confidence"]
+    if (boundary["id"], cid) in prior_refs:
+        reasons.append("prior verified boundary reference")
+    if boundary.get("from") == "external":
+        reasons.append("explicit external entry")
+    if boundary.get("kind") in {"identity", "privilege", "tenant"}:
+        reasons.append(f"{boundary['kind']} transition")
+    if boundary.get("kind") in {"third-party", "build"}:
+        reasons.append(f"{boundary['kind']} crossing")
+    if reasons:
+        return "primary", reasons
+    if boundary.get("kind") == "data-origin":
+        reasons.append("data-origin transition")
+    if component.get("handles_sensitive_data"):
+        reasons.append("crossing into sensitive-data component")
+    if reasons:
+        return "secondary", reasons
+    return "catalog-only", ["ordinary crossing without prioritized trust-change signal"]
+
+
+def prepare_contexts(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    component_ids: Iterable[str],
+    depth: str,
+) -> dict:
+    from resolve_config import BOUNDARY_CANDIDATE_LIMITS
+
+    if depth not in BOUNDARY_CANDIDATE_LIMITS:
+        raise ValueError(f"unknown assessment depth: {depth}")
+    sidecar = _read_json(output_dir / ".trust-boundaries.json", {}) or {}
+    schema = json.loads(NORMALIZED_SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(sidecar)
+    components = _component_map(output_dir)
+    prior_refs = _prior_boundary_refs(output_dir)
+    selected_component_ids = list(dict.fromkeys(str(x) for x in component_ids if x))
+    context_root = output_dir / ".dispatch-context"
+    context_root.mkdir(parents=True, exist_ok=True)
+    audit: dict[str, Any] = {
+        "schema_version": 1,
+        "depth": depth,
+        "max_candidates_per_component": BOUNDARY_CANDIDATE_LIMITS[depth],
+        "components": {},
+    }
+    for cid in selected_component_ids:
+        context_path = context_root / cid / "trust-boundaries.json"
+        try:
+            context_path.unlink()
+        except FileNotFoundError:
+            pass
+        component = components.get(cid)
+        if component is None:
+            audit["components"][cid] = {
+                "eligible_ids": [],
+                "selected_ids": [],
+                "omitted_ids": [],
+                "deferred_ids": [],
+                "reason": "selected STRIDE component absent from reconciled inventory",
+            }
+            continue
+        candidates: list[tuple[tuple, dict, str, list[str]]] = []
+        deferred: list[str] = []
+        for boundary in sidecar.get("trust_boundaries", []):
+            if boundary.get("resolution_status") != "resolved":
+                deferred.append(boundary["id"])
+                continue
+            if cid not in {boundary.get("from"), boundary.get("to")}:
+                continue
+            focus, reasons = _focus(boundary, component, prior_refs)
+            if focus == "catalog-only" or (depth == "quick" and focus != "primary"):
+                deferred.append(boundary["id"])
+                continue
+            rank = (
+                0 if (boundary["id"], cid) in prior_refs else 1,
+                0 if boundary.get("from") == "external" else 1,
+                0 if boundary.get("kind") in {"identity", "privilege", "tenant"} else 1,
+                0 if boundary.get("kind") == "data-origin" and component.get("handles_sensitive_data") else 1,
+                0 if boundary.get("kind") in {"third-party", "build"} else 1,
+                {"confirmed": 0, "inferred": 1, "unknown": 2}.get(boundary.get("confidence"), 2),
+                _numeric_id(boundary["id"]),
+            )
+            candidates.append((rank, boundary, focus, reasons))
+        candidates.sort(key=lambda item: item[0])
+        limit = BOUNDARY_CANDIDATE_LIMITS[depth]
+        chosen, omitted = candidates[:limit], candidates[limit:]
+        context_rows = [
+            {
+                key: deepcopy(boundary[key])
+                for key in ("id", "name", "from", "to", "kind", "assumption", "evidence", "confidence")
+                if key in boundary
+            }
+            | {"focus": focus, "focus_reasons": reasons}
+            for _rank, boundary, focus, reasons in chosen
+        ]
+        if context_rows:
+            component_dir = context_root / cid
+            component_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                context_path,
+                {"schema_version": 1, "adjacent_trust_boundaries": context_rows},
+                sort_keys=False,
+            )
+        audit["components"][cid] = {
+            "eligible_ids": [item[1]["id"] for item in candidates],
+            "selected_ids": [item[1]["id"] for item in chosen],
+            "omitted_ids": [item[1]["id"] for item in omitted],
+            "deferred_ids": sorted(set(deferred), key=_numeric_id),
+            "focus_reasons": {item[1]["id"]: item[3] for item in candidates},
+        }
+    atomic_write_json(context_root / "trust-boundary-selection.json", audit, sort_keys=False)
+    return audit
+
+
+def validate_finding_boundary_refs(
+    finding: dict,
+    *,
+    boundaries: Iterable[dict],
+    origin_component_id: str | None,
+    candidate_ids: set[str] | None,
+    require_candidate: bool,
+) -> tuple[list[dict], list[str]]:
+    """Fail-open validation for optional finding traceability.
+
+    Invalid references are removed while the security finding is retained.
+    ``candidate_ids`` is required only at the fresh analyzer→merge boundary;
+    carried findings are checked against canonical existence, adjacency and
+    surviving evidence instead.
+    """
+    boundary_by_id = {
+        row.get("id"): row for row in boundaries if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    evidence: set[tuple[str, int | None]] = set()
+    primary = finding.get("evidence")
+    primary_rows = primary if isinstance(primary, list) else [primary]
+    for item in [*primary_rows, *(finding.get("instances") or [])]:
+        if isinstance(item, dict) and item.get("file"):
+            evidence.add((str(item["file"]), item.get("line")))
+    cleaned: list[dict] = []
+    diagnostics: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for ref in finding.get("boundary_refs") or []:
+        if not isinstance(ref, dict):
+            diagnostics.append("removed malformed boundary reference")
+            continue
+        boundary_id = ref.get("boundary_id")
+        origin = ref.get("origin_component_id")
+        key = (str(boundary_id or ""), str(origin or ""))
+        boundary = boundary_by_id.get(boundary_id)
+        reason: str | None = None
+        if key in seen:
+            reason = f"removed duplicate reference {boundary_id!r}"
+        elif boundary is None:
+            reason = f"removed unknown boundary reference {boundary_id!r}"
+        elif boundary.get("resolution_status") != "resolved" or boundary.get("confidence") != "confirmed":
+            reason = f"removed non-confirmed/non-resolved boundary reference {boundary_id!r}"
+        elif origin_component_id is not None and origin != origin_component_id:
+            reason = f"removed wrong-origin boundary reference {boundary_id!r}"
+        elif not isinstance(origin, str) or origin not in {boundary.get("from"), boundary.get("to")}:
+            reason = f"removed non-adjacent boundary reference {boundary_id!r}"
+        elif require_candidate and (candidate_ids is None or boundary_id not in candidate_ids):
+            reason = f"removed current-run non-candidate boundary reference {boundary_id!r}"
+        elif not isinstance(ref.get("rationale"), str) or not 20 <= len(ref["rationale"].strip()) <= 240:
+            reason = f"removed invalid-rationale boundary reference {boundary_id!r}"
+        locations = ref.get("evidence_locations")
+        if reason is None and (
+            not isinstance(locations, list)
+            or not locations
+            or len(locations) > 3
+            or any(
+                not isinstance(location, dict) or (location.get("file"), location.get("line")) not in evidence
+                for location in locations
+            )
+        ):
+            reason = f"removed evidence-free/non-owned boundary reference {boundary_id!r}"
+        if reason:
+            diagnostics.append(reason)
+            continue
+        seen.add(key)
+        cleaned.append(deepcopy(ref))
+        if len(cleaned) == 2:
+            break
+    return cleaned, diagnostics
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="operation", required=True)
+    norm = sub.add_parser("normalize")
+    norm.add_argument("--repo-root", type=Path, required=True)
+    norm.add_argument("--sidecar", type=Path, required=True)
+    norm.add_argument("--prior-model", type=Path)
+    norm.add_argument("--output-dir", type=Path, required=True)
+    ctx = sub.add_parser("contexts")
+    ctx.add_argument("--repo-root", type=Path, required=True)
+    ctx.add_argument("--output-dir", type=Path, required=True)
+    ctx.add_argument("--depth", choices=("quick", "standard", "thorough"), required=True)
+    ctx.add_argument("--component", action="append", default=[])
+    args = parser.parse_args(argv)
+    try:
+        if args.operation == "normalize":
+            result, warnings = normalize(
+                repo_root=args.repo_root,
+                sidecar=args.sidecar,
+                prior_model=args.prior_model,
+                output_dir=args.output_dir,
+            )
+            print(json.dumps({"boundaries": len(result["trust_boundaries"]), "warnings": len(warnings)}))
+        else:
+            audit = prepare_contexts(
+                repo_root=args.repo_root,
+                output_dir=args.output_dir,
+                component_ids=args.component,
+                depth=args.depth,
+            )
+            print(json.dumps({"components": len(audit["components"])}))
+    except (OSError, ValueError, jsonschema.ValidationError) as exc:
+        print(f"prepare_trust_boundary_context: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

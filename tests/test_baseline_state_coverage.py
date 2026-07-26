@@ -308,7 +308,7 @@ def test_cmd_validate_missing_keys(tmp_path: Path, capsys):
     rc = bs.cmd_validate(_ns(output_dir=str(tmp_path)))
     assert rc == 2
     err = capsys.readouterr().err
-    assert "schema_version != 1" in err
+    assert "schema_version not migratable to 2" in err
     assert "missing required key" in err
 
 

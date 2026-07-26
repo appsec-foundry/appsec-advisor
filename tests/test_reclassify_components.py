@@ -190,6 +190,51 @@ def test_reclassify_threat_without_evidence_skipped():
     assert changes == []
 
 
+def test_reclassification_reconciles_boundary_origin_and_drops_nonadjacent_ref():
+    evidence = {"file": "routes/memory.ts", "line": 12}
+    data = {
+        "components": [dict(c) for c in _COMPONENTS],
+        "trust_boundaries": [
+            {
+                "id": "tb-1",
+                "from": "external",
+                "to": "file-upload-service",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            },
+            {
+                "id": "tb-2",
+                "from": "external",
+                "to": "express-backend",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            },
+        ],
+        "threats": [
+            {
+                "id": "T-012",
+                "component": "backend-api",
+                "evidence": evidence,
+                "boundary_refs": [
+                    {
+                        "boundary_id": boundary_id,
+                        "origin_component_id": "backend-api",
+                        "rationale": "The verified defect occurs at this public crossing.",
+                        "evidence_locations": [evidence],
+                    }
+                    for boundary_id in ("tb-1", "tb-2")
+                ],
+            }
+        ],
+    }
+    out, changes = rc.reclassify(data)
+    threat = out["threats"][0]
+    assert threat["component"] == "file-upload-service"
+    assert [ref["boundary_id"] for ref in threat["boundary_refs"]] == ["tb-1"]
+    assert threat["boundary_refs"][0]["origin_component_id"] == "file-upload-service"
+    assert changes[0]["boundary_refs"] == threat["boundary_refs"]
+
+
 def test_reclassify_syncs_threat_ids_lists():
     # A PHANTOM (non-registered) current component with a single glob match
     # gets reassigned, and the per-component threat_ids lists are kept in sync.

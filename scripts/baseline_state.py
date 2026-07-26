@@ -22,7 +22,8 @@ On `update`, we:
      the highest T-ID actually in the yaml
   3. sha256 every `.stride-<id>.json` currently in OUTPUT_DIR
 
-Schema version is 1. If you change the schema, bump it and add a migration
+Schema version is 2. Version-1 state is migrated in place without discarding
+known counters. If you change the schema, bump it and add a migration
 path — existing runs must continue to work.
 """
 
@@ -57,7 +58,7 @@ from _atomic_io import atomic_write_json
 from stride_outputs import component_id as stride_component_id
 from stride_outputs import stride_output_files
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Files that make up the recon fingerprint. Conservative list — if you add a
 # new kind of security-relevant input file, add it here AND invalidate caches
@@ -192,6 +193,7 @@ def _compute_recon_fingerprint(repo_root: Path, exclude_rel_prefix: str | None =
 
 _T_ID_RE = re.compile(r"T-(\d+)")
 _M_ID_RE = re.compile(r"M-(\d+)")
+_TB_ID_RE = re.compile(r"tb-(\d+)")
 
 
 def _scan_max_id(yaml_text: str, pattern: re.Pattern[str]) -> int:
@@ -269,6 +271,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     yaml_text = yaml_path.read_text(encoding="utf-8") if yaml_path.is_file() else ""
     max_t = _scan_max_id(yaml_text, _T_ID_RE)
     max_m = _scan_max_id(yaml_text, _M_ID_RE)
+    max_tb = _scan_max_id(yaml_text, _TB_ID_RE)
 
     def _parse_counter(raw, fallback: int = 1) -> int:
         """Parse a counter value that may be int, 'T-025' / 'M-025' string, or missing."""
@@ -288,6 +291,10 @@ def cmd_update(args: argparse.Namespace) -> int:
 
     next_threat_id = max(max_t + 1, _parse_counter(prev_counters.get("next_threat_id"), 1))
     next_mitigation_id = max(max_m + 1, _parse_counter(prev_counters.get("next_mitigation_id"), 1))
+    next_trust_boundary_id = max(
+        max_tb + 1,
+        _parse_counter(prev_counters.get("next_trust_boundary_id"), 1),
+    )
 
     # Use pre-computed hashes if passed via --manifest-hashes to skip rglob.
     # When computing fresh, exclude OUTPUT_DIR so the plugin's own writes
@@ -332,6 +339,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         "id_counters": {
             "next_threat_id": next_threat_id,
             "next_mitigation_id": next_mitigation_id,
+            "next_trust_boundary_id": next_trust_boundary_id,
         },
         "stride_files": stride_files,
         "slice_files": slice_files,
@@ -356,6 +364,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         "component_durations",
         "component_durations_recorded_at",
         "component_durations_phase_9_start",
+        "trust_boundary_declaration_fingerprint",
     ):
         if _carry in existing and _carry not in state:
             state[_carry] = existing[_carry]
@@ -397,7 +406,8 @@ def cmd_update(args: argparse.Namespace) -> int:
         f"iac={len(fingerprint['iac'])}, "
         f"stride={len(stride_files)}, "
         f"slice={len(slice_files)}, "
-        f"next_T={next_threat_id}, next_M={next_mitigation_id})"
+        f"next_T={next_threat_id}, next_M={next_mitigation_id}, "
+        f"next_tb={next_trust_boundary_id})"
     )
     return 0
 
@@ -424,8 +434,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     errors: list[str] = []
     warnings: list[str] = []
-    if data.get("schema_version") != SCHEMA_VERSION:
-        errors.append(f"schema_version != {SCHEMA_VERSION}: got {data.get('schema_version')}")
+    if data.get("schema_version") not in (1, SCHEMA_VERSION):
+        errors.append(f"schema_version not migratable to {SCHEMA_VERSION}: got {data.get('schema_version')}")
     for key in ("recon_fingerprint", "id_counters", "stride_files"):
         if key not in data:
             errors.append(f"missing required key: {key}")
@@ -452,6 +462,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
     for sub in ("next_threat_id", "next_mitigation_id"):
         if sub not in counters:
             errors.append(f"id_counters.{sub} missing")
+    if data.get("schema_version") == SCHEMA_VERSION and "next_trust_boundary_id" not in counters:
+        errors.append("id_counters.next_trust_boundary_id missing")
 
     if errors:
         for e in errors:
@@ -1075,14 +1087,27 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     # Recon fingerprint
 
     fingerprint_match = False
+    baseline_data: dict = {}
     if cache_path.is_file():
         try:
-            data = json.loads(cache_path.read_text(encoding="utf-8"))
-            cached_fp = data.get("recon_fingerprint", {})
+            baseline_data = json.loads(cache_path.read_text(encoding="utf-8"))
+            cached_fp = baseline_data.get("recon_fingerprint", {})
             current_fp = _compute_recon_fingerprint(repo_root, exclude_rel_prefix=output_dir_rel)
             fingerprint_match = cached_fp == current_fp
         except (OSError, json.JSONDecodeError):
             fingerprint_match = False
+
+    declaration_path = repo_root / ".appsec" / "trust-boundaries.yaml"
+    try:
+        declaration_fingerprint = (
+            "sha256:" + hashlib.sha256(declaration_path.read_bytes()).hexdigest()
+            if declaration_path.is_file()
+            else None
+        )
+    except OSError:
+        declaration_fingerprint = None
+    cached_declaration_fingerprint = baseline_data.get("trust_boundary_declaration_fingerprint")
+    boundary_declaration_changed = declaration_fingerprint != cached_declaration_fingerprint
 
     # Plugin-version drift
     version_tier = "unknown"
@@ -1095,7 +1120,12 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
 
     has_committed_changes = bool(committed)
     has_working_changes = bool(working)
-    no_source_changes = (not has_committed_changes) and (not has_working_changes) and fingerprint_match
+    no_source_changes = (
+        (not has_committed_changes)
+        and (not has_working_changes)
+        and fingerprint_match
+        and not boundary_declaration_changed
+    )
 
     # Security-relevance filter — only runs when there are raw file changes.
     all_changed = list(dict.fromkeys(committed + working))  # dedup, preserve order
@@ -1106,6 +1136,11 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
         security_relevant, noise_only, relevance_reasons = _classify_changed_files_relevance(
             repo_root, baseline_sha, all_changed
         )
+    declaration_rel = ".appsec/trust-boundaries.yaml"
+    if boundary_declaration_changed and declaration_rel not in security_relevant:
+        security_relevant.append(declaration_rel)
+        noise_only = [path for path in noise_only if path != declaration_rel]
+        relevance_reasons[declaration_rel] = ["trust_boundary_declaration_fingerprint"]
 
     # Among the security-relevant changes, flag the high-blast-radius ones:
     # security primitives (auth/crypto/session/validation), trust-boundary & I/O
@@ -1149,6 +1184,11 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
         "security_critical_change_count": len(security_critical),
         "noise_only_changes": noise_only[:50],
         "fingerprint_match": fingerprint_match,
+        "trust_boundary_declaration_changed": boundary_declaration_changed,
+        "trust_boundary_declaration_fingerprint": {
+            "baseline": cached_declaration_fingerprint,
+            "current": declaration_fingerprint,
+        },
         "plugin_version": {
             "baseline": baseline_plugin_version,
             "current": current_plugin_version,
@@ -1340,7 +1380,11 @@ def cmd_dirty_set(args: argparse.Namespace) -> int:
             unmapped.append(f)
 
     # Decision
-    if dirty:
+    boundary_declaration_only = bool(files) and set(files) == {".appsec/trust-boundaries.yaml"}
+    if boundary_declaration_only:
+        decision = "boundary_recompose"
+        exit_code = 0
+    elif dirty:
         decision = "dirty"
         exit_code = 0
     else:
@@ -1365,6 +1409,7 @@ def cmd_dirty_set(args: argparse.Namespace) -> int:
         "unmapped_files": unmapped,
         "all_components_known": [c["id"] for c in components],
         "input_file_count": len(files),
+        "recompose_only": boundary_declaration_only,
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return exit_code

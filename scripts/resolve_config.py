@@ -246,6 +246,11 @@ DEPTH_PARAMS = {
                  "diagrams": "extended", "qa": "extended", "qa_label": "extended",
                  "max_repair_iterations": 3},
 }
+
+# Optional trust-boundary context is capped independently from the STRIDE turn
+# budgets above.  The context preparer imports this constant; neither depth
+# parameters nor the dispatch builder's fallback should duplicate it.
+BOUNDARY_CANDIDATE_LIMITS = {"quick": 2, "standard": 4, "thorough": 6}
 # ``max_repair_iterations`` — the hard cap on the Stage-3 QA / Stage-4 architect
 # Re-Render Loop. At quick/standard the loop is a SINGLE quick-fix pass (one
 # repair attempt, then fail-closed `exit 2` if the contract still does not hold —
@@ -361,6 +366,7 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
     return {
         "assessment_depth":      depth,
         "max_stride_components": STRIDE_COMPONENT_CEILING,
+        "max_boundary_candidates_per_component": BOUNDARY_CANDIDATE_LIMITS[depth],
         "stride_turns_simple":   params["simple"],
         "stride_turns_moderate": params["moderate"],
         "stride_turns_complex":  params["complex"],
@@ -2675,6 +2681,17 @@ def _run_plan_verdict(
                 "pipeline":  "SKIPPED (no agents will run)",
                 "reason":    "all relevant files are top-level globals — no component glob matches",
                 "will_run":  False,
+            }
+        if ds_decision == "boundary_recompose":
+            steps = ["normalize boundaries", "carry findings", "render"]
+            if not cfg.get("skip_qa"):
+                steps.append("QA")
+            return {
+                "verdict": "RUN — trust-boundary catalogue changed",
+                "mode_line": "incremental — deterministic recomposition",
+                "pipeline": " -> ".join(steps),
+                "reason": "repository boundary declaration changed; zero STRIDE dispatches",
+                "will_run": True,
             }
         if ds_decision == "ambiguous_potential_new_component":
             return {

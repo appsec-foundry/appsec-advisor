@@ -1308,7 +1308,8 @@ class TestBaselineState:
         cache = output_dir / ".appsec-cache" / "baseline.json"
         assert cache.is_file()
         data = json.loads(cache.read_text())
-        assert data["schema_version"] == 1
+        assert data["schema_version"] == 2
+        assert data["id_counters"]["next_trust_boundary_id"] == 1
         # next_threat_id must be past highest T-ID in yaml (T-007 → next = 8)
         assert data["id_counters"]["next_threat_id"] == 8
         # next_mitigation_id past M-003 → 4
@@ -1884,6 +1885,47 @@ class TestCheckChanges:
         assert data["security_critical_change_count"] >= 1
         assert any("login.py" in p for p in data["security_critical_changes"])
 
+    def test_boundary_declaration_fingerprint_forces_recomposition(self, repo_with_baseline):
+        repo, outdir, _ = repo_with_baseline
+        declaration = repo / ".appsec" / "trust-boundaries.yaml"
+        declaration.parent.mkdir()
+        declaration.write_text(
+            "boundaries:\n"
+            "  - key: public-api\n"
+            "    name: Public API\n"
+            "    from: external\n"
+            "    to: api\n"
+            "    kind: network\n"
+            "    assumption: Requests are authenticated before protected operations.\n"
+        )
+        import hashlib
+
+        baseline_path = outdir / ".appsec-cache" / "baseline.json"
+        baseline = json.loads(baseline_path.read_text())
+        baseline["trust_boundary_declaration_fingerprint"] = (
+            "sha256:" + hashlib.sha256(declaration.read_bytes()).hexdigest()
+        )
+        baseline["working_tree_snapshot"][".appsec/trust-boundaries.yaml"] = (
+            "sha256:" + hashlib.sha256(declaration.read_bytes()).hexdigest()
+        )
+        baseline_path.write_text(json.dumps(baseline))
+
+        declaration.write_text(declaration.read_text().replace("Public API", "Public HTTPS API"))
+        r = _run_baseline(
+            [
+                "check-changes",
+                "--output-dir",
+                str(outdir),
+                "--repo-root",
+                str(repo),
+            ]
+        )
+        assert r.returncode == 1, r.stdout + r.stderr
+        data = json.loads(r.stdout)
+        assert data["status"] == "changed"
+        assert data["trust_boundary_declaration_changed"] is True
+        assert ".appsec/trust-boundaries.yaml" in data["security_relevant_changes"]
+
     def test_no_baseline_exits_three(self, tmp_path):
         repo = tmp_path / "empty"
         repo.mkdir()
@@ -2094,9 +2136,10 @@ class TestCheckChanges:
 
 class TestDirtySet:
     """Component-mapping pre-check that decides whether Stage 1 needs to
-    spawn at all. Three exit codes:
+    spawn at all. Four decisions:
 
       0 — at least one component is dirty (proceed to Stage 1)
+      0 — a boundary declaration changed (deterministic recomposition only)
       2 — only top-level global manifests are dirty (skip Stage 1+2+3)
       3 — unmapped non-global files (potential new component — proceed
           conservatively to Stage 1)
@@ -2189,6 +2232,23 @@ class TestDirtySet:
         )
         data = json.loads(r.stdout)
         assert data["decision"] == "ambiguous_potential_new_component"
+
+    def test_boundary_declaration_recomposes_without_dirty_component(self, output_with_components):
+        r = _run_baseline(
+            [
+                "dirty-set",
+                "--output-dir",
+                str(output_with_components),
+                "--no-stdin",
+                "--files",
+                ".appsec/trust-boundaries.yaml",
+            ]
+        )
+        assert r.returncode == 0, r.stdout
+        data = json.loads(r.stdout)
+        assert data["decision"] == "boundary_recompose"
+        assert data["dirty_component_ids"] == []
+        assert data["recompose_only"] is True
 
     def test_mixed_dirty_and_unmapped_proceeds(self, output_with_components):
         """A mixed input where ≥1 file maps to a component takes the

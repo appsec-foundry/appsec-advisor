@@ -1,6 +1,8 @@
 # Schema Invariants
 
-Detailed schema and pipeline invariants for `threat-model.md` and `threat-model.yaml`. Summarised in `AGENTS.md` Rule 4 — this file is the authoritative source for the §4a–§4f details.
+Detailed schema and pipeline invariants for `threat-model.md` and
+`threat-model.yaml`. Summarised in `AGENTS.md` Rule 4 — this file is the
+authoritative source for the §4a–§4h details.
 
 ## §4a. Cross-reference labelling invariant
 
@@ -98,3 +100,65 @@ while W links to its supporting findings.
 Every W-NNN has a required `title` of at most 80 characters. It is the short,
 reader-facing heading and must not contain CWE IDs, source paths, routes, or
 code snippets; `statement` holds the explanatory detail instead.
+
+## §4h. Trust-boundary catalogue and finding-reference invariant
+
+Trust zones and trust boundaries are different objects. A diagram may draw a
+deployment or trust zone as a subgraph. A canonical trust boundary is one
+crossing between two endpoints. Only a `resolution_status: resolved` row with
+explicit `from` and `to` values may affect adjacency, exposure, analyzer
+context, finding links, or Figure 1. In particular, external exposure requires
+the literal endpoint `from: external`; a missing endpoint never implies
+external access.
+
+The canonical v2 row is strict and contains only `id`, `name`, optional
+endpoints, `kind`, `assumption`, bounded repository-relative `evidence`,
+`confidence`, `resolution_status`, `sources`, and optional
+`declaration_key`. A present v2 `trust_boundaries: []` is valid and
+authoritative. Legacy fields such as `description`, `enforcement`,
+`crossing_enforcement`, `controls`, `trust_level`, and `weakness` are
+normalizer inputs only and never survive into canonical output.
+
+Public `tb-N` IDs are stable project anchors. The deterministic normalizer
+owns allocation through the locked baseline counter. It reuses prior identity
+conservatively, never trusts an unmatched current-input ID to raise the
+high-watermark, never reuses a retired ID during normal full or incremental
+runs, and resets continuity only for `--rebuild`.
+
+Repository declarations in `.appsec/trust-boundaries.yaml` are untrusted,
+data-only, additive input. They cannot disable detected rows, set confidence,
+claim that a control is effective, affect ratings, choose paths or commands,
+or suppress a finding. Declaration-only rows are at most `inferred`.
+Conflicting endpoints become non-semantic `conflicted` rows. A malformed file
+is rejected as a whole without discarding detected boundaries.
+
+`boundary_refs[]` is optional finding traceability, not finding evidence and
+not a consolidation key. Each reference must target a resolved, confirmed
+canonical row, be adjacent to its required `origin_component_id`, repeat only
+evidence locations already owned by the finding, and use a unique
+`(boundary_id, origin_component_id)` pair. At most two references survive.
+Fresh analyzer references must also come from that component's prepared
+candidate file. Invalid optional references are removed at the merge, builder,
+or post-reclassification trust boundary while the finding remains intact.
+Adding or removing a reference cannot change likelihood, impact, risk,
+effective severity, CVSS, mitigation priority, or
+`architectural_violation`.
+
+The field ownership matrix is:
+
+| Contract surface | Producer / owner | Validation | Semantic consumers |
+|---|---|---|---|
+| Provisional Phase-7 rows | `agents/phases/phase-group-architecture.md` | Normalizer input checks | `prepare_trust_boundary_context.py normalize` only |
+| Repository declarations | Repository author | `schemas/trust-boundaries-repo.schema.yaml` plus whole-file rejection | Normalizer merge only |
+| Canonical sidecar and stable IDs | `prepare_trust_boundary_context.py normalize`, `reserve_ids.py`, `baseline_state.py` | `schemas/fragments/trust-boundaries.schema.json` | YAML builder, context selector, cross-repo slicer |
+| Component candidate slices | `prepare_trust_boundary_context.py contexts` after final component selection | Structural cap and canonical-source checks | STRIDE analyzer through a Group-C path |
+| Finding references | STRIDE analyzer; merge/builder/reclassifier preserve or remove | STRIDE/merged/output schemas plus `validate_intermediate.py` post-checks | Composer, query, SARIF |
+| Canonical YAML catalogue | `build_threat_model_yaml.py` | `schemas/threat-model.output.schema.yaml` | Composer, Figure 1, query, SARIF, rerender |
+| Report catalogue and cards | `compose_threat_model.py` | compose/QA anchor and cross-reference tests | Human readers |
+| Runtime and permissions | `runtime_cleanup.py`, `data/required-permissions.yaml` | cleanup and permission tests | `.dispatch-context/**`, sidecars, optional repository input |
+
+Legacy pregenerators may display unresolved rows for compatibility but must not
+mint IDs or feed semantic consumers. Both Figure-1 implementations,
+cross-repository slicing, query, SARIF, post-build component
+reclassification, rerender, cleanup, and permission tests are part of this
+contract and must change atomically when the row shape changes.

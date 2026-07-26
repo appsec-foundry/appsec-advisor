@@ -3,7 +3,7 @@
 
 Hybrid handoff: this script assembles every per-component dispatch parameter
 that IS deterministically derivable from disk (identity, paths, complexity,
-max_turns, the per-component trust-boundary subset, the index/slice paths), and
+max_turns, the per-component context paths), and
 merges the small set of CONTEXTUAL fields that only the analyst can supply
 (interfaces, controls, known_*) from an optional analyst-context JSON. The
 result, ``$OUTPUT_DIR/.stride-dispatch-manifest.json``, is validated by
@@ -95,22 +95,6 @@ def _read_json(path: Path, default):
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return default
-
-
-def _trust_boundaries_for(component_id: str, all_boundaries: list) -> str:
-    """Deterministic per-component trust-boundary summary string."""
-    hits = []
-    for b in all_boundaries:
-        if not isinstance(b, dict):
-            continue
-        touches = (
-            component_id == b.get("from") or component_id == b.get("to") or component_id in (b.get("components") or [])
-        )
-        if touches:
-            name = b.get("name", b.get("id", "boundary"))
-            enf = b.get("crossing_enforcement", "")
-            hits.append(f"{name}: {enf}".strip().rstrip(":").strip())
-    return " | ".join(hits) if hits else "No trust boundary directly tied to this component."
 
 
 # ---------------------------------------------------------------------------
@@ -1285,6 +1269,22 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             sys.stderr.write(f"ACTOR_SLICES: could not build actor slices: {e}\n")
 
     components, selection_report = select_stride_components(all_components, depth, ceiling)
+    # Prepare optional boundary context only for the already-selected STRIDE
+    # set. This is deliberately downstream of inventory reconciliation and the
+    # selector; the helper cannot expand `components`.
+    try:
+        from prepare_trust_boundary_context import prepare_contexts
+
+        prepare_contexts(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            component_ids=[c.get("id") for c in components if isinstance(c, dict)],
+            depth=depth,
+        )
+    except Exception as exc:
+        # Boundary enrichment is best-effort. Core STRIDE dispatch remains
+        # valid with `none`, and must not retry or fail for optional context.
+        sys.stderr.write(f"TRUST_BOUNDARY_CONTEXT_OMITTED: {exc}\n")
     # Resolve the --cheap-stride screening set once, before the selection sidecar
     # is written: a screened component is NOT a fully-analyzed one, so the
     # rationale the report and the console banner are built from has to say so.
@@ -1323,8 +1323,6 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
         (output_dir / ".stride-selection.json").write_text(json.dumps(selection_report, indent=2), encoding="utf-8")
     except OSError:
         pass
-
-    boundaries = (_read_json(output_dir / ".trust-boundaries.json", {}) or {}).get("trust_boundaries", [])
 
     out_components = []
     for c in components:
@@ -1383,7 +1381,6 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                 int(turns.get(complexity, turns.get("moderate", 22))),
                 cheap=cheap_this,
             ),
-            "trust_boundaries": _trust_boundaries_for(cid, boundaries),
             "taxonomy_slice_dir": str(tax) if tax.is_dir() else str(plugin_root / "data"),
             # Carry the selection-criteria inputs through to the manifest so the
             # selection is auditable downstream (and not silently dropped here).
@@ -1395,6 +1392,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                 "cross_repo": _idx(f".dispatch-context/{cid}/cross-repo.json"),
                 "requirements_violations": _idx(f".dispatch-context/{cid}/requirements-violations.json"),
                 "relevant_actors": _idx(f".actors-for-{cid}.json"),
+                "trust_boundaries": _idx(f".dispatch-context/{cid}/trust-boundaries.json"),
             },
         }
         # Merge contextual (analyst-supplied) fields when present. The analyst

@@ -289,6 +289,68 @@ def test_stride_owasp_ai_ids_are_schema_validated():
     assert not ok
 
 
+def test_stride_boundary_ref_reuses_finding_evidence():
+    data = _stride_threat_with_code_example(None)
+    threat = data["threats"][0]
+    threat["evidence"] = {"file": "src/auth.ts", "line": 42}
+    threat["boundary_refs"] = [
+        {
+            "boundary_id": "tb-1",
+            "origin_component_id": "auth-svc",
+            "rationale": "The missing authorization check occurs at this crossing.",
+            "evidence_locations": [{"file": "src/auth.ts", "line": 42}],
+        }
+    ]
+    ok, errors = vi.validate_stride(data)
+    assert ok, errors
+
+
+def test_stride_boundary_ref_rejects_unowned_evidence_and_duplicate_pair():
+    data = _stride_threat_with_code_example(None)
+    threat = data["threats"][0]
+    threat["evidence"] = {"file": "src/auth.ts", "line": 42}
+    ref = {
+        "boundary_id": "tb-1",
+        "origin_component_id": "auth-svc",
+        "rationale": "The missing authorization check occurs at this crossing.",
+        "evidence_locations": [{"file": "src/other.ts", "line": 9}],
+    }
+    threat["boundary_refs"] = [ref, dict(ref)]
+    ok, errors = vi.validate_stride(data)
+    assert not ok
+    assert any("must repeat a location owned by the finding" in error for error in errors)
+    assert any("duplicates" in error for error in errors)
+
+
+def test_final_boundary_ref_requires_confirmed_adjacent_boundary():
+    data = {
+        "trust_boundaries": [
+            {
+                "id": "tb-1",
+                "from": "external",
+                "to": "api",
+                "resolution_status": "resolved",
+                "confidence": "inferred",
+            }
+        ],
+        "threats": [
+            {
+                "evidence": [{"file": "src/api.ts", "line": 7}],
+                "boundary_refs": [
+                    {
+                        "boundary_id": "tb-1",
+                        "origin_component_id": "worker",
+                        "evidence_locations": [{"file": "src/api.ts", "line": 7}],
+                    }
+                ],
+            }
+        ],
+    }
+    errors = vi._check_final_boundary_links(data)
+    assert any("resolved, confirmed" in error for error in errors)
+    assert any("not adjacent" in error for error in errors)
+
+
 def test_write_first_stub_is_schema_valid():
     """The mandatory STRIDE write-first stub (appsec-stride-analyzer.md
     "Write-first guarantee") must satisfy stride.schema.yaml — otherwise a

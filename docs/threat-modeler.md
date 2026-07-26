@@ -377,6 +377,53 @@ Each entry's `status` decides what the scan does with it:
 
 Optional fields per entry: `evidence` (`file:line`), `pentest_ref`, `accepted_risk`, `mitigation_ref`.
 
+### Trust-boundary declarations — `.appsec/trust-boundaries.yaml`
+
+Use this optional file when deployment, tenancy, or ownership intent cannot be
+derived reliably from source. Declarations add or clarify catalogue rows; they
+cannot suppress detected boundaries, claim that a control is effective, or
+change a finding's rating.
+
+```yaml
+boundaries:
+  - key: public-api
+    name: Public API ingress
+    from: external
+    to: api
+    kind: network
+    assumption: Authenticated requests are authorized before protected operations.
+    evidence:
+      - file: deploy/ingress.yaml
+        line: 18
+```
+
+`key` is stable repository identity. The assessment assigns the public `tb-N`
+ID. Paths must be repository-relative, and the complete declaration file is
+ignored when it does not satisfy the strict schema. A declaration-only change
+refreshes the canonical catalogue and report without dispatching STRIDE
+analyzers for otherwise unchanged components.
+
+Detected boundaries use evidence confidence `confirmed`, `inferred`, or
+`unknown`. Only resolved, confirmed crossings may become analyzer candidates
+or Figure 1 exposure context. An unresolved or conflicted row remains visible
+for review but is never treated as an observed path or an ineffective control.
+Legacy sidecars remain displayable during rerender, but they do not receive new
+IDs or feed semantic consumers; a fresh scan is required to normalize them.
+
+The report's **Trust Boundaries** catalogue links a boundary to findings only
+when the finding has its own verified evidence for a gap at that crossing.
+Adjacency alone does not create a finding and does not affect severity.
+Canonical YAML and the query command contain the complete catalogue; the
+Markdown catalogue is capped for readability, finding cards link only visible
+anchors, and SARIF carries linked IDs in result properties. Figure 1 remains a
+summary and is not the canonical boundary view.
+
+Boundary finding links are best-effort enrichment. Candidate files are bounded
+by assessment depth (2/4/6 for quick/standard/thorough), read with the existing
+parallel context batch, and never add an analyzer turn or expand the incremental
+dispatch set. A source-clean component may therefore retain its prior links
+until a later source-triggered, full, or rebuild run.
+
 ## Cross-repo context
 
 `appsec-advisor` scans one repository at a time. If your service calls another service, you can still give the scan useful cross-repo context.

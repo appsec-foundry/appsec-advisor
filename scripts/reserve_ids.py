@@ -2,9 +2,10 @@
 """
 reserve_ids.py — atomic ID counter assignment for sidecar-emitting phases.
 
-When a phase agent writes a sidecar that needs new IDs (M-NNN for
-mitigations, A-NNN for assets, MF-NNN for meta-findings, HYP-NNN for
-threat hypotheses), it MUST reserve them through this script rather
+When a phase agent or deterministic normalizer writes a sidecar that needs new
+IDs (M-NNN for mitigations, A-NNN for assets, MF-NNN for meta-findings,
+HYP-NNN for threat hypotheses, or tb-N for trust boundaries), it MUST reserve
+them through this script rather
 than picking numbers locally. Reserving via the central counter:
 
   * prevents collisions between phases that emit in parallel
@@ -64,7 +65,12 @@ _ID_TYPES = {
     "meta_finding": ("next_meta_finding_id", "MF", 3),
     "hyp": ("next_hyp_id", "HYP", 3),
     "abuse_case": ("next_abuse_case_id", "AC", 3),
+    # Public boundary IDs intentionally keep the established lowercase,
+    # unpadded form (tb-1, tb-2, ...).
+    "trust_boundary": ("next_trust_boundary_id", "tb", 0),
 }
+
+MAX_ID_NUMBER = 999_999_999
 
 # Lock-acquisition timeout. Phases write sidecars in single-digit ms;
 # 5 s is conservative. Failing fast surfaces deadlocks rather than
@@ -150,6 +156,8 @@ def reserve(output_dir: Path, id_type: str, count: int) -> list[str]:
 
         counters = state.setdefault("id_counters", {})
         current = _parse_counter(counters.get(counter_key), 1)
+        if current > MAX_ID_NUMBER or count > MAX_ID_NUMBER - current + 1:
+            raise ValueError(f"{id_type} ID counter exceeds supported maximum {MAX_ID_NUMBER}")
         reserved_nums = list(range(current, current + count))
         counters[counter_key] = current + count
 
@@ -160,7 +168,47 @@ def reserve(output_dir: Path, id_type: str, count: int) -> list[str]:
         os.ftruncate(fd, len(new_payload))
         os.fsync(fd)
 
-        return [f"{prefix}-{n:0{width}d}" for n in reserved_nums]
+        return [f"{prefix}-{n:0{width}d}" if width else f"{prefix}-{n}" for n in reserved_nums]
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError as exc:
+            if exc.errno != errno.EBADF:
+                raise
+        os.close(fd)
+
+
+def ensure_counter_at_least(output_dir: Path, id_type: str, minimum: int) -> None:
+    """Atomically advance a counter without reserving an ID.
+
+    Stable-ID reconcilers use this to seed the shared high-watermark from a
+    trusted prior canonical model. Untrusted current sidecars must never supply
+    ``minimum``.
+    """
+    if id_type not in _ID_TYPES:
+        raise ValueError(f"unknown id_type: {id_type}")
+    if minimum < 1 or minimum > MAX_ID_NUMBER + 1:
+        raise ValueError(f"minimum must be in 1..{MAX_ID_NUMBER + 1}, got {minimum}")
+    counter_key, _prefix, _width = _ID_TYPES[id_type]
+    cache_dir = output_dir / ".appsec-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = _baseline_path(output_dir)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        _acquire_exclusive_lock(fd)
+        os.lseek(fd, 0, os.SEEK_SET)
+        raw = os.read(fd, 10 * 1024 * 1024).decode("utf-8") or "{}"
+        try:
+            state = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"baseline.json is malformed JSON; refusing to seed IDs: {path}") from exc
+        counters = state.setdefault("id_counters", {})
+        counters[counter_key] = max(_parse_counter(counters.get(counter_key), 1), minimum)
+        payload = json.dumps(state, indent=2, sort_keys=True).encode("utf-8")
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, payload)
+        os.ftruncate(fd, len(payload))
+        os.fsync(fd)
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -175,7 +223,7 @@ def main() -> int:
     ap.add_argument(
         "id_type",
         choices=sorted(_ID_TYPES.keys()),
-        help="ID class to reserve (mitigation, asset, meta_finding, hyp, threat)",
+        help="ID class to reserve (including trust_boundary for public tb-N anchors)",
     )
     ap.add_argument("--count", type=int, default=1, help="how many consecutive IDs (default 1)")
     ap.add_argument("--output-dir", type=Path, required=True, help="$OUTPUT_DIR (e.g. docs/security)")

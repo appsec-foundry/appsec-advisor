@@ -197,6 +197,14 @@ def check_freshness(output_dir: Path, repo_root: Path) -> dict:
     )
 
     if ds_exit == 0:
+        if ds_payload.get("decision") == "boundary_recompose":
+            return {
+                "verdict": "STALE",
+                "reason": "trust-boundary declaration changed; deterministic recomposition required",
+                "check_changes": cc_payload,
+                "dirty_set": ds_payload,
+                "recommend": "incremental",
+            }
         return {
             "verdict": "STALE",
             "reason": (

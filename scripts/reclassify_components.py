@@ -197,6 +197,7 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         return data, []
     matcher_index = {cid: pats for cid, pats in matchers}
     known_ids = {(c.get("id") or "").strip() for c in components if isinstance(c, dict)}
+    boundaries = {b.get("id"): b for b in data.get("trust_boundaries") or [] if isinstance(b, dict) and b.get("id")}
     primary_id = _primary_component_id(components)
     # Raw path globs per component — needed to score glob specificity when a
     # placeholder component has to be resolved against an evidence file that
@@ -269,6 +270,44 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
             t["component"] = new_cid
         if t.get("component_id"):
             t["component_id"] = new_cid
+        if isinstance(t.get("boundary_refs"), list):
+            owned_evidence = {
+                ((entry.get("file") or "").strip(), entry.get("line"))
+                for entry in (t.get("evidence") if isinstance(t.get("evidence"), list) else [t.get("evidence")])
+                if isinstance(entry, dict) and entry.get("file")
+            }
+            reconciled_refs: list[dict] = []
+            for ref in t["boundary_refs"]:
+                if not isinstance(ref, dict):
+                    continue
+                boundary = boundaries.get(ref.get("boundary_id"))
+                locations = ref.get("evidence_locations") or []
+                evidence_survives = bool(locations) and all(
+                    isinstance(location, dict)
+                    and ((location.get("file") or "").strip(), location.get("line")) in owned_evidence
+                    for location in locations
+                )
+                if (
+                    isinstance(boundary, dict)
+                    and boundary.get("resolution_status") == "resolved"
+                    and boundary.get("confidence") == "confirmed"
+                    and new_cid in {boundary.get("from"), boundary.get("to")}
+                    and evidence_survives
+                ):
+                    updated = dict(ref)
+                    updated["origin_component_id"] = new_cid
+                    reconciled_refs.append(updated)
+                else:
+                    print(
+                        f"reclassify_components: removed optional boundary reference "
+                        f"{ref.get('boundary_id')} from {t.get('id') or '<anon>'}; "
+                        "new component is not a confirmed adjacent origin or evidence did not survive",
+                        file=sys.stderr,
+                    )
+            if reconciled_refs:
+                t["boundary_refs"] = reconciled_refs
+            else:
+                t.pop("boundary_refs", None)
         flags = list(t.get("evidence_flags") or [])
         if token not in flags:
             flags.append(token)
@@ -279,6 +318,7 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
                 "from": current or "<unset>",
                 "to": new_cid,
                 "evidence_files": files,
+                "boundary_refs": t.get("boundary_refs"),
             }
         )
 
@@ -351,6 +391,10 @@ def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
             t["component_id"] = c["to"]
         if t.get("component"):
             t["component"] = c["to"]
+        if c.get("boundary_refs"):
+            t["boundary_refs"] = c["boundary_refs"]
+        else:
+            t.pop("boundary_refs", None)
         n += 1
     if n:
         path.write_text(json.dumps(doc, indent=2), encoding="utf-8")

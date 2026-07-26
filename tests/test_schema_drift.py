@@ -96,3 +96,13 @@ def test_scanned_files_reference_schema_file():
 def test_schema_file_exists_and_nonempty():
     assert SCHEMA_FILE.is_file(), f"authoritative schema missing: {SCHEMA_FILE}"
     assert SCHEMA_FILE.stat().st_size > 1000, "schema file suspiciously small — suggests accidental truncation"
+
+
+def test_diagram_prose_distinguishes_zones_from_boundary_crossings():
+    scanned = [
+        PLUGIN_ROOT / "agents" / "appsec-threat-analyst.md",
+        PLUGIN_ROOT / "agents" / "phases" / "phase-group-architecture.md",
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in scanned)
+    assert "Trust boundaries are subgraphs" not in text
+    assert "trust-boundary objects are crossings" in text or "trust-boundary objects are crossings" in text.lower()

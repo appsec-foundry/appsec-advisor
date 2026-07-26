@@ -57,7 +57,17 @@ def _model(*, app=2, attackers=("internet-anon",), exposed=(), xss=False, threat
     yaml_data = {
         "components": comps,
         "threats": threats,
-        "trust_boundaries": [{"from": "external", "to": t, "name": f"Public to {t}"} for t in exposed],
+        "trust_boundaries": [
+            {
+                "id": f"tb-{i}",
+                "from": "external",
+                "to": target,
+                "name": f"Public to {target}",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            }
+            for i, target in enumerate(exposed, start=1)
+        ],
         "meta": meta or {},
     }
     tax = {"glyph_sequence": _GLYPHS[: len(classes)], "classes": classes}
@@ -323,6 +333,21 @@ def test_internet_exposed_marker_and_direct_attack_arrow():
     assert "internet-exposed entry point" in svg  # legend entry
 
 
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        {"id": "tb-1", "from": "", "to": "app0", "confidence": "confirmed", "resolution_status": "unresolved"},
+        {"id": "tb-1", "to": "app0", "confidence": "confirmed", "resolution_status": "unresolved"},
+        {"id": "tb-1", "from": "external", "to": "app0", "confidence": "inferred", "resolution_status": "resolved"},
+    ],
+)
+def test_incomplete_or_unconfirmed_boundary_does_not_imply_exposure(boundary):
+    y, apd, tax = _model(app=2, exposed=())
+    y["trust_boundaries"] = [boundary]
+    svg = F.build_figure1_svg(y, apd, tax)
+    assert "internet-exposed entry point" not in svg
+
+
 def test_direct_attack_arrow_present_for_direct_path():
     # Arrows are derived from attack_paths, NOT from trust-boundary exposure: a
     # path whose actor reaches the tier itself (internet-anon → application)
@@ -467,11 +492,34 @@ def _app_only(*, stores=True, server_rendered=True):
         {"id": "T-001", "component": "svc", "risk": "Critical"},
         {"id": "T-002", "component": "svc", "risk": "High"},
     ]
-    tb = [{"from": "external", "to": "svc", "name": "Public to app"}]
+    tb = [
+        {
+            "id": "tb-1",
+            "from": "external",
+            "to": "svc",
+            "name": "Public to app",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    ]
     if stores:
         tb += [
-            {"from": "svc", "to": "h2-database", "name": "App to H2"},
-            {"from": "svc", "to": "sqlite-legacy-auth", "name": "App to SQLite"},
+            {
+                "id": "tb-2",
+                "from": "svc",
+                "to": "h2-database",
+                "name": "App to H2",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            },
+            {
+                "id": "tb-3",
+                "from": "svc",
+                "to": "sqlite-legacy-auth",
+                "name": "App to SQLite",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            },
         ]
     yaml_data = {"components": comps, "threats": threats, "trust_boundaries": tb, "meta": {}}
     apd = {
@@ -518,7 +566,18 @@ def test_client_ghost_plain_when_not_server_rendered():
 def test_data_ghost_generic_without_known_store():
     reason = F._ghost_reason("data", [], [{"from": "svc", "to": "external-urls"}])
     assert reason == "no separate data tier"
-    reason_db = F._ghost_reason("data", [], [{"from": "svc", "to": "orders-database"}])
+    reason_db = F._ghost_reason(
+        "data",
+        [],
+        [
+            {
+                "from": "svc",
+                "to": "orders-database",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            }
+        ],
+    )
     assert reason_db == "data embedded in-process — no separate tier"
 
 

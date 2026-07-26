@@ -9,6 +9,7 @@ Draft 2020-12 cannot express are enforced as Python post-checks:
   - Sequential T-NNN ordering and uniqueness in `.threats-merged.json`
   - Snippet redaction rule on `hardcoded_secrets[].snippet`
   - Trimmed length >= 10 chars on stride `scenario`
+  - Boundary-reference uniqueness and evidence ownership
 
 Can be used in two ways:
 
@@ -497,6 +498,76 @@ def _check_known_threats_unique_ids(data: dict) -> list[str]:
     return errors
 
 
+def _finding_evidence_locations(finding: dict) -> set[tuple[str, int | None]]:
+    locations: set[tuple[str, int | None]] = set()
+    evidence = finding.get("evidence")
+    rows = evidence if isinstance(evidence, list) else [evidence]
+    for item in [*rows, *(finding.get("instances") or [])]:
+        if isinstance(item, dict) and isinstance(item.get("file"), str):
+            locations.add((item["file"], item.get("line")))
+    return locations
+
+
+def _check_boundary_refs(data: dict) -> list[str]:
+    """Boundary references are local traceability, never independent evidence."""
+    errors: list[str] = []
+    for i, finding in enumerate(data.get("threats", []) or []):
+        if not isinstance(finding, dict):
+            continue
+        seen: set[tuple[str, str]] = set()
+        evidence = _finding_evidence_locations(finding)
+        for j, ref in enumerate(finding.get("boundary_refs") or []):
+            if not isinstance(ref, dict):
+                continue
+            key = (str(ref.get("boundary_id") or ""), str(ref.get("origin_component_id") or ""))
+            if key in seen:
+                errors.append(
+                    f"threats[{i}].boundary_refs[{j}] duplicates "
+                    f"(boundary_id={key[0]!r}, origin_component_id={key[1]!r})"
+                )
+            seen.add(key)
+            for k, location in enumerate(ref.get("evidence_locations") or []):
+                if not isinstance(location, dict):
+                    continue
+                candidate = (location.get("file"), location.get("line"))
+                if candidate not in evidence:
+                    errors.append(
+                        f"threats[{i}].boundary_refs[{j}].evidence_locations[{k}] "
+                        "must repeat a location owned by the finding"
+                    )
+    return errors
+
+
+def _check_final_boundary_links(data: dict) -> list[str]:
+    """Final references must target one resolved, confirmed adjacent boundary."""
+    errors: list[str] = []
+    by_id: dict[str, dict] = {}
+    for i, boundary in enumerate(data.get("trust_boundaries", []) or []):
+        if not isinstance(boundary, dict):
+            continue
+        boundary_id = boundary.get("id")
+        if boundary_id in by_id:
+            errors.append(f"trust_boundaries[{i}].id {boundary_id!r} is duplicated")
+        elif isinstance(boundary_id, str):
+            by_id[boundary_id] = boundary
+    for i, finding in enumerate(data.get("threats", []) or []):
+        if not isinstance(finding, dict):
+            continue
+        for j, ref in enumerate(finding.get("boundary_refs") or []):
+            if not isinstance(ref, dict):
+                continue
+            boundary = by_id.get(ref.get("boundary_id"))
+            prefix = f"threats[{i}].boundary_refs[{j}]"
+            if boundary is None:
+                errors.append(f"{prefix}.boundary_id targets no canonical trust boundary")
+                continue
+            if boundary.get("resolution_status") != "resolved" or boundary.get("confidence") != "confirmed":
+                errors.append(f"{prefix}.boundary_id must target a resolved, confirmed trust boundary")
+            if ref.get("origin_component_id") not in {boundary.get("from"), boundary.get("to")}:
+                errors.append(f"{prefix}.origin_component_id is not adjacent to the referenced boundary")
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # Public validators
 # ---------------------------------------------------------------------------
@@ -520,6 +591,7 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
             _data_with_source = dict(data)
             _data_with_source["threats"] = [{**t, "source": "stride"} for t in raw_threats if isinstance(t, dict)]
             errors.extend(_check_threat_category_id_set(_data_with_source))
+        errors.extend(_check_boundary_refs(data))
     return len(errors) == 0, errors
 
 
@@ -695,6 +767,7 @@ def validate_threats_merged(data: Any, output_dir: Path | None = None) -> tuple[
     errors.extend(_check_architecture_coverage_invariants(data))
     # RC.G.1 / RC.I — TH gate on merged output.
     errors.extend(_check_threat_category_id_set(data))
+    errors.extend(_check_boundary_refs(data))
     # P1 — weakness-class register emission invariant (I2 + W-NNN uniqueness).
     errors.extend(_check_weakness_register(data))
     return len(errors) == 0, errors
@@ -871,6 +944,8 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     errors.extend(_check_mitigations_nonempty(data))
     errors.extend(_check_architecture_coverage_invariants(data))
     errors.extend(_check_threat_hypotheses_invariants(data))
+    errors.extend(_check_boundary_refs(data))
+    errors.extend(_check_final_boundary_links(data))
     # Surface migration as informational advisory, not as a failure.
     advisories = [f"[migrated] {note}" for note in migration_notes]
     # Detect F-NNN numbering gaps. A gap (e.g. F-001..F-013, F-015..) means

@@ -221,6 +221,7 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
         result["locations"] = locations
 
     mids = _mitigation_ids(threat)
+    properties: dict[str, Any] = {}
     if mids:
         fixes: list[dict] = []
         for mid in mids:
@@ -232,7 +233,18 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
                 fixes.append({"description": {"text": title.strip()}})
         if fixes:
             result["fixes"] = fixes
-        result["properties"] = {"mitigationIds": mids}
+        properties["mitigationIds"] = mids
+    boundary_ids = list(
+        dict.fromkeys(
+            str(ref.get("boundary_id"))
+            for ref in threat.get("boundary_refs") or []
+            if isinstance(ref, dict) and ref.get("boundary_id")
+        )
+    )
+    if boundary_ids:
+        properties["boundaryIds"] = boundary_ids
+    if properties:
+        result["properties"] = properties
 
     return result
 

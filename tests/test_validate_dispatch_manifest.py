@@ -40,6 +40,7 @@ def _minimal_component(**overrides):
             "cross_repo": "none",
             "requirements_violations": "none",
             "relevant_actors": "none",
+            "trust_boundaries": "none",
         },
     }
     comp.update(overrides)
@@ -140,6 +141,14 @@ class TestValidate:
         ok, errors, warnings = vdm.validate(mp, tmp_path)
         assert ok is True
         assert errors == []
+
+    def test_trust_boundary_index_path_must_exist(self, vdm, tmp_path):
+        comp = _minimal_component()
+        comp["index_paths"]["trust_boundaries"] = "missing-boundaries.json"
+        mp = _write_manifest(tmp_path, _minimal_manifest(components=[comp]))
+        ok, errors, warnings = vdm.validate(mp, tmp_path)
+        assert ok is False
+        assert any("index_paths.trust_boundaries points at a missing file" in error for error in errors)
 
     def test_index_path_absolute_existing(self, vdm, tmp_path):
         existing = tmp_path / "abs.json"

@@ -146,7 +146,8 @@ When `INCREMENTAL=false`, skip this whole decision tree and select components as
 Pass these additional context fields in the STRIDE analyzer prompt:
 - `COMPONENT_DESCRIPTION`: "CI/CD & source-contribution integrity — build, test, and deployment automation plus the trust boundary at which external code contributions enter the trunk. Includes workflow definitions, secret handling, artifact publishing, deployment triggers, and (for public repos) the pull-request contribution surface." When the component exists solely because `public_source_repo: true` and no workflow files were found, narrow the description to the contribution surface only.
 - `INTERFACES`: workflow trigger events (push, PR, schedule, workflow_dispatch), artifact registries, deployment targets, and the fork→pull-request contribution path (public repos)
-- `TRUST_BOUNDARIES`: external Actions/images crossing into build environment, secrets injected at runtime, artifact publish boundary, and (public repos) untrusted external contributions crossing into the trunk
+- Trust-boundary candidates come only from the validated component-scoped
+  `TRUST_BOUNDARIES_INDEX_PATH`; never reconstruct or inline them.
 - `SUPPLY_CHAIN_FINDINGS`: recon-summary sections 7.14–7.17, 7.26, 7.27, 7.27a, 7.30, and 7.32 (unpinned Actions, container images, dependency confusion, postinstall hooks, ecosystem CI install integrity, **install cooldown / minimum release age**, dependency management tooling, SCA tooling, `pull_request_target` misuse, `permissions:` hardening, self-hosted runner exposure, **public-repo contribution exposure**, **PR dependency-review gate**, AI coding assistant & IDE agent configurations, **publish authentication / Trusted Publishing & package provenance**)
 
 The STRIDE analyzer will use `SUPPLY_CHAIN_FINDINGS` to generate evidence-backed threats for the pipeline component (see STRIDE analyzer supply chain patterns).
@@ -207,10 +208,10 @@ For each component, use Agent tool:
   `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`, `TAXONOMY_SLICE_DIR` (path only; the file contents differ per component but the path template is stable), `STRIDE_PROFILE` (inline JSON from `.skill-config.json → stride_profile`; `{"stride_profile_label": "full"}` at Standard/Thorough or any non-economy reasoning-mode; `full (per-category cap N)` carrying `max_threats_per_category` when the opt-in `--stride-cap N` flag is set at any depth; depth-reduced JSON only when `--reasoning-model sonnet-economy` AND `--assessment-depth quick` — see `agents/appsec-stride-analyzer.md` → "Quick-mode adjustments" for A-F + cap semantics)
 
   **Group B — component-specific scalars and short lists:**
-  `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `COMPONENT_PATHS` (Fix #7 root cause — comma-separated `paths` globs from the component definition; the STRIDE analyzer uses these to refuse emitting a threat whose `evidence[0].file` is outside the globs, preventing the "SQL injection found in routes/search.ts recorded as component=data-layer" attack-target-tier drift that `reclassify_components.py` is currently the deterministic-only safety net for), `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26), `FOCUS_PATHS` (M15/M20 — see below), `EXCLUDE_PATHS` (M16 — only when extending scan-excludes.yaml is not enough), `PRIOR_ASSESSMENT_DEPTH` (incremental only — the `assessment_depth` of the run that produced the baseline, from `.appsec-cache/baseline.json.last_run_depth`; pass `none` on a full/first run. The analyzer compares it to `ASSESSMENT_DEPTH` to drive the prior-finding carry-vs-drop disposition — see `agents/appsec-stride-analyzer.md` → "Prior-finding disposition")
+  `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `COMPONENT_PATHS` (Fix #7 root cause — comma-separated `paths` globs from the component definition; the STRIDE analyzer uses these to refuse emitting a threat whose `evidence[0].file` is outside the globs, preventing the "SQL injection found in routes/search.ts recorded as component=data-layer" attack-target-tier drift that `reclassify_components.py` is currently the deterministic-only safety net for), `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26), `FOCUS_PATHS` (M15/M20 — see below), `EXCLUDE_PATHS` (M16 — only when extending scan-excludes.yaml is not enough), `PRIOR_ASSESSMENT_DEPTH` (incremental only — the `assessment_depth` of the run that produced the baseline, from `.appsec-cache/baseline.json.last_run_depth`; pass `none` on a full/first run. The analyzer compares it to `ASSESSMENT_DEPTH` to drive the prior-finding carry-vs-drop disposition — see `agents/appsec-stride-analyzer.md` → "Prior-finding disposition")
 
   **Group C — volatile context file paths (emit LAST):**
-  `PRIOR_FINDINGS_INDEX_PATH`, `KNOWN_THREATS_INDEX_PATH`, `CROSS_REPO_CONTEXT_PATH`, `PHASE_8B_VIOLATIONS_INDEX_PATH`, `RELEVANT_ACTORS_INDEX_PATH` — each is either a JSON file under `$OUTPUT_DIR/.dispatch-context/<COMPONENT_ID>/` or `none`. Do **not** inline the JSON arrays in the prompt. The old inline names (`PRIOR_FINDINGS_INDEX`, `KNOWN_THREATS_INDEX`, `CROSS_REPO_CONTEXT`, `PHASE_8B_VIOLATIONS_INDEX`) are accepted only as a legacy fallback for older orchestrator prompts.
+  `PRIOR_FINDINGS_INDEX_PATH`, `KNOWN_THREATS_INDEX_PATH`, `CROSS_REPO_CONTEXT_PATH`, `PHASE_8B_VIOLATIONS_INDEX_PATH`, `RELEVANT_ACTORS_INDEX_PATH`, `TRUST_BOUNDARIES_INDEX_PATH` — each is either a JSON file under `$OUTPUT_DIR/.dispatch-context/<COMPONENT_ID>/` (the actor slice uses its documented direct output path) or `none`. Do **not** inline the JSON arrays in the prompt. All non-`none` paths are read with parallel Read calls in one Step-1 assistant turn; the optional boundary context must not add a turn. The old inline names (`PRIOR_FINDINGS_INDEX`, `KNOWN_THREATS_INDEX`, `CROSS_REPO_CONTEXT`, `PHASE_8B_VIOLATIONS_INDEX`) are accepted only as a legacy fallback for older orchestrator prompts.
 
   `RELEVANT_ACTORS_INDEX_PATH` points to `$OUTPUT_DIR/.actors-for-<COMPONENT_ID>.json`. Actor resolution happens in Phase 2.7, but slicing requires the finalized Phase-3 component inventory. In the parallel runtime, `build_stride_dispatch_manifest.py` writes the slices after component reconciliation. In the legacy runtime, run this once before dispatch:
 
@@ -223,6 +224,23 @@ For each component, use Agent tool:
   ```
 
   When `.actors-resolved.json` does not exist (actor resolution was skipped or failed), do not call the slicer and pass `RELEVANT_ACTORS_INDEX_PATH=none`.
+
+  In the legacy runtime, generate normalized boundary candidate slices once
+  after the final component selection and before dispatch. Pass one
+  `--component <COMPONENT_ID>` argument for each selected, non-carry-forward
+  component:
+
+  ```bash
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/prepare_trust_boundary_context.py" contexts \
+      --repo-root "$REPO_ROOT" \
+      --output-dir "$OUTPUT_DIR" \
+      --depth "$ASSESSMENT_DEPTH" \
+      --component <COMPONENT_ID> [--component <COMPONENT_ID> ...]
+  ```
+
+  The parallel runtime performs the same operation inside
+  `build_stride_dispatch_manifest.py`. Do not construct boundary candidates
+  in the prompt.
 
 **Prior-findings index propagation (mandatory):** The orchestrator writes a component-scoped JSON slice of `$OUTPUT_DIR/.prior-findings-index.json` to `prior-findings.json` and passes `PRIOR_FINDINGS_INDEX_PATH`. The STRIDE analyzer uses this instead of reading `.threat-modeling-context.md` — Phase 1 has already extracted file/line/excerpt for every prior finding. Do **not** pass `CONTEXT_FILE` as a parameter; the STRIDE analyzer no longer needs it when the index file is populated. Only pass `CONTEXT_FILE` when a prior finding indicates deeper context (e.g. a known-threat row with cross-component dependencies) and the JSON index is insufficient.
 
@@ -282,7 +300,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/slice_cross_repo_for_component.py" \
     --component-name "$COMPONENT_NAME" \
     --component-description "$COMPONENT_DESC" \
     $(for i in "${INTERFACES[@]}";       do printf -- '--interface %q '        "$i"; done) \
-    $(for b in "${TRUST_BOUNDARIES[@]}"; do printf -- '--trust-boundary %q '  "$b"; done) \
+    --trust-boundaries-file "$OUTPUT_DIR/.trust-boundaries.json" \
     --output "$OUTPUT_DIR/.dispatch-context/$COMPONENT_ID/cross-repo.json"
 ```
 
@@ -548,7 +566,11 @@ Pipeline:
      CANDIDATES_FILE=<OUTPUT_DIR>/.merge-candidates.json
      COMPONENT_MAP_PATH=<OUTPUT_DIR>/.merge-context/component-map.json
    ```
-   Before dispatch, write `$OUTPUT_DIR/.merge-context/component-map.json` as JSON object `{component_id: {name, trust_boundaries}}`. Pass only the path; do not inline the component map in the prompt.
+   Before dispatch, write `$OUTPUT_DIR/.merge-context/component-map.json` as
+   JSON object `{component_id: {name}}`. Boundary provenance already travels
+   with candidate members as validated `boundary_refs[]`; never reconstruct it
+   from component adjacency. Pass only the path; do not inline the component
+   map in the prompt.
    The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id — `$MERGER_MODEL` resolves to a full id at `standard` (`claude-sonnet-5`) and `thorough` (`claude-opus-*`), so reduce it to its tier for the param (see the STRIDE dispatch note in Phase 9). Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage-validator dispatch above, using the full `$MERGER_MODEL` id in the message.
 
 2.5. **Emit weakness design signals (P1)** — before finalize, normalize

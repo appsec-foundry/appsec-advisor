@@ -205,6 +205,15 @@ The filter classifies each file using a three-tier heuristic (no LLM calls):
 
 **Immediately after delta detection and component mapping**, check whether the dirty-set intersects any component. If no changed file maps to any component path glob, this is a **no-op delta** — the threat model is unchanged. Execute the fast-path exit:
 
+Exception: when the only changed input is
+`.appsec/trust-boundaries.yaml` and the skill-level dirty-set decision is
+`boundary_recompose`, this is not a no-op. Carry forward source-derived
+components, findings, ratings, and STRIDE files; run Phase 7 normalization
+against the repository declaration; then run deterministic synthesis,
+rendering, exports, and QA. Dispatch zero STRIDE analyzers and do not add any
+component to the dirty set. This path refreshes the canonical catalogue and
+drops invalid carried boundary references without spending analyzer budget.
+
 1. **Do NOT dispatch any sub-agents** (no context-resolver, no recon-scanner, no STRIDE analyzers).
 2. **Do NOT read phase-group files** — they are not needed for the fast-path.
 3. **Do NOT rewrite the full YAML** — use targeted `sed`/`awk` edits to patch only the changed fields. This avoids 27k output tokens for a no-op.
@@ -316,6 +325,9 @@ If neither the No-Op nor the Low-Risk Delta fast-path applies, proceed with the 
 - **Phase 1 (Context):** Runs normally (context may have changed, lightweight).
 - **Phase 2 (Recon):** May be **skipped entirely** if the recon fingerprint (manifests + Dockerfiles + IaC hashes) in `$OUTPUT_DIR/.appsec-cache/baseline.json` is unchanged and `.recon-summary.md` still exists. See `phase-group-recon.md` for the fingerprint-skip logic. **The orchestrator MUST check the fingerprint BEFORE dispatching the recon-scanner agent** — do not spawn the agent only to have it discover the cache is valid.
 - **Phases 3–7:** Carry forward from the existing `threat-model.yaml` (read `components[]`, `assets[]`, `attack_surface[]`, `trust_boundaries[]`). Only re-run a phase if the dirty-set (changed files mapped via component paths) intersects it, or if a new component / service was detected in the diff.
+- **Boundary-only recomposition:** A `boundary_recompose` decision reruns only
+  deterministic Phase-7 normalization and Phases 10–11 composition/QA. It
+  carries all STRIDE findings forward and performs zero STRIDE dispatches.
 - **Phase 8 (Controls):** Re-check only controls whose evidence files are in the dirty-set. Carry forward the rest verbatim.
 - **Phase 9 (STRIDE):** For each component in `components[]`, use the security relevance filter result AND the per-component actor slice delta (actors.md §13) to decide:
   - If `component ∈ SECURITY_RELEVANT_COMPONENTS ∪ SLICE_DELTA_COMPONENTS` (dirty AND has security-relevant changes, OR `.actors-for-<id>.json` hash differs from `baseline.json.slice_files[id].sha256`), **re-dispatch** the STRIDE analyzer and overwrite `.stride-<id>.json`. The slice-delta path catches actor-input drift: e.g. enabling ACT-D-09 on a multi-tenant repo re-runs only the components whose relevant-actor set changed, not the whole repo.
@@ -748,9 +760,9 @@ classDef external fill:#999,stroke:#666,color:#fff
 classDef db       fill:#2E7D32,stroke:#1B5E20,color:#fff
 classDef risk     fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
 ```
-Trust boundaries are subgraphs with **plain text labels** (`Public Internet · untrusted`, `DMZ / Edge`, `Internal Network · trusted`, `Data Tier · restricted`). Do **not** prefix subgraph labels with emoji (`🌐` / `🔶` / `🔒` / `🔐`) — the earlier template allowed them but they carry no information beyond the label text, break layout in some Mermaid renderers, and break the screen-reader experience. Every diagram ends with a `%% Trust Boundary Key:` comment listing what enforces each boundary. Every edge carries a label. Max ~12 nodes per diagram. Add `:::risk` to any node with a Medium+ threat.
+Deployment and trust zones are subgraphs with **plain text labels** (`Public Internet · untrusted`, `DMZ / Edge`, `Internal Network · trusted`, `Data Tier · restricted`). Canonical trust-boundary objects are crossings between resolved endpoints, not subgraphs. Do **not** prefix subgraph labels with emoji (`🌐` / `🔶` / `🔒` / `🔐`) — the earlier template allowed them but they carry no information beyond the label text, break layout in some Mermaid renderers, and break the screen-reader experience. Every diagram ends with a `%% Trust Boundary Key:` comment listing the modeled crossing assumptions. Every edge carries a label. Max ~12 nodes per diagram. Add `:::risk` to any node with a Medium+ threat.
 
-- **2.1 System Context** (`graph TD`, **always**) — actors, the system, external dependencies with trust boundary subgraphs.
+- **2.1 System Context** (`graph TD`, **always**) — actors, the system, external dependencies, trust-zone subgraphs, and crossing edges.
 - **2.2 Container Architecture** (`graph TD`, **always**) — deployable units with service topology, protocols, trust zones. At Simple complexity this may be a minimal one-container diagram + brief note.
 - **2.3 Components** (`graph LR` with subgraphs stacked top-to-bottom, **always**) — internal structure of one security-critical service (controller / service layer / data access / auth middleware) at Moderate+, or a short note pointing back to §2.2 at Simple complexity. The heading itself is mandatory regardless of complexity.
 - **2.4 Technology Architecture** (`graph TB`, **always**) — vertical stack top-to-bottom with the four-layer heatmap presentation (key-tech diagram + four `#### 2.4.x` per-layer tables). See `phase-group-architecture.md` → "Section 2.4 — Technology Architecture" for the canonical layout.

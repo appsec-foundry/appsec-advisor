@@ -1311,6 +1311,61 @@ class TestYamlMdConsistencyCheck:
         r = qa.check_yaml_md_consistency(md, yml)
         assert [i for i in r.issues if "threat count drift" in i] == []
 
+    def test_trust_boundary_catalogue_and_finding_refs_match(self, tmp_path):
+        md, yml = self._write_pair(
+            tmp_path,
+            textwrap.dedent("""
+                | [F-001](#f-001) | one |
+
+                | ID | Boundary |
+                |---|---|
+                | <a id="tb-1"></a>tb-1 | Internet to API |
+
+                **Trust boundary gap:** [tb-1](#tb-1) — Internet to API: authentication is missing
+            """).strip(),
+            textwrap.dedent("""
+                meta: {schema_version: 1}
+                trust_boundaries:
+                  - {id: tb-1, name: Internet to API}
+                threats:
+                  - id: F-001
+                    boundary_refs:
+                      - {boundary_id: tb-1, origin_component_id: C-01}
+                mitigations: []
+            """).strip(),
+        )
+        r = qa.check_yaml_md_consistency(md, yml)
+        assert not [issue for issue in r.issues if "trust-boundary" in issue]
+
+    def test_trust_boundary_integrity_detects_duplicate_dangling_and_drift(self, tmp_path):
+        md, yml = self._write_pair(
+            tmp_path,
+            textwrap.dedent("""
+                | [F-001](#f-001) | one |
+                <a id="tb-1"></a>
+                <a id="tb-1"></a>
+                <a id="tb-9"></a>
+                **Trust boundary gap:** [tb-2](#tb-2) — wrong boundary
+            """).strip(),
+            textwrap.dedent("""
+                meta: {schema_version: 1}
+                trust_boundaries:
+                  - {id: tb-1, name: First}
+                  - {id: tb-1, name: Duplicate}
+                threats:
+                  - id: F-001
+                    boundary_refs:
+                      - {boundary_id: tb-1, origin_component_id: C-01}
+                mitigations: []
+            """).strip(),
+        )
+        r = qa.check_yaml_md_consistency(md, yml)
+        assert any("duplicate trust-boundary id in yaml" in issue for issue in r.issues)
+        assert any("duplicate trust-boundary catalogue anchor" in issue for issue in r.issues)
+        assert any("catalogue anchor is absent from canonical yaml" in issue for issue in r.issues)
+        assert any("reference has no catalogue anchor" in issue for issue in r.issues)
+        assert any("finding-reference drift" in issue for issue in r.issues)
+
 
 # ---------------------------------------------------------------------------
 # CLI smoke — verify new subcommands exit 0/1 and emit valid JSON

@@ -77,7 +77,7 @@ class TestSingleRepoNoSpuriousArtifacts:
             reg,
             component_name="App",
             interfaces=["HTTP /api/v1"],
-            trust_boundaries=["client ↔ app"],
+            trust_boundaries_file=None,
         )
         assert sliced == []
 

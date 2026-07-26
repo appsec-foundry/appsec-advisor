@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Added
+
+- Trust boundaries now have stable catalogue IDs, optional repository declarations, linked findings, and Markdown, YAML, query, and SARIF output.
+
 ## 0.5.1-beta (2026-07-26)
 
 ### Added
