@@ -236,12 +236,12 @@ These OWASP Juice Shop runs are all on plugin **v0.5.1-dev** (quick/thorough on 
 > [!NOTE]
 > Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
 
-**Cross-repo check (standard).** Cost tracks codebase size. [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app), an intentionally-vulnerable Spring Boot fixture, was assessed at `standard` on the same setup (table below). Its **$24.65** breaks down as $24.05 Sonnet 4.6 + $0.60 Haiku helpers, across 5 analyzed components. Only ~69 min wall / ~97 min agent compute was the pipeline itself; the rest of the session went to the repair loop and interactive iteration, so treat the figure as a loose upper bound. The lower bill than Juice Shop follows from the smaller repository — fewer files read means fewer cached input tokens, the dominant cost driver (see *Background: why Sonnet 4.6 costs less*).
+**Cross-repo check (standard).** Cost tracks codebase size. [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app), an intentionally-vulnerable Spring Boot fixture, was assessed at `standard` on the same setup (table below). Its **$31.32** breaks down as $30.73 Sonnet 4.6 + $0.59 Haiku helpers, across 8 analyzed components in ~96 min wall-clock (pipeline only; full session was ~4h 46m including this doc update). The higher component count versus the prior v0.5.0-beta run ($24.65, 5 components) reflects the v0.5.1 criteria expansion that adds crown-jewel stores and additional internet-exposed surfaces to the standard selection set; the session cost also includes the v0.5.1-dev triage/merger upgrade to Sonnet 5. The bill is close to Juice Shop here despite the smaller repository because the component count converged — fewer source files but a similarly broad attack surface.
 
 | Repo | Stack | Mode | Plugin | Session | Threats | API cost |
 |---|---|---|---|---|---|---|
 | OWASP Juice Shop | Node/Angular | standard | v0.5.1-dev | Sonnet 4.6 | 60 | $30.83 |
-| insecure-spring-app | Spring Boot | standard | v0.5.0-beta | Sonnet 4.6 | 49 | $24.65 |
+| insecure-spring-app | Spring Boot | standard | v0.5.1-dev | Sonnet 4.6 | 49 | $31.32 |
 
 `--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the standard benchmark, a cap of 2 trims the finding count by roughly a third and saves roughly $4. The selected cap is recorded in the report.
 
