@@ -19,8 +19,10 @@ below uses an equal-length edit on purpose.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -48,6 +50,19 @@ def _proof_script() -> str:
     env = "".join(f"export {k}={v}\n" for k, v in (step.get("env") or {}).items())
     body = "\n".join(line for line in step["run"].splitlines() if "pip install" not in line)
     return env + body
+
+
+def _step_path() -> str:
+    """PATH for the step, with the interpreter running these tests in front.
+
+    `_proof_script` strips the dependency install, so the step's bare `python3`
+    must already have pytest. A hard-coded `/usr/bin:/bin:/usr/local/bin`
+    silently assumes the system interpreter is the one that does — true on a
+    developer machine, false on a GitHub runner, where setup-python installs
+    into the tool cache and `/usr/bin/python3` has no pytest at all. The step
+    then reported every fix as unproven and failed the release gate.
+    """
+    return os.pathsep.join([str(Path(sys.executable).parent), "/usr/bin", "/bin", "/usr/local/bin"])
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -84,7 +99,7 @@ def _run_proof(tmp_path: Path, *, test_source: str, apply_fix: bool) -> dict[str
         ["bash", str(script)],
         cwd=repo,
         env={
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "PATH": _step_path(),
             "HOME": str(tmp_path),
             "RUNNER_TEMP": str(runner_temp),
             "GITHUB_OUTPUT": str(outputs),
@@ -103,6 +118,22 @@ pytestmark = pytest.mark.skipif(
     shutil.which("bash") is None or shutil.which("git") is None,
     reason="needs bash and git",
 )
+
+
+def test_the_step_runs_on_an_interpreter_that_has_pytest():
+    """Guard the environment the other cases silently depend on.
+
+    Every case below reads a pytest exit code out of the step. With the
+    dependency install stripped, a `python3` without pytest exits 1 on both
+    runs, so "fails without the fix" and "still fails with it" are
+    indistinguishable from a real defect — the suite goes red for a reason that
+    has nothing to do with the gate it is testing. Assert the interpreter
+    directly, so the failure names the cause.
+    """
+    resolved = shutil.which("python3", path=_step_path())
+    assert resolved, f"no python3 on the step PATH: {_step_path()}"
+    probe = subprocess.run([resolved, "-c", "import pytest"], capture_output=True, text=True)
+    assert probe.returncode == 0, f"{resolved} cannot import pytest: {probe.stderr.strip()}"
 
 
 def test_a_genuine_fix_is_proven(tmp_path):
