@@ -510,9 +510,7 @@ jobs:
           git add -A
           git commit -m "fix: repair ${KINDS} failure in ${LABEL}
 
-          Automated producer-side fix derived from run ${RUN_ID}.
-
-          Co-Authored-By: Claude <noreply@anthropic.com>"
+          Automated producer-side fix derived from run ${RUN_ID}."
           git push origin "$branch"
 
           # dev is the integration branch (GitFlow); main only takes releases.
