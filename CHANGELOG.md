@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+## 0.5.1-beta (2026-07-26)
+
 ### Added
 
 - Authentication scans now detect security-question password resets and password policies that allow fewer than eight characters.
@@ -37,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Packaged plugins now work correctly with custom namespaces in headless mode.
 - Security architecture reports no longer contain empty control sections or broken two-factor authentication links.
 - Container diagrams now stay within their size limit on larger models.
+- A finding now carries the same severity everywhere in the report; the attack-path table no longer disagrees with the rest of the document.
+- An attack chain is rated fully viable only when every assessed step is confirmed, and its control assessment follows the verifier's reading of the code instead of a keyword guess.
+- Attack demonstrations containing an unsigned token or an SQL-injection payload no longer trip the secret gate or get masked into an unusable reproduction step.
 
 ## 0.5.0-beta (2026-07-18)
 
