@@ -28,18 +28,21 @@ TOLERANCE = 0.20
 # bloat. Both bounds include the TOLERANCE buffer documented above.
 _BOUNDS: dict[str, tuple[int, int]] = {
     "agents/phases/phase-group-finalization.md": (32_000, 60_000),
-    "agents/phases/phase-group-architecture.md": (25_000, 45_000),
+    # Raised 2026-07-24: mirrored the canonical-zone hard constraint from
+    # appsec-recon-scanner.md into the actual .components.json writer — the
+    # analyst was free-texting off-vocab `*-zone` labels (application-zone/…)
+    # that silently disable the STRIDE exposure/ci-cd selector (real
+    # mis-classification bugfix). Measured 45_052; high = ~2% buffer.
+    "agents/phases/phase-group-architecture.md": (25_000, 46_000),
     "agents/phases/phase-group-threats.md": (24_000, 45_000),
     # Raised 2026-06-26: commit 77721d7 added the ⛔ "never re-dispatch
     # context-resolver/recon-scanner after a stall" rule (real token-waste
     # bugfix, pinned by a drift guard). Measured 7_613; high = ~20% buffer.
     "agents/phases/phase-group-recon.md": (3_000, 9_100),
-    # Lowered 2026-05-28: deterministic-first migration. All mechanical
-    # checks already covered by qa_checks.py (53 check functions) were
-    # collapsed to thin "consume PRE_PASS_JSON" pointers. Detailed §2.4
-    # theme rules and MS layout rules moved to shared/qa-section24-themes.md
-    # and shared/qa-ms-checks.md. Measured 11_096 tokens at the cut.
-    "agents/appsec-qa-reviewer.md": (8_500, 13_500),
+    # Lowered 2026-07-20: the canonical post-autofix gate now owns all
+    # mechanical checks. The exceptional reviewer consumes only a compact
+    # repair plan or an explicitly forced semantic sample.
+    "agents/appsec-qa-reviewer.md": (1_200, 3_000),
     "agents/appsec-threat-analyst.md": (22_000, 45_000),
     # Lowered 2026-05-23 after shared-file extraction (finding-title-contract,
     # supply-chain-patterns, spa-threats, cvss-metrics) and dedup of the
@@ -49,7 +52,16 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # Raised 2026-06-24: OAuth/OIDC FT-091/092/093 finding-type rows + the
     # evidence_summary "short inline identifiers only" code-formatting rule.
     # Measured 13_011; high = ~14% buffer above the new size.
-    "agents/appsec-stride-analyzer.md": (6_500, 14_900),
+    # 2026-07-19: + the "Authoring attack_steps" contract, so §3 walkthroughs
+    # are authored attacker-first instead of being sentence-split out of
+    # `scenario`. Measured 15_130; high = ~3% buffer above the new size.
+    # Raised 2026-07-25: four commits grew the prompt past that ~3% buffer
+    # without bumping the bound — 75e4167 (AI-agent threat hardening),
+    # c231749 (evidence preservation in the merger contract), c3c1e81
+    # (anti-serial dispatch rules) and 230e4fa (cheap-stride pacing signal).
+    # Measured 15_574, i.e. 26 tokens below the old ceiling, so the next
+    # single added line would have failed the gate. high = ~5% buffer.
+    "agents/appsec-stride-analyzer.md": (6_500, 16_400),
     # Parallel Stage-2 specialists intentionally keep only role-local
     # instructions. They load their relevant legacy contract slice on demand.
     "agents/appsec-secarch-renderer.md": (500, 1_200),

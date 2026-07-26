@@ -760,6 +760,9 @@ Parse the user's arguments for the following flags:
 | `--quick` | shortcut for `--assessment-depth quick`; also sets `SKIP_QA=true` and `SKIP_ATTACK_WALKTHROUGHS=true` (mutually exclusive with `--thorough`) | n/a |
 | `--thorough` | shortcut for `--assessment-depth thorough` (mutually exclusive with `--quick`) | n/a |
 | `--stride-cap <N>` | opt-in per-category STRIDE threat cap (Critical-safe); emits `stride_profile.max_threats_per_category=N` (label `full (per-category cap N)`). Off by default — full STRIDE depth otherwise preserved. | unset (no cap) |
+| `--evidence-verifier-cap <N>` | Maximum number of non-Critical findings checked by the Phase 10a evidence verifier; Critical findings do not count toward the cap and are selected first. | `20` quick, `30` standard, `100` thorough |
+| `--cheap-stride` / `--no-cheap-stride` | `cheap_stride` in `.skill-config.json` (resolved by `resolve_cheap_stride`, label in `cheap_stride_label`); the dispatch manifest gives the internal tail (not auth / frontend / LLM / internet-exposed / file-upload / realtime / data-store / core-backend) a flat 8-turn screening pass with `ESTIMATED_THREAT_COUNT=low`, all six STRIDE categories kept. Exposure-unknown components are **never** screened (only ci-cd is exempt, being role-identified), so a drifted zone vocabulary makes the tier inert — announced as `CHEAP_STRIDE_INERT` on stderr. Crown-jewel does **not** spare: `handles_sensitive_data` over-tags (6 of 11 components in the reference run). Screened components are marked `Screened` in §3 and in the Management Summary scope line. | on at quick/standard, off at thorough |
+| `--register-severity-floor <critical\|high\|medium\|low\|informational>` | Exclude findings below this effective severity from the canonical report, SARIF, and pentest-task export. `medium` keeps Critical/High/Medium; pass `low` or `informational` when the deliverable must retain lower-severity findings. | `medium` |
 | `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 4 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
 | `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 4 even at `--assessment-depth thorough` | n/a |
 | `--architect-model <model>` | `ARCHITECT_MODEL=<model>` — model for Stage 4 (ignored when `ARCHITECT_REVIEW=false`); tier alias or explicit version id | `opus` when Stage 4 is enabled |
@@ -780,6 +783,7 @@ Parse the user's arguments for the following flags:
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
 | `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json` / `pentest-tasks-<slug>.yaml`, figure and pentest-tasks references rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
+| _(no CLI flag)_ | `APPSEC_STRIDE_CONCURRENCY=1..32` — bound the number of per-component STRIDE analyzers in one resumable wave. Changes execution pressure only; selected-component coverage is unchanged. | `8` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
 - `--with-requirements` → `--requirements`
@@ -924,6 +928,7 @@ REPO_ROOT=$(echo "$RESOLVED_JSON"  | python3 -c "import json,sys;print(json.load
 
 # Reasoning core models (existing)
 STRIDE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['stride_model'])")
+STRIDE_CONCURRENCY=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('stride_concurrency',8))")
 TRIAGE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['triage_model'])")
 MERGER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['merger_model'])")
 
@@ -943,6 +948,10 @@ ORCHESTRATOR_MODEL=$(echo    "$RESOLVED_JSON" | python3 -c "import json,sys;prin
 # without moving the whole session. Passed as the Agent `model` param at dispatch.
 RENDERER_MODEL=$(echo        "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('renderer_model','sonnet'))")
 ABUSE_VERIFIER_MODEL=$(echo  "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('abuse_verifier_model','sonnet'))")
+# Evidence-verifier: same `sonnet` alias treatment. Never route this to Haiku —
+# see the routing comment in resolve_config.py (degenerate all-ambiguous batch).
+EVIDENCE_VERIFIER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('evidence_verifier_model','sonnet'))")
+EVIDENCE_VERIFIER_MAX_FINDINGS=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('evidence_verifier_max_findings',30))")
 
 # STRIDE depth profile (Quick-mode A-F reductions, only when
 # --reasoning-model sonnet-economy AND --assessment-depth quick).
@@ -1339,8 +1348,8 @@ Files
 <if will_run:>Configuration
   Depth     : <depth_summary — see _format_depth_summary>
   Reasoning : <reasoning_summary>
-  STRIDE cap : <if stride_profile.max_threats_per_category set: ≤<N> per STRIDE category per component (Criticals always kept); else: none — full STRIDE depth (all threats kept)>
-  <if PARALLEL_STRIDE=true:>STRIDE disp: parallel (per-component fan-out, Level-0; default)
+  STRIDE depth : <two clauses joined by "; " — see _format_stride_depth. Cap: <if stride_profile.max_threats_per_category set: ≤<N> per STRIDE category per component (Criticals always kept); else: no per-category cap (all threats kept)>. Screening: cheap-stride <cheap_stride_label> — <if cheap_stride: internal tail at screening depth (~8 turns, all 6 categories); else: every component at full depth>>
+  <if PARALLEL_STRIDE=true:>STRIDE disp: bounded waves (up to <STRIDE_CONCURRENCY> concurrent; Level-0)
   <elif mode∈{full,rebuild} AND APPSEC_PARALLEL_STRIDE=0:>STRIDE disp: serial inline (disabled via APPSEC_PARALLEL_STRIDE=0)
   <if LIVE_PHASE=true:>Live phase : on (background dispatch + console phase)
   <elif env APPSEC_LIVE_PHASE=1 (set but PARALLEL_STRIDE active):>Live phase : requested — inactive (PARALLEL_STRIDE wins)
@@ -1624,6 +1633,7 @@ Full run: discarding stale intermediate artifacts to avoid cross-contamination.
     .fragments/ (compose inputs from prior contract version)
     .pre-render-repair-plan.json, .qa-repair-plan.json, .architect-repair-plan.json (stale repair signals)
     .stage-stats.jsonl, .run-issues.json, .run-issues-fixes.json (prior-run observability — must not bleed into this run's stats)
+    .dispatch-waves.json (bounded STRIDE schedule and retry checkpoint)
   Preserved:
     threat-model.md, threat-model.yaml, threat-model.sarif.json (overwritten by orchestrator)
     .appsec-cache/ (baseline cache; used for incremental fingerprint comparison)
@@ -1645,7 +1655,7 @@ WIPED_COUNT=$(find . -maxdepth 1 \
      -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
      -o -name ".architect-repair-plan.json" \
      -o -name ".stage-stats.jsonl" -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \
-     -o -name ".preserved-provenance.json" \) \
+     -o -name ".preserved-provenance.json" -o -name ".dispatch-waves.json" \) \
   -print -delete 2>/dev/null | wc -l)
 # .stage-stats.jsonl + .run-issues.json + .run-issues-fixes.json are run-scoped
 # observability, NOT carried-forward state. Before 2026-06-13 the full-run wipe
@@ -1854,7 +1864,7 @@ When the deadline-watchdog removes `.appsec-lock`, the heartbeat watchdog's loop
 
 `phase-group-recon.md` §2.6 instructs the Stage 1 analyst to run `route_inventory.py` and `architecture_coverage_checks.py` "unconditionally" — but that is an LLM prompt, and under the `STAGE1_PHASE_LIMIT=8` parallel-STRIDE split (and under turn pressure generally) the analyst sometimes skips them. When `.route-inventory.json` is absent, `build_threat_model_yaml.py:build_attack_surface` gets an **empty baseline** and falls back to whatever finding-relevant entry points the analyst hand-authored into `.attack-surface-overrides.json` — typically a dozen vuln-focused, mostly-unauthenticated routes. The symptom is a report whose §5 Attack Surface lists only a handful of authenticated endpoints even though the app exposes dozens (2026-06-04 juice-shop: 4 authenticated rendered vs. 52 detected across 112 real routes).
 
-These three scripts are pure deterministic pattern extraction (~1 s, no LLM, no tokens), so the skill owns them as a hard pre-pass rather than trusting the analyst. Run them **before the Stage 1 dispatch** so `.route-inventory.json` exists when the analyst's Phase 6 reads it AND when Analyst-B's Phase 11 yaml-write composes `attack_surface[]`. Idempotent — a later analyst re-run is a harmless overwrite. Skip only in `--rerender` mode (Stage 1 is bypassed, the inventory from the prior run is reused) and `--dry-run` (sub-1-minute synthetic run). In incremental mode it still runs (the baseline route set is cheap to recompute and a route added/removed since baseline is exactly what an incremental delta wants to see).
+These deterministic scripts are pure pattern extraction (~1 s, no LLM, no tokens), so the skill owns them as a hard pre-pass rather than trusting the analyst. At `thorough` depth the pre-pass additionally evaluates explicit database-principal separation before architecture coverage consumes its evidence; quick and standard do not invoke that scan. Run them **before the Stage 1 dispatch** so `.route-inventory.json` exists when the analyst's Phase 6 reads it AND when Analyst-B's Phase 11 yaml-write composes `attack_surface[]`. Idempotent — a later analyst re-run is a harmless overwrite. Skip only in `--rerender` mode (Stage 1 is bypassed, the inventory from the prior run is reused) and `--dry-run` (sub-1-minute synthetic run). In incremental mode it still runs (the baseline route set is cheap to recompute and a route added/removed since baseline is exactly what an incremental delta wants to see).
 
 `source_auth_scanner.py` is the deterministic broken-access-control scanner (`data/source-auth-checks.yaml` → AUTHZ-001..008: BOLA / IDOR / mass assignment / JWT algorithm-confusion / missing route auth). Its output `.source-auth-findings.json` is ingested by `merge_threats.py:_load_source_auth_findings` into the same `.threats-merged.json` candidate pool the STRIDE analyzer feeds, so the findings flow through triage, evidence verification, and rendering like any other threat. The ingest is file-presence-gated and was already wired end-to-end; this pre-pass is what produces the file (without it the scanner never runs and the eight high-precision authz checks are dead). Run it here — beside the route inventory and under the same guards — for the same reason: an LLM-prompt instruction is unreliable under turn pressure.
 
@@ -1862,8 +1872,14 @@ These three scripts are pure deterministic pattern extraction (~1 s, no LLM, no 
 if [ "$DRY_RUN" != "true" ] && [ "$RERENDER" != "true" ]; then
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/route_inventory.py" \
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
+  # Thorough-only: inspect explicit privileged/unprivileged database-client
+  # separation before architecture coverage consumes its evidence sidecar.
+  if [ "$ASSESSMENT_DEPTH" = "thorough" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/database_privilege_separation.py" \
+        --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --assessment-depth thorough >/dev/null 2>&1 || true
+  fi
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/architecture_coverage_checks.py" \
-      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" >/dev/null 2>&1 || true
+      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --assessment-depth "$ASSESSMENT_DEPTH" >/dev/null 2>&1 || true
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/source_auth_scanner.py" \
       --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --quiet >/dev/null 2>&1 || true
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/authz_confirm.py" \
@@ -2068,7 +2084,7 @@ fi
 
 Behaviour:
 - No checkpoint present → exit 0, resume proceeds (same as a fresh run).
-- **Checkpoint claims `phase≥1` but `.threat-modeling-context.md` is missing → exit 3** (checked before the status/age rules below). A checkpoint can outlive the intermediate files its phases produced — cleaned up, or written to a different `OUTPUT_DIR`. Resuming then silently re-runs the early phases and rebuilds the full analyst context on *every* attempt; the juice-shop 2026-07-14 loop stalled repeatedly this way, its `cache_read` ballooning 4.5M→9.8M tokens per resume. The helper points at re-running **without** `--resume` (auto-cleans the stale checkpoint) or `--rebuild`.
+- **Checkpoint claims `phase≥1` but `.threat-modeling-context.md` is missing *and* `threat-model.yaml` is absent → exit 3** (checked before the status/age rules below). A checkpoint can outlive the intermediate files its phases produced — cleaned up, or written to a different `OUTPUT_DIR`. Resuming then silently re-runs the early phases and rebuilds the full analyst context on *every* attempt; the juice-shop 2026-07-14 loop stalled repeatedly this way, its `cache_read` ballooning 4.5M→9.8M tokens per resume. The helper points at re-running **without** `--resume` (auto-cleans the stale checkpoint) or `--rebuild`. **Exception — Stage 1 fully complete:** when `threat-model.yaml` is on disk the resume re-enters at Phase-11 compose/render only (the `need_render` state), which reads `.threats-merged.json` / `.triage-flags.json` / the yaml — never the context cache (the triage validator refuses it, the renderers never reference it). The cache having been reaped by `runtime_cleanup` there is expected, so the gate does **not** fire and the paid-for STRIDE+merge+triage work is preserved.
 - `status=completed` → exit 0, resume proceeds (the orchestrator will no-op and exit cleanly).
 - `status=started` or `status=aborted` AND checkpoint mtime ≤ 15 min → exit 0, resume proceeds.
 - `status=started` or `status=aborted` AND checkpoint mtime > 15 min → **exit 3**. The helper prints a remediation line pointing at `/appsec-advisor:clean-run-state` and `--full` / `--rebuild`. The skill does not dispatch Stage 1.
@@ -2135,7 +2151,7 @@ The script prints a full diagnostic to stderr on abort (the unreachable URL, the
 ## Stage 1 — Threat Analysis & Triage
 
 > **⚠ ROUTING — read FIRST. `PARALLEL_STRIDE` was resolved during Configuration Resolution (default-ON for `MODE` ∈ {full, rebuild}; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).**
-> - **If `PARALLEL_STRIDE=true`** → you MUST take the **Parallel-STRIDE split** (Full-M1): dispatch Analyst-A with `STAGE1_PHASE_LIMIT=8`, then run `build_stride_dispatch_manifest.py` → `validate_dispatch_manifest.py` → **fan out one `appsec-stride-analyzer` per component IN PARALLEL** → dispatch Analyst-B with `RESUME_FROM_PHASE=9-merge`. The full procedure is **step 3 → "Parallel-STRIDE variant"** below. Do **NOT** do the default single `STAGE1_PHASE_LIMIT=10b` dispatch in this case.
+> - **If `PARALLEL_STRIDE=true`** → you MUST take the **Parallel-STRIDE split** (Full-M1): dispatch Analyst-A with `STAGE1_PHASE_LIMIT=8`, then run `build_stride_dispatch_manifest.py` → `validate_dispatch_manifest.py` → dispatch one `appsec-stride-analyzer` per selected component in bounded parallel waves → dispatch Analyst-B with `RESUME_FROM_PHASE=9-merge`. The full procedure is **step 3 → "Parallel-STRIDE variant"** below. Do **NOT** do the default single `STAGE1_PHASE_LIMIT=10b` dispatch in this case.
 > - **If `PARALLEL_STRIDE=false` AND `LIVE_PHASE=false`** (opt-out `APPSEC_PARALLEL_STRIDE=0`, or incremental/rerender mode) → use the single-analyst foreground dispatch (step 3 → "Serial variant").
 > - **If `PARALLEL_STRIDE=false` AND `LIVE_PHASE=true`** (opt-in `APPSEC_LIVE_PHASE=1`) → use the **background dispatch + live-phase Monitor** (step 3 → "Live-phase variant"); also start the Monitor in step 2b. `LIVE_PHASE` is never true when `PARALLEL_STRIDE=true` (mutually exclusive, resolved at Configuration Resolution).
 > Verify the values before dispatching AND persist them for forensics (writes a canonical `PARALLEL_STRIDE_RESOLVED` line to `.agent-run.log`, updates `.appsec-progress.json`, and mirrors to stderr — so a post-mortem can tell at a glance which dispatch path was eligible to fire, without re-deriving it from spawn counts). **The `env APPSEC_PARALLEL_STRIDE=` field MUST be the raw `$PARALLEL_STRIDE_ENV` captured in the resolution block (value or `unset`) — never re-inline a `${APPSEC_PARALLEL_STRIDE:-N}` default here, or the line lies about whether a var was actually set:**
@@ -2148,7 +2164,7 @@ The script prints a full diagnostic to stderr on abort (the unreachable URL, the
 
 **Architecture change in M2.12 / M3.8:** Stage 1 runs Phases 1–10b **plus the deterministic Phase 11 Substeps 1–3** (counts pre-compute, canonical `threat-model.yaml` write, baseline-cache update). The LLM-heavy Phase 11 Substeps 4–N (fragment authoring, `compose_threat_model.py`, QA, SARIF/pentest exports) are dispatched as a separate **Stage 2** renderer session so the budget-cheap deterministic prep work stays in Stage 1's natural flow while the expensive compose work gets its own fresh budget and a smaller prompt. The full contract lives in `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT — early-exit branch".
 
-Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Analysis & Triage"` as the Agent tool `description`. The orchestrator handles Phases 1–10b and Phase 11 Substeps 1–3 internally (recon, context, architecture, STRIDE, merge, triage, yaml write, baseline-cache update). The LLM compose work (Phase 11 Substeps 4–N) is handled by Stage 2. Do **not** invoke any other agent from the skill level here.
+Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Analysis and Triage"` as the Agent tool `description` (spelled out: the console HTML-escapes an `&` in a description and never decodes it back, so `&` renders as `&amp;`. The stage NAME keeps its `&` — reports, `record_stage_stats --name`, and the section anchors are unaffected). The orchestrator handles Phases 1–10b and Phase 11 Substeps 1–3 internally (recon, context, architecture, STRIDE, merge, triage, yaml write, baseline-cache update). The LLM compose work (Phase 11 Substeps 4–N) is handled by Stage 2. Do **not** invoke any other agent from the skill level here.
 
 ### Dispatch
 
@@ -2183,9 +2199,11 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
 3. **Dispatch the orchestrator.**
 
-   **— Parallel-STRIDE variant (`PARALLEL_STRIDE=true` — Full-M1, the DEFAULT for full/rebuild; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).** Instead of one monolithic analyst that inlines STRIDE serially, split Stage 1 so the skill (Level-0, can fan out) dispatches the per-component STRIDE analyzers in parallel:
+   **— Parallel-STRIDE variant (`PARALLEL_STRIDE=true` — Full-M1, the DEFAULT for full/rebuild; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).** Instead of one monolithic analyst that inlines STRIDE serially, split Stage 1 so the skill (Level-0, can fan out) dispatches the per-component STRIDE analyzers in bounded waves:
 
-   3a. **Analyst-A** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on the `Stage 1a - Threat Analysis` task to set `activeForm: "Phases 1–8 — recon → architecture → controls"`. This is the only console signal the user gets while Analyst-A is blocking (its internal per-phase `PHASE_START` lines go to `.agent-run.log`, NOT the parent console — a blocking foreground sub-agent's interior never streams). The three coarse labels in 3a/3c/3d are inserted at the natural dispatch seams the orchestrator already controls — no background dispatch, no Monitor, no `LIVE_PHASE`. (Per-phase live ticking would require backgrounding Analyst-A/B; intentionally out of scope here.) Then: Agent call `description: "Threat Analysis & Triage"`, prompt sets **`STAGE1_PHASE_LIMIT=8`** (+ normal config). It runs Phases 1–8 + the Phase-9 dispatch-prep, writes `.stride-analyst-context.json` + `.dispatch-context/<id>/`, then stops (see `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT=8 — Analyst-A branch"). Foreground/blocking.
+   3a. **Analyst-A** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on the `Stage 1a - Threat Analysis` task to set `activeForm: "Phases 1–8 — recon → architecture → controls"`. This is the only console signal the user gets while Analyst-A is blocking (its internal per-phase `PHASE_START` lines go to `.agent-run.log`, NOT the parent console — a blocking foreground sub-agent's interior never streams). The three coarse labels in 3a/3c/3d are inserted at the natural dispatch seams the orchestrator already controls — no background dispatch, no Monitor, no `LIVE_PHASE`. (Per-phase live ticking would require backgrounding Analyst-A/B; intentionally out of scope here.) Then: Agent call `description: "Threat Analysis and Triage"`, prompt sets **`STAGE1_PHASE_LIMIT=8`** (+ normal config). It runs Phases 1–8 + the Phase-9 dispatch-prep, writes `.stride-analyst-context.json` + `.dispatch-context/<id>/`, then stops (see `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT=8 — Analyst-A branch").
+
+   **Set `run_in_background: false` on this Agent call. Do NOT background it and do NOT end your turn after dispatching it** — step 3b below must run in the SAME turn, off the blocking return. This path has no Monitor and no completion-notification handler (those exist only in the `LIVE_PHASE` variant), so a backgrounded Analyst-A strands the run: the orchestrator's turn ends, nothing re-invokes it, and headless `claude -p` hard-kills the process at its background-task ceiling with no `threat-model.yaml` written — which also defeats the compose backstop in `run-headless.sh`, since that is gated on the yaml existing. Observed on fixture-e2e runs 29696937786 / 29700135164 / 29704358601 (killed at 767–775s); run 29697943011 on the same commit, fixture and depth passed in 46m39s, i.e. the failure mode is dispatch-compliance, not workload. Same rule and rationale as the recon fan-out one level down (`agents/appsec-threat-analyst.md` → "Use `run_in_background: false` for these recon agents").
 
    3b. **Build + validate the dispatch manifest** (deterministic, ~1 s):
    ```bash
@@ -2199,73 +2217,36 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
    ```
    **On `PS_FAIL=1` → graceful fallback (never hard-fail):** log `PARALLEL_STRIDE_FALLBACK` and dispatch a normal single `STAGE1_PHASE_LIMIT=10b` analyst with `RESUME_FROM_PHASE=9` (it re-runs STRIDE inline per the M1-lite escape clause + the rest of Stage 1). Skip 3c/3d. The default flow is unchanged, so a manifest defect degrades to today's behaviour — no regression.
 
+   When the manifest is valid, initialize the deterministic wave checkpoint.
+   This is a hard gate; do not fall back to an unbounded burst or inline
+   analysis if it fails:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" init \
+       "$OUTPUT_DIR" --concurrency "$STRIDE_CONCURRENCY" || exit $?
+   ```
+
    3b-i. **Surface the component selection to the user (required console output).** The builder above prints a `STRIDE component selection (depth=…)` block — `ANALYZED (N)` each with its selection reason, then `SKIPPED (N)` each with its skip reason (e.g. `out-of-scope at depth=standard`). **Render that block to the user verbatim in your response** as a short banner, so the user sees exactly which components get a STRIDE pass and which are skipped and why, *before* the fan-out runs. (It is the console mirror of the report's §1 Scope + §11 Out of Scope, both built from the same `.stride-selection.json` → `meta.component_selection`.) If the builder's stdout is not in view, re-render it deterministically with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_stride_dispatch_manifest.py" --print-selection "$OUTPUT_DIR"`. Do not summarize it away or drop the skip reasons — the skipped list with reasons is the point.
 
-   3c. **Fan out STRIDE analyzers in parallel.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phase 9 — STRIDE (<N> components)"` where `<N>` is the manifest's `components[]` count. (The per-component `"STRIDE: <NAME>"` Agent rows below render natively in the subagent panel — this label just names the phase group above them.)
+   3c. **Dispatch bounded STRIDE waves.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phase 9 — STRIDE (<N> components, waves of up to <STRIDE_CONCURRENCY>)"`.
 
-   **⚠ HARD CONSTRAINT — ONE MESSAGE, ALL COMPONENTS, NO EXCEPTIONS.** Read `.stride-dispatch-manifest.json`; collect ALL `components[]` entries; issue ALL `Agent` calls to `appsec-advisor:appsec-stride-analyzer` **in a SINGLE message turn** (multiple tool-use blocks in one response). This is NOT optional and NOT sequential: every component must be in the SAME message so Claude Code dispatches them concurrently. **DO NOT send one Agent call, wait for it to finish, then send the next.** That sequential pattern collapses the fan-out to a serial chain, multiplying wall-clock by N (observed in production: 6 components × ~4 min each = 27 min instead of 5 min parallel). Concrete check: if you are about to call Agent for component 2 AFTER component 1 returned, you have already violated this constraint — stop and re-read. The proven model is the Stage-1c abuse-verifier dispatch (SKILL-impl.md §"Stage 1c"): all verifiers dispatched in one message, all run concurrently.
+   Repeatedly run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" claim "$OUTPUT_DIR"` and parse the returned JSON. `status=complete` ends the loop. `status=claimed` contains only the unfinished components in the earliest incomplete wave; issue those Agent calls **together in one message** so the wave runs concurrently, then claim again. Attempt 1 is the normal dispatch and attempt 2 is the only retry. Attempts are persisted in `.dispatch-waves.json`, so resume cannot reset the budget. Exit 1 / `status=blocked` is fatal: stop before Analyst-B rather than publishing a report that silently omitted a selected component.
 
-   **Set each Agent call's `description` to `"STRIDE: <NAME>"`** (the component's `name` from the manifest entry — e.g. `"STRIDE: express-api"`) so the Claude Code subagent panel shows one labelled row per component being analyzed. The component name leads the string because the panel truncates. Map each manifest entry to the analyzer's prompt params (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). **Each dispatch prompt MUST also pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instruct the analyzer to `export OUTPUT_DIR=<value>` as its FIRST Bash call** — `agent_progress.sh` silently no-ops unless `OUTPUT_DIR` is a shell env var, so without the export the analyzer writes `.stride-<id>.json` but skips `.progress/<id>.json`, blinding the watchdog and (pre-fix) false-positiving `check_stride_dispatch.py`. **⚠ Set each Agent call's `model` parameter to the tier alias of `$STRIDE_MODEL` — explicitly, on every component.** The Agent `model` param accepts only bare tier aliases (`sonnet`/`opus`/`haiku`), never a full version id: reduce `$STRIDE_MODEL` to its tier (`claude-opus-*`→`opus`, `claude-haiku-*`→`haiku`, else `sonnet`; a bare alias passes through), keeping the full id only in the `(model: …)` log lines. If you omit the `model` param, Claude Code silently runs the analyzer on the agent definition's frontmatter default (`model: sonnet` in `agents/appsec-stride-analyzer.md`), so `--reasoning-model opus` is silently ignored for the entire STRIDE phase — the most expensive, value-defining reasoning runs on Sonnet while the config says Opus. (Verified 2026-06-22 juice-shop: every analyzer fell back to Sonnet because the `model` param was omitted; only triage — which sets it — ran on Opus. The post-run issue aggregation (`aggregate_run_issues.py` → `stride_model_mismatch`) now flags this as a non-blocking run-issue in the completion summary.) Wait for all to return — each writes `.stride-<id>.json` + `.progress/<id>.json`. **Issuing the real per-component `Agent` calls here is what makes the run pass the post-Stage-1 gate.** `check_stride_dispatch.py` requires *count-based* dispatch evidence: at least as many `AGENT_SPAWN appsec-stride-analyzer` lines in `.hook-events.log` as the manifest has components (each `Agent` call emits exactly one). **The manifest's existence alone is NOT proof** — it is built in step 3b *before* this fan-out, so it survives a collapse where you build it and then inline STRIDE instead of dispatching; that is the precise failure the gate now catches (it would silently pass pre-2026-06-05). If the spawn count falls short, the gate falls through to the per-component `.progress/` check — so a genuinely-parallel run whose hooks under-logged is still saved by the `.progress/` files the `export OUTPUT_DIR` above guarantees, while a true inline-collapse (no spawns AND no `.progress/`) trips and aborts the run.
+   **Set each Agent call's `description` to `"STRIDE: <NAME>"` — or `"STRIDE screening: <NAME>"` when the manifest entry carries `cheap_stride: true`**, so the agent list names the analysis tier per component (prefix, not suffix: the console truncates long names on the right). Map every field from the claimed manifest entries to the analyzer prompt (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT` (pass the manifest's `estimated_threat_count_label` — the analyzer paces on the `low`/`moderate`/`high` band, not on the integer; omit the parameter when the entry has no label), `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). Preserve Group A → B → C order. Pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`; require `export OUTPUT_DIR=<value>` as the analyzer's first Bash call; set `run_in_background: false`; and reduce `$STRIDE_MODEL` to the bare `sonnet`/`opus`/`haiku` Agent model alias. Record each wave's usage with `record_stage_stats.py --accumulate` before claiming the next wave.
 
-   **3c-retry — Stub detection and immediate re-dispatch (before Analyst-B).** After all STRIDE agents return, inspect every `.stride-<id>.json` for stub output BEFORE dispatching Analyst-B:
-
-   ```bash
-   STUB_COMPONENTS=""
-   for f in "$OUTPUT_DIR"/.stride-*.json; do
-     [ -f "$f" ] || continue
-     cid=$(basename "$f" .json | sed 's/^\.stride-//')
-     # A stub has threats=[] OR partial=true — both indicate turn-budget exhaustion.
-     IS_STUB=$(python3 -c "
-   import json, sys
-   try:
-     d = json.load(open('$f'))
-     if 'threats' not in d:
-       print('no')
-       sys.exit()
-     threats = d['threats']
-     partial = d.get('partial', False)
-     print('yes' if (not threats or partial) else 'no')
-   except Exception:
-     print('no')
-   " 2>/dev/null)
-     if [ "$IS_STUB" = "yes" ]; then
-       STUB_COMPONENTS="$STUB_COMPONENTS $cid"
-       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  WARN   skill  STRIDE_STUB   component=$cid threats=0 — queuing for re-dispatch" >> "$OUTPUT_DIR/.agent-run.log"
-     fi
-   done
-   ```
-
-   For each `$cid` in `$STUB_COMPONENTS`, re-dispatch the single `appsec-stride-analyzer` **once** (foreground, `run_in_background: false`) with the same prompt as the original dispatch. Do NOT re-dispatch more than once per component — a second exhaustion signals the component is too large for the current turn budget, and Analyst-B's merge step will carry forward an empty threat set rather than blocking. Dispatch all stub re-runs **simultaneously in one message** when there are multiple stubs.
-
-   **Judge recovery from disk, not from the Agent return (deterministic post-retry gate).** After the retry Agent call(s) return, re-read each retried `.stride-<cid>.json` from disk with the SAME stub predicate used above and only THEN decide the outcome. Do **not** infer the verdict from the Agent return value: when a retry session is interrupted mid-run (parent turn-ceiling cut-off), it returns empty even though the analyzer wrote a full `.stride-<cid>.json`, and the component is also re-dispatched again by Analyst-B's Phase-9 merge — so a return-based verdict logs `STRIDE_STUB_RETRY_FAILED` while the file on disk already carries real threats (observed 2026-07-16 juice-shop: auth-service/data-persistence/frontend-spa logged RETRY_FAILED yet ended with 12/12/9 real threats). Judge STILL-a-stub from the on-disk file:
+   The helper advances only when every component in the wave has a schema-valid output with `partial=false` and `skipped_categories=[]`. `threats=[]` is valid when those completion signals hold; absence of findings is not itself a stub. After the loop, run the final hard gate:
 
    ```bash
-   for cid in $STUB_COMPONENTS; do
-     f="$OUTPUT_DIR/.stride-$cid.json"
-     STILL_STUB=$(python3 -c "
-   import json, sys
-   try:
-     d = json.load(open('$f'))
-     threats = d.get('threats')
-     print('yes' if (not threats or d.get('partial', False)) else 'no')
-   except Exception:
-     print('yes')
-   " 2>/dev/null)
-     if [ "$STILL_STUB" = "yes" ]; then
-       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  WARN   skill  STRIDE_STUB_RETRY_FAILED   component=$cid — still a stub on disk after retry; Analyst-B merge will attempt final recovery" >> "$OUTPUT_DIR/.agent-run.log"
-     else
-       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  INFO   skill  STRIDE_STUB_RETRY_OK   component=$cid — real threats present on disk after retry" >> "$OUTPUT_DIR/.agent-run.log"
-     fi
-   done
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" verify "$OUTPUT_DIR" || exit $?
    ```
 
-   `merge_threats.py` tolerates a genuinely-missing component, so a true still-stub is non-blocking; the point of the on-disk re-read is that `STRIDE_STUB_RETRY_FAILED` now reflects reality instead of an interrupted-return artifact. A component that only Analyst-B recovers is correctly logged `STRIDE_STUB_RETRY_FAILED` here (it IS a stub at this instant) but its later real threats flow into the merge normally — the wording no longer claims the component was dropped.
+   Never start Analyst-B unless this verification succeeds. `check_stride_dispatch.py` repeats the same coverage check in the post-Stage-1 gate and still independently verifies that real analyzer dispatches occurred.
 
-   3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis & Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
+   3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis and Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 
-   **— Serial variant (`PARALLEL_STRIDE=false` AND `LIVE_PHASE=false` — opt-out / incremental fallback).** Reached when `APPSEC_PARALLEL_STRIDE=0` is set, or in non-full/rebuild modes where the parallel split does not apply. Call the Agent tool with `description: "Threat Analysis & Triage"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b plus Phase 11 Substeps 1–3 (deterministic yaml write + baseline cache), without entering the LLM-heavy Substeps 4–N. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
+   **— Serial variant (`PARALLEL_STRIDE=false` AND `LIVE_PHASE=false` — opt-out / incremental fallback).** Reached when `APPSEC_PARALLEL_STRIDE=0` is set, or in non-full/rebuild modes where the parallel split does not apply. Call the Agent tool with `description: "Threat Analysis and Triage"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b plus Phase 11 Substeps 1–3 (deterministic yaml write + baseline cache), without entering the LLM-heavy Substeps 4–N. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
 
-   **— Live-phase variant (`LIVE_PHASE=true` — opt-in via `APPSEC_LIVE_PHASE=1`, experimental).** Same agent, same `description: "Threat Analysis & Triage"`, same `STAGE1_PHASE_LIMIT=10b` prompt and config as the Default variant — the ONLY differences are the dispatch mode and the control flow that follows. Set **`run_in_background: true`** on the Agent call so the Level-0 orchestrator is NOT blocked (a blocking foreground call would queue all async console output until it returns — verified by the 2026-06-04 spike). Capture the returned background agent id in `STAGE1_AGENT_ID`. Then drive the live-phase display:
+   **— Live-phase variant (`LIVE_PHASE=true` — opt-in via `APPSEC_LIVE_PHASE=1`, experimental).** Same agent, same `description: "Threat Analysis and Triage"`, same `STAGE1_PHASE_LIMIT=10b` prompt and config as the Default variant — the ONLY differences are the dispatch mode and the control flow that follows. Set **`run_in_background: true`** on the Agent call so the Level-0 orchestrator is NOT blocked (a blocking foreground call would queue all async console output until it returns — verified by the 2026-06-04 spike). Capture the returned background agent id in `STAGE1_AGENT_ID`. Then drive the live-phase display:
 
    - **End your turn immediately after dispatching.** Do NOT proceed to step 4. Do NOT make any blocking tool call (Bash, foreground Agent) while waiting — any blocking call re-blocks the main loop and re-queues the Monitor events, defeating the whole mechanism. You will be re-invoked by notifications.
    - **On each live-phase Monitor event** (task id `LIVE_PHASE_MONITOR_ID`): parse the phase/step text out of the event payload (e.g. `… PHASE_START   [Phase 3/11] ▶ Architecture Modeling…` → `Phase 3/11 — Architecture Modeling`; `STRIDE_PROGRESS stride_files=2 …` → `Phase 9/11 — STRIDE 2/5 components`) and call `TaskUpdate` on the `Stage 1a - Threat Analysis` task to set its `activeForm` to that text. This is what surfaces the live phase NAME on the console (the raw Monitor line shows only the static description). Do nothing else; end your turn again. If the payload has no parseable phase, skip the update.
@@ -2430,6 +2411,11 @@ EOF
   exit 2
 fi
 
+# Normalize merged↔YAML drift and CVSS eligibility BEFORE the hard gate. The
+# enforcer is best-effort for IO failures, but any unrepaired structural or
+# cross-field defect is still rejected immediately by validate_intermediate.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/enforce_yaml_invariants.py" "$OUTPUT_DIR" 2>&1 | tail -10 || true
+
 # Hard gate: validate threat-model.yaml schema before dispatching Stage 2.
 # An invalid YAML here means Stage 1 did not fully persist Phase 3-8 data.
 # Stage 2 rendering from an invalid YAML produces silently broken output
@@ -2487,13 +2473,14 @@ If either branch trips, the run exits 2 without dispatching Stage 2. The YAML an
 
 Phase-11 Substep-2 is LLM-driven: it assembles `threat-model.yaml` from `.threats-merged.json` plus working-memory Phases-5-8 context. In practice the LLM silently rewrites threat fields it is supposed to copy verbatim. The 2026-05 juice-shop run mutated 3 of 36 STRIDE categories (T-005 Tampering→Elevation of Privilege, T-024 Information Disclosure→Tampering, T-030 Information Disclosure→Tampering) between merge and yaml, and 29 of 36 titles. Downstream §8 grouping, attack-walkthroughs and mitigation references treated the post-mutation values as authoritative.
 
-`scripts/enforce_yaml_invariants.py` compares `stride` and `cwe` (the fields with semantic downstream impact) between yaml and merged, restores the merged value when they diverge, appends `yaml_invariant_drift` to `evidence_flags`, and writes a `YAML_INVARIANT_DRIFT` audit line to `.agent-run.log`. Idempotent.
+`scripts/enforce_yaml_invariants.py` compares `stride` and `cwe` (the fields with semantic downstream impact) between yaml and merged, restores the merged value when they diverge, and deterministically removes out-of-scope `cvss_v4` blocks from both representations. CVSS is retained only for known-vulnerability/dependency sources or STRIDE findings with an eligible CWE and concrete file:line evidence. Repairs append an evidence flag and write a `YAML_INVARIANT_DRIFT` audit line to `.agent-run.log`. Idempotent.
 
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/enforce_yaml_invariants.py" "$OUTPUT_DIR" 2>&1 | tail -10 || true
-```
+This command already ran immediately before the YAML hard gate above; do not
+run it a second time here.
 
-Runs **before** the auto-emitter pass so that any post-yaml mutation by reclassify_components, sanitize_perimeter_claims etc. operates on a stride/cwe-canonical yaml. `--report-only` is available for CI inspection without rewrite.
+It runs **before validation and before** the auto-emitter pass so that validation
+sees repaired CVSS scope and later mutations operate on a stride/cwe-canonical
+YAML. `--report-only` is available for CI inspection without rewrite.
 
 ### Stage 2 no-op gate (incremental only — skip render when YAML unchanged)
 
@@ -2633,6 +2620,15 @@ Behaviour contract:
 
 The YAML integrity gate that runs before this section will still pass after the emitter writes; the schema permits every field the emitters touch.
 
+▶ **End of the initial-load portion.** Per `SKILL.md`, the initial read stops at
+the `LAZY-LOAD BOUNDARY` below. Stage 1c and every later stage remain unloaded.
+Follow the bounded schedule in `SKILL.md`: after a completed Stage 1, load
+Stage 1c only when enabled; rerender and Stage-2-only recovery go directly to
+Stage 2. Load each later stage at its own boundary. **Do not read from this
+marker to EOF.**
+
+<!-- LAZY-LOAD BOUNDARY — use bounded stage-local reads after Stage 1 (see SKILL.md). -->
+
 ## Stage 1c — Abuse Case Verification (visible skill-level stage)
 
 **This is a first-class, user-visible stage** (formerly the invisible "Phase 10c"). It runs between Stage 1 and Stage 2, has its own `TaskList` row (`Stage 1c - Abuse Case Verification`), a handoff banner, a heartbeat watchdog, and a `.stage-stats.jsonl` record — so the verifier fan-out's cost, duration, and verdict reliability are visible in the completion summary and the §Run-Statistics breakdown (RC-2026-06: the 2026-06 juice-shop run lost 3/6 verifiers with no visibility because this work was unstaged).
@@ -2767,21 +2763,6 @@ fi
 
 The §9 fragment is **also** re-rendered idempotently in the Stage-3 pre-generation block (a backstop that picks up any late verdict change); rendering it here as well guarantees the FIRST Stage-2 compose already includes §9. Both calls read `.abuse-case-verdicts.json` (viable chains) **and** `.abuse-case-matches.json` (the generic catalog evaluated-but-not-applicable table) and are byte-identical given identical inputs.
 
-▶ **End of the initial-load portion.** Per `SKILL.md`, the initial read of this file
-stops at the `LAZY-LOAD BOUNDARY` marker just below — the Stage 2 / 3 / 4 / Completion /
-Error-Handling instructions were **not** read yet. When Stage 1 + 1c are complete and you
-are ready to compose the report — **or immediately, if you took the `--rerender` branch**
-(which lands here) — read `<base-dir>/SKILL-impl.md` **from the `LAZY-LOAD BOUNDARY`
-marker below to the END of the file now** (a single Read with `offset` at the marker), then
-follow those instructions. Do not skip this read: the renderer dispatch, the QA gate, the
-architect review, and the Completion Summary all live below it.
-
-<!-- LAZY-LOAD BOUNDARY — read from here to EOF at the Stage-2 handoff (see SKILL.md).
-Everything below (Stage 2 + Incremental/Dry-Run reference + Stage 3 + Stage 4 + Completion
-+ Error Handling, ~30k tokens) is deferred out of the pre-Stage-1 resident context. The
-Incremental-Mode and Dry-Run-Mode sections below are descriptive reference only — their
-operative logic runs earlier in the file, so deferring them does not change behavior. -->
-
 ## Stage 2 - Report Rendering (M2.12 — Sprint 3)
 
 Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`) **and** when the no-op gate above did not skip it. Stage 2 runs Phase 11 (Finalization) with its own renderer budget. This is the architectural fix for Phase-11 budget exhaustion.
@@ -2907,9 +2888,9 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    # doc (2026-06-05 parallel-render gotcha). Exit code is the only honest
    # signal. Retry compose once (mirrors the single-dispatch renderer's
    # Postcondition recovery) before handing off to the recovery path.
-   # Stage 3 runs `qa_checks.py all` for standard/thorough non-PR runs. Let
-   # that authoritative gate own Mermaid parsing once; quick/PR/no-QA paths
-   # retain the compose-time parse because no later full gate is guaranteed.
+   # The Stage-3 canonical gate owns Mermaid parsing for non-PR QA runs.
+   # Quick/PR/no-QA paths retain compose-time parsing because no later gate is
+   # guaranteed.
    COMPOSE_MERMAID_ARG=""
    if [ "$SKIP_QA" != "true" ] && [ "$DRY_RUN" != "true" ] && [ "$PR_MODE" != "true" ]; then
        COMPOSE_MERMAID_ARG="--defer-mermaid-validation"
@@ -3016,7 +2997,7 @@ This is where the existing `pregenerate_fragments.py || true` + `check_inline_sh
 
 **A stream-watchdog stall counts as a cut-off (any `Agent` dispatch).** A killed call returning a stall/stream error (`no progress … did not recover`) is API latency, not a plugin defect. First emit the shared calm banner — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stall_notice.py" "$OUTPUT_DIR" --stage "<label>"` (never hand-type "stalled … re-dispatching") — then run the detection below; never free-hand a fresh dispatch (it bypasses the `MAX_STAGE1_RESUMES` cap).
 
-Thorough-depth runs whose criteria selection yields the full inventory (commonly ~8 STRIDE analyzers; bounded by the `MAX_STRIDE_COMPONENTS` operational ceiling) routinely touch the Claude Code agent turn budget (observed at ~90 tool calls per agent session in `claude -p` headless mode). When the budget is hit, the Agent call returns control to the skill *before* Phase 11 finalization runs, typically mid-Phase-9 or mid-Phase-10. Two concrete symptoms:
+Thorough-depth runs whose criteria selection yields a large inventory routinely touch the Claude Code agent turn budget even though analyzer execution is split into bounded waves (observed at ~90 tool calls per agent session in `claude -p` headless mode). When the budget is hit, the Agent call returns control to the skill *before* Phase 11 finalization runs, typically mid-Phase-9 or mid-Phase-10. Two concrete symptoms:
 
 1. The agent's final text ends with something like `"All 8 STRIDE files ready. Proceeding to merge."` without a closing `ASSESSMENT_END` log entry.
 2. `$OUTPUT_DIR/threat-model.md` does NOT exist after the Agent call returns — but `$OUTPUT_DIR/.stride-*.json` and `$OUTPUT_DIR/.recon-summary.md` are present.
@@ -3262,7 +3243,7 @@ The lock file is removed (but `.appsec-checkpoint`, `.threat-modeling-context.md
 - When the counter has reached the cap and `STAGE1_CUTOFF=true` fires again, do **not** dispatch another resume. Instead, treat this as a hard abort (see "Exhausted resumes" below) — this prevents rare recursive cut-off→resume→cut-off chains from burning tokens indefinitely.
 - On successful completion (`threat-model.md` exists), the counter file is cleaned up by `runtime_cleanup.py` along with the other transient artifacts.
 
-**Recovery path.** If `STAGE1_CUTOFF=true` **and** the resume counter is below `MAX_STAGE1_RESUMES`, spawn another `appsec-advisor:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Threat Analysis & Triage (resume)"` and a prompt that:
+**Recovery path.** If `STAGE1_CUTOFF=true` **and** the resume counter is below `MAX_STAGE1_RESUMES`, spawn another `appsec-advisor:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Threat Analysis and Triage (resume)"` and a prompt that:
 
 1. Tells the agent to skip Phases 1–8 entirely because their outputs are on disk (`.recon-summary.md`, `.threat-modeling-context.md`).
 2. Lists every `.stride-<component>.json` file under `$OUTPUT_DIR` and instructs the agent not to re-dispatch STRIDE analyzers.
@@ -3327,6 +3308,7 @@ Pass the following variables to the agent prompt:
 - `RENDER_ROLE=<full|secarch|ms>` (perf 2026-06-05 — only set on Stage 2 dispatch. `full` (default / omit) = single-agent path: author MS + §7 + compose. `secarch` / `ms` = the two parallel split roles (`PARALLEL_RENDER=true`): each authors only its half and does NOT compose; the skill composes after both return. See `agents/appsec-threat-renderer.md` → "Render role — READ FIRST".)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 - `MAX_STRIDE_COMPONENTS=<operational ceiling, default 10>` (safety valve passed to the manifest builder as `--ceiling`; NOT the selection count — components are criteria-selected by `select_stride_components()`)
+- `STRIDE_CONCURRENCY=<1..32, default 8>` (maximum analyzer calls in one bounded wave; does not reduce selected-component coverage)
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
 - `STRIDE_TURNS_MODERATE=<15|22|28>`
 - `STRIDE_TURNS_COMPLEX=<20|31|35>`
@@ -3619,7 +3601,7 @@ The previous ~50 lines of inline Bash that tried to replicate the gate logic in 
 
 ### Pre-agent contract gate (deterministic, skill-level)
 
-Before invoking `qa_checks.py`, run the deterministic prose-fix pass — currently this wraps unbacked path-shaped tokens (`lib/insecurity.ts`, `routes/login.ts:42`) in backticks per `prose-style.md → Rule 6`. The renderer prompt asks for this but LLM compliance is patchy; the script is idempotent and shaves a dozen `inline_code_format` warnings off `.qa-prepass.json` for free:
+Before invoking `qa_checks.py`, run the deterministic prose-fix pass — currently this wraps unbacked path-shaped tokens (`lib/insecurity.ts`, `routes/login.ts:42`) in backticks per `prose-style.md → Rule 6`. The renderer prompt asks for this but LLM compliance is patchy; the script is idempotent and prevents those mechanical warnings from reaching the canonical gate:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py" \
@@ -3650,29 +3632,26 @@ if [ "$SECRET_GATE_EXIT" -eq 1 ]; then
 fi
 ```
 
-When the fragment precondition passes, run `qa_checks.py repair_plan` before the agent is dispatched. This builds `.qa-repair-plan.json` from the authoritative Python checker so the agent inherits a clean baseline instead of spending turns rediscovering drift:
+When the fragment precondition passes, run the canonical post-autofix gate.
+`qa_checks.py gate` applies the authorized Markdown mutations first and then
+builds `.qa-repair-plan.json` from the persisted bytes. Keeping both steps in
+one command prevents a pre-autofix exit code from being reused after the report
+has changed and removes the duplicate `qa_checks.py all` detector pass:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" repair_plan \
-    "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" gate \
+    "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" "$REPO_ROOT"
 GATE_EXIT=$?
 ```
 
-Also apply the auto-fixing checks in place so the Markdown already has clean links, anchors, MS structure, and `<br/>`-stacked multi-link cells before the agent even looks at it. The `autofix` subcommand runs **only** the five in-place mutating passes (links, anchors, MS structure, cell-format, heading-attribute strip); it does **not** run the ~45-check detector battery. That battery (`qa_checks.py all` → `.qa-prepass.json`) is deferred to the agent-dispatch path below, because on the clean fast path the QA agent is skipped and nothing consumes the pre-pass JSON:
-
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" autofix \
-    "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"
-```
-
 **Branch logic:**
-- `GATE_EXIT == 0` — contract clean, no repair plan on disk. The `autofix` pass above already applied the in-place fixes; write a compact `$OUTPUT_DIR/.qa-status.json` with `status: "pass"` and `source: "deterministic-pre-agent"`, then skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`. This is the normal fast path: the in-place auto-fixers own links, anchors, MS structure, cell-format; the `repair_plan` **gate** owns contract validation, Mermaid syntax, unfilled placeholders, and YAML↔MD consistency (count + asset cross-reference drift) — each trips the gate (exit 1/3/4) rather than the deferred `all` battery. No LLM session — and no detector pre-pass — is needed when they are clean. (Pre-2026-06-05 `placeholders` and `yaml_md_consistency` lived only in the deferred `all` battery, which never runs on the clean path because the QA agent that consumed it is skipped — so a residual placeholder or a yaml/md count drift could ship silently. They are now folded into `build_repair_plan`.)
+- `GATE_EXIT == 0` — contract clean, no repair plan on disk. Write a compact `$OUTPUT_DIR/.qa-status.json` with `status: "pass"` and `source: "deterministic-pre-agent"`, then skip the QA agent unless `APPSEC_FORCE_QA_AGENT=1`. This is the normal fast path at every depth: the gate owns links, anchors, MS structure, cell format, contract validation, Mermaid syntax, cross-references, canonical reference formatting, heading hygiene, unfilled placeholders, and YAML↔MD consistency. Extended depth adds deterministic coverage and the optional Stage-4 architect review; it does not by itself justify a second LLM reading of a clean report.
 - `GATE_EXIT == 1` — contract drift, `.qa-repair-plan.json` already on disk. Enter the Re-Render Loop below **without** dispatching the QA agent first. The Re-Render Loop dispatches `appsec-fragment-fixer` in REPAIR_MODE, which re-authors the offending fragments and re-renders. The QA agent is dispatched **after** the loop settles (status=pass) so it works on a contract-clean document.
 - `GATE_EXIT == 2` — tool error (bad path, malformed contract). Log and fall back to the old flow: dispatch the agent unconditionally and let its Check 14 write the plan instead.
 - `GATE_EXIT == 3` — `manual_review`: a real defect exists but no **explicitly blocking** action carries a writable fragment target. This includes deterministic yaml↔md drift (a composer/fragment bug rather than LLM drift) and new, unclassified action types: they must be assessed before they are allowed to spend an LLM repair pass. Do **not** enter the Re-Render Loop. Instead dispatch the QA agent **once** for semantic triage — it inherits the on-disk `.qa-repair-plan.json` and decides between a soft edit, a release-blocker, or a `manual_review_items` escalation. Treat it like the `== 2` fallback for dispatch purposes (set `QA_AGENT_DISPATCHED=true`).
-- `GATE_EXIT == 4` — `cosmetic_advisory` (2026-06-22): the only writable-fragment violations are **cosmetic** — `diagram_compactness`, `chain_compactness`, `walkthrough_depth`, `relevant_findings_bullet_list`, `recon_iam_bridge`. Re-rendering them would spend an LLM fragment-fixer pass on readability nits, so do **not** enter the Re-Render Loop and do **not** dispatch the QA agent for them. Treat dispatch exactly like `GATE_EXIT == 0` (fast path: skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`). Write `$OUTPUT_DIR/.qa-status.json` with `status: "pass"`, `source: "deterministic-pre-agent"`, and a `cosmetic_advisories` array copied from `.qa-repair-plan.json → actions[]` (each item: `type` + `raw_issue`) so the Completion Summary can surface them as non-blocking notes. The plan file is intentionally left on disk (it is **not** a release blocker). To force cosmetic findings back to blocking (exit 1 / Re-Render Loop), set `APPSEC_QA_COSMETIC_BLOCKING=1`.
+- `GATE_EXIT == 4` — `cosmetic_advisory` (2026-06-22): the only writable-fragment violations are **cosmetic** — `diagram_compactness`, `walkthrough_depth`, `relevant_findings_bullet_list`, `recon_iam_bridge`. Re-rendering them would spend an LLM fragment-fixer pass on readability nits, so do **not** enter the Re-Render Loop and do **not** dispatch the QA agent for them. Treat dispatch exactly like `GATE_EXIT == 0` (fast path: skip the QA agent unless `APPSEC_FORCE_QA_AGENT=1`). Write `$OUTPUT_DIR/.qa-status.json` with `status: "pass"`, `source: "deterministic-pre-agent"`, and a `cosmetic_advisories` array copied from `.qa-repair-plan.json → actions[]` (each item: `type` + `raw_issue`) so the Completion Summary can surface them as non-blocking notes. The plan file is intentionally left on disk (it is **not** a release blocker). To force cosmetic findings back to blocking (exit 1 / Re-Render Loop), set `APPSEC_QA_COSMETIC_BLOCKING=1`.
 
-**Mandatory dispatch guard.** Set a local `QA_AGENT_DISPATCHED=false` flag before this gate. Only set it to `true` in the explicit agent-dispatch branch below. On the clean deterministic path (`GATE_EXIT == 0` or `GATE_EXIT == 4`, `QA_DEPTH != extended`, and `APPSEC_FORCE_QA_AGENT != 1`), do **not** execute any later instruction that invokes `appsec-qa-reviewer`, starts the Stage-3 heartbeat watchdog, extracts QA-agent usage, or waits for a QA-agent result. Continue directly to Stage 4 (if enabled) or the completion summary. Record Stage 3 stats as a zero-token deterministic gate (`agent=deterministic:qa_checks.py`, model=`none`) when the stats helper is available.
+**Mandatory dispatch guard.** Set a local `QA_AGENT_DISPATCHED=false` flag before this gate. Only set it to `true` in the explicit agent-dispatch branch below. On the clean deterministic path (`GATE_EXIT == 0` or `GATE_EXIT == 4`, and `APPSEC_FORCE_QA_AGENT != 1`), do **not** execute any later instruction that invokes `appsec-qa-reviewer`, starts the Stage-3 heartbeat watchdog, extracts QA-agent usage, or waits for a QA-agent result. Continue directly to Stage 4 (if enabled) or the completion summary. Record Stage 3 stats as a zero-token deterministic gate (`agent=deterministic:qa_checks.py`, model=`none`) when the stats helper is available.
 
 This inverts the pre-M3.2 flow where the agent was the first thing to see the rendered Markdown. Cost win: clean runs avoid the 90 KB Markdown read entirely; non-clean runs give the QA agent a repair-plan-sized input instead of making it rediscover mechanical drift.
 
@@ -3682,7 +3661,6 @@ Run this subsection **only when `QA_AGENT_DISPATCHED=true` is required**:
 
 - `GATE_EXIT == 2` fallback
 - `GATE_EXIT == 3` (`manual_review` — re-render cannot fix; agent triages the on-disk plan)
-- `QA_DEPTH=extended`
 - `APPSEC_FORCE_QA_AGENT=1`
 - the Re-Render Loop settled with a remaining non-empty repair/content-repair plan that requires semantic triage
 
@@ -3699,14 +3677,10 @@ Immediately before dispatching, call `TaskUpdate` on the `Stage 3 - QA Review` t
 
 **Heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` background invocation (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
 
-**Produce the detector pre-pass the agent consumes (dispatch path only).** The `autofix` pass at the gate already cleaned the Markdown in place; now — and only now, because the agent is actually being dispatched — run the full detector battery to write the `.qa-prepass.json` the reviewer loads as `PRE_PASS_JSON`:
-
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
-    "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" > "$OUTPUT_DIR/.qa-prepass.json"
-```
-
-(If this step is ever skipped, the reviewer's own fallback re-runs `qa_checks.py all` once — see `appsec-qa-reviewer.md` "Pre-pass handoff". The skill-level run is preferred so the agent inherits a clean baseline without spending a turn.)
+Do not run `qa_checks.py all` before dispatch. The reviewer consumes the compact
+repair plan and invokes only the specific standalone check needed for a manual
+or forced semantic review. This keeps deterministic work single-pass and avoids
+serializing a large JSON result that no repair action consumes.
 
 Inside this guarded branch, invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`. If `QA_AGENT_DISPATCHED=false`, this invocation is skipped entirely.
 
@@ -3745,12 +3719,12 @@ Pass the following in the prompt body:
 - `OUTPUT_DIR=<absolute output path>` (same value resolved above)
 - `CONTEXT_FILE=$OUTPUT_DIR/.threat-modeling-context.md`
 - `QA_DEPTH=<core|full|extended>`
-- `PRE_PASS_JSON_PATH=$OUTPUT_DIR/.qa-prepass.json` when the deterministic pre-pass wrote one
+- `PRE_PASS_JSON_PATH=none` (legacy-only input; the canonical gate writes a compact repair plan instead)
 - `REPAIR_PLAN_PATH=$OUTPUT_DIR/.qa-repair-plan.json` when a plan exists, otherwise `none`
 
-The QA reviewer runs with its own turn budget and **does not repeat deterministic checks**. It reads the pre-pass summary and any repair plans, classifies structural vs. manual-review vs. content-repair work, performs only semantic checks that Python cannot reliably decide, and writes `$OUTPUT_DIR/.qa-status.json`. It may apply permitted soft edits, but it must not re-read the full Markdown unless the pre-pass or repair plan names a specific semantic ambiguity requiring source context.
+The QA reviewer runs with its own turn budget and **does not repeat deterministic checks**. It reads the repair plan, classifies manual-review vs. content-repair work, performs only semantic checks that Python cannot reliably decide, and writes `$OUTPUT_DIR/.qa-status.json`. It must not re-read the full Markdown unless the repair plan names a specific semantic ambiguity requiring source context.
 
-**Strict contract gate.** The QA reviewer's Check 14 is a **hard gate** — when it detects any `sections-contract.yaml` violation, it writes a structured `.qa-repair-plan.json` under `$OUTPUT_DIR/`. The presence of this file signals the skill to enter the Re-Render Loop below before proceeding to Stage 4 (or to the Completion Summary when Stage 4 is disabled).
+**Strict contract gate.** `qa_checks.py gate` is the hard gate and writes `.qa-repair-plan.json` before any reviewer dispatch. The reviewer never re-runs contract validation.
 
 **Record Stage 3 stats (M3.3).** If `QA_AGENT_DISPATCHED=true`, after the QA Agent returns (and the Re-Render Loop has settled, if invoked), extract the `<usage>` block from the QA Agent's return notification and append the Stage 3 record.
 
@@ -3887,6 +3861,20 @@ json.dump({'status': 'pass', 'source': 'deterministic-post-content-repair',
        repair_iteration += 1
        rm -f $OUTPUT_DIR/.budget-critical $OUTPUT_DIR/.budget-warning   # fresh-budget clear (G-BC): the REPAIR pass has its own maxTurns; never inherit an earlier stage's wrap-up flag
        dispatch appsec-fragment-fixer (REPAIR_MODE=true) + REPAIR_PLAN_PATH=$OUTPUT_DIR/.qa-repair-plan.json
+       # Transient-capacity guard: if the dispatch never produced a repair
+       # attempt because the SESSION itself was cut off — "session limit",
+       # "rate limit", "overloaded", "usage limit reached" — that is not a
+       # failed repair, and charging it against the budget can burn the whole
+       # allowance (standard depth has MAX_REPAIR_ITERATIONS=1, so a single
+       # limit error hard-fails a run whose document was one edit from clean —
+       # insecure-ai-app 2026-07-19). Roll the counter back and re-dispatch
+       # once. Only do this when the fragment-fixer wrote NOTHING; a fixer that
+       # ran and left the gate failing is a real iteration and must be counted.
+       if dispatch failed with a capacity/limit error AND no fragment was modified:
+           repair_iteration -= 1
+           print "⏳ Repair pass interrupted by a capacity limit — retrying (iteration not counted)"
+           if this rollback already happened once for this stage:
+               print manual-review banner; break   # do not spin on a hard outage
        continue  (back to Stage 3)
 ```
 
@@ -4101,7 +4089,17 @@ Pass the following variables in the prompt:
 
 The architect reviewer runs with its own turn budget (up to 40 turns) and writes `$OUTPUT_DIR/.architect-review.md` with findings and a single-line verdict. It never modifies the threat model itself.
 
+**Post-dispatch status and conditional repair load.** Read
+`$OUTPUT_DIR/.architect-status.json` after the agent returns. When its status is
+`repair_required`, and the shared `Re-Render Loop — enforce strict contract
+compliance` block was not already loaded during Stage 3, lazy-load that block
+now from its heading to immediately before this Stage-4 heading. Apply its
+Stage-4 branch with `.architect-repair-plan.json` and the separate Stage-4
+iteration counter. Do not load the repair block when the status is `pass`.
+
 **Non-fatal.** If Stage 4 errors out or returns without writing `.architect-review.md`, proceed to the Completion Summary as normal — the threat model is still valid. Log the failure to `.agent-run.log` but do not fail the overall skill.
+
+## Completion Summary
 
 ### Hard broken-link gate
 
@@ -4151,8 +4149,6 @@ the renderers. `qa_checks.py autofix` owns the final presentation-only gray ramp
 (❶ `#111111` → ❷ `#555555` → ❸ `#888888` → ❹ `#bbbbbb`). Keeping this inside
 the authorized final QA mutation means no post-validation script can drift the
 delivered Markdown from the section contract.
-
-## Completion Summary
 
 After the last enabled review stage completes (Stage 3 when QA is enabled, Stage 4 when architect review is enabled, or Stage 2 when QA is skipped), **always** print a final summary. For `DRY_RUN=true`, print the dry-run summary after Stage 2 and skip Stage 3/4. This is the last thing the skill outputs and is critical for headless mode (`claude -p`) where it becomes the entire visible output.
 

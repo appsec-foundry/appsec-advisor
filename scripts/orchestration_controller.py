@@ -9,6 +9,10 @@ Commands:
 
     orchestration_controller.py route -- <create-threat-model arguments>
     orchestration_controller.py prepare [--force] -- <arguments>
+    orchestration_controller.py post-stage1 --output-dir <path>
+    orchestration_controller.py prepare-abuse --output-dir <path>
+    orchestration_controller.py finalize-abuse --output-dir <path>
+    orchestration_controller.py prepare-stage2 --output-dir <path>
     orchestration_controller.py next --output-dir <path>
 """
 
@@ -35,12 +39,16 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import check_permissions  # noqa: E402
 import detect_session_model  # noqa: E402
+import ensure_output_gitignore  # noqa: E402
 import resolve_config  # noqa: E402
 from event_log import format_line  # noqa: E402
 
 ACTION_SCHEMA = PLUGIN_ROOT / "schemas" / "orchestration-action.schema.json"
 THIN_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
 THIN_RERENDER_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
+THIN_STAGE1_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1.md"
+THIN_STAGE1C_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1c.md"
+THIN_STAGE2_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage2.md"
 LEGACY_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 
 _FULL_INTERMEDIATE_NAMES = {
@@ -60,6 +68,7 @@ _FULL_INTERMEDIATE_NAMES = {
     ".run-issues.json",
     ".run-issues-fixes.json",
     ".preserved-provenance.json",
+    ".dispatch-waves.json",
 }
 _FULL_INTERMEDIATE_GLOBS = (".stride-*.json", ".merge-*.json")
 
@@ -95,6 +104,7 @@ _REBUILD_NAMES = {
     ".recon-scanner.pid",
     ".recon-scanner.stdout",
     ".coverage-gaps.json",
+    ".dispatch-waves.json",
     ".scan-manifest.txt",
     ".requirements.yaml",
     ".prior-findings-index.json",
@@ -142,6 +152,8 @@ _DISPATCH_KEYS = (
     "merger_model",
     "renderer_model",
     "abuse_verifier_model",
+    "evidence_verifier_model",
+    "evidence_verifier_max_findings",
     "context_resolver_model",
     "recon_scanner_model",
     "qa_routine_model",
@@ -158,6 +170,7 @@ _DISPATCH_KEYS = (
     "skip_attack_walkthroughs",
     "assessment_depth",
     "max_stride_components",
+    "stride_concurrency",
     "stride_turns_simple",
     "stride_turns_moderate",
     "stride_turns_complex",
@@ -325,8 +338,45 @@ def _run_script(
     return completed
 
 
+def _run_external(
+    command: list[str],
+    *,
+    acceptable: tuple[int, ...] = (0,),
+) -> subprocess.CompletedProcess[str]:
+    """Run a fixed controller-owned command and keep stdout out of context."""
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode not in acceptable:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise ControllerError(
+            f"{Path(command[0]).name} failed with exit {completed.returncode}: {detail}",
+            completed.returncode if completed.returncode > 0 else 2,
+        )
+    return completed
+
+
+def _load_run_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
+    output_dir = output_dir.resolve()
+    config_path = output_dir / ".skill-config.json"
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControllerError(f"cannot read resolved config {config_path}: {exc}") from exc
+    return output_dir, cfg
+
+
 def _persist_config(cfg: dict[str, Any], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
+    # The redaction sweep covers the deliverables and the finding pipeline; the
+    # intermediates it walks past stay unredacted because they are never meant
+    # to be published. Establish that assumption here rather than relying on
+    # it — publish-threat-model then lifts individual deliverables back out.
+    # No-op when a rule already exists or the directory is not in a work tree.
+    ensure_output_gitignore.ensure(output_dir)
     path = output_dir / ".skill-config.json"
     if path.is_symlink():
         path.unlink()
@@ -425,15 +475,20 @@ def _cleanup_rebuild(output_dir: Path) -> list[str]:
 
 
 def _checkpoint_needs_render(output_dir: Path) -> bool:
+    """Return whether the durable Stage-1 checkpoint still requires rendering.
+
+    Report-file presence is deliberately irrelevant: a prior run may have left
+    a stale Markdown report beside a newer Stage-1 checkpoint.
+    """
     checkpoint = output_dir / ".appsec-checkpoint"
-    if not checkpoint.is_file() or (output_dir / "threat-model.md").is_file():
+    if not checkpoint.is_file():
         return False
     try:
         line = checkpoint.read_text(encoding="utf-8", errors="replace").splitlines()[0]
     except (OSError, IndexError):
         return False
     fields = dict(token.split("=", 1) for token in line.split() if "=" in token)
-    return fields.get("phase") == "10b" and fields.get("need_render") == "true"
+    return fields.get("phase") == "10b" and fields.get("status") == "completed" and fields.get("need_render") == "true"
 
 
 def _activate_markers(cfg: dict[str, Any]) -> None:
@@ -460,16 +515,35 @@ def _deactivate_markers() -> None:
 def _prepasses(cfg: dict[str, Any], receipts: list[str]) -> None:
     repo_root = str(cfg["repo_root"])
     output_dir = str(cfg["output_dir"])
-    calls = (
+    depth = str(cfg.get("assessment_depth") or "standard")
+    calls: list[tuple[str, list[str]]] = [
         ("route_inventory.py", ["--repo-root", repo_root, "--output-dir", output_dir]),
-        (
-            "architecture_coverage_checks.py",
-            ["--repo-root", repo_root, "--output-dir", output_dir],
-        ),
-        (
-            "source_auth_scanner.py",
-            ["--repo-root", repo_root, "--output-dir", output_dir, "--quiet"],
-        ),
+    ]
+    if depth == "thorough":
+        calls.append(
+            (
+                "database_privilege_separation.py",
+                [
+                    "--repo-root",
+                    repo_root,
+                    "--output-dir",
+                    output_dir,
+                    "--assessment-depth",
+                    "thorough",
+                ],
+            )
+        )
+    calls.extend(
+        [
+            (
+                "architecture_coverage_checks.py",
+                ["--repo-root", repo_root, "--output-dir", output_dir, "--assessment-depth", depth],
+            ),
+            (
+                "source_auth_scanner.py",
+                ["--repo-root", repo_root, "--output-dir", output_dir, "--quiet"],
+            ),
+        ]
     )
     for name, args in calls:
         completed = _run_script(name, args, acceptable=(0, 1, 2))
@@ -1020,7 +1094,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "action": "dispatch_agent",
         "mode": cfg["mode"],
         "stage": "stage1",
-        "instruction_file": str(LEGACY_RUNTIME),
+        "instruction_file": str(THIN_STAGE1_RUNTIME),
         "preflight_status": str(cfg.get("preflight_status") or ""),
         "run_plan": run_plan,
         "config_path": str(config_path),
@@ -1033,29 +1107,461 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     }
 
 
+def _best_effort_script(
+    output_dir: Path,
+    name: str,
+    args: list[str],
+    receipts: list[str],
+) -> bool:
+    try:
+        _run_script(name, args)
+        return True
+    except ControllerError as exc:
+        receipts.append(f"{name}: best-effort failure")
+        _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+        return False
+
+
+def _selected_coverage_errors(output_dir: Path) -> list[dict[str, str]]:
+    """Blocked bounded-wave components, or [] when the gate does not apply.
+
+    Delegates to check_stride_dispatch.selected_coverage_errors so the early
+    diagnosis in post_stage1 and the hard gate below it can never disagree.
+    Import failures are non-fatal: the hard gate still runs as a subprocess.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import check_stride_dispatch  # noqa: PLC0415
+
+        return check_stride_dispatch.selected_coverage_errors(output_dir)
+    except Exception:
+        return []
+
+
+def post_stage1(output_dir: Path) -> dict[str, Any]:
+    """Run the deterministic thin-path gates after the Stage-1 agents return."""
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+
+    # Bounded-wave coverage is checked FIRST, before the artifact precondition.
+    #
+    # SKILL-thin-stage1.md tells the orchestrator to stop before Analyst-B when
+    # the wave plan reports `blocked`. Analyst-B is what produces
+    # .threats-merged.json / .triage-flags.json / threat-model.yaml, so an
+    # orchestrator that obeys that instruction used to land on the artifact
+    # precondition below and be told "Stage 1 did not produce required
+    # artifacts" -- which reads as its own failure and pushes it into the
+    # cut-off recovery path. Running that recovery produces the artifacts, and
+    # then check_stride_dispatch.py (further down) hard-fails with exit 4
+    # anyway. Both branches aborted, and the second one only after paying for a
+    # full merge+triage pass (2026-07-20 juice-shop: ~20 min / $5.75 spent
+    # after the run was already doomed).
+    #
+    # Reporting the real cause here keeps the two gates consistent: an
+    # orchestrator that correctly stopped gets the correct diagnosis instead of
+    # being blamed for the artifacts it was forbidden to create.
+    coverage_errors = _selected_coverage_errors(output_dir)
+    if coverage_errors:
+        detail = "; ".join(f"{e['component_id']}: {e['reason']}" for e in coverage_errors)
+        raise ControllerError(
+            "Selected STRIDE coverage is incomplete after the bounded retry budget "
+            f"({detail}). Merge and triage were correctly skipped -- the report must "
+            "not claim coverage for these components. Attempt counts persist across "
+            "resume, so a plain --resume hits the same block. Recover by fixing what "
+            "made the component fail (a turn budget too small for its file footprint "
+            "is the common cause) and then granting one more attempt with "
+            "APPSEC_STRIDE_MAX_ATTEMPTS=3; a fresh --full run also resets the counts "
+            "but discards the merge and triage already produced."
+        )
+
+    required = (".recon-summary.md", ".threats-merged.json", ".triage-flags.json", "threat-model.yaml")
+    missing = [name for name in required if not (output_dir / name).is_file()]
+    if missing:
+        raise ControllerError(f"Stage 1 did not produce required artifacts: {', '.join(missing)}")
+    if not _checkpoint_needs_render(output_dir):
+        raise ControllerError(
+            "Stage 1 completion checkpoint is missing or invalid; expected phase=10b status=completed need_render=true"
+        )
+
+    _run_script("check_stride_dispatch.py", [str(output_dir)])
+    if not _upgrade_bootstrap_yaml(output_dir, cfg):
+        raise ControllerError("Stage 1 left a bootstrap threat-model.yaml that could not be upgraded")
+    receipts: list[str] = []
+    # Normalize cross-artifact invariants before the hard schema/cross-field
+    # gate. In particular, invalid CVSS scope must be repaired before
+    # validate_intermediate evaluates the eligibility rule; the reverse order
+    # would block Stage 2 before the deterministic enforcer could run.
+    _best_effort_script(output_dir, "enforce_yaml_invariants.py", [str(output_dir)], receipts)
+    _run_script(
+        "validate_intermediate.py",
+        ["threat_model_output", str(output_dir / "threat-model.yaml")],
+    )
+    _best_effort_script(
+        output_dir,
+        "triage_compute_ranking.py",
+        [str(output_dir), "--force"],
+        receipts,
+    )
+    try:
+        _run_external(
+            [
+                "bash",
+                str(SCRIPT_DIR / "auto_emitter_pass.sh"),
+                str(output_dir),
+                str(cfg.get("repo_root") or output_dir),
+                str(PLUGIN_ROOT),
+                "false",
+            ]
+        )
+    except ControllerError as exc:
+        receipts.append("auto_emitter_pass.sh: best-effort failure")
+        _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+
+    _run_script("validate_mitigation_quality.py", [str(output_dir)])
+    _run_script(
+        "assert_completeness.py",
+        [str(output_dir), "--phase", "build", "--plugin-root", str(PLUGIN_ROOT)],
+    )
+    _append_event(output_dir, "POST_STAGE1_GATES_PASSED", "thin deterministic Stage-1 gates passed")
+    return {
+        "schema_version": 1,
+        "action": "run_gate",
+        "mode": cfg["mode"],
+        "stage": "stage1",
+        "config_path": str(config_path),
+        "receipts": ["Stage-1 artifacts and gates verified", *receipts],
+    }
+
+
+_ABUSE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+def prepare_abuse(output_dir: Path) -> dict[str, Any]:
+    """Match abuse cases and return a bounded verifier fan-out action."""
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+    common = {
+        "schema_version": 1,
+        "mode": cfg["mode"],
+        "stage": "stage1c",
+        "config_path": str(config_path),
+        "dispatch_values": _dispatch_values(cfg),
+    }
+    if cfg.get("skip_abuse_case_verification"):
+        return {**common, "action": "run_gate", "receipts": ["Abuse verification disabled"]}
+
+    repo_root = str(cfg.get("repo_root") or output_dir)
+    args = [
+        "match",
+        "--output-dir",
+        str(output_dir),
+        "--repo-root",
+        repo_root,
+        "--signals",
+        str(output_dir / ".recon-signals.json"),
+    ]
+    if org_profile := str(cfg.get("org_profile_path") or ""):
+        args += ["--org-profile", org_profile]
+    match = _run_script("match_abuse_cases.py", args, acceptable=(0, 1, 2))
+    listed = _run_script(
+        "match_abuse_cases.py",
+        ["list-candidates", "--output-dir", str(output_dir)],
+        acceptable=(0,),
+    )
+    candidates = [item for item in (listed.stdout or "").split() if _ABUSE_ID_RE.fullmatch(item)]
+    if len(candidates) > 64:
+        raise ControllerError(f"abuse verifier fan-out has {len(candidates)} candidates; maximum is 64")
+    receipts = [f"abuse candidates: {len(candidates)}"]
+    if match.returncode != 0:
+        receipts.append(f"matcher returned {match.returncode}; partial candidates retained")
+    if not candidates or (output_dir / ".budget-critical").exists():
+        return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
+    return {
+        **common,
+        "action": "dispatch_parallel",
+        "instruction_file": str(THIN_STAGE1C_RUNTIME),
+        "candidates": candidates,
+        "candidate_titles": _abuse_candidate_titles(output_dir, candidates),
+        "receipts": receipts,
+    }
+
+
+_ABUSE_TITLE_MAX = 60
+
+
+def _abuse_candidate_titles(output_dir: Path, candidates: list[str]) -> dict[str, str]:
+    """``{AC-ID: short title}`` from the matcher sidecar, for dispatch labels.
+
+    The verifier fan-out is otherwise a column of bare ids in the agent list.
+    Titles come from the catalogue via ``.abuse-case-matches.json``; they are
+    truncated here so one long scenario name cannot push the console line into
+    a wrap. Best-effort: a missing or unreadable sidecar simply yields no
+    titles, and the dispatcher falls back to the id alone.
+    """
+    try:
+        doc = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    wanted = set(candidates)
+    titles: dict[str, str] = {}
+    for match in doc.get("matches") or []:
+        if not isinstance(match, dict):
+            continue
+        ac_id = match.get("abuse_case_id")
+        title = str(match.get("title") or "").strip()
+        if ac_id in wanted and title:
+            titles[ac_id] = title if len(title) <= _ABUSE_TITLE_MAX else title[: _ABUSE_TITLE_MAX - 1].rstrip() + "…"
+    return titles
+
+
+def finalize_abuse(output_dir: Path) -> dict[str, Any]:
+    """Merge verifier sidecars and materialize the final abuse-case artifacts."""
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+    receipts: list[str] = []
+    for name, args in (
+        ("verify_abuse_cases.py", ["merge", "--output-dir", str(output_dir)]),
+        ("match_abuse_cases.py", ["finalize", "--output-dir", str(output_dir)]),
+        ("promote_verified_abuse_cases.py", ["--output-dir", str(output_dir)]),
+    ):
+        _best_effort_script(output_dir, name, args, receipts)
+
+    verdicts = output_dir / ".abuse-case-verdicts.json"
+    if verdicts.is_file():
+        _best_effort_script(
+            output_dir,
+            "build_threat_model_yaml.py",
+            [
+                str(output_dir),
+                "--repo-root",
+                str(cfg.get("repo_root") or output_dir),
+                "--plugin-root",
+                str(PLUGIN_ROOT),
+            ],
+            receipts,
+        )
+    _run_script("abuse_case_gate.py", ["--output-dir", str(output_dir)])
+    if verdicts.is_file():
+        _best_effort_script(
+            output_dir,
+            "triage_compute_ranking.py",
+            [str(output_dir), "--if-deterministic-owner"],
+            receipts,
+        )
+    render_args = [
+        "--output-dir",
+        str(output_dir),
+        "--repo-root",
+        str(cfg.get("repo_root") or output_dir),
+    ]
+    if org_profile := str(cfg.get("org_profile_path") or ""):
+        render_args += ["--org-profile", org_profile]
+    _best_effort_script(output_dir, "render_abuse_cases.py", render_args, receipts)
+    _append_event(output_dir, "ABUSE_FINALIZE_COMPLETE", "thin abuse-case finalization complete")
+    return {
+        "schema_version": 1,
+        "action": "run_gate",
+        "mode": cfg["mode"],
+        "stage": "stage1c",
+        "config_path": str(config_path),
+        "receipts": ["Abuse-case artifacts finalized", *receipts],
+    }
+
+
+def prepare_stage2(output_dir: Path) -> dict[str, Any]:
+    """Prepare structural fragments and select the compact Stage-2 dispatch."""
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+    receipts: list[str] = []
+    _best_effort_script(
+        output_dir,
+        "pregenerate_fragments.py",
+        [
+            str(output_dir),
+            "--force",
+            "--only",
+            "system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md",
+        ],
+        receipts,
+    )
+    for only in ("security-architecture.md", "ms-critical-attack-tree.json"):
+        _best_effort_script(
+            output_dir,
+            "pregenerate_fragments.py",
+            [str(output_dir), "--only", only],
+            receipts,
+        )
+    _best_effort_script(
+        output_dir,
+        "restore_preserved_sections.py",
+        [
+            str(output_dir),
+            "--current-depth",
+            str(cfg.get("assessment_depth") or "standard"),
+            "--plugin-root",
+            str(PLUGIN_ROOT),
+            "--repo-root",
+            str(cfg.get("repo_root") or output_dir),
+        ],
+        receipts,
+    )
+    for name in (".budget-critical", ".budget-warning"):
+        path = output_dir / name
+        try:
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+        except OSError:
+            pass
+
+    retry_pending = (output_dir / ".inline-shortcut-retry-count").is_file()
+    parallel = (
+        bool(cfg.get("enrich_arch_fragments")) and os.environ.get("APPSEC_PARALLEL_RENDER") != "0" and not retry_pending
+    )
+    action = "dispatch_parallel" if parallel else "dispatch_agent"
+    if parallel:
+        _best_effort_script(
+            output_dir,
+            "log_event.py",
+            [
+                str(output_dir),
+                "phase-start",
+                "[Phase 11/11] Finalization (parallel renderer)",
+                "--agent",
+                "threat-renderer",
+            ],
+            receipts,
+        )
+    _append_event(output_dir, "STAGE2_READY", f"parallel={str(parallel).lower()}")
+    return {
+        "schema_version": 1,
+        "action": action,
+        "mode": cfg["mode"],
+        "stage": "stage2",
+        "instruction_file": str(THIN_STAGE2_RUNTIME),
+        "config_path": str(config_path),
+        "dispatch_values": _dispatch_values(cfg),
+        "receipts": [f"Stage-2 structural fragments prepared; parallel={str(parallel).lower()}", *receipts],
+    }
+
+
 # LLM-authored render fragments a Stage-2 renderer must produce before the
 # report can be composed. Their presence means the expensive rendering already
 # happened and only the deterministic compose remains.
 _REQUIRED_RENDER_FRAGMENTS = ("ms-verdict.json", "security-architecture.md")
 
 
+def _upgrade_bootstrap_yaml(output_dir: Path, cfg: dict[str, Any]) -> bool:
+    """Rebuild a ``_bootstrap`` stub ``threat-model.yaml`` into the canonical one.
+
+    ``triage_compute_ranking.py --bootstrap-yaml`` writes a minimal stub
+    (``meta._bootstrap: true`` — threats only, no attack surface, trust
+    boundaries or security controls) so a Phase-11 cut-off still leaves *a* yaml
+    on disk. Every gate in ``next`` only tested that the file EXISTS, so the stub
+    sailed through as if it were canonical: the 2026-07-19 insecure-python-app
+    run lost Analyst-B to a session limit, kept a stub carrying 46 threats and 0
+    attack-surface entries, and the finalize gate still answered ``stage3``.
+
+    ``build_threat_model_yaml.py`` already recognises the stub and rebuilds it
+    from the Stage-1 intermediates, so this recovery is deterministic and needs
+    no agent — the same shape as ``_compose_if_ready`` for the report itself.
+
+    Returns True when the yaml is (or has become) canonical, False when the stub
+    could not be upgraded so the caller can fall back to a Stage-1 dispatch.
+    Fail-safe: never raises into ``next``'s JSON output.
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+
+    def _is_bootstrap() -> bool | None:
+        """True/False, or None when the yaml cannot be read or parsed."""
+        try:
+            import yaml  # local import: a missing dep must not break `next`
+
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+        return bool((data.get("meta") or {}).get("_bootstrap"))
+
+    state = _is_bootstrap()
+    if state is not True:
+        # Canonical, or unreadable — an unparseable yaml is a different failure
+        # that the existing downstream gates own. Only the stub is ours.
+        return True
+
+    args = [str(output_dir)]
+    if repo_root := str(cfg.get("repo_root") or ""):
+        args += ["--repo-root", repo_root]
+    args += ["--plugin-root", str(SCRIPT_DIR.parent)]
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "build_threat_model_yaml.py"), *args],
+            cwd=str(SCRIPT_DIR),
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return False
+    return _is_bootstrap() is False
+
+
 def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
-    """Deterministically compose ``threat-model.md`` from on-disk fragments.
+    """Deterministically compose or refresh ``threat-model.md`` from fragments.
 
     Closes the thin-runtime gap where the orchestrator authored the render
     fragments but ended — turn budget, or a skipped skill-level step — before
     issuing ``compose_threat_model.py``, leaving ``threat-model.yaml`` plus a
     full ``.fragments/`` set but no report (2026-07-02 juice-shop thin run).
 
-    Only fires when the LLM-authored fragments are already present, so no agent
-    work is needed; otherwise returns False and the caller falls back to a
-    Stage-2 agent dispatch. Runs the canonical finalization tail
+    Also refreshes a stale report when the checkpoint says Stage 1 still needs
+    rendering. Only fires when the LLM-authored fragments are already present,
+    so no agent work is needed; otherwise returns False and the caller falls
+    back to a Stage-2 agent dispatch. Runs the canonical finalization tail
     (compose --strict → apply_prose_fixes → qa_checks autofix). Fail-safe: any
     error returns False and never raises into ``next``'s JSON output.
     """
-    frag_dir = output_dir / ".fragments"
-    if not all((frag_dir / name).is_file() for name in _REQUIRED_RENDER_FRAGMENTS):
+    blocked_path = output_dir / ".compose-blocked.json"
+
+    def _block(step: str, detail: str) -> bool:
+        """Persist WHY the compose tail stopped, then report failure.
+
+        Every one of this function's exit points used to collapse into a bare
+        ``False`` that the caller labelled "Stage-2 render fragments
+        incomplete" — even though the fragment check is only the FIRST of a
+        dozen. On juice-shop 2026-07-24 both required fragments were present
+        and correct; the tail aborted in a mitigation helper, and the bogus
+        receipt made the orchestrator discard two finished specialist renders
+        and re-dispatch the full renderer for ~9 minutes to redo work already
+        on disk. Recording the real step and its stderr makes that
+        misdiagnosis impossible."""
+        try:
+            blocked_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "blocked_at": datetime.now(timezone.utc).isoformat(),
+                        "step": step,
+                        "detail": detail[-2000:],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
         return False
+
+    try:
+        blocked_path.unlink()
+    except (FileNotFoundError, OSError):
+        pass
+
+    frag_dir = output_dir / ".fragments"
+    missing = [name for name in _REQUIRED_RENDER_FRAGMENTS if not (frag_dir / name).is_file()]
+    if missing:
+        return _block("required-fragments", f"missing render fragment(s): {', '.join(missing)}")
     md = output_dir / "threat-model.md"
 
     def _run(*cmd: str) -> bool:
@@ -1067,25 +1573,38 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
                 text=True,
                 timeout=600,
             )
+            if proc.returncode != 0:
+                _run.last_error = (  # type: ignore[attr-defined]
+                    f"exit {proc.returncode}\n{(proc.stderr or proc.stdout or '').strip()}"
+                )
             return proc.returncode == 0
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError) as exc:
+            _run.last_error = f"{type(exc).__name__}: {exc}"  # type: ignore[attr-defined]
             return False
+
+    _run.last_error = ""  # type: ignore[attr-defined]
+
+    def _step(script: str, *args: str) -> bool:
+        """Run a mandatory tail step, recording the real blocker on failure."""
+        if _run(str(SCRIPT_DIR / script), *args):
+            return True
+        return _block(script, _run.last_error)  # type: ignore[attr-defined]
 
     # Complete the canonical mitigation cards before any fragment or report is
     # rendered. The normal skill path already ran these idempotent helpers; the
     # thin-runtime recovery path can reach this point after a turn cut-off, so
     # it must not bypass the developer-actionability contract.
-    if not _run(str(SCRIPT_DIR / "emit_general_mitigation_titles.py"), str(output_dir)):
+    if not _step("emit_general_mitigation_titles.py", str(output_dir)):
         return False
     # Scanner findings carry only a one-line mitigation_title; synthesise a
     # structured remediation block (steps + verification) from the check library
     # before hydration so the P1/P2 quality gate is satisfiable on the recovery
     # path too (mirrors the auto-emitter pass ordering).
-    if not _run(str(SCRIPT_DIR / "backfill_scanner_remediation.py"), str(output_dir)):
+    if not _step("backfill_scanner_remediation.py", str(output_dir)):
         return False
-    if not _run(str(SCRIPT_DIR / "hydrate_mitigation_details.py"), str(output_dir)):
+    if not _step("hydrate_mitigation_details.py", str(output_dir)):
         return False
-    if not _run(str(SCRIPT_DIR / "validate_mitigation_quality.py"), str(output_dir)):
+    if not _step("validate_mitigation_quality.py", str(output_dir)):
         return False
 
     # Mechanical structural fragments (idempotent backstop), then the strict
@@ -1102,18 +1621,31 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     # gap: the thin renderer often skips it, so the "AI / LLM Exposure" MS
     # callout silently vanishes even though the yaml carries an LLM surface
     # (2026-07-02). Deriving it here from the yaml guarantees the section.
+    # ms-verdict.json joins the floor: compose HARD-fails without it, and it is
+    # the one MANDATORY MS fragment neither prepare_stage2 nor this pass used to
+    # regenerate — so an MS-renderer cut-off before its first Write forced a
+    # full re-dispatch. The generator is idempotent and preserves a
+    # renderer-authored (richer) copy already on disk.
     _run(
         str(SCRIPT_DIR / "pregenerate_fragments.py"),
         str(output_dir),
         "--only",
-        "ms-ai-exposure.json,ms-critical-attack-tree.json",
+        "ms-ai-exposure.json,ms-critical-attack-tree.json,ms-verdict.json",
     )
-    if not _run(str(SCRIPT_DIR / "compose_threat_model.py"), "--output-dir", str(output_dir), "--strict"):
+    if not _step("compose_threat_model.py", "--output-dir", str(output_dir), "--strict"):
         return False
     if not md.is_file():
-        return False
+        return _block("compose_threat_model.py", "compose returned 0 but threat-model.md is absent")
     _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
+    try:
+        (output_dir / ".appsec-checkpoint").write_text(
+            f"phase=11 status=completed timestamp={datetime.now(timezone.utc).isoformat()}\n",
+            encoding="utf-8",
+        )
+        _append_event(output_dir, "PHASE_END", "[Phase 11/11] Finalization (controller compose)")
+    except OSError as exc:
+        return _block("checkpoint-write", f"{type(exc).__name__}: {exc}")
     return md.is_file()
 
 
@@ -1167,12 +1699,8 @@ def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
 
 
 def next_action(output_dir: Path) -> dict[str, Any]:
-    output_dir = output_dir.resolve()
+    output_dir, cfg = _load_run_config(output_dir)
     config_path = output_dir / ".skill-config.json"
-    try:
-        cfg = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ControllerError(f"cannot read resolved config {config_path}: {exc}")
 
     common = {
         "schema_version": 1,
@@ -1185,20 +1713,68 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             **common,
             "action": "dispatch_agent",
             "stage": "stage1",
-            "instruction_file": str(LEGACY_RUNTIME),
+            "instruction_file": str(THIN_STAGE1_RUNTIME),
         }
-    if not (output_dir / "threat-model.md").is_file():
+    # A bootstrap stub IS a file but is not a model — upgrade it deterministically
+    # before anything downstream treats it as canonical. Unrecoverable ⇒ Stage 1.
+    if not _upgrade_bootstrap_yaml(output_dir, cfg):
+        return {
+            **common,
+            "action": "dispatch_agent",
+            "stage": "stage1",
+            "instruction_file": str(THIN_STAGE1_RUNTIME),
+        }
+    if not (output_dir / "threat-model.md").is_file() or _checkpoint_needs_render(output_dir):
         # Deterministic compose backstop: when the render fragments are already
         # on disk the remaining work is a pure compose, so finish it here rather
         # than re-dispatching the (expensive) renderer. Only falls through to a
         # Stage-2 agent when the fragments are genuinely missing.
         if not _compose_if_ready(output_dir, str(cfg.get("repo_root") or "")):
+            retry_path = output_dir / ".inline-shortcut-retry-count"
+            try:
+                retry_count = int(retry_path.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                retry_count = 0
+            if retry_count >= 2:
+                raise ControllerError(
+                    "Stage 2 could not produce the required render fragments after two retries; "
+                    f"inspect {output_dir / '.fragments'} and {output_dir / '.agent-run.log'}"
+                )
+            retry_count += 1
+            try:
+                retry_path.write_text(f"{retry_count}\n", encoding="utf-8")
+            except OSError as exc:
+                raise ControllerError(f"cannot persist Stage-2 retry counter: {exc}") from exc
+            # Name the step that actually blocked. "fragments incomplete" is
+            # reserved for the required-fragment existence check; any other
+            # blocker (a mitigation gate, a strict-compose failure) reports
+            # itself, so the operator is not sent to inspect a fragment set
+            # that was complete all along.
+            try:
+                blocked = json.loads((output_dir / ".compose-blocked.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                blocked = {}
+            step = str(blocked.get("step") or "") if isinstance(blocked, dict) else ""
+            if step == "required-fragments":
+                receipt = f"Stage-2 render fragments incomplete; retry {retry_count}/2"
+            elif step:
+                receipt = f"Stage-2 compose blocked at {step}; retry {retry_count}/2 (see .compose-blocked.json)"
+            else:
+                receipt = f"Stage-2 compose did not complete; retry {retry_count}/2"
             return {
                 **common,
                 "action": "dispatch_agent",
                 "stage": "stage2",
-                "instruction_file": str(LEGACY_RUNTIME),
+                "instruction_file": str(THIN_STAGE2_RUNTIME),
+                "receipts": [receipt],
             }
+    for name in (".inline-shortcut-retry-count", ".inline-shortcut-repair-plan.json"):
+        try:
+            (output_dir / name).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
     if not cfg.get("skip_qa") and not (output_dir / ".qa-status.json").is_file():
         return {
             **common,
@@ -1229,6 +1805,36 @@ def _split_remainder(values: list[str]) -> list[str]:
     return values[1:] if values and values[0] == "--" else values
 
 
+def _aggregate_issues_on_abort(output_dir: Any, reason: str) -> None:
+    """Populate .run-issues.json when the controller aborts the run.
+
+    aggregate_run_issues.py has exactly one call site: the Completion step in
+    SKILL-impl.md. An aborted run never reaches it, so the very runs that most
+    need a diagnostic bundle are the ones that produce none -- `report-error`
+    and `diagnose-bundle` then read a stale file from a previous run, or none at
+    all. The 2026-07-20 juice-shop abort left `.run-issues.json` reporting a
+    clean run for a run that died without a deliverable.
+
+    Best-effort in every direction: no output dir, an unreadable one, or an
+    aggregator failure must never mask the real abort reason.
+    """
+    if not output_dir:
+        return
+    try:
+        path = Path(output_dir)
+        if not path.is_dir():
+            return
+        _append_event(path, "RUN_ABORTED", reason, level="WARN")
+        subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "aggregate_run_issues.py"), str(path)],
+            capture_output=True,
+            timeout=120,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1237,6 +1843,14 @@ def main(argv: list[str] | None = None) -> int:
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--force", action="store_true")
     prepare_parser.add_argument("arguments", nargs=argparse.REMAINDER)
+    post_stage1_parser = sub.add_parser("post-stage1")
+    post_stage1_parser.add_argument("--output-dir", required=True)
+    prepare_abuse_parser = sub.add_parser("prepare-abuse")
+    prepare_abuse_parser.add_argument("--output-dir", required=True)
+    finalize_abuse_parser = sub.add_parser("finalize-abuse")
+    finalize_abuse_parser.add_argument("--output-dir", required=True)
+    prepare_stage2_parser = sub.add_parser("prepare-stage2")
+    prepare_stage2_parser.add_argument("--output-dir", required=True)
     next_parser = sub.add_parser("next")
     next_parser.add_argument("--output-dir", required=True)
     args = parser.parse_args(argv)
@@ -1249,6 +1863,14 @@ def main(argv: list[str] | None = None) -> int:
                 _split_remainder(args.arguments),
                 force=args.force,
             )
+        elif args.command == "post-stage1":
+            action = post_stage1(Path(args.output_dir))
+        elif args.command == "prepare-abuse":
+            action = prepare_abuse(Path(args.output_dir))
+        elif args.command == "finalize-abuse":
+            action = finalize_abuse(Path(args.output_dir))
+        elif args.command == "prepare-stage2":
+            action = prepare_stage2(Path(args.output_dir))
         else:
             action = next_action(Path(args.output_dir))
     except (ControllerError, SystemExit, OSError) as exc:
@@ -1259,6 +1881,7 @@ def main(argv: list[str] | None = None) -> int:
             "reason": str(exc),
             "exit_code": code,
         }
+        _aggregate_issues_on_abort(getattr(args, "output_dir", None), str(exc))
     return _emit(action)
 
 

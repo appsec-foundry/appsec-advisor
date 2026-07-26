@@ -77,6 +77,7 @@ from pathlib import Path
 from typing import Any
 
 from event_log import format_line
+from stride_outputs import stride_output_files
 
 # Reuse the central phase budgets so per-component-timeout defaults stay
 # in sync with the rest of the toolchain.
@@ -95,6 +96,12 @@ try:
     from estimate_duration import _PHASE_DURATION as _PROGRESS_WEIGHTS  # type: ignore
 except Exception:  # pragma: no cover
     _PROGRESS_WEIGHTS = None  # type: ignore[assignment]
+
+# The weight table ends at the last Stage-1 phase; Stage-2 (render/compose/QA/
+# repair) is unmodeled, so the phase-weight percentage must never assert a full
+# 100 while a run is still in Stage-2. Cap the finalization region here — a true
+# 100 would require Stage-2 to be weighted and to emit its own checkpoints.
+_FINALIZATION_CAP_PCT = 99
 
 
 _LOG_NAME = ".agent-run.log"
@@ -423,7 +430,11 @@ def _refresh_heartbeat(plugin_root: Path, lock_path: Path) -> None:
 
 def _scan_stride(output_dir: Path) -> dict[str, Any]:
     """Snapshot the STRIDE-output state in one stat-only pass."""
-    stride_files = sorted(output_dir.glob(".stride-*.json"))
+    # Per-component results only — the `.stride-` sidecars (dispatch manifest,
+    # selection, analyst context) land BEFORE the fan-out, so counting them
+    # would keep `stride_count` permanently > 0 and silently disable the
+    # `sc == 0` Phase-9 canary below.
+    stride_files = stride_output_files(output_dir)
     stride_count = len(stride_files)
     stride_bytes = 0
     for f in stride_files:
@@ -552,11 +563,16 @@ def _resolve_depth(output_dir: Path) -> str:
 def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int, str] | None:
     """Return ``(percent, phase_token)`` from ``.appsec-checkpoint``, or None.
 
-    The percentage is the cumulative weight of all *completed* phases (those
-    strictly before the current phase position) over the total — a deliberate
-    lower bound that never overstates and is phase-granular (it jumps at phase
-    boundaries and sits flat within a long phase such as Phase 9 / STRIDE). The
-    caller clamps it monotonically so resume/incremental can't move it back.
+    The percentage is the cumulative weight of all *completed* phases over the
+    total — a deliberate lower bound that never overstates and is phase-granular
+    (it jumps at phase boundaries and sits flat within a long phase such as
+    Phase 9 / STRIDE). The caller clamps it monotonically so resume/incremental
+    can't move it back.
+
+    ``status=completed`` is a **per-phase** marker (``batch_checkpoint.py``
+    writes it at every phase end), not a run-terminal one — it means phase
+    ``token`` itself is done, so its weight counts toward the numerator. Only at
+    the last phase in the weight table does it mean the run is over.
     """
     try:
         text = (output_dir / ".appsec-checkpoint").read_text(encoding="utf-8")
@@ -566,18 +582,23 @@ def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int
     if not m:
         return None
     token = m.group(1)
-    # Terminal checkpoint — the phase token (e.g. `11`) is still mid-table but
-    # the run is done; saturate to 100 rather than the 96% the weights imply.
-    if re.search(r"status=completed", text):
-        return 100, token
     pos = _phase_position(token)
     if pos is None:
         return None
     total = sum(weights.values())
     if total <= 0:
         return None
-    done = sum(w for p, w in weights.items() if p < pos)
+    phase_done = re.search(r"status=completed", text) is not None
+    done = sum(w for p, w in weights.items() if (p <= pos if phase_done else p < pos))
     pct = max(0, min(100, round(100 * done / total)))
+    # Finalization region: phase 11 (max weight) reported completed, or any
+    # non-numeric Stage-2/repair token (pos → 99). The weight table stops at
+    # Stage 1, so the raw sum saturates to 100 while Stage-2 render + QA are
+    # still running — which read as "done" during a ~5-min render + QA on the
+    # 2026-07-23 juice-shop run. Cap below 100 so the bar never claims completion
+    # before the run actually ends; the watchdog exiting is the true done signal.
+    if pos >= max(weights):
+        pct = min(pct, _FINALIZATION_CAP_PCT)
     return pct, token
 
 

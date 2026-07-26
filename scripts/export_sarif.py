@@ -151,6 +151,20 @@ def _build_rule(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
     if isinstance(cwe, str) and cwe.strip():
         rule["properties"]["cwe"] = cwe.strip()
 
+    for field, prefix, property_name in (
+        ("owasp_llm_ids", "owasp-llm:", "owaspLlmIds"),
+        ("owasp_asi_ids", "owasp-asi:", "owaspAsiIds"),
+    ):
+        raw_ids = threat.get(field)
+        ids = (
+            [value.strip() for value in raw_ids if isinstance(value, str) and value.strip()]
+            if isinstance(raw_ids, list)
+            else []
+        )
+        if ids:
+            rule["properties"][property_name] = ids
+            rule["properties"]["tags"].extend(f"{prefix}{value}" for value in ids)
+
     source = threat.get("source")
     if isinstance(source, str) and source.strip():
         rule["properties"]["source"] = source.strip()

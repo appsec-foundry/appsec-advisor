@@ -55,11 +55,23 @@ e2e-full-eval: e2e-full  ## Run the adversarial semantic-quality judge over a fr
 e2e-fixture-suite:  ## Run all six external language/architecture fixtures and their recall oracles
 	@./tests/e2e/run-fixture-suite.sh
 
+.PHONY: ci-triage
+ci-triage:  ## Fetch a dispatched run's artifacts (fixture E2E or threat model) and summarise failures: make ci-triage RUN_ID=<id> [INTO=.appsec-ci]
+	@test -n "$(RUN_ID)" || { echo "ERROR: set RUN_ID=<github run id>. List runs with: gh run list --workflow fixture-e2e-dispatch.yml -L 10"; exit 2; }
+	@./scripts/ci_triage.sh --run-id "$(RUN_ID)" --into "$(or $(INTO),.appsec-ci)"
+
 .PHONY: e2e-full-keep
 e2e-full-keep:  ## Re-run assertions against the previous _last-run/ output (no pipeline re-run)
 	@APPSEC_E2E_FULL=1 \
 	 APPSEC_E2E_OUTPUT_DIR="$(PWD)/tests/fixtures/e2e/_last-run" \
 	 $(PYTHON) -m pytest tests/test_full_run_e2e.py -v --tb=short
+
+.PHONY: analyze-verify
+analyze-verify:  ## Full pipeline + structural assertions against ANY repo (recall/oracle checks self-skip): make analyze-verify REPO=<path> [DEPTH=quick|standard|thorough]
+	@command -v claude >/dev/null 2>&1 || { \
+		echo "ERROR: 'claude' CLI not on PATH. Install Claude Code first."; exit 3; }
+	@test -n "$(REPO)" || { echo "ERROR: set REPO=<path to repo to verify>, e.g. make analyze-verify REPO=/home/mrohr/juice-shop"; exit 2; }
+	@./tests/e2e/run-full.sh --repo "$(REPO)" --depth "$(or $(DEPTH),quick)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fast unit tests (the per-PR safety net — runs in CI too)
@@ -164,6 +176,34 @@ diagnostic-bundle:  ## Build an anonymised diagnostic .tgz from a run: make diag
 inspect-bundle:  ## Print a triage summary of a diagnostic bundle: make inspect-bundle BUNDLE=appsec-diag-<id>.tgz
 	@test -n "$(BUNDLE)" || { echo "ERROR: set BUNDLE=<path to .tgz or unpacked dir>"; exit 2; }
 	@$(PYTHON) scripts/diagnostic_bundle.py inspect --bundle "$(BUNDLE)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ad-hoc headless analysis against an arbitrary target repo
+#
+# Thin wrapper around scripts/run-headless.sh for maintainer spot-checks
+# (e.g. juice-shop). Streams to the terminal AND a log file by default; set
+# BG=1 to detach via nohup so this session is free to work in parallel.
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: analyze
+analyze:  ## Headless threat-model against any repo: make analyze REPO=<path> [BG=1] [LOG=<file>] [MAX_DURATION=9000] [EXTRA="--assessment-depth thorough"]
+	@test -n "$(REPO)" || { echo "ERROR: set REPO=<path to repo to analyze>, e.g. make analyze REPO=/home/mrohr/juice-shop"; exit 2; }
+	@log="$(or $(LOG),$(HOME)/appsec-$(notdir $(patsubst %/,%,$(REPO))).log)"; \
+	cmd='APPSEC_PLUGIN_DEV=1 $(PLUGIN_ROOT)scripts/run-headless.sh --repo "$(REPO)" --verbose --max-duration $(or $(MAX_DURATION),9000) $(EXTRA)'; \
+	if [ -n "$(BG)" ]; then \
+		nohup sh -c "$$cmd" >"$$log" 2>&1 & \
+		echo "▶ analyzing $(REPO) in background (PID $$!)"; \
+		echo "  log:  $$log"; \
+		echo "  tail: tail -f $$log"; \
+	else \
+		echo "▶ analyzing $(REPO) (log → $$log)"; \
+		sh -c "$$cmd" 2>&1 | tee "$$log"; \
+	fi
+
+.PHONY: analyze-resume
+analyze-resume:  ## Resume an interrupted analyze from its checkpoint — reuses .stride-*.json (no re-scan). Refuses if a run still holds the lock; kill it first, then: make analyze-resume REPO=<path> [BG=1] [LOG=<file>]
+	@test -n "$(REPO)" || { echo "ERROR: set REPO=<path to repo to resume>, e.g. make analyze-resume REPO=/home/mrohr/juice-shop"; exit 2; }
+	@$(MAKE) --no-print-directory analyze REPO="$(REPO)" BG="$(BG)" LOG="$(LOG)" MAX_DURATION="$(MAX_DURATION)" EXTRA="--resume $(EXTRA)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Help

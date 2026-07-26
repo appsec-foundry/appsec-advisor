@@ -398,6 +398,77 @@ def _arch_diagram_takeaways(
     return {"2.1": t21, "2.2": t22, "2.3": t23, "2.4": t24}
 
 
+_CONTAINER_TIERS = ("client", "application", "data")
+
+
+def _cap_container_tiers(
+    by_tier: dict[str, list[dict]],
+    crit_counts: dict[str, int],
+    high_counts: dict[str, int],
+    max_nodes: int,
+) -> tuple[dict[str, list[dict]], list[dict]]:
+    """Trim §2.2 container nodes down to the contract's ``max_nodes_total``.
+
+    `data/sections-contract.yaml → diagram_compactness."2.2 Container
+    Architecture"` caps the diagram at 8 nodes, but this generator emitted one
+    node per component with no ceiling. Any model with more components than the
+    cap therefore shipped a `diagram_compactness` violation that NO re-render
+    could clear — the repair plan's own remedy ("regenerate from the
+    deterministic Pre-Generator, it obeys the limits by construction")
+    reproduced the violation verbatim (juice-shop 2026-07-18: 9 components,
+    max 8). §2.4 has had this ceiling since its introduction; §2.2 never did.
+
+    Trimming preserves what the diagram is for:
+      * every non-empty tier keeps at least one node, so the layered topology
+        survives;
+      * the largest tier surrenders nodes first;
+      * within a tier the LOWEST-risk component goes first (fewest Critical,
+        then fewest High findings, then name for determinism) — the red/amber
+        risk borders are the reason this diagram exists, so the risky
+        containers are the last to go.
+
+    Returns ``(capped_by_tier, dropped)``. The caller names the dropped
+    components under the diagram; they stay fully inventoried in the §2.3
+    component table, which is exactly where the contract's remediation text
+    says per-container detail belongs.
+    """
+    capped = {tier: list(by_tier.get(tier) or []) for tier in _CONTAINER_TIERS}
+    dropped: list[dict] = []
+    if max_nodes <= 0:
+        return capped, dropped
+
+    def _risk(c: dict) -> tuple[int, int, str]:
+        cid = c.get("id") or ""
+        return (crit_counts.get(cid, 0), high_counts.get(cid, 0), str(c.get("name") or cid))
+
+    while sum(len(capped[tier]) for tier in _CONTAINER_TIERS) > max_nodes:
+        # Only tiers that can spare a node — never empty a tier entirely.
+        spare = [tier for tier in _CONTAINER_TIERS if len(capped[tier]) > 1]
+        if not spare:
+            break
+        tier = max(spare, key=lambda t: len(capped[t]))
+        victim = min(capped[tier], key=_risk)
+        capped[tier].remove(victim)
+        dropped.append(victim)
+    return capped, dropped
+
+
+def _edge_endpoints_kept(edge: str, kept: set[str]) -> bool:
+    """True when both endpoints of a ``a -->|label| b`` edge survived the cap.
+
+    An edge pointing at a trimmed container would make Mermaid render the node
+    anyway — silently re-introducing the node the cap just removed (and putting
+    it outside every subgraph). An unrecognised edge shape is left alone.
+    """
+    m = re.match(
+        r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*[-.=]+>\s*\|[^|]*\|\s*([A-Za-z][A-Za-z0-9_]*)",
+        edge,
+    )
+    if not m:
+        return True
+    return m.group(1) in kept and m.group(2) in kept
+
+
 def gen_architecture_diagrams(yaml_data: dict) -> str:
     """## 2. Architecture Diagrams — 4 required sub-sections with at least
     one ```mermaid block each.
@@ -457,26 +528,41 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     # crit_counts / high_counts pre-computed at the top of the function so the
     # classDef highlighting below and the §2 Key takeaways share one tally.
 
+    # Enforce the contract node ceiling — the SoT is
+    # `diagram_compactness."2.2 Container Architecture".max_nodes_total`.
+    # Without this the generator emitted one node per component and produced a
+    # permanently-failing advisory on any model above the cap (see
+    # `_cap_container_tiers`).
+    c22_rules = _load_diagram_compactness().get("2.2 Container Architecture") or {}
+    c22_max_nodes = int(c22_rules.get("max_nodes_total", 8))
+    by_tier_22, dropped_22 = _cap_container_tiers(by_tier, crit_counts, high_counts, c22_max_nodes)
+    kept_22 = [c for tier in _CONTAINER_TIERS for c in by_tier_22[tier]]
+    kept_node_ids = {_safe_node_id(c["id"]) for c in kept_22 if c.get("id")}
+    # Fallback nodes stand in for an empty tier and are legitimate endpoints.
+    for tier, fallback in (("client", "BROWSER"), ("application", "APP"), ("data", "DATA")):
+        if not by_tier_22[tier]:
+            kept_node_ids.add(fallback)
+
     lines.append("```mermaid")
     lines.append("flowchart TB")
     lines.append("    subgraph Client")
 
-    if by_tier["client"]:
-        for c in by_tier["client"]:
+    if by_tier_22["client"]:
+        for c in by_tier_22["client"]:
             lines.append(f'        {_safe_node_id(c["id"])}["{_component_label(c)}"]')
     else:
         lines.append('        BROWSER["Browser Runtime"]')
     lines.append("    end")
     lines.append("    subgraph Application")
-    if by_tier["application"]:
-        for c in by_tier["application"]:
+    if by_tier_22["application"]:
+        for c in by_tier_22["application"]:
             lines.append(f'        {_safe_node_id(c["id"])}["{_component_label(c)}"]')
     else:
         lines.append('        APP["Application Server"]')
     lines.append("    end")
     lines.append("    subgraph Data")
-    if by_tier["data"]:
-        for c in by_tier["data"]:
+    if by_tier_22["data"]:
+        for c in by_tier_22["data"]:
             lines.append(f'        {_safe_node_id(c["id"])}[("{_component_label(c)}")]')
     else:
         lines.append('        DATA[("Data Layer")]')
@@ -485,7 +571,9 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     # M3.3 / D1 — render edges from `data_flows[]` when the orchestrator
     # populated it; fall back to the legacy 1-pfeil-pro-tier-paar heuristic
     # when empty so old yamls still get a meaningful diagram.
-    flow_edges = _data_flow_edges(yaml_data, components)
+    # Edges to capped-away containers are dropped with them — Mermaid would
+    # otherwise re-materialise the node outside every subgraph.
+    flow_edges = [e for e in _data_flow_edges(yaml_data, components) if _edge_endpoints_kept(e, kept_node_ids)]
     if flow_edges:
         for edge in flow_edges:
             lines.append(f"    {edge}")
@@ -498,13 +586,13 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         # application-tier components are connected back to the primary
         # via in-process call edges so they show up as part of the
         # application cluster instead of floating freely.
-        primary_app = _safe_node_id(by_tier["application"][0]["id"]) if by_tier["application"] else None
-        if by_tier["client"] and primary_app:
-            for c_comp in by_tier["client"]:
+        primary_app = _safe_node_id(by_tier_22["application"][0]["id"]) if by_tier_22["application"] else None
+        if by_tier_22["client"] and primary_app:
+            for c_comp in by_tier_22["client"]:
                 c = _safe_node_id(c_comp["id"])
                 lines.append(f"    {c} -->|HTTPS REST| {primary_app}")
-        if primary_app and by_tier["data"]:
-            for d_comp in by_tier["data"]:
+        if primary_app and by_tier_22["data"]:
+            for d_comp in by_tier_22["data"]:
                 d = _safe_node_id(d_comp["id"])
                 lines.append(f"    {primary_app} -->|driver| {d}")
         elif primary_app:
@@ -515,16 +603,18 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         # so they appear within the application cluster rather than as
         # stranded nodes (file-upload-service, b2b-api, etc. are typically
         # in-process modules of the primary backend).
-        for extra in by_tier["application"][1:]:
+        for extra in by_tier_22["application"][1:]:
             extra_id = _safe_node_id(extra["id"])
             lines.append(f"    {primary_app} -->|in-process| {extra_id}")
 
     # M3.3 / D1.5 (L) — Critical-path classDef. Components with ≥3 Critical
     # threats get a thick red border; ≥2 High get a thinner amber border.
     # Subgraph IDs are excluded — the highlight is a *component* visual cue.
+    # Only nodes that survived the cap — a `class <id>` line for a trimmed
+    # container references an undeclared node and breaks the Mermaid block.
     crit_class_lines = []
     warn_class_lines = []
-    for c in components:
+    for c in kept_22:
         if not isinstance(c, dict):
             continue
         cid = c.get("id")
@@ -545,6 +635,15 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
 
     lines.append("```")
     lines.append("")
+    # Never drop containers silently — name what the cap removed and point at
+    # the table that still inventories them in full.
+    if dropped_22:
+        omitted = ", ".join(str(c.get("name") or c.get("id")) for c in dropped_22)
+        lines.append(
+            f"*Not shown (diagram capped at {c22_max_nodes} containers): {omitted} — "
+            f"every component is inventoried in [§2.3 Components](#23-components).*"
+        )
+        lines.append("")
     lines.append(f"**Key takeaway:** {takeaways['2.2']}")
     lines.append("")
 
@@ -3642,6 +3741,24 @@ _V2_CWE_ROUTING: dict[str, str] = {
     "CWE-15": "6.11 Operations Runtime and Supply Chain Controls",
     "CWE-260": "6.11 Operations Runtime and Supply Chain Controls",
     "CWE-1385": "6.12 Real-time and Not Applicable Controls",
+    # 2026-07-19 — routing gaps found while diagnosing the recurring §6 repair
+    # loop. An unrouted CWE contributes nothing to `routed_here`, which is one
+    # of the guards deciding whether a Missing control still earns an H4 block;
+    # on an AI/LLM codebase 17 of 49 findings landed here (CWE-1336 x5, CWE-74
+    # x4, ...), so whole §6 sections saw zero routed findings. Each entry below
+    # is placed with its existing siblings: injection-to-RCE classes join
+    # CWE-94/95 in §6.10, missing/spoofed authn joins CWE-287 in §6.2,
+    # resource-exhaustion joins CWE-400 in §6.6.
+    "CWE-306": "6.2 Identity and Authentication Controls",
+    "CWE-290": "6.2 Identity and Authentication Controls",
+    "CWE-284": "6.4 Authorization Controls",
+    "CWE-74": "6.6 Input Boundary Validation Controls",
+    "CWE-770": "6.6 Input Boundary Validation Controls",
+    "CWE-78": "6.10 File Parser and Outbound Request Controls",
+    "CWE-502": "6.10 File Parser and Outbound Request Controls",
+    "CWE-1336": "6.10 File Parser and Outbound Request Controls",
+    "CWE-359": "6.10 File Parser and Outbound Request Controls",
+    "CWE-494": "6.11 Operations Runtime and Supply Chain Controls",
 }
 
 
@@ -4418,7 +4535,14 @@ def _is_flow_like_control(name: str) -> bool:
 
 
 def _emit_v2_subcontrol_legacy(
-    lines: list, c: dict, name: str, threats: list, heading: str, section_id: str = "", idx: int = 0
+    lines: list,
+    c: dict,
+    name: str,
+    threats: list,
+    heading: str,
+    section_id: str = "",
+    idx: int = 0,
+    force: bool = False,
 ) -> bool:
     """Legacy single-block-per-control shape — used when subcontrols[] is empty.
 
@@ -4453,8 +4577,14 @@ def _emit_v2_subcontrol_legacy(
     # strict gate → the recurring §6 REPAIR_MODE loop). Only suppress when
     # there is genuinely nothing to anchor — no own links, no implementation
     # prose, AND no CWE-routed finding for this section.
+    #
+    # `force=True` is the caller's "this block is structurally required"
+    # override: the §6.x section would otherwise ship ZERO H4 blocks (see the
+    # all-suppressed re-emit below), which trips the coverage gate the
+    # paragraph above is trying to stay clear of. Structural coverage wins
+    # over the anti-filler heuristic.
     routed_here = _v2_finding_links(threats, heading, max_links=1)
-    if eff == "missing" and not linked and not impl_text and not routed_here:
+    if not force and eff == "missing" and not linked and not impl_text and not routed_here:
         return False
 
     title = _friendly_subcontrol_title(name)
@@ -5227,6 +5357,38 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                         h4_idx = next_idx
                     else:
                         suppressed_names.append(name)
+            if suppressed_names and h4_idx == 0:
+                # EVERY control in this section was suppressed, so the section
+                # would ship with zero H4 blocks. That is the one shape the
+                # coverage gate cannot accept: the section HAS catalogued
+                # controls, so the `_Not applicable_` exemption in
+                # qa_checks.check_control_subsection_coverage does not apply,
+                # and "no #### control subsections found" fails BLOCKING. The
+                # sibling no-controls path below handles its empty case by
+                # emitting a `_Not applicable_` stub; this branch had no
+                # equivalent, so it fell into the gap and forced an LLM repair
+                # pass that could only re-add exactly what we dropped here
+                # (insecure-ai-app §6.3, 2026-07-19 — both Session/Conversation
+                # Ownership and Agent State Serialization Security suppressed
+                # because no repo CWE routes to §6.3 at all).
+                #
+                # Re-emit the controls as real H4 blocks. A "Missing" control
+                # with no linked findings still deserves a subsection here:
+                # the reader needs to see the absent control named, and
+                # suppressing it is what made the gap invisible.
+                suppressed_names = []
+                for c, name in zip(section_controls[:8], control_names[:8]):
+                    h4_idx += 1
+                    _emit_v2_subcontrol_legacy(
+                        lines,
+                        c,
+                        name,
+                        threats,
+                        heading,
+                        section_id=section_id,
+                        idx=h4_idx,
+                        force=True,
+                    )
             if suppressed_names:
                 # Surface the suppressed control names as a single line so
                 # the user can see that the §6.x catalog item exists but
@@ -5527,6 +5689,45 @@ _LLM_TO_ASI_CROSSWALK = {
     "LLM09": "ASI09",  # Misinformation        → Human-Agent Trust Exploitation
     "LLM10": "ASI08",  # Unbounded Consumption → Cascading Agent Failures
 }
+_ASI_RISK_DETAILS = {
+    "ASI01": ("Agent Goal Hijack", "Untrusted context can redirect the agent's multi-step goal or plan."),
+    "ASI02": (
+        "Tool Misuse & Exploitation",
+        "Model-controlled tool use can exceed the intended authorization boundary.",
+    ),
+    "ASI03": (
+        "Agent Identity & Privilege Abuse",
+        "The agent can act with an over-broad or inherited identity instead of scoped delegation.",
+    ),
+    "ASI04": (
+        "Agentic Supply Chain",
+        "Tools, MCP servers, plugins, or personas lack sufficient provenance and integrity controls.",
+    ),
+    "ASI05": (
+        "Unexpected Code Execution",
+        "Agent-generated code or commands can reach execution sinks without an adequate sandbox.",
+    ),
+    "ASI06": (
+        "Memory & Context Poisoning",
+        "Persistent memory or shared retrieval context can be poisoned and reused across runs or tenants.",
+    ),
+    "ASI07": (
+        "Insecure Inter-Agent Communication",
+        "Peer-agent messages are trusted without sufficient authentication, integrity, or validation.",
+    ),
+    "ASI08": (
+        "Cascading Agent Failures",
+        "Unbounded loops or tool chains can amplify a single failure into a wider outage or cost event.",
+    ),
+    "ASI09": (
+        "Human-Agent Trust Exploitation",
+        "High-impact agent output or actions can be mistaken for authoritative human or system decisions.",
+    ),
+    "ASI10": (
+        "Rogue Agents",
+        "Standing agent privileges, monitoring, or revocation controls do not bound a compromised agent's blast radius.",
+    ),
+}
 # Substrings that mark a genuine agentic surface (tools/memory/multi-agent/autonomy)
 # in a threat's title+evidence+impact blob. Word-anchored where the token is short.
 _AGENTIC_KEYWORDS = (
@@ -5616,24 +5817,37 @@ def gen_ai_exposure(yaml_data: dict):
     # API...") once its OWN title already matched a keyword (juice-shop
     # 2026-07-02: T-040 lived on the generic "backend-api" component).
     buckets: dict[str, dict] = {}
+    llm_rules_by_id = {rule[0]: rule for rule in _LLM_TOP10_RULES}
+
+    def add_llm_bucket(llm_id: str, threat: dict) -> None:
+        rule = llm_rules_by_id.get(llm_id)
+        if rule is None:
+            return
+        _, name, _, description, _ = rule
+        bucket = buckets.setdefault(llm_id, {"name": name, "description": description, "threats": [], "sev_rank": -1})
+        if threat not in bucket["threats"]:
+            bucket["threats"].append(threat)
+        sev = str(threat.get("effective_severity") or threat.get("risk") or "").lower()
+        bucket["sev_rank"] = max(bucket["sev_rank"], _SEVERITY_RANK.get(sev, 1))
+
     for th in threats:
         title = th.get("title", "") or ""
         title_lc = title.lower()
         context_blob_lc = " ".join(
             str(th.get(f, "") or "") for f in ("title", "evidence_summary", "impact_description")
         ).lower()
+        explicit_ids = th.get("owasp_llm_ids")
+        if isinstance(explicit_ids, list) and explicit_ids:
+            for llm_id in explicit_ids:
+                if isinstance(llm_id, str):
+                    add_llm_bucket(llm_id, th)
+            continue
         for llm_id, name, keywords, description, strong in _LLM_TOP10_RULES:
             if not any(kw in title_lc for kw in keywords):
                 continue
             if not strong and not _llm_context(th, context_blob_lc):
                 continue
-            b = buckets.setdefault(
-                llm_id,
-                {"name": name, "description": description, "threats": [], "sev_rank": -1},
-            )
-            b["threats"].append(th)
-            sev = str(th.get("effective_severity") or th.get("risk") or "").lower()
-            b["sev_rank"] = max(b["sev_rank"], _SEVERITY_RANK.get(sev, 1))
+            add_llm_bucket(llm_id, th)
             break
 
     # Agentic surface? Only then does the LLM→ASI crosswalk apply, so a plain
@@ -5647,11 +5861,6 @@ def gen_ai_exposure(yaml_data: dict):
         str(c.get("name") or "").lower() + " " + str(c.get("description") or "").lower() for c in components
     )
     agentic_surface = any(kw in agentic_blob for kw in _AGENTIC_KEYWORDS)
-
-    if not buckets:
-        # No LLM-categorizable threat — even if a component looks LLM-ish, there
-        # is no concrete risk to surface, so emit nothing (zero-cost contract).
-        return None
 
     ai_risks = []
     for llm_id, b in buckets.items():
@@ -5688,12 +5897,75 @@ def gen_ai_exposure(yaml_data: dict):
             "description": b["description"],
             "findings": findings,
         }
-        asi_id = _LLM_TO_ASI_CROSSWALK.get(llm_id) if agentic_surface else None
+        explicit_asi_ids = [
+            asi_id
+            for threat in group_sorted
+            for asi_id in (threat.get("owasp_asi_ids") or [])
+            if isinstance(asi_id, str) and asi_id in _ASI_RISK_DETAILS
+        ]
+        asi_id = (
+            explicit_asi_ids[0]
+            if explicit_asi_ids
+            else (_LLM_TO_ASI_CROSSWALK.get(llm_id) if agentic_surface else None)
+        )
         if asi_id:
             risk["owasp_asi_id"] = asi_id
         if affected:
             risk["affected_components"] = affected[:8]
         ai_risks.append((b["sev_rank"], llm_id, risk))
+
+    emitted_asi_ids = {risk.get("owasp_asi_id") for _, _, risk in ai_risks}
+    asi_buckets: dict[str, list[dict]] = {}
+    for threat in threats:
+        raw_ids = threat.get("owasp_asi_ids")
+        if not isinstance(raw_ids, list):
+            continue
+        for asi_id in raw_ids:
+            if isinstance(asi_id, str) and asi_id in _ASI_RISK_DETAILS and asi_id not in emitted_asi_ids:
+                asi_buckets.setdefault(asi_id, []).append(threat)
+    for asi_id, group in asi_buckets.items():
+        details = _ASI_RISK_DETAILS[asi_id]
+        group_sorted = sorted(
+            group,
+            key=lambda t: (
+                -_SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1),
+                str(t.get("id", "")),
+            ),
+        )
+        findings = [
+            {"ref": t["id"], "label": _clean_finding_label(t.get("title", ""))} for t in group_sorted if t.get("id")
+        ][:6]
+        if not findings:
+            continue
+        affected = []
+        for threat in group_sorted:
+            cnn = cmap.get(threat.get("component"))
+            if cnn and cnn not in affected:
+                affected.append(cnn)
+        risk = {
+            "owasp_asi_id": asi_id,
+            "name": details[0],
+            "severity": _llm_severity_glyph(
+                max(
+                    _SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1)
+                    for t in group_sorted
+                )
+            ),
+            "description": details[1],
+            "findings": findings,
+        }
+        if affected:
+            risk["affected_components"] = affected[:8]
+        ai_risks.append(
+            (
+                max(
+                    _SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1)
+                    for t in group_sorted
+                ),
+                asi_id,
+                risk,
+            )
+        )
 
     if not ai_risks:
         return None

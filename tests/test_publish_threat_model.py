@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import publish_threat_model as ptm
 
@@ -36,6 +38,13 @@ class TestScanForSecrets:
     def test_missing_file_returns_empty(self, tmp_path):
         assert ptm.scan_for_secrets(tmp_path / "nonexistent.md") == []
 
+    def test_hits_name_the_file_they_came_from(self, tmp_path):
+        """The pre-flight scans every publishable file, so a hit must say which
+        one it is in."""
+        y = tmp_path / "threat-model.yaml"
+        y.write_text('snippet: "password: supersecret123"\n')
+        assert all("threat-model.yaml" in h for h in ptm.scan_for_secrets(y))
+
 
 # ---------------------------------------------------------------------------
 # .gitignore patching
@@ -43,6 +52,14 @@ class TestScanForSecrets:
 
 
 class TestPatchGitignore:
+    def _out(self, tmp_path: Path) -> Path:
+        """The directory the run wrote to. patch_gitignore derives its patterns
+        from this, so it must be a real subdirectory — passing the repo root
+        used to be masked by the hardcoded "docs/security" prefix."""
+        out = tmp_path / "docs" / "security"
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+
     def _make_gitignore(self, tmp_path: Path, content: str) -> Path:
         gi = tmp_path / ".gitignore"
         gi.write_text(content)
@@ -51,7 +68,7 @@ class TestPatchGitignore:
     def test_adds_negation_after_docs_security_line(self, tmp_path):
         gi = self._make_gitignore(tmp_path, "node_modules/\ndocs/security/\n")
         files = [tmp_path / "threat-model.md", tmp_path / "threat-model.yaml"]
-        ptm.patch_gitignore(gi, tmp_path, files)
+        ptm.patch_gitignore(gi, self._out(tmp_path), files)
         text = gi.read_text()
         assert "!docs/security/threat-model.md" in text
         assert "!docs/security/threat-model.yaml" in text
@@ -63,28 +80,28 @@ class TestPatchGitignore:
     def test_idempotent(self, tmp_path):
         gi = self._make_gitignore(tmp_path, "docs/security/\n")
         files = [tmp_path / "threat-model.md"]
-        ptm.patch_gitignore(gi, tmp_path, files)
+        ptm.patch_gitignore(gi, self._out(tmp_path), files)
         first = gi.read_text()
-        ptm.patch_gitignore(gi, tmp_path, files)
+        ptm.patch_gitignore(gi, self._out(tmp_path), files)
         second = gi.read_text()
         assert first == second
 
     def test_never_publish_guards_added_once(self, tmp_path):
         gi = self._make_gitignore(tmp_path, "docs/security/\n")
-        ptm.patch_gitignore(gi, tmp_path, [tmp_path / "threat-model.md"])
+        ptm.patch_gitignore(gi, self._out(tmp_path), [tmp_path / "threat-model.md"])
         text = gi.read_text()
         assert "never-publish guards" in text
         assert text.count("never-publish guards") == 1
 
     def test_pentest_tasks_always_in_never_list(self, tmp_path):
         gi = self._make_gitignore(tmp_path, "docs/security/\n")
-        ptm.patch_gitignore(gi, tmp_path, [])
+        ptm.patch_gitignore(gi, self._out(tmp_path), [])
         text = gi.read_text()
         assert "pentest-tasks.yaml" in text
 
     def test_creates_gitignore_when_missing(self, tmp_path):
         gi = tmp_path / ".gitignore"
-        ptm.patch_gitignore(gi, tmp_path, [tmp_path / "threat-model.md"])
+        ptm.patch_gitignore(gi, self._out(tmp_path), [tmp_path / "threat-model.md"])
         assert gi.exists()
         assert "!docs/security/threat-model.md" in gi.read_text()
 
@@ -97,7 +114,7 @@ class TestPatchGitignore:
             + "\n".join(f"docs/security/{n}  # never publish" for n in ptm.NEVER_PUBLISH)
             + "\n",
         )
-        result = ptm.patch_gitignore(gi, tmp_path, [tmp_path / "threat-model.md"])
+        result = ptm.patch_gitignore(gi, self._out(tmp_path), [tmp_path / "threat-model.md"])
         assert result is False
 
 
@@ -391,7 +408,10 @@ class TestMain:
         out_dir.mkdir()
         self._write_yaml(out_dir)
         (out_dir / "threat-model.md").write_text("clean\n")
-        (tmp_path / ".gitignore").write_text("docs/security/\n")
+        # The negation must address the directory the run actually used, not a
+        # hardcoded "docs/security" — otherwise --output leaves the deliverable
+        # ignored with no way to publish it.
+        (tmp_path / ".gitignore").write_text("out/**\n")
         ns = self._args(out_dir, tmp_path, json_out=True)
         self._patch_args(monkeypatch, ns)
         monkeypatch.setattr(ptm, "check_repo_visibility", lambda r: (False, ""))
@@ -402,7 +422,7 @@ class TestMain:
         parsed = __import__("json").loads(capsys.readouterr().out)
         assert parsed["gitignore_patched"] is True
         assert parsed["committed"] is False
-        assert "!docs/security/threat-model.md" in (tmp_path / ".gitignore").read_text()
+        assert "!out/threat-model.md" in (tmp_path / ".gitignore").read_text()
 
     def test_commit_success(self, tmp_path, monkeypatch, capsys):
         out_dir = tmp_path / "out"
@@ -467,3 +487,51 @@ class TestMain:
         assert rc == 0
         out = capsys.readouterr().out
         assert "Files to publish" in out
+
+
+class TestPreflightScansEveryPublishableFile:
+    """The secret scan covered threat-model.md alone while threat-model.yaml,
+    the SARIF export and .architect-review.md were published unscanned — they
+    carry the same evidence snippets, so a credential in one of them reached
+    git with the pre-flight reporting no blockers."""
+
+    def _output_dir(self, tmp_path: Path) -> Path:
+        out = tmp_path / "docs" / "security"
+        out.mkdir(parents=True)
+        (out / "threat-model.md").write_text("# Report\n\nAll clean here.\n")
+        (out / "threat-model.yaml").write_text("meta:\n  version: 1\n")
+        (out / "threat-model.sarif.json").write_text('{"text":"clean"}')
+        (out / ".architect-review.md").write_text("Looks fine.\n")
+        return out
+
+    def _scan_publishable(self, out: Path) -> list[str]:
+        files = [out / n for n in ptm.TIER1 + ptm.TIER2 if (out / n).exists()]
+        hits: list[str] = []
+        for f in files:
+            if f.suffix.lower() in ptm._BINARY_SUFFIXES:
+                continue
+            hits.extend(ptm.scan_for_secrets(f))
+        return hits
+
+    def test_clean_publish_set_has_no_hits(self, tmp_path):
+        assert self._scan_publishable(self._output_dir(tmp_path)) == []
+
+    @pytest.mark.parametrize(
+        "name,content",
+        [
+            ("threat-model.yaml", 'evidence:\n  snippet: "password: Pr0dP4ss!2024xyz"\n'),
+            ("threat-model.sarif.json", '{"text":"DB_PASSWORD=Pr0dP4ss!2024xyz"}'),
+            (".architect-review.md", "Observed `api_key: AKIAIOSFODNN7EXAMPLE`\n"),
+        ],
+    )
+    def test_a_secret_in_any_published_file_is_found(self, tmp_path, name, content):
+        out = self._output_dir(tmp_path)
+        (out / name).write_text(content)
+        hits = self._scan_publishable(out)
+        assert hits, f"secret in {name} went undetected"
+        assert any(name in h for h in hits)
+
+    def test_binary_deliverables_are_not_scanned_as_text(self, tmp_path):
+        out = self._output_dir(tmp_path)
+        (out / "threat-model.pdf").write_bytes(b"%PDF-1.4 password=binarynoise123 \xff\xfe")
+        assert self._scan_publishable(out) == []

@@ -40,7 +40,7 @@
 
   "spring-quick": {
     "target_repo": "matthiasrohr/insecure-spring-app",
-    "target_ref": "master",
+    "target_ref": "",
     "mode": "full",
     "assessment_depth": "quick",
     "reasoning_model": "sonnet-economy",
@@ -52,7 +52,7 @@
   },
   "spring-standard": {
     "target_repo": "matthiasrohr/insecure-spring-app",
-    "target_ref": "master",
+    "target_ref": "",
     "mode": "full",
     "assessment_depth": "standard",
     "reasoning_model": "sonnet-economy",
@@ -64,7 +64,7 @@
   },
   "spring-thorough": {
     "target_repo": "matthiasrohr/insecure-spring-app",
-    "target_ref": "master",
+    "target_ref": "",
     "mode": "full",
     "assessment_depth": "thorough",
     "reasoning_model": "opus-cheap",
@@ -77,7 +77,7 @@
 
   "python-quick": {
     "target_repo": "matthiasrohr/insecure-python-app",
-    "target_ref": "master",
+    "target_ref": "",
     "mode": "full",
     "assessment_depth": "quick",
     "reasoning_model": "sonnet-economy",
@@ -89,7 +89,7 @@
   },
   "python-standard": {
     "target_repo": "matthiasrohr/insecure-python-app",
-    "target_ref": "master",
+    "target_ref": "",
     "mode": "full",
     "assessment_depth": "standard",
     "reasoning_model": "sonnet-economy",
@@ -101,7 +101,7 @@
   },
   "python-thorough": {
     "target_repo": "matthiasrohr/insecure-python-app",
-    "target_ref": "master",
+    "target_ref": "",
     "mode": "full",
     "assessment_depth": "thorough",
     "reasoning_model": "opus-cheap",

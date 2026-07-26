@@ -140,8 +140,17 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         # every depth (no depth variation, like orchestrator). Manual pin via
         # APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL for quality buy-back
         # (Sonnet-5) or cost (4.6) without moving the whole session.
+        #
+        # evidence_verifier stays on SONNET at every tier and depth — including
+        # sonnet-economy, where every other extraction role drops to Haiku.
+        # Verified/refuted/ambiguous discrimination requires reading code
+        # semantics at the cited line; Haiku regressed to stamping every sampled
+        # finding `ambiguous` (0 verified / 0 refuted, ~57ms batch), which
+        # cascaded into an all-review, zero-P1 Mitigation Register. Override via
+        # APPSEC_EVIDENCE_VERIFIER_MODEL only with that failure mode in mind.
         "renderer":         SONNET,
         "abuse_verifier":   SONNET,
+        "evidence_verifier": SONNET,
     },
     ("sonnet-economy", "standard"): {
         "context_resolver": HAIKU,
@@ -152,6 +161,7 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         "orchestrator":     SONNET,
         "renderer":         SONNET,
         "abuse_verifier":   SONNET,
+        "evidence_verifier": SONNET,
     },
     ("sonnet-economy", "thorough"): {
         "context_resolver": HAIKU,
@@ -162,6 +172,7 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         "orchestrator":     SONNET,
         "renderer":         SONNET,
         "abuse_verifier":   SONNET,
+        "evidence_verifier": SONNET,
     },
 }
 
@@ -179,6 +190,7 @@ _DEFAULT_EXTENDED_ROUTING = {
     "orchestrator":     SONNET,
     "renderer":         SONNET,
     "abuse_verifier":   SONNET,
+    "evidence_verifier": SONNET,
 }
 
 # Quick-mode STRIDE depth reduction. The model stays Sonnet — only the
@@ -248,9 +260,17 @@ DEPTH_PARAMS = {
 # the selector; this only caps a pathologically large inventory (auth/frontend/
 # exposed are never dropped — the ceiling lifts and logs EXPOSURE_CAP_LIFT).
 # Depth-independent: the same operational limit regardless of assessment depth.
-# The recon scanner's own hint cap (max 8) currently bounds the inventory below
-# this, so in practice it rarely binds.
+# Recon deliberately has no hard inventory cap. When positive selection
+# criteria yield more than this ceiling (for example 50 exposed services), the
+# ceiling lifts and bounded dispatch waves control execution pressure instead.
 STRIDE_COMPONENT_CEILING = 10
+
+# Maximum number of per-component STRIDE agents dispatched in one foreground
+# wave. Selection remains uncapped for exposed/security-relevant components;
+# this bounds only concurrent execution pressure. Override for a particular
+# host with APPSEC_STRIDE_CONCURRENCY (1..32).
+STRIDE_DISPATCH_CONCURRENCY = 8
+STRIDE_DISPATCH_CONCURRENCY_MAX = 32
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +294,7 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("quick",        "thorough",        "--quick and --thorough cannot be used together."),
     ("enrich_arch",  "no_enrich_arch",  "--enrich-arch and --no-enrich-arch cannot be used together."),
     ("abuse_cases",  "no_abuse_cases",  "--abuse-cases and --no-abuse-cases cannot be used together."),
+    ("cheap_stride", "no_cheap_stride", "--cheap-stride and --no-cheap-stride cannot be used together."),
 ]
 
 
@@ -354,6 +375,41 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
     }
 
 
+def resolve_stride_concurrency() -> dict:
+    raw = os.environ.get("APPSEC_STRIDE_CONCURRENCY")
+    if raw is None or not raw.strip():
+        return {"stride_concurrency": STRIDE_DISPATCH_CONCURRENCY}
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise SystemExit("Error: APPSEC_STRIDE_CONCURRENCY must be an integer between 1 and 32") from exc
+    if not 1 <= value <= STRIDE_DISPATCH_CONCURRENCY_MAX:
+        raise SystemExit("Error: APPSEC_STRIDE_CONCURRENCY must be between 1 and 32")
+    return {"stride_concurrency": value}
+
+
+def resolve_evidence_verifier_cap(ns: argparse.Namespace, depth: str) -> dict:
+    """Bound Phase 10a work while preserving every Critical finding.
+
+    The verifier prompt applies this cap *after* selecting all Criticals, so a
+    repository with more Criticals than the configured cap still verifies each
+    of them.  The default keeps normal standard runs bounded without reducing
+    the high-risk coverage that makes the phase useful.
+    """
+    requested = getattr(ns, "evidence_verifier_cap", None)
+    if requested is not None:
+        return {
+            "evidence_verifier_max_findings": requested,
+            "evidence_verifier_cap_label": f"{requested} (--evidence-verifier-cap)",
+        }
+    defaults = {"quick": 20, "standard": 30, "thorough": 100}
+    cap = defaults[depth]
+    return {
+        "evidence_verifier_max_findings": cap,
+        "evidence_verifier_cap_label": f"{cap} (depth default)",
+    }
+
+
 def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
     """Resolve ``skip_abuse_case_verification`` + a human-readable label.
 
@@ -377,6 +433,32 @@ def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
             "abuse_case_label": "enabled"}
 
 
+def resolve_cheap_stride(ns: argparse.Namespace, depth: str) -> dict:
+    """Resolve ``cheap_stride`` + a human-readable label.
+
+    Default: ON at quick and standard depth, OFF at thorough. Screening depth is
+    a cost/pacing tier for components that are *proven* side-of-the-house, and
+    ``build_stride_dispatch_manifest._cheap_stride_target`` is what decides that:
+    auth, frontend, LLM, internet-exposed, file-upload, realtime, data-store and
+    core-backend components always keep full depth, and so does anything whose
+    reachability is unknown. Only ci-cd and provably-internal components qualify,
+    which is why this is safe to default — it can only ever trim the tail.
+    Thorough keeps full depth everywhere by definition: it is the mode a user
+    picks when depth matters more than cost.
+
+    ``--cheap-stride`` forces it on at any depth (incl. thorough);
+    ``--no-cheap-stride`` forces it off at any depth. The two flags are mutually
+    exclusive (see ``CONFLICT_PAIRS``).
+    """
+    if getattr(ns, "no_cheap_stride", False):
+        return {"cheap_stride": False, "cheap_stride_label": "off (--no-cheap-stride)"}
+    if getattr(ns, "cheap_stride", False):
+        return {"cheap_stride": True, "cheap_stride_label": "on (--cheap-stride)"}
+    if depth == "thorough":
+        return {"cheap_stride": False, "cheap_stride_label": "off (auto - thorough depth)"}
+    return {"cheap_stride": True, "cheap_stride_label": f"on (auto - {depth} depth)"}
+
+
 # B2c — repo-size auto-cap thresholds.
 # Source: 2026-04-27 juice-shop incident — 5 STRIDE components once consumed
 # 50+ min in Phase 9 on cold caches and never finished, so large repos were
@@ -397,10 +479,18 @@ LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
 # The orchestrator holds the largest resident context; on a *very* large repo a
 # small-window session model (Sonnet 4.6 in the harness) risks mid-run compaction,
 # which can drop finalization steps. At/above this source-file count we RECOMMEND the
-# large-window Sonnet 5 as the SESSION model (higher cost, but compaction-safe); below
-# it we recommend Sonnet 4.6 (much cheaper, only very limited orchestrator benefit). Advisory
-# only — the user always chooses (see the interactive prompt in SKILL-impl.md).
-# Calibrated ABOVE Juice-Shop (~641 source files) so a normal app recommends 4.6.
+# large-window Sonnet 5 as the SESSION model (higher cost, for more compaction
+# headroom); below it we recommend Sonnet 4.6 (much cheaper, only very limited
+# orchestrator benefit). Advisory only — the user always chooses (see the
+# interactive prompt in SKILL-impl.md).
+# CALIBRATION CAVEAT: this is a coarse heuristic, not a measured compaction point.
+# We have one calibration repo (Juice-Shop, ~650 source files by the count below);
+# 2500 is simply a margin well above it so a normal app recommends 4.6. Source-file
+# count is a *proxy* — the orchestrator's resident context is really driven by the
+# analyzed component count and finding volume (roughly bounded, not linear in files),
+# so the true compaction point does not track this number precisely. Kept because it
+# is the only cheap signal available pre-recon, and the recommendation is fail-safe
+# (defaults to the cheap model, user overrides).
 ORCHESTRATOR_SONNET5_FILE_THRESHOLD = 2500
 SOURCE_FILE_EXTENSIONS = (
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
@@ -498,9 +588,10 @@ def recommend_orchestrator_model(src_count: int) -> dict:
         reason = (
             f"very large repo ({src_count} source files >= "
             f"{ORCHESTRATOR_SONNET5_FILE_THRESHOLD}) — the orchestrator accumulates a "
-            f"large resident context; Sonnet 5's larger window avoids mid-run "
-            f"compaction (higher cost, but prevents compaction-induced finalization "
-            f"skips)"
+            f"large resident context; Sonnet 5's larger window reduces the risk of "
+            f"mid-run compaction (higher cost). Note: this is a coarse file-count "
+            f"heuristic — a margin above our single calibration repo, not a measured "
+            f"compaction threshold"
         )
     else:
         model = "claude-sonnet-4-6"
@@ -669,6 +760,7 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
         "orchestrator":     "APPSEC_ORCHESTRATOR_MODEL",
         "renderer":         "APPSEC_RENDERER_MODEL",
         "abuse_verifier":   "APPSEC_ABUSE_VERIFIER_MODEL",
+        "evidence_verifier": "APPSEC_EVIDENCE_VERIFIER_MODEL",
     }
     for k, env in env_map.items():
         if os.environ.get(env):
@@ -683,6 +775,7 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
         "orchestrator_model":     models["orchestrator"],
         "renderer_model":         models["renderer"],
         "abuse_verifier_model":   models["abuse_verifier"],
+        "evidence_verifier_model": models["evidence_verifier"],
     }
 
 
@@ -1388,6 +1481,27 @@ def build_parser() -> argparse.ArgumentParser:
                         "Trims the High/Medium/Low tail to cut tokens/cost; the "
                         "rest of full depth (CVSS, evidence, verification greps) "
                         "stays intact. Off by default.")
+    p.add_argument("--evidence-verifier-cap", type=int, default=None, metavar="N",
+                   help="Verify at most N non-Critical findings in Phase 10a; "
+                        "Critical findings do not count toward the cap. Defaults: 20 "
+                        "(quick), 30 (standard), 100 (thorough).")
+    # Screening-depth STRIDE for the internal tail (cost lever). ON by default at
+    # quick/standard, OFF at thorough — see resolve_cheap_stride. Exposed / auth /
+    # frontend / LLM (priority <=2) plus the file-upload / realtime / data-store /
+    # core-backend anchors keep full depth, and so does every exposure-unknown
+    # component (ci-cd excepted — role-identified); the rest gets a flat ~8-turn
+    # six-category screening pass. Defaulting it is only safe BECAUSE of the
+    # exposure-unknown fail-safe: unreliable zone tags cost budget, never depth.
+    p.add_argument("--cheap-stride", action="store_true", dest="cheap_stride",
+                   help="Force screening-depth STRIDE (~8 turns, all 6 categories "
+                        "kept) for the internal tail at any depth; exposed, auth, "
+                        "frontend, LLM, file-upload, realtime, data-store and "
+                        "core-backend (API/gateway) components keep full depth, as "
+                        "does anything exposure-unknown. Default: on at "
+                        "quick/standard, off at thorough.")
+    p.add_argument("--no-cheap-stride", action="store_true", dest="no_cheap_stride",
+                   help="Full STRIDE depth on every selected component, including "
+                        "the provably-internal tail and ci-cd.")
     # Architect
     p.add_argument("--architect-review",   action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
@@ -1637,6 +1751,10 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
 
     depth_info = resolve_assessment_depth(ns)
     cfg.update(depth_info)
+    cfg.update(resolve_stride_concurrency())
+    if ns.evidence_verifier_cap is not None and ns.evidence_verifier_cap < 1:
+        raise SystemExit("Error: --evidence-verifier-cap must be at least 1")
+    cfg.update(resolve_evidence_verifier_cap(ns, depth_info["assessment_depth"]))
 
     quick_depth = depth_info["assessment_depth"] == "quick"
     env_skip_qa = os.environ.get("APPSEC_SKIP_QA") == "1"
@@ -1649,6 +1767,10 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         cfg["skip_qa_label"] = "skipped (auto - quick depth)"
     else:
         cfg["skip_qa_label"] = "enabled"
+
+    # Cheap-stride screening tier. Read by build_stride_dispatch_manifest from
+    # .skill-config.json; the manifest decides which components qualify.
+    cfg.update(resolve_cheap_stride(ns, cfg["assessment_depth"]))
 
     # Quick-depth post-override for requirements — force off unless the
     # user explicitly opted in via --requirements.
@@ -2187,7 +2309,7 @@ def render_run_plan(
         lines.append("Configuration")
         lines.extend(kv("Depth", _format_depth_summary(cfg)))
         lines.extend(kv("Reasoning", _format_reasoning_summary(cfg)))
-        lines.extend(kv("STRIDE cap", _format_stride_cap(cfg)))
+        lines.extend(kv("STRIDE depth", _format_stride_depth(cfg)))
         active = _summary_active_options(cfg)
         for label, value in active:
             lines.extend(kv(label, value))
@@ -2269,7 +2391,8 @@ def render_run_plan_notes(
 # carries a resolved value in ``cfg`` (concrete id under sonnet-economy, or the
 # bare ``sonnet`` alias otherwise). renderer + abuse_verifier default to the
 # ``sonnet`` alias (host session) but are pinnable via APPSEC_RENDERER_MODEL /
-# APPSEC_ABUSE_VERIFIER_MODEL. Keep in sync with the AGENTS.md routing table.
+# APPSEC_ABUSE_VERIFIER_MODEL. This list is the display source of truth; keep
+# the user-facing rationale in docs/model-selection.md aligned with it.
 _ROUTING_ROWS: list[tuple[str, str | None, str]] = [
     # (display label, cfg key or None, note)
     ("STRIDE (discovery)",       "stride_model",           "reasoning core"),
@@ -2812,7 +2935,7 @@ def _render_summary_box(cfg: dict) -> list[str]:
     lines.extend(_box_kv("Depth", _format_depth_summary(cfg), width))
     lines.extend(_box_kv("Pipeline", _format_pipeline_summary(cfg), width))
     lines.extend(_box_kv("Reasoning", _format_reasoning_summary(cfg), width))
-    lines.extend(_box_kv("STRIDE cap", _format_stride_cap(cfg), width))
+    lines.extend(_box_kv("STRIDE depth", _format_stride_depth(cfg), width))
 
     active_options = _summary_active_options(cfg)
     if active_options:
@@ -2897,19 +3020,41 @@ def _format_reasoning_summary(cfg: dict) -> str:
     return f"{mode}; {prefix}STRIDE {stride}; triage {triage}; merge {merge}"
 
 
-def _format_stride_cap(cfg: dict) -> str:
-    """Always-on pre-flight row: how many threats STRIDE keeps per category.
+def _format_stride_depth(cfg: dict) -> str:
+    """Always-on pre-flight row: how much STRIDE this run buys per component.
 
-    Sourced from the resolved ``stride_profile.max_threats_per_category`` — set
-    either by ``--stride-cap N`` at any depth, or implicitly by the quick
-    triage profile (cap 1). When absent, standard/thorough keep full STRIDE
-    depth. Shown in both states so the user always sees, before any tokens are
-    spent, whether the per-component threat count is bounded.
+    Two independent levers answer that one question, so the row states both in
+    a fixed order and never lets one imply the other:
+
+      1. ``stride_profile.max_threats_per_category`` — how many threats survive
+         per STRIDE category. Set by ``--stride-cap N`` at any depth, or
+         implicitly by the quick triage profile (cap 1).
+      2. ``cheap_stride`` — whether the internal tail runs at screening depth.
+         It carries its own resolved label because it is a depth-dependent
+         DEFAULT (on at quick/standard, off at thorough), so the row has to say
+         whether the user asked for it or the depth did.
+
+    Both clauses print in both states: the user sees the full picture before any
+    tokens are spent, and a "no cap" run can never read as "full depth" while
+    its tail is screened. Which components qualify for screening is run-invariant
+    policy — the pre-flight runs before component discovery — so that list stays
+    in ``docs/threat-modeler.md`` and ``HELP.txt`` instead of in every run's box.
     """
     cap = (cfg.get("stride_profile") or {}).get("max_threats_per_category")
+    cheap = bool(cfg.get("cheap_stride"))
     if cap:
-        return f"≤{cap} per STRIDE category per component (Criticals always kept)"
-    return "none — full STRIDE depth (all threats kept)"
+        cap_part = f"≤{cap} per STRIDE category per component (Criticals always kept)"
+    else:
+        cap_part = "no per-category cap (all threats kept)"
+    label = cfg.get("cheap_stride_label") or ("on" if cheap else "off")
+    if cheap:
+        depth_part = (
+            f"cheap-stride {label} — internal tail at screening depth "
+            "(~8 turns, all 6 categories)"
+        )
+    else:
+        depth_part = f"cheap-stride {label} — every component at full depth"
+    return f"{cap_part}; {depth_part}"
 
 
 def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
@@ -2962,7 +3107,7 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
 
     # Depth-reduced STRIDE profiles (quick) still surface their label here.
     # The per-category cap is NOT shown via this row — it has its own always-on
-    # "STRIDE cap" line in the Configuration block, so a "full (per-category
+    # "STRIDE depth" line in the Configuration block, so a "full (per-category
     # cap N)" label would only duplicate it.
     sp_label = (cfg.get("stride_profile") or {}).get(
         "stride_profile_label", "full"
@@ -2984,7 +3129,7 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
         if parallel_active:
             rows.append((
                 "STRIDE disp",
-                "parallel (per-component fan-out, Level-0; default)",
+                f"bounded waves (up to {cfg.get('stride_concurrency', STRIDE_DISPATCH_CONCURRENCY)} concurrent; Level-0)",
             ))
         else:
             rows.append((

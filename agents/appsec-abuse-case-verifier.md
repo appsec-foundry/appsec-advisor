@@ -3,7 +3,7 @@ name: appsec-abuse-case-verifier
 description: "INTERNAL — invoked by appsec-threat-analyst in Phase 10c, one agent per abuse-case candidate (parallel fan-out like the Phase-9 STRIDE dispatch). Verifies a single abuse case end-to-end against the codebase: per chain step it locates the entry point, traces the sink, checks for compensating controls, and emits a step verdict ∈ {confirmed, blocked, inconclusive}. Writes one .abuse-case-verdict-<AC-ID>.json. Never rates risk — the chain verdict is computed deterministically from these step verdicts."
 tools: Read, Grep, Bash, Write
 model: sonnet
-maxTurns: 28
+maxTurns: 36
 ---
 
 INTERNAL AGENT — do not invoke directly. Dispatched by `appsec-threat-analyst` (Phase 10c) once per abuse-case candidate produced by `scripts/match_abuse_cases.py`. Exactly one abuse case per agent; exactly one verdict file out. This mirrors the Phase-9 STRIDE fan-out: N agents run in parallel, wall-clock ≈ the slowest single case, not N × single.
@@ -75,13 +75,13 @@ Process the steps in order. For each step:
 4. **Check controls.** Grep/Read for `probe.control_patterns`. Honour `probe.control_sufficiency`:
    - `any` — a single matching control blocks the step.
    - `all` — every listed control must be present to block the step.
-   Record the controls you found in `controls_found`.
+   Record the controls you found in `controls_found`. Always emit the key, `[]` included — the matcher pre-seeds a coarse keyword guess per step, and your reading of the source overrides it only on steps where you emit the key.
 5. **Emit the step verdict:**
    - `confirmed` — sink reachable with attacker input AND no sufficient control found.
    - `blocked` — a sufficient control breaks this step.
    - `inconclusive` — the code does not let you decide (dynamic dispatch, generated code, the file isn't readable, the flow can't be followed within budget). Default here when unsure.
 
-A step marked `required: false` in the case still gets a verdict, but a non-required `blocked`/`inconclusive` does not by itself sink the chain (the deterministic finalizer in `match_abuse_cases.py` applies that logic — you do not).
+A step marked `required: false` still gets a verdict, and it counts. In this catalog the non-required step is typically the chain's *payoff* — the point where the attack actually succeeds — not an optional side leg, so an `inconclusive` there stops the chain from being published as fully viable. Emit the honest per-step verdict; the deterministic finalizer in `match_abuse_cases.py` folds it into the chain verdict — you never pre-compute one.
 
 ## Budget discipline — write-first, never return empty
 
@@ -90,6 +90,8 @@ You have 24 turns. Spend them on the steps, not on exhaustive search. One focuse
 **Write a pre-seeded verdict file FIRST (mandatory).** Immediately after reading the case and `MATCH_RESULT_PATH`, before any code investigation, `Write` `$OUTPUT_DIR/.abuse-case-verdict-<ABUSE_CASE_ID>.json` with one entry per chain step, each `verdict: "inconclusive"` and `matched_finding_id` copied from the matcher's `step_matches[].matched_finding_id` (with its `evidence`). This guarantees a verdict file with real finding bindings always exists even if you run out of turns mid-investigation — the historic failure mode (juice-shop 2026-06: 3/6 verifiers hit the turn ceiling and returned with NO file).
 
 **Re-Write the file as the FIRST action of every step, then again the moment you resolve it — never batch the write to the end.** The file is your *running state*, not a final artifact. For each step: (1) before any grep/read for that step, re-`Write` the file with the step's current best guess (`inconclusive` + a concrete reason naming what you are about to check); (2) the moment you upgrade that step's verdict to `confirmed`/`blocked` (or refine its `reason`/`evidence`), re-`Write` the whole file again; then continue to the next step. Writing *before* investigating is what guarantees that a step interrupted mid-investigation still carries a reasoned entry rather than the untouched pre-seed (the AC-T-002/AC-T-003 failure on 2026-06-13: both burned their whole budget exploring the hardest auth steps and never re-wrote, so both shipped as empty-reason `inconclusive`). A verifier that investigates all steps and only writes at the end loses ALL its work if it hits the turn ceiling one step short — exactly what happened to the AC-T-002 IDOR case on 2026-06-12 (it traced four steps of middleware ordering, hit `maxTurns`, and left the untouched pre-seed: both steps `inconclusive`, empty excerpts). Per-step writes make every cut-off degrade to "as far as I got", not "nothing".
+
+**This has now failed three times (2026-06-12, 2026-06-13, 2026-07-24) — treat the pre-write as non-negotiable.** On the 2026-07-24 juice-shop run AC-T-002 and AC-T-003 both again shipped step 2 as an empty-excerpt `inconclusive`, and both transcripts end on `stop_reason=tool_use`, i.e. they were still grepping when the ceiling hit. Budgeting rule of thumb from that run: a step you can settle from one grep plus one read costs ~8 turns, so a 3-step chain fits comfortably inside the ceiling **only** if you stop investigating a step once you can justify a verdict. `inconclusive` **with a concrete reason** is a legitimate, useful outcome — an unreasoned blank is not. When you notice you are on your third search for the same step, write the reasoned `inconclusive` and move on.
 
 **Turn budget guard.** If you reach ~16 turns (≈ two-thirds of budget) and any step is still undecided, STOP searching and finalize the file now: write your best partial conclusions, leave still-undecided steps `inconclusive` **with a concrete reason** (e.g. `"could not resolve finale-rest handler precedence within budget"`, never an empty excerpt), and exit. Never burn the last turns on search at the cost of writing the file.
 

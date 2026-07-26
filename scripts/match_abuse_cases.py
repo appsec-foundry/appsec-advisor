@@ -86,9 +86,23 @@ def _finding_text(finding: dict) -> str:
 
 
 def _controls_text(finding: dict) -> str:
-    parts = [finding.get("controls_in_place", "")]
-    parts.append(str(finding.get("controls_absent_evidence", "")))
-    return "\n".join(p for p in parts if p)
+    """Text to probe for PRESENT controls.
+
+    ``controls_absent_evidence`` documents the controls a finding proves are
+    MISSING, so folding it in here inverted the probe: a finding whose absent-
+    evidence read "no ownership check on this path" matched the ``ownership``
+    control pattern and was recorded as a control *found* (2026-07-25
+    insecure-spring-app AC-T-002 step 1 → chain wrongly finalized
+    partially_blocked). Only `controls_in_place` may feed a controls-present
+    probe.
+
+    This probe stays a coarse substring heuristic either way — `controls_in_place`
+    prose can still name a control while negating it ("None on the detail page —
+    edit and delete use loadAllowedOrder() which does enforce ownership"). That
+    residual imprecision is contained downstream: ``finalize_verdict`` treats this
+    value as a hint only and lets the verifier's empirical observation override it.
+    """
+    return finding.get("controls_in_place", "") or ""
 
 
 def load_findings(path: Path) -> list[dict]:
@@ -134,6 +148,27 @@ def _pattern_specificity(pat: str) -> int:
 
 
 _CWE_ID_RE = re.compile(r"CWE-(\d+)", re.IGNORECASE)
+
+
+def _is_code_sink_pattern(pat: str) -> bool:
+    """Whether a sink pattern targets source code rather than prose or a CWE.
+
+    Catalog sink patterns come in three flavours: a ``CWE-(...)`` alternation,
+    a case-insensitive ``(?i)`` English phrase, and a case-sensitive code
+    token or shape (``innerHTML``, ``req\\.user\\.role``). Only the last kind
+    can meaningfully be searched for in application source."""
+    if "CWE-" in pat.upper():
+        return False
+    return "(?i)" not in pat
+
+
+def _cwe_code(value: object) -> str:
+    """Bare numeric CWE code from a ``CWE-639`` style field, else ``""``."""
+    if not isinstance(value, str):
+        return ""
+    hit = _CWE_ID_RE.search(value)
+    return hit.group(1) if hit else ""
+
 
 # These CWEs describe a weakness class that commonly spans unrelated domains.
 # A finding with only one of them is useful triage input, but is not sufficient
@@ -223,12 +258,27 @@ def _source_probe(step: dict, repo_root: Path | None) -> dict | None:
     if repo_root is None or not repo_root.is_dir():
         return None
     probe = step.get("probe") or {}
-    sinks = _compile(probe.get("sink_patterns") or [])
+    # Probe source with the CODE patterns only. A CWE code never appears in
+    # application source, and a case-insensitive prose phrase matches any file
+    # that merely discusses the topic — juice-shop 2026-07-24 returned an
+    # Arabic i18n string for "privilege escalation" as evidence of a role-claim
+    # sink. Catalog prose patterns are authored `(?i)` precisely because they
+    # target English text; code patterns are case-sensitive. Keeping only the
+    # latter makes this a sink probe again rather than a full-text search.
+    sinks = _compile([p for p in (probe.get("sink_patterns") or []) if _is_code_sink_pattern(p)])
     if not sinks:
         return None
     hints = [p for p in (_safe_repo_glob(v) for v in (probe.get("entry_points") or {}).get("file_hints", [])) if p]
     for path in _repo_source_files(repo_root):
         rel = path.relative_to(repo_root)
+        rel_str = str(rel).replace("\\", "/")
+        # Apply the same evidence policy the rest of the matcher uses. Without
+        # it the probe walked the assessment's OWN output directory and
+        # returned a line out of `docs/security/.abuse-case-matches.json` as
+        # "source evidence" for a role-claim step (juice-shop 2026-07-24) —
+        # the scan quoting its own prior output back at itself.
+        if not _is_runtime_surface_evidence(rel_str):
+            continue
         if hints and not _glob_matches(rel, hints):
             continue
         try:
@@ -279,21 +329,34 @@ def match_step(
     raw_sinks = probe.get("sink_patterns") or []
     sinks = _compile(raw_sinks)
     controls = _compile(probe.get("control_patterns") or [])
+    # The catalog declares the CWE this chain step is ABOUT. A finding carrying
+    # exactly that CWE is the intended target; one that merely falls inside the
+    # step's CWE-family alternation is not.
+    step_cwe = _cwe_code((step.get("finding") or {}).get("cwe"))
 
     matched_id = None
     matched_evidence = None
     controls_found: list[str] = []
     best_key: tuple | None = None
+    best_is_weak = False
+    top_score = 0
+    weak_tie_ids: set[str] = set()
     for idx, finding in enumerate(findings):
         text = _finding_text(finding)
         cwe_field = (finding.get("cwe") or "").strip()
         score = 0
         has_mechanism_match = False
         has_context_dependent_cwe_match = False
+        # Distinct from has_mechanism_match, which is also set for a plain
+        # CWE-field hit: this is true only when a NON-CWE pattern matched, i.e.
+        # the step's actual code shape or phrasing was found in the finding.
+        has_non_cwe_match = False
         for raw, rx in zip(raw_sinks, sinks):
             if not rx.search(text):
                 continue
             spec = _pattern_specificity(raw)
+            if spec != 5:
+                has_non_cwe_match = True
             # A CWE pattern only earns its strong bonus when it matches the
             # finding's OWN cwe field, not a CWE named in passing in the prose.
             if spec == 5 and not (cwe_field and rx.search(cwe_field)):
@@ -308,10 +371,27 @@ def match_step(
         if score <= 0:
             continue
         fid = _finding_id(finding)
-        # Maximise: score, then prefer a not-yet-consumed finding, then earliest.
-        key = (score, fid not in exclude_ids, -idx)
+        exact_cwe = bool(step_cwe) and _cwe_code(cwe_field) == step_cwe
+        # A match resting ONLY on a multi-CWE family alternation — no mechanism
+        # pattern, and not the step's own declared CWE — is not evidence that
+        # THIS finding implements THIS step. Several unrelated findings share a
+        # family, so the pre-2026-07-24 tie-break (finding list order) picked
+        # one arbitrarily: juice-shop AC-T-003 step 2 ("role claim trusted from
+        # token") bound to a chatbot discount-coupon finding because both are
+        # CWE-862, and the verifier then burned its whole turn budget
+        # discovering the binding was nonsense.
+        weak = not has_non_cwe_match and not exact_cwe
+        if score > top_score:
+            top_score = score
+            weak_tie_ids = {fid} if weak else set()
+        elif score == top_score and weak:
+            weak_tie_ids.add(fid)
+        # Maximise: score, the step's own CWE, real mechanism evidence, then
+        # prefer a not-yet-consumed finding, then earliest.
+        key = (score, exact_cwe, has_non_cwe_match, fid not in exclude_ids, -idx)
         if best_key is None or key > best_key:
             best_key = key
+            best_is_weak = weak
             matched_id = fid
             ev = finding.get("evidence") or {}
             matched_evidence = {
@@ -320,6 +400,15 @@ def match_step(
             }
             ctext = _controls_text(finding)
             controls_found = [rx.pattern for rx in controls if rx.search(ctext)]
+
+    # Ambiguous family-only tie: drop the binding entirely rather than guess.
+    # The step then falls through to the source probe below, which greps the
+    # repository for the step's own mechanism patterns — strictly better
+    # evidence than an arbitrarily chosen same-family finding.
+    if matched_id is not None and best_is_weak and len(weak_tie_ids) > 1:
+        matched_id = None
+        matched_evidence = None
+        controls_found = []
 
     direct_evidence = None
     if matched_id is None:
@@ -422,66 +511,89 @@ _BLOCKED = "blocked"
 _INCONCLUSIVE = "inconclusive"
 
 
-def _is_untouched_preseed_step(step: dict) -> bool:
-    """True when a single step is an untouched write-first pre-seed.
+def _step_controls(step_match: dict, step_verdict: dict | None) -> list:
+    """Controls observed for one step — the verifier overrides the matcher.
 
-    Mirrors ``verify_abuse_cases._is_untouched_preseed_step`` (the source of
-    truth for the predicate) so the chain-verdict computation stays a pure
-    function of ``step_verdicts`` without cross-importing that CLI module. A step
-    still ``inconclusive`` with no non-empty ``reason`` and no non-empty evidence
-    ``excerpt`` is one the verifier never re-wrote — the turn ceiling hit before
-    it recorded a finding. Keep this in sync with the verify-side definition.
+    The matcher's ``controls_found`` is a static substring probe over finding
+    prose (``_step_match`` → ``_controls_text``); the verifier's is an empirical
+    reading of the source at that step. When the verifier assessed the step it
+    emits ``controls_found`` unconditionally (`[]` when it found none — see
+    ``agents/appsec-abuse-case-verifier.md``), so a PRESENT key means the
+    verifier has spoken and its observation is authoritative.
+
+    OR-ing the two instead let a stale keyword guess outrank a code reading:
+    2026-07-25 insecure-spring-app AC-T-002 step 1 — the verifier reported
+    ``controls_found: []`` and "no ownership check; edit endpoint uses
+    loadAllowedOrder() but detail endpoint does not", yet the matcher's
+    ``['ownership']`` forced the chain to partially_blocked.
+
+    The matcher hint is still used when the verifier never assessed the step
+    (no verdict row, or a row that omits the key entirely) — there it is the
+    only signal available.
     """
-    if (step.get("verdict") or "") != "inconclusive":
-        return False
-    if (step.get("reason") or "").strip():
-        return False
-    excerpt = ((step.get("evidence") or {}).get("excerpt") or "").strip()
-    return not excerpt
+    if step_verdict is not None and "controls_found" in step_verdict:
+        return step_verdict.get("controls_found") or []
+    return step_match.get("controls_found") or []
 
 
 def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     """Compute the chain verdict from per-step verifier verdicts.
 
-    all required steps confirmed, no controls        -> fully_viable
+    all required steps confirmed, nothing unresolved -> fully_viable
     >=1 required confirmed AND >=1 step has a control -> partially_blocked
     all required steps blocked                        -> mitigated
-    any required step inconclusive (and not viable)   -> inconclusive
+    any ASSESSED step inconclusive                    -> inconclusive
+
+    ``fully_viable`` is a positive claim of end-to-end exploitability, so it
+    requires every step the verifier actually assessed to be ``confirmed`` —
+    not merely the ``required`` subset. See the inconclusive cap below.
     """
     by_step = {v.get("step"): v for v in step_verdicts}
-    required_steps = [s for s in case_match.get("step_matches", []) if s.get("required", True)]
+    step_matches = case_match.get("step_matches", [])
+    required_steps = [s for s in step_matches if s.get("required", True)]
     if not required_steps:
         return "not_applicable"
 
-    verdicts = []
-    any_control = False
-    for s in required_steps:
-        v = by_step.get(s.get("step")) or {}
-        verdicts.append(v.get("verdict", _INCONCLUSIVE))
-        if v.get("controls_found") or s.get("controls_found"):
-            any_control = True
-    # non-required steps can still contribute a control observation
-    for s in case_match.get("step_matches", []):
-        if not s.get("required", True):
-            v = by_step.get(s.get("step")) or {}
-            if v.get("controls_found") or s.get("controls_found"):
-                any_control = True
+    verdicts = [(by_step.get(s.get("step")) or {}).get("verdict", _INCONCLUSIVE) for s in required_steps]
+    # Controls from EVERY step (required or not) — a control anywhere on the
+    # chain impedes it. Per step the verifier's reading wins over the matcher's.
+    any_control = any(_step_controls(s, by_step.get(s.get("step"))) for s in step_matches)
 
     if all(v == _BLOCKED for v in verdicts):
         return "mitigated"
     if any(v == _INCONCLUSIVE for v in verdicts):
         return "inconclusive"
-    # A step left as an untouched write-first pre-seed (inconclusive, no reason,
-    # no excerpt) was never actually verified — e.g. a mid-chain turn-ceiling
-    # cut-off. Such a chain must not positively finalize as fully_viable /
-    # partially_blocked even when the untouched step is NON-required: the
-    # required-only scan above silently drops it otherwise, so an identical pair
-    # of chains diverges purely on the matcher's `required` flag (2026-07-16
-    # juice-shop: AC-T-003 step 2 required=False untouched → wrongly fully_viable
-    # while AC-T-002 step 2 required=True untouched → inconclusive). Genuinely
-    # reasoned inconclusive steps on non-required legs are NOT caught here (they
-    # carry a reason) — the attack can still be viable through the required path.
-    if any(_is_untouched_preseed_step(s) for s in step_verdicts):
+    # An inconclusive step ANYWHERE on the chain caps the verdict, whether the
+    # matcher flagged that leg `required` or not, and whether the verifier left
+    # it untouched (turn-ceiling cut-off) or examined it and recorded a reason.
+    #
+    # The pre-2026-07-25 rule capped only UNTOUCHED pre-seeds and deliberately
+    # let a reasoned inconclusive on a non-required leg stand as fully_viable,
+    # on the theory that "the attack is still viable through the required path".
+    # That theory does not hold for the chain shapes this catalog actually
+    # declares: every `required: false` step in data/abuse-cases is the chain's
+    # PAYOFF, not an optional alternative leg —
+    #   AC-T-001 step 3  "Stolen token accepted for a new session"
+    #   AC-T-003 step 2  "Role claim trusted from token without re-fetch"
+    #   AC-T-005 step 2  "Stolen material is accepted by the verification path"
+    # They carry `required: false` because they are rarely evidenced as their own
+    # finding, not because the attack succeeds without them. So the required path
+    # is the SETUP and the non-required step is where the attack pays off.
+    #
+    # 2026-07-25 insecure-spring-app AC-T-005: step 1 confirmed (JWT_SIGNING_KEY
+    # hardcoded at Dockerfile:13), step 2 inconclusive because SignedJwtService
+    # generates a random in-memory key — the exposed secret is NOT the one the
+    # server trusts, so the bypass does not follow. The old rule still published
+    # "⚠ Fully viable · 🔴 Critical" and counted it among the viable chains,
+    # while aggregate_run_issues.py concurrently flagged the same chain as "not
+    # verified end-to-end". A chain whose payoff was never established must not
+    # carry a positive viability claim.
+    #
+    # `inconclusive` loses nothing: §9 still renders the case with every step and
+    # its individual verdict, `_combined_risk` simply stops applying the
+    # fully-viable severity escalation, and triage_compute_ranking stops
+    # elevating the member findings off an unproven chain.
+    if any(v.get("verdict") == _INCONCLUSIVE for v in step_verdicts):
         return "inconclusive"
     confirmed = [v == _CONFIRMED for v in verdicts]
     if all(confirmed):

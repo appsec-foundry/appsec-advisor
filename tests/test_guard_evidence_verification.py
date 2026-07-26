@@ -141,5 +141,29 @@ def test_summary_healthy_keeps_everything(tmp_path: Path) -> None:
     assert all(t.get("evidence_check") == "ambiguous" for t in data["threats"])
 
 
+def test_no_verdict_summary_marks_deterministic_fallback_gate(tmp_path: Path) -> None:
+    _write_yaml(tmp_path, {"threats": _threats([""] * 8)})
+    (tmp_path / ".evidence-verification.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "sampled": 8,
+                    "verified": 0,
+                    "refuted": 0,
+                    "ambiguous": 0,
+                    "unchecked": 8,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert guard.guard(tmp_path) == 0
+
+    summary = json.loads((tmp_path / ".evidence-verification.json").read_text(encoding="utf-8"))
+    assert summary["verification_gate"] == "fallback_required"
+    assert guard.summary_has_no_verdicts(tmp_path) is True
+
+
 def test_summary_degenerate_unit() -> None:
     assert guard.summary_degenerate.__module__  # symbol exists

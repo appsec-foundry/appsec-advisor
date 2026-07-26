@@ -1,6 +1,6 @@
 # QA Cross-reference style rules (Check 3f)
 
-Used by `appsec-qa-reviewer` Check 3f. Enforces the convention from `phase-group-threats.md` → "Cross-reference linking rule (all sections)": every `T-NNN`, `M-NNN`, `F-NNN`, `TH-NN`, or `C-NN` that is used as a **reference** (not an identifier in an ID column) MUST be shaped `[X-NNN](#x-nnn) — <short title>` (uniform reference schema, em-dash separator) and — when it appears outside a table — MUST render as a Markdown bullet list when ≥2 references are on the same logical line.
+Used by `appsec-qa-reviewer` Check 3f. Ordinary table and list references to `T-NNN`, `M-NNN`, `F-NNN`, `TH-NN`, or `C-NN` use `[X-NNN](#x-nnn) — <short title>`. The composer deliberately uses shorter forms in narrow tables, headings, and inline citations; those cases are listed below. When a labelled reference list appears outside a table, two or more entries render as Markdown bullets.
 
 The check is deterministic and auto-repairs violations in-place. It runs exactly once per QA pass.
 
@@ -23,15 +23,16 @@ Build the title lookup from the Threat Register rows, Mitigation Register headin
 | Table reference cell with exactly 1 ref | `[X-NNN](#x-nnn) — <title>` | Missing title |
 | Prose outside tables — Mitigation Register `**Addresses:**` with ≥2 refs | Bullet list, one `- [X-NNN](#x-nnn) — <title>` per line | Missing title OR comma-separated |
 | Prose outside tables — Mitigation Register `**Addresses:**` with 1 ref | Inline `**Addresses:** [X-NNN](#x-nnn) — <title>` | Missing title |
-| Parenthetical inside a sentence (`…(T-005 — Hardcoded RSA key)…`) | `([X-NNN](#x-nnn) — <title>)` | Missing link |
+| Inline prose citation | `[X-NNN](#x-nnn) (<short title>)` or compact `[X-NNN](#x-nnn)` where the sentence already supplies the meaning | Missing link |
+| Narrow table or summary chip explicitly owned by the composer | `[X-NNN](#x-nnn)` | Missing link |
 
 ## 3. Auto-repair rules
 
 Applied in this order, single `Edit` batch per file:
 
-a. **Bare-ID → link.** Any `\bT-\d{3}\b`, `\bM-\d{3}\b`, `\bF-\d{3}\b`, `\bTH-\d{2}\b`, or `\bC-\d{2}\b` outside a Mermaid block, a code fence, the ID-column anchor site, or an existing `[X-NNN](#x-nnn)` is wrapped with the anchor link.
+a. **Bare-ID → link.** In eligible prose, tables, and lists, wrap bare `T-NNN`, `M-NNN`, `F-NNN`, `TH-NN`, and `C-NN` references with their anchor link. Skip the contexts in Section 4.
 
-b. **Link-without-em-dash → link+em-dash+title.** Any `[X-NNN](#x-nnn)` (where `X ∈ {T, M, F, TH, C}`) not immediately followed by ` — ` on the same visual unit (same table cell, same prose clause up to `,` or `;` or `.`) is rewritten to `[X-NNN](#x-nnn) — <title>` using the lookup from step 1. The legacy bare-space form (`[C-01](#c-01) REST API`) and colon form (`[F-009](#f-009): SQL injection`) are both rewritten to the uniform em-dash form — this is the single reference schema for every linked entity in the document.
+b. **Ordinary link without a title → titled link.** In a table or list that requires labels, rewrite `[X-NNN](#x-nnn)` to `[X-NNN](#x-nnn) — <title>` using the lookup from step 1. Normalize legacy bare-space and colon forms to the same em-dash form. Do not expand compact or inline forms owned by the composer.
 
 c. **Comma-list outside tables → bullet list.** In the Mitigation Register `## 9.` body only: any `**Addresses:** …, …` line carrying ≥2 references is converted to a bullet list (see template in `phase-group-threats.md`).
 
@@ -44,3 +45,8 @@ d. **Comma-list inside tables → `<br/>`-separated.** Any table cell matching `
 - IDs inside Mermaid diagram blocks (` ```mermaid `).
 - The anchor definition site itself: `<a id="t-001"></a>T-001`, `<a id="m-001"></a>M-001`.
 - The `ID` column of any table (first `|`-separated cell of a row, when the table header line is exactly `| ID |`).
+- Markdown headings and Table of Contents entries, where nested links break the generated slug.
+- Existing HTML anchors produced by fixed-layout tables.
+- Inline references already followed by a parenthetical short title.
+- Compact references in the Verdict, narrow Assets cells, Top Weaknesses proof lists, and the Critical Attack Tree findings pointer.
+- A reference whose title cannot be resolved. Keep the link compact and let orphan and schema checks report the missing source data.

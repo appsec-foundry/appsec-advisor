@@ -54,6 +54,8 @@ except ImportError:  # pragma: no cover — only fails when baseline_state is ru
     _classify_plugin_version = None  # type: ignore[assignment]
 
 from _atomic_io import atomic_write_json
+from stride_outputs import component_id as stride_component_id
+from stride_outputs import stride_output_files
 
 SCHEMA_VERSION = 1
 
@@ -198,9 +200,9 @@ def _scan_max_id(yaml_text: str, pattern: re.Pattern[str]) -> int:
 
 def _hash_stride_files(output_dir: Path) -> dict[str, dict]:
     out: dict[str, dict] = {}
-    for p in sorted(output_dir.glob(".stride-*.json")):
+    for p in stride_output_files(output_dir):
         # .stride-<component-id>.json
-        stem = p.name[len(".stride-") : -len(".json")]
+        stem = stride_component_id(p)
         out[stem] = {
             "path": p.name,
             "sha256": _sha256(p),

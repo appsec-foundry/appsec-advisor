@@ -45,6 +45,8 @@ from typing import Any
 import yaml
 from _atomic_io import atomic_write_json, atomic_write_text
 from _shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
+from stride_outputs import component_id as _stride_component_id
+from stride_outputs import stride_output_files
 from weakness_classifier import classify_cwe, classify_threat, load_weakness_classes
 
 # Stable ordering for the T-NNN deterministic sort.
@@ -99,13 +101,113 @@ def _threat_category_id_for(t: dict) -> str | None:
     return mapping.get(cwe)
 
 
+def backfill_threat_category_id(threat: dict) -> bool:
+    """Deterministically set ``threat_category_id`` from the CWE→TH taxonomy
+    when it is missing or left as the ``TH-UNCLASSIFIED`` sentinel.
+
+    Returns ``True`` when a value was written. A genuinely unmappable CWE is
+    left untouched so downstream validation still surfaces it. The STRIDE
+    analyzer is an LLM and sometimes emits the sentinel even when the threat's
+    CWE has a deterministic mapping; this is the single backstop for that,
+    applied both here (merge) and at the per-component dispatch gate — so a
+    repairable component is never fatally rejected before merge can fix it.
+    """
+    tcid = threat.get("threat_category_id")
+    if isinstance(tcid, str) and _TH_ID_RE.match(tcid):
+        return False
+    derived = _threat_category_id_for(threat)
+    if derived:
+        threat["threat_category_id"] = derived
+        return True
+    return False
+
+
+_CVSS_V4_SOURCES = {"stride-analyzer", "dep-scan", "nvd", "osv", "known-vuln", "manual"}
+_CVSS_V4_SEVERITIES = {"None", "Low", "Medium", "High", "Critical"}
+
+
+def normalize_cvss_v4(v4):
+    """Coerce an analyzer-emitted cvss_v4 to the canonical schema shape
+    ({vector, base_score, severity, source}, additionalProperties:false), or
+    return None to drop it.
+
+    The STRIDE analyzer is an LLM and commonly writes the "natural" CVSS JSON
+    shape ``{version, vector, score, severity}`` — ``score`` instead of
+    ``base_score``, a redundant ``version``, and no ``source`` — which matches
+    no schema. This is the single canonicaliser for that drift, shared by the
+    per-component dispatch gate, the merge step, and the yaml builder.
+    """
+    if not isinstance(v4, dict):
+        return None
+    vector = v4.get("vector")
+    if not isinstance(vector, str) or not vector.startswith("CVSS:4.0"):
+        return None
+    score = v4.get("base_score", v4.get("score"))
+    sev = v4.get("severity")
+    if not isinstance(score, (int, float)) or sev not in _CVSS_V4_SEVERITIES:
+        return None
+    src = v4.get("source")
+    return {
+        "vector": vector,
+        "base_score": float(score),
+        "severity": sev,
+        "source": src if src in _CVSS_V4_SOURCES else "stride-analyzer",
+    }
+
+
+def backfill_threat_cvss_v4(threat: dict) -> bool:
+    """Canonicalise ``threat['cvss_v4']`` in place before the schema gate.
+
+    Mirrors backfill_threat_category_id's contract: returns ``True`` iff the
+    threat was mutated. An unsalvageable cvss_v4 (missing vector/score, non-4.0
+    vector, bogus severity) is dropped — the schema treats the field as
+    optional, so dropping it is preferable to fatally rejecting a component
+    over a repairable shape defect that merge would fix anyway.
+    """
+    if not isinstance(threat, dict) or "cvss_v4" not in threat:
+        return False
+    original = threat["cvss_v4"]
+    canonical = normalize_cvss_v4(original)
+    if canonical is None:
+        threat.pop("cvss_v4", None)
+        return original is not None
+    if canonical != original:
+        threat["cvss_v4"] = canonical
+        return True
+    return False
+
+
+def strip_ineligible_cvss_v4(threat: dict) -> bool:
+    """Drop a cvss_v4 the eligibility rules forbid on this threat — a forbidden
+    source, or source=stride on a CWE that is not on the CVSS-eligible list (or
+    carries no evidence.line). The rogue-analyzer failure mode is over-attaching
+    CVSS to design/config-class CWEs (access-control, cleartext-storage, …) that
+    policy does not CVSS-score; left in place they fail validate_intermediate at
+    merge. The threat and its risk rating stay — only the policy-invalid score
+    is removed. Decision is delegated to validate_intermediate.cvss_v4_permitted
+    (the single source of truth), so the strip and the check never diverge.
+    Must run AFTER source classification and evidence list→object coercion.
+    Returns True iff a cvss_v4 was removed.
+    """
+    if not isinstance(threat, dict) or not isinstance(threat.get("cvss_v4"), dict):
+        return False
+    from validate_intermediate import cvss_v4_permitted
+
+    if not cvss_v4_permitted(threat):
+        threat.pop("cvss_v4", None)
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # IO helpers
 # ---------------------------------------------------------------------------
 
 
 def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
-    """Return [(component_id, parsed_json), ...] for every .stride-*.json.
+    """Return [(component_id, parsed_json), ...] for every per-component
+    .stride-<id>.json (the `.stride-` sidecars listed in stride_outputs.py are
+    not STRIDE results and are excluded).
 
     On invalid JSON: print a context window around the failure and the
     canonical recovery instruction, then exit 1. The orchestrator must
@@ -115,9 +217,9 @@ def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
     after one component emitted invalid JSON).
     """
     pairs: list[tuple[str, dict]] = []
-    for path in sorted(output_dir.glob(".stride-*.json")):
+    for path in stride_output_files(output_dir):
         # .stride-auth-service.json → component_id="auth-service"
-        comp_id = path.stem[len(".stride-") :]
+        comp_id = _stride_component_id(path)
         try:
             raw = path.read_text()
             data = json.loads(raw)
@@ -229,11 +331,17 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
             # rather than trusting the LLM to apply the map it was handed.
             # If the CWE is genuinely unmappable the sentinel is left intact
             # so validation still surfaces it.
-            tcid = t.get("threat_category_id")
-            if not tcid or not _TH_ID_RE.match(str(tcid)):
-                derived = _threat_category_id_for(t)
-                if derived:
-                    t["threat_category_id"] = derived
+            backfill_threat_category_id(t)
+            # Same rationale for cvss_v4: the analyzer sometimes emits the
+            # drifted {version, score} shape; canonicalise it deterministically
+            # so the merged artifact meets the schema rather than trusting the
+            # LLM to have written {base_score, source}.
+            backfill_threat_cvss_v4(t)
+            # Eligibility strip: the analyzer sometimes over-attaches CVSS to
+            # design/config-class CWEs that policy does not score. Drop those
+            # deterministically here (source + evidence are now final) so the
+            # merged artifact passes validate_intermediate instead of aborting.
+            strip_ineligible_cvss_v4(t)
             # M-18 (configuration-defect tail): if the source ended up as
             # `configuration-defect` and the threat has no LLM-authored
             # mitigation_title yet, stamp a review-shaped hint so the §1
@@ -350,6 +458,7 @@ def _config_finding_to_threat(f: dict) -> dict:
         "breach_distance": _BREACH_VECTOR_TO_DISTANCE.get(f.get("breach_vector") or "n/a"),
         "mitigation_title": f.get("recommended_mitigation_title"),
         "finding_type_id": f.get("finding_type_id"),
+        "control_scope": f.get("control_scope"),
     }
     # The merger's category guard applies equally to deterministic findings.
     # Derive the canonical category where the CWE taxonomy is authoritative;
@@ -388,6 +497,8 @@ _AUTHZ_TO_STRIDE: dict[str, str] = {
     "AUTHZ-006": "Spoofing",  # JWT decode without verify
     "AUTHZ-007": "Spoofing",  # express-jwt without algorithms
     "AUTHZ-008": "Elevation of Privilege",  # Missing auth middleware
+    "AUTHN-001": "Spoofing",  # Security-question-only password recovery
+    "AUTHN-002": "Spoofing",  # Password policy permits short credentials
     "AUTHZ-202": "Elevation of Privilege",  # Spring @RequestBody→entity mass assignment (mass_assignment_scanner.py)
     "AUTHZ-301": "Elevation of Privilege",  # Confirmed IDOR/BOLA (authz_confirm.py)
     "AUTHZ-302": "Elevation of Privilege",  # Confirmed missing route auth (authz_confirm.py)
@@ -467,6 +578,7 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         "breach_distance": _BREACH_VECTOR_TO_DISTANCE.get(f.get("breach_vector") or "n/a"),
         "mitigation_title": f.get("recommended_mitigation_title"),
         "finding_type_id": f.get("finding_type_id"),
+        "control_scope": f.get("control_scope"),
     }
     # The crypto catalog establishes a security-relevant use before emitting a
     # row. Preserve that fact explicitly; do not infer a weakness later from a
@@ -668,6 +780,7 @@ _CWE_FAMILY: dict[str, str] = {
     "CWE-306": "authn",
     "CWE-307": "authn",
     "CWE-347": "authn",
+    "CWE-521": "authn",
     "CWE-640": "authn",
     # Injection family
     "CWE-89": "injection",
@@ -716,18 +829,27 @@ def _endpoint_candidate_key(t: dict) -> tuple[str, str] | None:
 
 def _dedupe_exact(threats: list[dict]) -> list[dict]:
     """Collapse threats that are trivially identical. Preserves first-seen
-    order; subsequent duplicates are dropped after appending their
-    component_id into `merged_from`."""
+    order while retaining every folded member as an auditable instance."""
     out: list[dict] = []
     by_key: dict[tuple, dict] = {}
     for t in threats:
-        k = _exact_key(t)
+        category = t.get("threat_category_id")
+        if not isinstance(category, str) or not _TH_ID_RE.match(category):
+            # Do not let an incomplete architectural classification erase a
+            # finding. Validation will surface the bad category downstream.
+            out.append(t)
+            continue
+        k = (*_exact_key(t), category)
         if k in by_key:
             primary = by_key[k]
-            mf = primary.setdefault("merged_from", [primary.get("component_id")])
-            cid = t.get("component_id")
-            if cid and cid not in mf:
-                mf.append(cid)
+            # An identical title/location is not sufficient when upstream
+            # classification assigned distinct architectural threat categories.
+            # Keep the findings separate rather than silently discarding a
+            # category; this matches the guard enforced for LLM decisions.
+            if not _same_primary_threat_category([primary, t]):
+                out.append(t)
+                continue
+            _merge_member_metadata(primary, [primary, t], systemic=False)
             continue
         by_key[k] = t
         out.append(t)
@@ -959,12 +1081,26 @@ def _match_consolidation_group(t: dict, groups: tuple) -> dict | None:
 
 
 def _group_bucket_key(t: dict, g: dict) -> tuple:
-    """Bucket identity for a group member. cross-component groups merge across
-    components; per-component (default) keep components apart. ``split_by`` adds
-    arbitrary threat-field dimensions (the severity-zone / distinct-flow escape
-    hatch); an absent field is a no-op ('')."""
+    """Bucket identity for a group member.
+
+    Per-component is the default. A cross-component group may merge only when
+    its catalog entry names ``cross_component_scope_field`` and every member
+    supplies the same non-empty value for it. Without that concrete shared
+    control/object scope, fall back to per-component bucketing. ``split_by``
+    adds arbitrary threat-field dimensions (the severity-zone / distinct-flow
+    escape hatch); an absent field is a no-op ('')."""
     parts: list[str] = [g["id"]]
-    if g.get("scope") != "cross-component":
+    if g.get("scope") == "cross-component":
+        scope_field = g.get("cross_component_scope_field")
+        scope_value = str(t.get(scope_field) or "").strip() if isinstance(scope_field, str) else ""
+        if scope_value:
+            parts.extend(("shared-scope", scope_value.lower()))
+        else:
+            # A CWE, title or scanner rule alone does not establish that two
+            # services share one owner or control. Keep the manifestations
+            # separate until upstream provides a concrete control scope.
+            parts.extend(("component", (t.get("component_id") or t.get("component") or "").strip().lower()))
+    else:
         parts.append((t.get("component_id") or t.get("component") or "").strip().lower())
     for dim in g.get("split_by") or []:
         parts.append(str(t.get(dim) or ""))
@@ -1110,43 +1246,38 @@ def _dedupe_evidence(threats: list[dict]) -> list[dict]:
     reached at all.
 
     Merge policy: the higher-risk member stays primary (tie → first-seen, for
-    order-stable output); the dropped member's ``component_id`` and ``stride``
-    are recorded in ``merged_from`` / ``merged_strides`` for traceability.
-    Component re-attribution is left to the downstream ``reclassify_components``
-    pass, which keys on ``evidence.file``."""
+    order-stable output). Every folded member is retained as an ``instances[]``
+    record. Members with different or missing primary ``threat_category_id``
+    values are deliberately kept apart: a CWE family is not an architectural
+    category, and this deterministic path must enforce the same category guard
+    as LLM merge decisions. Component re-attribution is left to the downstream
+    ``reclassify_components`` pass, which keys on ``evidence.file``."""
     out: list[dict] = []
     by_key: dict[tuple, dict] = {}
     for t in threats:
-        k = _evidence_identity_key(t)
-        if k is None:
+        identity_key = _evidence_identity_key(t)
+        category = t.get("threat_category_id")
+        if identity_key is None or not isinstance(category, str) or not _TH_ID_RE.match(category):
             out.append(t)
             continue
+        # Category participates in the lookup key so multiple valid categories
+        # at one code location can each still deduplicate their own duplicates.
+        k = (*identity_key, category)
         prev = by_key.get(k)
         if prev is None:
             by_key[k] = t
             out.append(t)
             continue
+        if not _same_primary_threat_category([prev, t]):
+            out.append(t)
+            continue
         if _risk_rank(t.get("risk")) < _risk_rank(prev.get("risk")):
-            keep, dropped = t, prev
+            keep = t
             by_key[k] = t
             out[out.index(prev)] = t
         else:
-            keep, dropped = prev, t
-        mf = keep.setdefault("merged_from", [keep.get("component_id")])
-        cid = dropped.get("component_id")
-        if cid and cid not in mf:
-            mf.append(cid)
-        ms = keep.setdefault("merged_strides", [keep.get("stride")])
-        ds = dropped.get("stride")
-        if ds and ds not in ms:
-            ms.append(ds)
-        # The family-keyed merge can now collapse SIBLING CWEs (e.g. CWE-321 +
-        # CWE-798 for the same key). Record the dropped CWE so the surviving
-        # finding still carries every classification facet it absorbed.
-        mc = keep.setdefault("merged_cwes", [keep.get("cwe")])
-        dc = dropped.get("cwe")
-        if dc and dc not in mc:
-            mc.append(dc)
+            keep = prev
+        _merge_member_metadata(keep, [prev, t], systemic=False)
     return out
 
 
@@ -1480,6 +1611,9 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
     mitigation_ids: list[str] = []
     refs: list[str] = []
     component_ids: list[str] = []
+    strides: list[str] = []
+    cwes: list[str] = []
+    additional_categories: list[str] = []
     for member in members:
         prior_components = member.get("merged_from")
         if not isinstance(prior_components, list):
@@ -1508,6 +1642,15 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
         ref = member.get("local_id") or member.get("source_scan_ref") or member.get("config_scan_ref")
         if ref and ref not in refs:
             refs.append(ref)
+        for stride in member.get("merged_strides") or [member.get("stride")]:
+            if isinstance(stride, str) and stride and stride not in strides:
+                strides.append(stride)
+        for cwe in member.get("merged_cwes") or [member.get("cwe")]:
+            if isinstance(cwe, str) and cwe and cwe not in cwes:
+                cwes.append(cwe)
+        for category in member.get("additional_categories") or []:
+            if isinstance(category, str) and category and category not in additional_categories:
+                additional_categories.append(category)
 
     survivor["instances"] = instances
     survivor["affected_files"] = sorted(files)
@@ -1520,6 +1663,12 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
         survivor["consolidated_refs"] = refs
     if component_ids:
         survivor["merged_from"] = component_ids
+    if len(strides) > 1 or survivor.get("merged_strides"):
+        survivor["merged_strides"] = strides
+    if len(cwes) > 1 or survivor.get("merged_cwes"):
+        survivor["merged_cwes"] = cwes
+    if additional_categories:
+        survivor["additional_categories"] = additional_categories
 
 
 def _same_primary_threat_category(members: list[dict]) -> bool:
@@ -1763,7 +1912,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     payload = {
         "version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source_files": [p.name for p in sorted(out_dir.glob(".stride-*.json"))],
+        "source_files": [p.name for p in stride_output_files(out_dir)],
         "threat_count_raw": len(flat),
         "threat_count_after_exact_dedup": len(deduped),
         "candidate_group_count": len(candidates),

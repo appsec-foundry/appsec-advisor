@@ -65,9 +65,10 @@ import fnmatch
 import json
 import os
 import re
+import stat
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 # Try to load the central exclude policy. Fall back to a minimal built-in
 # set if scan_excludes is unavailable — the script must not hard-fail when
@@ -2231,9 +2232,130 @@ _MCP_SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|passwd|
 _MCP_REMOTE_URL_RE = re.compile(r"(?i)^https?://")
 _MCP_PUBLIC_REGISTRY_COMMANDS = {"npx", "uvx", "pipx"}
 
+_AI_AGENT_DIR_MARKERS = (
+    (".claude", "agents"),
+    (".claude", "skills"),
+    (".claude", "commands"),
+    (".continue", "assistants"),
+    (".windsurf", "workflows"),
+    (".cursor", "rules"),
+)
+_AI_INSTRUCTION_FILENAMES = {
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENTS.md",
+    "CONVENTIONS.md",
+    ".cursorrules",
+    ".windsurfrules",
+}
+_AI_INSTRUCTION_PATH_SUFFIXES = {
+    ".continue/instructions.md",
+    ".codeium/instructions.md",
+    ".github/copilot-instructions.md",
+}
+_AGENT_TOOL_RE = re.compile(r"(?im)^\s*(?:tools|allowed-tools)\s*:\s*([^\n]+)")
+_AGENT_CAPABLE_TOOL_RE = re.compile(r"(?i)\b(Bash|Write|Edit|MultiEdit|Agent)\b")
+_AGENT_SHELL_RE = re.compile(
+    r"(?i)(```(?:ba)?sh\b|\$\(|`(?:curl|wget|rm|sudo|sh|bash)\b[^`]*`"
+    r"|\b(?:curl|wget)\b[^|\n]*\|\s*(?:ba)?sh\b)"
+)
+_INSTRUCTION_OVERRIDE_RE = re.compile(
+    r"(?i)(ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|rules|prompts)"
+    r"|disregard\s+(?:the\s+)?(?:system|earlier)\s+(?:prompt|instructions)"
+    r"|<\|?(?:im_start|system|assistant)\|?>|\[INST\]|\{role:\s*[\"']system[\"'])"
+)
+_INSTRUCTION_DESTRUCTIVE_RE = re.compile(
+    r"(?i)\b(?:run|execute|invoke|use)\b.{0,32}"
+    r"(?:rm\s+-rf|sudo\b|(?:curl|wget)\b[^|\n]*\|\s*(?:ba)?sh\b|nc\s+-e|base64\s+-d[^|\n]*\|\s*(?:ba)?sh\b)"
+)
+_INSTRUCTION_ENCODED_PAYLOAD_RE = re.compile(r"(?:^|\s)[A-Za-z0-9+/]{100,}={0,2}(?:\s|$)")
+
 
 def _is_mcp_config_path(rel: str) -> bool:
     return PurePosixPath(rel).name in _MCP_CONFIG_NAMES
+
+
+def _is_ai_agent_artifact(rel: str) -> bool:
+    parts = PurePosixPath(rel).parts
+    return any(parts[: len(marker)] == marker for marker in _AI_AGENT_DIR_MARKERS)
+
+
+def _is_ai_instruction_path(rel: str) -> bool:
+    pure = PurePosixPath(rel)
+    if pure.name in _AI_INSTRUCTION_FILENAMES or rel in _AI_INSTRUCTION_PATH_SUFFIXES:
+        return True
+    return _is_ai_agent_artifact(rel) or rel.startswith(".kiro/steering/") or rel.startswith(".github/instructions/")
+
+
+def _scan_agent_artifact(path: Path, rel: str) -> list[dict[str, Any]]:
+    """Flag executable capabilities in a committed agent artifact.
+
+    A bundled agent is data from the target repository, not a trusted plugin
+    instruction. We only flag concrete execution-capability declarations and
+    shell constructs; prose that merely discusses agents remains out of scope.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    findings: list[dict[str, Any]] = []
+    for match in _AGENT_TOOL_RE.finditer(text):
+        tools = sorted(set(_AGENT_CAPABLE_TOOL_RE.findall(match.group(1))))
+        if not tools:
+            continue
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": "agent-capable-tool-declaration",
+                "file": rel,
+                "line": text.count("\n", 0, match.start()) + 1,
+                "tools": tools,
+                "severity": "High" if "Bash" in tools or "Agent" in tools else "Medium",
+                "match": f"agent frontmatter grants {', '.join(tools)} capability",
+            }
+        )
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if _AGENT_SHELL_RE.search(line):
+            findings.append(
+                {
+                    "category": 28,
+                    "subcategory": "agent-shell-construct",
+                    "file": rel,
+                    "line": line_no,
+                    "severity": "High",
+                    "match": line.strip()[:400],
+                }
+            )
+    return findings
+
+
+def _scan_instruction_red_flags(path: Path, rel: str) -> list[dict[str, Any]]:
+    """Detect high-confidence prompt-injection payloads in assistant instructions."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    rules = (
+        ("instruction-override", "Critical", _INSTRUCTION_OVERRIDE_RE),
+        ("destructive-command-in-instruction", "Critical", _INSTRUCTION_DESTRUCTIVE_RE),
+        ("encoded-payload", "High", _INSTRUCTION_ENCODED_PAYLOAD_RE),
+    )
+    findings: list[dict[str, Any]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        for rule, severity, pattern in rules:
+            if pattern.search(line):
+                findings.append(
+                    {
+                        "category": 28,
+                        "subcategory": "instruction-prompt-injection",
+                        "rule": rule,
+                        "file": rel,
+                        "line": line_no,
+                        "severity": severity,
+                        "match": line.strip()[:400],
+                    }
+                )
+    return findings
 
 
 def _mcp_servers_from_config(data: Any) -> dict[str, Any]:
@@ -2401,7 +2523,310 @@ def _scan_mcp_servers(path: Path, rel: str) -> list[dict[str, Any]]:
                 "match": classified["reason"],
             }
         )
+        url = _first_http_url(server_cfg)
+        if isinstance(url, str) and url.lower().startswith("http://"):
+            findings.append(
+                {
+                    "category": 28,
+                    "subcategory": "mcp-insecure-transport",
+                    "file": rel,
+                    "line": None,
+                    "server": str(server_name),
+                    "transport": classified["transport"],
+                    "severity": "High",
+                    "match": "remote MCP server uses cleartext HTTP; credentials and tool traffic can be intercepted",
+                }
+            )
     return findings
+
+
+# --- Cat 28b: Claude Code permission model (deterministic) -----------------
+# The flat `_CAT28_DANGEROUS` regex only ever matched literal `Bash(*)`. The
+# checks below parse `permissions.allow` / `defaultMode` structurally so the
+# recon template's 7.32 "dangerous permission patterns" table has a real
+# producer. Only `allow` is graded: `deny`/`ask` entries are protective, and a
+# thin or absent deny-list is hygiene, not an exploitable weakness.
+
+_CLAUDE_SETTINGS_NAMES = {"settings.json", "settings.local.json"}
+_PERM_RULE_RE = re.compile(r"^(?P<tool>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\((?P<arg>.*)\))?$", re.DOTALL)
+_PERM_WILDCARDS = {"", "*", "*:*", "**", "**/*"}
+# Commands that hand over the host (or an exfil channel) when granted with a
+# `:*` argument wildcard. Deliberately narrow: `git`/`npm`/`pip` are omitted
+# because `Bash(git:*)`-style rules are near-universal and mostly benign, and a
+# noisy Cat 28b table would get ignored wholesale.
+_BASH_HIGH_RISK = {
+    "sudo",
+    "su",
+    "rm",
+    "chmod",
+    "chown",
+    "ssh",
+    "scp",
+    "nc",
+    "ncat",
+    "eval",
+    "exec",
+    "dd",
+    "mkfs",
+    "curl",
+    "wget",
+}
+_SENSITIVE_PATH_RE = re.compile(
+    r"(?i)(\.ssh|\.aws|\.gnupg|\.kube|\.netrc|\.npmrc|\.env\b|id_rsa|id_ed25519|credential|\.git/config)"
+)
+
+
+def _classify_permission_rule(rule: str) -> dict[str, str] | None:
+    """Grade one `permissions.allow` entry. Returns None when not a real risk."""
+    match = _PERM_RULE_RE.match(rule.strip())
+    if not match:
+        return None
+    tool = match.group("tool")
+    arg = (match.group("arg") or "").strip()
+    arg_is_wildcard = arg in _PERM_WILDCARDS
+
+    if tool == "Bash":
+        if arg_is_wildcard:
+            return {
+                "severity": "Critical",
+                "reason": f"`{rule}` grants unrestricted shell execution without a permission prompt",
+            }
+        command = arg.split(":", 1)[0].strip()
+        if command in _BASH_HIGH_RISK:
+            return {
+                "severity": "High",
+                "reason": f"`{rule}` pre-approves the high-risk command `{command}` with an argument wildcard",
+            }
+        return None
+
+    if tool in {"Write", "Edit", "MultiEdit", "NotebookEdit"}:
+        if arg_is_wildcard:
+            return {
+                "severity": "High",
+                "reason": f"`{rule}` allows unprompted writes to any path",
+            }
+        if _SENSITIVE_PATH_RE.search(arg):
+            return {
+                "severity": "High",
+                "reason": f"`{rule}` allows unprompted writes to a credential-bearing path",
+            }
+        return None
+
+    if tool == "Read":
+        if _SENSITIVE_PATH_RE.search(arg):
+            return {
+                "severity": "High",
+                "reason": f"`{rule}` grants read access to a credential-bearing path",
+            }
+        if arg_is_wildcard:
+            return {
+                "severity": "Medium",
+                "reason": f"`{rule}` grants unrestricted read access, including files outside the project",
+            }
+        return None
+
+    if tool in {"WebFetch", "WebSearch"} and (arg_is_wildcard or arg.lower() in {"domain:*", "domain:  *"}):
+        return {
+            "severity": "Medium",
+            "reason": f"`{rule}` permits requests to any host — a usable exfiltration channel",
+        }
+
+    return None
+
+
+def _find_line(text: str, needle: str) -> int | None:
+    for idx, line in enumerate(text.splitlines(), start=1):
+        if needle in line:
+            return idx
+    return None
+
+
+def _scan_claude_permissions(path: Path, rel: str) -> list[dict[str, Any]]:
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    findings: list[dict[str, Any]] = []
+    permissions = data.get("permissions")
+    permissions = permissions if isinstance(permissions, dict) else {}
+
+    default_mode = permissions.get("defaultMode") or data.get("defaultMode")
+    if isinstance(default_mode, str) and default_mode.strip() == "bypassPermissions":
+        # Committed into a repo, this disables the tool's only guardrail for
+        # every contributor who opens it — hence Critical rather than High.
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": "permission-bypass-mode",
+                "file": rel,
+                "line": _find_line(raw, "bypassPermissions"),
+                "severity": "Critical",
+                "match": "`defaultMode: bypassPermissions` disables permission prompts for every tool call",
+            }
+        )
+
+    allow = permissions.get("allow")
+    if isinstance(allow, list):
+        for entry in allow:
+            if not isinstance(entry, str):
+                continue
+            classified = _classify_permission_rule(entry)
+            if classified is None:
+                continue
+            findings.append(
+                {
+                    "category": 28,
+                    "subcategory": "overbroad-permission-rule",
+                    "file": rel,
+                    "line": _find_line(raw, entry),
+                    "rule": entry,
+                    "severity": classified["severity"],
+                    "match": classified["reason"],
+                }
+            )
+
+    if data.get("enableAllProjectMcpServers") is True:
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": "mcp-auto-trust",
+                "file": rel,
+                "line": _find_line(raw, "enableAllProjectMcpServers"),
+                "severity": "High",
+                "match": "`enableAllProjectMcpServers: true` auto-approves every MCP server declared in the repo",
+            }
+        )
+
+    return findings
+
+
+# --- Cat 28c: hook command bodies (deterministic) --------------------------
+# `_CAT28_DANGEROUS` only ever matched the literal event-key names, so a benign
+# formatter hook was flagged while an exfiltrating `curl` hook was not, and
+# `UserPromptSubmit` was absent from the regex entirely. The checks below walk
+# the hook structure and grade the actual `command` bodies.
+
+_HOOK_EVENTS = {
+    "PreToolUse",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "Stop",
+    "SubagentStop",
+    "SessionStart",
+    "SessionEnd",
+    "Notification",
+    "PreCompact",
+}
+_HOOK_PIPE_TO_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:ba)?sh\b")
+_HOOK_SUBSTITUTION_RE = re.compile(r"\$\(|`")
+_HOOK_EGRESS_RE = re.compile(r"(?i)(\bcurl\b|\bwget\b|\bnc\b|\bncat\b|\bscp\b|https?://)")
+_HOOK_DESTRUCTIVE_RE = re.compile(r"(?i)(\brm\s+-[rf]{1,2}\b|\bchmod\s+777\b|\bdd\s+if=)")
+
+
+def _classify_hook_command(event: str, command: str) -> dict[str, str] | None:
+    """Grade one hook `command` body. Returns None when not a real risk."""
+    if _HOOK_PIPE_TO_SHELL_RE.search(command):
+        return {
+            "severity": "Critical",
+            "reason": f"`{event}` hook fetches and pipes remote content into a shell — remote code execution on every trigger",
+        }
+    if _HOOK_SUBSTITUTION_RE.search(command):
+        if event == "UserPromptSubmit":
+            # Attacker-controlled prompt text reaches the command line before
+            # any filtering, so substitution here is directly injectable.
+            return {
+                "severity": "Critical",
+                "reason": "`UserPromptSubmit` hook builds a shell command via substitution — prompt text reaches the command line unfiltered",
+            }
+        return {
+            "severity": "High",
+            "reason": f"`{event}` hook uses shell command substitution — tool payload can influence the executed command",
+        }
+    if _HOOK_EGRESS_RE.search(command):
+        return {
+            "severity": "High",
+            "reason": f"`{event}` hook network-egresses on every trigger — a continuous exfiltration channel",
+        }
+    if _HOOK_DESTRUCTIVE_RE.search(command):
+        return {
+            "severity": "High",
+            "reason": f"`{event}` hook runs a destructive command on every trigger",
+        }
+    return None
+
+
+def _iter_hook_commands(data: Any) -> Iterator[tuple[str, str]]:
+    """Yield (event, command) for every hook entry in a settings/hooks object."""
+    if not isinstance(data, dict):
+        return
+    events = data.get("hooks") if isinstance(data.get("hooks"), dict) else data
+    if not isinstance(events, dict):
+        return
+    for event, groups in events.items():
+        if event not in _HOOK_EVENTS or not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            entries = group.get("hooks")
+            entries = entries if isinstance(entries, list) else [group]
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                command = entry.get("command")
+                if isinstance(command, str) and command.strip():
+                    yield str(event), command
+
+
+def _find_hook_line(raw: str, event: str, command: str) -> int | None:
+    """Locate a hook command in the raw JSON, tolerating string escaping."""
+    escaped = json.dumps(command)[1:-1]
+    for needle in (command[:60], escaped[:60], f'"{event}"'):
+        line = _find_line(raw, needle)
+        if line is not None:
+            return line
+    return None
+
+
+def _scan_hook_commands(path: Path, rel: str) -> list[dict[str, Any]]:
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    findings: list[dict[str, Any]] = []
+    for event, command in _iter_hook_commands(data):
+        classified = _classify_hook_command(event, command)
+        if classified is None:
+            continue
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": "dangerous-hook-command",
+                "file": rel,
+                "line": _find_hook_line(raw, event, command),
+                "event": event,
+                "command": command,
+                "severity": classified["severity"],
+                "match": classified["reason"],
+            }
+        )
+    return findings
+
+
+def _is_claude_hooks_path(rel: str) -> bool:
+    parts = PurePosixPath(rel).parts
+    return len(parts) >= 2 and parts[-2] == ".claude" and parts[-1] == "hooks.json"
+
+
+def _is_claude_settings_path(rel: str) -> bool:
+    parts = PurePosixPath(rel).parts
+    return len(parts) >= 2 and parts[-2] == ".claude" and parts[-1] in _CLAUDE_SETTINGS_NAMES
 
 
 def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
@@ -2410,13 +2835,37 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
 
     def add_path(path: Path) -> None:
         try:
+            rel = str(path.relative_to(repo_root)).replace("\\", "/")
+        except ValueError:
+            return
+        if rel in seen or _is_excluded(rel):
+            return
+        # A symlink/device in the settings location can hide the effective
+        # configuration from both code review and the structured parser below.
+        # Inspect it with lstat before Path.is_file() follows or rejects it.
+        if _is_claude_settings_path(rel):
+            try:
+                mode = path.lstat().st_mode
+            except OSError:
+                mode = None
+            if mode is not None and not stat.S_ISREG(mode):
+                seen.add(rel)
+                findings.append(
+                    {
+                        "category": 28,
+                        "subcategory": "assistant-config-nonregular-file",
+                        "file": rel,
+                        "line": None,
+                        "severity": "Info",
+                        "match": "Claude settings path is not a regular file; inspect the effective local configuration",
+                    }
+                )
+                return
+        try:
             is_file = path.is_file()
         except OSError:
             return
         if not is_file:
-            return
-        rel = str(path.relative_to(repo_root)).replace("\\", "/")
-        if rel in seen or _is_excluded(rel):
             return
         seen.add(rel)
         try:
@@ -2444,6 +2893,14 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
             )
         if _is_mcp_config_path(rel):
             findings.extend(_scan_mcp_servers(path, rel))
+        if _is_claude_settings_path(rel):
+            findings.extend(_scan_claude_permissions(path, rel))
+        if _is_claude_settings_path(rel) or _is_claude_hooks_path(rel):
+            findings.extend(_scan_hook_commands(path, rel))
+        if _is_ai_agent_artifact(rel):
+            findings.extend(_scan_agent_artifact(path, rel))
+        if _is_ai_instruction_path(rel):
+            findings.extend(_scan_instruction_red_flags(path, rel))
 
     for rel in _AI_CONFIG_PATTERNS:
         add_path(repo_root / rel)
@@ -2509,7 +2966,8 @@ _CAT13_GROUPS: list[tuple[str, str, re.Pattern[str]]] = [
             r"(?i)(\bopenai\b|\banthropic\b|@anthropic-ai|\blangchain\b|@langchain/"
             r"|llama[_-]?index|\bllamaindex\b|\bautogen\b|\bcrewai\b|\blitellm\b"
             r"|\bcohere\b|\bmistralai\b|google\.generativeai|@google/generative-ai"
-            r"|\bollama\b|@azure/openai|\bbedrock-runtime\b|ChatCompletion"
+            r"|google\.genai|@google/genai|\bsemantic[_-]?kernel\b|\bpydantic[_-]?ai\b"
+            r"|\bollama\b|@azure/openai|azure-ai-inference|\bbedrock-runtime\b|ChatCompletion"
             r"|chat\.completions|GenerativeModel|\bInvokeModel\b)"
         ),
     ),
@@ -2517,7 +2975,15 @@ _CAT13_GROUPS: list[tuple[str, str, re.Pattern[str]]] = [
     (
         "agent-framework",
         "strong",
-        re.compile(r"(AgentExecutor|ReActAgent|create_react_agent|create_tool_calling_agent)"),
+        re.compile(
+            r"(?i)(AgentExecutor|ReActAgent|create_react_agent|create_tool_calling_agent"
+            r"|\blanggraph\b|\bAgentGraph\b|create_supervisor|\bsmolagents\b|\bstrands\b)"
+        ),
+    ),
+    (
+        "agent-memory",
+        "strong",
+        re.compile(r"(?i)(ConversationBufferMemory|MemorySaver|PostgresSaver|RedisSaver|checkpointer\s*=)"),
     ),
     (
         "prompt-framework",
@@ -2560,6 +3026,7 @@ _CAT13_PER_SUBCAT_CAP = 20
 # AI surface here. Cat 28 still catalogs them (that is a separate supply-chain
 # signal), which is why this is a Cat-13-local skip, not a global hard-exclude.
 _CAT13_SKIP_DIRS = frozenset({".claude", ".cursor", ".continue", ".codeium", ".aider", ".windsurf"})
+_CAT13_RUNTIME_ARTIFACT_DIRS = frozenset({".active-tool-calls", ".dispatch-context", ".fragments"})
 
 
 def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
@@ -2586,7 +3053,7 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
         if p.suffix.lower() not in _CAT13_EXTS:
             continue
         rel_path = p.relative_to(repo_root)
-        if any(part in _CAT13_SKIP_DIRS for part in rel_path.parts[:-1]):
+        if any(part in _CAT13_SKIP_DIRS | _CAT13_RUNTIME_ARTIFACT_DIRS for part in rel_path.parts[:-1]):
             continue
         rel = str(rel_path).replace("\\", "/")
         try:

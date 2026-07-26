@@ -1463,7 +1463,10 @@ def render_security_notice(output_dir: Path) -> list[str]:
     lines.append("  Warning: threat-model.md is NOT git-ignored and may be committed.")
     lines.append("  Threat reports contain sensitive vulnerability details,")
     lines.append("  attack vectors, and architecture weaknesses.")
-    lines.append("  Add docs/security/ to .gitignore to keep them out of git.")
+    # "docs/security/**", not "docs/security/". git cannot re-include a file
+    # whose parent directory is excluded, so the plain directory form would
+    # leave publish-threat-model unable to lift the deliverable back out.
+    lines.append("  Add docs/security/** to .gitignore to keep them out of git.")
     lines.append("  To publish deliberately (private repo, policy permits it):")
     lines.append("    /appsec-advisor:publish-threat-model")
     lines.append("  The publish skill runs pre-flight checks and patches .gitignore.")
@@ -1911,12 +1914,27 @@ def main(argv: list[str] | None = None) -> int:
         "(e.g. from Stage 2 where the skill renders the final "
         "summary itself after Stage 3).",
     )
+    p.add_argument(
+        "--issues-only",
+        action="store_true",
+        help="Print only the `-- Run Issues --` block from .run-issues.json and "
+        "exit. Does not require threat-model.md — used by run-headless.sh on the "
+        "failure path, where the LLM Completion turn that normally renders this "
+        "block never runs.",
+    )
     p.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
     args = p.parse_args(argv)
 
     if not args.output_dir.is_dir():
         print(f"error: output_dir not a directory: {args.output_dir}", file=sys.stderr)
         return 2
+
+    if args.issues_only:
+        # Failure-path diagnostics: surface whatever aggregate_run_issues.py
+        # recorded, independent of a rendered report. Errors first, top 2 shown.
+        lines = render_run_issues(extract_run_issues(args.output_dir), plugin_dev=args.plugin_dev)
+        print("\n".join(lines) if lines else "  Run issues          : none recorded")
+        return 0
 
     cfg = {
         "mode": args.mode,

@@ -18,7 +18,7 @@ Every print statement in this agent uses the prefix `[context-resolver]`. Print 
 
 ## Mandatory logging — CRITICAL
 
-**Follow the logging standard in `shared/logging-standard.md`** (agent: `context-resolver`, model: `<MODEL_ID>` — the value passed in the prompt, NOT a hardcoded `sonnet`, event types: `STEP_START`/`STEP_END`). Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file write, error, and agent completion.
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `context-resolver`, model: `<MODEL_ID>` — the value passed in the prompt, NOT a hardcoded `sonnet`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file write, error, and agent completion.
 
 **Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
 
@@ -568,41 +568,6 @@ After scanning all categories:
 ```
 [context-resolver]   ↳ Context files found: security-policy=<yes/no>, arch-docs=<n>, ADRs=<n>, api-spec=<yes/no>, deployment=<n files>, data-model=<yes/no>, env-template=<yes/no>, changelog=<yes/no>, known-threats=<n or no>, related-repos=<n declared / n with findings | not found>, cross-repo-TMs=<n found / n missing (auto-discovered)>
 ```
-
----
-
-### Step 4b — Protect intermediate files from accidental git commits
-
-**Skip this step entirely if `OUTPUT_DIR` is outside of `REPO_ROOT`.** When the output directory is external to the repository, `.gitignore` entries are unnecessary. Detect this via:
-```bash
-case "$OUTPUT_DIR" in "$REPO_ROOT"*) echo "inside" ;; *) echo "outside" ;; esac
-```
-
-If `OUTPUT_DIR` is inside `REPO_ROOT`, compute the relative path from `REPO_ROOT` to `OUTPUT_DIR`:
-```bash
-REL_OUTPUT_DIR="${OUTPUT_DIR#$REPO_ROOT/}"
-```
-
-Then check whether `$REPO_ROOT/.gitignore` already contains `$REL_OUTPUT_DIR/.stride-*.json`. If not, append the following block (using the computed relative path):
-
-```
-# AppSec plugin intermediate files (auto-added by appsec-context-resolver)
-<REL_OUTPUT_DIR>/.stride-*.json
-<REL_OUTPUT_DIR>/.sca-practice-findings.json
-<REL_OUTPUT_DIR>/.known-bad-libs-findings.json
-<REL_OUTPUT_DIR>/.requirements.yaml
-<REL_OUTPUT_DIR>/.threat-modeling-context.md
-<REL_OUTPUT_DIR>/.appsec-lock
-<REL_OUTPUT_DIR>/.agent-run.log
-<REL_OUTPUT_DIR>/.hook-events.log
-<REL_OUTPUT_DIR>/.session-agent-map
-```
-
-Replace `<REL_OUTPUT_DIR>` with the actual relative path (e.g. `docs/security` when using the default).
-
-**Print now:**
-- If outside repo: `[context-resolver]   ↳ .gitignore: skipped (output directory is outside repository)`
-- If inside repo: `[context-resolver]   ↳ .gitignore: <updated with AppSec entries | already up to date>`
 
 ---
 

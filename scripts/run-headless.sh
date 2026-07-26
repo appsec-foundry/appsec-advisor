@@ -26,7 +26,7 @@
 #   --fail-on <level>       Exit non-zero when delta contains threats at or above
 #                           <level> (critical, high, medium); PR-gate friendly
 #   --no-qa                 Skip the Stage-3 QA reviewer (faster CI runs)
-#   --trust-mode <mode>     trusted (default) | untrusted — when untrusted, runs
+#   --trust-mode <mode>     untrusted (default) | trusted — untrusted runs
 #                           preflight_untrusted.py first (rejects repo-owned hooks
 #                           and out-of-repo symlinks), enforces --strict-urls on
 #                           related-repos fetches, enables APPSEC_LOG_REDACT_PATHS,
@@ -44,7 +44,9 @@
 #   --reasoning-model <t>   Reasoning tier for STRIDE/triage/merger: opus,
 #                           opus-cheap, sonnet, sonnet-economy
 #   --assessment-depth <l>  Assessment depth: quick, standard (default), thorough
-#   --json                  Return structured JSON output
+#   --evidence-verifier-cap <n>  Limit Phase-10a non-Critical verification work
+#   --json                  Echo the raw `claude -p` result object on stdout
+#                           (the run's token/cost readout is printed either way)
 #   --verbose               Show the full real-time hook event log on stderr
 #   --quiet                 Suppress live progress (default = milestone events)
 #
@@ -113,7 +115,12 @@ Options:
   --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
                              opus, opus-cheap, sonnet, sonnet-economy
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
-  --json                     Return structured JSON output
+  --evidence-verifier-cap <N> Verify at most N non-Critical findings in
+                             Phase 10a; Critical findings do not count toward the cap.
+  --trust-mode <mode>         untrusted (default) | trusted. Untrusted mode rejects
+                               repo-owned agent configuration before Claude starts.
+  --strict-urls               Require APPSEC_URL_ALLOWLIST for remote related-repo fetches
+  --json                     Echo the raw claude result object on stdout
   --verbose                  Show the full real-time hook event log on stderr
   --quiet                    Suppress live progress output (default shows
                              milestone events: phases, agent spawns, heartbeat)
@@ -180,7 +187,8 @@ REQUIREMENTS_INFO=""
 REQUIREMENTS_SRC=""
 MAX_BUDGET=""
 MODEL=""
-OUTPUT_FORMAT="text"
+REASONING_TIER=""
+EMIT_RAW_JSON=0
 VERBOSE=""
 QUIET=""
 SKILL="create-threat-model"
@@ -197,10 +205,22 @@ INCREMENTAL_REQUESTED=0
 CLEAN_MODE=""
 CLEAN_FORCE=0
 CLEAN_DRY_RUN=0
-TRUST_MODE="trusted"
+# Target repositories are untrusted by default. Opting into trusted mode is an
+# explicit acknowledgement that repository-resident agent configuration may
+# execute before this plugin establishes its own instruction boundary.
+TRUST_MODE="untrusted"
 STRICT_URLS=0
 RESUME_REQUESTED=0
 FULL_REQUESTED=0
+
+# Preserve the raw invocation before the parser consumes it, so the failure
+# path can reconstruct a re-run command (see the recovery hint below). POSIX sh
+# has no arrays; args with embedded spaces are rare in headless use and degrade
+# to word-splitting, acceptable for a copy-paste hint.
+ORIG_ARGS=""
+for _a in "$@"; do
+    ORIG_ARGS="${ORIG_ARGS:+$ORIG_ARGS }$_a"
+done
 
 # CI mode auto-detect — when running under a CI runner we prefer silent,
 # deterministic defaults.
@@ -299,7 +319,15 @@ while [ $# -gt 0 ]; do
         --model)
             MODEL="$2"; shift 2 ;;
         --reasoning-model)
+            REASONING_TIER="$2"
             SKILL_FLAGS="$SKILL_FLAGS --reasoning-model $2"; shift 2 ;;
+        --evidence-verifier-cap)
+            if [[ "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
+                SKILL_FLAGS="$SKILL_FLAGS --evidence-verifier-cap $2"; shift 2
+            else
+                die "Invalid --evidence-verifier-cap value: ${2:-<missing>} (must be a positive integer)"
+            fi
+            ;;
         --assessment-depth)
             case "$2" in
                 quick|standard|thorough)
@@ -310,7 +338,7 @@ while [ $# -gt 0 ]; do
             esac
             ;;
         --json)
-            OUTPUT_FORMAT="json"; shift ;;
+            EMIT_RAW_JSON=1; shift ;;
         --verbose)
             VERBOSE="--verbose"; shift ;;
         --quiet)
@@ -402,7 +430,26 @@ if [ "$TRUST_MODE" = "untrusted" ]; then
         die "preflight script not found: $PREFLIGHT_SCRIPT"
     fi
     if ! python3 "$PREFLIGHT_SCRIPT" --repo-root "$REPO_PATH" --strict --strict-urls --format text --output - >/dev/null; then
-        die "preflight findings present — refusing to scan in untrusted mode (run preflight_untrusted.py manually for details)"
+        # The findings are printed above. Name the two ways forward here --
+        # without them the operator is told what is wrong but not what to do,
+        # and the usual reaction is to go looking for a flag to silence the
+        # check without understanding what it protects.
+        printf '\n' >&2
+        printf 'The paths above are loaded by the host tool BEFORE this plugin runs, so a\n' >&2
+        printf 'repository you do not control could use them to steer the assessment.\n' >&2
+        printf '\n' >&2
+        printf 'If those paths are yours (your own Claude Code setup, or a repo you trust):\n' >&2
+        printf '    --trust-mode trusted        skips this preflight, changes nothing else\n' >&2
+        printf '\n' >&2
+        printf 'If you did not write them, or the repo is third-party, do NOT use that flag.\n' >&2
+        printf 'Move them out of the repo instead, then re-run:\n' >&2
+        printf '    mv %s/.claude %s/.claude.off\n' "$REPO_PATH" "$REPO_PATH" >&2
+        printf '\n' >&2
+        printf 'Check ownership first — untracked files are usually yours, committed ones\n' >&2
+        printf 'come from the repository:\n' >&2
+        printf '    git -C %s ls-files .claude\n' "$REPO_PATH" >&2
+        printf '\n' >&2
+        die "preflight findings present — refusing to scan in untrusted mode"
     fi
     info "preflight: clean"
 fi
@@ -557,7 +604,12 @@ CLAUDE_CMD="claude -p \"$PROMPT\""
 CLAUDE_CMD="$CLAUDE_CMD --plugin-dir \"$PLUGIN_DIR\""
 CLAUDE_CMD="$CLAUDE_CMD --allowedTools \"Read,Write,Glob,Grep,Bash,Agent\""
 CLAUDE_CMD="$CLAUDE_CMD --permission-mode bypassPermissions"
-CLAUDE_CMD="$CLAUDE_CMD --output-format $OUTPUT_FORMAT"
+# Always `json`, never `text`. The JSON result object is the only readout that
+# carries the run's authoritative token/cost accounting (total_cost_usd +
+# per-model modelUsage, sub-agents included) — see headless_usage.py. Its
+# `result` field holds exactly the text that `--output-format text` would have
+# printed, so nothing user-visible is lost; the wrapper re-emits it below.
+CLAUDE_CMD="$CLAUDE_CMD --output-format json"
 CLAUDE_CMD="$CLAUDE_CMD --no-session-persistence"
 
 # Optional arguments
@@ -581,6 +633,17 @@ fi
 # proceed on the current session model. See SKILL-impl.md "Orchestrator
 # (session-model) recommendation — interactive prompt".
 export APPSEC_HEADLESS=1
+# Background-task wait ceiling: Claude Code's `-p` mode waits a default 600s for
+# backgrounded tasks and then HARD-KILLS the process. Stage 1 (Analyst-A, phases
+# 1-8) routinely runs longer than that, so the orchestrator's turn ends while
+# Analyst-A is still backgrounded and the run dies mid-phase with no
+# threat-model.yaml — which also means the compose backstop below (gated on that
+# yaml) cannot salvage it. Observed as a nondeterministic ~13m failure: fixture
+# runs 29696937786 (fail, 775s) and 29697943011 (pass, 46m39s) share commit
+# 9d9c44e, fixture and depth. 0 = wait indefinitely; the bound is the outer
+# `timeout ${MAX_DURATION}s` wrapper above, so headless callers that care about
+# a wall-clock cap must pass --max-duration (CI always does).
+export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 [ "$NO_QA" = "1" ]         && export APPSEC_SKIP_QA=1
 [ "$PR_MODE" = "1" ]       && export APPSEC_PR_MODE=1
 [ -n "$BASE_REF" ]         && export APPSEC_BASE_REF="$BASE_REF"
@@ -595,8 +658,18 @@ echo ""
 info "AppSec Plugin — Headless Mode"
 echo "  Skill      : $SKILL"
 echo "  Billing    : $BILLING_MODE"
-[ -n "$MODEL" ]            && echo "  Model      : $MODEL"
 echo "  Depth      : ${ASSESSMENT_DEPTH:-standard}"
+# Every model the run will use, grouped by model with the roles it drives.
+# A bare "Model: <session>" line read as "the whole assessment runs on this",
+# which is wrong and misleading in the direction that costs money: the session
+# model is the dominant cost lever but drives orchestration, not analysis depth.
+# Falls back to the session model alone if the lineup cannot be resolved.
+MODEL_LINEUP=""
+[ -n "$MODEL" ] && MODEL_LINEUP="$(python3 "$SCRIPT_DIR/model_lineup.py" \
+    --session "$MODEL" \
+    ${REASONING_TIER:+--reasoning "$REASONING_TIER"} \
+    --depth "${ASSESSMENT_DEPTH:-standard}" 2>/dev/null || printf '%s' "$MODEL")"
+[ -n "$MODEL_LINEUP" ]     && echo "  Models     : $MODEL_LINEUP"
 echo "  Context    : $CONTEXT_INFO"
 echo "  Plugin     : $PLUGIN_DIR"
 [ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"
@@ -726,6 +799,54 @@ else
 fi
 echo ""
 
+# Capture claude's stdout instead of letting it reach the terminal directly.
+# stdout is now a single JSON result object, which is machine data, not a
+# progress view — live progress comes from the hook-log monitor on stderr and
+# is unaffected. Redirecting a plain `>` keeps claude a direct child, so the
+# process-group signal handling below (kill -SIG -$CLAUDE_PID) still works; a
+# pipe would make $! the reader's PID and break escalation.
+RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+mkdir -p "$RESULT_DIR" 2>/dev/null || true
+RESULT_CAPTURE="$RESULT_DIR/.headless-result.json"
+: > "$RESULT_CAPTURE" 2>/dev/null || RESULT_CAPTURE=""
+
+# Print the run's token/cost readout. Two tiers, never blended:
+#   1. The result object — Claude Code's own accounting, the same source the
+#      interactive /cost reports, and the only one that includes sub-agent
+#      spend. Exact; printed with a per-model breakdown.
+#   2. Nothing survived (timeout, SIGKILL, Ctrl-C truncate the capture) — fall
+#      back to the hook-log figure and label it an estimate. That figure covers
+#      the host session only, so it is a lower bound and must never be shown
+#      as if it were the run's cost.
+print_usage_summary() {
+    [ -n "$RESULT_CAPTURE" ] || return 0
+    if python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" 2>/dev/null; then
+        return 0
+    fi
+    _usage_est=$(python3 "$SCRIPT_DIR/cost_running_total.py" "$RESULT_DIR" \
+        --format banner 2>/dev/null || true)
+    case "$_usage_est" in
+        ""|*"n/a"*) return 0 ;;
+    esac
+    warn "Token usage & cost — ESTIMATE (the run did not exit cleanly, so no result object)."
+    echo "  Host session only, from .hook-events.log — sub-agent spend is NOT included (lower bound)."
+    printf '%s\n' "$_usage_est"
+}
+
+# The capture is wrapper-owned scratch, not a run artifact: it is read out by
+# print_usage_summary and holds the assistant's final text, which can quote
+# repository content. Drop it once consumed. An unparseable capture is KEPT so
+# the raw object stays available for diagnosis; --keep-runtime-files keeps it
+# unconditionally, matching the runtime_cleanup opt-out.
+discard_capture_if_consumed() {
+    [ -n "$RESULT_CAPTURE" ] && [ -f "$RESULT_CAPTURE" ] || return 0
+    [ "${KEEP_RUNTIME_FILES:-}" != "true" ] || return 0
+    if [ ! -s "$RESULT_CAPTURE" ] \
+       || python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" --format json >/dev/null 2>&1; then
+        rm -f "$RESULT_CAPTURE"
+    fi
+}
+
 # Allow the claude subprocess to fail without tripping `set -e` so the
 # trap cleanup still runs and we can surface the real exit code.
 set +e
@@ -745,6 +866,34 @@ set +e
 # on a terminal read (SIGTTIN).
 CLAUDE_PID=""
 SIGINT_COUNT=0
+ESCALATION_WATCHDOG_PID=""
+# Auto-escalation delays (seconds). Overridable so tests can run fast.
+INTERRUPT_TERM_SECS="${APPSEC_INTERRUPT_TERM_SECS:-10}"
+INTERRUPT_KILL_SECS="${APPSEC_INTERRUPT_KILL_SECS:-10}"
+
+# After a graceful first interrupt, claude may not stop — a stalled or already
+# -aborted turn ignores a single SIGINT. And when this script runs under
+# `make ... | tee`, `make` dies on the SAME Ctrl-C and hands the shell prompt
+# back, orphaning us: no further Ctrl-C can reach the manual TERM/KILL
+# escalation below (those keystrokes now go to the shell). Arm a timed watchdog
+# so a SINGLE interrupt still guarantees teardown — escalate to SIGTERM, then
+# SIGKILL, on a timer regardless of any further signals. Idempotent: armed once.
+start_escalation_watchdog() {
+    [ -n "$ESCALATION_WATCHDOG_PID" ] && return
+    [ -n "$CLAUDE_PID" ] || return
+    (
+        sleep "$INTERRUPT_TERM_SECS"
+        kill -0 "-$CLAUDE_PID" 2>/dev/null || exit 0
+        warn "claude still running ${INTERRUPT_TERM_SECS}s after interrupt — sending SIGTERM to its process group."
+        kill -TERM "-$CLAUDE_PID" 2>/dev/null || true
+        sleep "$INTERRUPT_KILL_SECS"
+        kill -0 "-$CLAUDE_PID" 2>/dev/null || exit 0
+        warn "claude ignored SIGTERM — sending SIGKILL to its process group."
+        kill -KILL "-$CLAUDE_PID" 2>/dev/null || true
+    ) &
+    ESCALATION_WATCHDOG_PID=$!
+}
+
 on_interrupt() {
     SIGINT_COUNT=$((SIGINT_COUNT + 1))
     [ -n "$CLAUDE_PID" ] || return
@@ -755,17 +904,54 @@ on_interrupt() {
         warn "Second interrupt — sending SIGTERM to the claude process group."
         kill -TERM "-$CLAUDE_PID" 2>/dev/null || true
     else
-        warn "Interrupt — forwarding SIGINT to claude (graceful abort may take a few seconds; press Ctrl-C again to escalate)."
+        warn "Interrupt — forwarding SIGINT to claude (auto-escalates to SIGTERM in ${INTERRUPT_TERM_SECS}s, then SIGKILL after a further ${INTERRUPT_KILL_SECS}s if it is ignored; press Ctrl-C again to escalate now)."
         kill -INT "-$CLAUDE_PID" 2>/dev/null || true
+        start_escalation_watchdog
     fi
 }
 on_terminate() {
     [ -n "$CLAUDE_PID" ] || return
     kill -TERM "-$CLAUDE_PID" 2>/dev/null || true
+    start_escalation_watchdog
+}
+
+# Print a paste-ready re-run command, choosing --resume vs --rebuild from what
+# the resume-guard actually allows (an interrupt before Stage-1 checkpoints
+# cannot resume → point at --rebuild instead). Reused by both the Ctrl-C abort
+# path and the non-zero-exit failure path so the hint is never only on one.
+print_recovery_hint() {
+    _rh_dir="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+    if [ "$SKILL" != "create-threat-model" ]; then
+        warn "Check intermediate files or run with --resume to continue."
+        return
+    fi
+    _rerun_cmd() {  # $1 = mode flag to append
+        _cmd="$0"
+        for _a in $ORIG_ARGS; do
+            case "$_a" in
+                --resume|--full|--rebuild|--rerender|--incremental) ;;
+                *) _cmd="$_cmd $_a" ;;
+            esac
+        done
+        printf '%s %s\n' "$_cmd" "$1"
+    }
+    if [ -f "$_rh_dir/.appsec-checkpoint" ] \
+       && python3 "$PLUGIN_DIR/scripts/check_state.py" "$_rh_dir" \
+            --resume-guard --max-age-seconds 900 >/dev/null 2>&1; then
+        warn "Resume from the last checkpoint:"
+        printf '    %s\n' "$(_rerun_cmd --resume)"
+    else
+        warn "This run cannot be resumed cleanly — start fresh:"
+        printf '    %s\n' "$(_rerun_cmd --rebuild)"
+    fi
 }
 
 set -m
-eval "$CLAUDE_CMD" < /dev/null &
+if [ -n "$RESULT_CAPTURE" ]; then
+    eval "$CLAUDE_CMD" < /dev/null > "$RESULT_CAPTURE" &
+else
+    eval "$CLAUDE_CMD" < /dev/null &
+fi
 CLAUDE_PID=$!
 set +m
 
@@ -782,16 +968,46 @@ while [ "$EXIT_CODE" -gt 128 ] && kill -0 "$CLAUDE_PID" 2>/dev/null; do
     EXIT_CODE=$?
 done
 
+# claude has exited — cancel the escalation watchdog if it is still counting
+# down, so it never lingers past the run or signals a reused process group.
+if [ -n "$ESCALATION_WATCHDOG_PID" ]; then
+    kill "$ESCALATION_WATCHDOG_PID" 2>/dev/null || true
+    ESCALATION_WATCHDOG_PID=""
+fi
+
 # Restore the tail-cleanup trap that the verbose/default branches installed.
 trap 'cleanup_tails' INT TERM HUP
 set -e
 
 cleanup_tails
 
+# Re-emit what claude's stdout used to show. `result` holds the final assistant
+# text verbatim (what `--output-format text` printed); --json additionally dumps
+# the raw object for machine consumers. Both are no-ops on a truncated capture.
+if [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ]; then
+    if python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" --result-text 2>/dev/null; then
+        [ "$EMIT_RAW_JSON" -eq 1 ] && cat "$RESULT_CAPTURE"
+    else
+        # No result object. The CLI wrote something else to stdout — an error it
+        # does not route to stderr, an unrecognised format, a stubbed binary.
+        # Pass it through rather than swallowing it; capturing stdout must not
+        # cost us diagnosability. Truncated JSON is the one exception: a killed
+        # run leaves a half-written object with nothing readable in it.
+        case "$(head -c 1 "$RESULT_CAPTURE")" in
+            "{"|"[") ;;
+            *) cat "$RESULT_CAPTURE" ;;
+        esac
+    fi
+fi
+
 # If the run was interrupted by Ctrl-C, stop here instead of proceeding to
 # artifact parsing — the user asked to abort.
 if [ "$SIGINT_COUNT" -gt 0 ]; then
     warn "Run aborted by user (exit $EXIT_CODE). Skipping post-run parsing."
+    echo ""
+    print_usage_summary
+    print_recovery_hint
+    discard_capture_if_consumed
     exit "$EXIT_CODE"
 fi
 
@@ -892,8 +1108,33 @@ if [ $EXIT_CODE -eq 0 ]; then
 else
     err "Assessment exited with code $EXIT_CODE"
     [ -n "$ASSESSMENT_DURATION" ] && echo "  Duration: $ASSESSMENT_DURATION"
-    warn "Check intermediate files or run with --resume to continue."
+
+    # Surface diagnostics on the failure path. The rich Run Issues block is
+    # normally rendered by the LLM Completion turn, which never runs on an
+    # abort / bg-ceiling kill — so regenerate .run-issues.json from the logs
+    # and render it here deterministically. Delivery gap, not detection.
+    if [ "$SKILL" = "create-threat-model" ] && [ -f "$RESULT_DIR/.agent-run.log" ]; then
+        PLUGIN_DEV_FLAG=""
+        [ "${APPSEC_PLUGIN_DEV:-0}" = "1" ] && PLUGIN_DEV_FLAG="--plugin-dev"
+        python3 "$PLUGIN_DIR/scripts/aggregate_run_issues.py" \
+            "$RESULT_DIR" --depth "${ASSESSMENT_DEPTH:-standard}" >/dev/null 2>&1 || true
+        python3 "$PLUGIN_DIR/scripts/render_completion_summary.py" \
+            --issues-only --output-dir "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \
+            $PLUGIN_DEV_FLAG 2>/dev/null || true
+    fi
+
+    # Recovery hint — print a full, paste-ready re-run command. Reconstruct it
+    # from the original invocation (dropping the wrapper-only mode flags it must
+    # not carry) and pick --resume vs --rebuild from what the resume-guard
+    # actually allows, so we never point the user at a resume that will be
+    # refused (the missing-context / incomplete-Stage-1 case) or hide a resume
+    # that would work.
+    print_recovery_hint
 fi
+
+# Token/cost readout on both paths — a failed run still spent the tokens.
+echo ""
+print_usage_summary
 
 # ── Exact-value secret redaction ───────────────────────────────────
 # Pattern-based masking (upstream + postscan below) only neutralises a secret
@@ -1003,5 +1244,7 @@ PY
         err "PR gate triggered — new threats at or above '$FAIL_ON' severity."
     fi
 fi
+
+discard_capture_if_consumed
 
 exit $EXIT_CODE

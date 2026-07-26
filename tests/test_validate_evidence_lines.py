@@ -222,6 +222,116 @@ def test_main_updates_yaml_and_prints_stats(tmp_path: Path, capsys) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Floor durability under rebuild.
+#
+# Stage 1c regenerates threat-model.yaml from .threats-merged.json whenever
+# abuse-case verification ran (standard/thorough depth). A floor that wrote
+# only to the YAML was discarded there — observed as 0 verified / 56 unchecked
+# on standard-depth runs while quick, which skips the rebuild, kept 33
+# verified. These tests pin the verdicts into the merged intermediate so the
+# rebuild cannot drop them.
+# ---------------------------------------------------------------------------
+
+
+def _merged(*t_ids: str, evidence_check: str | None = None) -> dict:
+    threats = []
+    for tid in t_ids:
+        threat = {"t_id": tid, "title": tid, "risk": "High", "cwe": "CWE-89", "likelihood": "High"}
+        if evidence_check is not None:
+            threat["evidence_check"] = evidence_check
+        threats.append(threat)
+    return {"threats": threats}
+
+
+def test_persist_to_merged_mirrors_verdicts_and_respects_prior(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    _write(
+        out / ".threats-merged.json",
+        vel.json.dumps(
+            {
+                "threats": [
+                    {"t_id": "T-001", "title": "a"},
+                    {"t_id": "T-002", "title": "b"},
+                    # A genuine LLM verdict already present — must not be lowered.
+                    {"t_id": "T-003", "title": "c", "evidence_check": "verified"},
+                ]
+            }
+        ),
+    )
+    data = {
+        "threats": [
+            _threat("T-001", evidence_check="verified", flags=["ok"]),
+            _threat("T-002", evidence_check="refuted", flags=["file_missing"]),
+            _threat("T-003", evidence_check="ambiguous"),
+        ]
+    }
+
+    assert vel.persist_to_merged(out, data) == 2
+
+    merged = vel.json.loads((out / ".threats-merged.json").read_text(encoding="utf-8"))
+    by_id = {t["t_id"]: t for t in merged["threats"]}
+    assert by_id["T-001"]["evidence_check"] == "verified"
+    assert by_id["T-001"]["evidence_flags"] == ["ok"]
+    # Refuted is retained in the merged intermediate for audit — the drop
+    # happens only in the active model.
+    assert by_id["T-002"]["evidence_check"] == "refuted"
+    assert by_id["T-003"]["evidence_check"] == "verified"
+
+
+def test_persist_to_merged_tolerates_missing_or_malformed_intermediate(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    data = {"threats": [_threat("T-001", evidence_check="verified")]}
+
+    assert vel.persist_to_merged(out, data) == 0
+
+    _write(out / ".threats-merged.json", "{ not json")
+    assert vel.persist_to_merged(out, data) == 0
+
+    _write(out / ".threats-merged.json", vel.json.dumps({"threats": "not-a-list"}))
+    assert vel.persist_to_merged(out, data) == 0
+
+
+def test_floor_verdicts_survive_yaml_rebuild(tmp_path: Path) -> None:
+    """End-to-end: run the floor, then rebuild from the merged intermediate.
+
+    This is the regression the previous test suite could not catch — it
+    asserted the floor ran, never that its output reached the final artifact.
+    """
+    import build_threat_model_yaml as btm
+
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    out.mkdir()
+    _write(repo / "src" / "app.ts", "const sql = query(req.body.id)\n")
+    _write(out / ".threats-merged.json", vel.json.dumps(_merged("T-001", "T-002")))
+    _write(
+        out / "threat-model.yaml",
+        vel.yaml.safe_dump(
+            {
+                "threats": [
+                    _threat("T-001", {"file": "src/app.ts", "line": 1}),
+                    _threat("T-002", {"file": "gone.ts", "line": 1}),
+                ]
+            },
+            sort_keys=False,
+        ),
+    )
+
+    assert vel.main([str(out), "--repo-root", str(repo)]) == 0
+
+    merged = vel.json.loads((out / ".threats-merged.json").read_text(encoding="utf-8"))
+    rebuilt, _warnings = btm.build_threats(merged)
+
+    by_id = {t["id"]: t for t in rebuilt}
+    # The verified verdict survived the rebuild instead of resetting to unchecked.
+    assert by_id["T-001"]["evidence_check"] == "verified"
+    # The refuted candidate is dropped by the rebuild's own filter.
+    assert "T-002" not in by_id
+
+
+# ---------------------------------------------------------------------------
 # Inference / coverage-gap provenance gate — must NOT auto-verify off a
 # structurally-valid-but-attached evidence anchor (the T-065 case).
 # ---------------------------------------------------------------------------

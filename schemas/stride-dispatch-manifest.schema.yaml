@@ -7,8 +7,8 @@ description: |
   per-component parameter the `appsec-stride-analyzer` needs into this manifest,
   then stops before Phase 9. The skill (Level-0) reads it, validates it via
   `scripts/validate_dispatch_manifest.py` (hard gate), and dispatches one
-  `appsec-stride-analyzer` per component IN PARALLEL — replacing the serial
-  inline STRIDE that runs today inside a single Level-1 analyst.
+  `appsec-stride-analyzer` per component in bounded parallel waves — replacing
+  serial inline STRIDE without creating an unbounded concurrency burst.
 
   The per-component fields mirror the dispatch parameters documented in
   `agents/phases/phase-group-threats.md` ("For each component, use Agent tool")
@@ -77,6 +77,21 @@ properties:
         estimated_threat_count:
           type: integer
           minimum: 0
+        estimated_threat_count_label:
+          description: |
+            Pacing band for `estimated_threat_count`, derived deterministically by
+            the builder (low ≤3 / moderate 4–7 / high ≥8). This — not the integer —
+            is what the dispatch prompt passes as `ESTIMATED_THREAT_COUNT`, because
+            the analyzer's turn-budget self-regulation branches on the label.
+          type: string
+          enum: [low, moderate, high]
+        cheap_stride:
+          description: |
+            Audit marker — true when cheap-stride put this component in the
+            screening set (flat 8-turn six-category pass). Absent otherwise.
+            Cheap-stride is on by default at quick/standard depth, off at
+            thorough; `--cheap-stride` / `--no-cheap-stride` override.
+          type: boolean
         interfaces:
           description: Component interfaces (entry points / exposed surfaces) from Phase 6.
           oneOf: [ { type: string }, { type: array } ]

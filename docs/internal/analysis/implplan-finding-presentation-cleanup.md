@@ -43,7 +43,7 @@ garbled inline PoC, and the redundant Issue/Root-cause/Evidence stack. Use it as
 the acceptance eyeball for A–D.
 
 > Note: F-031 is already correctly marked `◌ ambiguous` and excluded from the
-> "confirmed-exploitable" narrative (landed on `dev`: commit a0e1401, "P2a").
+> "confirmed-exploitable" narrative (landed on `dev`: commit d5d5d41, "P2a").
 > This plan is orthogonal — it fixes how such a card *renders*, not its rating.
 
 ---

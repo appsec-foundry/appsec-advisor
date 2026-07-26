@@ -62,6 +62,8 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
 from _atomic_io import atomic_write_text  # noqa: E402
+from merge_threats import normalize_cvss_v4 as _normalize_cvss_v4  # noqa: E402
+from stride_outputs import is_stride_output  # noqa: E402
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -430,6 +432,12 @@ def _reanalyzed_component_ids(output_dir: Path) -> set[str] | None:
     changed: set[str] = set()
     for cid, rec in prior_hashes.items():
         sfile = output_dir / f".stride-{cid}.json"
+        if not is_stride_output(sfile):
+            # Baselines written before the `.stride-` sidecars were excluded
+            # carry `dispatch-manifest` / `selection` / `analyst-context` as
+            # component ids. Their content changes almost every run, so they
+            # would show up as changed components forever.
+            continue
         if not sfile.is_file():
             continue  # removed component — handled by the removal path, not here
         actual = "sha256:" + hashlib.sha256(sfile.read_bytes()).hexdigest()
@@ -564,7 +572,13 @@ def build_component_selection(sel: dict | None, components: list) -> dict | None
     def _norm_sel(e: object) -> dict:
         if isinstance(e, dict):
             cid = e.get("id")
-            return {"id": cid, "name": _name(cid), "reasons": list(e.get("reasons") or [])}
+            row = {"id": cid, "name": _name(cid), "reasons": list(e.get("reasons") or [])}
+            # Carry the per-component analysis depth (currently only "screening",
+            # set by --cheap-stride) so §1 Scope and the Management Summary can
+            # say screened instead of implying a full STRIDE pass.
+            if e.get("analysis_depth"):
+                row["analysis_depth"] = e["analysis_depth"]
+            return row
         return {"id": e, "name": _name(e), "reasons": []}
 
     def _norm_exc(e: object) -> dict:
@@ -693,30 +707,6 @@ def _clamp_title(title: str, limit: int = _TITLE_MAXLEN) -> str:
         if keep >= 8:
             return f"{head[:keep].rstrip()}… {tail}"
     return title[: limit - 1].rstrip() + "…"
-
-
-def _normalize_cvss_v4(v4):
-    """Coerce a STRIDE-emitted cvss_v4 to the output-schema shape
-    ({vector, base_score, severity, source}, additionalProperties:false) or
-    return None to drop it. Analyzers commonly write ``score`` instead of
-    ``base_score`` and omit ``source``."""
-    if not isinstance(v4, dict):
-        return None
-    vector = v4.get("vector")
-    if not isinstance(vector, str) or not vector.startswith("CVSS:4.0"):
-        return None
-    score = v4.get("base_score", v4.get("score"))
-    sev = v4.get("severity")
-    if not isinstance(score, (int, float)) or sev not in ("None", "Low", "Medium", "High", "Critical"):
-        return None
-    src = v4.get("source")
-    valid_src = {"stride-analyzer", "dep-scan", "nvd", "osv", "known-vuln", "manual"}
-    return {
-        "vector": vector,
-        "base_score": float(score),
-        "severity": sev,
-        "source": src if src in valid_src else "stride-analyzer",
-    }
 
 
 def _clean_title(raw: str) -> str:

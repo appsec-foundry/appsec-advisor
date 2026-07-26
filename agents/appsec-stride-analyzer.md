@@ -3,10 +3,10 @@ name: appsec-stride-analyzer
 description: "INTERNAL — invoked by appsec-threat-analyst after Phase 7, one instance per major component. Performs focused STRIDE threat analysis for a single component and writes findings to $OUTPUT_DIR/.stride-<component-id>.json."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 40
+maxTurns: 56
 ---
 
-<!-- maxTurns=40 is the hard harness ceiling; soft target is `MAX_TURNS` passed in the prompt (see scripts/resolve_config.py → DEPTH_PARAMS). The harness cap MUST stay ≥ the highest skill-level value, plus a small buffer for retries. -->
+<!-- maxTurns=56 is the hard harness ceiling; soft target is `MAX_TURNS` passed in the prompt (see scripts/resolve_config.py → DEPTH_PARAMS). The harness cap MUST stay ≥ the highest skill-level value plus a retry buffer. Raised 40→56 (2026-07-20): the highest skill-level value is now the file-footprint floor in classify_component._footprint_turn_floor (cap 48), not the thorough/complex tier (35). 48 + 8 buffer = 56. -->
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after trust boundary analysis, once per major component.
 
@@ -177,7 +177,7 @@ When `RELEVANT_ACTORS_INDEX_PATH = none`: set `COMPONENT_ACTORS = []`. Proceed w
 - **`moderate`** — default. Run targeted verification greps when control absence matters.
 - **`high`** — use the full budget. Prefer finding real evidence over skipping categories.
 
-Default to `moderate` when `ESTIMATED_THREAT_COUNT` is not passed.
+Band a numeric `ESTIMATED_THREAT_COUNT` yourself: `≤3` low, `4–7` moderate, `≥8` high. Default to `moderate` when it is not passed.
 
 **Write-first NOW (before Step 2).** Before reading any source files, perform the pre-seed write described in `## Write-first guarantee` below: `Write` `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json` with `"partial": true`, all six categories in `skipped_categories`, and `"threats": []`. This must happen here — at the Step-1/Step-2 boundary — so a cut-off during the (sometimes long) source-reading phase still leaves a valid file.
 
@@ -238,10 +238,13 @@ Print each file: `[stride | <COMPONENT_NAME>]   ↳ Reading <filepath>…`
 
 **As the FIRST write action of this dispatch — at the end of Step 1, BEFORE you read any source files in Step 2 — `Write` an initial valid `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`** containing the required top-level fields (`component_id`, `component_name`, `analyzed_at`, `threats`) plus:
 - `"partial": true`
+- `"seed_only": true` — this write carries no analysis yet.
 - `"skipped_categories": ["Spoofing","Tampering","Repudiation","Information Disclosure","Denial of Service","Elevation of Privilege"]`
 - `"threats": []` — empty at this point; Step 2 (source reading) has not run yet.
 
 Then re-write the file as you go: after Step 2 add any threats already obvious from the source reads, and **as each STRIDE category completes in Step 3, OVERWRITE the same file** with the accumulated threats and remove that category from `skipped_categories`. On the final Step-4 write, set `"partial": false` and `"skipped_categories": []`.
+
+**Drop `seed_only` (or set it `false`) on the first overwrite carrying any real analysis**, including a Step-2 write that only adds obvious threats. It marks exactly one state: the pre-seed exists, nothing has been analyzed yet. The dispatch gate uses it to tell a component that died before starting — which fails identically on retry unless its turn budget grows — from one that ran and honestly reported partial coverage, which is worth retrying as-is.
 
 This guarantees a valid `.stride-<COMPONENT_ID>.json` exists from the very start of the dispatch — **including throughout the Step-2 source-reading phase**, which is itself budget-heavy on large components — so a turn-budget cut-off at ANY point degrades to a **partial-but-valid** file instead of a **missing** one. Two historic failure modes this prevents: (a) a budget-cut analyzer wrote `.progress/<id>.json` but never `.stride-<id>.json` because it intended to write "after this category" and ran out of turns first (juice-shop 2026-06: file-upload-service); (b) a component cut off **mid-Step-2 (Reading source files)** — before any pre-seed under the old "write before Step 3" rule — left no file at all and forced a full re-dispatch (juice-shop 2026-06-16: data-layer). Pre-seeding before Step 2 closes both. This mirrors the **write-first** contract the `appsec-abuse-case-verifier` already follows (it pre-seeds before any investigation). The reactive `## Budget-critical wrap-up` below is the secondary guard; this proactive early write is the primary one — do **not** rely on the budget-critical flag firing in time.
 
@@ -472,7 +475,7 @@ Read `shared/owasp-llm-top10.md` for the full threat table, grep patterns, and f
 
 ### OWASP Agentic Top 10 (ASI) — conditional (only for an agentic surface)
 
-When `KNOWN_LLM_PATTERNS` shows an **agentic** signal — an `agent-framework` / `tool-use` subcategory, a multi-agent SDK (`crewai`, `autogen`), or an LLM wired to tools, persistent memory, retrieval, or other agents — also read `shared/owasp-asi-top10.md` and apply the OWASP Top 10 for Agentic Applications (2026) lens. Same quality bar. **Do not duplicate:** most agentic risk is the agentic framing of an LLM finding you already recorded — use the crosswalk in that file to tag it (e.g. an LLM06 Excessive Agency finding is also `ASI02`), and only author a *new* threat for the genuinely agent-specific classes (`ASI03` identity/privilege, `ASI07` inter-agent transport, `ASI10` autonomy bounds) when a real multi-agent / tool-wielding surface is present. A plain LLM call-and-return has no agentic surface — skip this lens.
+When `KNOWN_LLM_PATTERNS` shows an **agentic** signal — an `agent-framework`, `agent-memory`, or `tool-use` subcategory, a multi-agent SDK (`crewai`, `autogen`), or an LLM wired to tools, persistent memory, retrieval, or other agents — also read `shared/owasp-asi-top10.md` and apply the OWASP Top 10 for Agentic Applications (2026) lens. Same quality bar. **Do not duplicate:** most agentic risk is the agentic framing of an LLM finding you already recorded — use the crosswalk in that file to tag it (e.g. an LLM06 Excessive Agency finding is also `ASI02`), and only author a *new* threat for the genuinely agent-specific classes (`ASI03` identity/privilege, `ASI07` inter-agent transport, `ASI10` autonomy bounds) when a real multi-agent / tool-wielding surface is present. A plain LLM call-and-return has no agentic surface — skip this lens.
 
 ### Client-side / SPA — conditional (only for frontend components)
 
@@ -484,7 +487,7 @@ When `COMPONENT_ID` is `mobile-app`, `COMPONENT_DESCRIPTION` indicates Android/i
 
 ### Supply chain — conditional (only when `SUPPLY_CHAIN_FINDINGS != none`)
 
-Read `shared/supply-chain-patterns.md` for the 21 finding-type → STRIDE-category mappings (Cat 27/28 plus unpinned dependencies / lockfile / SCA / runner patterns). Verify each finding by reading the cited `file:line` from recon-summary 7.14–7.17, 7.26, 7.27, 7.28. Same quality bar.
+Read `shared/supply-chain-patterns.md` for the 21 finding-type → STRIDE-category mappings (Cat 27/28 plus unpinned dependencies / lockfile / SCA / runner patterns). Verify each finding by reading the cited `file:line` from recon-summary 7.14–7.17, 7.26, 7.27, 7.32. Same quality bar.
 
 ### Requirements reference lookup — apply to every threat's `remediation.reference`
 
@@ -540,6 +543,12 @@ Read `shared/cvss-metrics.md` for the conditions, output shape, base-metric deri
 | `evidence: {file, line}` (nested object) | ~~`evidence_file` / `evidence_line`~~ |
 | `mitigation_title` | ~~`title`~~, ~~`recommendation`~~ |
 | `threat_category_id` (REQUIRED) | ~~`category`~~, ~~`pattern`~~, ~~`owasp`~~ |
+| `control_scope` (optional) | ~~component name~~, ~~CWE family~~ |
+
+Set `control_scope` only when the evidence shows that multiple components use
+the same concrete control or object (for example one named gateway middleware
+or JWT verifier). Use its stable identifier and omit the field when the shared
+scope is uncertain; the merger keeps unscoped components separate.
 
 Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
 
@@ -563,16 +572,20 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
       "local_id": "<COMPONENT_ID>-001",
       "threat_category_id": "<TH-NN — REQUIRED, from data/threat-category-taxonomy.yaml>",
       "additional_categories": ["<TH-NN>", "<TH-NN>"],
+      "control_scope": "<OPTIONAL stable identifier of one evidenced control/object shared across components; omit when unknown, e.g. 'gateway-authz-middleware'>",
       "stride": "<Spoofing | Tampering | Repudiation | Information Disclosure | Denial of Service | Elevation of Privilege>",
       "cwe": "<REQUIRED — primary CWE, e.g. 'CWE-89'. Used for compound-chain detection, severity caps, and breach-distance scoring. Use the most specific applicable CWE, not a pillar.>",
       "title": "<see shared/finding-title-contract.md — canonical form: <Weakness class> (<relative_file_path[:line]>), MAX 80 chars>",
       "affected_parameter": "<optional — when meaningful: 'email', 'q', 'id', 'X-Forwarded-For'. Do NOT cram into title.>",
       "scenario": "<longer prose description of the attack — used in §8 detail body, not in table rows>",
+      "attack_steps": ["<REQUIRED for Critical, optional otherwise — see 'Authoring attack_steps' below. 2-4 attacker-voice steps that §3 renders as the numbered walkthrough. NOT a summary of `scenario`.>"],
       "evidence_summary": "<RECOMMENDED — one-sentence structural assertion about the code that the snippet below visually proves. Distinct from scenario (attack narrative) and impact_description (consequence). Reference code with SHORT inline identifiers only (a file:line, function or variable name); do NOT paste a multi-statement expression or arrow function inline — that code belongs in the fenced snippet below, and embedding it half-quoted renders as broken partial formatting.>",
       "impact_description": "<RECOMMENDED — one-sentence concrete consequence. Distinct from scenario and evidence_summary.>",
       "likelihood": "<High | Medium | Low>",
       "impact": "<Critical | High | Medium | Low>",
       "risk": "<Critical | High | Medium | Low>",
+      "owasp_llm_ids": ["<optional LLM01..LLM10 — only categories actually evidenced by this finding>"],
+      "owasp_asi_ids": ["<optional ASI01..ASI10 — only categories actually evidenced by this agentic finding>"],
       "controls_in_place": "<description of existing mitigations, or 'None'>",
       "mitigation_title": "<one-line action phrase — becomes the M-NNN title in the Mitigation Register>",
       "remediation": {
@@ -609,6 +622,41 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
 
 **`evidence.line` quality rule.** MUST point at the line that contains the vulnerable statement itself — NOT line 1 (typically a JSDoc opener or copyright header), NOT a blank line, NOT a comment-only line, NOT a closing brace. When you grep with `Grep -n`, use the exact line number where the offending API call, string concat, unsafe parser option, or missing-auth-check lives. For structural vulnerabilities ("no rate-limit middleware on route"), point at the route registration line. The Phase 10b `evidence_integrity` gate refuses comment/blank lines and surfaces `evidence_line_suspicious` per offending threat — treat as a hard contract.
 
+### Authoring `attack_steps` — the §3 walkthrough
+
+**Required for every Critical finding**, optional below. §3 renders it verbatim as
+the numbered "Attack Steps" list. It is NOT a shortened `scenario`: `scenario`
+explains *what is broken and why it matters* (§8 body, code may be the subject);
+`attack_steps` answers *what does the attacker do, in order* (attacker is always
+the subject). Deriving one from the other is why §3 previously renumbered
+rationale and caveats as if they were actions. Write them separately.
+
+Rules — every step:
+
+1. **Attacker is the subject.** Never open with `The function …`, `Server code
+   that …`, `The endpoint requires …`. If the subject is code, it is not a step —
+   fold it into an attacker action or leave it to `scenario`.
+2. **An action, not a state.** Preconditions, rationale and limitations are not steps.
+3. **Chronological** — step *n+1* only possible once *n* happened. Self-check:
+   swapping two steps must break the text.
+4. **One sentence, ≤ 200 chars.**
+5. **Consistent actor** — first step "An attacker …", later steps "The attacker …".
+   Never reintroduce "An attacker" halfway down.
+6. **Whole code tokens in backticks** — `` `request.data['role']` ``, not
+   `` `request.data`['role'] ``; a payload literal is one span: `` `{"is_staff": true}` ``.
+7. **2–4 steps.** Needing five means it is a chain — split it.
+
+Example — mass assignment (`views.py:229`):
+
+```
+1. An attacker registers a normal account and authenticates against the profile API.
+2. The attacker replays the profile-update request with `{"is_staff": true}` added to the JSON body.
+3. `views.py:229` binds the body straight onto the model, so the attacker's account is now staff.
+```
+
+Step 3 names code as the *mechanism* inside an attacker-outcome sentence — fine.
+Banned is code as the grammatical *subject*.
+
 ### threat_category_id — mandatory Phase 3 field
 
 Every threat MUST carry `threat_category_id` from one of the 18 architectural categories in the threat-category taxonomy. **Taxonomy file path:** `$TAXONOMY_SLICE_DIR/threat-category-taxonomy.yaml` when `TAXONOMY_SLICE_DIR` is set and the file exists there; otherwise `$CLAUDE_PLUGIN_ROOT/data/threat-category-taxonomy.yaml`. The slice is a valid subset — if a CWE is not found there, fall back to the full file before using TH-UNCLASSIFIED.
@@ -626,7 +674,7 @@ Do **not** invent new TH-IDs. The taxonomy is the single authoritative source.
 
 ## Budget-critical wrap-up
 
-The watchdog (`scripts/budget_watchdog.py`, fired by the PostToolUse hook) writes `$OUTPUT_DIR/.budget-critical` when ANY agent — orchestrator or sub-agent — crosses 90% of its `maxTurns`. The signal is shared: if it exists, the orchestrator will soon wind down, so finer-grained stride analysis is wasted budget that the merger will never read.
+The watchdog (`scripts/budget_watchdog.py`, fired by the PostToolUse hook) writes `$OUTPUT_DIR/.budget-critical` when ANY agent — orchestrator or sub-agent — crosses 90% of its `maxTurns`. Its bare existence is the trigger, which is safe because the watchdog only writes the flag for a session that owns this run's `.appsec-lock` — a concurrent foreign session sharing `OUTPUT_DIR` can no longer raise it (see `budget_watchdog._write_flag`). If it exists, this run's orchestrator will soon wind down, so finer-grained stride analysis is wasted budget that the merger will never read.
 
 **Check at every STRIDE-category boundary** (between Spoofing → Tampering → Repudiation → InfoDisclosure → DoS → EoP). Combine the check with the Bash call that prints `↳ Checking <category>…`, e.g.:
 

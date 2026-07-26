@@ -6,11 +6,10 @@
 # judgment "which code sites are the same object" lives HERE, not in a heuristic.
 #
 # A finding consolidates only if it matches a group below. No match → it stays a
-# separate finding (per_instance default). IDOR (CWE-639) is consolidated
-# cross-component (see the idor-object-authz group): broken object-level
-# authorization is ONE systemic control gap, and listing every vulnerable route
-# as a separate Critical buried the signal under ~17 near-identical findings.
-# Each route is preserved as an `instances[]` entry on the single survivor.
+# separate finding (per_instance default). A cross-component group consolidates
+# only when its members name the same concrete `control_scope`; otherwise each
+# component keeps its own finding. Every folded route remains an `instances[]`
+# entry on the survivor.
 #
 # XSS (CWE-79/80) policy (revised 2026-06-25): XSS sinks in DIFFERENT components
 # stay distinct (different objects, different fixes), but multiple XSS sinks in
@@ -29,8 +28,10 @@
 #   source_check_id:  list; threat.source_check_id (scanner AUTHZ-NNN) must match
 #   config_check_id:  list; threat.config_check_id (config-scan) must match
 #
-# scope: per-component (default) buckets per component_id; cross-component merges
-#        across components (use for shared infra like a JWT helper).
+# scope: per-component (default) buckets per component_id. A cross-component
+#        group MUST declare cross_component_scope_field; it merges only when
+#        every member carries the same non-empty value for that concrete shared
+#        control/object. Missing scope falls back to per-component bucketing.
 # split_by: extra threat-dict field names to add to the bucket key — the escape
 #        hatch for the severity-zone / distinct-flow exceptions (a field that is
 #        absent on the threat is a no-op).
@@ -39,7 +40,8 @@
 groups:
   - id: jwt-verification
     title: "Insecure JWT Verification"
-    scope: cross-component          # the JWT helper is shared infra
+    scope: cross-component
+    cross_component_scope_field: control_scope
     match_any:
       - cwe: [CWE-347, CWE-287, CWE-345]
         title_pattern: '(?i)\b(jwt|algorithm|signature|verif\w*|decode)\b'
@@ -73,7 +75,8 @@ groups:
 
   - id: idor-object-authz
     title: "Insecure Direct Object Reference"
-    scope: cross-component          # broken object-level authz is one control gap
+    scope: cross-component
+    cross_component_scope_field: control_scope
     match_any:
       - cwe: [CWE-639]
 
@@ -83,10 +86,11 @@ groups:
   # systemic gap — "no centralized security event logging." Separate findings
   # per event type (auth, upload, b2b, challenge) share a single fix (add an
   # audit-log middleware / SIEM drain) and a single owner. Cross-component
-  # because the missing infrastructure is shared.
+  # only when the findings name the same shared control_scope.
   - id: missing-audit-logging
     title: "Missing Security Event Logging"
     scope: cross-component
+    cross_component_scope_field: control_scope
     match_any:
       - cwe: [CWE-778, CWE-223]
 
@@ -121,12 +125,13 @@ groups:
   # absent-dependency-tooling: "no lockfile", "Renovate not present",
   # "Dependabot npm ecosystem not configured" are three symptoms of ONE missing
   # control: automated dependency tracking. They share a single remediation
-  # (add lockfile + enable Dependabot/Renovate) and a single owner (platform
-  # team). Guarded by title_pattern so Docker/Actions pinning (also CWE-1104)
+  # (add lockfile + enable Dependabot/Renovate) only when the findings name one
+  # shared control_scope. Guarded by title_pattern so Docker/Actions pinning (also CWE-1104)
   # stays in ci-workflow-supply-chain above.
   - id: absent-dependency-tooling
     title: "Automated Dependency Tracking Not Configured"
     scope: cross-component
+    cross_component_scope_field: control_scope
     match_any:
       - cwe: [CWE-1104, CWE-937]
         title_pattern: '(?i)\b(lock.?file|package.lock|renovate|dependabot|sca|dependency.review|dependency.track|supply.chain.gate)\b'

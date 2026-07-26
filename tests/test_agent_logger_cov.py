@@ -367,6 +367,36 @@ class TestAgentParams:
     def test_empty_prompt(self, al):
         assert al._agent_params("") == {}
 
+    def test_adds_stride_tier_from_the_manifest(self, al, tmp_path):
+        """The tier reaches AGENT_SPAWN/AGENT_INVOKE — and from there
+        .agent-run.log and the headless progress view — without the dispatch
+        prompt carrying it: the manifest already knows, and the analyzer prompt
+        sits at its size budget."""
+        (tmp_path / ".stride-dispatch-manifest.json").write_text(
+            json.dumps(
+                {
+                    "components": [
+                        {"component_id": "ci-cd", "cheap_stride": True},
+                        {"component_id": "auth"},
+                    ]
+                }
+            )
+        )
+        assert al._agent_params("COMPONENT_ID=ci-cd") == {
+            "COMPONENT_ID": "ci-cd",
+            "ANALYSIS_DEPTH": "screening",
+        }
+        assert al._agent_params("COMPONENT_ID=auth") == {
+            "COMPONENT_ID": "auth",
+            "ANALYSIS_DEPTH": "full",
+        }
+
+    def test_stride_tier_absent_without_a_manifest(self, al):
+        """Non-STRIDE agents, and any run whose manifest is missing or corrupt,
+        must not gain a guessed tier."""
+        assert al._agent_params("COMPONENT_ID=ci-cd") == {"COMPONENT_ID": "ci-cd"}
+        assert al._agent_params("REPO_ROOT=/r") == {"REPO_ROOT": "/r"}
+
 
 # ---------------------------------------------------------------------------
 # _write_trace_summary

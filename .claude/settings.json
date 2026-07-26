@@ -2,7 +2,6 @@
   "permissions": {
     "allow": [
       "Read(**)",
-      "Write(**)",
       "Edit(**)",
       "Bash(find:*)",
       "Bash(git:*)",
@@ -34,8 +33,6 @@
       "Bash(python3:*)",
       "Bash(awk:*)",
       "Bash(sed:*)",
-      "Write(/home/mrohr/appsec-advisor/docs/security/**)",
-      "Write(/home/mrohr/appsec-advisor/.eval-out/**)",
       "Read(/home/mrohr/appsec-advisor/**)",
       "Read(/home/mrohr/.claude/projects/**)",
       "Read(/home/mrohr/appsec-advisor/docs/security/**)",
@@ -43,8 +40,7 @@
       "Edit(/home/mrohr/appsec-advisor/.gitignore)",
       "Edit(/home/mrohr/appsec-advisor/**)",
       "Read(/home/mrohr/appsec-advisor/.eval-out/**)",
-      "Bash(*)",
-      "Write(/home/mrohr/appsec-advisor/docs/security/.*)"
+      "Bash(*)"
     ]
   }
 }

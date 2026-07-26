@@ -6,8 +6,8 @@ description: |
   shared mechanism/object whose matching findings collapse into ONE systemic
   finding carrying `instances[]`. Consumed by
   `merge_threats._consolidate_by_group` during Phase 10 collect. A finding that
-  matches NO group stays a separate per-instance finding (the conservative
-  default — IDOR/XSS intentionally match nothing).
+  matches NO group stays a separate per-instance finding. Cross-component groups
+  additionally require a concrete shared scope before they fold members.
 
 type: object
 required: [groups]
@@ -28,6 +28,14 @@ properties:
         scope:
           type: string
           enum: [per-component, cross-component]
+        cross_component_scope_field:
+          type: string
+          minLength: 1
+          description: |
+            Required in practice for a cross-component merge. The merger joins
+            findings across components only when each carries the same non-empty
+            value for this field; otherwise it falls back to per-component
+            bucketing.
         split_by:
           type: array
           items:

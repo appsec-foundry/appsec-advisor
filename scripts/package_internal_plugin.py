@@ -18,7 +18,12 @@ import tarfile
 from pathlib import Path
 
 UPSTREAM_NAMESPACE = "appsec-advisor"
-TEXT_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml"}
+# Namespace rewriting + leak detection must reach the script surfaces too:
+# scripts/run-headless.sh and many .py helpers hardcode `<namespace>:<skill>`
+# command references (e.g. the `claude -p` prompt, `/…:fix-run-issues` hints).
+# Excluding .sh/.py left a repackaged plugin dispatching the upstream namespace
+# — a broken headless wrapper that check_namespace_leaks never saw.
+TEXT_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml", ".sh", ".py"}
 TOP_LEVEL_EXCLUDES = {
     ".agents",
     ".cache",
@@ -527,9 +532,25 @@ def apply_package_surface_policy(
     write_surface_manifest(build, policy_path, skills, hooks, upstream_url, mcp_servers)
 
 
+def _has_shebang(path: Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            return fh.read(2) == b"#!"
+    except OSError:
+        return False
+
+
 def _text_files(root: Path):
     for path in root.rglob("*"):
-        if path.is_file() and path.suffix.lower() in TEXT_SUFFIXES:
+        if not path.is_file():
+            continue
+        if path.suffix.lower() in TEXT_SUFFIXES:
+            yield path
+        elif not path.suffix and _has_shebang(path):
+            # Extensionless executables (CLI shims like scripts/appsec-reviewer-cli)
+            # hardcode `<namespace>:<skill>` command references too, but match no
+            # suffix. Detect them by shebang so the namespace rewrite and the leak
+            # check reach them — without hardcoding shim names.
             yield path
 
 
@@ -548,7 +569,7 @@ def rewrite_namespace(build: Path, name: str) -> None:
 def check_namespace_leaks(build: Path) -> None:
     needle = f"{UPSTREAM_NAMESPACE}:"
     leaks: list[str] = []
-    for root_name in ("skills", "agents"):
+    for root_name in ("skills", "agents", "scripts"):
         root = build / root_name
         if not root.exists():
             continue

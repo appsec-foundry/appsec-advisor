@@ -707,6 +707,25 @@ def test_component_selection_passthrough_no_exclusions():
     assert cs["analyzed"] == 1 and cs["total"] == 1 and cs["excluded"] == []
 
 
+def test_component_selection_carries_screening_depth():
+    """--cheap-stride marks screened components in .stride-selection.json; the
+    marker has to survive into meta so §1 Scope, §3 and the verdict can say so."""
+    m = _load()
+    comps = [{"id": "web", "name": "Web"}, {"id": "worker", "name": "Worker"}]
+    sel = {
+        "mode": "criteria",
+        "selected": [
+            {"id": "web", "reasons": ["internet-exposed"]},
+            {"id": "worker", "reasons": ["screening depth (--cheap-stride)"], "analysis_depth": "screening"},
+        ],
+        "excluded": [],
+    }
+    cs = m.build_component_selection(sel, comps)
+    by_id = {s["id"]: s for s in cs["selected"]}
+    assert by_id["worker"]["analysis_depth"] == "screening"
+    assert "analysis_depth" not in by_id["web"]
+
+
 def test_component_selection_none_when_absent():
     m = _load()
     assert m.build_component_selection(None, []) is None
@@ -1894,6 +1913,30 @@ def test_build_threats_skips_info_stubs_and_missing_id():
     assert threats[1]["affected_parameter"].endswith("…")
     assert any("observation-stub" in w for w in warnings)
     assert any("evidence-refuted" in w for w in warnings)
+
+
+def test_build_threats_applies_and_can_override_register_severity_floor():
+    merged = {
+        "threats": [
+            {
+                "t_id": "T-001",
+                "title": "Low-impact diagnostic information disclosure",
+                "component_id": "c1",
+                "likelihood": "Low",
+                "risk": "Low",
+                "effective_severity": "Low",
+                "cwe": "CWE-200",
+                "evidence": {"file": "src/info.py", "line": 4},
+            }
+        ]
+    }
+    default_threats, default_warnings = b.build_threats(merged)
+    assert default_threats == []
+    assert any("below severity floor (medium)" in warning for warning in default_warnings)
+
+    low_threats, low_warnings = b.build_threats(merged, register_floor="low")
+    assert [threat["id"] for threat in low_threats] == ["T-001"]
+    assert not low_warnings
 
 
 def test_build_mitigations_bumps_severity_to_max():

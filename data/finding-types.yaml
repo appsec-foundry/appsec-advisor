@@ -114,6 +114,12 @@ finding_types:
     parent_category: TH-02
     cwe_any: [CWE-613]
 
+  - id: FT-034
+    name: "Weak Password Policy"
+    parent_category: TH-02
+    cwe_any: [CWE-521]
+    title_hints: ["password policy", "password length", "short password"]
+
   # ---------- Authorization ----------
   - id: FT-040
     name: "Insecure Direct Object Reference (IDOR)"

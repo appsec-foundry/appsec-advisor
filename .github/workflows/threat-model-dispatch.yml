@@ -203,10 +203,11 @@ jobs:
       - name: Sanitize untrusted checkout
         run: |
           set -euo pipefail
+          rm -f   target/CLAUDE.md target/CLAUDE.local.md
           rm -rf  target/.claude
           rm -f   target/.vscode/tasks.json
           rm -f   target/.devcontainer/devcontainer.json
-          echo "Stripped repo-owned .claude / IDE task config from ./target"
+          echo "Stripped repo-owned Claude memory, .claude, and IDE task config from ./target"
           # Escaping symlinks are not auto-removed (would change scan scope); the
           # untrusted preflight will abort on them. Surface any for triage:
           esc=$(find target -type l -printf '%p -> %l\n' 2>/dev/null || true)
@@ -229,6 +230,11 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -uo pipefail
+          # The env: block above re-reads the raw secret directly — preflight's
+          # trim happened in its own step and never left that shell, so a
+          # whitespace-wrapped token would otherwise reach `claude` untrimmed
+          # and fail here even though the preflight just called it clean.
+          CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
           out=$(claude -p "Reply with the single word: ok" --output-format text 2>&1)
           rc=$?
           if [ "$rc" -ne 0 ] || printf '%s' "$out" | grep -qiE '401|invalid bearer|not authenticated'; then
@@ -286,6 +292,9 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
+          # Same re-read-the-raw-secret gap as the verify step above: trim again
+          # where the token is actually consumed.
+          CLAUDE_CODE_OAUTH_TOKEN="$(printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | tr -d '[:space:]')"
           OUT="$PWD/${{ steps.preset.outputs.output_path }}"
           mkdir -p "$OUT"
 
@@ -311,6 +320,35 @@ jobs:
           ./scripts/run-headless.sh "${ARGS[@]}"
 
           cp -f effective-permissions.json "$OUT/" 2>/dev/null || true
+
+      # 7b) Put the readable part of the report on the run page itself, so the
+      #     common case ("what did it find?") needs no artifact download at all.
+      #     Only the Management Summary: the full report is ~109 KB and its
+      #     Mermaid/SVG figures do not render in a job summary, while the
+      #     summary section is ~14 KB and is what a reader wants first.
+      #     Never fatal — a failed scan still uploads its artifact below.
+      - name: Publish report digest to job summary
+        if: always()
+        run: |
+          set -uo pipefail
+          REPORT="$PWD/${{ steps.preset.outputs.output_path }}/threat-model.md"
+          if [ ! -s "$REPORT" ]; then
+            echo "No threat-model.md — scan did not produce a report." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "# Threat Model — ${{ steps.preset.outputs.use_case }}"
+            echo
+            python3 scripts/extract_report_section.py "$REPORT" \
+                --section "Management Summary" \
+                --section "Critical Attack Tree" \
+                --skip-missing \
+              || echo "_(digest unavailable — see the artifact for the full report)_"
+            echo
+            echo "---"
+            echo
+            echo "Full report, YAML and SARIF: artifact \`threat-model-${{ steps.preset.outputs.use_case }}\` below."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # 8) Publish the report (md / yaml / sarif / run log / permissions).
       - name: Upload report artifact

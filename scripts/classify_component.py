@@ -114,12 +114,26 @@ ALIASES_TO_CANONICAL = {
 
 
 def _to_canonical(component_id: str, hint: str | None = None) -> str:
-    if hint:
-        return hint.lower()
-    cid_lower = component_id.lower()
-    if cid_lower in ALIASES_TO_CANONICAL:
-        return ALIASES_TO_CANONICAL[cid_lower]
-    return cid_lower
+    """Canonical id for classification, with the M19 auth rule applied last.
+
+    The docstring's rule 1 says an id matching ``auth-*`` is always auth-identity,
+    but that was only ever approximated by an enumeration in
+    ``ALIASES_TO_CANONICAL`` (auth-core, auth-jwt, auth-login, auth-module,
+    auth-session). Any name outside the list fell through to itself, missing the
+    complex floor. On 2026-07-20 an inventory named the component ``auth-service``
+    -- not in the list -- so the component holding JWT signing, password hashing,
+    login and 2FA classified as *moderate* and got the smaller turn budget, while
+    an earlier run of the same repo classified it complex. Auth is the one class
+    where under-budgeting is most costly, so the rule is applied as a prefix here
+    and also to a caller-supplied hint: the hint comes from an LLM-authored
+    inventory and must not be able to opt a component out of a safety floor.
+    """
+    candidate = (hint or component_id).lower()
+    if candidate in ALIASES_TO_CANONICAL:
+        candidate = ALIASES_TO_CANONICAL[candidate]
+    if candidate.startswith("auth-") or candidate == "auth":
+        return "auth-identity"
+    return candidate
 
 
 def _bump_complexity(current: str, floor: str) -> str:
@@ -157,12 +171,45 @@ def _count_recon_pattern(recon_summary: str, section_pattern: str, component_hin
     return count
 
 
+# A dispatch must read 8 mandatory context files before it touches source:
+# 4 under .dispatch-context/<id>/ and 4 taxonomy-slice files. On top of the
+# per-source-file reads it needs turns for the pre-seed write, the six
+# per-category overwrites and the step logging.
+_MANDATORY_CONTEXT_READS = 8
+_WRITE_AND_LOGGING_RESERVE = 10
+# Ceiling on the footprint-derived floor. Analyzers are expected to sample wide
+# components rather than read exhaustively; this keeps a 400-file component from
+# demanding an absurd budget while still covering the mid-size case that broke.
+_FOOTPRINT_TURN_CAP = 48
+
+
+def _footprint_turn_floor(file_count: int | None, current: int) -> tuple[int, str]:
+    """Raise the turn budget when a component's file footprint outgrows it.
+
+    2026-07-20 juice-shop: `data-persistence` classified as `moderate` (22 soft
+    turns, 40 hard harness ceiling) purely from role heuristics, while its
+    `paths` spanned 24 model files. With the 8 mandatory context reads that is
+    32 reads before analysis can start -- the component could not finish inside
+    the ceiling, and both dispatch attempts died at exactly 40 tool calls having
+    completed zero STRIDE categories. Complexity is a risk signal; it says
+    nothing about how much reading the component requires, so the budget needs
+    this second, orthogonal input.
+    """
+    if not file_count or file_count <= 0:
+        return current, ""
+    needed = min(file_count + _MANDATORY_CONTEXT_READS + _WRITE_AND_LOGGING_RESERVE, _FOOTPRINT_TURN_CAP)
+    if needed <= current:
+        return current, ""
+    return needed, f" + footprint floor ({file_count} files → {needed} turns)"
+
+
 def classify(
     component_id: str,
     recon_summary: str,
     interfaces: int,
     depth: str,
     canonical_id: str | None = None,
+    file_count: int | None = None,
 ) -> dict:
     """Return the classification dict (see module docstring)."""
     canonical = _to_canonical(component_id, canonical_id)
@@ -170,13 +217,17 @@ def classify(
 
     # Step 1 — auth-identity invariant
     if canonical == "auth-identity":
+        # The complexity verdict ignores file footprint by design (M19/M8), but
+        # the turn budget must not: reading N files costs N turns whatever the
+        # risk rating says.
+        auth_turns, auth_floor = _footprint_turn_floor(file_count, budgets["complex"])
         return {
             "component_id": component_id,
             "canonical_id": canonical,
             "complexity": "complex",
-            "max_turns": budgets["complex"],
+            "max_turns": auth_turns,
             "estimated_threat_count": "high",
-            "reason": "auth/identity: always high-risk regardless of file footprint (M19/M8)",
+            "reason": "auth/identity: always high-risk regardless of file footprint (M19/M8)" + auth_floor,
         }
 
     # Recon counts for this component
@@ -222,11 +273,16 @@ def classify(
 
     # ESTIMATED_THREAT_COUNT mapping
     etc_map = {"simple": "low", "moderate": "moderate", "complex": "high"}
+    max_turns = budgets[complexity] if complexity != "simple" else 8
+    floor_turns, floor_reason = _footprint_turn_floor(file_count, max_turns)
+    if floor_turns > max_turns:
+        max_turns = floor_turns
+        reason += floor_reason
     return {
         "component_id": component_id,
         "canonical_id": canonical,
         "complexity": complexity,
-        "max_turns": budgets[complexity] if complexity != "simple" else 8,
+        "max_turns": max_turns,
         "estimated_threat_count": etc_map[complexity],
         "reason": reason,
     }

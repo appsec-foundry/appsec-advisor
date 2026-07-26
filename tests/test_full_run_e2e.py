@@ -626,6 +626,7 @@ def test_resolved_config_matches_driver_and_depth_contract(
     out_dir: Path,
     target_repo: Path,
     assessment_depth: str,
+    driver_metadata: dict,
 ) -> None:
     config = json.loads((out_dir / ".skill-config.json").read_text(encoding="utf-8"))
     assert config.get("assessment_depth") == assessment_depth, config
@@ -652,18 +653,23 @@ def test_resolved_config_matches_driver_and_depth_contract(
         assert qa_status.get("status") == "pass", qa_status
         assert (out_dir / ".actors-discovered.json").is_file(), "actor discovery output missing"
         assert (out_dir / ".actors-resolved.json").is_file(), "resolved actor catalog missing"
-        resolved = json.loads((out_dir / ".actors-resolved.json").read_text(encoding="utf-8"))
-        actors = resolved.get("resolved_actors") or []
-        actor_ids = {actor.get("id") for actor in actors}
-        assert "ACT-D-09" in actor_ids, "multi-tenancy actor was not activated"
-        assert actor_ids & {"ACT-D-04", "ACT-D-06"}, "CI/secret signals activated no insider or supply-chain actor"
-        discovered = json.loads((out_dir / ".actors-discovered.json").read_text(encoding="utf-8"))
-        proposed_labels = {
-            str(actor.get("label") or "").lower() for actor in discovered.get("proposed_additional") or []
-        }
-        assert any("partner" in label or "b2b" in label for label in proposed_labels), (
-            f"B2B partner actor was not proposed: {sorted(proposed_labels)}"
-        )
+        # The specific actor IDs and B2B label below are bundled-fixture ground
+        # truth. A custom --repo run (make analyze-verify) exercises the same
+        # pipeline but cannot be held to the fixture's planted actors, so gate
+        # these on the bundled-oracle profile like the other recall assertions.
+        if driver_metadata.get("bundled_oracle"):
+            resolved = json.loads((out_dir / ".actors-resolved.json").read_text(encoding="utf-8"))
+            actors = resolved.get("resolved_actors") or []
+            actor_ids = {actor.get("id") for actor in actors}
+            assert "ACT-D-09" in actor_ids, "multi-tenancy actor was not activated"
+            assert actor_ids & {"ACT-D-04", "ACT-D-06"}, "CI/secret signals activated no insider or supply-chain actor"
+            discovered = json.loads((out_dir / ".actors-discovered.json").read_text(encoding="utf-8"))
+            proposed_labels = {
+                str(actor.get("label") or "").lower() for actor in discovered.get("proposed_additional") or []
+            }
+            assert any("partner" in label or "b2b" in label for label in proposed_labels), (
+                f"B2B partner actor was not proposed: {sorted(proposed_labels)}"
+            )
         assert (out_dir / ".fragments" / "security-posture-attack-paths.json").is_file(), (
             "non-quick run did not author the attack-path fragment"
         )

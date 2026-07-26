@@ -60,6 +60,7 @@ _SCHEMA_FILES = {
     "pentest_tasks": "pentest-tasks.schema.yaml",
     "config_scan_findings": "config-scan-findings.schema.yaml",
     "source_auth_findings": "source-auth-findings.schema.yaml",
+    "db_privilege_separation": "db-privilege-separation.schema.yaml",
     "actors_discovered": "actors-discovered.schema.yaml",
     "actors_resolved": "actors-resolved.schema.yaml",
     "actors_repo": "actors-repo.schema.yaml",
@@ -155,6 +156,33 @@ def _eligible_cwes() -> frozenset[str]:
         return frozenset()
     entries = doc.get("eligible_cwes") or []
     return frozenset(e["cwe"] for e in entries if isinstance(e, dict) and "cwe" in e)
+
+
+def cvss_v4_permitted(threat: dict) -> bool:
+    """Whether a cvss_v4 *already present* on ``threat`` is permitted by the
+    eligibility rules — source-forbidden, or source=stride on an ineligible /
+    evidence-less CWE. Does NOT cover the known-vuln "required" case or the
+    severity-band coherence warning (those are not permit/strip decisions).
+
+    Single source of truth for the permit decision: _check_cvss_eligibility
+    (below) enforces it as an error, and merge_threats.strip_ineligible_cvss_v4
+    enforces it as a deterministic repair — so the check and the strip can never
+    diverge. test_cvss_eligibility pins that equivalence.
+    """
+    source = threat.get("source")
+    if source in _CVSS_FORBIDDEN_SOURCES:
+        return False
+    if source == "stride":
+        cwe = threat.get("cwe")
+        evidence = threat.get("evidence") or {}
+        line = evidence.get("line") if isinstance(evidence, dict) else None
+        if not (isinstance(cwe, str) and _CWE_RE.match(cwe)):
+            return False
+        if cwe not in _eligible_cwes():
+            return False
+        if line is None:
+            return False
+    return True
 
 
 def _check_cvss_eligibility(data: dict, skip_cvss_required: bool = False) -> list[str]:
@@ -769,7 +797,7 @@ def _check_attack_surface_shape(data: dict) -> list[str]:
         )
     if missing_auth:
         errors.append(
-            f"ADVISORY: attack_surface has {missing_auth} entries where `auth_required` "
+            f"[advisory] attack_surface has {missing_auth} entries where `auth_required` "
             f"is null. The §5 generator cannot split unauthenticated vs authenticated "
             f"entry points — §5.2 will render '(0)'. Set `auth_required: true/false` "
             f"on every attack_surface entry."
@@ -1168,6 +1196,23 @@ def validate_source_auth_findings(data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
+def validate_db_privilege_separation(data: Any) -> tuple[bool, list[str]]:
+    """Validate the thorough-only database-principal separation sidecar."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("db_privilege_separation", data)
+    seen: set[str] = set()
+    for section in ("confirmed_findings", "hypotheses"):
+        for i, record in enumerate(data.get(section, []) or []):
+            if not isinstance(record, dict) or not isinstance(record.get("local_id"), str):
+                continue
+            local_id = record["local_id"]
+            if local_id in seen:
+                errors.append(f"{section}[{i}].local_id '{local_id}' is duplicated")
+            seen.add(local_id)
+    return len(errors) == 0, errors
+
+
 def validate_actors_discovered(data: Any) -> tuple[bool, list[str]]:
     """Validate the Phase-2.7 LLM actor-discovery sidecar."""
     if not isinstance(data, dict):
@@ -1209,6 +1254,7 @@ _VALIDATORS = {
     "pentest_tasks": validate_pentest_tasks,
     "config_scan_findings": validate_config_scan_findings,
     "source_auth_findings": validate_source_auth_findings,
+    "db_privilege_separation": validate_db_privilege_separation,
     "actors_discovered": validate_actors_discovered,
     "actors_resolved": validate_actors_resolved,
     "actors_repo": validate_actors_repo,

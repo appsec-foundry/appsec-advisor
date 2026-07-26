@@ -397,6 +397,33 @@ class TestAiExposure:
         assert "LLM06" in by_id
         assert by_id["LLM06"].get("owasp_asi_id") == "ASI02"
 
+    def test_explicit_owasp_ids_override_title_heuristics_and_surface_asi_only_risk(self):
+        d = {
+            "components": [{"id": "agent-orchestrator", "name": "Agent Orchestrator"}],
+            "threats": [
+                {
+                    "id": "T-071",
+                    "title": "Delegated Agent Token Reuse (agents/auth.py:48)",
+                    "component": "agent-orchestrator",
+                    "risk": "High",
+                    "owasp_asi_ids": ["ASI03"],
+                },
+                {
+                    "id": "T-072",
+                    "title": "Generic Finding (chat.py:12)",
+                    "component": "agent-orchestrator",
+                    "risk": "High",
+                    "owasp_llm_ids": ["LLM06"],
+                    "owasp_asi_ids": ["ASI02"],
+                },
+            ],
+        }
+        data = json.loads(pf.gen_ai_exposure(d))
+        by_asi = {r.get("owasp_asi_id"): r for r in data["ai_risks"]}
+        assert by_asi["ASI03"]["name"] == "Agent Identity & Privilege Abuse"
+        assert by_asi["ASI03"]["findings"][0]["ref"] == "T-071"
+        assert by_asi["ASI02"]["owasp_llm_id"] == "LLM06"
+
     def test_ai_exposure_schema_declares_asi_enum(self):
         """The ai-exposure fragment schema must accept owasp_asi_id ASI01..ASI10
         (contract guard: producer above emits it, schema must permit it)."""
@@ -2324,10 +2351,20 @@ class TestSecurityArchitectureV2:
         assert "CSRF Protection" not in labels
         assert "Role-Based Access Control" in titles
 
-    def test_controls_covered_dropped_when_all_suppressed(self):
-        """When every control in a §6.x section is suppressed, the
-        `**Controls covered:**` line is removed entirely (no dangling links);
-        the suppressed-controls note still lists them for the reader."""
+    def test_all_suppressed_section_still_emits_h4_blocks(self):
+        """A §6.x section whose controls would ALL be suppressed must still
+        emit them as H4 blocks rather than shipping empty.
+
+        Previously this case dropped the `**Controls covered:**` line and left
+        the section with zero `####` blocks. That avoided dangling links but
+        produced the one shape qa_checks.check_control_subsection_coverage
+        rejects as BLOCKING: the section HAS catalogued controls, so the
+        `_Not applicable_` exemption does not apply and "no #### control
+        subsections found" fails the gate — an unwinnable repair loop, because
+        the only content that could satisfy it is what was just dropped
+        (insecure-ai-app §6.3, 2026-07-19). The no-dangling-link guarantee is
+        preserved by emitting the H4s so every link resolves.
+        """
         data = {
             "components": [],
             "threats": [],
@@ -2337,9 +2374,22 @@ class TestSecurityArchitectureV2:
         }
         md = pf.gen_security_architecture_v2(data)
         assert "__CONTROLS_COVERED_SENTINEL__" not in md
-        seg = self._section_containing(md, "Additional cataloged controls")
-        assert "**Controls covered:**" not in seg
-        assert "CSRF Protection" in seg
+        seg = self._section_containing(md, "CSRF Protection")
+
+        # The gate's hard requirement: at least one H4 in the section.
+        titles = [re.sub(r"^\d+(?:\.\d+)*\s+", "", t).strip() for t in re.findall(r"^#### (.+)$", seg, re.M)]
+        assert titles, "section shipped with zero #### blocks — control_subsection_coverage would fail"
+        assert "CSRF Protection" in titles
+
+        # Original intent retained: every covered link resolves to an emitted H4.
+        assert "**Controls covered:**" in seg
+        covered_line = seg.split("**Controls covered:**", 1)[1].split("\n", 1)[0]
+        for lab in re.findall(r"\[([^\]]+)\]\(#[^)]+\)", covered_line):
+            assert lab in titles, f"dangling covered link {lab!r}; H4s={titles}"
+
+        # The suppressed-controls note lists controls that were actually
+        # dropped; nothing was dropped here, so it must not appear.
+        assert "Additional cataloged controls" not in seg
 
 
 class TestV2SectionRouting:
@@ -3218,6 +3268,82 @@ class TestClassifyTierBoundary:
         node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", block, re.M))
         assert "DATA" not in node_ids and "APP" not in node_ids and "BROWSER" not in node_ids
         assert len(node_ids) <= 8, f"expected ≤8 nodes, got {sorted(node_ids)}"
+
+
+class TestContainerDiagramNodeCap:
+    """Regression (2026-07-18 juice-shop): `gen_architecture_diagrams` emitted
+    one §2.2 node per component with NO ceiling, so a 9-component model shipped
+    a `diagram_compactness` violation that no re-render could clear — the repair
+    plan's own "regenerate from the Pre-Generator, it obeys the limits by
+    construction" remedy reproduced the violation verbatim.
+    """
+
+    @staticmethod
+    def _yaml(n_app: int, threats: list | None = None) -> dict:
+        comps = [
+            {"id": "angular-spa", "name": "Angular SPA", "paths": ["frontend/src/**"]},
+            {"id": "data-layer", "name": "Data Layer", "paths": ["models/**", "data/app.sqlite"]},
+        ]
+        comps += [{"id": f"svc-{i}", "name": f"Service {i}", "paths": [f"routes/svc{i}.ts"]} for i in range(n_app)]
+        return {"meta": {"project": {"name": "JS"}}, "components": comps, "threats": threats or []}
+
+    @staticmethod
+    def _block(frag: str) -> str:
+        return re.search(r"### 2\.2 Container Architecture.*?```mermaid(.*?)```", frag, re.S).group(1)
+
+    def test_twelve_components_capped_to_contract_maximum(self):
+        frag = pf.gen_architecture_diagrams(self._yaml(n_app=10))
+        node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", self._block(frag), re.M))
+        assert len(node_ids) <= 8, f"expected ≤8 nodes, got {sorted(node_ids)}"
+
+    def test_every_tier_keeps_at_least_one_node(self):
+        block = self._block(pf.gen_architecture_diagrams(self._yaml(n_app=10)))
+        node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", block, re.M))
+        # Client and data tiers must survive the trim — the layered topology is
+        # the point of the diagram.
+        assert "angular_spa" in node_ids
+        assert "data_layer" in node_ids
+
+    def test_highest_risk_components_survive_the_trim(self):
+        threats = [{"component_id": "svc-9", "risk": "critical"} for _ in range(4)]
+        frag = pf.gen_architecture_diagrams(self._yaml(n_app=10, threats=threats))
+        node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", self._block(frag), re.M))
+        assert "svc_9" in node_ids, "the component carrying 4 Criticals must not be trimmed"
+
+    def test_no_class_line_references_a_trimmed_node(self):
+        threats = [{"component_id": "svc-9", "risk": "critical"} for _ in range(4)]
+        block = self._block(pf.gen_architecture_diagrams(self._yaml(n_app=10, threats=threats)))
+        declared = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", block, re.M))
+        classed = set(re.findall(r"^\s*class\s+([A-Za-z0-9_]+)\s", block, re.M))
+        assert classed <= declared, f"class lines reference undeclared nodes: {sorted(classed - declared)}"
+
+    def test_no_edge_references_a_trimmed_node(self):
+        block = self._block(pf.gen_architecture_diagrams(self._yaml(n_app=10)))
+        declared = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", block, re.M))
+        edges = re.findall(r"^\s*([A-Za-z0-9_]+)\s*[-.=]+>\s*\|[^|]*\|\s*([A-Za-z0-9_]+)", block, re.M)
+        referenced = {n for edge in edges for n in edge}
+        assert referenced <= declared, f"edges reference trimmed nodes: {sorted(referenced - declared)}"
+
+    def test_trimmed_components_are_named_not_silently_dropped(self):
+        frag = pf.gen_architecture_diagrams(self._yaml(n_app=10))
+        assert "Not shown" in frag
+        assert "#23-components" in frag
+
+    def test_small_model_is_untouched_and_carries_no_note(self):
+        frag = pf.gen_architecture_diagrams(self._yaml(n_app=3))
+        node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", self._block(frag), re.M))
+        assert len(node_ids) == 5
+        assert "Not shown" not in frag
+
+    def test_cap_helper_keeps_one_per_tier_when_budget_is_tighter_than_tiers(self):
+        by_tier = {
+            "client": [{"id": "c1"}, {"id": "c2"}],
+            "application": [{"id": "a1"}, {"id": "a2"}],
+            "data": [{"id": "d1"}],
+        }
+        capped, dropped = pf._cap_container_tiers(by_tier, {}, {}, max_nodes=2)
+        assert [len(capped[t]) for t in ("client", "application", "data")] == [1, 1, 1]
+        assert len(dropped) == 2
 
 
 # ---------------------------------------------------------------------------

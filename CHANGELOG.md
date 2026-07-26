@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+## 0.5.1-beta (2026-07-26)
+
+### Added
+
+- Authentication scans now detect security-question password resets and password policies that allow fewer than eight characters.
+- `ask-threat-model` can now filter findings by severity, component, and evidence state.
+- Headless runs now end with a per-model token and cost breakdown, taken from Claude Code's own accounting and matching what `/cost` reports in an interactive session.
+- New screening depth tier that analyzes the internal tail on a smaller budget while everything carrying attack surface or data keeps full depth — on by default in quick and standard scans, off in thorough, overridable with `--cheap-stride` and `--no-cheap-stride`. On the reference OWASP Juice Shop at standard depth this reduced the API cost from $33.21 to $30.83.
+- Scans of agentic applications now check Claude Code permissions and hooks for unsafe behavior.
+
+### Changed
+
+- Large scans now analyze components in resumable batches, improving speed without sacrificing coverage.
+- Supply-chain scoring now focuses on exploitable risks and better recognizes common Python and npm safeguards.
+- Clean reports now skip redundant semantic review, reducing run time and cost.
+- Architecture and evidence checks are now faster on larger repositories.
+- Attack walkthroughs now present attacker actions in a clearer order and format technical details more consistently.
+- The pre-flight now reports the STRIDE threat cap and tail screening in one shorter `STRIDE depth` row.
+
+### Fixed
+
+- Full and rebuild scans are now more reliable on long runs without weakening final checks.
+- Evidence results are no longer lost while abuse cases are processed.
+- Merged findings now retain their locations and sources, while unrelated architectural risks remain separate.
+- Stored XSS is now reported as confirmed only when data is persisted and later reaches an unsafe HTML output.
+- Headless runs can resume after analysis and provide clearer failure details and recovery guidance.
+- Component analysis no longer runs serially by mistake, and concurrent runs no longer interfere with each other.
+- Packaged plugins now work correctly with custom namespaces in headless mode.
+- Security architecture reports no longer contain empty control sections or broken two-factor authentication links.
+- Container diagrams now stay within their size limit on larger models.
+- A finding now carries the same severity everywhere in the report; the attack-path table no longer disagrees with the rest of the document.
+- An attack chain is rated fully viable only when every assessed step is confirmed, and its control assessment follows the verifier's reading of the code instead of a keyword guess.
+- Attack demonstrations containing an unsigned token or an SQL-injection payload no longer trip the secret gate or get masked into an unusable reproduction step.
+
 ## 0.5.0-beta (2026-07-18)
 
 ### Added

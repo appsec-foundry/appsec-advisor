@@ -26,7 +26,7 @@
     },
     "stage": {
       "type": "string",
-      "enum": ["stage1", "stage2", "stage3", "stage4", "complete"]
+      "enum": ["stage1", "stage1c", "stage2", "stage3", "stage4", "complete"]
     },
     "runtime": {
       "enum": ["thin-full", "thin-rerender", "legacy"]
@@ -89,6 +89,8 @@
           "config_scanner_model",
           "context_resolver_model",
           "diagram_depth",
+          "evidence_verifier_max_findings",
+          "evidence_verifier_model",
           "enrich_arch_fragments",
           "estimate_source",
           "estimate_stage1_min",
@@ -137,6 +139,7 @@
           "skip_qa",
           "slug",
           "stride_model",
+          "stride_concurrency",
           "stride_profile",
           "stride_turns_complex",
           "stride_turns_moderate",
@@ -181,6 +184,26 @@
         "maxLength": 500
       },
       "maxItems": 50
+    },
+    "candidates": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+      }
+    },
+    "candidate_titles": {
+      "description": "Short display titles keyed by candidate id, for dispatch labels. Advisory: a dispatcher falls back to the bare id when an entry is absent.",
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 60
+      }
     }
   },
   "allOf": [
@@ -213,6 +236,24 @@
         "properties": {
           "action": {
             "const": "dispatch_agent"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "mode",
+          "stage",
+          "instruction_file",
+          "config_path",
+          "dispatch_values"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "dispatch_parallel"
           }
         }
       },

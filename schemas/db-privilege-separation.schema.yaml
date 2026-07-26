@@ -1,0 +1,94 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/db-privilege-separation.schema.yaml
+title: Database principal separation assessment
+description: |
+  Thorough-only evidence produced by database_privilege_separation.py. The
+  sidecar intentionally records configuration references and source locations,
+  never credential values or connection strings.
+type: object
+required:
+  - version
+  - generated_at
+  - assessment_depth
+  - skipped
+  - confirmed_findings
+  - hypotheses
+  - warnings
+additionalProperties: false
+properties:
+  version:
+    type: integer
+    const: 1
+  generated_at:
+    type: string
+    pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+  assessment_depth:
+    type: string
+    enum: [quick, standard, thorough]
+  skipped:
+    type: boolean
+  skip_reason:
+    type: [string, 'null']
+  confirmed_findings:
+    type: array
+    items:
+      $ref: '#/$defs/record'
+  hypotheses:
+    type: array
+    items:
+      $ref: '#/$defs/record'
+  warnings:
+    type: array
+    items:
+      type: string
+$defs:
+  evidence:
+    type: object
+    required: [file, line, signal]
+    additionalProperties: false
+    properties:
+      file:
+        type: string
+      line:
+        type: integer
+        minimum: 1
+      signal:
+        type: string
+  record:
+    type: object
+    required:
+      - local_id
+      - title
+      - cwe
+      - principal_kind
+      - privileged_aliases
+      - unprivileged_aliases
+      - evidence
+    additionalProperties: false
+    properties:
+      local_id:
+        type: string
+        pattern: '^DBSEP-[0-9]{3,4}$'
+      title:
+        type: string
+      cwe:
+        type: string
+        pattern: '^CWE-[0-9]+$'
+      principal_kind:
+        type: string
+        enum: [literal, reference]
+      privileged_aliases:
+        type: array
+        minItems: 1
+        items:
+          type: string
+      unprivileged_aliases:
+        type: array
+        minItems: 1
+        items:
+          type: string
+      evidence:
+        type: array
+        minItems: 1
+        items:
+          $ref: '#/$defs/evidence'

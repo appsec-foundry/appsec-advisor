@@ -2721,16 +2721,31 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     # system was assessed when only a criteria-selected subset was.
     scope_coverage = ""
     cs = (ctx.yaml_data.get("meta") or {}).get("component_selection")
-    if isinstance(cs, dict) and (cs.get("excluded") or []):
+    # Screening-depth components (--cheap-stride) were analyzed, but not at full
+    # depth — counting them as "full STRIDE analysis" would overstate coverage,
+    # so they get their own clause and are subtracted from the full-depth count.
+    n_screen = sum(
+        1 for e in ((cs or {}).get("selected") or []) if isinstance(e, dict) and e.get("analysis_depth") == "screening"
+    )
+    if isinstance(cs, dict) and ((cs.get("excluded") or []) or n_screen):
         analyzed = cs.get("analyzed", 0)
         total_comp = cs.get("total", analyzed)
         n_exc = len(cs.get("excluded") or [])
         scope_coverage = (
-            f"**Scope:** {analyzed} of {total_comp} components received full STRIDE analysis — "
+            f"**Scope:** {analyzed - n_screen} of {total_comp} components received full STRIDE analysis — "
             f"the externally-reachable, authentication-bearing, and business-critical surface. "
-            f"The other {n_exc} (lower-priority / internal) were not individually assessed at this depth "
-            f"(see [§1 Scope](#scope))."
         )
+        if n_screen:
+            scope_coverage += (
+                f"{n_screen} further component(s) received a reduced-budget screening pass "
+                f"(all six STRIDE categories, no verification greps) and are marked "
+                f"`Screened` in the component table. "
+            )
+        if n_exc:
+            scope_coverage += (
+                f"The other {n_exc} (lower-priority / internal) were not individually assessed at this depth "
+            )
+        scope_coverage += "(see [§1 Scope](#scope))."
     # Badge worst-case bullets whose findings anchor a code-verified
     # (fully_viable) abuse chain. Data-level (per bullet.refs) — no fuzzy
     # markdown parsing. Empty suffix when no viable chain / abuse skipped.
@@ -9231,7 +9246,18 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             # criticality inline (same 🔴/🟠/🟡/🟢 vocabulary as the §8/§9
             # indices). Keep it BEFORE the non-breaking link unit; the ` — `
             # title separator downstream passes key on is preserved.
-            f_emoji = _TOP_THREATS_SEVERITY_EMOJI.get((t.get("risk") or t.get("severity") or "").strip().lower(), "")
+            # Severity must come from the SAME source every other section uses —
+            # `ctx.severity_for_ref`, which prefers post-triage
+            # `effective_severity` (incl. abuse-chain elevation) over raw `risk`.
+            # Reading `risk` directly here made one finding render two different
+            # severities inside one document (2026-07-25 insecure-spring-app:
+            # F-024 was 🟠 High in this table and 🔴 Critical in the Management
+            # Summary, component table, attack-surface table and roadmap — 7 of
+            # 49 findings had risk != effective_severity).
+            f_emoji = _TOP_THREATS_SEVERITY_EMOJI.get(
+                (ctx.severity_for_ref(visible) or t.get("risk") or t.get("severity") or "").strip().lower(),
+                "",
+            )
             f_prefix = f"{f_emoji}&nbsp;" if f_emoji else ""
             # No leading `•` bullet — each finding sits on its own line (joined
             # by <br/> below); a bullet inside a table cell reads as clutter
@@ -9248,10 +9274,16 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
                 f'<span style="white-space:nowrap">→&nbsp;[{c_anchor}](#{c_anchor.lower()})</span>{_c_suffix}'
             )
 
-        # Risk = max severity across member findings.
+        # Risk = max severity across member findings — read through the same
+        # canonical resolver as the per-finding dots above, so the path's own
+        # rating can never contradict the findings it is aggregating.
+        def _member_severity(t: dict[str, Any]) -> str:
+            ref = (t.get("t_id") or t.get("id") or "").strip()
+            return (ctx.severity_for_ref(ref) or t.get("risk") or t.get("severity") or "").strip()
+
         if member_threats:
-            top_t = min(member_threats, key=lambda t: _severity_rank(t.get("risk") or t.get("severity")))
-            risk_word = (top_t.get("risk") or top_t.get("severity") or "").strip()
+            top_t = min(member_threats, key=lambda t: _severity_rank(_member_severity(t)))
+            risk_word = _member_severity(top_t)
         else:
             risk_word = ""
         risk_emoji = _TOP_THREATS_SEVERITY_EMOJI.get(risk_word.lower(), "")
@@ -10112,18 +10144,25 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     # and don't inherit a redundant em-dash column.
     has_runtime = any(isinstance(c, dict) and (c.get("runtime") or "").strip() for c in components)
     # Scope column — only when a criteria-based selection actually excluded some
-    # components (meta.component_selection.excluded). Marks each row Analyzed vs
-    # Out of scope so the reader can see which components received a STRIDE pass.
+    # components (meta.component_selection.excluded) or screened some at reduced
+    # depth. Marks each row Analyzed / Screened / Out of scope so the reader can
+    # see which components received a STRIDE pass, and at which depth.
     # Absent in passthrough/legacy runs → original column layout is preserved.
     cs = (ctx.yaml_data.get("meta") or {}).get("component_selection")
     excluded_ids = set()
+    screened_ids = set()
     if isinstance(cs, dict):
         excluded_ids = {
             (e.get("id") or "").strip()
             for e in (cs.get("excluded") or [])
             if isinstance(e, dict) and (e.get("id") or "").strip()
         }
-    show_scope = bool(excluded_ids)
+        screened_ids = {
+            (e.get("id") or "").strip()
+            for e in (cs.get("selected") or [])
+            if isinstance(e, dict) and e.get("analysis_depth") == "screening" and (e.get("id") or "").strip()
+        }
+    show_scope = bool(excluded_ids or screened_ids)
     scope_hdr = " Scope |" if show_scope else ""
     scope_sep = "-------|" if show_scope else ""
     if has_runtime:
@@ -10204,7 +10243,10 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         else:
             row = f"| {id_cell} | {name} | {kind} | {paths_cell} | {th_cell} |"
         if show_scope:
-            row += " Out of scope |" if raw in excluded_ids else " Analyzed |"
+            if raw in excluded_ids:
+                row += " Out of scope |"
+            else:
+                row += " Screened |" if raw in screened_ids else " Analyzed |"
         table_lines.append(row)
     table_lines.append("")
     insertion = "\n".join(table_lines)
@@ -10959,6 +11001,28 @@ _REF_TRAILING_LOC_RE = re.compile(
     r"(\[[FTM]-\d+\]\(#[ftm]-\d+\)[^\n|\[<]*?)"  # a finding/mitigation link + its (locator-free) label
     r"\((?!`)([\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?)\)"  # an un-backticked (path/file[:line[-line]]) right after
 )
+
+
+_ID_IN_LINK_TEXT_RE = re.compile(r"\[([FTM]-\d+)\s*[—–-]\s*([^\]]*)\]\(#([ftm]-\d+)\)")
+
+
+def _delink_id_in_link_text(md: str) -> str:
+    """Rewrite a reference whose visible text pulls the title INTO the link —
+    ``[F-NNN — Title](#f-nnn)`` — back to the canonical ``[F-NNN](#f-nnn) — Title``
+    shape the reference-format linter (``check_reference_format._ID_IN_LINK``)
+    requires. LLM fragment authors — notably the §6 Security Architecture
+    renderer citing findings in narrative bullets — emit the id-in-link-text
+    form; normalising it deterministically here keeps the anchor intact while
+    moving the title out of the link, so link syntax is never trusted to the
+    LLM. Idempotent: a bare ``[F-NNN](#f-nnn)`` carries no in-link title and is
+    left untouched."""
+
+    def _repl(m: re.Match[str]) -> str:
+        fid, title, anchor = m.group(1), m.group(2).strip(), m.group(3)
+        link = f"[{fid}](#{anchor})"
+        return f"{link} — {title}" if title else link
+
+    return _ID_IN_LINK_TEXT_RE.sub(_repl, md)
 
 
 def _normalize_reference_locators(md: str) -> str:
@@ -17364,6 +17428,11 @@ def render(
     # render, fragment injection, and T→F bridge, so any reference-trailing
     # `(path/file:line)` (incl. §3/§9 and MS leaderboard cells produced past the
     # per-section pass) ends up backticked + basenamed exactly once.
+    # De-link id-in-link-text references (`[F-NNN — Title](#f-nnn)`, emitted by
+    # LLM fragment authors such as the §6 SecArch renderer) to the canonical
+    # `[F-NNN](#f-nnn) — Title` FIRST, so the trailing-locator pass then sees a
+    # normal `[ID](#id) — label` tail.
+    rendered = _apply_outside_changelog(rendered, _delink_id_in_link_text)
     rendered = _apply_outside_changelog(rendered, _normalize_reference_locators)
 
     # Report-integrity manifest: certify which sections rendered and which

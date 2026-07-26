@@ -114,6 +114,58 @@ class TestResolveWriteYaml:
         assert out["write_yaml"] is False
 
 
+class TestCheapStride:
+    def test_flags_unset_without_arguments(self):
+        """The FLAGS default to unset; the depth default is applied in resolve() so
+        that --no-cheap-stride can distinguish "user said no" from "user said
+        nothing"."""
+        ns = rc.build_parser().parse_args([])
+        assert ns.cheap_stride is False
+        assert ns.no_cheap_stride is False
+
+    def test_flag_sets_true(self):
+        ns = rc.build_parser().parse_args(["--cheap-stride"])
+        assert ns.cheap_stride is True
+
+    def test_reaches_resolved_config(self, tmp_path):
+        """Parser-level is not enough — the manifest builder reads the RESOLVED
+        cfg (via .skill-config.json), so the key has to survive resolve()."""
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        assert rc.resolve([*base, "--cheap-stride"], REPO_ROOT)["cheap_stride"] is True
+        assert rc.resolve([*base, "--no-cheap-stride"], REPO_ROOT)["cheap_stride"] is False
+
+    def test_default_on_at_quick_and_standard_off_at_thorough(self, tmp_path):
+        """Screening only ever reaches components proven to be side-of-the-house
+        (build_stride_dispatch_manifest._cheap_stride_target), so quick and standard
+        take it by default. Thorough is the mode a user picks when depth outweighs
+        cost, so it keeps full depth everywhere."""
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        assert rc.resolve(base, REPO_ROOT)["cheap_stride"] is True
+        assert rc.resolve([*base, "--quick"], REPO_ROOT)["cheap_stride"] is True
+        assert rc.resolve([*base, "--thorough"], REPO_ROOT)["cheap_stride"] is False
+
+    def test_explicit_flags_beat_the_depth_default(self, tmp_path):
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        forced_on = rc.resolve([*base, "--thorough", "--cheap-stride"], REPO_ROOT)
+        assert forced_on["cheap_stride"] is True
+        assert forced_on["cheap_stride_label"] == "on (--cheap-stride)"
+        forced_off = rc.resolve([*base, "--quick", "--no-cheap-stride"], REPO_ROOT)
+        assert forced_off["cheap_stride"] is False
+        assert forced_off["cheap_stride_label"] == "off (--no-cheap-stride)"
+
+    def test_label_names_the_source_of_the_decision(self, tmp_path):
+        """The pre-flight has to say whether the user asked for screening depth or
+        the depth default did — otherwise a surprised user cannot tell."""
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        assert rc.resolve(base, REPO_ROOT)["cheap_stride_label"] == "on (auto - standard depth)"
+        assert rc.resolve([*base, "--quick"], REPO_ROOT)["cheap_stride_label"] == "on (auto - quick depth)"
+        assert rc.resolve([*base, "--thorough"], REPO_ROOT)["cheap_stride_label"] == "off (auto - thorough depth)"
+
+    def test_conflicting_flags_are_rejected(self):
+        ns = rc.build_parser().parse_args(["--cheap-stride", "--no-cheap-stride"])
+        assert "cannot be used together" in (rc.detect_conflicts(ns) or "")
+
+
 class TestResolveRequirements:
     def test_no_requirements_flag(self):
         ns = rc.build_parser().parse_args(["--no-requirements"])
@@ -149,6 +201,7 @@ class TestResolveAssessmentDepth:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_assessment_depth(ns)
         assert out["assessment_depth"] == "standard"
+        assert out["register_severity_floor"] == "medium"
         # max_stride_components is now the depth-independent operational ceiling,
         # NOT a per-depth selection count (selection is criteria-derived).
         assert out["max_stride_components"] == rc.STRIDE_COMPONENT_CEILING
@@ -192,6 +245,43 @@ class TestResolveAssessmentDepth:
         """The default depth (standard) caps QA repair at a single pass."""
         out = rc.resolve_assessment_depth(rc.build_parser().parse_args([]))
         assert out["max_repair_iterations"] == 1
+
+    def test_register_severity_floor_override(self):
+        ns = rc.build_parser().parse_args(["--register-severity-floor", "low"])
+        assert rc.resolve_assessment_depth(ns)["register_severity_floor"] == "low"
+
+
+class TestResolveStrideConcurrency:
+    def test_default(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_STRIDE_CONCURRENCY", raising=False)
+        assert rc.resolve_stride_concurrency() == {"stride_concurrency": 8}
+
+    def test_override(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_STRIDE_CONCURRENCY", "12")
+        assert rc.resolve_stride_concurrency() == {"stride_concurrency": 12}
+
+    @pytest.mark.parametrize("value", ["0", "33", "many"])
+    def test_invalid_override_fails_closed(self, monkeypatch, value):
+        monkeypatch.setenv("APPSEC_STRIDE_CONCURRENCY", value)
+        with pytest.raises(SystemExit, match="APPSEC_STRIDE_CONCURRENCY"):
+            rc.resolve_stride_concurrency()
+
+
+class TestEvidenceVerifierCap:
+    def test_depth_defaults_bound_non_critical_work(self):
+        caps = {
+            depth: rc.resolve_evidence_verifier_cap(rc.build_parser().parse_args(["--assessment-depth", depth]), depth)[
+                "evidence_verifier_max_findings"
+            ]
+            for depth in ("quick", "standard", "thorough")
+        }
+        assert caps == {"quick": 20, "standard": 30, "thorough": 100}
+
+    def test_explicit_cap_overrides_depth_default(self):
+        ns = rc.build_parser().parse_args(["--assessment-depth", "standard", "--evidence-verifier-cap", "12"])
+        out = rc.resolve_evidence_verifier_cap(ns, "standard")
+        assert out["evidence_verifier_max_findings"] == 12
+        assert "--evidence-verifier-cap" in out["evidence_verifier_cap_label"]
 
 
 class TestResolveReasoningModel:
@@ -797,6 +887,20 @@ class TestCLI:
         assert cfg["reasoning_model"] == "sonnet-economy"  # standard default (2026-06-23)
         assert cfg["architect_review"] is False
         assert cfg["quiet"] is False  # verdict echoed by default
+        assert cfg["evidence_verifier_max_findings"] == 30
+
+    def test_evidence_verifier_cap_flows_to_config(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--evidence-verifier-cap", "12")
+        assert r.returncode == 0
+        cfg = json.loads(r.stdout)
+        assert cfg["evidence_verifier_max_findings"] == 12
+
+    def test_evidence_verifier_cap_rejects_zero(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--evidence-verifier-cap", "0")
+        assert r.returncode == 1
+        assert "must be at least 1" in r.stderr
 
     def test_quiet_flag_flows_to_cfg(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -1742,8 +1846,8 @@ class TestSummaryActiveOptions:
     def test_parallel_stride_default_on_for_full(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(mode="full")))
-        assert "parallel" in rows["STRIDE disp"]
+        rows = dict(rc._summary_active_options(_base_cfg(mode="full", stride_concurrency=8)))
+        assert "up to 8 concurrent" in rows["STRIDE disp"]
 
     def test_parallel_stride_optout(self, monkeypatch):
         monkeypatch.setenv("APPSEC_PARALLEL_STRIDE", "0")
@@ -2157,8 +2261,8 @@ class TestRenderRunPlan:
         assert "Threat Model — Pre-flight" in out
         assert "Configuration" in out
         assert "Verdict" in out
-        # The STRIDE cap row is always present (capped or not).
-        assert "STRIDE cap" in out
+        # The STRIDE depth row is always present (capped or not).
+        assert "STRIDE depth" in out
 
     def test_dirty_incremental_renders_files_and_why(self):
         cfg = _base_cfg(incremental=True, mode="incremental")
@@ -2229,9 +2333,10 @@ class TestRenderRunPlan:
         assert "Unmapped (possible new component)" in out
 
 
-class TestStrideCapDisplay:
-    """The per-component STRIDE cap is surfaced in the pre-flight in BOTH
-    states (set / unset), and never double-shown via the active-options row."""
+class TestStrideDepthDisplay:
+    """The pre-flight answers "how much STRIDE do I get per component?" in one
+    row that always states BOTH levers (per-category cap, screening depth) in
+    both states, and never double-shows the cap via the active-options row."""
 
     def test_format_capped(self):
         cfg = _base_cfg(
@@ -2240,25 +2345,40 @@ class TestStrideCapDisplay:
                 "max_threats_per_category": 2,
             }
         )
-        s = rc._format_stride_cap(cfg)
+        s = rc._format_stride_depth(cfg)
         assert "≤2 per STRIDE category per component" in s
         assert "Criticals always kept" in s
 
     def test_format_uncapped(self):
-        cfg = _base_cfg(stride_profile={"stride_profile_label": "full"})
-        s = rc._format_stride_cap(cfg)
-        assert s == "none — full STRIDE depth (all threats kept)"
+        # Both clauses print: no cap AND no screening is the only state that may
+        # read as unqualified full depth.
+        cfg = _base_cfg(
+            stride_profile={"stride_profile_label": "full"},
+            cheap_stride=False,
+            cheap_stride_label="off (--no-cheap-stride)",
+        )
+        s = rc._format_stride_depth(cfg)
+        assert s == (
+            "no per-category cap (all threats kept); "
+            "cheap-stride off (--no-cheap-stride) — every component at full depth"
+        )
 
     def test_format_missing_profile(self):
         cfg = _base_cfg()
         cfg.pop("stride_profile", None)
-        assert "none" in rc._format_stride_cap(cfg)
+        assert "no per-category cap" in rc._format_stride_depth(cfg)
 
     def test_run_plan_shows_uncapped_line(self):
-        cfg = _base_cfg(incremental=False, baseline_state="empty", stride_profile={"stride_profile_label": "full"})
+        cfg = _base_cfg(
+            incremental=False,
+            baseline_state="empty",
+            stride_profile={"stride_profile_label": "full"},
+            cheap_stride=False,  # else the row correctly qualifies the depth claim
+        )
         out = rc.render_run_plan(cfg, None, None, None)
-        assert "STRIDE cap" in out
-        assert "full STRIDE depth" in out
+        assert "STRIDE depth" in out
+        assert "no per-category cap" in out
+        assert "every component at full depth" in out
 
     def test_run_plan_shows_capped_line(self):
         cfg = _base_cfg(
@@ -2272,13 +2392,62 @@ class TestStrideCapDisplay:
         out = rc.render_run_plan(cfg, None, None, None)
         assert "≤2 per STRIDE category per component" in out
 
-    def test_config_summary_shows_cap_line(self):
+    def test_config_summary_shows_depth_line(self):
         out = rc.render_configuration_summary(_base_cfg())
-        assert "STRIDE cap" in out
+        assert "STRIDE depth" in out
+
+    def test_cheap_stride_qualifies_the_depth_claim(self):
+        """Without this the row would imply full depth for a run whose internal
+        tail is screened — the one place the user sees depth before any tokens
+        are spent. Since screening is a depth-dependent DEFAULT, the row must
+        also name who decided: the user or the depth."""
+        cfg = _base_cfg(
+            stride_profile={"stride_profile_label": "full"},
+            cheap_stride=True,
+            cheap_stride_label="on (--cheap-stride)",
+        )
+        s = rc._format_stride_depth(cfg)
+        assert "cheap-stride on (--cheap-stride)" in s and "screening depth" in s
+        auto = rc._format_stride_depth(
+            _base_cfg(
+                stride_profile={"stride_profile_label": "full"},
+                cheap_stride=True,
+                cheap_stride_label="on (auto - standard depth)",
+            )
+        )
+        assert "cheap-stride on (auto - standard depth)" in auto
+        cfg_run = _base_cfg(
+            incremental=False,
+            baseline_state="empty",
+            stride_profile={"stride_profile_label": "full"},
+            cheap_stride=True,
+        )
+        assert "cheap-stride" in rc.render_run_plan(cfg_run, None, None, None)
+        assert "cheap-stride" in rc.render_configuration_summary(cfg_run)
+        # Explicitly off → the row says so instead of staying silent.
+        assert "every component at full depth" in rc._format_stride_depth(
+            _base_cfg(stride_profile={"stride_profile_label": "full"}, cheap_stride=False)
+        )
+
+    def test_cap_and_screening_both_stated_when_both_active(self):
+        """The two levers are independent: a capped run may still screen its
+        tail. Neither clause may swallow the other."""
+        s = rc._format_stride_depth(
+            _base_cfg(
+                stride_profile={
+                    "stride_profile_label": "full (per-category cap 2)",
+                    "max_threats_per_category": 2,
+                },
+                cheap_stride=True,
+                cheap_stride_label="on (auto - standard depth)",
+            )
+        )
+        assert "≤2 per STRIDE category per component" in s
+        assert "cheap-stride on (auto - standard depth)" in s
 
     def test_cap_not_duplicated_in_active_options(self, monkeypatch):
         # A pure cap label must NOT appear as a separate "STRIDE" active-options
-        # row — the dedicated STRIDE cap line owns it.
+        # row — the dedicated STRIDE depth line owns it.
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
         rows = dict(

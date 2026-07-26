@@ -773,6 +773,64 @@ def test_auth_social_login_heading_is_whitelisted(monkeypatch, tmp_path: Path):
     ), report.issues
 
 
+def test_auth_two_factor_authentication_heading_is_whitelisted(monkeypatch, tmp_path: Path):
+    """Regression (2026-07-18): '#### 6.2.3 Two-Factor Authentication' — the
+    spelled-out form of 2FA — matched NO method_whitelist entry, because the
+    matcher is a token-subset test and neither '2fa' ({2fa}) nor 'multi-factor'
+    ({multi,factor}) is a subset of {two,factor,authentication}. The heading was
+    folded into its parent by normalize_security_architecture, which stranded
+    the `Controls covered:` link and hard-failed control_subsection_coverage on
+    every run. 'two-factor' / 'two factor' are now whitelisted."""
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 6. Security Architecture
+
+            ### 6.2 Identity and Authentication Controls
+
+            **Controls covered:** [Two-Factor Authentication](#two-factor-authentication).
+
+            #### 6.2.3 Two-Factor Authentication
+
+            TOTP adds a possession factor to the password login sequence.
+
+            ```mermaid
+            sequenceDiagram
+                User->>App: 6-digit TOTP code
+            ```
+
+            **Security assessment**
+
+            Pre-auth token is stored client-side before the factor is satisfied.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_auth_method_decomposition(md)
+
+    assert not any(
+        "Two-Factor Authentication" in issue and "not a recognized authentication mechanism" in issue
+        for issue in report.issues
+    ), report.issues
+
+
+def test_auth_two_factor_matches_via_token_subset():
+    """Pin the matcher itself: the whitelist entry must cover every spelling
+    the renderer realistically emits, and must NOT turn into a blanket pass."""
+    whitelist = ["two-factor", "two factor", "2fa", "multi-factor"]
+
+    assert qa._row_is_auth_method("Two-Factor Authentication", whitelist)
+    assert qa._row_is_auth_method("6.2.3 Two Factor Authentication", whitelist)
+    assert qa._row_is_auth_method("Two-Factor (TOTP)", whitelist)
+    # Negative control — an unrelated primitive must still be rejected.
+    assert not qa._row_is_auth_method("Login Rate Limiting", whitelist)
+    assert not qa._row_is_auth_method("Password Hashing", whitelist)
+
+
 def test_auth_threat_hypotheses_heading_exempt(monkeypatch, tmp_path: Path):
     """Regression (2026-06-16): pregenerate_fragments deterministically emits
     '#### Threat Hypotheses Requiring Validation' inside §6.2 (asserted present
@@ -2082,6 +2140,84 @@ class TestRepairPlanStatusClassification:
         assert status == "manual_review"
         assert actionable is False
 
+    def test_infobox_thinness_is_a_cosmetic_advisory(self):
+        """2026-07-19 regression: `infobox_incomplete` was unclassified, so a
+        repo without LICENSE/manifest metadata produced `manual_review` (exit 3)
+        on every otherwise-clean run — forcing a QA-agent dispatch for an
+        advisory whose only remedy is a data source the pipeline cannot author.
+        It is cosmetic, and a cosmetic action need not name a fragment."""
+        issues = ["infobox is missing required field(s): license"]
+        actions = [
+            {
+                "raw_issue": issues[0],
+                "type": "infobox_incomplete",
+                "severity": qa._action_severity("infobox_incomplete"),
+                "fragments_to_rewrite": [],
+            },
+        ]
+        assert qa._action_severity("infobox_incomplete") == "cosmetic"
+        status, actionable = qa._classify_plan_status(issues, actions)
+        assert status == "cosmetic_advisory"
+        assert actionable is False
+
+    def test_infobox_advisory_never_masks_a_real_blocker(self):
+        """The advisory must not downgrade a co-occurring blocking defect."""
+        issues = ["infobox is missing required field(s): license", "section missing"]
+        actions = [
+            {
+                "raw_issue": issues[0],
+                "type": "infobox_incomplete",
+                "severity": "cosmetic",
+                "fragments_to_rewrite": [],
+            },
+            {
+                "raw_issue": issues[1],
+                "type": "missing_section",
+                "severity": "blocking",
+                "fragments_to_rewrite": [".fragments/security-architecture.md"],
+            },
+        ]
+        status, actionable = qa._classify_plan_status(issues, actions)
+        assert status == "fail"
+        assert actionable is True
+
+    def test_dead_internal_anchor_reaches_the_gate(self, tmp_path):
+        """2026-07-19 regression: `toc_closure` ran only in the deferred `all`
+        battery, which the skill writes solely on the QA-dispatch path — so a
+        document with dead `[..](#anchor)` links shipped from the clean fast
+        path with the defect never reported (that run delivered 12 while
+        section_integrity and final_structure both passed)."""
+        md = tmp_path / "threat-model.md"
+        md.write_text(
+            "# Threat Model\n\n"
+            "| Control | Verdict |\n|---|---|\n"
+            "| [Identity](#72-identity-and-authentication-controls) | Unsafe |\n\n"
+            "## 6. Security Architecture\n\n"
+            "### 6.2 Identity and Authentication Controls\n\nBody.\n",
+            encoding="utf-8",
+        )
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        toc = [a for a in plan["actions"] if a["type"] == "toc_closure"]
+        assert toc, "dead anchor must surface as a toc_closure action"
+        # Blocking so it cannot pass as the clean fast path, but with no writable
+        # target so it routes to manual_review instead of spinning the
+        # fragment-fixer on a fragment we cannot identify.
+        assert toc[0]["severity"] == "blocking"
+        assert toc[0]["fragments_to_rewrite"] == []
+
+    def test_resolved_anchor_emits_no_toc_closure_action(self, tmp_path):
+        md = tmp_path / "threat-model.md"
+        md.write_text(
+            "# Threat Model\n\n"
+            "| Control | Verdict |\n|---|---|\n"
+            "| [Identity](#62-identity-and-authentication-controls) | Unsafe |\n\n"
+            "## 6. Security Architecture\n\n"
+            "### 6.2 Identity and Authentication Controls\n\nBody.\n",
+            encoding="utf-8",
+        )
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        assert [a for a in plan["actions"] if a["type"] == "toc_closure"] == []
+
     def test_clean_md_end_to_end_returns_pass(self, tmp_path):
         """Smoke test: an MD with no contract violations returns status=pass
         through the full `build_repair_plan` pipeline."""
@@ -2200,6 +2336,43 @@ class TestRepairPlanFoldedChecks:
         status, actionable = qa._classify_plan_status(issues, actions)
         assert status == "manual_review"
         assert actionable is False
+
+
+class TestCanonicalQaGate:
+    def test_gate_applies_autofix_before_building_plan(self, tmp_path, monkeypatch):
+        md = tmp_path / "threat-model.md"
+        md.write_text("# Report\n", encoding="utf-8")
+        calls = []
+
+        monkeypatch.setattr(qa, "_run_autofix", lambda *args: calls.append("autofix") or 0)
+        monkeypatch.setattr(qa, "cmd_repair_plan", lambda *args: calls.append("repair_plan") or 0)
+
+        assert qa.cmd_gate(md, tmp_path, tmp_path, qa.DEFAULT_CONTRACT_PATH) == 0
+        assert calls == ["autofix", "repair_plan"]
+
+    def test_cross_reference_issues_reach_repair_plan(self, tmp_path):
+        md = tmp_path / "threat-model.md"
+        md.write_text(
+            "## 8. Findings Register\n\n"
+            "| ID | Scenario |\n|---|---|\n| T-001 | Existing |\n\n"
+            "A stale reference points to T-999.\n",
+            encoding="utf-8",
+        )
+
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+
+        actions = [a for a in plan["actions"] if a["type"] == "xrefs"]
+        assert actions
+        assert "T-999" in actions[0]["raw_issue"]
+        assert actions[0]["severity"] == "blocking"
+
+    def test_retired_chain_checks_are_not_in_runtime_batteries(self):
+        import inspect
+
+        assert "check_chain_compactness(" not in inspect.getsource(qa.build_repair_plan)
+        assert "check_chain_tid_consistency(" not in inspect.getsource(qa.build_repair_plan)
+        assert "check_chain_compactness(" not in inspect.getsource(qa.cmd_all)
+        assert "check_chain_tid_consistency(" not in inspect.getsource(qa.cmd_all)
 
 
 # ---------------------------------------------------------------------------

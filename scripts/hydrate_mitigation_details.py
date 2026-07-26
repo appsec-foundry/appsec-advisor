@@ -37,6 +37,7 @@ import yaml
 
 _NON_FIX_KINDS = {"review", "investigate", "accept_risk"}
 _DETAIL_FIELDS = ("code_example", "verification", "reference")
+_URGENT_PRIORITIES = {"P1", "P2"}
 # Fields that, if present, keep an unlinked fix card actionable enough to survive
 # the orphan drop (mirrors the P1/P2 gate's own code/step signals).
 _CONTENT_FIELDS = ("how", "how_code", "code_example")
@@ -80,6 +81,24 @@ def _addressed_threats(mitigation: dict, threats: dict, reverse: dict[str, list[
             resolved.append(threat)
             seen.add(id(threat))
     return resolved
+
+
+def _synth_verification(mitigation: dict) -> str:
+    """Concrete re-scan verification for a P1/P2 fix whose addressed findings
+    authored none. Mirrors ``backfill_scanner_remediation``'s re-scan assertion,
+    but keys off the card's own CWE/location instead of a scanner check id — so an
+    auto-emitted finding-fix card (steps but no source ``verification`` and no
+    scanner check for backfill to key off) can satisfy the P1/P2 quality gate
+    without a downstream hand-patch."""
+    prevents = mitigation.get("prevents")
+    cwes = [_text(c) for c in prevents if _text(c)] if isinstance(prevents, list) else []
+    label = ", ".join(cwes) if cwes else (_text(mitigation.get("title")) or "the weakness")
+    location = _text(mitigation.get("file") or mitigation.get("location"))
+    where = f" at {location}" if location else ""
+    return (
+        f"After applying the steps, re-run the security scan (or the covering test) "
+        f"and confirm no {label} finding remains{where}."
+    )
 
 
 def hydrate(data: dict) -> int:
@@ -149,6 +168,19 @@ def hydrate(data: dict) -> int:
                     mitigation["file"] = f"{source_file}:{source_line}" if source_line is not None else source_file
                     card_changed = True
                     break
+        # A P1/P2 fix must carry a concrete verification for the quality gate. The
+        # copy above pulls one from an addressed finding when present; when none
+        # authored one (an auto-emitted finding-fix card with steps but no source
+        # verification and no scanner check for backfill to key off), synthesize a
+        # re-scan assertion so the gate is satisfiable by the producer rather than
+        # forcing a downstream hand-patch that the next auto-emit pass wipes.
+        if (
+            _text(mitigation.get("priority")).upper() in _URGENT_PRIORITIES
+            and not _text(mitigation.get("verification"))
+            and any(_text(step) for step in mitigation.get("steps") or [])
+        ):
+            mitigation["verification"] = _synth_verification(mitigation)
+            card_changed = True
         if card_changed:
             changed += 1
 

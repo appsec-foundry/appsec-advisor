@@ -96,6 +96,8 @@ TRIAGE_MODEL = triage_model
 MERGER_MODEL = merger_model
 RENDERER_MODEL = renderer_model
 ABUSE_VERIFIER_MODEL = abuse_verifier_model
+EVIDENCE_VERIFIER_MODEL = evidence_verifier_model
+EVIDENCE_VERIFIER_MAX_FINDINGS = evidence_verifier_max_findings
 CONTEXT_RESOLVER_MODEL = context_resolver_model
 RECON_SCANNER_MODEL = recon_scanner_model
 QA_ROUTINE_MODEL = qa_routine_model
@@ -120,6 +122,7 @@ SKIP_ATTACK_PATHS_AUTHORING = skip_attack_paths_authoring
 SKIP_ATTACK_WALKTHROUGHS = skip_attack_walkthroughs
 ASSESSMENT_DEPTH = assessment_depth
 MAX_STRIDE_COMPONENTS = max_stride_components
+STRIDE_CONCURRENCY = stride_concurrency
 STRIDE_TURNS_SIMPLE = stride_turns_simple
 STRIDE_TURNS_MODERATE = stride_turns_moderate
 STRIDE_TURNS_COMPLEX = stride_turns_complex
@@ -221,15 +224,19 @@ Then emit the normal handoff banner using the controller estimate:
 
 ## 5. Stage 1 and Stage 1c
 
-Read `SKILL-impl.md` starting exactly at
-`## Stage 1 — Threat Analysis & Triage` and stop at the single
-`<!-- LAZY-LOAD BOUNDARY` marker. Do not read any earlier part of that file.
-Follow the Stage 1 and Stage 1c instructions with the aliases above.
+Read `SKILL-thin-stage1.md` in full and follow it. It replaces the verbose
+Stage-1 slice from `SKILL-impl.md` for this runtime; do not load that legacy
+slice. Only when `SKIP_ABUSE_CASE_VERIFICATION=false`, read
+`SKILL-thin-stage1c.md` in full and follow it. Otherwise do not load any
+Stage-1c instructions.
 
-If a Stage-1 dispatch returns as a stall/stream-watchdog failure instead of
-completing, it is still a return: emit `stall_notice.py "$OUTPUT_DIR" --stage
-"Stage 1"` for the shared banner, then follow the past-boundary "Handling
-turn-budget cut-offs" recovery — do not re-dispatch on your own.
+If a Stage-1 dispatch returns as a stall/stream-watchdog failure, treat the
+filesystem as authoritative and still run the compact Stage-1 post-gate. A
+valid completion checkpoint means the agent finished its write-first contract;
+continue without recovery. Only when the post-gate reports missing artifacts
+or an invalid completion checkpoint, emit `stall_notice.py "$OUTPUT_DIR"
+--stage "Stage 1"` and follow the past-boundary "Handling turn-budget cut-offs"
+recovery. Do not re-dispatch on your own.
 
 When those instructions say to start the heartbeat watchdog, use this exact
 fixed command with `run_in_background: true` and retain its task id:
@@ -245,19 +252,21 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" \
 
 Load `TaskStop` before its first use and pass `task_id`, never `taskId`.
 
-The controller already performed preflight, so references in the Stage 1 slice
-to configuration resolution, cleanup, lock acquisition, prepasses,
-requirements fetch, task bootstrap, live-phase monitor, or deadline watchdog
-are satisfied or inapplicable. Do not repeat them.
+The controller already performed configuration, cleanup, lock acquisition,
+prepasses, requirements fetch, and task bootstrap. Do not repeat them.
 
 ## 6. Stage 2 onward
 
 Read only:
 
-- 2: `## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs`.
-  Failure/cut-off only: through `## Incremental Mode`.
+- 2: `SKILL-thin-stage2.md` in full. Do not load the Stage-2 slice from
+  `SKILL-impl.md`. Failure/cut-off only: load the legacy range from
+  `### Handling turn-budget cut-offs` through `## Incremental Mode`.
 - 3: `## Stage 3 - QA Review` to `### Stage 3 handoff banner`.
-  QA/semantic repair only: through `## Stage 4 - Architect Review`.
+  Load this safety slice on every non-dry path once the report exists, even
+  when quick / `--no-qa` / PR mode makes `next` return `stage4` or `complete`;
+  those paths run the hard secret-leak gate and skip the remaining QA work.
+  QA/repair only: continue through `## Stage 4 - Architect Review`.
 - 4: `## Stage 4 - Architect Review` to `## Completion Summary`.
 - Done: `## Completion Summary` to `## Error Handling`.
 - Error: `## Error Handling` to EOF on that branch.
@@ -281,8 +290,11 @@ set but no report. Honor the returned `action`/`stage`:
 - `stage=stage2` → the report still does not exist **and** the render fragments
   are missing; (re-)dispatch Stage 2. **Never emit a completion summary in this
   state.**
-- `stage=stage3` / `stage=stage4` → proceed with that stage.
-- `action=complete` → the report exists; proceed to the completion summary.
+- `stage=stage3` → run the Stage-3 safety slice and any enabled QA work.
+- `stage=stage4` → run the Stage-3 safety slice first if it has not run for
+  this report, then proceed with Stage 4.
+- `action=complete` → the report exists; run the Stage-3 safety slice first
+  if it has not run for this report, then proceed to the completion summary.
 
 **Hard invariant:** never emit an "Assessment complete" summary while
 `$OUTPUT_DIR/threat-model.md` is absent. After each major agent return the

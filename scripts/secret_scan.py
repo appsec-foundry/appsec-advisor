@@ -17,10 +17,14 @@ Run as a script for ad-hoc scans:
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote_plus
 
 # Markers that indicate a value has already been masked / redacted.
 # A loose-pattern match whose captured value contains any of these is skipped.
@@ -82,9 +86,40 @@ _PATTERNS: list[_Pattern] = [
         "generic_credential_assignment",
         re.compile(
             r"(?ix)"
-            r"\b(?P<kw>password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
+            # ``(?<=_)`` admits the keyword as the tail of an env-style
+            # identifier — ``DB_PASSWORD=``, ``MYSQL_ROOT_PASSWORD:``,
+            # ``X_AUTH_TOKEN=`` — which a bare ``\b`` rejects because ``_`` is a
+            # word character. Those are the canonical shapes in .env files,
+            # docker-compose, and k8s manifests, so a report quoting one used to
+            # pass the release gate with the credential in cleartext.
+            #
+            # Only ``_`` is admitted. Dropping ``\b`` outright would also match
+            # a keyword ending any word, re-opening the false-positive class the
+            # guards below exist for: a heading like ``## OAuth: Configuration``
+            # would be masked as a secret. A two-line k8s ``name:``/``value:``
+            # pair remains out of reach of this single-line pattern.
+            r"(?:\b|(?<=_))(?P<kw>password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
             r"\s*(?P<op>[=:])\s*"
-            r"(?P<q>['\"])?(?P<val>[A-Za-z0-9_\-+/=\.]{8,})"
+            # The value charset must cover password punctuation. It previously
+            # stopped at the first character outside [A-Za-z0-9_\-+/=.], so a
+            # credential like ``'J6aVjTgOpRs@?5l!…'`` matched only its 11-char
+            # alnum head — and _mask_match() then replaced just that head,
+            # shipping the remaining 19 characters in cleartext right after the
+            # ``**** (11 chars)`` marker (2026-07-25 juice-shop run). Because
+            # scan_text() re-checks with this same regex, the residual tail no
+            # longer sits behind a credential keyword and the release gate
+            # reported zero issues on a leaking document. Only alnum passwords
+            # masked correctly; every password with a special character leaked
+            # its tail.
+            #
+            # Whitespace, quotes, backticks, backslash, ``:``, ``<>``, ``{}``
+            # and the markdown-active characters ``*()~&^`` stay OUT: the value
+            # is consumed by redact_known_secrets' blind document-wide
+            # ``text.replace(value, mask)``, so a capture that can swallow a
+            # sentence, a URL (``:``), or markdown emphasis would corrupt the
+            # report — the failure mode already recorded in
+            # _is_keyword_echo_value below.
+            r"(?P<q>['\"])?(?P<val>[A-Za-z0-9_\-+/=\.!@#$%?]{8,})"
         ),
         False,
     ),
@@ -92,7 +127,7 @@ _PATTERNS: list[_Pattern] = [
 
 
 # An unquoted credential-assignment value that is a code-identifier reference
-# (camelCase / PascalCase / dotted attribute path, no digits) — e.g.
+# (camelCase / PascalCase / snake_case / dotted attribute path, no digits) — e.g.
 # ``secret: publicKey`` or ``password: security.hash`` — is a reference to a
 # variable in a code excerpt, not a literal secret value, and must not be
 # flagged. Quoted values and opaque/digit-bearing strings (``abcdefghijklmnop``,
@@ -102,8 +137,16 @@ _CODE_REFERENCE_RE = re.compile(
     r"[A-Za-z_]+(?:\.[A-Za-z_]+)+"  # dotted path:  security.hash
     r"|[a-z]+[A-Z][A-Za-z]*"  # camelCase:    publicKey
     r"|[A-Z][a-z]+[A-Z][A-Za-z]*"  # PascalCase:   PublicKey
+    r"|[a-z]+(?:_[a-z]+)+"  # snake_case:   read_unsigned_jwt_claims
+    r"|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"  # env/template: $DB_PASS, ${DB_PASS}
+    r"|#[A-Za-z0-9][A-Za-z0-9-]*"  # markdown anchor: #section-anchor
     r")$"
 )
+
+
+# A ```mermaid fenced block. Diagram labels (``participant Auth as "auth.py:84"``)
+# routinely match the loose credential-assignment shape; see scan_text().
+_MERMAID_FENCE_RE = re.compile(r"^[ \t]*```[ \t]*mermaid\b.*?^[ \t]*```", re.S | re.M)
 
 
 def _looks_like_code_reference(value: str) -> bool:
@@ -165,6 +208,69 @@ def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool
     return bool(re.search(r"[A-Za-z]{2,}\s+$", before))
 
 
+# A JWT header segment that decodes to ``{"alg":"none"}``. An unsigned token
+# carries NO signature and therefore no secret material — anyone can mint one
+# from scratch, which is the entire point of quoting it. See
+# ``_is_non_secret_demo_payload``.
+_JWT_SEGMENT_RE = re.compile(r"^eyJ[A-Za-z0-9_\-]+")
+
+# A SQL-injection tautology, percent-decoded: ``' OR '1'='1``, ``" OR 1=1--``,
+# ``') OR ('a'='a``. An attack payload, never a credential.
+_SQLI_TAUTOLOGY_RE = re.compile(
+    r"""(?ix)
+    ['"\)\s]                # payload boundary: quote / paren / space
+    \s*(?:OR|AND)\s+        # the tautology conjunction
+    (?:
+        ['"]?[A-Za-z0-9]{1,8}['"]?\s*=\s*['"]?[A-Za-z0-9]{1,8}['"]?
+      | \d+\s*=\s*\d+
+    )
+    """
+)
+
+
+def _is_non_secret_demo_payload(value: str) -> bool:
+    """A value that is provably NOT secret material, only demonstrated attacker input.
+
+    The abuse-case walkthroughs and per-finding verification steps quote the
+    exact request that reproduces a finding, and those requests carry
+    ``token=``/``password=`` query parameters — the loose credential-assignment
+    shape — without ever carrying a credential. Masking them is not a harmless
+    over-reaction: it destroys the one value the reader needs. On the 2026-07-25
+    insecure-spring-app run the gate hard-failed (exit 2, and in headless mode
+    the whole run aborts with no remediation path), and masking to satisfy it
+    left ``?username=x&password=**** (21 chars)`` in both the §3 walkthrough and
+    the finding's Verification line — a reproduction step that no longer
+    reproduces anything.
+
+    Both shapes below are decided structurally, not by context, so this can never
+    hide a real leak:
+
+    * **Unsigned JWT** — the header decodes to ``alg: none``. Such a token has no
+      signature by construction; it is forgeable by anyone and proves the
+      *absence* of signing, so it holds no secret. A signed JWT (any other
+      ``alg``) is untouched and still caught by the strict ``jwt`` pattern.
+    * **SQL-injection tautology** — percent-decoded, the value is an ``OR 1=1``
+      style predicate. That is attacker input, not a credential.
+    """
+    if not value:
+        return False
+
+    seg = _JWT_SEGMENT_RE.match(value)
+    if seg:
+        header = seg.group(0)
+        # urlsafe_b64decode needs the padding the JWT encoding strips.
+        padded = header + "=" * (-len(header) % 4)
+        try:
+            claims = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8", "replace"))
+        except (ValueError, binascii.Error):
+            claims = None
+        if isinstance(claims, dict) and str(claims.get("alg", "")).strip().lower() == "none":
+            return True
+
+    decoded = unquote_plus(value)
+    return bool(_SQLI_TAUTOLOGY_RE.search(decoded))
+
+
 def _is_identifier_suffix_keyword(text: str, start: int, op_start: int) -> bool:
     """A credential keyword that is the trailing segment of a SCREAMING-KEBAB
     identifier — e.g. ``SEC-USER-AUTH: Authenticate users…`` in a requirements
@@ -218,11 +324,25 @@ def _line_lookup(text: str):
     return line_of
 
 
+def _mermaid_fence_spans(text: str) -> list[tuple[int, int]]:
+    """Return ``(start, end)`` offsets of every ```mermaid fenced block.
+
+    Only mermaid is collected — a secret inside a ```python or ```yaml block is
+    a genuine leak and must stay in scope for every pattern.
+    """
+    return [(m.start(), m.end()) for m in _MERMAID_FENCE_RE.finditer(text)]
+
+
+def _in_mermaid_fence(spans: list[tuple[int, int]], pos: int) -> bool:
+    return any(start <= pos < end for start, end in spans)
+
+
 def scan_text(text: str) -> list[SecretHit]:
     """Return list of SecretHits — empty list means clean."""
     if not text:
         return []
     line_of = _line_lookup(text)
+    mermaid_spans = _mermaid_fence_spans(text)
     hits: list[SecretHit] = []
     for pat in _PATTERNS:
         for m in pat.regex.finditer(text):
@@ -230,6 +350,21 @@ def scan_text(text: str) -> list[SecretHit]:
             groups = m.groupdict() or {}
             value = m.group("val") if "val" in groups else matched
             if not pat.strict:
+                # Mermaid is a diagram DSL, not code: ``participant Auth as …``
+                # and ``Auth->>Auth: base64-decode`` match the credential-
+                # assignment shape without ever carrying a literal. Strict token
+                # formats (JWT/AWS/PEM/…) still scan these blocks, so a real
+                # secret pasted into a diagram label is still caught.
+                if _in_mermaid_fence(mermaid_spans, m.start()):
+                    continue
+                # Trailing sentence punctuation is not part of the value. The
+                # loose charclass includes ``.``, so prose like
+                # ``Password: password.`` captured ``password.`` — one character
+                # that defeated the keyword-echo guard below (``'password.' !=
+                # 'password'``) and let the exact-value redactor rewrite every
+                # ``password``-prefixed token in the document, corrupting prose
+                # and code samples alike (2026-07-19 insecure-python-app run).
+                value = value.rstrip(".,;:!?")
                 if _value_is_masked(value):
                     continue
                 # Unquoted code-identifier reference (variable name in an
@@ -248,6 +383,11 @@ def scan_text(text: str) -> list[SecretHit]:
                 # sample, not a reusable secret. Skipping it keeps the exact-value
                 # redactor from corrupting prose/anchors document-wide.
                 if _is_keyword_echo_value(value, groups.get("kw"), bool(groups.get("q"))):
+                    continue
+                # Demonstrated attacker input (unsigned alg:none JWT, SQLi
+                # tautology) quoted in a walkthrough / verification step — an
+                # attack payload, never secret material.
+                if _is_non_secret_demo_payload(value):
                     continue
             snippet = matched[:80].replace("\n", " ")
             hits.append(SecretHit(pattern=pat.name, snippet=snippet, line=line_of(m.start()), value=value))
@@ -318,6 +458,11 @@ def mask_text(text: str) -> tuple[str, list[str]]:
                 # Mirror the detector's keyword-echo guard so masking never
                 # corrupts a doc example like "password=password".
                 if _is_keyword_echo_value(value, groups.get("kw"), bool(groups.get("q"))):
+                    return m.group(0)
+                # Mirror the detector's demo-payload guard so masking never
+                # destroys the reproduction step in a walkthrough / verification
+                # line ("?username=x&password=' OR '1'='1").
+                if _is_non_secret_demo_payload(value):
                     return m.group(0)
             applied.append(_pat.name)
             return _mask_match(_pat, m)

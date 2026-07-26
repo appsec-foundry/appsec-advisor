@@ -492,3 +492,30 @@ def test_linter_accepts_titled_reference_links():
         "**Reference:** [CWE-798: Use of Hard-coded Credentials](https://cwe.mitre.org/data/definitions/798.html)\n"
     )
     assert linter.lint_text(md) == []
+
+
+# ---------------------------------------------------------------------------
+# _delink_id_in_link_text — deterministic repair of the id-in-link-text shape
+# ---------------------------------------------------------------------------
+
+
+def test_delink_id_in_link_text_moves_title_out_of_link():
+    """`[F-NNN — Title](#f-nnn)` (emitted by the §6 SecArch renderer) is
+    rewritten to the canonical `[F-NNN](#f-nnn) — Title`, clearing the
+    reference-format linter's ID-in-link-text violation."""
+    md = "- 🔴 [F-004 — JWT Algorithm Confusion](#f-004) — The session JWT is forgeable.\n"
+    assert linter.lint_text(md), "fixture must start as a violation"
+
+    fixed = compose._delink_id_in_link_text(md)
+    assert fixed == "- 🔴 [F-004](#f-004) — JWT Algorithm Confusion — The session JWT is forgeable.\n"
+    assert not [v for v in linter.lint_text(fixed) if v.startswith("ID inside link text")]
+
+
+def test_delink_id_in_link_text_leaves_bare_links_and_is_idempotent():
+    """A canonical bare `[F-NNN](#f-nnn)` link carries no in-link title and is
+    untouched; applying the pass twice equals applying it once."""
+    canonical = "- [F-007](#f-007) — Insecure Direct Object Reference on basket.\n"
+    assert compose._delink_id_in_link_text(canonical) == canonical
+
+    once = compose._delink_id_in_link_text("[T-012 — Spoofing via header](#t-012)")
+    assert compose._delink_id_in_link_text(once) == once

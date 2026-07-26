@@ -111,6 +111,25 @@ _SOURCE_EXTS = {
 }
 
 
+# Stored-XSS confirmation is deliberately narrower than the generic XSS
+# hypothesis. A raw HTML sink alone says nothing about where its data came
+# from. We only emit ARCH-XSS-002 when one source line explicitly maps a
+# request field into a persistence call and a separate unsafe HTML sink renders
+# that exact persisted property without a sanitizer on the sink line.
+_REQUEST_FIELD_ASSIGNMENT = re.compile(
+    r"(?i)(?:(?P<property>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?"
+    r"(?:req|request)\.(?:body|json)\.(?P<input>[A-Za-z_][A-Za-z0-9_]*)"
+)
+_PERSISTENCE_MODEL_CALL = re.compile(
+    r"(?i)\b(?P<model>[A-Za-z_][A-Za-z0-9_]*)\.(?:create|insert(?:One|Many)?|save|update|upsert|persist)\s*\("
+)
+_UNSAFE_HTML_SINK = re.compile(
+    r"(?i)(?:\.innerHTML\s*=|insertAdjacentHTML\s*\(|dangerouslySetInnerHTML|"
+    r"bypassSecurityTrustHtml\s*\(|\bv-html\b|\{@html\b)"
+)
+_SINK_SANITIZER = re.compile(r"(?i)(?:DOMPurify\.sanitize|sanitize\s*\(|escapeHtml\s*\()")
+
+
 # ---------------------------------------------------------------------------
 # IO helpers
 # ---------------------------------------------------------------------------
@@ -150,6 +169,23 @@ def _read_lines(path: Path) -> list[str]:
             return f.readlines()
     except OSError:
         return []
+
+
+# The architecture rules share one repository-wide source view.  Keeping the
+# decoded lines lets each rule retain its own matching semantics without
+# repeatedly traversing and opening the exact same source tree.
+SourceSnapshot = list[tuple[str, list[str]]]
+
+
+def _load_source_snapshot(repo_root: Path) -> SourceSnapshot:
+    snapshot: SourceSnapshot = []
+    for src in _walk_sources(repo_root):
+        lines = _read_lines(src)
+        if not lines:
+            continue
+        rel = str(src.relative_to(repo_root)).replace("\\", "/")
+        snapshot.append((rel, lines))
+    return snapshot
 
 
 def _load_json_or_none(path: Path) -> dict | None:
@@ -557,13 +593,14 @@ def _evaluate_inventory_flag_rule(rule: CompiledRule, inventory: dict | None) ->
 # ---------------------------------------------------------------------------
 
 
-def _aggregate_hits_for_rule(repo_root: Path, rule: CompiledRule) -> PatternHits:
+def _aggregate_hits_for_rule(
+    repo_root: Path,
+    rule: CompiledRule,
+    source_snapshot: SourceSnapshot | None = None,
+) -> PatternHits:
     agg = PatternHits()
-    for src in _walk_sources(repo_root):
-        rel = str(src.relative_to(repo_root)).replace("\\", "/")
-        lines = _read_lines(src)
-        if not lines:
-            continue
+    sources = source_snapshot if source_snapshot is not None else _load_source_snapshot(repo_root)
+    for rel, lines in sources:
         hits = _scan_file_for_rule(rel, lines, rule)
         agg.precondition.extend(hits.precondition)
         agg.positive.extend(hits.positive)
@@ -579,11 +616,16 @@ def _evidence_dicts(items: list[tuple[str, int, str]], cap: int = 8) -> list[dic
     return out
 
 
-def _evaluate_hard_rule(rule: CompiledRule, repo_root: Path, inventory: dict | None) -> dict:
+def _evaluate_hard_rule(
+    rule: CompiledRule,
+    repo_root: Path,
+    inventory: dict | None,
+    source_snapshot: SourceSnapshot | None = None,
+) -> dict:
     if rule.rule_id == "ARCH-MGMT-001":
         return _evaluate_mgmt_rule(rule, inventory)
 
-    hits = _aggregate_hits_for_rule(repo_root, rule)
+    hits = _aggregate_hits_for_rule(repo_root, rule, source_snapshot)
     if rule.precondition_patterns and not hits.precondition:
         return {
             "applies": False,
@@ -629,13 +671,103 @@ def _evaluate_hard_rule(rule: CompiledRule, repo_root: Path, inventory: dict | N
     }
 
 
-def _evaluate_hypothesis_rule(rule: CompiledRule, repo_root: Path, inventory: dict | None) -> dict:
+def _evaluate_db_principal_separation_rule(assessment_depth: str, db_separation: dict | None) -> dict:
+    """Translate the thorough-only DB separation sidecar into one rule verdict.
+
+    The sidecar is not consulted below thorough depth, including when a stale
+    sidecar exists from a prior run. Confirmed records are deliberately the
+    only path to proof_state=confirmed; opaque secret/config references remain
+    evidence-backed review hypotheses.
+    """
+    if assessment_depth != "thorough":
+        return {
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": "database principal separation is assessed only at thorough depth",
+        }
+    if not db_separation or db_separation.get("skipped"):
+        return {
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": "database principal separation sidecar is unavailable",
+        }
+
+    def combined_evidence(records: list[dict]) -> list[dict]:
+        """Keep this architecture rule to one finding, not one per principal.
+
+        The sidecar retains separate technical records for auditability. The
+        report-facing rule deliberately joins their distinct evidence locations
+        into one capped, de-duplicated evidence set so a repository with many
+        similarly misconfigured pools is actionable rather than noisy.
+        """
+        evidence: list[dict] = []
+        seen: set[tuple[str, int, str]] = set()
+        for record in records:
+            for item in record.get("evidence") or []:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    key = (str(item.get("file") or ""), int(item.get("line")), str(item.get("signal") or ""))
+                except (TypeError, ValueError):
+                    continue
+                if not key[0] or key in seen:
+                    continue
+                seen.add(key)
+                evidence.append({"file": key[0], "line": key[1], "signal": key[2]})
+                if len(evidence) == 8:
+                    return evidence
+        return evidence
+
+    confirmed = db_separation.get("confirmed_findings") or []
+    if confirmed:
+        return {
+            "applies": True,
+            "status": "weak",
+            "confidence": "high",
+            "evidence": combined_evidence(confirmed),
+            "skip_reason": None,
+            "proof_state": "confirmed",
+        }
+    hypotheses = db_separation.get("hypotheses") or []
+    if hypotheses:
+        return {
+            "applies": True,
+            "status": "weak",
+            "confidence": "medium",
+            "evidence": combined_evidence(hypotheses),
+            "skip_reason": None,
+            "proof_state": "evidence-backed",
+        }
+    return {
+        "applies": True,
+        "status": "present",
+        "confidence": "medium",
+        "evidence": [],
+        "skip_reason": None,
+    }
+
+
+def _evaluate_hypothesis_rule(
+    rule: CompiledRule,
+    repo_root: Path,
+    inventory: dict | None,
+    *,
+    assessment_depth: str = "standard",
+    db_separation: dict | None = None,
+    source_snapshot: SourceSnapshot | None = None,
+) -> dict:
+    if rule.rule_id == "ARCH-DBSEP-001":
+        return _evaluate_db_principal_separation_rule(assessment_depth, db_separation)
     if rule.rule_id == "ARCH-AUTHZ-001":
         return _evaluate_authz_hyp_rule(rule, inventory)
     if (rule.inventory_pattern or {}).get("route_flag"):
         return _evaluate_inventory_flag_rule(rule, inventory)
 
-    hits = _aggregate_hits_for_rule(repo_root, rule)
+    hits = _aggregate_hits_for_rule(repo_root, rule, source_snapshot)
     if rule.precondition_patterns and not hits.precondition:
         return {
             "applies": False,
@@ -677,6 +809,84 @@ def _evaluate_hypothesis_rule(rule: CompiledRule, repo_root: Path, inventory: di
     }
 
 
+def _evaluate_stored_xss_rule(
+    rule: CompiledRule,
+    repo_root: Path,
+    source_snapshot: SourceSnapshot | None = None,
+) -> dict:
+    """Confirm a narrow, statically traceable stored-XSS path.
+
+    This is intentionally not a general taint engine. It accepts only a direct
+    object-field mapping such as ``body: req.body.content`` on the same line as
+    ``Comment.create(...)`` and a later unsafe sink that reads ``comment.body``.
+    Variable indirection, API contracts, serializers, and sanitizer wrappers
+    require the normal STRIDE/abuse-case verification rather than a guessed
+    deterministic finding.
+    """
+    persisted: dict[tuple[str, str], tuple[str, int, str]] = {}
+    source_lines: list[tuple[str, int, str]] = []
+
+    # First collect every direct request-to-persistence mapping. A second pass
+    # below makes the result independent of filesystem traversal order: frontend
+    # files commonly sort before routes/ in a monorepo.
+    sources = source_snapshot if source_snapshot is not None else _load_source_snapshot(repo_root)
+    for rel, lines in sources:
+        for line_no, raw_line in enumerate(lines, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            source_lines.append((rel, line_no, line))
+            model_match = _PERSISTENCE_MODEL_CALL.search(line)
+            if not model_match:
+                continue
+            for match in _REQUEST_FIELD_ASSIGNMENT.finditer(line):
+                field = match.group("property") or match.group("input")
+                key = (model_match.group("model").casefold(), field.casefold())
+                if key not in persisted:
+                    persisted[key] = (
+                        rel,
+                        line_no,
+                        "request field "
+                        f"`{match.group('input')}` is persisted as `{field}` on "
+                        f"`{model_match.group('model')}`: {line}",
+                    )
+
+    sinks: dict[tuple[str, str], tuple[str, int, str]] = {}
+    for rel, line_no, line in source_lines:
+        if not _UNSAFE_HTML_SINK.search(line) or _SINK_SANITIZER.search(line):
+            continue
+        for model, field in persisted:
+            field_ref = re.compile(rf"(?i)\b(?P<object>[A-Za-z_][A-Za-z0-9_]*)\.[ \t]*{re.escape(field)}\b")
+            field_match = field_ref.search(line)
+            if field_match and field_match.group("object").casefold() == model and (model, field) not in sinks:
+                sinks[(model, field)] = (
+                    rel,
+                    line_no,
+                    f"unsafe HTML sink renders `{model}.{field}`: {line}",
+                )
+
+    matched_fields = sorted(set(persisted) & set(sinks))
+    if not matched_fields:
+        return {
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": "no direct request-field persistence to matching unsafe HTML sink",
+        }
+
+    model, field = matched_fields[0]
+    persistence_evidence = persisted[(model, field)]
+    sink_evidence = sinks[(model, field)]
+    return {
+        "applies": True,
+        "status": "anti_pattern",
+        "confidence": "high",
+        "evidence": _evidence_dicts([persistence_evidence, sink_evidence]),
+        "skip_reason": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Decision mapping
 # ---------------------------------------------------------------------------
@@ -714,10 +924,21 @@ def _decision_for_hypothesis(rule: CompiledRule, verdict: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
+def run(
+    repo_root: Path,
+    output_dir: Path | None,
+    rules_data: dict,
+    *,
+    assessment_depth: str = "standard",
+) -> dict:
     inventory: dict | None = None
     if output_dir is not None:
         inventory = _load_json_or_none(output_dir / ".route-inventory.json")
+    db_separation = (
+        _load_json_or_none(output_dir / ".db-privilege-separation.json")
+        if output_dir is not None and assessment_depth == "thorough"
+        else None
+    )
 
     rules_evaluated: list[dict] = []
     control_assessments: list[dict] = []
@@ -726,10 +947,15 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
     warnings: list[str] = []
 
     hyp_counter: dict[str, int] = {}
+    source_snapshot = _load_source_snapshot(repo_root)
 
     for rule_dict in rules_data.get("hard_rules", []) or []:
         rule = _compile_rule(rule_dict, "hard")
-        verdict = _evaluate_hard_rule(rule, repo_root, inventory)
+        verdict = (
+            _evaluate_stored_xss_rule(rule, repo_root, source_snapshot)
+            if rule.rule_id == "ARCH-XSS-002"
+            else _evaluate_hard_rule(rule, repo_root, inventory, source_snapshot)
+        )
         decision = _decision_for_hard(rule, verdict)
         rules_evaluated.append(
             _with_arch_fields(
@@ -795,7 +1021,14 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
 
     for rule_dict in rules_data.get("hypothesis_rules", []) or []:
         rule = _compile_rule(rule_dict, "hypothesis")
-        verdict = _evaluate_hypothesis_rule(rule, repo_root, inventory)
+        verdict = _evaluate_hypothesis_rule(
+            rule,
+            repo_root,
+            inventory,
+            assessment_depth=assessment_depth,
+            db_separation=db_separation,
+            source_snapshot=source_snapshot,
+        )
         decision = _decision_for_hypothesis(rule, verdict)
 
         rules_evaluated.append(
@@ -834,7 +1067,7 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
                         "component_id": None,
                         "domain": rule.domain,
                         "surface": None,
-                        "proof_state": "control-derived",
+                        "proof_state": verdict.get("proof_state", "control-derived"),
                         "confidence": verdict["confidence"],
                         "weak_or_missing_controls": rule.weak_or_missing_controls,
                         "positive_signals": verdict["evidence"],
@@ -884,6 +1117,7 @@ def _main(argv: list[str]) -> int:
     p.add_argument("--repo-root", required=True)
     p.add_argument("--output-dir", help="If provided, writes .architecture-coverage.json there.")
     p.add_argument("--rules-yaml", help="Override path to architecture-coverage-rules.yaml.")
+    p.add_argument("--assessment-depth", choices=("quick", "standard", "thorough"), default="standard")
     p.add_argument("--stdout", action="store_true")
     args = p.parse_args(argv)
 
@@ -894,7 +1128,7 @@ def _main(argv: list[str]) -> int:
     output_dir = Path(args.output_dir) if args.output_dir else None
 
     rules = _load_rules(Path(args.rules_yaml) if args.rules_yaml else None)
-    result = run(repo_root, output_dir, rules)
+    result = run(repo_root, output_dir, rules, assessment_depth=args.assessment_depth)
 
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)

@@ -71,6 +71,22 @@ def _write_manifest(output_dir: Path, *cids: str, generated_at: str | None = Non
     (output_dir / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
+def _init_waves(output_dir: Path, concurrency: int = 8) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "stride_dispatch_waves.py"),
+            "init",
+            str(output_dir),
+            "--concurrency",
+            str(concurrency),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def _write_spawns(output_dir: Path, count: int, *, day: str = "2026-06-05") -> None:
     """Append `count` dispatched-analyzer AGENT_SPAWN lines to the hook log.
 
@@ -262,6 +278,48 @@ def test_empty_threats_pass(tmp_path):
     """An empty/partial wrap-up has no real work to attribute → no trip."""
     _write_stride(tmp_path, "queue-consumer", {"threats": [], "partial": True})
     assert _run(tmp_path) == 0
+
+
+def test_wave_gate_accepts_complete_zero_finding_component(tmp_path):
+    _write_manifest(tmp_path, "queue-consumer")
+    _init_waves(tmp_path)
+    _write_stride(
+        tmp_path,
+        "queue-consumer",
+        {
+            "component_id": "queue-consumer",
+            "component_name": "Queue Consumer",
+            "analyzed_at": "2026-07-20T12:00:00Z",
+            "partial": False,
+            "skipped_categories": [],
+            "threats": [],
+        },
+    )
+    assert _run(tmp_path) == 0
+
+
+def test_wave_gate_blocks_partial_selected_component(tmp_path):
+    _write_manifest(tmp_path, "public-api")
+    _init_waves(tmp_path)
+    _write_stride(
+        tmp_path,
+        "public-api",
+        {
+            "component_id": "public-api",
+            "component_name": "Public API",
+            "analyzed_at": "2026-07-20T12:00:00Z",
+            "partial": True,
+            "skipped_categories": ["Denial of Service"],
+            "threats": [],
+        },
+    )
+    assert _run(tmp_path) == 4
+
+
+def test_wave_gate_blocks_missing_selected_component(tmp_path):
+    _write_manifest(tmp_path, "public-api")
+    _init_waves(tmp_path)
+    assert _run(tmp_path) == 4
 
 
 def test_no_stride_files_pass(tmp_path):

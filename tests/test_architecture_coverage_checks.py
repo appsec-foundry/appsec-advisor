@@ -24,6 +24,7 @@ ALL_RULE_IDS = {
     "ARCH-TLS-001",
     "ARCH-MGMT-001",
     "ARCH-XSS-001",
+    "ARCH-XSS-002",
     "ARCH-SQLI-001",
     "ARCH-AUTHZ-001",
     "ARCH-AUTHN-001",
@@ -31,13 +32,15 @@ ALL_RULE_IDS = {
     "ARCH-INPUT-001",
     "ARCH-SUPPLY-001",
     "ARCH-SECRET-001",
+    "ARCH-DBSEP-001",
 }
 
 
-def _run_engine(repo: Path, output_dir: Path | None = None) -> dict:
+def _run_engine(repo: Path, output_dir: Path | None = None, depth: str = "standard") -> dict:
     args = [sys.executable, str(ENGINE), "--repo-root", str(repo), "--stdout"]
     if output_dir is not None:
         args += ["--output-dir", str(output_dir)]
+    args += ["--assessment-depth", depth]
     proc = subprocess.run(args, capture_output=True, text=True, check=True)
     return json.loads(proc.stdout)
 
@@ -100,10 +103,73 @@ def test_every_rule_appears_in_rules_evaluated(tmp_path: Path) -> None:
     assert seen == ALL_RULE_IDS
 
 
+def test_run_reads_the_source_tree_once_for_all_rules(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "app.ts").write_text(
+        "app.use(cors({origin:'*', credentials:true}));\n",
+        encoding="utf-8",
+    )
+    original_walk = acc._walk_sources
+    walks = 0
+
+    def count_walks(repo_root: Path):
+        nonlocal walks
+        walks += 1
+        yield from original_walk(repo_root)
+
+    monkeypatch.setattr(acc, "_walk_sources", count_walks)
+    acc.run(tmp_path, None, acc._load_rules())
+
+    assert walks == 1
+
+
 def test_rules_evaluated_carries_weakness_mechanism_metadata(tmp_path: Path) -> None:
     out = _run_engine(tmp_path)
     assert _verdict(out, "ARCH-SQLI-001")["weakness_mechanism"] == "database-query-concatenation"
     assert _verdict(out, "ARCH-XSS-001")["weakness_mechanism"] == "frontend-output-encoding"
+
+
+def test_database_principal_separation_consumes_only_thorough_sidecar(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    output.mkdir()
+    sidecar = {
+        "version": 1,
+        "generated_at": "2026-07-20T00:00:00Z",
+        "assessment_depth": "thorough",
+        "skipped": False,
+        "skip_reason": None,
+        "confirmed_findings": [
+            {
+                "local_id": "DBSEP-001",
+                "title": "shared principal",
+                "cwe": "CWE-284",
+                "principal_kind": "literal",
+                "privileged_aliases": ["adminDb"],
+                "unprivileged_aliases": ["publicDb"],
+                "evidence": [{"file": "db.ts", "line": 3, "signal": "visible grant"}],
+            },
+            {
+                "local_id": "DBSEP-002",
+                "title": "another shared principal",
+                "cwe": "CWE-284",
+                "principal_kind": "literal",
+                "privileged_aliases": ["managementDb"],
+                "unprivileged_aliases": ["applicationDb"],
+                "evidence": [{"file": "roles.sql", "line": 7, "signal": "another visible grant"}],
+            },
+        ],
+        "hypotheses": [],
+        "warnings": [],
+    }
+    (output / ".db-privilege-separation.json").write_text(json.dumps(sidecar), encoding="utf-8")
+
+    standard = _run_engine(tmp_path, output)
+    assert _verdict(standard, "ARCH-DBSEP-001")["status"] == "not_applicable"
+    thorough = _run_engine(tmp_path, output, "thorough")
+    hypothesis = next(h for h in thorough["threat_hypotheses"] if h["rule_id"] == "ARCH-DBSEP-001")
+    assert hypothesis["proof_state"] == "confirmed"
+    assert hypothesis["confidence"] == "high"
+    assert len([h for h in thorough["threat_hypotheses"] if h["rule_id"] == "ARCH-DBSEP-001"]) == 1
+    assert {e["file"] for e in hypothesis["positive_signals"]} == {"db.ts", "roles.sql"}
 
 
 def test_output_validates_against_schema(tmp_path: Path) -> None:
@@ -410,6 +476,71 @@ def test_xss_hypothesis_does_not_emit_anti_pattern(tmp_path: Path) -> None:
     assert all(c["rule_id"] != "ARCH-XSS-001" for c in out["anti_pattern_candidates"])
     hyp_ids = {h["rule_id"] for h in out["threat_hypotheses"]}
     assert "ARCH-XSS-001" in hyp_ids
+
+
+def test_stored_xss_direct_persist_to_sink_emits_high_confidence_candidate(tmp_path: Path) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "routes" / "comments.ts").write_text(
+        "app.post('/comments', (req, res) => Comment.create({ body: req.body.content }));\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ui" / "comment.tsx").write_text(
+        "export const Comment = ({ comment }) => <div dangerouslySetInnerHTML={{ __html: comment.body }} />;\n",
+        encoding="utf-8",
+    )
+
+    out = _run_engine(tmp_path)
+    candidate = next(c for c in out["anti_pattern_candidates"] if c["rule_id"] == "ARCH-XSS-002")
+    assert candidate["confidence"] == "high"
+    assert candidate["cwe"] == "CWE-79"
+    assert [(e["file"], e["line"]) for e in candidate["evidence"]] == [
+        ("routes/comments.ts", 1),
+        ("ui/comment.tsx", 1),
+    ]
+
+
+def test_stored_xss_sink_without_direct_persistence_stays_a_hypothesis(tmp_path: Path) -> None:
+    (tmp_path / "ui.tsx").write_text(
+        "export const Comment = ({ comment }) => <div dangerouslySetInnerHTML={{ __html: comment.body }} />;\n",
+        encoding="utf-8",
+    )
+
+    out = _run_engine(tmp_path)
+    assert all(c["rule_id"] != "ARCH-XSS-002" for c in out["anti_pattern_candidates"])
+    assert any(h["rule_id"] == "ARCH-XSS-001" for h in out["threat_hypotheses"])
+
+
+def test_stored_xss_sanitized_sink_is_not_confirmed(tmp_path: Path) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "routes" / "comments.ts").write_text(
+        "app.post('/comments', (req, res) => Comment.create({ body: req.body.content }));\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ui" / "comment.tsx").write_text(
+        "export const Comment = ({ comment }) => <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(comment.body) }} />;\n",
+        encoding="utf-8",
+    )
+
+    out = _run_engine(tmp_path)
+    assert all(c["rule_id"] != "ARCH-XSS-002" for c in out["anti_pattern_candidates"])
+
+
+def test_stored_xss_same_field_on_a_different_model_is_not_confirmed(tmp_path: Path) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "routes" / "profiles.ts").write_text(
+        "app.post('/profiles', (req, res) => Profile.create({ body: req.body.content }));\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ui" / "comment.tsx").write_text(
+        "export const Comment = ({ comment }) => <div dangerouslySetInnerHTML={{ __html: comment.body }} />;\n",
+        encoding="utf-8",
+    )
+
+    out = _run_engine(tmp_path)
+    assert all(c["rule_id"] != "ARCH-XSS-002" for c in out["anti_pattern_candidates"])
 
 
 def test_sqli_hypothesis_only_on_concat(tmp_path: Path) -> None:

@@ -147,7 +147,7 @@ Pass these additional context fields in the STRIDE analyzer prompt:
 - `COMPONENT_DESCRIPTION`: "CI/CD & source-contribution integrity — build, test, and deployment automation plus the trust boundary at which external code contributions enter the trunk. Includes workflow definitions, secret handling, artifact publishing, deployment triggers, and (for public repos) the pull-request contribution surface." When the component exists solely because `public_source_repo: true` and no workflow files were found, narrow the description to the contribution surface only.
 - `INTERFACES`: workflow trigger events (push, PR, schedule, workflow_dispatch), artifact registries, deployment targets, and the fork→pull-request contribution path (public repos)
 - `TRUST_BOUNDARIES`: external Actions/images crossing into build environment, secrets injected at runtime, artifact publish boundary, and (public repos) untrusted external contributions crossing into the trunk
-- `SUPPLY_CHAIN_FINDINGS`: recon-summary sections 7.14–7.17, 7.26, 7.27, 7.27a, 7.28, and 7.30 (unpinned Actions, container images, dependency confusion, postinstall hooks, ecosystem CI install integrity, **install cooldown / minimum release age**, dependency management tooling, SCA tooling, `pull_request_target` misuse, `permissions:` hardening, self-hosted runner exposure, **public-repo contribution exposure**, **PR dependency-review gate**, AI coding assistant & IDE agent configurations, **publish authentication / Trusted Publishing & package provenance**)
+- `SUPPLY_CHAIN_FINDINGS`: recon-summary sections 7.14–7.17, 7.26, 7.27, 7.27a, 7.30, and 7.32 (unpinned Actions, container images, dependency confusion, postinstall hooks, ecosystem CI install integrity, **install cooldown / minimum release age**, dependency management tooling, SCA tooling, `pull_request_target` misuse, `permissions:` hardening, self-hosted runner exposure, **public-repo contribution exposure**, **PR dependency-review gate**, AI coding assistant & IDE agent configurations, **publish authentication / Trusted Publishing & package provenance**)
 
 The STRIDE analyzer will use `SUPPLY_CHAIN_FINDINGS` to generate evidence-backed threats for the pipeline component (see STRIDE analyzer supply chain patterns).
 
@@ -181,13 +181,13 @@ For unknown types, `slice_taxonomy.py` writes a full passthrough slice (exit 1, 
 
 ### Dispatch
 
-**Pre-dispatch echo (user-visible manifest, once per run — mandatory):** Immediately before the parallel `Agent` dispatch block (and together with the `AGENT_INVOKE` batch below), print **one purpose line plus one line per component** so the user sees exactly what is about to be analyzed in parallel. The per-component line includes id, complexity tier, and turn budget so the expected wall-clock differences are visible up front.
+**Pre-dispatch echo (user-visible manifest, once per run — mandatory):** Immediately before the parallel `Agent` dispatch block (and together with the `AGENT_INVOKE` batch below), print **one purpose line plus one line per component** so the user sees exactly what is about to be analyzed in parallel. The per-component line includes id, complexity tier, turn budget, and analysis depth so the expected wall-clock differences — and which components are only screened — are visible up front.
 
 Format:
 ```
   ⟶ Dispatching stride-analyzer × <N> components (parallel) — per component: enumerate Spoofing/Tampering/Repudiation/Information-Disclosure/DoS/EoP threats with CWE + file:line evidence → .stride-<id>.json
-     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>)
-     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>)
+     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>, <screening|full>)
+     • <component-name> (<component-id>, <simple|moderate|complex>, MAX_TURNS=<n>, <screening|full>)
      …
 ```
 
@@ -199,7 +199,7 @@ Batch the echoes with the `AGENT_INVOKE` Bash call below so no extra turn is spe
 
 For each component, use Agent tool:
 - `subagent_type`: `appsec-advisor:appsec-stride-analyzer`
-- `description`: `STRIDE analysis for <COMPONENT_NAME>`
+- `description`: `STRIDE analysis for <COMPONENT_NAME>` — prefix it as `STRIDE screening analysis for <COMPONENT_NAME>` when the manifest entry carries `cheap_stride: true`, so the agent list shows which components run at screening depth. Prefix, not suffix: the console truncates long names on the right.
 - `run_in_background`: `true`
 - `prompt`: **emit the parameters in the order below.** The three groups are ordered by cache-friendliness — stable values across all dispatches come first so the Claude Code prompt-cache prefix covers them; component-specific values come next; volatile context file paths come last. See AGENTS.md → "Prompt caching contract" for the full rationale.
 
@@ -419,7 +419,7 @@ When no obvious priority files are derivable (rare, e.g. brand-new component wit
 - data-persistence: 170 s → ~80 s by reading the ORM model + raw-query route directly.
 
 
-Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and the `model` parameter set to the **tier alias** of `$STRIDE_MODEL` — overrides the agent's frontmatter default. **The Agent tool's `model` parameter accepts ONLY the bare tier aliases `sonnet` / `opus` / `haiku`; a full version id (`claude-sonnet-4-6`, `claude-opus-4-7`, …) is rejected.** Reduce `$STRIDE_MODEL` to its tier for the parameter: any `claude-opus-*` / `opus*` → `opus`, any `claude-haiku-*` / `haiku*` → `haiku`, anything else (incl. `claude-sonnet-*`) → `sonnet`; a value that is already a bare alias passes through unchanged. Keep the full `$STRIDE_MODEL` id ONLY in the `(model: …)` log lines (below) so cost accounting stays exact. This same tier-alias reduction applies to **every** Agent-tool `model` parameter in this skill (triage, recon, context, config, actor, abuse, renderer). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
+Dispatch in bounded waves of at most `$STRIDE_CONCURRENCY` components (`8` by default). Within each wave, issue all calls together with `run_in_background: true`; wait for the wave before starting the next one. (`run_in_background: true` is correct **here** and is NOT in conflict with the `false` in `SKILL-thin-stage1.md`: this analyst-orchestrated path relies on the deterministic progress watcher below, which reads `.progress/*.json` from backgrounded sub-agents. The skill-orchestrated default path — Analyst-A stops at Phase 8 and never reaches this dispatch — fans out foreground with `false` instead. The two are never co-resident in one context.) **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and the `model` parameter set to the **tier alias** of `$STRIDE_MODEL` — overrides the agent's frontmatter default. **The Agent tool's `model` parameter accepts ONLY the bare tier aliases `sonnet` / `opus` / `haiku`; a full version id (`claude-sonnet-4-6`, `claude-opus-4-7`, …) is rejected.** Reduce `$STRIDE_MODEL` to its tier for the parameter: any `claude-opus-*` / `opus*` → `opus`, any `claude-haiku-*` / `haiku*` → `haiku`, anything else (incl. `claude-sonnet-*`) → `sonnet`; a value that is already a bare alias passes through unchanged. Keep the full `$STRIDE_MODEL` id ONLY in the `(model: …)` log lines (below) so cost accounting stays exact. This same tier-alias reduction applies to **every** Agent-tool `model` parameter in this skill (triage, recon, context, config, actor, abuse, renderer). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
 
 **STRIDE_PROFILE forwarding (M3.5).** The `STRIDE_PROFILE_JSON` env var (set by the skill from `.skill-config.json → stride_profile`) is forwarded verbatim into Group A of every per-component dispatch prompt. When the user runs with `--reasoning-model sonnet-economy --assessment-depth quick` the JSON encodes the A-F depth-reduction flags. With the opt-in `--stride-cap N` flag the JSON is `{"max_threats_per_category": N, "stride_profile_label": "full (per-category cap N)"}` — full depth except the key-gated per-category cap. Otherwise it is `{"stride_profile_label":"full"}` and the analyzer runs at full depth. Emit the line as:
 
@@ -450,7 +450,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_ST
 ```bash
 # Before dispatch — one line per component (batch all into one Bash call):
 for cid in <comp-id-1> <comp-id-2> <comp-id-n>; do
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_INVOKE   STRIDE analysis for $cid (model: $STRIDE_MODEL, MAX_TURNS=$TURNS)" >> "$OUTPUT_DIR/.agent-run.log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   stride-analyzer  AGENT_INVOKE   STRIDE analysis for $cid (model: $STRIDE_MODEL, MAX_TURNS=$TURNS, depth=$DEPTH)" >> "$OUTPUT_DIR/.agent-run.log"
 done
 ```
 
@@ -1323,9 +1323,9 @@ For each merged M-NNN entry:
 
 ### Cross-reference linking rule (all sections)
 
-When writing `threat-model.md`, every T-NNN and M-NNN that appears in the report falls into exactly one of two categories:
+When writing report fragments, distinguish labelled references from the compact forms owned by the composer. Do not expand a compact form merely to make every link look alike.
 
-### 1. As an ID (no label)
+### 1. As an identifier or compact citation (no label)
 
 When T-NNN or M-NNN appears in a column named **"ID"** in a table, it is an **identifier** — just the bare link, no description. The adjacent column (Title, Description, Summary, Threat Scenario) already describes the item.
 
@@ -1335,17 +1335,17 @@ When T-NNN or M-NNN appears in a column named **"ID"** in a table, it is an **id
 | [T-001](#t-001) | SQL injection — authentication bypass | ...
 ```
 
-This applies to: Top Findings table (# column — rank, not ID), Critical Attack Tree Findings pointer (T-NNN links), Attack Walkthrough summary table (ID column), Threat Register (ID column).
+This applies to ID columns, narrow summary cells, the Critical Attack Tree Findings pointer, and other compact contexts named in `agents/shared/qa-crossref-rules.md`.
 
 Also no label on: anchor definition sites (`<a id="t-001"></a>T-001`), inside Mermaid diagram blocks (node labels carry their own text), Mitigation Register headings (`### M-001 — <full title>`).
 
-### 2. As a reference (always with label)
+### 2. As an ordinary table or list reference (with label)
 
-When T-NNN or M-NNN appears in **any other column** (Mitigation, Addresses, Enables, Linked Threats, Controls in Place) or **in prose**, it is a **reference** — always with a short description.
+When T-NNN or M-NNN appears in a normal reference column (Mitigation, Addresses, Enables, Linked Threats, Controls in Place) or a reference list, include a short description.
 
-**Format (uniform reference schema):** `[X-NNN](#x-nnn) — <short label>` — applies identically to every linked entity with an anchor: findings (`F-NNN`), architectural findings (`AF-NNN`), threats (`T-NNN`), threat categories (`TH-NN`), mitigations (`M-NNN`), and components (`C-NN`). One em-dash, one space on each side, short label ≤50 chars. No legacy variants (bare space, colon, `>`, `<br/><small>`) — these are auto-repaired by QA Check 3f.
+**Default labelled format:** `[X-NNN](#x-nnn) — <short label>` for findings (`F-NNN`), architectural findings (`AF-NNN`), threats (`T-NNN`), threat categories (`TH-NN`), mitigations (`M-NNN`), and components (`C-NN`). Use one em-dash with one space on each side and keep the label to 50 characters. QA Check 3f normalizes legacy bare-space and colon variants in contexts that require labels.
 
-**In prose:** `...the hardcoded RSA private key ([T-005](#t-005) — Hardcoded RSA key) enables...`
+**In inline prose:** `...the hardcoded RSA private key [T-005](#t-005) (Hardcoded RSA key) enables...`
 
 **In table cells with a single reference:**
 ```
@@ -1377,11 +1377,11 @@ When listing linked threats outside of table cells (e.g. after `**Linked threats
 
 This applies to all `**Linked threats:**` blocks in the architecture assessment themes (2.5.3–2.5.9). The label is on its own line preceded by `**Linked threats:**` as a standalone paragraph, followed by a blank line, then the bullet list.
 
-**Consistency rule:** Each T-NNN or M-NNN MUST use the **same short label everywhere** it appears in the report. The label is a 2–5 word summary of the threat or mitigation title. Decide the label once (during Phase 9 when composing the Threat Register) and reuse it verbatim in every subsequent reference — Management Summary, Critical Attack Tree, Architecture Assessment, Assets, Attack Surface, Trust Boundaries, Controls, Threat Register (Mitigations column), and Mitigation Register (Addresses field).
+**Consistency rule:** Wherever a T-NNN or M-NNN label is shown, derive the same 2–5 word label from the canonical title. Compact contexts omit the label rather than inventing a different one.
 
 **Mitigation Register `**Addresses:**` field — special case.** The Mitigation Register lives under `## 9.` (prose/list context, not inside a table). The `**Addresses:**` line therefore MUST follow the "outside tables" rule — render every addressed threat as a Markdown bullet on its own line, each shaped `- [T-NNN](#t-NNN) — <short label>`. When exactly one threat is addressed, a single inline form `[T-NNN](#t-NNN) — <short label>` on the same line as `**Addresses:**` is acceptable. **Never** emit bare `T-NNN`, **never** emit comma-separated prose lists. The QA reviewer's Check 3c enforces this and auto-repairs violations.
 
-**Prose references — rendering exception.** When a short-label reference is embedded inside a sentence (e.g. "…the hardcoded RSA private key ([T-005](#t-005) — Hardcoded RSA key) enables…"), wrap the reference in parentheses so the reading flow is preserved. This is the only place where the "bullet list outside tables" rule is relaxed — a parenthetical short-label reference in a sentence is treated as inline.
+**Inline prose exception.** The composer renders a reference embedded in a sentence as `[X-NNN](#x-nnn) (<short label>)`, or as a compact link when the sentence already supplies the meaning. Do not turn an inline citation into a bullet list.
 
 ### Build Management Summary — MANDATORY at all depth levels
 
@@ -1553,7 +1553,7 @@ fi
 
 **Log `PHASE_START`:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10a/11] Evidence Verification (sampled, model: haiku)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10a/11] Evidence Verification (sampled, model: $EVIDENCE_VERIFIER_MODEL)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Print before dispatch:**
@@ -1567,25 +1567,38 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_S
 ```
 subagent_type: "appsec-advisor:appsec-evidence-verifier"
 description: "Re-reads cited evidence file:line on sampled findings"
-model: haiku
+model: sonnet
 run_in_background: false
 prompt: |
   REPO_ROOT=<REPO_ROOT>
   OUTPUT_DIR=<OUTPUT_DIR>
   ASSESSMENT_DEPTH=<ASSESSMENT_DEPTH>
-  MODEL_ID=haiku
-  EVIDENCE_VERIFIER_MAX_FINDINGS=100
+  MODEL_ID=$EVIDENCE_VERIFIER_MODEL
+  EVIDENCE_VERIFIER_MAX_FINDINGS=$EVIDENCE_VERIFIER_MAX_FINDINGS
 ```
 
 Log `AGENT_INVOKE` / `AGENT_DONE` in the same style as the triage dispatch below.
 
 **Failure handling — non-fatal.** If the verifier fails to produce `.evidence-verification.json`, log a warning and continue to Phase 10b. The downstream triage will fall back to the legacy "no refutation signal" code path, which is the pre-M2 behaviour. The run does not abort.
 
+A missing file is not the only degenerate outcome. The write-first pre-seed is a valid, schema-clean file with every count at zero, so an existence check passes even when the verifier produced nothing — on 2026-07-20 it sampled 38 findings, ran six minutes, logged `AGENT_DONE`, and left the untouched pre-seed behind. Phase 10b then computed `effective_severity` for all 60 findings with no refutation signal, silently. `guard_evidence_verification.py` already detects this shape, but it runs in the Stage-2 emitter pass — minutes after the triage that depends on it. Run the content check here, where the consumer is:
+
 ```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/guard_evidence_verification.py" "$OUTPUT_DIR" 2>/dev/null || true
+
 if [ ! -f "$OUTPUT_DIR/.evidence-verification.json" ]; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  AGENT_ERROR   evidence-verifier did not produce .evidence-verification.json — continuing without refutation signal" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+elif python3 -c "
+import json,sys
+d=json.load(open('$OUTPUT_DIR/.evidence-verification.json')).get('summary',{})
+resolved=d.get('verified',0)+d.get('refuted',0)+d.get('ambiguous',0)
+sys.exit(0 if d.get('sampled',0)>=5 and resolved==0 else 1)
+" 2>/dev/null; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  AGENT_ERROR   evidence-verifier: all sampled findings unchecked (0 verified/refuted) — continuing without refutation signal" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 fi
 ```
+
+When that second branch fires, Phase 10b MUST NOT let a compound chain elevate any finding's `effective_severity`: the signal that would stop a *refuted* finding from elevating never existed, so elevation would rest on unverified evidence. Rate on base severity and record the gap in the triage flags.
 
 **Print when done:**
 ```

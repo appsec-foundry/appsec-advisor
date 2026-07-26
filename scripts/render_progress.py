@@ -60,8 +60,21 @@ def _parse_ts(ts: str):
 
 
 def _kv(detail: str, key: str) -> str:
-    m = re.search(rf"\b{re.escape(key)}=([^\s,\]]+)", detail)
+    # `)` terminates a value too: the orchestrator's own echoes put pairs inside
+    # parentheses (`… (model: sonnet, MAX_TURNS=8, depth=screening)`), and
+    # without it the closing paren is captured as part of the value.
+    m = re.search(rf"\b{re.escape(key)}=([^\s,\])]+)", detail)
     return m.group(1) if m else ""
+
+
+def _agent_tag(model: str, depth: str = "") -> str:
+    """Parenthesised suffix for an agent line: model, plus the STRIDE tier.
+
+    ``depth`` is empty for every agent that is not a STRIDE analyzer, so the
+    tag stays exactly as it was for them.
+    """
+    parts = [p for p in (model, depth) if p]
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 def _mins(start, now) -> str:
@@ -94,6 +107,7 @@ def main() -> int:
     cur_when = None  # datetime of the line being processed
     status_shown = False  # a transient \r heartbeat line is on screen
     last_perm = None  # datetime of the last permanent (scrolling) line
+    last_pct_shown = None  # last RUN_PROGRESS percentage given a permanent line
     _CLEAR = "\r\033[K"  # carriage-return + clear-to-end-of-line
 
     # Heartbeats are pure liveness — on a TTY they update one in-place status
@@ -167,18 +181,28 @@ def main() -> int:
             # SPAWN: agent name leads the detail, model in a model= field.
             agent = detail.split()[0] if detail else "?"
             model = _kv(detail, "model")
+            # The trailing [KEY=value …] block is stripped as noise below, so lift
+            # the STRIDE tier out of it first: in the default (non-verbose) headless
+            # view this line is the only per-component record the user gets, and a
+            # screened component must not read like a full-depth one.
+            depth = _kv(detail, "ANALYSIS_DEPTH")
             task = re.sub(r"\s*\[REPO_ROOT=[^\]]*\]\s*$", "", detail)
             task = re.sub(rf"^{re.escape(agent)}\s+model=\S+\s*", "", task).strip()
-            tag = f" ({model})" if model else ""
-            w(f"    ↳ {agent.split(':')[-1]}{tag}: {task}")
+            w(f"    ↳ {agent.split(':')[-1]}{_agent_tag(model, depth)}: {task}")
 
         elif event == "AGENT_INVOKE":
             # INVOKE: agent name is the component, model in a "(model: x)" suffix.
-            m = re.search(r"\(model:\s*(\w+)\)", detail)
+            # The suffix may carry more pairs (`(model: sonnet, MAX_TURNS=8,
+            # depth=screening)`), so match up to the comma as well as the paren —
+            # anchoring on `)` alone dropped the model for every STRIDE line.
+            m = re.search(r"\(model:\s*(\w+)[,)]", detail)
             model = m.group(1) if m else ""
-            task = re.sub(r"\s*\(model:\s*\w+\)\s*$", "", detail).strip()
-            tag = f" ({model})" if model else ""
-            w(f"    ↳ {comp.split(':')[-1]}{tag}: {task}")
+            # Hook-emitted lines carry ANALYSIS_DEPTH=; the orchestrator's own
+            # per-component echo carries depth= (background agents do not always
+            # reach the hook, which is why that echo exists).
+            depth = _kv(detail, "depth") or _kv(detail, "ANALYSIS_DEPTH")
+            task = re.sub(r"\s*\(model:[^)]*\)\s*$", "", detail).strip()
+            w(f"    ↳ {comp.split(':')[-1]}{_agent_tag(model, depth)}: {task}")
 
         elif event == "AGENT_DONE":
             w(f"    ✓ {comp.split(':')[-1]} done — {detail}")
@@ -207,7 +231,26 @@ def main() -> int:
         elif event == "RUN_RESUMED":
             w(f"    ↻ resumed — {detail}")
         elif event == "RUN_PROGRESS":
-            w(f"    ◷ progress · {detail}")
+            # The watchdog's `phase=` token is read from `.appsec-checkpoint`,
+            # which is only written at phase *end* and therefore lags the live
+            # PHASE_START banner by one phase. The banners are authoritative
+            # here, so show the phase we tracked from them.
+            if cur_phase:
+                detail = re.sub(r"\bphase=\S+", f"phase={cur_phase.split('/')[0]}", detail)
+            # The percentage is phase-granular: it sits flat for the whole of a
+            # long phase (Phase 9 / STRIDE runs ~20m). Only a *changed* reading
+            # earns a permanent line; the repeats carry no new progress and go
+            # through the heartbeat channel instead. They can't be dropped —
+            # the watchdog emits no HEARTBEAT of its own, so this line is the
+            # run's only liveness signal during those flat stretches.
+            m_pct = re.match(r"~(\d+)%", detail)
+            pct = m_pct.group(1) if m_pct else None
+            line = f"    ◷ progress · {detail}"
+            if pct is None or pct != last_pct_shown:
+                last_pct_shown = pct
+                w(line)
+            else:
+                heartbeat(line)
         elif event in ("STRIDE_STALE", "STRIDE_CANARY_TIMEOUT", "STRIDE_COMPONENT_TIMEOUT"):
             w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "SUBSTEP2_IDLE":
@@ -218,6 +261,10 @@ def main() -> int:
             w(f"    ⚠ non-empty session at scan start — {detail}")
         elif event == "SESSION_ABORTED_MIDRUN":
             w(f"    ⛔ aborted mid-run — {detail}")
+        elif event == "BUDGET_CRITICAL":
+            w(f"    ⛔ budget critical — {detail}")
+        elif event in ("BUDGET_WARN", "MAX_TURNS", "AGENT_ERROR", "RENDER_FAILED"):
+            w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "PARALLEL_STRIDE_RESOLVED":
             w(f"   config · {detail}")
         elif event == "ROUTE_INVENTORY_PREPASS":

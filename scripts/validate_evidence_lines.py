@@ -22,6 +22,15 @@ Before writing the final artifact, however, refuted candidates are removed:
 the active threat model is a current-risk snapshot, while the merged
 intermediate retains the audit verdict.
 
+Verdicts are persisted back into `.threats-merged.json` as well as
+`threat-model.yaml`. This is load-bearing, not bookkeeping: Stage 1c
+regenerates `threat-model.yaml` from the merged intermediate
+(`SKILL-impl.md`, abuse-case branch), so a floor that wrote only to the YAML
+was silently discarded on every standard/thorough run — the depth tiers where
+abuse-case verification is enabled. Writing both keeps the floor idempotent
+under rebuild and lets `build_threat_model_yaml.build_threats` apply its own
+refuted-drop on the regenerated artifact.
+
 Usage:
     python3 validate_evidence_lines.py <output_dir> --repo-root <REPO_ROOT>
 """
@@ -30,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import json
 import re
 import sys
 from pathlib import Path
@@ -324,6 +334,59 @@ def drop_refuted_findings(data: dict) -> int:
     return dropped
 
 
+def persist_to_merged(output_dir: Path, data: dict) -> int:
+    """Mirror floor verdicts into `.threats-merged.json`. Return count written.
+
+    Join key is `t_id` in the merged intermediate, which
+    ``build_threat_model_yaml.build_threats`` renames to `id` in the YAML.
+    Call this *before* :func:`drop_refuted_findings`, which removes refuted
+    entries from ``data`` — the merged intermediate must keep them so the
+    rebuild can re-apply the drop and the audit trail survives.
+
+    The never-lower rule from :func:`validate_yaml` applies here too: a real
+    LLM verdict already in the merged file is never overwritten by the floor.
+    Missing file is not an error — some paths run the floor without a merged
+    intermediate present.
+    """
+    merged_path = output_dir / ".threats-merged.json"
+    if not merged_path.is_file():
+        return 0
+    try:
+        merged = json.loads(merged_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"validate_evidence_lines: could not parse {merged_path}: {exc}", file=sys.stderr)
+        return 0
+    if not isinstance(merged, dict) or not isinstance(merged.get("threats"), list):
+        return 0
+
+    verdicts = {
+        t["id"]: t
+        for t in (data.get("threats") or [])
+        if isinstance(t, dict) and t.get("id") and t.get("evidence_check")
+    }
+    written = 0
+    for threat in merged["threats"]:
+        if not isinstance(threat, dict):
+            continue
+        source = verdicts.get(threat.get("t_id") or threat.get("id"))
+        if source is None:
+            continue
+        if (threat.get("evidence_check") or "").strip() in _RESPECTED_PRIOR_STATES:
+            continue
+        threat["evidence_check"] = source["evidence_check"]
+        if source.get("evidence_flags"):
+            existing = list(threat.get("evidence_flags") or [])
+            for flag in source["evidence_flags"]:
+                if flag not in existing:
+                    existing.append(flag)
+            threat["evidence_flags"] = existing
+        written += 1
+
+    if written:
+        merged_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+    return written
+
+
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="validate_evidence_lines", description="Deterministic evidence-line validation backstop."
@@ -351,6 +414,10 @@ def main(argv: list[str]) -> int:
         return 1
 
     data, stats = validate_yaml(data, repo_root)
+    # Mirror verdicts into the merged intermediate *before* dropping refuted
+    # entries from the active model — the rebuild reads the merged file and
+    # re-applies the drop itself.
+    mirrored = persist_to_merged(output_dir, data)
     dropped_refuted = drop_refuted_findings(data)
     yaml_path.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
@@ -360,7 +427,7 @@ def main(argv: list[str]) -> int:
         f"validate_evidence_lines: sampled={stats['sampled']} "
         f"verified={stats.get('verified', 0)} refuted={stats.get('refuted', 0)} "
         f"ambiguous={stats.get('ambiguous', 0)} skipped(prior)={stats['skipped']} "
-        f"dropped_refuted={dropped_refuted}"
+        f"dropped_refuted={dropped_refuted} mirrored_to_merged={mirrored}"
     )
     return 0
 

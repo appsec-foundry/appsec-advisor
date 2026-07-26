@@ -456,6 +456,7 @@ cwe_to_th:
   CWE-306: [TH-09, TH-13]        # Missing Auth Critical Fn -> mgmt plane primary
   CWE-307: [TH-02, TH-12]        # Excessive Auth Attempts
   CWE-522: [TH-02, TH-10]        # Insufficiently Protected Creds
+  CWE-521: [TH-02]               # Weak Password Requirements
   CWE-639: [TH-06]               # Authorization Bypass UC Key (IDOR)
   CWE-640: [TH-02]               # Weak Password Recovery
   CWE-862: [TH-06, TH-09]        # Missing Authorization

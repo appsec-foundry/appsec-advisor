@@ -7,6 +7,7 @@
 ## Contents
 
 - [What you get](#what-you-get)
+- [Threat model lifecycle](#threat-model-lifecycle)
 - [Example report: OWASP Juice Shop](#example-report-owasp-juice-shop)
 - [What it checks](#what-it-checks)
 - [Usage examples](#usage-examples)
@@ -55,6 +56,51 @@ SARIF and pentest tasks are generated from `threat-model.yaml` without model cal
 ```
 
 Use `--no-mermaid` to export PDF or HTML without rendered diagrams. To enable strict Mermaid validation during assessments, install the optional parser with `npm install --prefix "$CLAUDE_PLUGIN_ROOT/scripts"`.
+
+## Threat model lifecycle
+
+A threat model is a continuing security-review workflow, not just a generated report. Create it once, then ask questions, make decisions, implement selected changes, and reassess as the repository evolves.
+
+```mermaid
+flowchart LR
+    create["Create model"] --> model["Validated<br/>Markdown + YAML"]
+    model --> choose{"Use the model"}
+    choose --> ask["Ask directly<br/>Read-only answers"]
+    choose --> review["Review and decide<br/>Fix, accept, defer, or plan"]
+    choose --> share["Export or publish<br/>Optional"]
+    ask -->|Act on a finding| review
+    review --> change["Implement selected fixes"]
+    review --> plan["Remediation plan<br/>or accepted risk"]
+    change --> update["Update model<br/>Changed components"]
+    update --> model
+```
+
+### Create or update the model
+
+Run `/appsec-advisor:create-threat-model` for the first assessment. It analyzes repository evidence and produces validated Markdown and YAML. After code changes, `/appsec-advisor:update-threat-model` re-analyzes affected components and preserves finding identity across runs. It stops with guidance when no prior model exists, so an update cannot become an accidental first full scan.
+
+### Ask about the model directly
+
+You do not need a command to explore an existing model. Ask a natural-language question in the Claude Code console:
+
+```text
+what are the most critical findings?
+does the model cover SSRF?
+what is the mitigation for F-003?
+is the threat model still current?
+```
+
+The `ask-threat-model` workflow reads the structured model without rescanning the repository or changing files. Answers are grounded in the model, cite finding IDs, and say when the model does not contain the requested information. The explicit `/appsec-advisor:ask-threat-model <question>` form is also available. Use `/appsec-advisor:show-threat-model` when you want the fixed overview block rather than an answer to a specific question.
+
+### Review, decide, or implement
+
+Run `/appsec-advisor:review-threat-model` when you want to act on findings. Its modes support read-only browsing, recording fix, accept-risk, or defer decisions across selected findings, applying chosen code fixes one at a time, and building a remediation plan with owners and targets.
+
+Triage decisions live separately from the generated model and survive reassessment. The review workflow never regenerates or re-scores `threat-model.yaml`; source changes happen only after an explicit implementation choice.
+
+### Export or publish
+
+`/appsec-advisor:export-threat-model` generates PDF, HTML, SARIF, or pentest tasks from an existing assessment without another repository analysis. `/appsec-advisor:publish-threat-model` is the separate, deliberate path for making reviewed report files trackable in version control after its publication checks pass.
 
 ## Example report: OWASP Juice Shop
 
@@ -114,6 +160,17 @@ Target specific components to reduce cost and review time on large monorepos or 
 /appsec-advisor:create-threat-model focus on the /services/payment-gateway
 ```
 
+### Large component inventories
+
+Full and rebuild scans keep every criteria-selected component in scope, including
+inventories that exceed the operational component ceiling because many services
+are externally reachable. STRIDE analyzers run in resumable waves of up to eight
+components by default; completed component files are reused after an interrupted
+parent session. Set `APPSEC_STRIDE_CONCURRENCY=1..32` in the Claude Code
+environment to tune host pressure without changing coverage. A selected component
+that remains missing, partial, or schema-invalid after one retry blocks merge and
+report publication.
+
 ### With requirements catalog
 
 Use `--requirements` to include your organization's security requirements. See the [harvester guide](harvester.md) for creating the catalog YAML from Confluence, Antora, or other HTML pages.
@@ -168,25 +225,39 @@ Thorough increases both component coverage and per-component analysis depth.
 
 ### Cost by depth
 
-These OWASP Juice Shop runs are all on plugin **v0.5.0-beta** with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. They compare modes but do not predict the exact bill for another repository.
+These OWASP Juice Shop runs are all on plugin **v0.5.1-dev** (quick/thorough on v0.5.0-beta) with the Claude Code session (the orchestrator) on **Sonnet 4.6**, the recommended economy setup. They compare modes but do not predict the exact bill for another repository.
 
 | Mode | Best fit | Review depth | API cost (USD) and time |
 |---|---|---|---|
 | **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | $18.03 and 68 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick-v0.5.md)) |
-| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $33.21 and ~130 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.md)) |
+| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $30.83 and 89 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.md)) |
 | **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | $48.01 and ~138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.md)) |
 
 > [!NOTE]
 > Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
 
-**Cross-repo check (standard).** Cost tracks codebase size. [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app), an intentionally-vulnerable Spring Boot fixture, was assessed at `standard` on the same setup (table below). Its **$24.65** breaks down as $24.05 Sonnet 4.6 + $0.60 Haiku helpers, across 5 analyzed components. Only ~69 min wall / ~97 min agent compute was the pipeline itself; the rest of the session went to the repair loop and interactive iteration, so treat the figure as a loose upper bound. The lower bill than Juice Shop follows from the smaller repository — fewer files read means fewer cached input tokens, the dominant cost driver (see *Background: why Sonnet 4.6 costs less*).
+**Cross-repo check (standard).** Cost tracks codebase size. [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app), an intentionally-vulnerable Spring Boot fixture, was assessed at `standard` on the same setup (table below). Its **$31.32** breaks down as $30.73 Sonnet 4.6 + $0.59 Haiku helpers, across 8 analyzed components in ~96 min wall-clock (pipeline only; full session was ~4h 46m including this doc update). The higher component count versus the prior v0.5.0-beta run ($24.65, 5 components) reflects the v0.5.1 criteria expansion that adds crown-jewel stores and additional internet-exposed surfaces to the standard selection set; the session cost also includes the v0.5.1-dev triage/merger upgrade to Sonnet 5. The bill is close to Juice Shop here despite the smaller repository because the component count converged — fewer source files but a similarly broad attack surface.
 
 | Repo | Stack | Mode | Plugin | Session | Threats | API cost |
 |---|---|---|---|---|---|---|
-| OWASP Juice Shop | Node/Angular | standard | v0.5.0-beta | Sonnet 4.6 | 54 | $33.21 |
-| insecure-spring-app | Spring Boot | standard | v0.5.0-beta | Sonnet 4.6 | 49 | $24.65 |
+| OWASP Juice Shop | Node/Angular | standard | v0.5.1-dev | Sonnet 4.6 | 60 | $30.83 |
+| insecure-spring-app | Spring Boot | standard | v0.5.1-dev | Sonnet 4.6 | 49 | $31.32 |
 
 `--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the standard benchmark, a cap of 2 trims the finding count by roughly a third and saves roughly $4. The selected cap is recorded in the report.
+
+Phase 10a evidence verification is capped at 20 non-Critical findings in quick mode, 30 in standard mode, and 100 in thorough mode. Use `--evidence-verifier-cap N` to change that limit; Critical findings do not count toward the cap and are selected first.
+
+Cheap-stride is the screening-depth tier for the internal tail. It is **on by default at quick and standard depth and off at thorough**; `--cheap-stride` forces it on at any depth and `--no-cheap-stride` forces it off. The pre-flight names which of the two decided, so a run never screens silently. Components that carry the attack surface — authentication, frontend, LLM, internet-exposed, file-upload, and realtime components — keep full STRIDE depth, and so do data stores and the central request-handling backend (the API or gateway layer everything else is reached through). Authentication and the core API are never screened under any configuration. Every other selected component gets a screening pass instead: a flat 8-turn budget with `ESTIMATED_THREAT_COUNT=low`, which skips verification greps and file re-reads. One turn is one tool call the agent makes — reading a file, searching the code — so a screened component gets roughly eight looks at the repository before it has to write up, enough to spot what a file shows on its face but not to trace a control across several files. All six STRIDE categories are still covered; the tier is a budget and pacing lever, never a reduction in category coverage. Screened components are disclosed as such — `Screened` in the §3 component table, a separate clause in the Management Summary scope line, and `analysis_depth: screening` in `.stride-selection.json`.
+
+Defaulting it is only defensible because of the reachability fail-safe described below: an unreliable component model costs budget, never depth. Thorough keeps full depth everywhere because it is the mode a user picks when depth outweighs cost. Use `--no-cheap-stride` at quick or standard when even a proven-internal component must be analyzed at full depth.
+
+The data-store carve-out is measured rather than precautionary. In the juice-shop A/B (`docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md`) a screened datastore pair kept its data-at-rest findings but lost every model-design finding the same code yielded at full depth — a conditional-sanitize bypass, the database file placement, and missing query timeouts. That class is what the verification round buys, and the data-store signal is a type anchor, so sparing on it stays selective.
+
+Crown-jewel status deliberately does not spare a component. It reads the analyst's `handles_sensitive_data` flag, which over-tags: 6 of 11 components carried it in that run and 6 of 8 in the comparison run. The same measurement found no coverage loss for the screened crown-jewel API — 18 findings including 4 Criticals at 8 turns.
+
+What does spare it is the reachability fail-safe. A component with no canonical access-zone token is never screened, because screening asserts the component is tail and nothing has proven it internal. This is what put juice-shop's internet-facing REST API into the screening set in the first place: the analyst wrote the runtime tier (`server`, a runtime-only zone) into `deployment_zones` instead of a reachability zone, so the exposure signal never fired. The comparison run tagged the same component `internet-facing` and it kept full depth — analysis depth must not hinge on which synonym the analyst picked. The consequence is that on a repo whose zone vocabulary drifted the flag has little or nothing to screen; when it screens nothing at all the manifest builder says so on stderr (`CHEAP_STRIDE_INERT`) rather than letting a full-price run read as a cheapened one. ci-cd is the one exception to the fail-safe: it is identified by role rather than by reachability, and screening it measured ~zero loss because its substance comes from the deterministic config scanner.
+
+`--register-severity-floor` controls which effective severities enter the canonical report and its SARIF and pentest-task exports. The default, `medium`, excludes Low and Informational findings to keep the register actionable. Use `--register-severity-floor low` or `informational` when a complete lower-severity export is required.
 
 ### Reasoning model
 
@@ -358,6 +429,8 @@ Use these commands after an assessment or to recover an interrupted run.
 
 | Command | Purpose |
 |---|---|
+| `/appsec-advisor:ask-threat-model <question>` | Answer a free-form question from the structured model without rescanning or writing files. Natural-language questions about the model route here even when the command is omitted. |
+| `/appsec-advisor:show-threat-model` | Print the fixed read-only overview with scan identity, severity mix, mitigation backlog, worst-case scenarios, control posture, and freshness. |
 | `/appsec-advisor:update-threat-model` | Incrementally update an existing threat model — alias for `create-threat-model --incremental`, re-analyzing only changed components. Aborts with guidance when no model exists yet (never bootstraps a first full scan). An explicit `--full`/`--rebuild`/`--rerender`/`--resume` is honored instead. |
 | `/appsec-advisor:review-threat-model` | Open a triage console over an existing report — a one-screen verdict (severity mix, hottest areas and components, mitigation coverage), then drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with owner and target) on a whole selection at once; writes a prioritised `remediation-plan.md`. Runs independently of the assessment and only reads the model. |
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |

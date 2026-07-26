@@ -872,14 +872,36 @@ def test_progress_snapshot_percent_is_completed_lower_bound(out_dir):
     (out_dir / ".appsec-checkpoint").write_text("phase=11 status=writing_output\n")
     pct11, _ = sw._progress_snapshot(out_dir, weights)
     assert pct11 == 96
-    # repair/completed token saturates to 100.
+    # Stage-2 (repair/render tokens) is unmodeled and runs AFTER phase 11, so the
+    # bar is capped below 100 while it is in flight — never a premature "done".
     (out_dir / ".appsec-checkpoint").write_text("phase=repair/1 status=in_progress\n")
     pct_done, _ = sw._progress_snapshot(out_dir, weights)
-    assert pct_done == 100
-    # Terminal status=completed at phase=11 saturates to 100, not 96.
+    assert pct_done == sw._FINALIZATION_CAP_PCT == 99
+    # Terminal status=completed at phase=11 is Stage-1 done, Stage-2 pending →
+    # capped at 99, not a hard 100 (which read as "finished" while Stage-2 ran).
     (out_dir / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
     pct_term, _ = sw._progress_snapshot(out_dir, weights)
-    assert pct_term == 100
+    assert pct_term == 99
+
+
+def test_progress_snapshot_mid_run_completed_is_not_terminal(out_dir):
+    """`status=completed` is a per-phase marker (batch_checkpoint.py writes it
+    at every phase end). Reading it as run-terminal pinned the live progress
+    line at ~100% from Phase 3 onward for the whole run."""
+    sw = _load()
+    weights = sw._PROGRESS_WEIGHTS["standard"]
+    # Phase 8 done, Phase 9 running → phases 1..8 count, not 100%.
+    (out_dir / ".appsec-checkpoint").write_text("phase=8 status=completed\n")
+    pct, token = sw._progress_snapshot(out_dir, weights)
+    assert token == "8"
+    assert pct == 40  # same numerator as "phase=9 in_progress"
+    # And it advances stepwise rather than sitting flat.
+    seen = []
+    for n in (3, 5, 8):
+        (out_dir / ".appsec-checkpoint").write_text(f"phase={n} status=completed\n")
+        seen.append(sw._progress_snapshot(out_dir, weights)[0])
+    assert seen == sorted(seen) and len(set(seen)) == 3
+    assert max(seen) < 100
 
 
 def test_progress_snapshot_none_without_checkpoint(out_dir):

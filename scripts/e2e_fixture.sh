@@ -19,7 +19,7 @@ PLUGIN_PARENT="$(cd "$PLUGIN_ROOT/.." && pwd)"
 DEFAULT_FIXTURE_ROOT="$PLUGIN_PARENT/appsec-advisor-fixtures"
 LEGACY_FIXTURE_ROOT="$PLUGIN_PARENT/appsec-advisor-tests"
 
-KNOWN_FIXTURES="spring-boot-threat-fixture python-threat-fixture rust-threat-fixture go-threat-fixture node-typescript-threat-fixture python-langchain-llm-threat-fixture"
+KNOWN_FIXTURES="spring-boot-threat-fixture python-threat-fixture rust-threat-fixture go-threat-fixture node-typescript-threat-fixture python-langchain-llm-threat-fixture aws-terraform-threat-fixture npm-supply-chain-threat-fixture fifty-service-threat-fixture"
 
 if [ -n "${APPSEC_FIXTURE_E2E_ROOT:-}" ]; then
     FIXTURE_ROOT="$APPSEC_FIXTURE_E2E_ROOT"

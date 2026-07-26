@@ -67,7 +67,8 @@ entry** (a finding sidecar that is `0 B`, missing, or implausibly large), then:
 1. **Phase/component → producer.** Map the phase to its phase-group file under
    `agents/phases/` and the script that runs there (e.g. Phase 9/merge →
    `scripts/build_threat_model_yaml.py`; compose → `compose_threat_model.py`).
-   Use `AGENTS.md` → "Phase map" and "Agent roster".
+   Use `AGENTS.md` → "Phase and stage map", the phase-group headings, and
+   each agent's frontmatter for its role and turn budget.
 2. **Error signature → code.** `Grep` the repo for the distinctive tokens of the
    scrubbed `last error` (schema enum names, function names, event names) across
    `scripts/`, `schemas/`, `agents/`. The `<str>`/`<path>` placeholders are

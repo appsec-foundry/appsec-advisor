@@ -134,6 +134,14 @@ cwes:
     owasp_top10_2025: A07
     owasp_asvs: V2.4
     cwe_top25_2024: null
+  CWE-521:
+    title: "Weak Password Requirements"
+    url: "https://cwe.mitre.org/data/definitions/521.html"
+    pillar: CWE-284
+    canonical_parent: CWE-287
+    owasp_top10_2025: A07
+    owasp_asvs: V2.1
+    cwe_top25_2024: null
   CWE-639:
     title: "Authorization Bypass Through User-Controlled Key"
     url: "https://cwe.mitre.org/data/definitions/639.html"

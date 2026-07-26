@@ -256,6 +256,17 @@ def _tokenise(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+def _strip_domain_commas(domain: str) -> str:
+    """Drop commas from a §6 domain title and collapse the resulting spaces.
+
+    The canonical titles in ``sections-contract.yaml`` are comma-free
+    ("Operations Runtime and Supply Chain Controls"), but both Stage 1 and
+    ``assess_supply_chain_controls.py`` have historically written the comma
+    form. Comparing the comma-stripped shape lets the caller recognise those
+    as the SAME domain instead of treating them as unknown."""
+    return re.sub(r"\s{2,}", " ", domain.replace(",", " ")).strip()
+
+
 def _infer_domain(control_name: str) -> str | None:
     """Return the canonical domain for ``control_name`` per the token index,
     or ``None`` when no entry matches deterministically."""
@@ -376,6 +387,40 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                 )
                 is not None
             )
+            # Comma-only drift is stylistic, never semantic. The canonical §6
+            # titles in sections-contract.yaml are comma-free, but Stage 1 —
+            # and, until 2026-07-24, the deterministic
+            # assess_supply_chain_controls.py producer — wrote the comma form
+            # ("Operations, Runtime and Supply Chain Controls"). That form
+            # matched nothing in `known_domain_strings`, so the final branch
+            # below treated a perfectly valid domain as unknown and re-routed
+            # on the inferred token alone: juice-shop 2026-07-24 moved
+            # "Rate Limiting" out of §6.11 Operations into §6.2 IAM purely
+            # because of punctuation. Normalise in place and stop, exactly
+            # like the suffix case.
+            if (
+                not session_primitive_reroute
+                and not crypto_primitive_reroute
+                and current_norm
+                and current_norm not in known_domain_strings
+                and _strip_domain_commas(current_norm) in known_domain_strings
+            ):
+                canonical_domain = _strip_domain_commas(current_norm)
+                c["domain"] = canonical_domain
+                domain_changes.append(
+                    {
+                        "id": cid,
+                        "from": current_domain,
+                        "to": canonical_domain,
+                        "control": c.get("control"),
+                    }
+                )
+                flags = list(c.get("audit_flags") or [])
+                token = "control_domain_comma_normalised"
+                if token not in flags:
+                    flags.append(token)
+                c["audit_flags"] = flags
+                continue
             if (
                 not session_primitive_reroute
                 and not crypto_primitive_reroute

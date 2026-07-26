@@ -86,7 +86,7 @@ natural-language question), print this block verbatim and exit.
 
 USAGE
   /appsec-advisor:ask-threat-model [your question]  [--repo <path>] [--output <path>]
-  /appsec-advisor:ask-threat-model --grep <term>    [--repo <path>] [--output <path>] [--json]
+  /appsec-advisor:ask-threat-model --grep <term>    [--severity <level>] [--component <name>] [--evidence-state <state>] [--repo <path>] [--output <path>] [--json]
   /appsec-advisor:ask-threat-model --id <F-003>     [--repo <path>] [--output <path>] [--json]
 
 WHAT IT DOES
@@ -99,6 +99,10 @@ FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
   --output <path>   Output directory holding the model (default: <repo>/docs/security)
   --grep <term>     Pre-filter findings/mitigations to those matching <term>
+  --severity <level> Filter findings to Critical, High, Medium, Low, or Informational
+  --component <name> Filter findings by component id or name
+  --evidence-state <state>
+                    Filter findings by evidence state (for example verified or unchecked)
   --id <id>         Look one identifier up precisely (F-/T-/M-/W-NNN), with its
                     cross-links (finding <-> mitigation <-> weakness)
   --json            Emit the facts index as JSON (for tooling)
@@ -119,26 +123,26 @@ tokens — that text IS the question you must answer.
 
 Recognized flags (everything else is the user's question, kept verbatim):
 
-  `--repo <path>`  `--output <path>`  `--grep <term>`  `--id <id>`  `--json`
+  `--repo <path>`  `--output <path>`  `--grep <term>`  `--id <id>`  `--severity <level>`
+  `--component <name>`  `--evidence-state <state>`  `--json`
   `--help` | `-h`
 
 - Default `REPO_ROOT` to the current working directory; `--repo` overrides.
 - Default `OUTPUT_DIR` to `$REPO_ROOT/docs/security`; `--output` overrides.
-- `--grep <term>` sets an optional pre-filter, `--id <id>` a precise lookup
-  (mutually exclusive); `--json` is a boolean toggle.
+- `--grep <term>` sets an optional topic pre-filter, `--severity <level>` an
+  exact severity filter, `--component <name>` a component filter, and
+  `--evidence-state <state>` an exact evidence-state filter. They compose with
+  AND semantics. `--id <id>` is a precise lookup and cannot be combined with
+  the other filters; `--json` is a boolean toggle.
 - All remaining tokens form `QUESTION` — the thing you answer in Step 4.
 
 ## Step 2 — Resolve `CLAUDE_PLUGIN_ROOT`
 
 ```bash
-if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/ask-threat-model/SKILL.md" \
-    2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
-fi
-export CLAUDE_PLUGIN_ROOT
-if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
-  echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved." >&2
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] \
+  || [ ! -f "$CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json" ] \
+  || [ ! -f "$CLAUDE_PLUGIN_ROOT/scripts/query_threat_model.py" ]; then
+  echo "Error: CLAUDE_PLUGIN_ROOT is missing or does not identify a valid appsec-advisor plugin." >&2
   exit 2
 fi
 ```
@@ -174,34 +178,42 @@ the unfiltered read is large:
 - **`--id <F-/T-/M-/W-NNN>`** — the question names one identifier ("what's the
   fix for F-003?", "why is W-002 a problem?"). Returns that record with its
   cross-links (finding ↔ mitigation ↔ weakness). Cheapest and most precise;
-  prefer it over `--grep` whenever an id is present.
+  prefer it over every other filter whenever an id is present.
+- **`--severity <level>`** — use for questions such as "what are the Critical
+  findings?". It avoids loading unrelated findings; the severity histogram and
+  worst-case block remain global.
+- **`--component <name>`** — use for questions about a named service or
+  component. It matches both the component id and its display name.
+- **`--evidence-state <state>`** — use when the question distinguishes verified,
+  ambiguous, or unchecked evidence.
 - **`--grep <term>`** — the question centers on one keyword (a component name, a
   vulnerability class). Note the severity histogram and worst-case block stay
   global, so a filtered read still answers "how bad is it overall?".
-- **no filter** — broad questions ("what are the critical findings?", "what are
-  my assets?", "which controls are weak?"). Fine on a `quick`/`standard` model;
-  on a large one prefer `--grep`/`--id`. Note the attack-surface entry list is
-  *only* rendered under `--grep` — the default shows its shape alone.
+- **no filter** — genuinely broad questions ("what are my assets?", "which
+  controls are weak?"). Fine on a `quick`/`standard` model; on a large one
+  prefer a targeted filter. Note the attack-surface entry list is *only*
+  rendered under `--grep` — the default shows its shape alone.
 
 ```bash
-MODE=""
+QUERY_ARGS=(--output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT")
 if [ -n "$ID_QUERY" ]; then
-  MODE="--id $ID_QUERY"
-elif [ -n "$GREP_TERM" ]; then
-  MODE="--grep $GREP_TERM"
+  QUERY_ARGS+=(--id "$ID_QUERY")
+else
+  [ -n "$GREP_TERM" ] && QUERY_ARGS+=(--grep "$GREP_TERM")
+  [ -n "$SEVERITY_QUERY" ] && QUERY_ARGS+=(--severity "$SEVERITY_QUERY")
+  [ -n "$COMPONENT_QUERY" ] && QUERY_ARGS+=(--component "$COMPONENT_QUERY")
+  [ -n "$EVIDENCE_STATE_QUERY" ] && QUERY_ARGS+=(--evidence-state "$EVIDENCE_STATE_QUERY")
 fi
-JSON=""
-[ "$JSON_MODE" = "true" ] && JSON="--json"
+[ "$JSON_MODE" = "true" ] && QUERY_ARGS+=(--json)
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/query_threat_model.py" \
-    --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" $MODE $JSON
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/query_threat_model.py" "${QUERY_ARGS[@]}"
 EXIT=$?
 ```
 
 Exit-code reference:
 - `0` — model present, facts emitted
 - `1` — no model found (the tool prints the create-threat-model hint; surface it)
-- `2` — error (unreadable / unparseable model)
+- `2` — error (unreadable, unparseable, or contract-invalid model)
 
 If `--json` was requested, print the tool's output as the deliverable and stop.
 

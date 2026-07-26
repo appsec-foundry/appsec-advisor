@@ -123,7 +123,7 @@ fixes) — a fresh session loses nothing.
 
 ## UPDATE 2026-07-02 (later same day) — Part A committed; Part B Phase 1 done, Phase 2 blocked
 
-**Part A:** committed as `96b6058` on `dev` (not pushed). Regression tests per bug not
+**Part A:** committed as `23bd6ec` on `dev` (not pushed). Regression tests per bug not
 yet added (deferred by user — commit first).
 
 ### Part B Phase 1 — two corrections to the numbers above

@@ -221,7 +221,7 @@ def test_rebuild_wipe_lazy_loaded_not_inline():
 def test_skill_impl_stage2_tail_lazy_loaded():
     """Context-budget fix (2026-06-23): the orchestrator must read SKILL-impl.md only
     through the LAZY-LOAD BOUNDARY during initial load (Stage 1 core), deferring the
-    Stage 2/3/4/Completion tail (~30k tokens) until the Stage-2 handoff. This keeps the
+    Stage 2/3/4/Completion tail until its individual stage boundaries. This keeps the
     pre-flight resident context below the auto-compaction threshold that otherwise fires
     just before STRIDE dispatch. Content stays in SKILL-impl.md (no test churn) — only the
     *read schedule* changes."""
@@ -234,20 +234,92 @@ def test_skill_impl_stage2_tail_lazy_loaded():
     )
     assert "LAZY-LOAD BOUNDARY" in skill, "SKILL.md must point the initial read at the LAZY-LOAD BOUNDARY"
 
-    # Exactly one boundary marker, and it sits before the Stage 2 section.
+    # Exactly one boundary marker, and it defers Stage 1c plus later stages.
     assert impl.count("<!-- LAZY-LOAD BOUNDARY") == 1, (
         "SKILL-impl.md must contain exactly one LAZY-LOAD BOUNDARY marker"
     )
     boundary_pos = impl.find("<!-- LAZY-LOAD BOUNDARY")
+    stage1c_pos = impl.find("## Stage 1c — Abuse Case Verification")
     stage2_pos = impl.find("## Stage 2 - Report Rendering")
-    assert 0 < boundary_pos < stage2_pos, (
-        "the LAZY-LOAD BOUNDARY marker must appear immediately before '## Stage 2 - Report Rendering'"
+    assert 0 < boundary_pos < stage1c_pos < stage2_pos, (
+        "the LAZY-LOAD BOUNDARY marker must defer Stage 1c and every later stage"
     )
 
-    # The resume instruction (read from the boundary to EOF) must sit ABOVE the marker,
-    # i.e. inside the initially-read portion, or the orchestrator never learns to resume.
-    resume_pos = impl.find("to the END of the file now")
-    assert 0 < resume_pos < boundary_pos, (
-        "the 'read from the boundary to EOF' resume instruction must sit above the marker "
-        "(in the initially-read Stage-1 portion)"
+    # The bounded resume instruction must sit above the marker, and neither the
+    # router nor the prefix may tell legacy mode to ingest the complete tail.
+    resume_pos = impl.find("Follow the bounded schedule")
+    assert 0 < resume_pos < boundary_pos
+    bounded_instruction = " ".join(impl[resume_pos:boundary_pos].split())
+    assert "Do not read from this marker to EOF" in bounded_instruction
+    assert "do not read the whole tail" in skill
+    for heading in (
+        "## Stage 2 - Report Rendering",
+        "## Stage 3 - QA Review",
+        "## Stage 4 - Architect Review",
+        "## Completion Summary",
+        "## Error Handling",
+    ):
+        assert heading in skill
+    assert "skip it for rerender and Stage-2-only recovery paths" in skill
+    prefix = impl[:boundary_pos]
+    assert "rerender and Stage-2-only recovery go directly to\nStage 2" in prefix
+
+
+def test_thin_runtime_loads_stage1c_only_when_enabled():
+    runtime = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
+    assert "Read `SKILL-thin-stage1.md` in full" in runtime
+    assert "Only when `SKIP_ABUSE_CASE_VERIFICATION=false`" in runtime
+    assert "read\n`SKILL-thin-stage1c.md` in full" in runtime
+    assert "Otherwise do not load any\nStage-1c instructions" in runtime
+    assert "SKILL-thin-stage2.md" in runtime
+    assert "Do not load the Stage-2 slice" in runtime
+
+
+def test_non_dry_stage3_safety_slice_cannot_be_bypassed_by_controller_action():
+    """Quick/no-QA paths may return stage4/complete from the controller, but
+    the depth-independent secret gate still has to run before either action."""
+    router = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md").read_text(encoding="utf-8")
+    full = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
+    rerender = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md").read_text(
+        encoding="utf-8"
     )
+
+    for text in (router, full, rerender):
+        normalized = " ".join(text.split())
+        assert "Stage-3 safety slice" in normalized
+        assert "secret-leak gate" in normalized
+        assert "stage4" in normalized and "complete" in normalized
+
+
+def test_completion_slice_owns_cross_path_release_gates():
+    """Final integrity gates must not live in optional Stage 4: standard runs
+    without architect review jump directly to the Completion slice."""
+    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
+    completion = impl.find("## Completion Summary")
+    hard_link_gate = impl.find("### Hard broken-link gate")
+    error_handling = impl.find("## Error Handling")
+
+    assert 0 < completion < hard_link_gate < error_handling
+    completion_slice = impl[completion:error_handling]
+    assert "reclassify_components.py" in completion_slice
+    assert 'qa_checks.py" toc_closure' in completion_slice
+
+
+def test_stage4_lazy_loads_repair_contract_only_when_required():
+    """A clean Stage-3 fast path must not make architect repair instructions
+    unreachable, while a passing architect review should not pay for them."""
+    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
+    stage4 = impl.find("## Stage 4 - Architect Review")
+    completion = impl.find("## Completion Summary")
+    block = impl[stage4:completion]
+
+    assert ".architect-status.json" in block
+    assert "repair_required" in block
+    assert "Re-Render Loop — enforce strict contract" in block
+    assert "Do not load the repair block when the status is `pass`" in block
+
+
+def test_agents_md_does_not_claim_full_impl_is_resident():
+    agents = AGENTS_MD.read_text(encoding="utf-8")
+    assert "`SKILL-impl.md` is read in full into the orchestrator's resident context" not in agents
+    assert "`SKILL-impl.md` is large and is read in bounded slices" in agents

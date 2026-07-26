@@ -229,6 +229,60 @@ def test_format_entry_unknown_name():
     assert out == "? [starting]"
 
 
+# --- screening tier ----------------------------------------------------------
+
+
+def test_format_entry_marks_screening():
+    marks = {"done": "D", "stale": "S", "bullet": "-"}
+    running = sp._format_entry(
+        {"component_name": "CI/CD", "step": 4, "total": 9, "label": "Tampering"},
+        False,
+        False,
+        marks,
+        screening=True,
+    )
+    assert running == "CI/CD (screening) [4/9 Tampering]"
+    done = sp._format_entry({"component_name": "CI/CD"}, True, False, marks, screening=True)
+    assert done == "CI/CD (screening) D"
+
+
+def _write_manifest(output_dir: Path, entries: list[dict]) -> None:
+    (output_dir / ".stride-dispatch-manifest.json").write_text(json.dumps({"components": entries}))
+
+
+def test_screening_ids_read_from_manifest(tmp_path):
+    _write_manifest(
+        tmp_path,
+        [
+            {"component_id": "ci-cd", "cheap_stride": True},
+            {"component_id": "auth"},
+            {"component_id": "api", "cheap_stride": False},
+        ],
+    )
+    assert sp._screening_ids(tmp_path) == {"ci-cd"}
+
+
+def test_screening_ids_empty_without_manifest(tmp_path):
+    """No manifest → every component renders as full depth. Claiming screening
+    for a component whose tier is unknown would understate the analysis."""
+    assert sp._screening_ids(tmp_path) == set()
+    (tmp_path / ".stride-dispatch-manifest.json").write_text("{not json")
+    assert sp._screening_ids(tmp_path) == set()
+
+
+def test_screening_reaches_console_and_progress_bridge(tmp_path):
+    _write_progress(tmp_path, "ci-cd", "CI/CD Pipeline", 3, 9, "Spoofing")
+    _write_progress(tmp_path, "auth", "Auth Service", 3, 9, "Spoofing")
+    _write_manifest(tmp_path, [{"component_id": "ci-cd", "cheap_stride": True}, {"component_id": "auth"}])
+    res = _run(tmp_path, expected=2)
+    assert "CI/CD Pipeline (screening)" in res.stdout
+    assert "Auth Service [3/9" in res.stdout
+    assert "Auth Service (screening)" not in res.stdout
+    # The tier must survive into the file watch_run.py tails.
+    bridged = json.loads((tmp_path / ".appsec-progress.json").read_text())
+    assert "CI/CD Pipeline (screening)" in bridged["label"]
+
+
 # --- _read_last / _write_last error paths ------------------------------------
 
 

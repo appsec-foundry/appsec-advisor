@@ -467,3 +467,77 @@ def test_reset_session_unlink_oserror_swallowed(env, monkeypatch):
 
     monkeypatch.setattr(Path, "unlink", boom)
     bw.reset_session("sid_aaaa", str(output_dir))  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Run-ownership guard — a foreign session sharing OUTPUT_DIR must not raise
+# the shared budget flag (2026-07-20 juice-shop cross-session poisoning).
+# ---------------------------------------------------------------------------
+
+
+def _write_lock(output_dir: Path, run_id: str, *, fresh: bool = True) -> None:
+    """Write an `.appsec-lock` in acquire_lock's `<pid>\\n<hb>\\n<run_id>\\n` form."""
+    import time  # noqa: PLC0415
+
+    hb = int(time.time()) - (0 if fresh else bw.LOCK_FRESH_SECONDS + 60)
+    (output_dir / bw.LOCK_FILENAME).write_text(f"12345\n{hb}\n{run_id}\n", encoding="utf-8")
+
+
+def _drive_to_critical(output_dir: Path, sid: str) -> None:
+    for _ in range(9):  # maxTurns=10 → 9 calls crosses the 90% critical line
+        bw.tally_and_check(sid, "appsec-test-agent", str(output_dir))
+
+
+def test_foreign_session_under_live_lock_does_not_write_flag(env):
+    """The exact juice-shop failure: a dev session (sid 9617b066) sharing the
+    run's OUTPUT_DIR crosses budget while the run (6f373f38) owns a live lock.
+    Its exhaustion must NOT raise the shared .budget-critical flag."""
+    output_dir, _ = env
+    _write_lock(output_dir, "6f373f38-cfbf-4d9e-8792-8e7631897d8f", fresh=True)
+    _drive_to_critical(output_dir, "9617b066")
+    assert not (output_dir / bw.CRITICAL_FLAG_FILENAME).exists()
+    assert not (output_dir / bw.WARN_FLAG_FILENAME).exists()
+
+
+def test_owning_session_under_live_lock_writes_flag(env):
+    """The run's own session (sid == lock run-id[:8]) still trips the flag."""
+    output_dir, _ = env
+    _write_lock(output_dir, "6f373f38-cfbf-4d9e-8792-8e7631897d8f", fresh=True)
+    _drive_to_critical(output_dir, "6f373f38")
+    flag = output_dir / bw.CRITICAL_FLAG_FILENAME
+    assert flag.is_file()
+    assert any(e["sid"] == "6f373f38" for e in json.loads(flag.read_text()))
+
+
+def test_fail_open_when_no_lock(env):
+    """No lock → ownership indeterminate → behave as before (flag written)."""
+    output_dir, _ = env
+    _drive_to_critical(output_dir, "9617b066")
+    assert (output_dir / bw.CRITICAL_FLAG_FILENAME).is_file()
+
+
+def test_fail_open_when_lock_is_stale(env):
+    """A hung/dead owner (stale heartbeat) cannot claim ownership → fail open."""
+    output_dir, _ = env
+    _write_lock(output_dir, "6f373f38-cfbf-4d9e-8792-8e7631897d8f", fresh=False)
+    _drive_to_critical(output_dir, "9617b066")
+    assert (output_dir / bw.CRITICAL_FLAG_FILENAME).is_file()
+
+
+def test_fail_open_when_lock_has_no_run_id(env):
+    """A v1/legacy 2-line lock carries no run-id → cannot own → fail open."""
+    output_dir, _ = env
+    import time  # noqa: PLC0415
+
+    (output_dir / bw.LOCK_FILENAME).write_text(f"12345\n{int(time.time())}\n", encoding="utf-8")
+    _drive_to_critical(output_dir, "9617b066")
+    assert (output_dir / bw.CRITICAL_FLAG_FILENAME).is_file()
+
+
+def test_live_lock_owner_returns_none_when_indeterminate(env):
+    output_dir, _ = env
+    assert bw._live_lock_owner(str(output_dir)) is None  # no lock
+    _write_lock(output_dir, "abcd1234-rest", fresh=False)
+    assert bw._live_lock_owner(str(output_dir)) is None  # stale
+    _write_lock(output_dir, "abcd1234-rest", fresh=True)
+    assert bw._live_lock_owner(str(output_dir)) == "abcd1234"  # fresh owner

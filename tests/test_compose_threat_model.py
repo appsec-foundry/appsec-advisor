@@ -530,6 +530,69 @@ def test_figure1_caps_tier_width_for_complex_apps(tmp_path: Path) -> None:
     assert "Critical/High finding in §8" in fig1, "capped Crit/High components must be named in the muted note"
 
 
+def test_attack_paths_table_uses_effective_severity(tmp_path: Path, monkeypatch) -> None:
+    """Regression (2026-07-25 insecure-spring-app): the attack-paths table read
+    the raw ``risk`` field while every other section resolves severity through
+    ``ctx.severity_for_ref`` (which prefers post-triage ``effective_severity``,
+    incl. abuse-chain elevation). One finding therefore rendered two different
+    severities inside one report — F-024 was 🟠 High in this table and 🔴
+    Critical in the Management Summary, component table, attack-surface table and
+    roadmap. 7 of that run's 49 findings had risk != effective_severity.
+
+    Both the per-finding dot AND the path's aggregate Risk cell must follow the
+    canonical resolver, so a path can never be rated below a member finding.
+    """
+    out = tmp_path / "out"
+    (out / ".fragments").mkdir(parents=True)
+    ctx = compose.RenderContext(
+        output_dir=out,
+        contract={},
+        yaml_data={
+            "components": [{"id": "C-04", "name": "Legacy Admin Console", "tier": "application"}],
+            "threats": [
+                # Elevated by triage: raw risk High, effective Critical.
+                {
+                    "id": "F-024",
+                    "t_id": "T-024",
+                    "title": "Unauthenticated Account Deletion",
+                    "component": "C-04",
+                    "risk": "High",
+                    "effective_severity": "Critical",
+                },
+                {
+                    "id": "F-035",
+                    "t_id": "T-035",
+                    "title": "Unauthenticated Full User Listing",
+                    "component": "C-04",
+                    "risk": "Medium",
+                },
+            ],
+        },
+        triage={},
+        fragments_dir=out / ".fragments",
+    )
+    monkeypatch.setattr(
+        compose,
+        "_load_attack_class_taxonomy",
+        lambda: {"classes": [{"id": "privilege-escalation", "threat_label": "Broken Authorization", "stride": "E"}]},
+    )
+    monkeypatch.setattr(
+        compose,
+        "_load_attack_paths_fragment",
+        lambda c, tax, thr: {
+            "attack_paths": [{"class": "privilege-escalation", "findings": ["F-024", "F-035"], "impact": []}]
+        },
+    )
+    rows = compose._compute_top_threats_rows(ctx)
+    assert rows, "expected a Top Threats row"
+    cell = rows[0]["findings_cell"]
+    # The elevated finding carries its effective Critical dot, not raw-risk High.
+    before_ref = cell.split("[F-024]")[0]
+    assert "🔴" in before_ref[-40:], f"F-024 must render its effective Critical severity: {cell[:400]}"
+    # The path's aggregate Risk must not sit below its worst member finding.
+    assert "critical" in (rows[0]["risk_cell"] or "").strip().lower(), rows[0]["risk_cell"]
+
+
 def test_components_table_scope_column_marks_out_of_scope(tmp_path: Path) -> None:
     """§2.3 gains a Scope column when meta.component_selection excluded some
     components — each row marked Analyzed / Out of scope for completeness."""
@@ -3905,6 +3968,86 @@ def test_verdict_scope_coverage_line(tmp_path: Path) -> None:
     out = compose._render_verdict(ctx, env, section)
     assert "**Scope:** 2 of 4 components received full STRIDE analysis" in out
     assert "other 2 (lower-priority / internal) were not individually assessed" in out
+
+
+def test_verdict_scope_coverage_counts_screening_separately(tmp_path: Path) -> None:
+    """A --cheap-stride screening pass is not full STRIDE depth — it must not be
+    counted into the full-analysis figure the executive verdict states."""
+    frag = tmp_path / ".fragments"
+    frag.mkdir(parents=True)
+    (frag / "ms-verdict.json").write_text(
+        json.dumps(
+            {
+                "severity": "red",
+                "opening": "Not production-ready. The application leaves its most sensitive operations open.",
+                "bullets": [
+                    {
+                        "title": "Anyone can act as admin",
+                        "body": "An unauthenticated caller reaches every privileged action.",
+                        "refs": ["F-001"],
+                    },
+                    {
+                        "title": "Customer data is reachable",
+                        "body": "Any logged-in user can read other customers' records.",
+                        "refs": ["F-002"],
+                    },
+                ],
+                "closing": "Address authentication and authorization before any production use.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    cs = _cs_with_exclusions()
+    cs["selected"][1]["analysis_depth"] = "screening"
+    yaml_data = {"meta": {"component_selection": cs}, "threats": []}
+    ctx = compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={}, fragments_dir=frag)
+    env = compose._build_jinja_env(ctx)
+    section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
+    out = compose._render_verdict(ctx, env, section)
+    assert "**Scope:** 1 of 4 components received full STRIDE analysis" in out
+    # Never "internal component(s)": the screening set is not necessarily internal
+    # (a crown-jewel API with runtime-only zones used to land in it), and claiming
+    # so would misreport where the depth tradeoff was made.
+    assert "1 further component(s) received a reduced-budget screening pass" in out
+    assert "internal component(s) received a reduced-budget" not in out
+    assert "marked `Screened` in the component table" in out
+    assert "other 2 (lower-priority / internal) were not individually assessed" in out
+
+
+def test_components_table_scope_column_marks_screened(tmp_path: Path) -> None:
+    """Screening-depth components get their own Scope value — with nothing
+    excluded the column still appears, because Analyzed alone would overstate."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    comps = [
+        {"id": "api", "name": "API", "tier": "application", "paths": ["src/api"]},
+        {"id": "worker", "name": "Worker", "tier": "application", "paths": ["src/worker"]},
+    ]
+    meta = {
+        "component_selection": {
+            "selected": [
+                {"id": "api", "name": "API", "reasons": ["internet-exposed"]},
+                {
+                    "id": "worker",
+                    "name": "Worker",
+                    "reasons": ["screening depth (--cheap-stride)"],
+                    "analysis_depth": "screening",
+                },
+            ],
+            "excluded": [],
+        }
+    }
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={"components": comps, "threats": [], "meta": meta},
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
+    out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n")
+    rows = [ln for ln in out.splitlines() if ln.startswith("|") and ("API" in ln or "Worker" in ln)]
+    assert next(ln for ln in rows if "Worker" in ln).rstrip().endswith("Screened |")
+    assert next(ln for ln in rows if "API" in ln and "Worker" not in ln).rstrip().endswith("Analyzed |")
 
 
 def _verdict_ctx_with_abuse(tmp_path: Path, bullets: list[dict], abuse_cases: list[dict] | None):

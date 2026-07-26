@@ -226,6 +226,14 @@ class TestBuildSarif:
         rule = sarif["runs"][0]["tool"]["driver"]["rules"][0]
         assert rule["helpUri"] == "https://owasp.org/cheat/sqli"
 
+    def test_owasp_ai_classifications_export_as_properties_and_tags(self):
+        t = _make_threat(owasp_llm_ids=["LLM06"], owasp_asi_ids=["ASI02", "ASI10"])
+        sarif = export_sarif.build_sarif(_make_doc([t], [_make_mitigation()]))
+        properties = sarif["runs"][0]["tool"]["driver"]["rules"][0]["properties"]
+        assert properties["owaspLlmIds"] == ["LLM06"]
+        assert properties["owaspAsiIds"] == ["ASI02", "ASI10"]
+        assert {"owasp-llm:LLM06", "owasp-asi:ASI02", "owasp-asi:ASI10"} <= set(properties["tags"])
+
     def test_help_uri_absent_when_no_source(self):
         t = _make_threat()
         mit = _make_mitigation(reference=None)

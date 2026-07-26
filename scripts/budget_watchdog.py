@@ -35,6 +35,16 @@ STATE_FILENAME = ".budget-state.json"
 WARN_FLAG_FILENAME = ".budget-warning"
 CRITICAL_FLAG_FILENAME = ".budget-critical"
 
+# Run-ownership guard for the shared flag files. `.appsec-lock` is written by
+# acquire_lock.py as `<pid>\n<heartbeat_ts>\n<run_id>\n` (see acquire_lock.py
+# `_write_lock`); the run-id is the owning session id (SKILL-impl.md mints
+# APPSEC_RUN_ID = CLAUDE_CODE_SESSION_ID). budget_watchdog keys everything on
+# sid[:8], so the lock's run-id[:8] is exactly the owning run's sid.
+LOCK_FILENAME = ".appsec-lock"
+# Mirror acquire_lock.HEARTBEAT_STALE_SECONDS (default 300s): a lock whose
+# heartbeat is older is hung/dead and can no longer claim ownership.
+LOCK_FRESH_SECONDS = 300
+
 # Fallback when an agent file has no `maxTurns:` line. Mirrors the
 # Claude Code harness default; conservative so missing-frontmatter never
 # triggers false-positive criticals.
@@ -134,6 +144,33 @@ def _write_state(output_dir: str, state: dict) -> None:
         pass
 
 
+def _live_lock_owner(output_dir: str) -> Optional[str]:
+    """Return the owning run's sid[:8] when a LIVE lock names one, else None.
+
+    ``None`` means ownership is indeterminate (no lock, a v1/legacy lock with
+    no run-id, an unparseable or stale heartbeat) — callers MUST fail OPEN and
+    behave as before. A positive owner is returned only for a fresh lock that
+    carries a run-id, so any flag suppression is confined to the exact
+    "live run owns this dir + a foreign session is firing" case.
+
+    Never raises — the hot PostToolUse path must stay crash-free.
+    """
+    try:
+        raw = (Path(output_dir) / LOCK_FILENAME).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if len(lines) < 3:
+        return None  # v1 lock (pid[+heartbeat]) — no run-id to own by
+    try:
+        heartbeat = int(lines[1].split()[0])
+    except (ValueError, IndexError):
+        return None
+    if time.time() - heartbeat > LOCK_FRESH_SECONDS:
+        return None  # hung/dead owner — cannot claim ownership
+    return lines[2][:8] or None
+
+
 def _write_flag(output_dir: str, filename: str, payload: dict) -> None:
     """Write a flag file (.budget-warning / .budget-critical).
 
@@ -141,7 +178,20 @@ def _write_flag(output_dir: str, filename: str, payload: dict) -> None:
     currently-flagged (sid, agent, percent_used) tuples. Agents poll the
     *file's existence* as a binary trigger; the content is for human
     debugging and skill-layer summary.
+
+    **Run-ownership guard.** When a live lock names the run that owns this
+    output dir, a firing session whose sid does not match is FOREIGN — its
+    budget exhaustion is irrelevant to this run and must NOT raise the shared
+    flag. Without this, a concurrent second session sharing ``OUTPUT_DIR``
+    (2026-07-20 juice-shop: a dev session with a stale ``OUTPUT_DIR`` export,
+    running its own pytest + edits, crossed 250 turns) tripped
+    ``.budget-critical`` and forced every fresh STRIDE analyzer in the real run
+    to wrap up immediately. When ownership is indeterminate the guard fails
+    OPEN, so the pre-existing single-run behaviour is unchanged.
     """
+    owner = _live_lock_owner(output_dir)
+    if owner is not None and payload.get("sid") != owner:
+        return
     path = Path(output_dir) / filename
     existing: list[dict] = []
     if path.is_file():

@@ -402,3 +402,210 @@ def test_main_mask_mode_masks_and_reports(secret_scan, tmp_path, capsys):
     assert "aws_access_key" in out
     assert str(clean) not in out
     assert secret_scan.scan_file(leak) == []
+
+
+# --- Regression: loose-pattern false positives that corrupted a shipped report
+# (2026-07-19 insecure-python-app run). Each of the three guards below let the
+# exact-value redactor rewrite legitimate prose/code; the strict-format patterns
+# must keep firing in exactly the same contexts.
+
+
+def test_trailing_sentence_punctuation_does_not_defeat_keyword_echo(secret_scan):
+    """``Password: password.`` captured ``password.`` — the trailing period made
+    the keyword-echo guard miss, and the redactor then rewrote every
+    ``password``-prefixed token document-wide."""
+    prose = "Demo users: alice, bob, admin. Password: password. <a href=/register>"
+    assert secret_scan.scan_text(prose) == []
+
+
+def test_snake_case_identifier_is_a_code_reference(secret_scan):
+    assert secret_scan.scan_text("Auth: read_unsigned_jwt_claims") == []
+    assert secret_scan.scan_text("Auth: decode_homegrown_session_token") == []
+
+
+def test_mermaid_labels_are_not_credential_assignments(secret_scan):
+    diagram = (
+        "```mermaid\n"
+        "sequenceDiagram\n"
+        '    participant Auth as "auth.py:84"\n'
+        "    Auth->>Auth: base64-decode payload\n"
+        "```\n"
+    )
+    assert secret_scan.scan_text(diagram) == []
+
+
+def test_strict_formats_still_fire_inside_mermaid(secret_scan):
+    """Mermaid is exempt from the LOOSE pattern only — a real token pasted into a
+    diagram label is still a leak."""
+    diagram = (
+        "```mermaid\n    A->>B: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiQURNSU4ifQ.sigsigsigsig\n```\n"
+    )
+    assert [h.pattern for h in secret_scan.scan_text(diagram)] == ["jwt"]
+
+
+def test_secrets_in_non_mermaid_fences_still_fire(secret_scan):
+    """Only ```mermaid is exempt (and only from the loose pattern) — a strict
+    token inside any other fence is a genuine leak. Uses AWS's documentation
+    key: a literal matching a live provider format trips GitHub push
+    protection even as an obvious dummy."""
+    block = '```python\naws_access_key_id = "AKIAIOSFODNN7EXAMPLE"\n```\n'
+    assert "aws_access_key" in {h.pattern for h in secret_scan.scan_text(block)}
+
+
+def test_quoted_keyword_echo_and_opaque_values_still_flag(secret_scan):
+    assert secret_scan.scan_text('password = "password"') != []
+    assert secret_scan.scan_text("secret: deadbeef1234") != []
+
+
+# --- Special-character credentials: mask must consume the WHOLE value --------
+# Regression for the 2026-07-25 juice-shop run: the value charset stopped at the
+# first character outside [A-Za-z0-9_\-+/=.], so only the alnum head was masked
+# and the rest of the password shipped in cleartext after the mask marker.
+
+
+def test_mask_consumes_whole_special_character_password(secret_scan):
+    """The full credential is replaced — no cleartext tail survives the mask,
+    and the reported length matches the real password length."""
+    pw = "J6aVjTgOpRs@?5l!Zkq2AYnCE@RF$P"
+    masked, applied = secret_scan.mask_text(f"  password: '{pw}'")
+    assert "generic_credential_assignment" in applied
+    assert f"**** ({len(pw)} chars)" in masked
+    # No fragment of the secret may survive anywhere in the output.
+    for tail in ("@?5l!", "Zkq2AYnCE", "@RF$P", "J6aVjTgOpRs"):
+        assert tail not in masked
+
+
+def test_masked_special_character_password_has_no_residual_leak(secret_scan):
+    """End-to-end: the masked document must be clean under the detector AND
+    contain no substring of the original secret. The gate shares this regex, so
+    an under-capture would be invisible to it — this asserts the value itself."""
+    pw = "Tr0ub4dor#%3xK"
+    masked, _ = secret_scan.mask_text(f'password = "{pw}"')
+    assert secret_scan.scan_text(masked) == []
+    assert pw not in masked
+    assert "#%3xK" not in masked
+
+
+def test_special_character_password_is_detected_at_full_length(secret_scan):
+    hits = secret_scan.scan_text("password: 'A9x!c@dE#f$g%h?j'")
+    assert [h.value for h in hits] == ["A9x!c@dE#f$g%h?j"]
+
+
+def test_unquoted_env_and_anchor_references_are_not_credentials(secret_scan):
+    """The widened charset admits ``$`` and ``#``; unquoted values that are
+    plainly references (env/template vars, markdown anchors) must not be
+    flagged — masking them would blind-replace the reference document-wide."""
+    assert secret_scan.scan_text("password: $DATABASE_PASSWORD") == []
+    assert secret_scan.scan_text("secret: #section-anchor-name") == []
+
+
+def test_quoted_dollar_value_still_flags(secret_scan):
+    """A quoted value is an intentional literal even when it looks like a
+    variable — the reference carve-out is unquoted-only, as for code refs."""
+    assert secret_scan.scan_text("password: '$DATABASE_PASSWORD'") != []
+
+
+def test_widened_charset_does_not_swallow_markup_or_urls(secret_scan):
+    """Markdown-active characters and ``:`` stay out of the charset so the
+    blind exact-value redactor can never rewrite prose, links, or URLs."""
+    assert secret_scan.scan_text("token: *placeholder-value*") == []
+    assert secret_scan.scan_text("secret: [see the docs](secrets.md)") == []
+    assert secret_scan.scan_text("auth: https://example.com/path?x=1") == []
+
+
+# --- Env-style credential assignments ---------------------------------------
+# A bare \b rejects a keyword preceded by "_", so DB_PASSWORD= and friends were
+# never detected — the canonical shape in .env files, docker-compose, and k8s
+# manifests. A report quoting one passed the release gate in cleartext.
+
+
+def test_env_style_credential_assignments_are_detected(secret_scan):
+    for line in (
+        "DB_PASSWORD=Pr0dDbP4ss!2024",
+        "export DB_PASSWORD=Pr0dDbP4ss!2024",
+        "MYSQL_ROOT_PASSWORD: Pr0dDbP4ss!24",
+        "SPRING_DATASOURCE_PASSWORD=Sup3rS3cretDb",
+        "X_AUTH_TOKEN=abcdef1234567890",
+        "ANTHROPIC_API_KEY=sk-ant-abcdef123456",
+    ):
+        assert secret_scan.scan_text(line), f"missed env-style credential: {line}"
+
+
+def test_env_style_credential_is_masked_in_a_report(secret_scan):
+    """The release gate reads the rendered report — a quoted env credential must
+    not survive masking, which is the path that shipped cleartext before."""
+    report = "The manifest hardcodes it:\n\n    DB_PASSWORD=Pr0dDbP4ss!2024\n"
+    masked, applied = secret_scan.mask_text(report)
+    assert "generic_credential_assignment" in applied
+    assert "Pr0dDbP4ss!2024" not in masked
+    assert secret_scan.scan_text(masked) == []
+
+
+def test_keyword_ending_a_word_is_not_a_credential(secret_scan):
+    """Only "_" is admitted before the keyword. Dropping the word boundary
+    entirely would mask ordinary headings and prose whose last word happens to
+    end in a credential keyword."""
+    assert secret_scan.scan_text("## OAuth: Configuration Options") == []
+    assert secret_scan.scan_text("See reauth: Documentation for details") == []
+
+
+# ---------------------------------------------------------------------------
+# Demonstrated attacker input is not secret material
+# ---------------------------------------------------------------------------
+
+
+def test_sqli_tautology_payload_is_not_a_credential(secret_scan):
+    """Regression (2026-07-25 insecure-spring-app): the §3 walkthrough and the
+    finding's Verification line quote the request that reproduces the SQLi, and
+    its ``password=`` query parameter carries the tautology payload — the loose
+    credential-assignment shape without a credential. The gate hard-failed
+    (exit 2; headless aborts the whole run), and masking to clear it left
+    ``?username=x&password=**** (21 chars)`` — a reproduction step that no
+    longer reproduces anything."""
+    for line in (
+        "An attacker sends `GET /api/legacy-sqlite/login-raw?username=x&password=%27+OR+%271%27%3D%271`.",
+        'curl "http://host/login?password=%27%20OR%20%271%27%3D%271"',
+        "POST /login with password=' OR '1'='1",
+        "password=%22+OR+1%3D1--",
+    ):
+        assert secret_scan.scan_text(line) == [], f"SQLi payload flagged as a secret: {line}"
+
+
+def test_unsigned_alg_none_jwt_is_not_a_credential(secret_scan):
+    """An ``alg:none`` JWT has no signature by construction — anyone can mint
+    one, and quoting it is what demonstrates the missing verification. It holds
+    no secret material, so masking it only destroys the PoC."""
+    token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4Iiwicm9sZSI6IkFETUlOIn0."
+    line = f"Send `GET /api/legacy-admin/audit?token={token}` — must return HTTP 401 or 403."
+    assert secret_scan.scan_text(line) == [], "unsigned alg:none demo token flagged as a secret"
+
+
+def test_signed_jwt_is_still_flagged(secret_scan):
+    """The alg:none carve-out must not extend to a real signed token — that one
+    carries a signature produced with the server's key and stays a leak."""
+    signed = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abcdefghijklmnopqrst"
+    hits = secret_scan.scan_text(f"token={signed}")
+    assert hits, "signed JWT must still be flagged"
+    assert "jwt" in {h.pattern for h in hits}
+
+
+def test_demo_payload_carveout_does_not_leak_real_credentials(secret_scan):
+    """Precision guard: the carve-out is decided structurally on the value, so a
+    genuine credential sitting on a walkthrough line is still caught."""
+    line = "An attacker sends `GET /login?password=Pr0dDbP4ss!2024` to the endpoint."
+    assert secret_scan.scan_text(line), "real credential in a walkthrough must still flag"
+
+
+def test_masker_preserves_demo_payloads(secret_scan):
+    """mask_text is the detector's masking twin and mirrors every skip rule. If
+    the demo-payload guard lived only in scan_text, the composer's masking pass
+    would still rewrite the PoC — the gate would go green while the walkthrough
+    stayed destroyed. Both halves must agree."""
+    walkthrough = (
+        "1. An attacker sends `GET /login-raw?username=x&password=%27+OR+%271%27%3D%271`.\n"
+        "2. Send `GET /audit?token=eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.` — expect HTTP 401.\n"
+    )
+    masked, applied = secret_scan.mask_text(walkthrough)
+    assert masked == walkthrough, f"masker rewrote a demo payload: {masked}"
+    assert applied == []
+    assert secret_scan.scan_text(masked) == []

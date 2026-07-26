@@ -15,6 +15,9 @@ def test_e2e_fixture_script_exists_and_documents_supported_fixtures():
         "go-threat-fixture",
         "node-typescript-threat-fixture",
         "python-langchain-llm-threat-fixture",
+        "aws-terraform-threat-fixture",
+        "npm-supply-chain-threat-fixture",
+        "fifty-service-threat-fixture",
     ]:
         assert fixture in text
 
@@ -58,6 +61,9 @@ def test_e2e_fixture_doc_records_manual_external_fixture_contract():
     assert "go-threat-fixture" in text
     assert "node-typescript-threat-fixture" in text
     assert "python-langchain-llm-threat-fixture" in text
+    assert "aws-terraform-threat-fixture" in text
+    assert "npm-supply-chain-threat-fixture" in text
+    assert "fifty-service-threat-fixture" in text
     assert "verify_threat_model.py" in text
     assert "./scripts/e2e_fixture.sh --fixture python-threat-fixture --depth quick --clean-output" in text
     assert "--fixture-root ../appsec-advisor-fixtures" in text
