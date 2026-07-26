@@ -73,7 +73,7 @@ Levers, by what they attack: **D** (shrink/chunk the dispatch turn) · **F×N** 
    turn (incremental / session-limit / stall×2), which itself corroborates D as the cost centre.
 3. **`max_turns` is a ceiling, not spend** *(structural).* Small components finish under budget →
    turn-tiering them saves ≈ 0. → **turn-tiering rejected as a lever.**
-4. **Zone-drift bug — fixed** (`ea623c4`). The analyst emitted off-vocabulary `deployment_zones`
+4. **Zone-drift bug — fixed** (`a4e158a`). The analyst emitted off-vocabulary `deployment_zones`
    (`application-zone`/`data-zone`/`build-zone`) matching no zone set, so the zonal exposure/ci-cd
    signal was silently inert and off-vocab components were mis-read as proven-internal. Now
    `_reachability_zones` is intersective vs `_REACHABILITY_VOCAB`; off-vocab → exposure-unknown

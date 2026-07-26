@@ -283,7 +283,7 @@ def test_every_token_consumer_trims_whitespace_before_use():
     job (fixture-e2e-dispatch.yml's matrix job, which only `needs: resolve`)
     there is no shared shell at all: a `$GITHUB_ENV` export from the preflight
     job would not even cross the job boundary. So a token with a copy-pasted
-    leading/trailing newline — exactly what 9b51762 was written to handle —
+    leading/trailing newline — exactly what 9d9c44e was written to handle —
     passed a preflight that now trims and warns instead of failing, and then
     reached `claude` untrimmed one step later, where it was rejected. Every
     consumer must repeat the trim right where it uses the token.

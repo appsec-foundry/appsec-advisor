@@ -4,12 +4,12 @@ First real end-to-end exercise of six commits that all landed **2026-07-20**:
 
 | Commit | Subject |
 |---|---|
-| `ff6e0d9` | Lazy-load post-analysis skill stages |
-| `86c2b55` | Fix lazy-loaded release gate routing |
-| `71eeb70` | Reduce thin orchestrator context usage |
-| `2150b13` | Scale STRIDE dispatch for large component inventories |
-| `331538a` | Optimize deterministic QA gating |
-| `88d5208` | docs: streamline contributor agent guidance |
+| `8da6d89` | Lazy-load post-analysis skill stages |
+| `8c5fbac` | Fix lazy-loaded release gate routing |
+| `115178f` | Reduce thin orchestrator context usage |
+| `3482778` | Scale STRIDE dispatch for large component inventories |
+| `efe343d` | Optimize deterministic QA gating |
+| `2d177e2` | docs: streamline contributor agent guidance |
 
 Run outcome: Stage 1 completed (56 threats, 8 Critical / 40 High), then the run was
 hard-aborted by `post-stage1` exit 4. No report produced. One session reached
@@ -54,7 +54,7 @@ documented cut-off recovery → merge+triage ran (~20 min, $5.75) → killed by 
 are mutually blind, so the controller cannot report "legitimately blocked" instead of
 "you failed to produce artifacts".
 
-The `check_stride_dispatch.py` call site at :1131 pre-dates `2150b13`; what `2150b13` added
+The `check_stride_dispatch.py` call site at :1131 pre-dates `3482778`; what `3482778` added
 (+38 lines) is the new exit-4 condition that now fires there. The cheap pre-merge gate is
 **LLM-prose only, never code-enforced** — the only deterministic coverage gate sits strictly
 *after* the expensive stage it exists to prevent.
@@ -103,7 +103,7 @@ distinguish, and expose a targeted attempt-counter reset.
 
 ## D3 — Compaction deleted executable CLI contracts (root cause of the day's friction)
 
-`data/context-budgets.yaml`, in `71eeb70` alone:
+`data/context-budgets.yaml`, in `115178f` alone:
 
 ```
 -  thin_full_pre_stage2_max_bytes: 92000
@@ -393,7 +393,7 @@ This run completed Stage-1 and produced a report where the 2026-07-20 dead end d
 components. But two producer defects surfaced, and the delivered report was QA-blocked as
 non-releasable. Both root-caused and fixed.
 
-### R1 — STRIDE `TH-UNCLASSIFIED` aborts a run the pipeline can already repair (fixed `8925c38`)
+### R1 — STRIDE `TH-UNCLASSIFIED` aborts a run the pipeline can already repair (fixed `8ec1f1d`)
 
 `express-backend-008` (CWE-601, Open Redirect) was written with
 `threat_category_id: "TH-UNCLASSIFIED"`. The per-component gate
@@ -410,10 +410,10 @@ keep the sentinel and still fail. Not a taxonomy gap — an ordering defect
 (validation-before-backfill). Cost this run: express-backend dispatched 3× (~44% STRIDE
 retry waste) on a defect the pipeline already knew how to fix.
 
-### R2 — §6 SecArch renderer emits id-in-link-text references (fixed `5de7021`)
+### R2 — §6 SecArch renderer emits id-in-link-text references (fixed `0eb76ce`)
 
 The §6 Security Architecture narrative cites findings as `[F-NNN — Title](#f-nnn)`, pulling
-the title into the link text. `check_reference_format._ID_IN_LINK` (tightened in `27a0d9f`)
+the title into the link text. `check_reference_format._ID_IN_LINK` (tightened in `267dd6f`)
 forbids exactly that shape → 53 violations → QA `repair_required`, non-releasable. No pass
 converted it (`_bulletize_relevant_findings` only handles the bare `[F-NNN](#f-nnn)` form).
 

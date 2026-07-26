@@ -194,7 +194,7 @@ MUTATIONS = [
     ("verdict-missing", mutate_remove_required_fragment, "verdict"),
     ("yaml-missing", mutate_yaml_missing, "threat-model.yaml"),
     # ---- Contract-level enforcement (markdown fragments) ----
-    # NB: no `arch-diagrams-missing-2-3` case — since c5a86d5 ("prevent
+    # NB: no `arch-diagrams-missing-2-3` case — since 882722c ("prevent
     # threat-model repair drift") §2 is regenerated deterministically from
     # yaml data at the composition chokepoint (compose `gen_architecture_diagrams`),
     # so the four §2.x subsections are emitted unconditionally and a fragment

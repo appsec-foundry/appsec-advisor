@@ -12,7 +12,7 @@ Consequence: headless ``claude -p`` hard-killed the process at its
 background-task ceiling before any ``threat-model.yaml`` was written, which
 also defeats the compose backstop in ``run-headless.sh`` (gated on that yaml).
 Fixture-e2e runs 29696937786 / 29700135164 / 29704358601 all died at wall-time
-767-775s; run 29697943011 -- same commit 9b51762, same fixture, same depth --
+767-775s; run 29697943011 -- same commit 9d9c44e, same fixture, same depth --
 passed in 46m39s. Workload was not the variable; dispatch compliance was.
 
 Root cause was an instruction-strength gap between the three Stage-1 dispatch

@@ -133,7 +133,7 @@ session) vs `max_turns` (manifest), plus the per-dispatch fixed token count and 
 turn's tokens. If F ≫ V on the tail → batching wins; if V dominates → even batching's headroom is
 small. Either way, D (Option 5) is already justified by the observed stalls independent of this probe.
 
-> En route, verifying the selection surfaced and fixed a real bug (`ea623c4`): off-vocabulary
+> En route, verifying the selection surfaced and fixed a real bug (`a4e158a`): off-vocabulary
 > `deployment_zones` (`application-zone`/`data-zone`/`build-zone`) matched no zone set, so the zonal
 > exposure/ci-cd signal was silently inert and off-vocab components were mis-read as proven-internal.
 > Not a cheap-STRIDE lever, but it was corrupting the very selection this analysis reads.

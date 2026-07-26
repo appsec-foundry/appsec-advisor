@@ -9,7 +9,7 @@
 
 ## Phase 1 — Verify headless completion *(first)*
 
-Commit `d57d5a3` (2026-07-03) added a deterministic compose backstop `_compose_if_ready()` in `scripts/orchestration_controller.py`: when render fragments are present (`ms-verdict.json` + `security-architecture.md`) but `threat-model.md` is missing, it composes deterministically (pregenerate → `compose_threat_model.py --strict` → `apply_prose_fixes` → `qa_checks autofix`). Invoked via the finalize `next` call (mandatory in `SKILL-full-runtime.md §6` before every completion summary).
+Commit `6241798` (2026-07-03) added a deterministic compose backstop `_compose_if_ready()` in `scripts/orchestration_controller.py`: when render fragments are present (`ms-verdict.json` + `security-architecture.md`) but `threat-model.md` is missing, it composes deterministically (pregenerate → `compose_threat_model.py --strict` → `apply_prose_fixes` → `qa_checks autofix`). Invoked via the finalize `next` call (mandatory in `SKILL-full-runtime.md §6` before every completion summary).
 
 **RESOLVED (2026-07-20):** `_compose_if_ready` does **not** cover the bg-ceiling PROCESS-KILL case — but not for the reason assumed here. The kill lands in **Stage 1** (Analyst-A, phases 1–8), far earlier than the render stage: no `threat-model.yaml` and no render fragments ever exist, so the backstop's own gate is false and it correctly no-ops. Evidence: fixture-e2e runs 29704358601 / 29700135164 / 29696937786 all die at wall-time 767–775s with `Background tasks still running after 600s; terminating`; the artifact of 29704358601 contains `.trust-boundaries.json` (phase 7 done) but no yaml, no md, and a `.fragments/` holding only `data-relations.json`.
 
@@ -18,7 +18,7 @@ Consequences for the two remedies proposed here:
 - `APPSEC_PARALLEL_RENDER=0` — **inapplicable**; it targets the render stage, which the killed runs never reach.
 - fail-closed — **already implemented** (`run-headless.sh` artifact gate, ~L833); it is why these runs surface as red rather than a false `✓ completed`.
 
-The ceiling export suppresses the symptom. The underlying nondeterminism is still open: on commit `9b51762`, same fixture and depth, run 29697943011 passed in 46m39s while 29696937786 was killed at 775s — i.e. the orchestrator sometimes ends its turn while Analyst-A is still backgrounded.
+The ceiling export suppresses the symptom. The underlying nondeterminism is still open: on commit `9d9c44e`, same fixture and depth, run 29697943011 passed in 46m39s while 29696937786 was killed at 775s — i.e. the orchestrator sometimes ends its turn while Analyst-A is still backgrounded.
 
 ## Phase 0 — Prove parity *(hard gate, no merge code)*
 
@@ -54,4 +54,4 @@ Keep the escape hatch; optional canary phase before the opt-out note disappears 
 **Context references (as of 2026-07-03):**
 - Thin prompt `SKILL-full-runtime.md` = 263 lines vs legacy `SKILL-impl.md` = 4441 lines (~17× smaller → less cache_read/turn = the cost lever).
 - Router logic: `orchestration_controller.py:_runtime_for()` (`:236-245`) + `route()` (`:250-269`).
-- Only 2 commits have ever touched the thin files (most recent `d57d5a3`) → beta, still hardening.
+- Only 2 commits have ever touched the thin files (most recent `6241798`) → beta, still hardening.

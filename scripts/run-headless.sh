@@ -640,7 +640,7 @@ export APPSEC_HEADLESS=1
 # threat-model.yaml — which also means the compose backstop below (gated on that
 # yaml) cannot salvage it. Observed as a nondeterministic ~13m failure: fixture
 # runs 29696937786 (fail, 775s) and 29697943011 (pass, 46m39s) share commit
-# 9b51762, fixture and depth. 0 = wait indefinitely; the bound is the outer
+# 9d9c44e, fixture and depth. 0 = wait indefinitely; the bound is the outer
 # `timeout ${MAX_DURATION}s` wrapper above, so headless callers that care about
 # a wall-clock cap must pass --max-duration (CI always does).
 export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0

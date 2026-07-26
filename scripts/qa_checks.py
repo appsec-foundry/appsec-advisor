@@ -2195,7 +2195,7 @@ def build_repair_plan(
     #
     # Deliberately NO `fragments_to_rewrite`: the check reports the dangling
     # anchor, not the fragment that emitted it, and guessing would start the
-    # kind of non-convergent repair loop 89bef74 had to unwind. Blocking without
+    # kind of non-convergent repair loop 7ac5cfa had to unwind. Blocking without
     # a writable target classifies as `manual_review` (exit 3) — the defect
     # blocks the clean fast path and goes to QA triage, but never spins the
     # fragment-fixer.

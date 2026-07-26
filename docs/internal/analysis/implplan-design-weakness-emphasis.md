@@ -7,7 +7,7 @@ formatting workstream backtick-wraps an HTML anchor id) and is called out there.
 
 Extends the shipped weakness-class evidence model
 (`implplan-weakness-class-evidence-model.md`, P1–P4) and the P4 design-gap fold
-(commit `6b0be3e`). Goal: flag *unsafe SQL handling, weak input/output
+(commit `e896ea6`). Goal: flag *unsafe SQL handling, weak input/output
 validation, missing access control, weak authentication, weak crypto* as
 first-class **design weaknesses even when no concrete SQLi/XSS/IDOR instance is
 found**, and **emphasise them in the Management Summary** — not only deep in §8.

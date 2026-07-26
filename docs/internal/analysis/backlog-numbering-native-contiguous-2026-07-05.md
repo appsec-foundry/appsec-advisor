@@ -12,7 +12,7 @@ Architecture = §6, Findings = §7, Abuse = §8, Mitigation = §9, Out of Scope 
 (`renumber_sections_display.py`) run after all gates, plus a §7 mirror at
 `.appsec-cache/threat-model.canonical7.md` that the machinery reads back.
 
-That workaround (landed 2026-07-05, commit `b80b848`) makes the delivered
+That workaround (landed 2026-07-05, commit `39dfd41`) makes the delivered
 `threat-model.md` correct, but the underlying numbering is still §7-based
 everywhere internally:
 
@@ -40,7 +40,7 @@ stay "7.1". `renumber_sections_display.py` papers over this only for the
 fixed §7→§6 remap; a *conditional omission* still reopens a gap that no fixed
 remap closes. Native contiguous numbering (or position-derived numbering) is
 the only durable fix. (Related: the HTML-`href` anchor form of the relabel was
-itself a latent bug — fixed 2026-07-05, commit d81b1c4 — a symptom of the
+itself a latent bug — fixed 2026-07-05, commit 8e28fc2 — a symptom of the
 relabel having to chase every reference form by hand.)
 
 ## Goal
@@ -55,7 +55,7 @@ it, and the §6/§7 dual-numbering notes in `SKILL-impl.md`.
 
 The 2026-07 session deliberately avoided the full rename because it is a large,
 tightly-coupled, all-repo change with real collision risk (a prior session at
-commit `64029a2` reached the same conclusion). A correct rework is bidirectional
+commit `2c09488` reached the same conclusion). A correct rework is bidirectional
 and must land as one atomic change (AGENTS.md §4):
 
 1. `data/sections-contract.yaml` — renumber §7.x → §6.x, §8→§7 … §11→§10;
@@ -84,5 +84,5 @@ and must land as one atomic change (AGENTS.md §4):
 ## Related
 
 - Interim workaround: memory `project_section6_canonical_section7_mirror_2026-07-05`
-  and commit `b80b848`.
-- Prior "don't rename, it's too coupled" decision: commit `64029a2`.
+  and commit `39dfd41`.
+- Prior "don't rename, it's too coupled" decision: commit `2c09488`.

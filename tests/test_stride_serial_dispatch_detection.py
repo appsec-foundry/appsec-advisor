@@ -195,7 +195,7 @@ def test_serial_wave_is_reported_but_does_not_fail_the_run(tmp_path: Path, capsy
 def test_skill_forbids_sequential_wave_dispatch() -> None:
     """The mechanical detector above only reports; the prose must forbid.
 
-    The 71eeb70 thin-orchestrator rebuild compacted the original HARD-CONSTRAINT
+    The 115178f thin-orchestrator rebuild compacted the original HARD-CONSTRAINT
     block (SKILL-impl.md) down to one descriptive sentence, dropping the
     imperative + concrete anti-serial check — which is what let the orchestrator
     dispatch the wave serially. These substrings pin the restored imperative so a

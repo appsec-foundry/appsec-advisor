@@ -31,7 +31,7 @@ surfaces:
   thin_stage1_runtime:
     path: skills/create-threat-model/SKILL-thin-stage1.md
     # Raised 8600->9200 (2026-07-21): the STRIDE wave-dispatch imperative was
-    # compacted to a single descriptive sentence in the 71eeb70 thin-orchestrator
+    # compacted to a single descriptive sentence in the 115178f thin-orchestrator
     # rebuild, and the headless run then dispatched the wave serially (~66 min vs
     # ~10 min parallel). The restored HARD-CONSTRAINT prose (one-message =
     # concurrent + concrete anti-serial check) is load-bearing operational
