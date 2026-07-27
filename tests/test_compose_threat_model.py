@@ -1214,6 +1214,156 @@ def test_finding_cell_component_already_canonical_passes_through(tmp_path: Path)
     assert "**Component:** [C-01](#c-01) — REST API" in cell
 
 
+def _canonical_boundary(number: int, name: str | None = None) -> dict:
+    return {
+        "id": f"tb-{number}",
+        "name": name or f"Boundary {number}",
+        "from": "external",
+        "to": "C-01",
+        "kind": "network",
+        "assumption": "Requests are authenticated before protected operations.",
+        "evidence": [],
+        "confidence": "confirmed",
+        "resolution_status": "resolved",
+        "sources": ["detected"],
+    }
+
+
+def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tmp_path: Path) -> None:
+    rows = [_canonical_boundary(i) for i in range(1, 22)]
+    rows[0]["name"] = "<a id=x>|[link](javascript:alert(1))"
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": rows, "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    assert rendered.count('<a id="tb-') == 20
+    assert "&lt;a id=x&gt;" in rendered
+    assert "\\|" in rendered
+    assert "\\[link\\](javascript:alert(1))" in rendered
+    assert "\\(" not in rendered
+    assert "1 additional trust boundary row(s)" in rendered
+    assert "Source: `detected`" in rendered
+    assert "confirmed internet ingress may raise effective severity" in rendered
+    assert "raw risk remains unchanged" in rendered
+
+
+def test_trust_boundary_catalog_exposure_and_review_labels(tmp_path: Path) -> None:
+    rows = [
+        _canonical_boundary(1, "Public entry"),
+        {
+            **_canonical_boundary(2, "Outbound provider"),
+            "from": "C-01",
+            "to": "external",
+        },
+        {
+            **_canonical_boundary(3, "Internal crossing"),
+            "from": "C-01",
+            "to": "C-02",
+        },
+        {
+            **_canonical_boundary(4, "Unresolved crossing"),
+            "from": "Actor prose",
+            "to": "C-01",
+            "resolution_status": "unresolved",
+        },
+        {
+            **_canonical_boundary(5, "Inferred entry"),
+            "confidence": "inferred",
+        },
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={
+            "components": [{"id": "C-01"}, {"id": "C-02"}],
+            "trust_boundaries": rows,
+            "threats": [],
+        },
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    assert "🌐 **internet-facing**" in rendered
+    assert "**outbound**" in rendered
+    assert "**internal**" in rendered
+    assert "**review required**" in rendered
+    assert "**inferred**" in rendered
+
+
+def test_trust_boundary_external_sort_is_only_a_tie_breaker(tmp_path: Path) -> None:
+    rows = [
+        _canonical_boundary(1, "Unlinked external"),
+        {
+            **_canonical_boundary(2, "Linked internal"),
+            "from": "C-01",
+            "to": "C-02",
+        },
+        {
+            **_canonical_boundary(3, "Review row"),
+            "from": "Actor prose",
+            "resolution_status": "unresolved",
+        },
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={
+            "components": [{"id": "C-01"}, {"id": "C-02"}],
+            "trust_boundaries": rows,
+            "threats": [
+                {
+                    "id": "T-001",
+                    "boundary_refs": [{"boundary_id": "tb-2", "origin_component_id": "C-01"}],
+                }
+            ],
+        },
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    assert [row["id"] for row in compose._ordered_trust_boundaries(ctx)] == ["tb-2", "tb-3", "tb-1"]
+
+
+def test_finding_boundary_gap_links_only_to_visible_catalogue_rows(tmp_path: Path) -> None:
+    rows = [_canonical_boundary(i) for i in range(1, 22)]
+    other_threats = [
+        {
+            "id": f"T-{i:03d}",
+            "boundary_refs": [{"boundary_id": f"tb-{i}", "origin_component_id": "C-01"}],
+        }
+        for i in range(1, 22)
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"trust_boundaries": rows, "threats": other_threats},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="C-01")
+    threat["boundary_refs"] = [
+        {
+            "boundary_id": "tb-21",
+            "origin_component_id": "C-01",
+            "rationale": "The missing input control is evidenced at this crossing.",
+            "evidence_locations": [{"file": "routes/login.ts", "line": 34}],
+        }
+    ]
+    cell = compose._build_threat_card(
+        t=threat,
+        sev="critical",
+        taxonomy={},
+        components={"C-01": {"name": "REST API"}},
+        repo_root=None,
+        ctx=ctx,
+    )
+    assert "**Trust boundary gap:** tb-21 — Boundary 21:" in cell
+    assert "[tb-21](#tb-21)" not in cell
+
+
 def test_finding_card_folds_consequence_into_issue(tmp_path: Path) -> None:
     """The card has no separate **Impact:** field — the consequence is folded
     into the **Issue:** line so it is never lost (2026-05 card layout)."""
@@ -3772,6 +3922,17 @@ def test_softwrap_never_breaks_inside_backtick_span():
     # No <br/> may fall INSIDE the backtick span (each segment has even backticks).
     for seg in desc.split("<br/>"):
         assert seg.count("`") % 2 == 0
+
+
+def test_softwrap_exempts_fixed_layout_trust_boundary_table():
+    md = (
+        "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |\n"
+        "|---|---|---|---|---|---|\n"
+        "| tb-1 | **Internet entry**<br>external → backend-api | network / resolved | "
+        "This deliberately long trust assumption must reflow naturally inside the fixed-width HTML column "
+        "without synthetic mid-phrase line breaks.<br>_confirmed_ | detected | — |\n"
+    )
+    assert compose._softwrap_prose_table_cells(md, width=20) == md
 
 
 # ---------------------------------------------------------------------------

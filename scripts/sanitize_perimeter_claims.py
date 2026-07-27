@@ -44,7 +44,7 @@ from perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_
 _NEUTRAL_TAIL = "deployment-time perimeter controls out of scope for source-tree review"
 
 
-def _sanitize_string(value: str) -> tuple[str, list[str]]:
+def sanitize_perimeter_prose(value: str) -> tuple[str, list[str]]:
     """Return (cleaned_string, removed_tokens). Idempotent."""
     if not isinstance(value, str) or not value.strip():
         return value, []
@@ -95,6 +95,11 @@ def _sanitize_string(value: str) -> tuple[str, list[str]]:
     return cleaned, removed
 
 
+# Compatibility alias for tests and callers written before the helper became a
+# public producer-side boundary. New code must use sanitize_perimeter_prose.
+_sanitize_string = sanitize_perimeter_prose
+
+
 _TARGETS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("trust_boundaries", ("enforcement", "description")),
     ("security_controls", ("notes", "implementation", "effectiveness_rationale")),
@@ -117,7 +122,7 @@ def sanitize_yaml(data: dict) -> tuple[dict, list[dict]]:
                 original = item.get(field_name)
                 if not isinstance(original, str):
                     continue
-                cleaned, removed = _sanitize_string(original)
+                cleaned, removed = sanitize_perimeter_prose(original)
                 if removed:
                     item[field_name] = cleaned
                     changes.append(

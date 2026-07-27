@@ -729,6 +729,51 @@ class TestExtractWarnings:
         assert agg._extract_warnings([(1, _hline("2026-04-26T18:00:00Z", "OTHER", "x"))]) == []
 
 
+class TestTrustBoundaryDiagnostics:
+    def test_resolution_diagnostics_are_visible_run_issue(self, tmp_path):
+        (tmp_path / ".trust-boundary-diagnostics.json").write_text(
+            _json.dumps(
+                {
+                    "schema_version": 1,
+                    "issues": [
+                        {
+                            "code": "invalid_resolved_endpoint",
+                            "boundary_id": "tb-1",
+                            "boundary_name": "Internet entry",
+                            "side": "from",
+                            "raw_value": "Public Internet",
+                            "reason": "not canonical",
+                            "candidates": [],
+                        },
+                        {
+                            "code": "unresolved_endpoint",
+                            "boundary_id": "tb-5",
+                            "boundary_name": "OAuth provider",
+                            "side": "to",
+                            "raw_value": "Provider",
+                            "reason": "not canonical",
+                            "candidates": [],
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        issues = agg._extract_trust_boundary_diagnostics(tmp_path)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "trust_boundary_resolution"
+        assert issues[0]["evidence"]["boundary_ids"] == ["tb-1", "tb-5"]
+        assert issues[0]["evidence"]["issue_count"] == 2
+
+        aggregated = agg.aggregate(tmp_path, "standard")
+        assert any(issue["category"] == "trust_boundary_resolution" for issue in aggregated["issues"])
+
+    def test_missing_or_malformed_diagnostics_are_ignored(self, tmp_path):
+        assert agg._extract_trust_boundary_diagnostics(tmp_path) == []
+        (tmp_path / ".trust-boundary-diagnostics.json").write_text("{bad", encoding="utf-8")
+        assert agg._extract_trust_boundary_diagnostics(tmp_path) == []
+
+
 class TestPerfAnomaliesCeilingAndHysteresis:
     def _pd(self, phase, dur, label="Lbl"):
         return {

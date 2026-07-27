@@ -1311,6 +1311,61 @@ class TestYamlMdConsistencyCheck:
         r = qa.check_yaml_md_consistency(md, yml)
         assert [i for i in r.issues if "threat count drift" in i] == []
 
+    def test_trust_boundary_catalogue_and_finding_refs_match(self, tmp_path):
+        md, yml = self._write_pair(
+            tmp_path,
+            textwrap.dedent("""
+                | [F-001](#f-001) | one |
+
+                | ID | Boundary |
+                |---|---|
+                | <a id="tb-1"></a>tb-1 | Internet to API |
+
+                **Trust boundary gap:** [tb-1](#tb-1) — Internet to API: authentication is missing
+            """).strip(),
+            textwrap.dedent("""
+                meta: {schema_version: 1}
+                trust_boundaries:
+                  - {id: tb-1, name: Internet to API}
+                threats:
+                  - id: F-001
+                    boundary_refs:
+                      - {boundary_id: tb-1, origin_component_id: C-01}
+                mitigations: []
+            """).strip(),
+        )
+        r = qa.check_yaml_md_consistency(md, yml)
+        assert not [issue for issue in r.issues if "trust-boundary" in issue]
+
+    def test_trust_boundary_integrity_detects_duplicate_dangling_and_drift(self, tmp_path):
+        md, yml = self._write_pair(
+            tmp_path,
+            textwrap.dedent("""
+                | [F-001](#f-001) | one |
+                <a id="tb-1"></a>
+                <a id="tb-1"></a>
+                <a id="tb-9"></a>
+                **Trust boundary gap:** [tb-2](#tb-2) — wrong boundary
+            """).strip(),
+            textwrap.dedent("""
+                meta: {schema_version: 1}
+                trust_boundaries:
+                  - {id: tb-1, name: First}
+                  - {id: tb-1, name: Duplicate}
+                threats:
+                  - id: F-001
+                    boundary_refs:
+                      - {boundary_id: tb-1, origin_component_id: C-01}
+                mitigations: []
+            """).strip(),
+        )
+        r = qa.check_yaml_md_consistency(md, yml)
+        assert any("duplicate trust-boundary id in yaml" in issue for issue in r.issues)
+        assert any("duplicate trust-boundary catalogue anchor" in issue for issue in r.issues)
+        assert any("catalogue anchor is absent from canonical yaml" in issue for issue in r.issues)
+        assert any("reference has no catalogue anchor" in issue for issue in r.issues)
+        assert any("finding-reference drift" in issue for issue in r.issues)
+
 
 # ---------------------------------------------------------------------------
 # CLI smoke — verify new subcommands exit 0/1 and emit valid JSON
@@ -3771,10 +3826,28 @@ def test_asset_and_attack_surface_specs_widths_sum_to_100():
     for widths in (
         qa._AS_COL_WIDTHS,
         qa._ASSET_COL_WIDTHS,
+        qa._TRUST_BOUNDARY_COL_WIDTHS,
         qa._STRENGTH_COL_WIDTHS_3,
         qa._STRENGTH_COL_WIDTHS_4,
     ):
         assert sum(int(w.rstrip("%")) for w in widths) == 100
+
+
+def test_trust_boundary_table_converts_with_structural_breaks_and_links():
+    gfm = (
+        "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |\n"
+        "|---|---|---|---|---|---|\n"
+        '| <a id="tb-1"></a>tb-1 | **Internet entry**<br>external → backend-api | '
+        "network / resolved<br>🌐 **internet-facing** | Requests require authorization.<br>_confirmed_ | "
+        "detected | [F-001](#f-001) |\n"
+    )
+    out, count = qa._attack_surface_tables_to_html(gfm)
+    assert count == 1
+    assert "".join(f'<col width="{width}" style="width:{width}">' for width in qa._TRUST_BOUNDARY_COL_WIDTHS) in out
+    assert "<strong>Internet entry</strong><br/>external → backend-api" in out
+    assert "🌐 <strong>internet-facing</strong>" in out
+    assert '<a href="#f-001">F-001</a>' in out
+    assert '<a id="tb-1"></a>' in out
 
 
 def test_operational_strengths_table_converts_keeping_structural_breaks():

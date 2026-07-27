@@ -30,7 +30,13 @@ def _write(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def _sidecars(tmp_path: Path, *, with_metadata: bool = True, verdict: str = "confirmed") -> None:
+def _sidecars(
+    tmp_path: Path,
+    *,
+    with_metadata: bool = True,
+    verdict: str = "confirmed",
+    evidence_file: str = "src/template.ts",
+) -> None:
     finding = {
         "title": "Untrusted template input reaches dynamic evaluation",
         "cwe": "CWE-94",
@@ -69,7 +75,7 @@ def _sidecars(tmp_path: Path, *, with_metadata: bool = True, verdict: str = "con
                             "step": 1,
                             "match_basis": "source_probe",
                             "matched_finding_id": None,
-                            "evidence": {"file": "src/template.ts", "line": 17, "excerpt": "eval(input)"},
+                            "evidence": {"file": evidence_file, "line": 17, "excerpt": "eval(input)"},
                         }
                     ],
                     "matched_finding_ids": [],
@@ -90,7 +96,7 @@ def _sidecars(tmp_path: Path, *, with_metadata: bool = True, verdict: str = "con
                             "step": 1,
                             "verdict": verdict,
                             "matched_finding_id": None,
-                            "evidence": {"file": "src/template.ts", "line": 17},
+                            "evidence": {"file": evidence_file, "line": 17},
                         }
                     ],
                 }
@@ -182,3 +188,80 @@ def test_source_probe_evidence_wins_when_verifier_omits_a_file(tmp_path: Path) -
     assert mod.promote(tmp_path)[0] == 1
     created = json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][-1]
     assert created["evidence"] == {"file": "src/template.ts", "line": 17}
+
+
+def _registry(tmp_path: Path, components: list[dict]) -> None:
+    (tmp_path / "threat-model.yaml").write_text(
+        yaml.safe_dump({"components": components}, sort_keys=False), encoding="utf-8"
+    )
+
+
+def _promoted_component(tmp_path: Path) -> tuple[str, str]:
+    created = json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][-1]
+    return created["component_id"], created["component_name"]
+
+
+def test_promoted_component_resolves_against_the_registry_not_a_hardcoded_name(tmp_path: Path) -> None:
+    """Regression (juice-shop 2026-07-27): a step promoted from evidence under
+    `frontend/` emitted the literal `frontend` while the registered id was
+    `frontend-spa`. That phantom dangles the §8 Component link, and since
+    promotion runs after the curing reclassify_components pass, the pre-export
+    gate aborted the run."""
+    _sidecars(tmp_path, evidence_file="frontend/src/app/login/login.component.ts")
+    _registry(
+        tmp_path,
+        [
+            {"id": "backend-api", "name": "Express REST API Backend", "paths": ["server.ts", "routes/**"]},
+            {"id": "frontend-spa", "name": "Angular SPA Frontend", "paths": ["frontend/src/**"]},
+        ],
+    )
+
+    assert mod.promote(tmp_path)[0] == 1
+
+    assert _promoted_component(tmp_path) == ("frontend-spa", "Angular SPA Frontend")
+
+
+def test_promoted_component_is_always_a_registered_id_even_without_a_glob_match(tmp_path: Path) -> None:
+    """An evidence file no component glob claims must still land on a registered
+    component — falling back to an invented id is what created the phantom."""
+    _sidecars(tmp_path, evidence_file="Dockerfile")
+    registered = [
+        {"id": "express-backend", "name": "Express Backend", "paths": ["server.ts", "routes/**"]},
+        {"id": "sqlite-database", "name": "SQLite Database", "paths": ["models/**"]},
+    ]
+    _registry(tmp_path, registered)
+
+    assert mod.promote(tmp_path)[0] == 1
+
+    component_id, _ = _promoted_component(tmp_path)
+    assert component_id in {c["id"] for c in registered}
+
+
+def test_overlapping_globs_resolve_to_the_most_specific_owner(tmp_path: Path) -> None:
+    """Same tie-break as reclassify_components: the exact-path owner wins, so
+    promotion and the curing pass agree instead of fighting over the threat."""
+    _sidecars(tmp_path, evidence_file="routes/memory.ts")
+    _registry(
+        tmp_path,
+        [
+            {"id": "express-backend", "name": "Express Backend", "paths": ["server.ts", "routes/**"]},
+            {"id": "file-upload-service", "name": "File Upload Service", "paths": ["routes/memory.ts"]},
+        ],
+    )
+
+    assert mod.promote(tmp_path)[0] == 1
+
+    assert _promoted_component(tmp_path) == ("file-upload-service", "File Upload Service")
+
+
+def test_missing_registry_keeps_the_default_and_says_so(tmp_path: Path) -> None:
+    """No yaml on disk (unit-test / pre-compose paths): promotion still works,
+    but the unbound component is surfaced rather than passed off as resolved."""
+    _sidecars(tmp_path, evidence_file="frontend/src/app/login/login.component.ts")
+
+    count, notes = mod.promote(tmp_path)
+
+    assert count == 1
+    assert any("component registry unavailable" in n for n in notes)
+    component_id, _ = _promoted_component(tmp_path)
+    assert component_id == "backend-api"

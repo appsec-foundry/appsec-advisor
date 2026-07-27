@@ -21,6 +21,20 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+from reclassify_components import (  # canonical registry resolver — see _component_for
+    _build_matcher as _rc_build_matcher,
+)
+from reclassify_components import (
+    _component_for as _rc_component_for,
+)
+from reclassify_components import (
+    _most_specific_candidate as _rc_most_specific_candidate,
+)
+from reclassify_components import (
+    _primary_component_id as _rc_primary_component_id,
+)
+
 _VALID_SEVERITIES = {"Critical", "High", "Medium", "Low"}
 _VALID_STRIDE = {
     "Spoofing",
@@ -78,14 +92,62 @@ def _metadata(step: dict) -> dict | None:
     }
 
 
-def _component_for(file_path: str) -> tuple[str, str]:
-    """Use the same conservative code-location grouping as source scanners."""
-    normalized = file_path.replace("\\", "/").lower()
-    if any(part in normalized for part in ("frontend/", "client/", "web/", "ui/", ".component.")):
-        return "frontend", "Frontend"
-    if any(part in normalized for part in ("database/", "migrations/", "models/", "repository/", "repositories/")):
-        return "data-layer", "Data Layer"
-    return "backend-api", "Backend API"
+def _component_for(file_path: str, components: list) -> tuple[str, str]:
+    """Resolve an evidence file to a **registered** component id/name.
+
+    A promoted threat's ``component_id`` must name a component that exists in
+    ``components[]``.  This used to be a hardcoded three-value grouping
+    (``frontend`` / ``data-layer`` / ``backend-api``) that never consulted the
+    registry, so it invented ids for any model whose components are not named
+    exactly that — juice-shop 2026-07-27 promoted an ``AC-T-001`` step under
+    ``frontend/`` as ``frontend`` while the registered id was ``frontend-spa``.
+    A phantom is expensive: it dangles the §8 Component link, and because
+    promotion runs *after* the curing ``reclassify_components`` pass nothing
+    fixes it — the read-only pre-export gate then aborts the whole run.
+
+    Matching goes through the same glob resolver ``reclassify_components``
+    uses, so promotion and curing agree by construction.  An evidence file
+    matching no glob falls back to the primary component (still registered)
+    rather than to an invented id.
+    """
+    registered = [c for c in components if isinstance(c, dict) and (c.get("id") or "").strip()]
+    if not registered:
+        # No registry to resolve against (yaml absent). Nothing here can be
+        # "registered" yet; keep the historical default and let the later
+        # reclassify_components pass bind it once the yaml exists.
+        return "backend-api", "Backend API"
+
+    primary = _rc_primary_component_id(registered)
+    hits = _rc_component_for(file_path, [_rc_build_matcher(c) for c in registered])
+    if not hits:
+        cid = primary
+    elif len(hits) == 1:
+        cid = hits[0]
+    else:
+        glob_index = {
+            (c.get("id") or "").strip(): [g for g in (c.get("paths") or []) if isinstance(g, str)] for c in registered
+        }
+        cid = _rc_most_specific_candidate([file_path], hits, glob_index, primary)
+
+    for component in registered:
+        if (component.get("id") or "").strip() == cid:
+            return cid, str(component.get("name") or cid)
+    return cid, cid
+
+
+def _registered_components(output_dir: Path) -> list:
+    """Component registry from the composed model; empty when it is not there."""
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        return []
+    try:
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    components = data.get("components")
+    return components if isinstance(components, list) else []
 
 
 def _find_step(case_match: dict, step_number: object) -> dict | None:
@@ -116,6 +178,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
     if not isinstance(threats, list) or not isinstance(matches, list) or not isinstance(verdicts, list):
         raise ValueError("abuse-case promotion sidecars have an unexpected shape")
 
+    components = _registered_components(output_dir)
     verdict_by_case = {v.get("abuse_case_id"): v for v in verdicts if isinstance(v, dict)}
     existing = {
         (
@@ -163,7 +226,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
             t_id = existing.get(key)
             if not t_id:
                 t_id = _next_t_id(threats)
-                component_id, component_name = _component_for(str(evidence["file"]))
+                component_id, component_name = _component_for(str(evidence["file"]), components)
                 threat = {
                     "t_id": t_id,
                     "title": meta["title"],
@@ -206,6 +269,11 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         _write(matches_path, matches_doc)
         _write(verdicts_path, verdicts_doc)
     notes = [f"promoted {len(promoted)} confirmed source-probe finding(s)"]
+    if promoted and not components:
+        notes.append(
+            "component registry unavailable (no threat-model.yaml) — promoted finding(s) "
+            "carry the default component until reclassify_components binds them"
+        )
     if skipped_metadata:
         notes.append("not promoted (missing finding metadata): " + ", ".join(sorted(skipped_metadata)))
     return len(promoted), notes

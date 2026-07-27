@@ -24,8 +24,16 @@ attack_surface:
     notes: Authenticated profile lookup.
 
 trust_boundaries:
-  - name: Browser to API
-    description: Authenticated browser requests cross into the backend API.
+  - id: tb-1
+    name: Browser to API
+    from: external
+    to: C-01
+    kind: network
+    assumption: Authenticated browser requests are authorized before protected operations.
+    evidence: []
+    confidence: inferred
+    resolution_status: resolved
+    sources: [detected]
 
 security_controls:
   - domain: Authorization

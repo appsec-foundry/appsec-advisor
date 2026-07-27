@@ -109,6 +109,28 @@ properties:
           properties:
             file: { type: string }
             line: { type: [integer, "null"] }
+        boundary_refs:
+          type: array
+          maxItems: 2
+          items:
+            type: object
+            additionalProperties: false
+            required: [boundary_id, origin_component_id, rationale, evidence_locations]
+            properties:
+              boundary_id: {type: string, pattern: "^tb-\\d+$"}
+              origin_component_id: {type: string, minLength: 1, maxLength: 128}
+              rationale: {type: string, minLength: 20, maxLength: 240}
+              evidence_locations:
+                type: array
+                minItems: 1
+                maxItems: 3
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [file]
+                  properties:
+                    file: {type: string, minLength: 1, maxLength: 512}
+                    line: {type: [integer, "null"], minimum: 1}
         # A lossless merger stores every affected location here. The primary
         # evidence remains the report anchor; instances retain the additional
         # scenario/provenance needed for incremental diffs and audit.

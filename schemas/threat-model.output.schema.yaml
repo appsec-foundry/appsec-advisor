@@ -74,6 +74,30 @@ properties:
           next_mitigation_id:
             type: string
             pattern: "^M-\\d{3,}$"
+      boundary_selection:
+        type: object
+        additionalProperties: false
+        required: [depth, max_candidates_per_component, components]
+        properties:
+          depth: {type: string, enum: [quick, standard, thorough]}
+          max_candidates_per_component: {type: integer, minimum: 1, maximum: 6}
+          components:
+            type: object
+            additionalProperties:
+              type: object
+              additionalProperties: false
+              required: [eligible_ids, selected_ids, omitted_ids, deferred_ids]
+              properties:
+                eligible_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
+                selected_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
+                omitted_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
+                deferred_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
+                focus_reasons:
+                  type: object
+                  additionalProperties:
+                    type: array
+                    items: {type: string}
+                reason: {type: string}
       accepted_risks:
         # Team-provided risks from `docs/known-threats.yaml` with `status: accepted`.
         # Phase 1 extracts these and the orchestrator emits them here during
@@ -318,11 +342,53 @@ properties:
     type: array
     items:
       type: object
-      additionalProperties: true
-      required: [name]
+      additionalProperties: false
+      required: [id, name, kind, assumption, evidence, confidence, resolution_status, sources]
       properties:
-        name:        { type: string, minLength: 1 }
-        description: { type: [string, "null"] }
+        id: {type: string, pattern: "^tb-\\d+$"}
+        name: {type: string, minLength: 1, maxLength: 100}
+        from: {type: string, minLength: 1, maxLength: 128}
+        to: {type: string, minLength: 1, maxLength: 128}
+        kind:
+          type: string
+          enum: [network, process, identity, privilege, tenant, data-origin, third-party, build]
+        assumption: {type: string, minLength: 1, maxLength: 240}
+        evidence:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties: false
+            required: [file]
+            properties:
+              file: {type: string, minLength: 1, maxLength: 512}
+              line: {type: integer, minimum: 1}
+        confidence: {type: string, enum: [confirmed, inferred, unknown]}
+        resolution_status: {type: string, enum: [resolved, unresolved, conflicted]}
+        sources:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {type: string, enum: [detected, repo-declared, legacy]}
+        declaration_key:
+          type: string
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          maxLength: 80
+      allOf:
+        - if:
+            properties: {resolution_status: {const: resolved}}
+            required: [resolution_status]
+          then:
+            required: [from, to]
+            properties:
+              from: {pattern: "^(?:external|[A-Za-z][A-Za-z0-9-]{0,127})$"}
+              to: {pattern: "^(?:external|[A-Za-z][A-Za-z0-9-]{0,127})$"}
+        - if:
+            required: [declaration_key]
+          then:
+            properties:
+              sources:
+                contains: {const: repo-declared}
 
   security_controls:
     type: array
@@ -664,6 +730,28 @@ properties:
             properties:
               file: { type: string }
               line: { type: [integer, "null"] }
+        boundary_refs:
+          type: array
+          maxItems: 2
+          items:
+            type: object
+            additionalProperties: false
+            required: [boundary_id, origin_component_id, rationale, evidence_locations]
+            properties:
+              boundary_id: {type: string, pattern: "^tb-\\d+$"}
+              origin_component_id: {type: string, minLength: 1, maxLength: 128}
+              rationale: {type: string, minLength: 20, maxLength: 240}
+              evidence_locations:
+                type: array
+                minItems: 1
+                maxItems: 3
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [file]
+                  properties:
+                    file: {type: string, minLength: 1, maxLength: 512}
+                    line: {type: [integer, "null"], minimum: 1}
         controls_in_place:
           type: [string, "null"]
         mitigation_ids:

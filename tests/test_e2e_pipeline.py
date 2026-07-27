@@ -394,7 +394,7 @@ def test_baseline_update_writes_cache(tmp_path: Path, e2e_run: Path) -> None:
     assert cache_path.is_file()
 
     data = json.loads(cache_path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
     assert data["mode"] == "full"
     # Fingerprint must have hashed our synthetic manifests.
     assert "package.json" in data["recon_fingerprint"]["manifests"]

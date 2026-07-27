@@ -615,6 +615,12 @@ SYS_SAMPLE = """\
         name: Public Internet
         from: external
         to: backend-api
+        kind: network
+        assumption: Requests are authenticated before protected operations.
+        evidence: []
+        confidence: confirmed
+        resolution_status: resolved
+        sources: [detected]
     security_controls:
       - domain: Identity and Authentication
         control: Password-Based Authentication
@@ -635,6 +641,16 @@ SYS_SAMPLE = """\
         component: backend-api
         severity: Critical
         title: "SQL Injection"
+        evidence:
+          - file: routes/search.ts
+            line: 42
+        boundary_refs:
+          - boundary_id: tb-1
+            origin_component_id: backend-api
+            rationale: The unsafe query is reached through this public crossing.
+            evidence_locations:
+              - file: routes/search.ts
+                line: 42
 """
 
 
@@ -650,6 +666,19 @@ def test_components_assets_boundaries_controls_are_indexed():
     assert [a["name"] for a in sysv["assets"]] == ["User Account Database"]
     assert [b["id"] for b in sysv["trust_boundaries"]] == ["tb-1"]
     assert [c["effectiveness"] for c in sysv["controls"]] == ["Weak"]
+    assert sysv["trust_boundaries"][0]["findings"] == ["F-001"]
+
+
+def test_boundary_and_finding_detail_are_bidirectionally_linked():
+    facts = _sys_facts()
+    boundary = qtm.lookup_id(facts, "tb-1")
+    assert boundary["found"] is True
+    assert boundary["kind"] == "trust_boundary"
+    assert [finding["id"] for finding in boundary["findings"]] == ["F-001"]
+    assert "Linked findings: F-001" in qtm.render_detail(boundary)
+
+    finding = qtm.lookup_id(facts, "F-001")
+    assert "Trust boundary gap(s): tb-1 (backend-api)" in qtm.render_detail(finding)
 
 
 def test_linked_threats_are_cited_as_f_ids():

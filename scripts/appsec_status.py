@@ -503,8 +503,11 @@ def render_text(data: dict) -> str:
             sev = "STRONGLY recommend" if tier == "major" else "recommend"
             decision = f"plugin-drift ({tier}) — {sev} --full"
         elif cc_exit == 1 and ds_exit == 0:
-            ids = ds.get("dirty_component_ids") or []
-            decision = f"changes detected — {len(ids)} component(s) dirty: " + ", ".join(ids[:3])
+            if ds.get("decision") == "boundary_recompose":
+                decision = "boundary declaration changed — deterministic recomposition, zero STRIDE dispatches"
+            else:
+                ids = ds.get("dirty_component_ids") or []
+                decision = f"changes detected — {len(ids)} component(s) dirty: " + ", ".join(ids[:3])
         elif cc_exit == 1 and ds_exit == 2:
             decision = (
                 "changes detected but only top-level globals — SKILL would "

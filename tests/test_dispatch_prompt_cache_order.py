@@ -77,6 +77,7 @@ def test_groups_are_in_order_a_b_c():
         "KNOWN_THREATS_INDEX_PATH",
         "CROSS_REPO_CONTEXT_PATH",
         "PHASE_8B_VIOLATIONS_INDEX_PATH",
+        "TRUST_BOUNDARIES_INDEX_PATH",
     ],
 )
 def test_volatile_paths_listed_in_group_c(param):
@@ -101,6 +102,14 @@ def test_group_c_uses_paths_not_inline_json_contract():
     group_c = block[c_start:]
     assert "Do **not** inline the JSON arrays" in group_c
     assert ".dispatch-context/<COMPONENT_ID>/" in group_c
+    assert "TRUST_BOUNDARIES=" not in group_c
+
+
+def test_boundary_context_is_batched_into_the_existing_step_one_read_turn():
+    analyzer = (PLUGIN_ROOT / "agents" / "appsec-stride-analyzer.md").read_text(encoding="utf-8")
+    assert "through parallel `Read` calls in this single" in analyzer
+    assert "`TRUST_BOUNDARIES_INDEX_PATH`" in analyzer
+    assert "must not add a second tool turn" in analyzer
 
 
 def test_threat_merger_component_map_is_path_not_inline_json():

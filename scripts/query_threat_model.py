@@ -58,7 +58,7 @@ _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Information
 _KNOWN_SEVERITIES = set(_SEVERITY_ORDER)
 _SEVERITY_BY_NORMALIZED = {severity.lower(): severity for severity in _KNOWN_SEVERITIES}
 _SCENARIO_TRIM = 200
-_ID_RE = re.compile(r"^([TFMW])-0*(\d+)$", re.IGNORECASE)
+_ID_RE = re.compile(r"^(TB|[TFMW])-0*(\d+)$", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +185,15 @@ def _finding_record(threat: dict) -> dict:
         "location": _location(threat),
         "evidence_check": (threat.get("evidence_check") or "").strip(),
         "mitigation_ids": [str(m).strip() for m in (threat.get("mitigation_ids") or []) if str(m).strip()],
+        "boundary_refs": [
+            {
+                "boundary_id": str(ref.get("boundary_id") or "").strip(),
+                "origin_component_id": str(ref.get("origin_component_id") or "").strip(),
+                "rationale": _trim(ref.get("rationale") or ""),
+            }
+            for ref in threat.get("boundary_refs") or []
+            if isinstance(ref, dict) and ref.get("boundary_id")
+        ],
         # Custom requirements this finding breaks. Filtered against the declared
         # catalog in build_facts — a raw id here may predate the current catalog.
         "violated_requirements": violated_requirements(threat),
@@ -251,7 +260,12 @@ def _boundary_record(b: dict) -> dict:
         "name": (b.get("name") or "").strip(),
         "from": (b.get("from") or "").strip(),
         "to": (b.get("to") or "").strip(),
-        "enforcement": _trim(b.get("enforcement") or ""),
+        "kind": (b.get("kind") or "").strip(),
+        "status": (b.get("resolution_status") or "").strip(),
+        "confidence": (b.get("confidence") or "").strip(),
+        "assumption": _trim(b.get("assumption") or ""),
+        "sources": [str(source) for source in b.get("sources") or []],
+        "findings": [],
     }
 
 
@@ -417,6 +431,14 @@ def build_facts(
     components_l = [_component_record(c) for c in components_raw]
     assets_l = [_asset_record(a) for a in (data.get("assets") or []) if isinstance(a, dict)]
     boundaries_l = [_boundary_record(b) for b in (data.get("trust_boundaries") or []) if isinstance(b, dict)]
+    boundary_findings: dict[str, list[str]] = {}
+    for finding in findings:
+        for ref in finding.get("boundary_refs") or []:
+            boundary_findings.setdefault(ref["boundary_id"], [])
+            if finding["id"] not in boundary_findings[ref["boundary_id"]]:
+                boundary_findings[ref["boundary_id"]].append(finding["id"])
+    for boundary in boundaries_l:
+        boundary["findings"] = boundary_findings.get(boundary["id"], [])
     controls_l = [_control_record(c) for c in controls_raw]
     surface_all = [_surface_record(e) for e in (data.get("attack_surface") or []) if isinstance(e, dict)]
 
@@ -439,7 +461,12 @@ def build_facts(
     if grep:
         assets_l = [a for a in assets_l if _matches([a["id"], a["name"], a["classification"], a["description"]], grep)]
         boundaries_l = [
-            b for b in boundaries_l if _matches([b["id"], b["name"], b["from"], b["to"], b["enforcement"]], grep)
+            b
+            for b in boundaries_l
+            if _matches(
+                [b["id"], b["name"], b["from"], b["to"], b["kind"], b["status"], b["assumption"]],
+                grep,
+            )
         ]
         controls_l = [
             c for c in controls_l if _matches([c["domain"], c["control"], c["effectiveness"], c["assessment"]], grep)
@@ -564,6 +591,14 @@ def lookup_id(facts: dict, wanted: str) -> dict:
         if w:
             inst = [f for f in facts["findings"] if any(_id_key(i) == _id_key(f["id"]) for i in w["instances"])]
             result.update(kind="weakness", found=True, weakness=w, instances=inst)
+    elif prefix == "TB":
+        boundary = next(
+            (item for item in facts["system"]["trust_boundaries"] if _id_key(item["id"]) == key),
+            None,
+        )
+        if boundary:
+            linked = [finding for finding in facts["findings"] if finding["id"] in boundary["findings"]]
+            result.update(kind="trust_boundary", found=True, trust_boundary=boundary, findings=linked)
     return result
 
 
@@ -637,7 +672,13 @@ def render_text(facts: dict) -> str:
             if a["findings"]:
                 buf.append(f"             at risk from: {', '.join(a['findings'])}")
         for b in sysv.get("trust_boundaries") or []:
-            buf.append(f"  boundary   {b['id']:<22} {b['name']}  ({b['from'] or '?'} -> {b['to'] or '?'})")
+            meta = " · ".join(x for x in (b["kind"], b["status"], b["confidence"]) if x)
+            buf.append(
+                f"  boundary   {b['id']:<22} {b['name']}  "
+                f"({b['from'] or '?'} -> {b['to'] or '?'})" + (f"  [{meta}]" if meta else "")
+            )
+            if b["findings"]:
+                buf.append(f"             linked findings: {', '.join(b['findings'])}")
         if surf.get("total"):
             proto = " · ".join(f"{k} {v}" for k, v in (surf.get("by_protocol") or {}).items())
             buf.append(
@@ -750,7 +791,7 @@ def render_detail(focus: dict) -> str:
     if not focus["found"]:
         key = _id_key(focus["query"])
         if key is None:
-            return f"'{focus['query']}' is not a recognizable id (expected F-/T-/M-/W-NNN).\n"
+            return f"'{focus['query']}' is not a recognizable id (expected F-/T-/M-/W-/tb-NNN).\n"
         return f"No {focus['query']} in this threat model.\n"
 
     buf: list[str] = []
@@ -770,6 +811,14 @@ def render_detail(focus: dict) -> str:
                 buf.append(f"  {label}: {val}")
         if f["scenario"]:
             buf.append(f"  Scenario: {f['scenario']}")
+        if f["boundary_refs"]:
+            buf.append(
+                "  Trust boundary gap(s): "
+                + ", ".join(
+                    f"{ref['boundary_id']} ({ref['origin_component_id']}): {ref['rationale']}"
+                    for ref in f["boundary_refs"]
+                )
+            )
         if focus["mitigations"]:
             buf.append("  Fix(es):")
             for m in focus["mitigations"]:
@@ -795,6 +844,14 @@ def render_detail(focus: dict) -> str:
         if w["affected_components"]:
             buf.append("  Affects: " + ", ".join(w["affected_components"]))
         buf.append("  Instances: " + (", ".join(f["id"] for f in focus["instances"]) or "(none)"))
+    elif focus["kind"] == "trust_boundary":
+        boundary = focus["trust_boundary"]
+        meta = " · ".join(x for x in (boundary["kind"], boundary["status"], boundary["confidence"]) if x)
+        buf.append(f"{boundary['id']} — {boundary['name']}" + (f" [{meta}]" if meta else ""))
+        buf.append(f"  Crossing: {boundary['from'] or '?'} -> {boundary['to'] or '?'}")
+        if boundary["assumption"]:
+            buf.append(f"  Assumption: {boundary['assumption']}")
+        buf.append("  Linked findings: " + (", ".join(finding["id"] for finding in focus["findings"]) or "(none)"))
     return "\n".join(buf) + "\n"
 
 
@@ -809,7 +866,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--repo-root", default=None)
     g = p.add_mutually_exclusive_group()
     g.add_argument("--grep", default=None, help="Case-insensitive topic filter.")
-    g.add_argument("--id", dest="id_query", default=None, help="Precise F-/T-/M-/W-NNN lookup.")
+    g.add_argument("--id", dest="id_query", default=None, help="Precise F-/T-/M-/W-/tb-NNN lookup.")
     p.add_argument("--severity", default=None, help="Filter findings by severity (case-insensitive).")
     p.add_argument("--component", default=None, help="Filter findings by component id or name (case-insensitive).")
     p.add_argument("--evidence-state", default=None, help="Filter findings by evidence_check (case-insensitive).")

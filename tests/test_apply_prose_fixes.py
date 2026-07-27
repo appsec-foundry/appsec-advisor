@@ -525,3 +525,164 @@ def test_humanize_actor_ids_skips_fenced_code():
     md = "```\nACT-D-04 stays as an id in code\n```\n"
     out, n = prose._humanize_actor_ids(md)
     assert "ACT-D-04" in out and n == 0
+
+
+# ---------------------------------------------------------------------------
+# Dot-directory roots must be backticked like any other path
+# (regression: juice-shop 2026-07-27 — `_PATH_RE` started with `[A-Za-z]`, so
+# `.github/workflows/image_actions.yml:33` matched one char late at `github`
+# and the `before in "._"` adjacency guard discarded it. The path stayed bare
+# and the QA reference-format gate raised a non-actionable `manual_review`.)
+# ---------------------------------------------------------------------------
+
+
+def test_dot_directory_path_is_backticked():
+    line = "Pin the action in .github/workflows/image_actions.yml:33 to a SHA."
+    out, n = prose._wrap_line(line)
+    assert n == 1
+    assert "`.github/workflows/image_actions.yml:33`" in out
+    # the leading dot belongs INSIDE the span — a half-wrap is the failure mode
+    # the adjacency guard exists to prevent.
+    assert ".`github" not in out
+
+
+def test_dot_directory_path_in_linked_title_tail():
+    """The exact §1 critical-gaps shape that tripped the gate: a finding link
+    whose title tail carries the locator. The title-tail mask is penetrable by
+    the path passes, so the dot-root must be wrapped here too."""
+    line = (
+        "- **Supply chain injection** — text. "
+        "*([F-010](#f-010) — Unpinned Mutable-Branch Action "
+        "(.github/workflows/image_actions.yml:33) → [W-003](#w-003))*"
+    )
+    out, _ = prose._wrap_line(line)
+    assert "(`.github/workflows/image_actions.yml:33`)" in out
+
+
+def test_various_dot_directory_roots_are_backticked():
+    for raw, want in [
+        ("See .circleci/config.yml now.", "`.circleci/config.yml`"),
+        ("Edit .claude/settings.json please.", "`.claude/settings.json`"),
+        ("Check .github/workflows/ci.yml:12 here.", "`.github/workflows/ci.yml:12`"),
+    ]:
+        out, _ = prose._wrap_line(raw)
+        assert want in out, f"{raw!r} -> {out!r}"
+
+
+def test_interior_dot_still_claims_whole_token():
+    """Guard against the fix over-reaching: when the dot is INTERIOR the greedy
+    body must still own the whole token rather than splitting at the dot."""
+    out, n = prose._wrap_line("The file v1.github/x.yml is fine.")
+    assert n == 1
+    assert "`v1.github/x.yml`" in out
+    assert "v1.`github" not in out
+
+
+def test_dot_directory_wrapping_is_idempotent():
+    already = "Already wrapped: `.github/workflows/ci.yml` stays as-is."
+    out, n = prose._wrap_line(already)
+    assert n == 0
+    assert out == already
+    # and a second pass over freshly wrapped output changes nothing further
+    once, _ = prose._wrap_line("Pin .github/workflows/ci.yml now.")
+    twice, n2 = prose._wrap_line(once)
+    assert n2 == 0
+    assert twice == once
+
+
+# ---------------------------------------------------------------------------
+# The styled <blockquote> wrapper is presentation — its Markdown body must
+# still get code-token backticking.
+# (regression: juice-shop 2026-07-27 — apply_fixes/apply_code_formatting
+# skipped EVERY line between <blockquote> and </blockquote>, so the §1
+# critical-gaps list kept bare paths that no fragment rewrite could reach.)
+# ---------------------------------------------------------------------------
+
+_MS_BLOCKQUOTE = (
+    "**Critical gaps:**\n"
+    "\n"
+    '<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px;">\n'
+    "\n"
+    "- **Supply chain injection** — text here. "
+    "*([F-010](#f-010) — Unpinned Mutable-Branch Action "
+    "(.github/workflows/image_actions.yml:33) → [W-003](#w-003))*\n"
+    "- **SQL injection** — more text. "
+    "*([F-008](#f-008) — data interpolated into a SQL string routes/search.ts:23)*\n"
+    "\n"
+    "</blockquote>\n"
+)
+
+
+def test_blockquote_body_gets_path_backticking():
+    out, n = prose.apply_fixes(_MS_BLOCKQUOTE)
+    assert n >= 2
+    assert "(`.github/workflows/image_actions.yml:33`)" in out
+    assert "`routes/search.ts:23`" in out
+
+
+def test_blockquote_wrapper_tags_are_left_untouched():
+    """The wrapper's style attribute contains `:` and `;` — it must never be
+    rewritten. Lines carrying markup stay byte-identical."""
+    out, _ = prose.apply_fixes(_MS_BLOCKQUOTE)
+    assert '<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px;">' in out
+    assert "</blockquote>" in out
+    assert "`border-left" not in out
+    assert "`3px" not in out
+
+
+def test_apply_code_formatting_matches_apply_fixes_in_blockquote():
+    """Both entry points share the rule; drift between them is how the bug
+    would come back through the autofix path only."""
+    a, _ = prose.apply_fixes(_MS_BLOCKQUOTE)
+    b, _ = prose.apply_code_formatting(_MS_BLOCKQUOTE)
+    for want in ("(`.github/workflows/image_actions.yml:33`)", "`routes/search.ts:23`"):
+        assert want in a, f"apply_fixes missed {want}"
+        assert want in b, f"apply_code_formatting missed {want}"
+
+
+def test_blockquote_body_wrapping_is_idempotent():
+    once, _ = prose.apply_fixes(_MS_BLOCKQUOTE)
+    twice, n2 = prose.apply_fixes(once)
+    assert twice == once
+    assert n2 == 0
+
+
+def test_fenced_code_inside_blockquote_is_still_skipped():
+    """Fence tracking must keep priority over the new blockquote body path —
+    a snippet inside the quote is code, not prose."""
+    src = "<blockquote>\n\n```yaml\nuses: calibreapp/image-actions@main\n```\n\n</blockquote>\n"
+    out, _ = prose.apply_fixes(src)
+    assert "uses: calibreapp/image-actions@main" in out
+    assert "`calibreapp" not in out
+
+
+_TRUST_BOUNDARY_GFM = (
+    "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |\n"
+    "|---|---|---|---|---|---|\n"
+    "| tb-4 | **Application to LLM**<br>Backend API Server (routes/chatbot.ts) → external | "
+    'third-party / resolved | The call uses app.options("*", cors()) and routes/chatbot.ts.<br>_confirmed_ | '
+    "detected | [F-001](#f-001) |\n"
+)
+
+
+def test_trust_boundary_narrative_columns_keep_prose_typography():
+    for formatter in (prose.apply_fixes, prose.apply_code_formatting):
+        out, _ = formatter(_TRUST_BOUNDARY_GFM)
+        assert "Backend API Server (routes/chatbot.ts)" in out
+        assert 'app.options("*", cors()) and routes/chatbot.ts' in out
+        assert "`routes/chatbot.ts`" not in out
+        assert "`app.options`" not in out
+        assert "[F-001](#f-001)" in out
+
+
+def test_trust_boundary_table_exemption_is_column_scoped_and_idempotent():
+    source = _TRUST_BOUNDARY_GFM.replace(
+        "detected |",
+        "source/file.yml |",
+    )
+    once, _ = prose.apply_code_formatting(source)
+    twice, n2 = prose.apply_code_formatting(once)
+    assert "`source/file.yml`" in once
+    assert "routes/chatbot.ts" in once and "`routes/chatbot.ts`" not in once
+    assert twice == once
+    assert n2 == 0

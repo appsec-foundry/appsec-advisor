@@ -39,6 +39,7 @@ properties:
             - cvss_missing
             - cvss_scope_violation
             - cvss_band_mismatch
+            - severity_reconciliation
         severity:
           type: string
           enum: [warning, info]

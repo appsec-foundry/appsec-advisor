@@ -43,11 +43,30 @@ def test_independent_counters_per_type(tmp_path: Path):
     assert reserve_ids.reserve(tmp_path, "asset", 1) == ["A-001"]
     assert reserve_ids.reserve(tmp_path, "meta_finding", 1) == ["MF-001"]
     assert reserve_ids.reserve(tmp_path, "hyp", 1) == ["HYP-001"]
+    assert reserve_ids.reserve(tmp_path, "trust_boundary", 2) == ["tb-1", "tb-2"]
     state = json.loads((tmp_path / ".appsec-cache" / "baseline.json").read_text())
     assert state["id_counters"]["next_mitigation_id"] == 2
     assert state["id_counters"]["next_asset_id"] == 2
     assert state["id_counters"]["next_meta_finding_id"] == 2
     assert state["id_counters"]["next_hyp_id"] == 2
+    assert state["id_counters"]["next_trust_boundary_id"] == 3
+
+
+def test_ensure_trust_boundary_counter_advances_without_reserving(tmp_path: Path):
+    reserve_ids.ensure_counter_at_least(tmp_path, "trust_boundary", 9)
+    assert reserve_ids.reserve(tmp_path, "trust_boundary", 1) == ["tb-9"]
+    reserve_ids.ensure_counter_at_least(tmp_path, "trust_boundary", 4)
+    assert reserve_ids.reserve(tmp_path, "trust_boundary", 1) == ["tb-10"]
+
+
+def test_trust_boundary_counter_has_bounded_suffix(tmp_path: Path):
+    reserve_ids.ensure_counter_at_least(
+        tmp_path,
+        "trust_boundary",
+        reserve_ids.MAX_ID_NUMBER + 1,
+    )
+    with pytest.raises(ValueError, match="exceeds supported maximum"):
+        reserve_ids.reserve(tmp_path, "trust_boundary", 1)
 
 
 def test_prefixed_string_counter_carry_over(tmp_path: Path):

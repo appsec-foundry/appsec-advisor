@@ -105,6 +105,36 @@ class TestExactDedup:
         )
         assert len(result) == 2
 
+    def test_boundary_provenance_over_cap_blocks_exact_merge(self, mt):
+        def refs(*ids):
+            return [
+                {
+                    "boundary_id": boundary_id,
+                    "origin_component_id": "auth",
+                    "rationale": "The verified defect occurs at this crossing.",
+                    "evidence_locations": [{"file": "src/auth/login.py", "line": 42}],
+                }
+                for boundary_id in ids
+            ]
+
+        first = {"component_id": "auth", **_threat(boundary_refs=refs("tb-1", "tb-2"))}
+        second = {"component_id": "auth", **_threat(boundary_refs=refs("tb-3"))}
+        result = mt._dedupe_exact([first, second])
+        assert len(result) == 2
+
+    def test_candidate_member_carries_boundary_provenance(self, mt):
+        threat = _threat(
+            boundary_refs=[
+                {
+                    "boundary_id": "tb-1",
+                    "origin_component_id": "auth",
+                    "rationale": "The verified defect occurs at this crossing.",
+                    "evidence_locations": [{"file": "src/auth/login.py", "line": 42}],
+                }
+            ]
+        )
+        assert mt._candidate_member(threat)["boundary_refs"] == threat["boundary_refs"]
+
 
 # ---------------------------------------------------------------------------
 # Evidence-identity dedup (cross-STRIDE / cross-component same-location dup)
@@ -670,6 +700,19 @@ class TestEndToEnd:
         assert member["cwe"] == "CWE-89"
         assert member["source"] == "stride"
         assert member["instances"] == [{"file": "src/auth/login.py", "line": 42, "severity": "High"}]
+
+    def test_collect_drops_an_empty_boundary_refs_list(self, mt, tmp_path):
+        """An analyzer that found no crossing still emits the key as `[]`. Both
+        cleanup paths only fire on a truthy value, so the empty list used to
+        survive into the delivered yaml and overstate how many findings carry a
+        boundary link (juice-shop 2026-07-27: key on 49, reference on 12)."""
+        _write_stride(tmp_path, "auth", [_threat(boundary_refs=[])])
+
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert all("boundary_refs" not in threat for threat in merged["threats"])
 
     def test_collect_records_auto_decisions_and_removes_agent_candidates(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat(threat_category_id="TH-01")])

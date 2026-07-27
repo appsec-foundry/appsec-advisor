@@ -125,6 +125,56 @@ def _evidence_for_threat(evidence: list[dict] | None) -> dict | None:
     return {"file": file, "line": line}
 
 
+def _scenario_for_threat(
+    *,
+    source: str,
+    rule_id: str,
+    title: str,
+    cwe: str,
+    spaced_stride: str,
+    evidence: list[dict],
+    hypothesis_id: str | None,
+) -> str:
+    """Deterministic `scenario` prose for a bridged architecture threat.
+
+    `scenario` is schema-required on every threat
+    (schemas/threat-model.output.schema.yaml → threats[].required) and must
+    survive `validate_intermediate._check_scenario_stripped_length` (>= 10
+    non-whitespace chars). The bridge never set it, so a single coverage hit
+    hard-failed the post-Stage-1 gate for the whole run (juice-shop 2026-07-27,
+    ARCH-TLS-001 → T-070).
+
+    Synthesised the same way the sibling coverage emitter does it
+    (`coverage_checks.py` suggested_threat.scenario): an f-string over fields
+    the record already carries. No LLM, no new YAML field to keep in sync.
+
+    The matched `signal` text is deliberately NOT interpolated: ARCH-SECRET-001
+    matches on literal key/credential material, and this string is rendered
+    user-visible in the §8 story card, downstream of the secret masker.
+    Location only — the evidence list carries the detail.
+    """
+    loc = ""
+    first = _evidence_for_threat(evidence)
+    if first:
+        loc = f"`{first['file']}:{first['line']}`" if first.get("line") else f"`{first['file']}`"
+    n = len([e for e in evidence or [] if (e.get("file") or "").strip()])
+    extra = f" and {n - 1} further site(s)" if n > 1 else ""
+
+    if source == "threat-hypothesis":
+        origin = f"Architecture-coverage hypothesis {hypothesis_id or rule_id}"
+        verb = "was confirmed against the codebase"
+    else:
+        origin = f"Architecture-coverage rule {rule_id}"
+        verb = "matched this anti-pattern"
+
+    where = f" at {loc}{extra}" if loc else " in this repository"
+    return (
+        f"{origin} {verb}{where}. {title}: the condition is observable in the "
+        f"code as cited, weakening the control this rule checks and exposing the "
+        f"affected surface to {spaced_stride} ({cwe})."
+    )
+
+
 def _build_threat(
     *,
     source: str,
@@ -151,6 +201,15 @@ def _build_threat(
         "likelihood": "Medium",
         "impact": safe_risk,
         "title": title,
+        "scenario": _scenario_for_threat(
+            source=source,
+            rule_id=rule_id,
+            title=title,
+            cwe=cwe,
+            spaced_stride=spaced_stride,
+            evidence=evidence,
+            hypothesis_id=hypothesis_id,
+        ),
         "cwe": cwe,
         "evidence": _evidence_for_threat(evidence),
         "source": source,

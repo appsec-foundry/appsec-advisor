@@ -172,6 +172,257 @@ def test_yaml_augmented_with_effective_fields(tmp_path: Path) -> None:
     assert "chain_role" in t
 
 
+def test_all_findings_persist_derived_fields_beyond_top_50(tmp_path: Path) -> None:
+    threats = [
+        {
+            "t_id": f"T-{number:03d}",
+            "title": f"Finding {number}",
+            "risk": "Medium",
+            "impact": "Medium",
+            "likelihood": "Medium",
+        }
+        for number in range(1, 61)
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    augmented = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    assert len(augmented["threats"]) == 60
+    for finding in augmented["threats"]:
+        assert finding["effective_severity"] == "Medium"
+        assert "breach_distance" in finding
+        assert "breach_distance_reason" in finding
+        assert finding["chain_role"] == "none"
+        assert finding["compound_chain_ids"] == []
+        assert finding["verified_chain_ids"] == []
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert len(flags["ranking"]["views"]["top_findings"]["findings_ranked"]) == 50
+
+
+def _external_boundary_yaml(*, include_ref: bool = True, confidence: str = "confirmed") -> dict:
+    evidence = {"file": "routes/search.ts", "line": 42}
+    finding = {
+        "t_id": "T-001",
+        "component": "api",
+        "title": "Unbounded search query",
+        "risk": "Medium",
+        "impact": "Medium",
+        "likelihood": "Medium",
+        "primary_cwe": "CWE-400",
+        "evidence": [evidence],
+    }
+    if include_ref:
+        finding["boundary_refs"] = [
+            {
+                "boundary_id": "tb-1",
+                "origin_component_id": "api",
+                "rationale": "The cited route accepts requests across this ingress boundary.",
+                "evidence_locations": [evidence],
+            }
+        ]
+    data = _minimal_yaml([finding])
+    data["components"] = [{"id": "api"}]
+    data["trust_boundaries"] = [
+        {
+            "id": "tb-1",
+            "from": "external",
+            "to": "api",
+            "resolution_status": "resolved",
+            "confidence": confidence,
+        }
+    ]
+    return data
+
+
+def test_confirmed_external_boundary_ref_elevates_and_is_audited(tmp_path: Path) -> None:
+    _write_yaml(tmp_path / "threat-model.yaml", _external_boundary_yaml())
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    finding = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
+    assert finding["effective_severity"] == "High"
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    reconciliation = [flag for flag in flags["flags"] if flag["type"] == "severity_reconciliation"]
+    assert len(reconciliation) == 1
+    assert reconciliation[0]["threat_ids"] == ["T-001"]
+    assert reconciliation[0]["source"].endswith(":external_boundary:tb-1")
+    assert finding["triage_flags"] == [reconciliation[0]["flag_id"]]
+    summary = flags["ranking"]["reconciliation_summary"]
+    assert summary["findings_elevated_via_external_boundary"] == 1
+
+
+def test_component_exposure_without_finding_ref_does_not_elevate(tmp_path: Path) -> None:
+    _write_yaml(
+        tmp_path / "threat-model.yaml",
+        _external_boundary_yaml(include_ref=False),
+    )
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    finding = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
+    assert finding["effective_severity"] == "Medium"
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert not any(flag["type"] == "severity_reconciliation" for flag in flags["flags"])
+
+
+def test_inferred_external_boundary_ref_is_rejected_before_ranking(tmp_path: Path) -> None:
+    _write_yaml(
+        tmp_path / "threat-model.yaml",
+        _external_boundary_yaml(confidence="inferred"),
+    )
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    finding = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
+    assert finding["effective_severity"] == "Medium"
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert flags["ranking"]["reconciliation_summary"]["boundary_refs_rejected_before_ranking"] == 1
+
+
+def test_external_boundary_elevation_is_recomputed_and_stale_flag_removed(tmp_path: Path) -> None:
+    _write_yaml(tmp_path / "threat-model.yaml", _external_boundary_yaml())
+    first = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+    assert first.returncode == 0, first.stderr
+
+    model = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    model["threats"][0].pop("boundary_refs")
+    _write_yaml(tmp_path / "threat-model.yaml", model)
+    second = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert second.returncode == 0, second.stderr
+    finding = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
+    assert finding["effective_severity"] == "Medium"
+    assert "triage_flags" not in finding
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert not any(flag["type"] == "severity_reconciliation" for flag in flags["flags"])
+
+
+def test_stale_reconciliation_removal_reindexes_later_preflight_flags(tmp_path: Path) -> None:
+    data = _external_boundary_yaml(include_ref=False)
+    data["threats"][0]["triage_flags"] = ["TF-002", "TF-003"]
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+    (tmp_path / ".triage-flags.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "generated_at": "2026-07-27T00:00:00Z",
+                "flags": [
+                    {
+                        "flag_id": "TF-001",
+                        "type": "consistency",
+                        "severity": "warning",
+                        "threat_ids": ["T-001"],
+                        "message": "retained first pre-flight flag",
+                    },
+                    {
+                        "flag_id": "TF-002",
+                        "type": "severity_reconciliation",
+                        "severity": "info",
+                        "threat_ids": ["T-001"],
+                        "message": "stale elevation",
+                        "source": "triage_compute_ranking.py",
+                    },
+                    {
+                        "flag_id": "TF-003",
+                        "type": "completeness",
+                        "severity": "info",
+                        "threat_ids": ["T-001"],
+                        "message": "later pre-flight flag",
+                    },
+                ],
+                "summary": {
+                    "total_flags": 3,
+                    "warnings": 1,
+                    "info": 2,
+                    "threats_reviewed": 1,
+                },
+                "ranking": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert [flag["flag_id"] for flag in flags["flags"]] == ["TF-001", "TF-002"]
+    assert [flag["type"] for flag in flags["flags"]] == ["consistency", "completeness"]
+    finding = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
+    assert finding["triage_flags"] == ["TF-002"]
+    validation = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "scripts" / "validate_intermediate.py"),
+            "triage_flags",
+            str(tmp_path / ".triage-flags.json"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert validation.returncode == 0, validation.stderr
+
+
+def test_external_boundary_elevation_respects_evidence_and_caps() -> None:
+    tcr = _tcr()
+    criteria = {
+        "never_individual_critical": [],
+        "always_critical_cwes": [],
+        "conditional_critical": {},
+    }
+    caps = {
+        "contributor_cap": {"default": "High"},
+        "severity_caps": {"CWE-400": {"max": "Medium"}},
+    }
+
+    capped, capped_reasons = tcr._compute_effective(
+        {"risk": "Medium", "primary_cwe": "CWE-400"},
+        None,
+        0,
+        caps,
+        criteria,
+        1,
+        ("tb-1", "tb-2"),
+    )
+    assert capped == "Medium"
+    assert "elevated:external_boundary(tb-1,tb-2)" in capped_reasons
+    assert "capped:CWE-400<=Medium" in capped_reasons
+
+    for evidence_check in ("refuted", "ambiguous"):
+        unchanged, reasons = tcr._compute_effective(
+            {
+                "risk": "Medium",
+                "primary_cwe": "CWE-400",
+                "evidence_check": evidence_check,
+            },
+            None,
+            0,
+            {"contributor_cap": {"default": "High"}},
+            criteria,
+            1,
+            ("tb-1",),
+        )
+        assert unchanged == "Medium"
+        assert f"suppressed:evidence_{evidence_check}(external_boundary)" in reasons
+
+    high, high_reasons = tcr._compute_effective(
+        {"risk": "High", "primary_cwe": "CWE-400"},
+        None,
+        0,
+        {"contributor_cap": {"default": "High"}},
+        criteria,
+        1,
+        ("tb-1",),
+    )
+    assert high == "High"
+    assert not any(reason.startswith("elevated:external_boundary") for reason in high_reasons)
+
+
 def test_missing_yaml_returns_error(tmp_path: Path) -> None:
     res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
     assert res.returncode == 1

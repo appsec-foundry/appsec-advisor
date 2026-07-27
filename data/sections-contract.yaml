@@ -72,6 +72,7 @@ document:
     - { id: critical_attack_tree, condition: "has_multi_critical" }
     - system_overview
     - { id: identified_actors, condition: "has_resolved_actors" }
+    - { id: trust_boundary_catalog, condition: "has_trust_boundaries" }
     - architecture_diagrams
     # §3 Attack Walkthroughs — conditional on `not skip_attack_walkthroughs`.
     # `--quick` sets `skip_attack_walkthroughs=true` in `.skill-config.json`
@@ -150,6 +151,7 @@ document:
         - { id: critical_attack_tree, condition: "has_multi_critical" }
         - system_overview
         - { id: identified_actors, condition: "has_resolved_actors" }
+        - { id: trust_boundary_catalog, condition: "has_trust_boundaries" }
         - architecture_diagrams
         # §3 conditional on `not skip_attack_walkthroughs` — see main `order:` block.
         - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
@@ -182,6 +184,7 @@ document:
         - infobox
         - toc
         - system_overview
+        - { id: trust_boundary_catalog, condition: "has_trust_boundaries" }
         - architecture_diagrams
         # §3 conditional on `not skip_attack_walkthroughs` — see main `order:` block.
         - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
@@ -680,6 +683,13 @@ sections:
     fragment_type: computed
     # No fragment file. No required_subsections — sub-headings are renderer-emitted
     # and depend on whether proposed / disabled / dormant actors exist this run.
+
+  trust_boundary_catalog:
+    heading: "### Trust Boundaries"
+    heading_numbered: false
+    fragment_type: computed
+    # Canonical human catalogue folded under §1. The deterministic renderer
+    # caps it at 20 rows and points overflow to YAML/query output.
 
   architecture_diagrams:
     heading: "## 2. Architecture Diagrams"

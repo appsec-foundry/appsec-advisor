@@ -91,8 +91,10 @@ Use this path when `PARALLEL_STRIDE=true`.
    `cheap_stride` — and the complete manifest mapping: `COMPONENT_ID`, `NAME`,
    `DESCRIPTION`, `PATHS`, `COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`,
    `INTERFACES`,
-   `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and every
-   `index_paths.*` entry. Preserve Group A → B → C ordering. Each prompt also
+   `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and every
+   `index_paths.*` entry, including
+   `TRUST_BOUNDARIES_INDEX_PATH=index_paths.trust_boundaries`. Preserve Group A
+   → B → C ordering. Each prompt also
    passes `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instructs the
    analyzer to export `OUTPUT_DIR` first. Reduce `STRIDE_MODEL` to the bare
    `sonnet`/`opus`/`haiku` Agent model alias. Zero findings are complete only

@@ -1,4 +1,4 @@
-"""Release contract for upgrading analysis baselines from v2 to v3."""
+"""Release contract for upgrading compatible analysis baselines to v4."""
 
 from __future__ import annotations
 
@@ -17,11 +17,11 @@ CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
 COMPOSE_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "compose"
 
 
-def test_analysis_v3_declares_v1_v2_read_compatibility() -> None:
+def test_analysis_v4_declares_v1_v2_v3_read_compatibility() -> None:
     manifest = json.loads(PLUGIN_JSON.read_text(encoding="utf-8"))
 
-    assert manifest["analysis_version"] == 3
-    assert manifest["compatible_analysis_versions"] == [1, 2, 3]
+    assert manifest["analysis_version"] == 4
+    assert manifest["compatible_analysis_versions"] == [1, 2, 3, 4]
 
 
 def test_v2_baseline_recommends_full_without_hard_failure() -> None:
@@ -61,7 +61,7 @@ def test_v2_report_remains_renderable_and_is_not_rewritten(tmp_path: Path) -> No
     rendered, _warnings = compose.render(CONTRACT, output_dir)
 
     assert "## Management Summary" in rendered
-    assert "analysis v3" in rendered
+    assert "analysis v4" in rendered
     assert yaml_path.read_bytes() == before
     integrity = json.loads((output_dir / ".render-integrity.json").read_text(encoding="utf-8"))
     assert integrity["schema_version"] == 1

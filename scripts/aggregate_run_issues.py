@@ -642,6 +642,49 @@ def _extract_warnings(hook_log: list[tuple[int, str]]) -> list[dict]:
     return issues
 
 
+def _extract_trust_boundary_diagnostics(output_dir: Path) -> list[dict]:
+    """Surface deterministic endpoint-resolution failures as one run issue."""
+    path = output_dir / ".trust-boundary-diagnostics.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    rows = data.get("issues") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    valid = [
+        row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("boundary_id"), str) and isinstance(row.get("code"), str)
+    ]
+    if not valid:
+        return []
+    boundary_ids = sorted(
+        {row["boundary_id"] for row in valid},
+        key=lambda value: int(value.split("-", 1)[1]) if value.startswith("tb-") and value[3:].isdigit() else 10**9,
+    )
+    invalid_resolved = sum(1 for row in valid if row["code"] == "invalid_resolved_endpoint")
+    conflicted = sum(1 for row in valid if row["code"] == "conflicted_boundary")
+    detail = (
+        f"{len(boundary_ids)} trust boundary row(s) require endpoint review"
+        f" ({invalid_resolved} invalid-resolved endpoint issue(s), {conflicted} conflict issue(s))"
+    )
+    return [
+        {
+            "category": "trust_boundary_resolution",
+            "severity": "warning",
+            "title": detail,
+            "evidence": {
+                "log_file": ".trust-boundary-diagnostics.json",
+                "log_line": 1,
+                "raw_event": detail,
+                "boundary_ids": boundary_ids[:50],
+                "issue_count": len(valid),
+            },
+        }
+    ]
+
+
 def _extract_perf_anomalies(
     phase_durs: list[dict],
     depth: str,
@@ -1393,6 +1436,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues: list[dict] = []
     issues.extend(_extract_errors(hook_log, agent_log))
     issues.extend(_extract_warnings(hook_log))
+    issues.extend(_extract_trust_boundary_diagnostics(output_dir))
     issues.extend(_extract_budget_events(agent_log))
     issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))

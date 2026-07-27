@@ -1207,16 +1207,19 @@ d = json.load(sys.stdin)
 for f in d.get("security_relevant_changes", []) or []:
     print(f)
 ')
+  set +e
   DIRTY_SET_OUTPUT=$(printf '%s\n' "$REL_FILES" \
     | python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" dirty-set \
-        --output-dir "$OUTPUT_DIR" 2>/dev/null || true)
+        --output-dir "$OUTPUT_DIR" 2>/dev/null)
   DIRTY_SET_EXIT=$?
-  case "$DIRTY_SET_EXIT" in
-    0)  DIRTY_SET_DECISION=dirty ;;
-    2)  DIRTY_SET_DECISION=noop_global_only ;;
-    3)  DIRTY_SET_DECISION=ambiguous ;;
-    *)  DIRTY_SET_DECISION=skip ;;
-  esac
+  set -e
+  DIRTY_SET_DECISION=$(printf '%s' "$DIRTY_SET_OUTPUT" | python3 -c '
+import json, sys
+try:
+    print((json.load(sys.stdin).get("decision") or "skip").strip())
+except Exception:
+    print("skip")
+')
 fi
 export DIRTY_SET_OUTPUT DIRTY_SET_EXIT DIRTY_SET_DECISION
 ```
@@ -1275,6 +1278,7 @@ skill bypasses the Bash call and follows the same template inline.
 | `plugin-drift`| (n/a)              | `PLUGIN-DRIFT — plugin upgraded (B → C, tier=T)` | `PROMPT (interactive) / ABORT (CI)` | no (interactive prompt below) |
 | `changes`     | `noop_global_only` | `NO-OP — relevant changes touch no component` | `SKIPPED (no agents will run)` | no |
 | `changes`     | `noop_empty_input` | `NO-OP — relevant list empty after mapping`   | `SKIPPED (no agents will run)` | no |
+| `changes`     | `boundary_recompose` | `RUN — trust-boundary catalogue changed`    | `normalize boundaries -> carry findings -> render -> QA` | yes, zero STRIDE |
 | `changes`     | `dirty`            | `RUN — N component(s) dirty`                  | `change check -> recon -> STRIDE delta (<ids>) -> triage -> render -> QA` | yes |
 | `changes`     | `ambiguous`        | `AMBIGUOUS — possible new component`          | `change check -> recon -> STRIDE delta -> triage -> render -> QA` | yes |
 | `changes`     | `skip` (error)     | `RUN — incremental (delta scope unresolved)`  | (incremental pipeline)                                                   | yes |
@@ -2232,7 +2236,7 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
    Repeatedly run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" claim "$OUTPUT_DIR"` and parse the returned JSON. `status=complete` ends the loop. `status=claimed` contains only the unfinished components in the earliest incomplete wave; issue those Agent calls **together in one message** so the wave runs concurrently, then claim again. Attempt 1 is the normal dispatch and attempt 2 is the only retry. Attempts are persisted in `.dispatch-waves.json`, so resume cannot reset the budget. Exit 1 / `status=blocked` is fatal: stop before Analyst-B rather than publishing a report that silently omitted a selected component.
 
-   **Set each Agent call's `description` to `"STRIDE: <NAME>"` — or `"STRIDE screening: <NAME>"` when the manifest entry carries `cheap_stride: true`**, so the agent list names the analysis tier per component (prefix, not suffix: the console truncates long names on the right). Map every field from the claimed manifest entries to the analyzer prompt (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT` (pass the manifest's `estimated_threat_count_label` — the analyzer paces on the `low`/`moderate`/`high` band, not on the integer; omit the parameter when the entry has no label), `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). Preserve Group A → B → C order. Pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`; require `export OUTPUT_DIR=<value>` as the analyzer's first Bash call; set `run_in_background: false`; and reduce `$STRIDE_MODEL` to the bare `sonnet`/`opus`/`haiku` Agent model alias. Record each wave's usage with `record_stage_stats.py --accumulate` before claiming the next wave.
+   **Set each Agent call's `description` to `"STRIDE: <NAME>"` — or `"STRIDE screening: <NAME>"` when the manifest entry carries `cheap_stride: true`**, so the agent list names the analysis tier per component (prefix, not suffix: the console truncates long names on the right). Map every field from the claimed manifest entries to the analyzer prompt (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT` (pass the manifest's `estimated_threat_count_label` — the analyzer paces on the `low`/`moderate`/`high` band, not on the integer; omit the parameter when the entry has no label), `INTERFACES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`, including `TRUST_BOUNDARIES_INDEX_PATH=index_paths.trust_boundaries`). Preserve Group A → B → C order. Pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`; require `export OUTPUT_DIR=<value>` as the analyzer's first Bash call; set `run_in_background: false`; and reduce `$STRIDE_MODEL` to the bare `sonnet`/`opus`/`haiku` Agent model alias. Record each wave's usage with `record_stage_stats.py --accumulate` before claiming the next wave.
 
    The helper advances only when every component in the wave has a schema-valid output with `partial=false` and `skipped_categories=[]`. `threats=[]` is valid when those completion signals hold; absence of findings is not itself a stub. After the loop, run the final hard gate:
 
@@ -2360,7 +2364,14 @@ On exit 2 the script prints a full banner to stderr naming the inlined component
 
 **This is the critical enforcement point.** The finalization agent is instructed to run `validate_intermediate.py` internally, but under turn-budget pressure it may skip or incompletely execute that step — the instruction is an LLM prompt, not a hard technical barrier. This skill-level gate closes that gap: it runs `validate_intermediate.py` directly in the skill's Bash context, outside any agent, and **blocks Stage 2 dispatch if the YAML is structurally invalid**.
 
-The most common failure mode observed in production: `attack_surface`, `trust_boundaries`, and `security_controls` are held in the orchestrator's working memory but never written to the YAML. The schema requires all three as non-empty arrays; their absence causes `(0)` empty tables across §2.4, §5, §7, and §9 regardless of how correct Stage 2's rendering is. No amount of LLM instruction in Stage 2 can recover content that was never persisted to the YAML.
+The most common failure mode observed in production: `attack_surface`,
+`trust_boundaries`, and `security_controls` are held in the orchestrator's
+working memory but never written to the YAML. The schema requires all three
+properties; `attack_surface` and `security_controls` retain their documented
+non-empty gates, while a normalized v2 `trust_boundaries: []` is authoritative
+and valid. Their absence causes empty report surfaces regardless of how correct
+Stage 2's rendering is. No amount of LLM instruction in Stage 2 can recover
+content that was never persisted to the YAML.
 
 **Bootstrap-stub special case.** `triage_compute_ranking.py --bootstrap-yaml` (invoked by `appsec-triage-validator`) writes a minimal stub when Phase 11 Substep 2's full yaml-write never ran — it carries `meta._bootstrap: true` as a marker and uses the merged-threats shape (`t_id`/`component_id`) rather than the output shape (`id`/`component`). The stub is, by design, NOT output-schema-valid; it exists only so the deterministic triage script has something to read. When the gate detects the stub, it MUST NOT block — the actual production failure here is "Stage 1 never reached Phase 11 Substeps 1–3", and the user-facing remediation is the same as `--rebuild` regardless. The gate prints a distinct diagnostic and exits 2; it does NOT treat the stub as a normal schema failure.
 
@@ -4421,107 +4432,38 @@ banners from "parametric" to "from last run on this repo" and pins the
 estimate to within ±5 % of reality.
 
 ```bash
-# Prefer the first ASSESSMENT_START timestamp in .agent-run.log (the actual
-# orchestrator-Phase-1 start) over the epoch markers. The markers are
-# captured before the Stage 1 Agent dispatch and therefore include any
-# user-confirm wait time on the permission prompt — which would inflate
-# last_run_seconds and corrupt the next run's estimate. The log timestamp is
-# only written once the orchestrator is actually running. Fallback chain:
-# log -> .scan-start-epoch FILE -> ASSESSMENT_START_EPOCH shell var -> skip.
-#
-# The `.scan-start-epoch` file (written at skill start) is the durable
-# fallback: the ASSESSMENT_START_EPOCH shell variable does NOT survive
-# across the skill's separate Bash invocations, so by the time this
-# finalization block runs it is usually empty -> "0" -> the write was
-# silently skipped and last_run_seconds never persisted (the gap that left
-# `last_run_seconds=None` in real anchor caches while component_durations
-# survived). Reading the file closes that hole without losing the log's
-# wait-time-excluding accuracy preference.
-RUN_START_EPOCH=$(python3 - "$OUTPUT_DIR/.agent-run.log" "$OUTPUT_DIR/.scan-start-epoch" "${ASSESSMENT_START_EPOCH:-0}" <<'PYEOF'
-import sys, re, datetime
-log_path, scan_start_path, fallback = sys.argv[1], sys.argv[2], sys.argv[3]
-ts_re = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s.*ASSESSMENT_START\b')
-try:
-    with open(log_path, encoding='utf-8', errors='replace') as fh:
-        for line in fh:
-            m = ts_re.match(line)
-            if m:
-                dt = datetime.datetime.strptime(m.group(1), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
-                print(int(dt.timestamp()))
-                sys.exit(0)
-except OSError:
-    pass
-# Durable file marker — survives across Bash invocations, unlike the shell var.
-try:
-    raw = open(scan_start_path, encoding='utf-8').read().strip()
-    if raw.isdigit() and int(raw) > 0:
-        print(int(raw))
-        sys.exit(0)
-except OSError:
-    pass
-print(fallback)
-PYEOF
-)
-if [ "$RUN_START_EPOCH" -gt 0 ]; then
-  RUN_END_EPOCH=$(date +%s)
-  RUN_SECONDS=$(( RUN_END_EPOCH - RUN_START_EPOCH ))
-  RUN_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  # Standby-correct the persisted figure. A run suspended mid-flight (machine
-  # standby) or with a hung dispatch produces a raw end-to-end RUN_SECONDS
-  # dominated by dead time (observed: 232 min for ~95 min of real work), which
-  # would poison the next run's estimate. run_timing.py isolates per-stage
-  # standby/suspend gaps (>10 min wall-minus-compute); prefer its net-of-standby
-  # wall when it is available AND shorter than the raw span. The displayed
-  # Completion Summary uses the same helper, so the persisted basis matches the
-  # "Net run (wall−sleep)" line the user just saw.
-  NET_WALL=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/run_timing.py" \
-      --output-dir "$OUTPUT_DIR" --net-wall-seconds 2>/dev/null)
-  if [ -n "$NET_WALL" ] && [ "$NET_WALL" -gt 0 ] 2>/dev/null && [ "$NET_WALL" -lt "$RUN_SECONDS" ]; then
-    RUN_SECONDS="$NET_WALL"
-  fi
-  CACHE_DIR="$OUTPUT_DIR/.appsec-cache"
-  CACHE_FILE="$CACHE_DIR/baseline.json"
-  mkdir -p "$CACHE_DIR" 2>/dev/null
-  if [ -f "$CACHE_FILE" ]; then
-    # Merge with existing baseline.json (don't clobber other fields).
-    # Pure-Python implementation — `jq` is not a hard dependency of the skill
-    # (Alpine, slim Docker images, vanilla WSL all ship without it). The
-    # earlier `jq` form failed silently on those systems and the field never
-    # made it to disk, defeating the entire estimation cache.
-    python3 - "$CACHE_FILE" "$RUN_SECONDS" "$MODE" "${ASSESSMENT_DEPTH:-standard}" "$RUN_ISO" <<'PYEOF'
-import json, sys, os
-path, secs, mode, depth, iso = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-try:
-    with open(path, encoding='utf-8') as fh:
-        data = json.load(fh)
-except Exception:
-    data = {}
-data['last_run_seconds'] = secs
-data['last_run_mode']    = mode
-data['last_run_depth']   = depth
-data['last_run_iso']     = iso
-tmp = path + '.tmp'
-with open(tmp, 'w', encoding='utf-8') as fh:
-    json.dump(data, fh, indent=2)
-os.replace(tmp, path)
-PYEOF
-  else
-    # No baseline yet (first-ever run) — minimal seed file. Other
-    # fields (manifest hashes, ID counters) get filled in by
-    # baseline_state.py on the next assessment.
-    cat > "$CACHE_FILE" <<EOF
-{
-  "last_run_seconds": $RUN_SECONDS,
-  "last_run_mode":    "$MODE",
-  "last_run_depth":   "${ASSESSMENT_DEPTH:-standard}",
-  "last_run_iso":     "$RUN_ISO"
-}
-EOF
-  fi
-fi
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/persist_run_baseline.py" \
+    --output-dir "$OUTPUT_DIR" \
+    --mode "$MODE" \
+    --depth "${ASSESSMENT_DEPTH:-standard}" \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+    --fallback-epoch "${ASSESSMENT_START_EPOCH:-0}" || true
 ```
 
-`RUN_START_EPOCH` is derived from the first `ASSESSMENT_START` line in `.agent-run.log` so that pre-dispatch user-confirm wait time is excluded from `last_run_seconds`. The durable `.scan-start-epoch` file is the next fallback (it survives across the skill's separate Bash invocations, unlike the in-memory `ASSESSMENT_START_EPOCH` shell variable, which is usually empty by the time this block runs — the historic cause of `last_run_seconds` never being written), and the shell variable is the last resort (and is still used by the deadline watchdog at §"Wall-time + cost deadline watchdog"). Best-effort: if all three signals are missing the cache write is skipped and the next-run estimator falls back to the parametric formula. The cache write itself uses `python3` rather than `jq`, so the field is persisted on systems without `jq` installed.
+**The script owns the cache field names — never write `baseline.json` by hand,
+and do not restate its keys here.** They are pinned in
+`scripts/persist_run_baseline.py` against both consumers (`estimate_duration.py`
+reads them, `baseline_state.py` carries them forward) and covered by
+`tests/test_persist_run_baseline.py`.
+
+This step used to be ~40 lines of inline bash that the orchestrator reproduced
+by hand. On 2026-07-27 a context compaction landed between the paragraph above
+and that block; the field names were reconstructed from the prose ("wall-clock +
+mode + depth") as `last_wall_seconds` / `last_mode` / `last_depth`. The estimator
+reads only `last_run_seconds`, so the cache looked populated while the next run's
+estimate silently fell back to the parametric formula (66 min instead of the
+measured 101 min). A misspelled key is indistinguishable from a missing one —
+hence a single owner, in code, with tests.
+
+The script resolves the start time itself, preferring the first
+`ASSESSMENT_START` line in `.agent-run.log` (which excludes pre-dispatch
+user-confirm wait time), then the durable `.scan-start-epoch` file, then
+`--fallback-epoch` (the `ASSESSMENT_START_EPOCH` shell variable is usually empty
+by the time finalization runs; it is still used by the deadline watchdog at
+§"Wall-time + cost deadline watchdog"). When `run_timing.py --net-wall-seconds`
+reports a smaller value, that one wins, so an idle run does not inflate the next
+estimate. Best-effort by contract: with no usable start signal the script reports
+the skip on stderr and exits 0 — the run never fails on this step.
 
 ### Persist per-component durations for next-run Phase-9 estimate (M5)
 

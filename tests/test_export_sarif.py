@@ -213,6 +213,19 @@ class TestBuildSarif:
         sarif = export_sarif.build_sarif(_make_doc([t]))
         assert "fixes" not in sarif["runs"][0]["results"][0]
 
+    def test_boundary_ids_are_deduplicated_in_result_properties(self):
+        t = _make_threat(
+            boundary_refs=[
+                {"boundary_id": "tb-2"},
+                {"boundary_id": "tb-1"},
+                {"boundary_id": "tb-2"},
+            ]
+        )
+        sarif = export_sarif.build_sarif(_make_doc([t], [_make_mitigation()]))
+        properties = sarif["runs"][0]["results"][0]["properties"]
+        assert properties["boundaryIds"] == ["tb-2", "tb-1"]
+        assert properties["mitigationIds"] == ["M-001"]
+
     def test_help_uri_direct(self):
         t = _make_threat(remediation_reference="https://internal/blueprint")
         sarif = export_sarif.build_sarif(_make_doc([t], [_make_mitigation()]))

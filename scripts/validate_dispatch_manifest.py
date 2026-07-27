@@ -41,6 +41,7 @@ _INDEX_KEYS = (
     "cross_repo",
     "requirements_violations",
     "relevant_actors",
+    "trust_boundaries",
 )
 
 

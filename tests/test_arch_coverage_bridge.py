@@ -877,3 +877,138 @@ def test_emit_design_signals_cli(tmp_path):
     out = json.loads((tmp_path / ".arch-design-signals.json").read_text())
     assert len(out["design_signals"]) == 1
     assert out["design_signals"][0]["weakness_class"] == "injection"
+
+
+# ---------------------------------------------------------------------------
+# scenario is schema-required on every bridged threat
+# (regression: juice-shop 2026-07-27 — ARCH-TLS-001 promoted to T-070 with no
+# `scenario`, hard-failing validate_intermediate on threat-model.yaml and
+# aborting the post-Stage-1 gate for the whole run)
+# ---------------------------------------------------------------------------
+
+
+def _scenario_ok(text: object) -> bool:
+    """Mirror the two constraints the pipeline actually enforces: presence
+    (schemas/threat-model.output.schema.yaml threats[].required) and
+    validate_intermediate._check_scenario_stripped_length (>= 10 chars)."""
+    return isinstance(text, str) and len(text.strip()) >= 10
+
+
+def test_anti_pattern_threat_carries_scenario():
+    cov = {
+        "anti_pattern_candidates": [
+            {
+                "rule_id": "ARCH-TLS-001",
+                "generic_threat_title": "Data disclosure through cleartext transport",
+                "cwe": "CWE-319",
+                "stride": "InformationDisclosure",
+                "severity_cap": "High",
+                "confidence": "high",
+                "evidence": [
+                    {"file": "docker-compose.yml", "line": 12, "signal": "http://api"},
+                    {"file": "server.ts", "line": 4, "signal": "ssl: false"},
+                ],
+            }
+        ]
+    }
+    threats, _ = bridge.select_and_build(cov)
+    assert len(threats) == 1
+    scenario = threats[0]["scenario"]
+    assert _scenario_ok(scenario)
+    # Grounded in the record: rule id, title, location, STRIDE and CWE.
+    assert "ARCH-TLS-001" in scenario
+    assert "Data disclosure through cleartext transport" in scenario
+    assert "`docker-compose.yml:12`" in scenario
+    assert "Information Disclosure" in scenario  # spaced form, not the enum form
+    assert "CWE-319" in scenario
+    # The matched signal text must NOT leak into user-visible prose:
+    # ARCH-SECRET-001 matches literal key material.
+    assert "http://api" not in scenario
+
+
+def test_confirmed_hypothesis_threat_carries_scenario():
+    cov = {
+        "threat_hypotheses": [
+            {
+                "hypothesis_id": "ARCH-HYP-SECRET-001",
+                "rule_id": "ARCH-SECRET-001",
+                "generic_threat_title": "Credential compromise via hardcoded secret",
+                "cwe": "CWE-798",
+                "stride": "Spoofing",
+                "proof_state": "confirmed",
+                "confidence": "high",
+                "positive_signals": [
+                    {"file": "lib/insecurity.ts", "line": 21, "signal": "-----BEGIN RSA PRIVATE KEY-----"}
+                ],
+            }
+        ]
+    }
+    threats, _ = bridge.select_and_build(cov)
+    assert len(threats) == 1
+    scenario = threats[0]["scenario"]
+    assert _scenario_ok(scenario)
+    assert "ARCH-HYP-SECRET-001" in scenario
+    assert "`lib/insecurity.ts:21`" in scenario
+    assert "BEGIN RSA PRIVATE KEY" not in scenario
+
+
+def test_scenario_present_even_without_evidence_location():
+    """`_evidence_for_threat` returns None when no entry carries a file; the
+    scenario must still clear the >= 10-char floor rather than be empty."""
+    cov = {
+        "anti_pattern_candidates": [
+            {
+                "rule_id": "ARCH-CORS-001",
+                "title": "CORS wildcard with credentials",
+                "cwe": "CWE-942",
+                "stride": "Tampering",
+                "severity_cap": "Medium",
+                "confidence": "high",
+                "evidence": [{"signal": "no file key"}],
+            }
+        ]
+    }
+    threats, _ = bridge.select_and_build(cov)
+    assert _scenario_ok(threats[0]["scenario"])
+
+
+def test_every_bridged_threat_has_scenario_for_all_shipped_rules():
+    """Contract sweep: drive one candidate per rule in the shipped YAML so a
+    newly added rule cannot reintroduce a scenario-less threat."""
+    import yaml as _yaml
+
+    rules = _yaml.safe_load((REPO_ROOT / "data" / "architecture-coverage-rules.yaml").read_text())
+    candidates = []
+    hypotheses = []
+    for rule in rules.get("hard_rules") or []:
+        candidates.append(
+            {
+                "rule_id": rule["id"],
+                "generic_threat_title": rule.get("generic_threat_title"),
+                "cwe": rule["cwe"],
+                "stride": rule["stride"],
+                # severity_cap=Critical is refused by policy; force a mergeable cap.
+                "severity_cap": "High",
+                "confidence": "high",
+                "evidence": [{"file": "a.ts", "line": 1, "signal": "x"}],
+            }
+        )
+    for rule in rules.get("hypothesis_rules") or []:
+        hypotheses.append(
+            {
+                "hypothesis_id": f"{rule.get('hypothesis_id_prefix') or 'ARCH-HYP'}-001",
+                "rule_id": rule["id"],
+                "generic_threat_title": rule.get("generic_threat_title"),
+                "cwe": rule["cwe"],
+                "stride": rule["stride"],
+                "proof_state": "confirmed",
+                "confidence": "high",
+                "positive_signals": [{"file": "a.ts", "line": 1, "signal": "x"}],
+            }
+        )
+    threats, _ = bridge.select_and_build(
+        {"anti_pattern_candidates": candidates, "threat_hypotheses": hypotheses}
+    )
+    assert len(threats) == len(candidates) + len(hypotheses)
+    missing = [t["rule_id"] for t in threats if not _scenario_ok(t.get("scenario"))]
+    assert not missing, f"rules producing a scenario-less threat: {missing}"

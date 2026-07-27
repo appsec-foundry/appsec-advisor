@@ -69,14 +69,61 @@ class TestMatching:
         )
         assert [s["name"] for s in sliced] == ["auth-service"]
 
-    def test_interface_substring_match(self) -> None:
+    def test_interface_substring_match(self, tmp_path: Path) -> None:
         reg = _register(_declared("ext-svc", interface="WebSocket /ws/notifications"))
+        boundaries = {
+            "schema_version": 2,
+            "trust_boundaries": [
+                {
+                    "id": "tb-1",
+                    "name": "ext-svc notifications",
+                    "from": "external",
+                    "to": "notify",
+                    "kind": "network",
+                    "assumption": "WebSocket /ws/notifications authenticates clients.",
+                    "evidence": [],
+                    "confidence": "confirmed",
+                    "resolution_status": "resolved",
+                    "sources": ["detected"],
+                }
+            ],
+        }
+        path = tmp_path / "boundaries.json"
+        path.write_text(json.dumps(boundaries), encoding="utf-8")
         sliced = slicer.slice_for_component(
             reg,
             component_name="NotifyComponent",
-            trust_boundaries=["client ↔ WebSocket /ws/notifications"],
+            component_id="notify",
+            trust_boundaries_file=path,
         )
         assert len(sliced) == 1
+
+    def test_unresolved_boundary_is_not_matching_input(self, tmp_path: Path) -> None:
+        path = tmp_path / "boundaries.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "trust_boundaries": [
+                        {
+                            "name": "payment-gateway",
+                            "resolution_status": "unresolved",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        reg = _register(_declared("payment-gateway"))
+        assert (
+            slicer.slice_for_component(
+                reg,
+                component_name="AuthComponent",
+                component_id="auth",
+                trust_boundaries_file=path,
+            )
+            == []
+        )
 
     def test_no_match_returns_empty(self) -> None:
         reg = _register(_declared("payment-gateway"))
@@ -174,6 +221,50 @@ class TestCLI:
         assert r.returncode == 0, r.stderr
         data = json.loads(out.read_text(encoding="utf-8"))
         assert len(data) == 1
+
+    def test_cli_reads_normalized_boundary_file(self, tmp_path: Path) -> None:
+        reg_path = tmp_path / "register.json"
+        reg_path.write_text(json.dumps(_register(_declared("svc", interface="gRPC"))))
+        boundary_path = tmp_path / "boundaries.json"
+        boundary_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "trust_boundaries": [
+                        {
+                            "from": "caller",
+                            "to": "c1",
+                            "name": "service boundary",
+                            "kind": "network",
+                            "assumption": "svc accepts gRPC",
+                            "resolution_status": "resolved",
+                        }
+                    ],
+                }
+            )
+        )
+        out = tmp_path / "slice.json"
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--register",
+                str(reg_path),
+                "--component-id",
+                "c1",
+                "--component-name",
+                "consumer",
+                "--trust-boundaries-file",
+                str(boundary_path),
+                "--output",
+                str(out),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, r.stderr
+        assert [row["name"] for row in json.loads(out.read_text(encoding="utf-8"))] == ["svc"]
 
 
 class TestAdditiveFields:

@@ -57,7 +57,17 @@ def _model(*, app=2, attackers=("internet-anon",), exposed=(), xss=False, threat
     yaml_data = {
         "components": comps,
         "threats": threats,
-        "trust_boundaries": [{"from": "external", "to": t, "name": f"Public to {t}"} for t in exposed],
+        "trust_boundaries": [
+            {
+                "id": f"tb-{i}",
+                "from": "external",
+                "to": target,
+                "name": f"Public to {target}",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            }
+            for i, target in enumerate(exposed, start=1)
+        ],
         "meta": meta or {},
     }
     tax = {"glyph_sequence": _GLYPHS[: len(classes)], "classes": classes}
@@ -323,6 +333,28 @@ def test_internet_exposed_marker_and_direct_attack_arrow():
     assert "internet-exposed entry point" in svg  # legend entry
 
 
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        {"id": "tb-1", "from": "", "to": "app0", "confidence": "confirmed", "resolution_status": "unresolved"},
+        {"id": "tb-1", "to": "app0", "confidence": "confirmed", "resolution_status": "unresolved"},
+        {"id": "tb-1", "from": "external", "to": "app0", "confidence": "inferred", "resolution_status": "resolved"},
+        {
+            "id": "tb-1",
+            "from": "Public Internet",
+            "to": "Application (port 3000)",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        },
+    ],
+)
+def test_incomplete_or_unconfirmed_boundary_does_not_imply_exposure(boundary):
+    y, apd, tax = _model(app=2, exposed=())
+    y["trust_boundaries"] = [boundary]
+    svg = F.build_figure1_svg(y, apd, tax)
+    assert "internet-exposed entry point" not in svg
+
+
 def test_direct_attack_arrow_present_for_direct_path():
     # Arrows are derived from attack_paths, NOT from trust-boundary exposure: a
     # path whose actor reaches the tier itself (internet-anon → application)
@@ -467,11 +499,34 @@ def _app_only(*, stores=True, server_rendered=True):
         {"id": "T-001", "component": "svc", "risk": "Critical"},
         {"id": "T-002", "component": "svc", "risk": "High"},
     ]
-    tb = [{"from": "external", "to": "svc", "name": "Public to app"}]
+    tb = [
+        {
+            "id": "tb-1",
+            "from": "external",
+            "to": "svc",
+            "name": "Public to app",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    ]
     if stores:
         tb += [
-            {"from": "svc", "to": "h2-database", "name": "App to H2"},
-            {"from": "svc", "to": "sqlite-legacy-auth", "name": "App to SQLite"},
+            {
+                "id": "tb-2",
+                "from": "svc",
+                "to": "h2-database",
+                "name": "App to H2",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            },
+            {
+                "id": "tb-3",
+                "from": "svc",
+                "to": "sqlite-legacy-auth",
+                "name": "App to SQLite",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            },
         ]
     yaml_data = {"components": comps, "threats": threats, "trust_boundaries": tb, "meta": {}}
     apd = {
@@ -518,7 +573,18 @@ def test_client_ghost_plain_when_not_server_rendered():
 def test_data_ghost_generic_without_known_store():
     reason = F._ghost_reason("data", [], [{"from": "svc", "to": "external-urls"}])
     assert reason == "no separate data tier"
-    reason_db = F._ghost_reason("data", [], [{"from": "svc", "to": "orders-database"}])
+    reason_db = F._ghost_reason(
+        "data",
+        [],
+        [
+            {
+                "from": "svc",
+                "to": "orders-database",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+            }
+        ],
+    )
     assert reason_db == "data embedded in-process — no separate tier"
 
 
@@ -542,3 +608,143 @@ def test_weasyprint_renders_without_error(tmp_path):
     # must not raise — verifies WeasyPrint accepts our flat SVG (incl. markers)
     wp.HTML(str(html)).write_pdf(str(tmp_path / "t.pdf"))
     assert (tmp_path / "t.pdf").stat().st_size > 2000
+
+
+# ---------------------------------------------------------------------------
+# Trust boundaries — architecture dividers at the tier transitions
+# ---------------------------------------------------------------------------
+
+_TRUST_STROKE = 'stroke="#475569"'
+
+
+def test_trust_boundary_is_drawn_as_a_divider_at_the_tier_transition():
+    """A trust boundary belongs to the architecture, so it is a divider between
+    trust zones — not an annotation on the attack vectors, which would make it
+    read as a property of the attack."""
+    svg = _build(exposed=("app0", "app1"))
+    assert "trust boundary · tb-1 · tb-2" in svg
+    assert _TRUST_STROKE in svg
+
+
+def test_divider_sits_below_the_client_tier_not_above_it():
+    """The client tier runs on the user's device, so it is on the untrusted side
+    with the actors. The trust change happens at the client/application gap."""
+    svg = _build(exposed=("app0",))
+    root = ET.fromstring(svg)
+    ns = "{http://www.w3.org/2000/svg}"
+    divider_y = [float(el.get("y1")) for el in root.iter(f"{ns}line") if el.get("stroke") == "#475569"]
+    assert divider_y, "no trust-boundary divider drawn"
+
+    def band_y(label_start: str) -> float:
+        for el in root.iter(f"{ns}text"):
+            if (el.text or "").startswith(label_start):
+                return float(el.get("y"))
+        raise AssertionError(f"band label {label_start!r} not found")
+
+    # Between the client band's label and the application band's label.
+    assert band_y("Client Tier") < min(divider_y) < band_y("Application Tier")
+
+
+def test_no_divider_without_a_boundary_crossing_a_tier_gap():
+    svg = _build(exposed=())
+    assert "trust boundary ·" not in svg
+    assert _TRUST_STROKE not in svg
+
+
+def test_divider_label_names_internet_facing_crossings_first():
+    """Internet-facing crossings are what a reader looks for, so they must
+    survive the truncation that keeps the caption on one line."""
+    label = F._divider_label(["tb-1", "tb-2", "tb-3", "tb-4", "tb-9"], {"tb-9"})
+    assert label == "trust boundary · tb-9 · tb-1 · tb-2 +2"
+    assert F._divider_label([]) == ""
+
+
+def test_boundary_inside_a_tier_is_named_in_the_band_instead_of_dropped():
+    """An application tier holding an untrusted component (or a privilege split
+    within one service) has a boundary that cannot be a band divider. It is
+    reported in the band header rather than silently omitted."""
+    y, apd, tax = _model(exposed=("app0",))
+    y["trust_boundaries"].append(
+        {
+            "id": "tb-9",
+            "from": "app0",
+            "to": "app1",
+            "name": "Untrusted component in the application tier",
+            "kind": "privilege",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    )
+
+    svg = F.build_figure1_svg(y, apd, tax)
+
+    assert "internal: tb-9" in svg
+    # It is NOT promoted onto the tier divider, which separates zones.
+    assert "trust boundary · tb-1" in svg
+    assert "trust boundary · tb-1 · tb-9" not in svg
+
+
+def test_classification_separates_gap_crossings_from_intra_tier_boundaries():
+    y, _apd, _tax = _model(exposed=("app0",))
+    y["trust_boundaries"].append(
+        {
+            "id": "tb-9",
+            "from": "app0",
+            "to": "app1",
+            "name": "Intra-tier split",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    )
+    tier_of = {row["id"]: row["tier"] for row in y["components"]}
+
+    crossings, notes = F._classify_boundaries(y, tier_of)
+
+    assert crossings == {(0, 2): ["tb-1"]}
+    assert notes == {"application": {"internal": ["tb-9"]}}
+
+
+def test_outbound_boundary_is_not_placed_on_the_client_server_divider():
+    """Regression: `external` denotes two different things — the untrusted
+    client side as a SOURCE, a third party as a TARGET. Ordering the endpoints
+    by zone discarded the direction, so `backend -> LLM provider` landed on the
+    same divider as `internet -> backend`."""
+    y, apd, tax = _model(exposed=("app0",))
+    y["trust_boundaries"].append(
+        {
+            "id": "tb-9",
+            "from": "app0",
+            "to": "external",
+            "name": "API to external LLM provider",
+            "kind": "third-party",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    )
+    tier_of = {row["id"]: row["tier"] for row in y["components"]}
+
+    crossings, notes = F._classify_boundaries(y, tier_of)
+
+    assert crossings == {(0, 2): ["tb-1"]}, "egress must not join the ingress divider"
+    assert notes == {"application": {"outbound": ["tb-9"]}}
+
+    svg = F.build_figure1_svg(y, apd, tax)
+    assert "outbound: tb-9" in svg
+    assert "trust boundary · tb-1 · tb-9" not in svg
+
+
+def test_ingress_and_egress_between_the_same_pair_stay_apart():
+    """The two directions are different boundaries and must not collapse into
+    one divider entry just because they share endpoints."""
+    tier_of = {"api": "application"}
+    model = {
+        "trust_boundaries": [
+            {"id": "tb-1", "from": "external", "to": "api", "resolution_status": "resolved"},
+            {"id": "tb-2", "from": "api", "to": "external", "resolution_status": "resolved"},
+        ]
+    }
+
+    crossings, notes = F._classify_boundaries(model, tier_of)
+
+    assert crossings == {(0, 2): ["tb-1"]}
+    assert notes == {"application": {"outbound": ["tb-2"]}}

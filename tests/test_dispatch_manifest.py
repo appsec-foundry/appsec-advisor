@@ -32,7 +32,6 @@ def _component(cid="backend-api", **over):
         "max_turns": 31,
         "estimated_threat_count": 8,
         "interfaces": "REST endpoints under /rest and /api",
-        "trust_boundaries": "Public Internet -> backend-api",
         "controls": "JWT auth (unsafe), input validation (partial)",
         "index_paths": {
             "prior_findings": "none",
@@ -40,6 +39,7 @@ def _component(cid="backend-api", **over):
             "cross_repo": "none",
             "requirements_violations": "none",
             "relevant_actors": "none",
+            "trust_boundaries": "none",
         },
     }
     comp.update(over)
@@ -176,14 +176,19 @@ def _seed_output_dir(tmp_path: Path):
     (tmp_path / ".trust-boundaries.json").write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "trust_boundaries": [
                     {
                         "id": "tb-1",
                         "name": "Public Internet",
                         "from": "external",
                         "to": "backend-api",
-                        "crossing_enforcement": "None",
+                        "kind": "network",
+                        "assumption": "Requests require authorization before protected operations.",
+                        "evidence": [],
+                        "confidence": "inferred",
+                        "resolution_status": "resolved",
+                        "sources": ["detected"],
                     },
                 ],
             }
@@ -644,8 +649,9 @@ def test_builder_trust_boundary_scoped_per_component(tmp_path):
     _seed_output_dir(tmp_path)
     manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
     by_id = {c["component_id"]: c for c in manifest["components"]}
-    assert "Public Internet" in by_id["backend-api"]["trust_boundaries"]
-    assert "No trust boundary" in by_id["frontend-spa"]["trust_boundaries"]
+    assert "trust_boundaries" not in by_id["backend-api"]
+    assert by_id["backend-api"]["index_paths"]["trust_boundaries"].endswith("trust-boundaries.json")
+    assert by_id["frontend-spa"]["index_paths"]["trust_boundaries"] == "none"
 
 
 def test_depth_params_in_sync_with_resolve_config(tmp_path):
@@ -673,18 +679,8 @@ def test_depth_params_falls_back_when_resolve_config_import_fails(monkeypatch):
     assert bm._depth_params() == bm._FALLBACK_DEPTH_PARAMS
 
 
-def test_trust_boundary_summary_skips_non_mapping_rows():
-    boundaries = [
-        "not-a-boundary",
-        {
-            "id": "tb-1",
-            "from": "frontend",
-            "to": "backend-api",
-            "crossing_enforcement": "JWT",
-        },
-    ]
-
-    assert bm._trust_boundaries_for("backend-api", boundaries) == "tb-1: JWT"
+def test_dispatch_builder_has_no_inline_trust_boundary_summary():
+    assert not hasattr(bm, "_trust_boundaries_for")
 
 
 # ---------------------------------------------------------------------------

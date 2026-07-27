@@ -17,7 +17,7 @@ Matching is layered, in order:
        * component name (case-insensitive)
        * component description
        * any string in ``component.interfaces[]``
-       * any string in ``component.trust_boundaries[]``
+       * any normalized, resolved boundary adjacent to the component
   3. Substring match of the dependency interface text in any of the same
      fields.
 
@@ -33,7 +33,7 @@ CLI usage::
         --component-name <NAME> \\
         [--component-description <TEXT>] \\
         [--interface <STR>]... \\
-        [--trust-boundary <STR>]... \\
+        [--trust-boundaries-file <PATH>] \\
         --output <PATH-or-->
 """
 
@@ -46,14 +46,31 @@ from pathlib import Path
 from typing import Any
 
 
-def _component_text_corpus(
-    name: str,
-    description: str,
-    interfaces: list[str],
-    trust_boundaries: list[str],
-) -> str:
+def _component_text_corpus(name: str, description: str, interfaces: list[str], trust_boundaries: list[str]) -> str:
     pieces = [name, description, *interfaces, *trust_boundaries]
     return " | ".join(p for p in pieces if p).lower()
+
+
+def _boundary_corpus(path: Path | None, component_id: str) -> list[str]:
+    """Return trusted-shape, untrusted-content text for adjacent boundaries."""
+    if path is None or not path.is_file():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    rows: list[str] = []
+    for boundary in payload.get("trust_boundaries", []):
+        if not isinstance(boundary, dict) or boundary.get("resolution_status") != "resolved":
+            continue
+        if component_id not in {boundary.get("from"), boundary.get("to")}:
+            continue
+        rows.append(
+            " | ".join(
+                str(boundary.get(key, "")) for key in ("name", "from", "to", "kind", "assumption") if boundary.get(key)
+            )
+        )
+    return rows
 
 
 def _entry_matches(entry: dict[str, Any], corpus: str) -> bool:
@@ -70,9 +87,10 @@ def slice_for_component(
     register: dict[str, Any],
     *,
     component_name: str,
+    component_id: str = "",
     component_description: str = "",
     interfaces: list[str] | None = None,
-    trust_boundaries: list[str] | None = None,
+    trust_boundaries_file: Path | None = None,
     explicit_names: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Return the cross-repo deps that apply to a single STRIDE component.
@@ -85,7 +103,7 @@ def slice_for_component(
         component_name,
         component_description,
         interfaces or [],
-        trust_boundaries or [],
+        _boundary_corpus(trust_boundaries_file, component_id),
     )
     explicit_set = {n.lower() for n in (explicit_names or [])}
 
@@ -131,7 +149,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--component-name", required=True)
     p.add_argument("--component-description", default="")
     p.add_argument("--interface", action="append", default=[])
-    p.add_argument("--trust-boundary", action="append", default=[])
+    p.add_argument("--trust-boundaries-file", type=Path)
     p.add_argument("--explicit-name", action="append", default=[])
     p.add_argument("--output", required=True, help="destination JSON path, or '-' for stdout")
     return p.parse_args(argv)
@@ -151,9 +169,10 @@ def main(argv: list[str] | None = None) -> int:
     sliced = slice_for_component(
         register,
         component_name=args.component_name,
+        component_id=args.component_id,
         component_description=args.component_description,
         interfaces=args.interface,
-        trust_boundaries=args.trust_boundary,
+        trust_boundaries_file=args.trust_boundaries_file,
         explicit_names=args.explicit_name,
     )
     rendered = json.dumps(sliced, indent=2)

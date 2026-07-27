@@ -1,0 +1,41 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/trust-boundaries-repo.schema.yaml
+title: Repository-declared trust boundaries
+description: Strict, additive-only architecture input from .appsec/trust-boundaries.yaml.
+type: object
+additionalProperties: false
+required: [api_version, boundaries]
+properties:
+  api_version:
+    const: appsec-advisor/trust-boundaries/v1
+  boundaries:
+    type: array
+    maxItems: 200
+    items:
+      type: object
+      additionalProperties: false
+      required: [key, name, from, to, kind, assumption]
+      properties:
+        key:
+          type: string
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          maxLength: 80
+        name: {type: string, minLength: 1, maxLength: 100}
+        from: {type: string, minLength: 1, maxLength: 128}
+        to: {type: string, minLength: 1, maxLength: 128}
+        kind:
+          type: string
+          enum: [network, process, identity, privilege, tenant, data-origin, third-party, build]
+        assumption: {type: string, minLength: 1, maxLength: 240}
+        evidence:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties: false
+            required: [file]
+            properties:
+              file: {type: string, minLength: 1, maxLength: 512}
+              line: {type: integer, minimum: 1}
+    allOf:
+      - uniqueItems: true

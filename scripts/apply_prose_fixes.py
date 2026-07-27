@@ -128,7 +128,18 @@ _EXTENSIONS = (
     "pub",
 )
 _PATH_RE = re.compile(
-    r"(?P<path>[A-Za-z][\w.-]*/[\w./-]+\.(?:"
+    # The leading `\.?` admits dot-directory roots — `.github/workflows/ci.yml`,
+    # `.circleci/config.yml`, `.claude/settings.json`. Without it the match
+    # started one char late (at `github`), and the adjacency guard below
+    # (`before in "._"`) then correctly discarded it rather than emit a
+    # half-wrapped ``.`github/...` `` — so the path stayed bare in EVERY
+    # context and the QA reference-format gate flagged it as a non-actionable
+    # `manual_review` the repair loop structurally cannot clear (juice-shop
+    # 2026-07-27, F-010 `.github/workflows/image_actions.yml:33`).
+    # Greedy `[\w.-]*` still claims the whole token when the dot is interior
+    # (`v1.github/x.yml` matches from `v`), so this only fires on a real
+    # dot-root.
+    r"(?P<path>\.?[A-Za-z][\w.-]*/[\w./-]+\.(?:"
     + "|".join(_EXTENSIONS)
     # `(?:-\d+)?` keeps a `:line-line` range inside the wrapped span; without it
     # the boundary below closes the backtick after `:20`, leaving `-25` bare.
@@ -549,6 +560,25 @@ _MD_LINK_LABEL_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
 # `_bulletize_relevant_findings` post-processor normalises `- ` to `— `
 # only AFTER the per-line wrap pass, so the hyphen form must match here too.
 _LINKED_TITLE_TAIL_RE = re.compile(r"\]\(#(?:f|t|m|th)-\d+\)\s*[—–-]\s[^\n|]*?(?=<br/?>|\||$)")
+
+
+def _html_block_body_wrappable(stripped: str) -> bool:
+    """True when a line inside an HTML `<blockquote>` block is plain Markdown
+    prose that should still get code-token backticking.
+
+    The styled `<blockquote>` the §1 Management-Summary critical-gaps list is
+    rendered in is presentation only — its BODY is ordinary prose. Skipping the
+    whole block meant `.github/workflows/image_actions.yml:33` stayed bare there
+    while every other section rendered it wrapped, and the QA reference-format
+    gate then raised a `manual_review` the repair loop structurally cannot clear
+    (it is composed, not authored in any fragment — juice-shop 2026-07-27, F-010).
+
+    Conservative boundary: any line carrying markup — the wrapper tags
+    themselves, `<br/>`, inline HTML — is left untouched. `_wrap_line`'s mask
+    does protect HTML attributes, but not rewriting those lines at all is the
+    cheaper guarantee and keeps this fix off the styled-wrapper path entirely.
+    """
+    return "<" not in stripped
 
 
 def _wrap_line(line: str) -> tuple[str, int]:
@@ -1200,6 +1230,63 @@ def _humanize_actor_ids(text: str) -> tuple[str, int]:
     return "".join(out_lines), count
 
 
+_TRUST_BOUNDARY_TABLE_HEADER = (
+    "ID",
+    "Boundary / crossing",
+    "Kind / status",
+    "Assumption / confidence",
+    "Source",
+    "Linked findings",
+)
+_TRUST_BOUNDARY_PROSE_COLUMNS = frozenset({1, 3})
+
+
+def _split_unescaped_table_pipes(line: str) -> list[str]:
+    """Split a GFM row at unescaped pipes while preserving exact cell text."""
+    parts: list[str] = []
+    start = 0
+    for index, char in enumerate(line):
+        if char != "|":
+            continue
+        backslashes = 0
+        cursor = index - 1
+        while cursor >= 0 and line[cursor] == "\\":
+            backslashes += 1
+            cursor -= 1
+        if backslashes % 2:
+            continue
+        parts.append(line[start:index])
+        start = index + 1
+    parts.append(line[start:])
+    return parts
+
+
+def _table_header_cells(line: str) -> tuple[str, ...]:
+    parts = _split_unescaped_table_pipes(line.strip())
+    if parts and parts[0] == "":
+        parts = parts[1:]
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    return tuple(part.strip() for part in parts)
+
+
+def _format_trust_boundary_table_row(line: str) -> tuple[str, int]:
+    """Format non-prose cells while keeping boundary narrative typography."""
+    parts = _split_unescaped_table_pipes(line)
+    if len(parts) < len(_TRUST_BOUNDARY_TABLE_HEADER) + 2:
+        return line, 0
+    total = 0
+    for part_index in range(1, len(parts) - 1):
+        column_index = part_index - 1
+        if column_index in _TRUST_BOUNDARY_PROSE_COLUMNS:
+            continue
+        formatted, n_wrap = _wrap_line(parts[part_index])
+        formatted, n_unwrap = _apply_label_as_code_unwrap(formatted)
+        parts[part_index] = formatted
+        total += n_wrap + n_unwrap
+    return "|".join(parts), total
+
+
 def apply_fixes(text: str) -> tuple[str, int]:
     """Apply all prose-fix classes outside fenced blocks. Returns
     (new_text, n_fixes_total)."""
@@ -1211,6 +1298,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
     padding_fixes = 0
     rhetorical_fixes = 0
     perimeter_fixes = 0
+    in_trust_boundary_table = False
     for raw in lines:
         # Strip trailing newline for inspection, restore at write time.
         nl = "\n" if raw.endswith("\n") else ""
@@ -1234,15 +1322,29 @@ def apply_fixes(text: str) -> tuple[str, int]:
         # snippets from accidental rewriting.
         is_heading = stripped.startswith("#")
         is_table_row = stripped.startswith("|")
+        if is_table_row and _table_header_cells(line) == _TRUST_BOUNDARY_TABLE_HEADER:
+            in_trust_boundary_table = True
+        elif not is_table_row:
+            in_trust_boundary_table = False
         if "<blockquote" in stripped:
             in_html_block = True
         if in_html_block:
             if "</blockquote>" in stripped:
                 in_html_block = False
-            out.append(raw)
+            if _html_block_body_wrappable(stripped):
+                new_line, n_bq = _wrap_line(line)
+                inline_fixes += n_bq
+                out.append(new_line + nl)
+            else:
+                out.append(raw)
             continue
         if is_heading:
             out.append(raw)
+            continue
+        if in_trust_boundary_table and is_table_row:
+            new_line, n_table = _format_trust_boundary_table_row(line)
+            inline_fixes += n_table
+            out.append(new_line + nl)
             continue
         # Path-wrapping runs on prose AND table rows. AI-padding /
         # rhetorical / perimeter passes stay prose-only — they would
@@ -1307,6 +1409,7 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
     out: list[str] = []
     in_fence = False
     in_html_block = False
+    in_trust_boundary_table = False
     total = 0
     for raw in lines:
         nl = "\n" if raw.endswith("\n") else ""
@@ -1319,15 +1422,32 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
         if in_fence:
             out.append(raw)
             continue
+        is_table_row = stripped.startswith("|")
+        if is_table_row and _table_header_cells(line) == _TRUST_BOUNDARY_TABLE_HEADER:
+            in_trust_boundary_table = True
+        elif not is_table_row:
+            in_trust_boundary_table = False
         if "<blockquote" in stripped:
             in_html_block = True
         if in_html_block:
             if "</blockquote>" in stripped:
                 in_html_block = False
-            out.append(raw)
+            # Same rule as apply_fixes: the wrapper is presentation, its
+            # Markdown body still needs code-token backticking.
+            if _html_block_body_wrappable(stripped):
+                new_line, n_bq = _wrap_line(line)
+                total += n_bq
+                out.append(new_line + nl)
+            else:
+                out.append(raw)
             continue
         if stripped.startswith("#"):  # headings stay clean (no backticks)
             out.append(raw)
+            continue
+        if in_trust_boundary_table and is_table_row:
+            new_line, n_table = _format_trust_boundary_table_row(line)
+            total += n_table
+            out.append(new_line + nl)
             continue
         new_line, n1 = _wrap_line(line)
         new_line, n5 = _apply_label_as_code_unwrap(new_line)

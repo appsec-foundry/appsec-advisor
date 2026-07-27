@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/trust-boundary-diagnostics.schema.json",
+  "title": "Trust-boundary normalization diagnostics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "issues"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "issues": {
+      "type": "array",
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "boundary_id",
+          "boundary_name",
+          "side",
+          "raw_value",
+          "reason",
+          "candidates"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "unresolved_endpoint",
+              "invalid_resolved_endpoint",
+              "conflicted_boundary"
+            ]
+          },
+          "boundary_id": {"type": "string", "pattern": "^tb-\\d+$"},
+          "boundary_name": {"type": "string", "minLength": 1, "maxLength": 100},
+          "side": {"type": "string", "enum": ["from", "to", "both"]},
+          "raw_value": {"type": "string", "maxLength": 128},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 240},
+          "candidates": {
+            "type": "array",
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]+$"}
+          }
+        }
+      }
+    }
+  }
+}

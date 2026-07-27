@@ -13,7 +13,7 @@ description: |
   The per-component fields mirror the dispatch parameters documented in
   `agents/phases/phase-group-threats.md` ("For each component, use Agent tool")
   and the Inputs section of `agents/appsec-stride-analyzer.md`. Scalar context
-  fields (interfaces, trust_boundaries, controls, known_*) are authored by the
+  fields (interfaces, controls, known_*) are authored by the
   analyst from its Phase 6-8 analysis (they are NOT all reconstructable from the
   structured on-disk artifacts, which is why the analyst must serialize them
   here). Index/slice fields are absolute paths under $OUTPUT_DIR, or the literal
@@ -95,9 +95,6 @@ properties:
         interfaces:
           description: Component interfaces (entry points / exposed surfaces) from Phase 6.
           oneOf: [ { type: string }, { type: array } ]
-        trust_boundaries:
-          description: Trust boundaries touching this component, from Phase 7.
-          oneOf: [ { type: string }, { type: array } ]
         controls:
           description: Security controls relevant to this component, from Phase 8.
           oneOf: [ { type: string }, { type: array } ]
@@ -130,9 +127,11 @@ properties:
             - cross_repo
             - requirements_violations
             - relevant_actors
+            - trust_boundaries
           properties:
             prior_findings:        { type: string, minLength: 1 }
             known_threats:         { type: string, minLength: 1 }
             cross_repo:            { type: string, minLength: 1 }
             requirements_violations: { type: string, minLength: 1 }
             relevant_actors:       { type: string, minLength: 1 }
+            trust_boundaries:       { type: string, minLength: 1 }

@@ -1,0 +1,500 @@
+diff --git a/scripts/apply_prose_fixes.py b/scripts/apply_prose_fixes.py
+index 324a7b54..e061ef70 100644
+--- a/scripts/apply_prose_fixes.py
++++ b/scripts/apply_prose_fixes.py
+@@ -128,7 +128,18 @@ _EXTENSIONS = (
+     "pub",
+ )
+ _PATH_RE = re.compile(
+-    r"(?P<path>[A-Za-z][\w.-]*/[\w./-]+\.(?:"
++    # The leading `\.?` admits dot-directory roots — `.github/workflows/ci.yml`,
++    # `.circleci/config.yml`, `.claude/settings.json`. Without it the match
++    # started one char late (at `github`), and the adjacency guard below
++    # (`before in "._"`) then correctly discarded it rather than emit a
++    # half-wrapped ``.`github/...` `` — so the path stayed bare in EVERY
++    # context and the QA reference-format gate flagged it as a non-actionable
++    # `manual_review` the repair loop structurally cannot clear (juice-shop
++    # 2026-07-27, F-010 `.github/workflows/image_actions.yml:33`).
++    # Greedy `[\w.-]*` still claims the whole token when the dot is interior
++    # (`v1.github/x.yml` matches from `v`), so this only fires on a real
++    # dot-root.
++    r"(?P<path>\.?[A-Za-z][\w.-]*/[\w./-]+\.(?:"
+     + "|".join(_EXTENSIONS)
+     # `(?:-\d+)?` keeps a `:line-line` range inside the wrapped span; without it
+     # the boundary below closes the backtick after `:20`, leaving `-25` bare.
+@@ -551,6 +562,25 @@ _MD_LINK_LABEL_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
+ _LINKED_TITLE_TAIL_RE = re.compile(r"\]\(#(?:f|t|m|th)-\d+\)\s*[—–-]\s[^\n|]*?(?=<br/?>|\||$)")
+
+
++def _html_block_body_wrappable(stripped: str) -> bool:
++    """True when a line inside an HTML `<blockquote>` block is plain Markdown
++    prose that should still get code-token backticking.
++
++    The styled `<blockquote>` the §1 Management-Summary critical-gaps list is
++    rendered in is presentation only — its BODY is ordinary prose. Skipping the
++    whole block meant `.github/workflows/image_actions.yml:33` stayed bare there
++    while every other section rendered it wrapped, and the QA reference-format
++    gate then raised a `manual_review` the repair loop structurally cannot clear
++    (it is composed, not authored in any fragment — juice-shop 2026-07-27, F-010).
++
++    Conservative boundary: any line carrying markup — the wrapper tags
++    themselves, `<br/>`, inline HTML — is left untouched. `_wrap_line`'s mask
++    does protect HTML attributes, but not rewriting those lines at all is the
++    cheaper guarantee and keeps this fix off the styled-wrapper path entirely.
++    """
++    return "<" not in stripped
++
++
+ def _wrap_line(line: str) -> tuple[str, int]:
+     """Return (rewritten_line, n_changes).
+
+@@ -1239,7 +1269,12 @@ def apply_fixes(text: str) -> tuple[str, int]:
+         if in_html_block:
+             if "</blockquote>" in stripped:
+                 in_html_block = False
+-            out.append(raw)
++            if _html_block_body_wrappable(stripped):
++                new_line, n_bq = _wrap_line(line)
++                inline_fixes += n_bq
++                out.append(new_line + nl)
++            else:
++                out.append(raw)
+             continue
+         if is_heading:
+             out.append(raw)
+@@ -1324,7 +1359,14 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
+         if in_html_block:
+             if "</blockquote>" in stripped:
+                 in_html_block = False
+-            out.append(raw)
++            # Same rule as apply_fixes: the wrapper is presentation, its
++            # Markdown body still needs code-token backticking.
++            if _html_block_body_wrappable(stripped):
++                new_line, n_bq = _wrap_line(line)
++                total += n_bq
++                out.append(new_line + nl)
++            else:
++                out.append(raw)
+             continue
+         if stripped.startswith("#"):  # headings stay clean (no backticks)
+             out.append(raw)
+diff --git a/scripts/arch_coverage_to_threats.py b/scripts/arch_coverage_to_threats.py
+index 6ed6e670..0e409b8f 100644
+--- a/scripts/arch_coverage_to_threats.py
++++ b/scripts/arch_coverage_to_threats.py
+@@ -125,6 +125,56 @@ def _evidence_for_threat(evidence: list[dict] | None) -> dict | None:
+     return {"file": file, "line": line}
+
+
++def _scenario_for_threat(
++    *,
++    source: str,
++    rule_id: str,
++    title: str,
++    cwe: str,
++    spaced_stride: str,
++    evidence: list[dict],
++    hypothesis_id: str | None,
++) -> str:
++    """Deterministic `scenario` prose for a bridged architecture threat.
++
++    `scenario` is schema-required on every threat
++    (schemas/threat-model.output.schema.yaml → threats[].required) and must
++    survive `validate_intermediate._check_scenario_stripped_length` (>= 10
++    non-whitespace chars). The bridge never set it, so a single coverage hit
++    hard-failed the post-Stage-1 gate for the whole run (juice-shop 2026-07-27,
++    ARCH-TLS-001 → T-070).
++
++    Synthesised the same way the sibling coverage emitter does it
++    (`coverage_checks.py` suggested_threat.scenario): an f-string over fields
++    the record already carries. No LLM, no new YAML field to keep in sync.
++
++    The matched `signal` text is deliberately NOT interpolated: ARCH-SECRET-001
++    matches on literal key/credential material, and this string is rendered
++    user-visible in the §8 story card, downstream of the secret masker.
++    Location only — the evidence list carries the detail.
++    """
++    loc = ""
++    first = _evidence_for_threat(evidence)
++    if first:
++        loc = f"`{first['file']}:{first['line']}`" if first.get("line") else f"`{first['file']}`"
++    n = len([e for e in evidence or [] if (e.get("file") or "").strip()])
++    extra = f" and {n - 1} further site(s)" if n > 1 else ""
++
++    if source == "threat-hypothesis":
++        origin = f"Architecture-coverage hypothesis {hypothesis_id or rule_id}"
++        verb = "was confirmed against the codebase"
++    else:
++        origin = f"Architecture-coverage rule {rule_id}"
++        verb = "matched this anti-pattern"
++
++    where = f" at {loc}{extra}" if loc else " in this repository"
++    return (
++        f"{origin} {verb}{where}. {title}: the condition is observable in the "
++        f"code as cited, weakening the control this rule checks and exposing the "
++        f"affected surface to {spaced_stride} ({cwe})."
++    )
++
++
+ def _build_threat(
+     *,
+     source: str,
+@@ -151,6 +201,15 @@ def _build_threat(
+         "likelihood": "Medium",
+         "impact": safe_risk,
+         "title": title,
++        "scenario": _scenario_for_threat(
++            source=source,
++            rule_id=rule_id,
++            title=title,
++            cwe=cwe,
++            spaced_stride=spaced_stride,
++            evidence=evidence,
++            hypothesis_id=hypothesis_id,
++        ),
+         "cwe": cwe,
+         "evidence": _evidence_for_threat(evidence),
+         "source": source,
+diff --git a/tests/test_apply_prose_fixes.py b/tests/test_apply_prose_fixes.py
+index 9a372ae4..be0feeb6 100644
+--- a/tests/test_apply_prose_fixes.py
++++ b/tests/test_apply_prose_fixes.py
+@@ -525,3 +525,140 @@ def test_humanize_actor_ids_skips_fenced_code():
+     md = "```\nACT-D-04 stays as an id in code\n```\n"
+     out, n = prose._humanize_actor_ids(md)
+     assert "ACT-D-04" in out and n == 0
++
++
++# ---------------------------------------------------------------------------
++# Dot-directory roots must be backticked like any other path
++# (regression: juice-shop 2026-07-27 — `_PATH_RE` started with `[A-Za-z]`, so
++# `.github/workflows/image_actions.yml:33` matched one char late at `github`
++# and the `before in "._"` adjacency guard discarded it. The path stayed bare
++# and the QA reference-format gate raised a non-actionable `manual_review`.)
++# ---------------------------------------------------------------------------
++
++
++def test_dot_directory_path_is_backticked():
++    line = "Pin the action in .github/workflows/image_actions.yml:33 to a SHA."
++    out, n = prose._wrap_line(line)
++    assert n == 1
++    assert "`.github/workflows/image_actions.yml:33`" in out
++    # the leading dot belongs INSIDE the span — a half-wrap is the failure mode
++    # the adjacency guard exists to prevent.
++    assert ".`github" not in out
++
++
++def test_dot_directory_path_in_linked_title_tail():
++    """The exact §1 critical-gaps shape that tripped the gate: a finding link
++    whose title tail carries the locator. The title-tail mask is penetrable by
++    the path passes, so the dot-root must be wrapped here too."""
++    line = (
++        "- **Supply chain injection** — text. "
++        "*([F-010](#f-010) — Unpinned Mutable-Branch Action "
++        "(.github/workflows/image_actions.yml:33) → [W-003](#w-003))*"
++    )
++    out, _ = prose._wrap_line(line)
++    assert "(`.github/workflows/image_actions.yml:33`)" in out
++
++
++def test_various_dot_directory_roots_are_backticked():
++    for raw, want in [
++        ("See .circleci/config.yml now.", "`.circleci/config.yml`"),
++        ("Edit .claude/settings.json please.", "`.claude/settings.json`"),
++        ("Check .github/workflows/ci.yml:12 here.", "`.github/workflows/ci.yml:12`"),
++    ]:
++        out, _ = prose._wrap_line(raw)
++        assert want in out, f"{raw!r} -> {out!r}"
++
++
++def test_interior_dot_still_claims_whole_token():
++    """Guard against the fix over-reaching: when the dot is INTERIOR the greedy
++    body must still own the whole token rather than splitting at the dot."""
++    out, n = prose._wrap_line("The file v1.github/x.yml is fine.")
++    assert n == 1
++    assert "`v1.github/x.yml`" in out
++    assert "v1.`github" not in out
++
++
++def test_dot_directory_wrapping_is_idempotent():
++    already = "Already wrapped: `.github/workflows/ci.yml` stays as-is."
++    out, n = prose._wrap_line(already)
++    assert n == 0
++    assert out == already
++    # and a second pass over freshly wrapped output changes nothing further
++    once, _ = prose._wrap_line("Pin .github/workflows/ci.yml now.")
++    twice, n2 = prose._wrap_line(once)
++    assert n2 == 0
++    assert twice == once
++
++
++# ---------------------------------------------------------------------------
++# The styled <blockquote> wrapper is presentation — its Markdown body must
++# still get code-token backticking.
++# (regression: juice-shop 2026-07-27 — apply_fixes/apply_code_formatting
++# skipped EVERY line between <blockquote> and </blockquote>, so the §1
++# critical-gaps list kept bare paths that no fragment rewrite could reach.)
++# ---------------------------------------------------------------------------
++
++_MS_BLOCKQUOTE = (
++    "**Critical gaps:**\n"
++    "\n"
++    '<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px;">\n'
++    "\n"
++    "- **Supply chain injection** — text here. "
++    "*([F-010](#f-010) — Unpinned Mutable-Branch Action "
++    "(.github/workflows/image_actions.yml:33) → [W-003](#w-003))*\n"
++    "- **SQL injection** — more text. "
++    "*([F-008](#f-008) — data interpolated into a SQL string routes/search.ts:23)*\n"
++    "\n"
++    "</blockquote>\n"
++)
++
++
++def test_blockquote_body_gets_path_backticking():
++    out, n = prose.apply_fixes(_MS_BLOCKQUOTE)
++    assert n >= 2
++    assert "(`.github/workflows/image_actions.yml:33`)" in out
++    assert "`routes/search.ts:23`" in out
++
++
++def test_blockquote_wrapper_tags_are_left_untouched():
++    """The wrapper's style attribute contains `:` and `;` — it must never be
++    rewritten. Lines carrying markup stay byte-identical."""
++    out, _ = prose.apply_fixes(_MS_BLOCKQUOTE)
++    assert '<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px;">' in out
++    assert "</blockquote>" in out
++    assert "`border-left" not in out
++    assert "`3px" not in out
++
++
++def test_apply_code_formatting_matches_apply_fixes_in_blockquote():
++    """Both entry points share the rule; drift between them is how the bug
++    would come back through the autofix path only."""
++    a, _ = prose.apply_fixes(_MS_BLOCKQUOTE)
++    b, _ = prose.apply_code_formatting(_MS_BLOCKQUOTE)
++    for want in ("(`.github/workflows/image_actions.yml:33`)", "`routes/search.ts:23`"):
++        assert want in a, f"apply_fixes missed {want}"
++        assert want in b, f"apply_code_formatting missed {want}"
++
++
++def test_blockquote_body_wrapping_is_idempotent():
++    once, _ = prose.apply_fixes(_MS_BLOCKQUOTE)
++    twice, n2 = prose.apply_fixes(once)
++    assert twice == once
++    assert n2 == 0
++
++
++def test_fenced_code_inside_blockquote_is_still_skipped():
++    """Fence tracking must keep priority over the new blockquote body path —
++    a snippet inside the quote is code, not prose."""
++    src = (
++        "<blockquote>\n"
++        "\n"
++        "```yaml\n"
++        "uses: calibreapp/image-actions@main\n"
++        "```\n"
++        "\n"
++        "</blockquote>\n"
++    )
++    out, _ = prose.apply_fixes(src)
++    assert "uses: calibreapp/image-actions@main" in out
++    assert "`calibreapp" not in out
+diff --git a/tests/test_apply_prose_fixes_coverage.py b/tests/test_apply_prose_fixes_coverage.py
+index e48105a3..78bdf4eb 100644
+--- a/tests/test_apply_prose_fixes_coverage.py
++++ b/tests/test_apply_prose_fixes_coverage.py
+@@ -176,21 +176,31 @@ def test_collapse_consecutive_anchors_skips_fences():
+     assert n == 0
+
+
+-# --- apply_fixes: blockquote block skipped (897, 899-902) -----------------
+-
+-
+-def test_apply_fixes_blockquote_block_left_untouched():
+-    text = "<blockquote>\nPath server.ts:12 inside blockquote stays bare\n</blockquote>\nOutside server.ts:12 prose\n"
++# --- apply_fixes: blockquote WRAPPER skipped, body wrapped (897, 899-902) --
++#
++# These two originally pinned "the whole blockquote block is skipped". That was
++# the characterised behaviour, not an intended one: it left the §1 critical-gaps
++# list — the only styled <blockquote> the report emits — with bare paths that no
++# fragment rewrite could reach, which the QA reference-format gate then raised as
++# a non-actionable manual_review (juice-shop 2026-07-27, F-010). The wrapper tags
++# stay untouched; the Markdown body is prose and is wrapped like any other line.
++
++
++def test_apply_fixes_blockquote_wrapper_untouched_body_wrapped():
++    text = "<blockquote>\nPath server.ts:12 inside blockquote\n</blockquote>\nOutside server.ts:12 prose\n"
+     out, _ = prose.apply_fixes(text)
+-    # Inside-blockquote path NOT backticked; outside prose IS.
+-    assert "Path server.ts:12 inside blockquote stays bare" in out
+-    assert "`server.ts:12`" in out  # the outside occurrence
++    # The wrapper tags themselves are never rewritten...
++    assert "<blockquote>" in out
++    assert "</blockquote>" in out
++    # ...but the body is prose and gets the same treatment as the outside line.
++    assert "Path `server.ts:12` inside blockquote" in out
++    assert "Outside `server.ts:12` prose" in out
+
+
+ # --- apply_code_formatting fence + blockquote + heading (973-988) ---------
+
+
+-def test_apply_code_formatting_skips_fence_and_blockquote_and_heading():
++def test_apply_code_formatting_skips_fence_and_heading_but_wraps_blockquote_body():
+     text = (
+         "```\n"
+         "code server.ts:1\n"
+@@ -203,7 +213,8 @@ def test_apply_code_formatting_skips_fence_and_blockquote_and_heading():
+     )
+     out, _ = prose.apply_code_formatting(text)
+     assert "code server.ts:1" in out  # fence untouched
+-    assert "bq server.ts:2" in out  # blockquote untouched
++    assert "bq `server.ts:2`" in out  # blockquote BODY wrapped (wrapper is not)
++    assert "<blockquote>" in out and "</blockquote>" in out
+     assert "# Heading server.ts:3" in out  # heading untouched
+     assert "`server.ts:4`" in out  # prose backticked
+
+diff --git a/tests/test_arch_coverage_bridge.py b/tests/test_arch_coverage_bridge.py
+index 5a11def8..c1e99eb4 100644
+--- a/tests/test_arch_coverage_bridge.py
++++ b/tests/test_arch_coverage_bridge.py
+@@ -877,3 +877,138 @@ def test_emit_design_signals_cli(tmp_path):
+     out = json.loads((tmp_path / ".arch-design-signals.json").read_text())
+     assert len(out["design_signals"]) == 1
+     assert out["design_signals"][0]["weakness_class"] == "injection"
++
++
++# ---------------------------------------------------------------------------
++# scenario is schema-required on every bridged threat
++# (regression: juice-shop 2026-07-27 — ARCH-TLS-001 promoted to T-070 with no
++# `scenario`, hard-failing validate_intermediate on threat-model.yaml and
++# aborting the post-Stage-1 gate for the whole run)
++# ---------------------------------------------------------------------------
++
++
++def _scenario_ok(text: object) -> bool:
++    """Mirror the two constraints the pipeline actually enforces: presence
++    (schemas/threat-model.output.schema.yaml threats[].required) and
++    validate_intermediate._check_scenario_stripped_length (>= 10 chars)."""
++    return isinstance(text, str) and len(text.strip()) >= 10
++
++
++def test_anti_pattern_threat_carries_scenario():
++    cov = {
++        "anti_pattern_candidates": [
++            {
++                "rule_id": "ARCH-TLS-001",
++                "generic_threat_title": "Data disclosure through cleartext transport",
++                "cwe": "CWE-319",
++                "stride": "InformationDisclosure",
++                "severity_cap": "High",
++                "confidence": "high",
++                "evidence": [
++                    {"file": "docker-compose.yml", "line": 12, "signal": "http://api"},
++                    {"file": "server.ts", "line": 4, "signal": "ssl: false"},
++                ],
++            }
++        ]
++    }
++    threats, _ = bridge.select_and_build(cov)
++    assert len(threats) == 1
++    scenario = threats[0]["scenario"]
++    assert _scenario_ok(scenario)
++    # Grounded in the record: rule id, title, location, STRIDE and CWE.
++    assert "ARCH-TLS-001" in scenario
++    assert "Data disclosure through cleartext transport" in scenario
++    assert "`docker-compose.yml:12`" in scenario
++    assert "Information Disclosure" in scenario  # spaced form, not the enum form
++    assert "CWE-319" in scenario
++    # The matched signal text must NOT leak into user-visible prose:
++    # ARCH-SECRET-001 matches literal key material.
++    assert "http://api" not in scenario
++
++
++def test_confirmed_hypothesis_threat_carries_scenario():
++    cov = {
++        "threat_hypotheses": [
++            {
++                "hypothesis_id": "ARCH-HYP-SECRET-001",
++                "rule_id": "ARCH-SECRET-001",
++                "generic_threat_title": "Credential compromise via hardcoded secret",
++                "cwe": "CWE-798",
++                "stride": "Spoofing",
++                "proof_state": "confirmed",
++                "confidence": "high",
++                "positive_signals": [
++                    {"file": "lib/insecurity.ts", "line": 21, "signal": "-----BEGIN RSA PRIVATE KEY-----"}
++                ],
++            }
++        ]
++    }
++    threats, _ = bridge.select_and_build(cov)
++    assert len(threats) == 1
++    scenario = threats[0]["scenario"]
++    assert _scenario_ok(scenario)
++    assert "ARCH-HYP-SECRET-001" in scenario
++    assert "`lib/insecurity.ts:21`" in scenario
++    assert "BEGIN RSA PRIVATE KEY" not in scenario
++
++
++def test_scenario_present_even_without_evidence_location():
++    """`_evidence_for_threat` returns None when no entry carries a file; the
++    scenario must still clear the >= 10-char floor rather than be empty."""
++    cov = {
++        "anti_pattern_candidates": [
++            {
++                "rule_id": "ARCH-CORS-001",
++                "title": "CORS wildcard with credentials",
++                "cwe": "CWE-942",
++                "stride": "Tampering",
++                "severity_cap": "Medium",
++                "confidence": "high",
++                "evidence": [{"signal": "no file key"}],
++            }
++        ]
++    }
++    threats, _ = bridge.select_and_build(cov)
++    assert _scenario_ok(threats[0]["scenario"])
++
++
++def test_every_bridged_threat_has_scenario_for_all_shipped_rules():
++    """Contract sweep: drive one candidate per rule in the shipped YAML so a
++    newly added rule cannot reintroduce a scenario-less threat."""
++    import yaml as _yaml
++
++    rules = _yaml.safe_load((REPO_ROOT / "data" / "architecture-coverage-rules.yaml").read_text())
++    candidates = []
++    hypotheses = []
++    for rule in rules.get("hard_rules") or []:
++        candidates.append(
++            {
++                "rule_id": rule["id"],
++                "generic_threat_title": rule.get("generic_threat_title"),
++                "cwe": rule["cwe"],
++                "stride": rule["stride"],
++                # severity_cap=Critical is refused by policy; force a mergeable cap.
++                "severity_cap": "High",
++                "confidence": "high",
++                "evidence": [{"file": "a.ts", "line": 1, "signal": "x"}],
++            }
++        )
++    for rule in rules.get("hypothesis_rules") or []:
++        hypotheses.append(
++            {
++                "hypothesis_id": f"{rule.get('hypothesis_id_prefix') or 'ARCH-HYP'}-001",
++                "rule_id": rule["id"],
++                "generic_threat_title": rule.get("generic_threat_title"),
++                "cwe": rule["cwe"],
++                "stride": rule["stride"],
++                "proof_state": "confirmed",
++                "confidence": "high",
++                "positive_signals": [{"file": "a.ts", "line": 1, "signal": "x"}],
++            }
++        )
++    threats, _ = bridge.select_and_build(
++        {"anti_pattern_candidates": candidates, "threat_hypotheses": hypotheses}
++    )
++    assert len(threats) == len(candidates) + len(hypotheses)
++    missing = [t["rule_id"] for t in threats if not _scenario_ok(t.get("scenario"))]
++    assert not missing, f"rules producing a scenario-less threat: {missing}"

@@ -4108,6 +4108,15 @@ _AS_TABLE_HEADERS = ("Method", "Route", "Risk", "Notes")
 _AS_COL_WIDTHS = ("9%", "30%", "14%", "47%")
 _ASSET_TABLE_HEADERS = ("Asset", "Classification", "Description", "Linked Threats")
 _ASSET_COL_WIDTHS = ("22%", "13%", "32%", "33%")
+_TRUST_BOUNDARY_TABLE_HEADERS = (
+    "ID",
+    "Boundary / crossing",
+    "Kind / status",
+    "Assumption / confidence",
+    "Source",
+    "Linked findings",
+)
+_TRUST_BOUNDARY_COL_WIDTHS = ("7%", "25%", "15%", "34%", "9%", "10%")
 # Operational Strengths (2026-07-15): Gap merged into the Effectiveness cell;
 # Mitigates column shown only when at least one row carries a back-reference.
 # Two fixed-layout forms — 3-col (no Mitigates) and 4-col (with Mitigates).
@@ -4131,6 +4140,22 @@ _FIXED_LAYOUT_SPECS = (
         _ASSET_COL_WIDTHS,
         {0: "overflow-wrap:anywhere", 3: "overflow-wrap:anywhere"},
         frozenset({2}),  # Description (col 2) reflows; Linked Threats keeps its <br/> stack
+    ),
+    (
+        _TRUST_BOUNDARY_TABLE_HEADERS,
+        _TRUST_BOUNDARY_COL_WIDTHS,
+        {
+            0: "white-space:nowrap",
+            1: "overflow-wrap:anywhere",
+            2: "overflow-wrap:anywhere",
+            3: "overflow-wrap:anywhere",
+            4: "overflow-wrap:anywhere",
+            5: "overflow-wrap:anywhere",
+        },
+        # Compose exempts the table from synthetic 44-character soft breaks.
+        # The remaining <br> elements separate name/crossing, status/exposure,
+        # confidence, and finding links and are therefore structural.
+        frozenset(),
     ),
     (
         _STRENGTH_TABLE_HEADERS_3,
@@ -4163,7 +4188,8 @@ _FIXED_LAYOUT_SPECS = (
 )
 _AS_SEP_LINE_RE = re.compile(r"^\s*\|[\s:\-|]+\|\s*$")
 _AS_INLINE_TOKEN_RE = re.compile(
-    r"(?P<br><br\s*/?>)"
+    r'(?P<anchor><a id="tb-\d+"></a>)'
+    r"|(?P<br><br\s*/?>)"
     r"|\[(?P<ltext>[^\]]+)\]\((?P<lhref>[^)]+)\)"
     r"|\*\*(?P<bold>[^*]+)\*\*"
     # Italic: content excludes `_`/`*` AND `<` so a lone `_id`/`$where`-style
@@ -4192,7 +4218,9 @@ def _render_inline_md_to_html(text: str) -> str:
         for m in _AS_INLINE_TOKEN_RE.finditer(part):
             if m.start() > pos:
                 out.append(_as_html_escape(part[pos : m.start()]))
-            if m.group("br") is not None:
+            if m.group("anchor") is not None:
+                out.append(m.group("anchor"))
+            elif m.group("br") is not None:
                 out.append("<br/>")
             elif m.group("ltext") is not None:
                 href = _as_html_escape(m.group("lhref")).replace('"', "&quot;")
@@ -9678,6 +9706,66 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
     schema_ver = (yaml_data.get("meta") or {}).get("schema_version")
     if schema_ver != 1:
         report.issues.append(f"meta.schema_version expected 1, got {schema_ver!r}")
+
+    # Trust-boundary integrity: canonical YAML owns IDs and finding links, while
+    # Markdown owns only their presentation. Keep this check beside the other
+    # YAML/Markdown drift checks so both the full QA path and the repair-plan
+    # gate execute it.
+    boundary_rows = [row for row in (yaml_data.get("trust_boundaries") or []) if isinstance(row, dict)]
+    boundary_ids = [str(row.get("id") or "") for row in boundary_rows]
+    boundary_id_set = {boundary_id for boundary_id in boundary_ids if boundary_id}
+    for boundary_id in sorted(boundary_id_set):
+        count = boundary_ids.count(boundary_id)
+        if count > 1:
+            report.issues.append(f"duplicate trust-boundary id in yaml: {boundary_id} appears {count} times")
+
+    boundary_anchors = re.findall(r'<a\s+id="(tb-\d+)"></a>', md_text, re.IGNORECASE)
+    anchor_counts: dict[str, int] = {}
+    for boundary_id in boundary_anchors:
+        key = boundary_id.lower()
+        anchor_counts[key] = anchor_counts.get(key, 0) + 1
+    for boundary_id, count in sorted(anchor_counts.items()):
+        if count > 1:
+            report.issues.append(f"duplicate trust-boundary catalogue anchor: #{boundary_id} appears {count} times")
+        if boundary_id not in boundary_id_set:
+            report.issues.append(f"trust-boundary catalogue anchor is absent from canonical yaml: #{boundary_id}")
+
+    boundary_links = re.findall(
+        r"\[(tb-\d+)\]\(#(tb-\d+)\)",
+        md_text,
+        re.IGNORECASE,
+    )
+    for label, target in boundary_links:
+        label = label.lower()
+        target = target.lower()
+        if label != target:
+            report.issues.append(f"trust-boundary link label/target mismatch: {label} points to #{target}")
+        if label not in boundary_id_set:
+            report.issues.append(f"rendered trust-boundary reference is absent from canonical yaml: {label}")
+        if target not in anchor_counts:
+            report.issues.append(f"rendered trust-boundary reference has no catalogue anchor: #{target}")
+
+    canonical_boundary_refs = {
+        str(ref.get("boundary_id") or "").lower()
+        for threat in yaml_threats_all
+        if isinstance(threat, dict)
+        for ref in (threat.get("boundary_refs") or [])
+        if isinstance(ref, dict) and ref.get("boundary_id")
+    }
+    rendered_boundary_refs: set[str] = set()
+    for card in re.findall(
+        r"\*\*Trust boundary gap:\*\*(.*?)(?=<br>\*\*|$)",
+        md_text,
+        re.IGNORECASE | re.MULTILINE,
+    ):
+        rendered_boundary_refs.update(
+            boundary_id.lower() for boundary_id in re.findall(r"\btb-\d+\b", card, re.IGNORECASE)
+        )
+    if canonical_boundary_refs != rendered_boundary_refs:
+        report.issues.append(
+            "trust-boundary finding-reference drift: "
+            f"yaml={sorted(canonical_boundary_refs)} md={sorted(rendered_boundary_refs)}"
+        )
 
     # Asset linked_threats cross-reference: every asset's linked_threats[] in
     # YAML must match the T-NNN set rendered in the MD Assets table (Section 4).

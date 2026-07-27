@@ -1614,8 +1614,11 @@ class TestRenderConfigurationSummary:
 
     def test_post_summary_repo_size_capped(self):
         out = rc.render_configuration_summary(_base_cfg(repo_size_capped=True, repo_size_source_files=99999))
-        assert "large repository" in out
+        assert "longer run expected" in out
         assert "99999" in out
+        # Runtime heads-up must not claim the repo is "large" — size is judged
+        # only on the orchestrator-window axis (see LARGE_REPO_SOURCE_FILE_THRESHOLD).
+        assert "large repo" not in out.lower()
 
 
 class TestSessionModelAdvisoryInPreflightBox:
@@ -2053,6 +2056,15 @@ class TestRunPlanVerdictIncremental:
         assert v["will_run"] is True
         assert "AMBIGUOUS" in v["verdict"]
 
+    def test_changed_boundary_declaration_recomposes_without_stride(self):
+        pre = {"status": "changed"}
+        ds = {"decision": "boundary_recompose", "dirty_component_ids": []}
+        v = rc._run_plan_verdict(self._icfg(), pre, ds, None)
+        assert v["will_run"] is True
+        assert "trust-boundary catalogue changed" in v["verdict"]
+        assert "STRIDE" not in v["pipeline"]
+        assert "zero STRIDE dispatches" in v["reason"]
+
     def test_changed_dirty_components(self):
         pre = {"status": "changed", "plugin_version": {"tier": "minor"}}
         ds = {"decision": "dirty", "dirty_component_ids": ["c1", "c2", "c3", "c4"]}
@@ -2251,7 +2263,8 @@ class TestRunPlanNotes:
         verdict = {"will_run": True, "mode_line": "full"}
         cfg = _base_cfg(repo_size_capped=True, repo_size_source_files=12345)
         notes = rc._run_plan_notes(verdict, cfg, None, None, None)
-        assert any("Large repo (12345" in n for n in notes)
+        assert any("12345 source files" in n and "Longer run expected" in n for n in notes)
+        assert not any("large repo" in n.lower() for n in notes)
 
 
 class TestRenderRunPlan:

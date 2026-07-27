@@ -2,7 +2,21 @@
 
 **Date:** 2026-07-22
 
-**Status:** planned / not started
+**Status:** implementation candidate complete; deterministic verification
+passed; live Milestone-2 economy replay pending
+
+**Implementation note (2026-07-26):** Milestones 1–3 and the deterministic
+parts of Milestone 4 are implemented on the feature branch. Contracts,
+normalization, stable IDs, repository declarations, bounded component
+contexts, optional evidence-constrained finding references, catalogue
+rendering, QA, query, and SARIF propagation are wired atomically. Static and
+offline tests prove unchanged dispatch membership, zero boundary-only
+incremental STRIDE dispatches, and no second analyzer context-read turn.
+
+The rollout is not approved by this note. The required neutral-fixture and
+self-model before/after agent replays, manual reference review, and measured
+API-equivalent cost comparison have not been run in this implementation
+workspace. Per the gate below, an inconclusive cost result is not a pass.
 
 **Supersedes:** the implementation sequence in
 `analysis-trust-boundary-first-class-2026-07-21.md` where that sequence assumes
@@ -34,11 +48,12 @@ boundaries to the existing global internet-exposure legend text when doing so
 requires no new node, edge, or layout calculation. The §1 catalogue remains
 authoritative.
 
-The new boundary metadata will **not** weight trust boundaries, change finding
-severity, create a generic `trust_boundary_violation` threat, infer a full
-attack path, or treat an unknown control as an absent control. Existing,
-independently evidenced rating rules such as `architectural_violation` remain
-separate and unchanged.
+The initial boundary implementation did **not** weight trust boundaries, change
+finding severity, create a generic `trust_boundary_violation` threat, infer a
+full attack path, or treat an unknown control as an absent control. Existing,
+independently evidenced rating rules such as `architectural_violation` remained
+separate and unchanged. The evidence-gated exception adopted on 2026-07-27 is
+recorded below.
 
 Trust-boundary enrichment is an optional, best-effort architecture aid. It must
 not make the core STRIDE assessment materially more expensive, consume an
@@ -51,13 +66,13 @@ analyzer-facing boundary contexts or `boundary_refs[]`.
 
 | Question | Decision | Reason |
 |---|---|---|
-| Weight trust boundaries? | No numeric weight and no likelihood/severity multiplier. | The current model has no reliable path or deployment-reachability fact. An observed boundary control is context, not proof that a finding is unreachable. |
+| Weight trust boundaries? | No numeric trust score or multiplier. A validated finding-level reference to a confirmed `external → component` ingress may raise effective severity by one band, capped at High and still subject to CWE caps. | Component adjacency is only context. The narrow exception requires finding-owned evidence and an exact canonical crossing, so repository declarations or topology alone cannot change severity. |
 | Add a generic boundary-violation threat? | No. Add an evidence-backed boundary-gap reference to an existing precise finding. | Missing authZ, injection, weak trust-conferring headers, and similar mechanisms already have more useful threat/weakness classes. A generic class would duplicate them. |
 | How much model complexity? | One normalized boundary object, one shared preparation step, one bounded candidate-adjacency join, and one optional evidence-backed finding link. Even `thorough` has a hard per-component candidate budget. | This delivers traceability without introducing data-flow, taint, exposure, weak context relations, and risk-scoring subsystems at once. Thorough increases evidence depth, not unbounded boundary breadth. |
-| How may a boundary affect a finding? | Evidence-backed traceability and remediation scope only in this release. Weak contextual associations stay out of finding records. | Risk remains `likelihood x impact`; mitigation priority keeps its existing severity/effort/reachability/architectural-violation inputs. |
+| How may a boundary affect a finding? | Evidence-backed traceability and remediation scope, plus the bounded external-ingress elevation above. Weak contextual associations stay out of finding records. | Raw risk remains `likelihood x impact`; only deterministic effective severity receives the audited one-step adjustment. |
 | Where is the documentation shown? | A compact `### Trust Boundaries` subsection inside §1 plus boundary links on finding cards. | §2.x Trust Boundaries is forbidden and the old numbered §6 intentionally remains absent. The §1 view is visible without restoring duplicated sections. |
 | Show boundaries in Figure 1? | Only resolved, confirmed external-entry IDs may be appended to the existing global internet-exposure legend text. No new nodes, arrows, subgraphs, or layout rules. | This exposes the highest-value topological boundaries without turning the executive figure into an incomplete topology engine. Internal, inferred, and outbound boundaries remain in §1/§2 and machine output. |
-| Allow repository declarations? | Yes, through optional `.appsec/trust-boundaries.yaml`; declarations add or clarify boundaries but cannot suppress detected rows, claim a control is effective, or affect ratings. | Deployment and tenancy intent is often not provable from source. A strict data-only input supplies that truth without becoming an instruction or risk-policy channel. |
+| Allow repository declarations? | Yes, through optional `.appsec/trust-boundaries.yaml`; declarations add or clarify boundaries but cannot suppress detected rows, claim a control is effective, or affect ratings by themselves. | Deployment and tenancy intent is often not provable from source. A strict data-only input supplies that truth without becoming an instruction or risk-policy channel. |
 | May boundary drift expand incremental analysis? | No. Boundary-only catalogue, declaration, ranking, or context changes recompose deterministic outputs but never add a component to the STRIDE dispatch set. | Boundary links are optional enrichment. Paying for source-clean component analysis solely to refresh them is disproportionate; a later source-triggered, full, or rebuild run refreshes the links. |
 | What is the runtime cost contract? | No new agent calls, no extra analyzer model turn, unchanged full/rebuild component dispatch count, zero STRIDE dispatches for a boundary-only incremental change, and no more than 5% measured API-equivalent cost growth at the Milestone-2 rollout gate. | Structural gates prevent nonlinear retry/redispatch costs; the measured gate catches prompt and cache growth that call-count checks miss. |
 
@@ -393,7 +408,7 @@ more useful.
 |---|---|---|---|
 | Adjacency is misreported as traversal or violation. | `build_stride_dispatch_manifest.py::_trust_boundaries_for` joins only on `from`/`to`/`components`; canonical YAML has no persisted `data_flows[]`. | Name the deterministic input `adjacent_trust_boundaries`; allow a finding reference only with verified gap evidence and rationale; forbid weak `context` links and `crossed_boundary_ids`. | The analyzer can still overstate the rationale; replay sampling must measure precision. |
 | Boundary prose creates false precision about controls. | Phase 7 requests `enforcement: "none observed"`, the sidecar also carries free-form `controls[]`, and the canonical `security_controls[]` register already owns observed controls. | Remove boundary-local enforcement, controls, trust weights, and description from the v2 object. Keep only the trust assumption, evidence, and confidence; unknown never becomes absent. | Linking a specific existing security-control record to a boundary is deferred rather than guessed by name. |
-| Boundary metadata contaminates severity or priority. | `triage_validate_ratings.py` enforces the likelihood-impact matrix; `phase-group-threats.md` separately escalates `architectural_violation` and contains existing cross-repository rules. | Make `boundary_refs` metadata-only; it cannot set `architectural_violation`, likelihood, impact, risk, CVSS, or priority. Isolate existing cross-repository/architecture rules and test that identical findings rate identically with and without boundary refs. | An analyzer may still phrase a scenario more strongly; evidence and rating QA remain necessary. |
+| Boundary metadata contaminates severity or priority. | `triage_validate_ratings.py` enforces the likelihood-impact matrix; `phase-group-threats.md` separately escalates `architectural_violation` and contains existing cross-repository rules. | Keep raw likelihood, impact, risk, CVSS, `architectural_violation`, and mitigation priority independent from boundary metadata. Permit only the deterministic, audited, one-step effective-severity exception for a validated confirmed external-ingress reference; cap it at High and apply CWE caps afterward. | An analyzer may still phrase a scenario more strongly; evidence and rating QA remain necessary. |
 | Structured context inflates the finding count. | The STRIDE analyzer already reasons from trust-boundary prose and requires a code/evidence basis, but nothing currently prevents a future “one finding per boundary” instruction. | State that a boundary object alone is never finding evidence; require the existing threat/evidence gates; add no deterministic boundary-threat emitter and no completeness rule requiring a finding per boundary. | Better context may legitimately change LLM recall, so fixture counts are diagnostic rather than a fixed equality gate. |
 | Findings are over-consolidated because they share a boundary. | `merge_threats.py` consolidates by mechanism/object catalog and `_merge_member_metadata` currently has no boundary provenance. | Never use `boundary_id` alone as a merge key. Require `origin_component_id`, preserve per-member evidence, and keep findings separate when a merge would exceed two unique refs or lose provenance. | Existing heuristic/LLM consolidation still needs its current fail-closed guards. |
 | Public `tb-N` references churn or are reused. | Phase 7 says IDs are LLM-chosen; `reserve_ids.py` has no boundary ID type; `baseline_state.py` persists only T/M high-watermarks. Multiple integrations may share one endpoint pair. | Capture the prior canonical catalogue before the sidecar is overwritten; persist `next_trust_boundary_id` in the baseline; match declaration key, compatible prior ID, endpoint+name, then unique endpoint; allocate only from the high-watermark. `--rebuild` deliberately resets both catalogue and counter. | A rename among several boundaries sharing endpoints may intentionally receive a new ID rather than risk a wrong match. |
@@ -582,7 +597,8 @@ Acceptance criteria:
 - Retiring the highest ID and adding a boundary in a later third run never
   reuses the retired ID; `--rebuild` is the tested exception.
 - Repository declarations merge additively, retain provenance, and cannot
-  suppress detection, self-confirm, alter Figure-1 exposure, or affect ratings.
+  suppress detection, self-confirm, alter Figure-1 exposure, or affect ratings
+  without a separate validated finding-level reference.
 - Changing only a repository declaration recomposes the catalogue and performs
   zero STRIDE analyzer dispatches. Boundary links for otherwise source-clean
   components may remain unchanged until a later source-triggered, full, or
@@ -655,8 +671,9 @@ them to invent topology.
    - emit no reference when a candidate merely provides context;
    - emit a boundary reference only for a confirmed candidate and a concrete,
      verified control gap; and
-   - never change the finding rating or set `architectural_violation` because
-     of a boundary reference.
+   - never change raw likelihood, impact, risk, CVSS, or
+     `architectural_violation` because of a boundary reference; deterministic
+     triage exclusively owns the bounded effective-severity exception.
 5. Update the thin and legacy dispatch mappings in
    `skills/create-threat-model/` and extend
    `tests/test_dispatch_prompt_cache_order.py`. The volatile context path stays
@@ -705,8 +722,10 @@ them to invent topology.
    the current selection cap, and consolidation/reclassification that would
    otherwise lose reference provenance.
 11. Add regression tests proving that adding or removing `boundary_refs[]` does
-   not change likelihood, impact, risk, effective severity, CVSS, or mitigation
-   priority and cannot activate `architectural_violation`.
+   not change likelihood, impact, raw risk, CVSS, mitigation priority, or
+   `architectural_violation`. Effective severity may change only for the
+   validated external-ingress exception and must reverse when its cause is
+   removed.
 12. Add tests for deterministic focus ranking, the 2/4/6 limits,
     ordinary-process exclusion at `thorough`, overflow disclosure, and stable
     selection after input reordering.
@@ -740,8 +759,9 @@ Milestone-2 exit gate:
   implementing report changes.
 - Manually review every emitted boundary reference.
 - Continue to Milestone 3 only if there are zero invented/non-adjacent IDs,
-  zero evidence-free control gaps, zero boundary-only findings, and no rating
-  changes attributable to `boundary_refs`.
+  zero evidence-free control gaps, zero boundary-only findings, and no raw-risk
+  changes attributable to `boundary_refs`. Any effective-severity change must
+  satisfy the audited external-ingress exception.
 - Full/rebuild replay must dispatch exactly the same STRIDE components as the
   Milestone-1 baseline, and a boundary-only incremental replay must dispatch
   zero STRIDE analyzers.
@@ -831,7 +851,8 @@ risk or remediation-priority logic.
 1. Update `docs/threat-modeler.md` with:
    - boundary semantics and evidence confidence;
    - the difference between adjacency and an evidence-backed boundary gap;
-   - the fact that boundaries do not change severity; and
+   - the fact that adjacency and declarations do not change severity by
+     themselves, plus the audited external-ingress exception; and
    - the best-effort economy contract, including deferred boundary-link refresh
      on source-clean incremental runs;
    - the legacy-sidecar/rerender behavior;
@@ -883,17 +904,21 @@ Do not include the following in the initial implementation:
 - automatic weakness emission from boundary prose;
 - a generic `trust_boundary_violation` threat or weakness class;
 - numeric `trust_level` deltas or control-strength weights;
-- automatic up-ranking or down-ranking of finding severity;
+- automatic down-ranking, topology-only up-ranking, or any elevation beyond the
+  audited one-step confirmed-external-ingress exception;
 - mitigation-priority changes; or
 - a general Figure 1 boundary-label/layout redesign beyond the bounded external
   ingress-ID suffix.
 
-A later proposal may add **boundary review priority** as a separate, explicitly
-non-severity field, but only after measured link precision and evidence coverage
-are available. It must never reduce a finding's risk merely because a control is
-documented. A new weakness class such as `over_trusted_input` is justified only
-when a deterministic, evidence-backed emitter finds a design condition that no
-existing precise class represents.
+The 2026-07-27 follow-up permits one evidence-backed severity exception: a
+finding with a validated reference to a resolved, confirmed
+`external → origin_component_id` boundary may move up one effective-severity
+band, never above High, before CWE caps and the Critical-criteria gate. The
+finding must own every referenced evidence location; `refuted` or `ambiguous`
+evidence is ineligible. Multiple eligible boundaries still produce only one
+step, and each actual change requires a deterministic reconciliation flag.
+Removing the cause must clear the elevation. A boundary must never reduce a
+finding's risk merely because a control is documented.
 
 ## Suggested commit boundaries
 

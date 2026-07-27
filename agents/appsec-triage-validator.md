@@ -154,27 +154,28 @@ Compute `effective_severity` in this ordered pipeline:
 2. **Apply chain elevation scoped by role.** For every active chain this finding belongs to:
    - If **keystone** in this chain: `effective = max(effective, chain.severity)` — but see step 2b.
    - If **contributor** in this chain: `effective = max(effective, contributor_cap)` where contributor_cap = value from `severity-caps.yaml → contributor_cap.default` (default `High`). Do NOT elevate contributor to `chain.severity`.
-   - **Evidence-refutation guard (M2).** When the finding carries `evidence_check == "refuted"` (set by Phase 10a evidence-verifier), **skip elevation entirely** for both keystone and contributor roles. The raw `risk` is preserved unchanged (we never downgrade the auditor's rating), but a refuted finding cannot pull the chain's severity up. Record a flag `suppressed:evidence_refuted(<role>)` in the reconciliation reasons. This guard is the entire point of running Phase 10a — without it, a refuted finding still inflates the chain it sits on.
+   - **Evidence-refutation guard (M2).** When the finding carries `evidence_check` of `refuted` or `ambiguous` (set by Phase 10a evidence-verifier), **skip elevation entirely** for both keystone and contributor roles. The raw `risk` is preserved unchanged (we never downgrade the auditor's rating), but an unverified finding cannot pull the chain's severity up. Record `suppressed:evidence_<state>(<role>)` in the reconciliation reasons. This guard is the entire point of running Phase 10a — without it, an unverified finding still inflates the chain it sits on.
 2b. **Chain severity realization check (R5 rule).** Read `compound-chain-patterns.yaml → chain.severity_realization` if present. If the chain's `requires_all` preconditions are not all satisfied by the current findings set, **downgrade** the chain's effective severity for this finding to `severity_realization.fallback_severity`. Example: CC-01 Stored XSS → Session Theft only realises Critical when at least one XSS keystone has `likelihood: High` AND `breach_distance ≤ 2`; otherwise the chain stays active but caps at `High`.
-3. **Apply per-CWE severity cap.** Read `severity-caps.yaml → severity_caps`. For the finding's primary CWE, if a cap entry exists, **clamp** `effective_severity` to at most `cap.max`. Cap exceptions: if `cap_exceptions[cwe]` lists a `requires_compound_with` CWE set that is fully satisfied by OTHER findings in the same category, use `elevated_cap` instead.
-4. **Apply critical-criteria gate (V2 rule, last).** Read `$CLAUDE_PLUGIN_ROOT/data/critical-criteria.yaml`. This is the **final gatekeeper** before the finding is allowed to hold `effective_severity: Critical`:
+3. **Apply evidence-backed external-ingress elevation.** Consider only `boundary_refs[]` entries that pass the shared deterministic validator: the boundary exists, has canonical endpoints, is `resolved` and `confirmed`, is oriented `external → origin_component_id`, matches the finding's component, and cites evidence locations owned by that finding. If at least one eligible reference remains and the evidence state is neither `refuted` nor `ambiguous`, raise the current effective severity by exactly one band, capped at `High`. Multiple eligible boundaries still cause only one step. Component adjacency without such a reference, as well as internal, outbound, inferred, unresolved, conflicted, wrong-origin, dangling, or evidence-free references, never changes severity.
+4. **Apply per-CWE severity cap.** Read `severity-caps.yaml → severity_caps`. For the finding's primary CWE, if a cap entry exists, **clamp** `effective_severity` to at most `cap.max`. Cap exceptions: if `cap_exceptions[cwe]` lists a `requires_compound_with` CWE set that is fully satisfied by OTHER findings in the same category, use `elevated_cap` instead.
+5. **Apply critical-criteria gate (V2 rule, last).** Read `$CLAUDE_PLUGIN_ROOT/data/critical-criteria.yaml`. This is the **final gatekeeper** before the finding is allowed to hold `effective_severity: Critical`:
     - If `effective_severity == Critical` AND the finding's primary CWE is in `never_individual_critical` list AND the finding is NOT a keystone in any active chain with severity=Critical → **downgrade** to `max_severity_individual` (usually High). Emit flag `severity_over_inflation`.
     - If `effective_severity == Critical` AND primary CWE is in `always_critical_cwes` → check `required.breach_distance_max` and `required.impact_min`. If violated, downgrade to High.
     - If `effective_severity == Critical` AND primary CWE is in `conditional_critical` → check `condition` (specific context hints in scenario text). If the condition is not present, drop to `fallback_severity`.
     - If `effective_severity < Critical` AND primary CWE is in `always_critical_cwes` AND context conditions hold → **escalate** to Critical. Emit flag `severity_under_rated`.
-5. **Record a reconciliation flag** when the effective differs from raw:
+6. **Record a reconciliation flag** when the effective differs from raw. For an external-ingress elevation, include the eligible `tb-N` IDs in deterministic numeric order in the flag source:
    ```json
    {
      "flag_id": "TF-NNN",
      "type": "severity_reconciliation",
      "severity": "info",
-     "threat_ids": ["F-039"],
+     "threat_ids": ["T-039"],
      "message": "Raw risk High; capped via CWE-693 severity_cap at High despite CC-01 chain severity Critical (contributor role)",
      "suggested_action": "Confirm the defense-in-depth framing is appropriate — see severity-caps.yaml rationale."
    }
    ```
 
-Write `effective_severity`, `compound_chain_ids`, and `chain_role` on the finding. Raw `risk` is preserved unchanged.
+Write `effective_severity`, breach distance and its reason, `compound_chain_ids`, `verified_chain_ids`, and `chain_role` on every finding, including findings outside the top-50 display view. Recompute these fields and reconciliation flags on every run so removed evidence, chains, or boundaries clear stale elevation state. Raw `risk` is preserved unchanged.
 
 **Invariants (QA-enforced by Check 3j and Check 7d):**
 - `effective_severity` ≥ `risk` (never downgrades the auditor's rating)

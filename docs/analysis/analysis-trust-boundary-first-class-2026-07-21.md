@@ -5,6 +5,17 @@
 > and tie findings to the specific boundary they violate." No code changed.
 > Written 2026-07-21.
 
+> **Erratum (2026-07-26):** The deterministic attack-path join and risk
+> modulation proposed below are not supported by the available evidence.
+> Component adjacency does not prove that an actor traverses a boundary, and a
+> documented control does not prove reachability or effectiveness. The
+> superseding implementation plan is
+> `plan-trust-boundaries-first-class-2026-07-22.md`: it uses stable normalized
+> crossing objects and optional evidence-backed finding references, with no
+> boundary-derived severity, likelihood, weakness, or mitigation-priority
+> change. Treat the path, weighting, generic-threat, and exposure-seed proposals
+> in this analysis as rejected historical options.
+
 ## Verdict
 
 Feasible, and cheaper than it looks — most infrastructure already exists. Trust
