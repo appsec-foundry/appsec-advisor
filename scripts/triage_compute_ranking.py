@@ -1223,7 +1223,7 @@ def _is_deterministic_ranking_owner(output_dir: Path) -> bool:
     The marker is ``ranking.computed_by`` in ``.triage-flags.json`` — written
     only by this script (see the ranking dicts in ``compute_ranking``). The
     LLM-driven Step 6 fallback writes its own ranking block without this
-    value, so the Stage 1c fold (``--if-deterministic-owner``) stays a no-op
+    value, so the Stage 1d fold (``--if-deterministic-owner``) stays a no-op
     there and never clobbers LLM-refined rankings.
     """
     flags_path = output_dir / ".triage-flags.json"
@@ -1247,7 +1247,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Run only when .triage-flags.json shows this script as the "
         "ranking owner (ranking.computed_by from a prior deterministic Step "
         "6 run); exit cleanly otherwise. Bypasses the env feature flag — "
-        "for skill-level re-runs (Stage 1c fold) where env vars don't reach "
+        "for skill-level re-runs (Stage 1d fold) where env vars don't reach "
         "the orchestrator Bash and the LLM-ranking fallback must not be "
         "clobbered.",
     )

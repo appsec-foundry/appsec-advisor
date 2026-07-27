@@ -286,6 +286,32 @@ properties:
           type: string
           enum: [client, application, data]
 
+  data_flows:
+    type: array
+    items:
+      type: object
+      additionalProperties: true
+      required: [id, from, to, label, protocol, data_classification]
+      properties:
+        id: {type: string, pattern: "^df-[0-9]{3,}$"}
+        from: {type: string, pattern: "^(?:external|[a-z][a-z0-9-]+)$"}
+        to: {type: string, pattern: "^(?:external|[a-z][a-z0-9-]+)$"}
+        label: {type: string, minLength: 1}
+        protocol: {type: string, minLength: 1}
+        data_classification: {type: string, minLength: 1}
+        direction:
+          type: string
+          enum: [unidirectional, bidirectional, request-response]
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [file]
+            properties:
+              file: {type: string, minLength: 1}
+              line: {type: integer, minimum: 1}
+
   tier_root_causes:
     # Per-tier architectural root causes (terse bullet items) consumed by the
     # `Security Posture at a Glance` Tier Drill-Down table. Optional — when

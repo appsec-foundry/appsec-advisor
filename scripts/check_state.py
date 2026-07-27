@@ -707,6 +707,51 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
     # is missing, resume offers nothing safe — force an honest fresh run.
     context_md = output_dir / ".threat-modeling-context.md"
     phase_ord = _phase_ordinal(phase)
+    if str(phase) in {"6", "7"}:
+        stage1a_required = (
+            ".components.json",
+            ".component-inventory-finalization.json",
+            ".data-flows.json",
+            ".trust-boundary-assessment-input.json",
+        )
+        missing_stage1a = [name for name in stage1a_required if not (output_dir / name).is_file()]
+        if missing_stage1a:
+            return (
+                3,
+                "Refusing to resume the trust-boundary handoff: checkpoint "
+                f"phase={phase} but Stage-1a artifacts are missing: {', '.join(missing_stage1a)}.",
+            )
+    if str(phase) == "7" and status == "completed":
+        stage1b_required = (
+            ".trust-boundary-candidates.json",
+            ".trust-boundaries.json",
+            ".trust-boundary-diagnostics.json",
+            ".trust-boundary-coverage.json",
+        )
+        missing_stage1b = [name for name in stage1b_required if not (output_dir / name).is_file()]
+        if missing_stage1b:
+            return (
+                3,
+                "Refusing to skip Stage 1b: phase=7 is completed but required "
+                f"artifacts are missing: {', '.join(missing_stage1b)}.",
+            )
+        try:
+            assessment = json.loads((output_dir / ".trust-boundary-assessment-input.json").read_text(encoding="utf-8"))
+            candidates = json.loads((output_dir / ".trust-boundary-candidates.json").read_text(encoding="utf-8"))
+            coverage = json.loads((output_dir / ".trust-boundary-coverage.json").read_text(encoding="utf-8"))
+            fingerprint_fields = ("component_inventory_fingerprint", "assessment_input_fingerprint")
+            if any(
+                candidates.get(field) != assessment.get(field) or coverage.get(field) != assessment.get(field)
+                for field in fingerprint_fields
+            ):
+                raise ValueError("fingerprint mismatch")
+            if coverage.get("status") != "pass":
+                raise ValueError("coverage status is not pass")
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            return (
+                3,
+                f"Refusing to skip Stage 1b: candidate/coverage artifacts are stale or malformed ({exc}).",
+            )
     # The analyst context cache is read only by the Stage-1 phases (context
     # resolver, actor discovery, STRIDE analysers + merger). Once Stage 1 is
     # fully finished — threat-model.yaml on disk — a resume re-enters at

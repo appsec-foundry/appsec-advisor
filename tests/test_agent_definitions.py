@@ -31,7 +31,7 @@ REQUIRED_MODEL = "sonnet"
 #     Stage 1/Stage 2 split where the renderer needs more budget to compose
 #     fragments and the orchestrator absorbs additional sub-agent dispatches.
 #   - Orchestrator 250→300: extra headroom for the added sub-agent dispatches
-#     (Phase 2.7 actor discovery + Stage-1c abuse-case fan-out coordination).
+#     (Phase 2.7 actor discovery + Stage-1d abuse-case fan-out coordination).
 EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst": 300,
     "appsec-context-resolver": 25,
@@ -48,6 +48,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
     "appsec-evidence-verifier": 60,  # Phase 10a evidence re-check (40→60 2026-07-20: N reads + 2*ceil(N/5) flushes; a 38-finding standard sample needs ~57 turns and produced zero verdicts at 40)
     "appsec-abuse-case-verifier": 36,  # Phase 10c: one agent per abuse-case candidate (24→28 2026-06-13: complex IDOR/middleware-ordering traces still hit 24 mid-investigation; 28→36 2026-07-24: AC-T-002/AC-T-003 again shipped empty-excerpt inconclusive step 2s, both transcripts ending on stop_reason=tool_use mid-grep at 33/28 tool uses)
+    "appsec-trust-boundary-analyst": 24,
     "appsec-fragment-fixer": 30,  # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE)
     "appsec-reviewer": 40,  # embeddable diff-scoped security reviewer (requirements or best-practices); skill/CLI/direct
     "appsec-eval-judge": 30,  # dev/test semantic-quality judge for the eval-threat-model skill (JUDGE/VERIFY modes)
@@ -69,6 +70,7 @@ INTERNAL_AGENTS = {
     "appsec-actor-discoverer",  # Phase 2.7 sub-agent — internal (body already carries the marker; set was missing it)
     "appsec-evidence-verifier",
     "appsec-abuse-case-verifier",
+    "appsec-trust-boundary-analyst",
     "appsec-fragment-fixer",
 }
 

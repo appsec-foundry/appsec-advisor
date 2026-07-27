@@ -1,4 +1,4 @@
-# Phase Group: Architecture & Analysis (Phases 3–8)
+# Phase Group: Architecture & Analysis (Phases 3–6 and 8)
 
 This file is read by the orchestrator at runtime to load phase instructions.
 
@@ -40,10 +40,10 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_E
 
 | Phase | Sidecar file | Schema | Reserve IDs first? | Detailed protocol at line |
 |---|---|---|---|---|
-| 3 — Architecture Modeling     | `.components.json`               | `schemas/fragments/components.schema.json`           | no  | ~776 (`### Phase 3 sidecar`) |
+| 3 — Architecture Modeling     | `.components.json`, `.data-flows.json` | `schemas/fragments/components.schema.json`, `schemas/fragments/data-flows.schema.json` | no | `### Phase 3 sidecar` |
 | 5 — Asset Identification      | `.assets.json`                   | `schemas/fragments/assets.schema.json`               | **yes** (`asset --count N`) | ~1096 (`### Phase 5 sidecar`) |
 | 6 — Attack Surface Mapping    | `.attack-surface-overrides.json` | `schemas/fragments/attack-surface-overrides.schema.json` | no  | ~1238 (`### Phase 6 sidecar`) |
-| 7 — Trust Boundary Analysis   | `.trust-boundaries.json`         | `schemas/fragments/trust-boundaries.schema.json`     | no  | ~1311 (`### Phase 7 sidecar`) |
+| 7 — Trust Boundary Analysis   | dedicated Stage-1b candidate + canonical artifacts | candidate, canonical, diagnostics, and coverage schemas | no | dedicated agent/runtime |
 | 8 — Security Controls Catalog | `.security-controls.json`        | `schemas/fragments/security-controls.schema.json`    | no  | ~1690 (`### Phase 8 sidecar`) |
 
 **Before emitting `PHASE_END` for any phase above, you MUST**:
@@ -60,6 +60,7 @@ The schemas are strict (`additionalProperties: false` on top-level). The LLM has
 | Sidecar | Top-level keys (exact names) | Required fields per item |
 |---|---|---|
 | `.components.json`               | `schema_version`, `components`                    | **every component MUST have `tier`** (enum: `client` / `application` / `data`) plus `id`, `name`, `description`, `paths`; SHOULD also carry `deployment_zones[]` + `handles_sensitive_data` (selection-criteria inputs — see Phase 3 sidecar) |
+| `.data-flows.json`                | `schema_version`, `component_inventory_fingerprint`, `data_flows` | every flow uses exact finalized component IDs or `external`, stable `df-NNN`, evidence, direction, and provenance |
 | `.assets.json`                   | `schema_version`, `assets`                        | `id` (A-NNN from `reserve_ids.py asset --count N`), `name`, `classification` (enum: `Public` / `Internal` / `Confidential` / `Restricted`), `description` |
 | `.attack-surface-overrides.json` | `schema_version`, **`curations`** (NOT `overrides`), `additions` | `curations.include_route_ids[]` (route_ids from `.route-inventory.json`); each `additions[]` entry needs `entry_point` + `protocol` |
 | `.trust-boundaries.json`         | `schema_version: 2`, `trust_boundaries`           | normalized by `prepare_trust_boundary_context.py`; stable `tb-N`, endpoints, kind, assumption, evidence, confidence, resolution status, and provenance |
@@ -67,11 +68,12 @@ The schemas are strict (`additionalProperties: false` on top-level). The LLM has
 
 **If you find yourself naming a top-level key that's not in the table above, you are about to fail validation.** Stop and re-read the schema. The aggregator does NOT silently rename keys — `overrides` ≠ `curations`, `categories` ≠ `domain`, `status` ≠ `effectiveness`.
 
-**For the combined single-pass execution of Phases 5–7** (see "Phases 5–7 combined" below), emit all three `PHASE_START` lines together at the start of the combined pass and all three `PHASE_END` lines together at the end. Do **not** collapse them into a single entry — timing analysis requires per-phase markers.
+Phases 5 and 6 may reuse one in-memory recon snapshot. Phase 7 is never part
+of that pass: it is a separate Stage-1b dispatch with its own lifecycle.
 
-**⚠ No look-ahead logging — contract violation.** Phases 3, 4, and 8 each get their own `PHASE_START`/`PHASE_END` pair, emitted **immediately before / after** the actual work for that phase. The 5–7 exception above is the **only** legal batching in this file. Pre-emitting `PHASE_START` for phases that have not yet started (e.g. dumping all of 3–8 as a "plan" before doing any work) is **forbidden**: it makes silent-death diagnosis impossible because the log shows phases that never ran. This was the failure mode of a historical LLM-stall run — the orchestrator emitted `PHASE_START` for phases 3, 4, 5, 6, 7, 8 in a single second, then hung in Phase 3 for 1h 44m. Without the burst, the diagnosis would have been trivially "died in Phase 3"; with it, we could not tell which phase actually stalled. **Rule:** if you are not about to run the work for phase N right now, do not emit `PHASE_START Phase N/11`.
+**⚠ No look-ahead logging — contract violation.** Phases 3, 4, 5, 6, and 8 each get their own `PHASE_START`/`PHASE_END` pair, emitted **immediately before / after** the actual work for that phase. Phase 7 is logged only by the dedicated Stage-1b runtime. Pre-emitting `PHASE_START` for phases that have not yet started (e.g. dumping all of 3–8 as a "plan" before doing any work) is **forbidden**: it makes silent-death diagnosis impossible because the log shows phases that never ran. This was the failure mode of a historical LLM-stall run — the orchestrator emitted `PHASE_START` for phases 3, 4, 5, 6, 7, 8 in a single second, then hung in Phase 3 for 1h 44m. Without the burst, the diagnosis would have been trivially "died in Phase 3"; with it, we could not tell which phase actually stalled. **Rule:** if you are not about to run the work for phase N right now, do not emit `PHASE_START Phase N/11`.
 
-**Self-check with auto-repair before leaving this file:** After Phase 8 END, the orchestrator MUST run this validator (cheap, never skipped). It detects missing `PHASE_START`/`PHASE_END` markers in the range 3–8 and auto-repairs them by appending synthetic entries using the earliest and latest phase-group timestamps — preventing the historically observed failure where Phases 3, 4, 5, 6, 7 emit only `PHASE_START` (never `PHASE_END`), leaving the skill unable to compute per-phase durations in the Run Statistics appendix. The validator **also** flags look-ahead bursts (>3 distinct PHASE_START lines within the same second is a contract violation — only Phases 5+6+7 are allowed to share a timestamp).
+**Self-check with auto-repair before leaving this file:** After Phase 8 END, the orchestrator MUST run this validator (cheap, never skipped). It detects missing `PHASE_START`/`PHASE_END` markers in the range 3–8 and auto-repairs them by appending synthetic entries using the earliest and latest phase-group timestamps — preventing the historically observed failure where Phases 3, 4, 5, 6, 7 emit only `PHASE_START` (never `PHASE_END`), leaving the skill unable to compute per-phase durations in the Run Statistics appendix. The validator **also** flags look-ahead bursts (>3 distinct `PHASE_START` lines within the same second is a contract violation).
 
 ```bash
 PHASE_GROUP_START=$(grep -oE '^[0-9T:Z-]+' "$OUTPUT_DIR/.agent-run.log" | sort -u | head -1)
@@ -878,7 +880,9 @@ The renderer (M3.3 / D1 — `pregenerate_fragments.py:_data_flow_edges`) reads t
    }
    JSON
    ```
-   The shape mirrors the in-memory `components[]` exactly — `responsibilities[]`, `data_flows[]`, and `threat_ids[]` stay in working memory (they belong to other yaml fields). Only the fields the aggregator emits into `threat-model.yaml[components[]]` go into the sidecar.
+   The shape mirrors the in-memory `components[]` exactly.
+   `responsibilities[]` and `threat_ids[]` stay in working memory;
+   `data_flows[]` must be persisted in its own sidecar below.
 
    **`deployment_zones` + `handles_sensitive_data` (selection-criteria inputs).** These two fields let the downstream STRIDE-component selection be *derived from criteria* instead of a hard-coded count — populate them for every component:
    - `deployment_zones[]` — where the component sits. **MUST use canonical access-zone tokens only** from `data/actors/default-library.yaml` (`internet`, `dmz`, `client-device`, `mobile-device`, `internal-network`, `peer-service`, `prod-env`, `prod-write-db`, `ci-cd-runtime`, `ci-cd-secrets`, `build-pipeline`, `deployment-pipeline`) — the selector matches them literally, so an invented label silently disables the exposure/ci-cd signal. Tag an internet-facing web/API tier `internet`; **do NOT** invent `*-zone` labels (`application-zone`, `data-zone`, `build-zone`) — `tier` is a separate field, never a zone. **Source:** map the recon `component_hints[].deployment_zones` in `.recon-signals.json` onto your finalized component set — the recon IDs may not match your component IDs (e.g. recon `auth-service` → your `data-layer`), so map by role/paths, not by ID string. When a component has no recon hint, assign zones from your own trust-boundary analysis (Phase 3.x). Leave `[]` only when genuinely undeterminable.
@@ -890,6 +894,35 @@ The renderer (M3.3 / D1 — `pregenerate_fragments.py:_data_flow_edges`) reads t
        --type components "$OUTPUT_DIR/.components.json"
    ```
    On failure: log WARN to `.agent-run.log`, continue (aggregator falls back to prior yaml). Non-blocking during PoC rollout.
+
+4. **Finalize component identity now:**
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/finalize_component_inventory.py" \
+     --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR"
+   ```
+
+   Re-read `.components.json` and
+   `.component-inventory-finalization.json`. Component IDs and
+   endpoint-relevant fields are immutable after this command.
+
+5. **Write `$OUTPUT_DIR/.data-flows.json` before PHASE_END.** Copy the
+   `component_inventory_fingerprint` verbatim from the finalization receipt.
+   Each flow requires stable `df-NNN`, exact finalized `from`/`to` component
+   IDs (or `external`), `label`, `protocol`, `data_classification`,
+   `direction`, bounded repository-relative `evidence[]`, optional
+   `route_refs[]`/`interface_refs[]`, and `provenance` in
+   `{recon, architecture, route-extraction, repo-declared}`.
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+     data-flows "$OUTPUT_DIR/.data-flows.json"
+   ```
+
+   Duplicate flow IDs, unsafe evidence paths, unknown endpoints, or a stale
+   component fingerprint are blocking at the Stage-1a handoff. Incremental
+   runs preserve `df-NNN` when normalized endpoint/protocol/label identity is
+   unchanged.
 
 **Rules:** single writer (Phase 3 only), append-only within run, sidecar lives alongside the in-memory `components[]` — both must agree on the canonical ID set. **Author the COMPLETE inventory** — every deployable unit you identified, depth-independent. Do **not** pre-prune by `--assessment-depth`: which components get a STRIDE pass is decided deterministically downstream by `select_stride_components()` from the `deployment_zones[]` + `handles_sensitive_data` criteria (see `phase-group-threats.md → Component Selection`). Pre-pruning here re-introduces the hard-coded count the deterministic selector exists to remove, and creates whole-component blind spots when your guess differs from the criteria.
 
@@ -1053,23 +1086,23 @@ After Phase 10 annotation this becomes:
 - Do not hand-write `%% anno-seq-start` / `%% anno-seq-end` fences — they are annotator-owned and will be overwritten on re-run.
 - A diagram whose flow touches components that end up with zero matching threats still passes annotation — it simply receives no Note injection (the `anno-seq-*` fence is empty and the attack branch is untouched).
 
-## Phases 5–7: Combined single-pass execution (mandatory)
+## Phases 5–6: Combined single-pass execution
 
-**⚠ Token-saving rule: Phases 5, 6, and 7 MUST run as a single combined pass, not three separate phases.** All three phases read the same recon baseline (`$OUTPUT_DIR/.recon-summary.md` Sections 5, 7, 9, 10) and produce sections that reference each other. Running them serially triples the recon re-read cost without adding information.
+Phases 5 and 6 may reuse one in-memory recon snapshot. Phase 7 is excluded:
+the trust-boundary assessment is a fresh Stage-1b agent dispatch.
 
 **Combined execution protocol:**
 
-1. **Read `.recon-summary.md` once** at the start of Phase 5 and keep the parsed content in working memory for Phases 5, 6, and 7.
+1. **Read `.recon-summary.md` once** at the start of Phase 5 and keep the parsed content in working memory for Phases 5 and 6.
 2. **Log each phase's `PHASE_START` immediately before its work and `PHASE_END` immediately after — separately, never batched.** This is a Sprint 3B (M3.5) hard requirement. The previous "log all three in one Bash call" guidance produced four PHASE_STARTs in a single second (the 2026-04-27 PHASE_BURST signal), making silent-death diagnosis impossible — when a phase hung, the log could not say *which* phase. Each `PHASE_END` must include a real elapsed reading from `.phase-epoch` (or measured between the surrounding `date +%s` calls), not a constant. Phase 4 (Attack Walkthroughs) follows the same rule even though it is not part of the 5-7 combined pass.
-3. **Iterate the recon data once**, emitting rows into three in-memory tables simultaneously:
+3. **Iterate the recon data once**, emitting rows into two in-memory tables:
    - Phase 5 assets (Data/Code/Infra/Availability) derived from recon Section 10
    - Phase 6 entry points (split by auth requirement) derived from recon Section 7.11 + 7.1 + Section 9
-   - Phase 7 trust boundaries derived from recon Section 5 (deployment) + Section 9 (components) + browser↔server when a frontend is present
-4. **Issue at most one combined route grep** (see Phase 6 — single combined grep) if recon Section 7.11 is insufficient. This grep covers Phase 6 entirely; do not issue additional greps during Phase 5 or Phase 7.
-5. **Emit the three sections in the final report in their canonical order** (Section 4 Assets, Section 5 Attack Surface; trust boundaries are deferred to §6.11 Infrastructure) — the combined execution only changes *how* they are computed, not *how* they are rendered.
+4. **Issue at most one combined route grep** if recon Section 7.11 is insufficient.
+5. Emit Assets and Attack Surface in canonical order. Stage 1b owns boundary candidates.
 
 **Rules:**
-- Never re-read `.recon-summary.md` between Phases 5, 6, and 7 — one read at the top, reused throughout
+- Never re-read `.recon-summary.md` between Phases 5 and 6.
 - Do not dispatch sub-agents during the combined pass
 - Progress substep counters continue to show `[k/2]`, `[k/3]`, `[k/N]` per phase in the log so users still see per-phase progress
 - If the orchestrator runs Phase 5 in isolation (e.g. incremental mode where only one phase is being refreshed), the combined-pass rule does not apply — read recon data once for that single phase
@@ -1085,10 +1118,6 @@ After Phase 10 annotation this becomes:
   # ... do Phase 6 work ...
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END    [Phase 6/11] Attack Surface Mapping — <n> entry points" >> "$OUTPUT_DIR/.agent-run.log"
 
-  # Phase 7
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START  [Phase 7/11] Trust Boundary Analysis..." >> "$OUTPUT_DIR/.agent-run.log"
-  # ... do Phase 7 work ...
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END    [Phase 7/11] Trust Boundary Analysis — <n> boundaries" >> "$OUTPUT_DIR/.agent-run.log"
   ```
   The `qa_checks invariants` PHASE_BURST detector treats >3 distinct `PHASE_START` lines within the same UTC second as a contract violation; the cadence above guarantees ≥1 second between phase starts because the in-memory work between the two `date` calls always takes longer than that.
 
@@ -1096,7 +1125,8 @@ After Phase 10 annotation this becomes:
 
 ## Phase 5: Asset Identification
 
-**⚠ Single-read constraint:** Phases 5, 6, and 7 execute as **one combined pass** — see the "Phases 5–7: Combined single-pass execution" protocol immediately above. Read `.recon-summary.md` once at the start of Phase 5 and hold the parsed content in working memory for Phases 6 and 7. Every instruction in the three phase bodies that says "Read Section X of .recon-summary.md" refers to this in-memory snapshot.
+**Single-read constraint:** Phases 5 and 6 reuse one recon snapshot. Phase 7
+does not run in this context.
 
 **⚠ Token-saving rule: Enrich the pre-populated list from recon — do NOT re-discover assets from source files.**
 
@@ -1167,7 +1197,7 @@ If your project uses different classification labels, adapt the legend wording b
 3. **Validate the sidecar** before emitting PHASE_END:
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
-       --type assets "$OUTPUT_DIR/.assets.json"
+       assets "$OUTPUT_DIR/.assets.json"
    ```
    On validation failure: log a WARN to `.agent-run.log` and continue (the aggregator falls back to prior `threat-model.yaml`). Do NOT block PHASE_END — sidecar persistence is best-effort during the PoC rollout.
 
@@ -1186,7 +1216,7 @@ If your project uses different classification labels, adapt the legend wording b
 
 ## Phase 6: Attack Surface Mapping
 
-**⚠ Single-read constraint:** Continue using the `.recon-summary.md` snapshot loaded at the start of Phase 5 — do not re-read the file. See "Phases 5–7: Combined single-pass execution" above.
+**Single-read constraint:** Continue using the `.recon-summary.md` snapshot loaded at the start of Phase 5.
 
 Enumerate all entry points. Use the route data already captured by recon Section 7.11 (exposed routes) and Section 7.1 (auth patterns) as the baseline — do not re-grep what recon has already found.
 
@@ -1318,11 +1348,46 @@ attack_surface:
 3. **Validate:**
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
-       --type attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
+       attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
    ```
    On failure: log WARN, continue.
 
+### Stage-1a completion gate (after Phase 6)
+
+When `STAGE1_PHASE_LIMIT=6`, run:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_trust_boundary_assessment_input.py" \
+  --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" \
+  --depth "$ASSESSMENT_DEPTH"
+```
+
+Require `.component-inventory-finalization.json`, `.data-flows.json`, and
+`.trust-boundary-assessment-input.json`, then write exactly:
+
+```text
+phase=6 status=completed need_boundary_assessment=true
+```
+
+Exit without starting Phase 7.
+
 ## Phase 7: Trust Boundary Analysis
+
+**Dedicated Stage-1b only.** The threat analyst must not execute the legacy
+Phase-7 authoring protocol below on normal full, rebuild, incremental, quick,
+serial, or parallel paths. It remains readable for one-release compatibility
+with old checkpoints only. New runs:
+
+1. stop Stage 1a after Phase 6;
+2. build `.trust-boundary-assessment-input.json` from finalized components and
+   persisted flows;
+3. dispatch `appsec-trust-boundary-analyst` in a fresh context;
+4. let it write only `.trust-boundary-candidates.json`; and
+5. run `prepare_trust_boundary_context.py promote` as the deterministic
+   canonical/coverage gate.
+
+Never write a provisional canonical catalog from Stage 1a. Stage 1c resumes at
+Phase 8 and consumes only the canonical Stage-1b output.
 
 **⚠ Single-read constraint:** Continue using the `.recon-summary.md` snapshot loaded at the start of Phase 5 — do not re-read the file. See "Phases 5–7: Combined single-pass execution" above. Phase 8 will reset the snapshot; until then, this is the last of the three phases drawing from it.
 

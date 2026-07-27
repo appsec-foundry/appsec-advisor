@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Trust boundaries now have stable catalogue IDs, optional repository declarations, linked findings, and Markdown, YAML, query, and SARIF output.
+- Trust boundaries are now assessed in a dedicated stage after component identities and data flows are finalized, with complete crossing-signal coverage required before STRIDE starts.
 
 ### Changed
 

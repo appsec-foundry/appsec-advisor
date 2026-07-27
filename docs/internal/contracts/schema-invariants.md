@@ -156,9 +156,12 @@ The field ownership matrix is:
 
 | Contract surface | Producer / owner | Validation | Semantic consumers |
 |---|---|---|---|
-| Provisional Phase-7 rows | `agents/phases/phase-group-architecture.md` | Normalizer input checks | `prepare_trust_boundary_context.py normalize` only |
+| Final component identity | `finalize_component_inventory.py` after Phase 3 | components schema plus finalization receipt/fingerprint | data-flow producer, Stage-1b input builder, manifest drift gate |
+| Persisted topology | Phase-3 `.data-flows.json` producer | data-flow schema plus dynamic endpoint/fingerprint checks | Stage-1b input builder and YAML builder |
+| Deterministic crossing signals | `build_trust_boundary_assessment_input.py` | assessment-input schema and bounded source validation | dedicated boundary agent only |
+| Untrusted boundary candidates | `appsec-trust-boundary-analyst` | candidate schema plus disposition/foreign-key gate | `prepare_trust_boundary_context.py promote` only |
 | Repository declarations | Repository author | `schemas/trust-boundaries-repo.schema.yaml` plus whole-file rejection | Normalizer merge only |
-| Canonical sidecar, stable IDs, and resolution diagnostics | `prepare_trust_boundary_context.py normalize`, `reserve_ids.py`, `baseline_state.py` | `schemas/fragments/trust-boundaries.schema.json`, `schemas/trust-boundary-diagnostics.schema.json` | YAML builder, context selector, cross-repo slicer, run-issue aggregator |
+| Canonical sidecar, stable IDs, resolution diagnostics, and signal coverage | `prepare_trust_boundary_context.py promote/normalize`, `reserve_ids.py`, `baseline_state.py` | canonical, diagnostics, and coverage schemas | YAML builder, context selector, cross-repo slicer, run-issue aggregator |
 | Component candidate slices | `prepare_trust_boundary_context.py contexts` after final component selection | Structural cap and canonical-source checks | STRIDE analyzer through a Group-C path |
 | Finding references | STRIDE analyzer; merge/builder/reclassifier preserve or remove | STRIDE/merged/output schemas plus the shared boundary-reference validator and `validate_intermediate.py` post-checks | Composer, deterministic triage, query, SARIF |
 | Canonical YAML catalogue | `build_threat_model_yaml.py` | `schemas/threat-model.output.schema.yaml` | Composer, Figure 1, query, SARIF, rerender |

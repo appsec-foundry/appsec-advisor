@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/trust-boundary-coverage.schema.json",
+  "title": "Deterministic trust-boundary signal coverage",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "component_inventory_fingerprint",
+    "assessment_input_fingerprint",
+    "status",
+    "signals",
+    "issues"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "component_inventory_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "assessment_input_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "status": {"const": "pass"},
+    "signals": {
+      "type": "array",
+      "maxItems": 800,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["signal_id", "disposition", "candidate_keys", "boundary_ids", "evidence", "rationale"],
+        "properties": {
+          "signal_id": {"type": "string", "pattern": "^signal-[a-z0-9-]+$"},
+          "disposition": {"type": "string", "enum": ["boundary", "same-trust", "not-applicable", "unresolved"]},
+          "candidate_keys": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^candidate-[a-z0-9-]+$"}},
+          "boundary_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^tb-[0-9]+$"}},
+          "evidence": {"type": "array", "maxItems": 12, "items": {"type": "object"}},
+          "rationale": {"type": "string", "minLength": 1, "maxLength": 300}
+        }
+      }
+    },
+    "issues": {
+      "type": "array",
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "signal_id", "message"],
+        "properties": {
+          "code": {"type": "string", "enum": ["unresolved-signal"]},
+          "signal_id": {"type": "string", "pattern": "^signal-[a-z0-9-]+$"},
+          "message": {"type": "string", "minLength": 1, "maxLength": 300}
+        }
+      }
+    }
+  }
+}

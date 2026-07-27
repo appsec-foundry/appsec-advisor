@@ -9,7 +9,9 @@ Commands:
 
     orchestration_controller.py route -- <create-threat-model arguments>
     orchestration_controller.py prepare [--force] -- <arguments>
-    orchestration_controller.py post-stage1 --output-dir <path>
+    orchestration_controller.py post-stage1a --output-dir <path>
+    orchestration_controller.py finalize-stage1b --output-dir <path>
+    orchestration_controller.py post-stage1c --output-dir <path>
     orchestration_controller.py prepare-abuse --output-dir <path>
     orchestration_controller.py finalize-abuse --output-dir <path>
     orchestration_controller.py prepare-stage2 --output-dir <path>
@@ -47,7 +49,8 @@ ACTION_SCHEMA = PLUGIN_ROOT / "schemas" / "orchestration-action.schema.json"
 THIN_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
 THIN_RERENDER_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
 THIN_STAGE1_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1.md"
-THIN_STAGE1C_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1c.md"
+THIN_STAGE1B_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1b.md"
+THIN_STAGE1D_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1d.md"
 THIN_STAGE2_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage2.md"
 LEGACY_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 
@@ -69,6 +72,10 @@ _FULL_INTERMEDIATE_NAMES = {
     ".run-issues-fixes.json",
     ".preserved-provenance.json",
     ".dispatch-waves.json",
+    ".budget-critical",
+    ".budget-warning",
+    ".trust-boundary-assessment-input.json",
+    ".trust-boundary-candidates.json",
 }
 _FULL_INTERMEDIATE_GLOBS = (".stride-*.json", ".merge-*.json")
 
@@ -112,6 +119,15 @@ _REBUILD_NAMES = {
     ".triage-ranking.json",
     ".run-issues.json",
     ".run-issues-fixes.json",
+    ".budget-critical",
+    ".budget-warning",
+    ".component-inventory-finalization.json",
+    ".data-flows.json",
+    ".trust-boundary-assessment-input.json",
+    ".trust-boundary-candidates.json",
+    ".trust-boundary-coverage.json",
+    ".trust-boundary-diagnostics.json",
+    ".trust-boundaries.json",
 }
 _REBUILD_GLOBS = (
     "threat-model.figure*.svg",
@@ -1233,6 +1249,137 @@ def post_stage1(output_dir: Path) -> dict[str, Any]:
     }
 
 
+def post_stage1a(output_dir: Path) -> dict[str, Any]:
+    """Finalize architecture artifacts and open the Stage-1b dispatch gate."""
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+    required = (
+        ".recon-summary.md",
+        ".components.json",
+        ".component-inventory-finalization.json",
+        ".data-flows.json",
+        ".assets.json",
+        ".attack-surface-overrides.json",
+    )
+    missing = [name for name in required if not (output_dir / name).is_file()]
+    if missing:
+        raise ControllerError(f"Stage 1a did not produce required artifacts: {', '.join(missing)}")
+    repo_root = Path(str(cfg.get("repo_root") or output_dir))
+    _run_script(
+        "finalize_component_inventory.py",
+        ["--repo-root", str(repo_root), "--output-dir", str(output_dir), "--validate-only"],
+    )
+    for fragment_type, name in (
+        ("assets", ".assets.json"),
+        ("attack-surface-overrides", ".attack-surface-overrides.json"),
+    ):
+        _run_script(
+            "validate_fragment.py",
+            [fragment_type, str(output_dir / name)],
+        )
+    _run_script(
+        "build_trust_boundary_assessment_input.py",
+        [
+            "--repo-root",
+            str(repo_root),
+            "--output-dir",
+            str(output_dir),
+            "--depth",
+            str(cfg.get("assessment_depth") or "standard"),
+        ],
+    )
+    if (output_dir / ".budget-critical").is_file():
+        from _atomic_io import atomic_write_text
+
+        atomic_write_text(
+            output_dir / ".appsec-checkpoint",
+            "phase=7 status=aborted reason=budget-critical-before-boundary\n",
+        )
+        raise ControllerError(
+            "Stage 1b was not dispatched because the Stage-1a turn budget was exhausted; "
+            "the immutable assessment input was preserved for --resume"
+        )
+    checkpoint = {}
+    try:
+        checkpoint = dict(
+            part.split("=", 1)
+            for part in (output_dir / ".appsec-checkpoint").read_text(encoding="utf-8").split()
+            if "=" in part
+        )
+    except OSError:
+        pass
+    if not (
+        checkpoint.get("phase") == "6"
+        and checkpoint.get("status") == "completed"
+        and checkpoint.get("need_boundary_assessment") == "true"
+    ):
+        raise ControllerError(
+            "Stage 1a completion checkpoint is missing or invalid; expected "
+            "phase=6 status=completed need_boundary_assessment=true"
+        )
+    _append_event(output_dir, "POST_STAGE1A_GATES_PASSED", "architecture handoff and boundary input verified")
+    return {
+        "schema_version": 1,
+        "action": "dispatch_agent",
+        "mode": cfg["mode"],
+        "stage": "stage1b",
+        "instruction_file": str(THIN_STAGE1B_RUNTIME),
+        "config_path": str(config_path),
+        "dispatch_values": _dispatch_values(cfg),
+        "receipts": ["Stage-1a component, topology, and assessment-input gates passed"],
+    }
+
+
+def finalize_stage1b(output_dir: Path) -> dict[str, Any]:
+    """Promote candidate output and require complete deterministic coverage."""
+    from _atomic_io import atomic_write_text
+
+    output_dir, cfg = _load_run_config(output_dir)
+    config_path = output_dir / ".skill-config.json"
+    candidates = output_dir / ".trust-boundary-candidates.json"
+    assessment = output_dir / ".trust-boundary-assessment-input.json"
+    if not candidates.is_file():
+        raise ControllerError("Stage 1b agent did not produce .trust-boundary-candidates.json")
+    args = [
+        "promote",
+        "--repo-root",
+        str(cfg.get("repo_root") or output_dir),
+        "--output-dir",
+        str(output_dir),
+        "--candidates",
+        str(candidates),
+        "--assessment-input",
+        str(assessment),
+    ]
+    prior_model = output_dir / "threat-model.yaml"
+    if prior_model.is_file():
+        args.extend(["--prior-model", str(prior_model)])
+    _run_script("prepare_trust_boundary_context.py", args)
+    for name in (".trust-boundaries.json", ".trust-boundary-diagnostics.json", ".trust-boundary-coverage.json"):
+        if not (output_dir / name).is_file():
+            raise ControllerError(f"Stage 1b gate did not produce required artifact {name}")
+    atomic_write_text(
+        output_dir / ".appsec-checkpoint",
+        "phase=7 status=completed need_threat_analysis=true\n",
+    )
+    _append_event(output_dir, "POST_STAGE1B_GATES_PASSED", "candidate promotion and signal coverage verified")
+    return {
+        "schema_version": 1,
+        "action": "run_gate",
+        "mode": cfg["mode"],
+        "stage": "stage1b",
+        "config_path": str(config_path),
+        "receipts": ["Stage-1b candidates promoted; mandatory signal coverage passed"],
+    }
+
+
+def post_stage1c(output_dir: Path) -> dict[str, Any]:
+    """Compatibility wrapper for the renamed controls/STRIDE/triage stage."""
+    action = post_stage1(output_dir)
+    action["stage"] = "stage1c"
+    return action
+
+
 _ABUSE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
 
@@ -1243,7 +1390,7 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
     common = {
         "schema_version": 1,
         "mode": cfg["mode"],
-        "stage": "stage1c",
+        "stage": "stage1d",
         "config_path": str(config_path),
         "dispatch_values": _dispatch_values(cfg),
     }
@@ -1279,7 +1426,7 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
     return {
         **common,
         "action": "dispatch_parallel",
-        "instruction_file": str(THIN_STAGE1C_RUNTIME),
+        "instruction_file": str(THIN_STAGE1D_RUNTIME),
         "candidates": candidates,
         "candidate_titles": _abuse_candidate_titles(output_dir, candidates),
         "receipts": receipts,
@@ -1362,7 +1509,7 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
         "schema_version": 1,
         "action": "run_gate",
         "mode": cfg["mode"],
-        "stage": "stage1c",
+        "stage": "stage1d",
         "config_path": str(config_path),
         "receipts": ["Abuse-case artifacts finalized", *receipts],
     }
@@ -1845,6 +1992,12 @@ def main(argv: list[str] | None = None) -> int:
     prepare_parser.add_argument("arguments", nargs=argparse.REMAINDER)
     post_stage1_parser = sub.add_parser("post-stage1")
     post_stage1_parser.add_argument("--output-dir", required=True)
+    post_stage1a_parser = sub.add_parser("post-stage1a")
+    post_stage1a_parser.add_argument("--output-dir", required=True)
+    finalize_stage1b_parser = sub.add_parser("finalize-stage1b")
+    finalize_stage1b_parser.add_argument("--output-dir", required=True)
+    post_stage1c_parser = sub.add_parser("post-stage1c")
+    post_stage1c_parser.add_argument("--output-dir", required=True)
     prepare_abuse_parser = sub.add_parser("prepare-abuse")
     prepare_abuse_parser.add_argument("--output-dir", required=True)
     finalize_abuse_parser = sub.add_parser("finalize-abuse")
@@ -1865,6 +2018,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "post-stage1":
             action = post_stage1(Path(args.output_dir))
+        elif args.command == "post-stage1a":
+            action = post_stage1a(Path(args.output_dir))
+        elif args.command == "finalize-stage1b":
+            action = finalize_stage1b(Path(args.output_dir))
+        elif args.command == "post-stage1c":
+            action = post_stage1c(Path(args.output_dir))
         elif args.command == "prepare-abuse":
             action = prepare_abuse(Path(args.output_dir))
         elif args.command == "finalize-abuse":

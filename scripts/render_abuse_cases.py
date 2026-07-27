@@ -567,7 +567,7 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
 
     # Self-heal: the renderer consumes a pre-computed `chain_verdict`, but the
     # deterministic fold (`match_abuse_cases.finalize_verdict`) runs in a
-    # separate pipeline step that can be skipped/interrupted (e.g. a Stage-1c
+    # separate pipeline step that can be skipped/interrupted (e.g. a Stage-1d
     # orchestration gap leaves `.abuse-case-verdicts.json` with step_verdicts
     # but no chain_verdict). Without a fallback every chain silently renders
     # "Inconclusive" even when its steps are all confirmed. When the key is
@@ -718,7 +718,7 @@ def main(argv: list[str] | None = None) -> int:
         # the verdicts resolved to nothing renderable (e.g. all chains
         # not_applicable, or AC-IDs unknown to the current library). Deleting
         # the fragment in that case would silently replace a §9 produced by
-        # Stage 1c with an empty placeholder — the bug this guard fixes.
+        # Stage 1d with an empty placeholder — the bug this guard fixes.
         verdicts_on_disk = (output_dir / ".abuse-case-verdicts.json").exists()
         matches_on_disk = (output_dir / ".abuse-case-matches.json").exists()
         if verdicts_on_disk or matches_on_disk:

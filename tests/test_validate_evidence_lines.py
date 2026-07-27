@@ -224,7 +224,7 @@ def test_main_updates_yaml_and_prints_stats(tmp_path: Path, capsys) -> None:
 # ---------------------------------------------------------------------------
 # Floor durability under rebuild.
 #
-# Stage 1c regenerates threat-model.yaml from .threats-merged.json whenever
+# Stage 1d regenerates threat-model.yaml from .threats-merged.json whenever
 # abuse-case verification ran (standard/thorough depth). A floor that wrote
 # only to the YAML was discarded there — observed as 0 verified / 56 unchecked
 # on standard-depth runs while quick, which skips the rebuild, kept 33

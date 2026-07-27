@@ -26,7 +26,7 @@
     },
     "stage": {
       "type": "string",
-      "enum": ["stage1", "stage1c", "stage2", "stage3", "stage4", "complete"]
+      "enum": ["stage1", "stage1a", "stage1b", "stage1c", "stage1d", "stage2", "stage3", "stage4", "complete"]
     },
     "runtime": {
       "enum": ["thin-full", "thin-rerender", "legacy"]

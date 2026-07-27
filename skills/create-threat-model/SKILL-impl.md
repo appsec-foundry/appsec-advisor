@@ -31,7 +31,7 @@ the condition stated *in* the section wins.
 
 | MODE / flag | Sections that apply (in order) | Skip |
 |---|---|---|
-| **full / standard / thorough** (default, incl. `rebuild`) | Prerequisites → Argument Parsing → Configuration Resolution → Plugin Version Gate → Configuration Summary → Stage 1 → Stage 1c (unless `skip_abuse_case_verification`/`DRY_RUN`) → Stage 2 → Stage 3 (unless `SKIP_QA`/`DRY_RUN`/`PR_MODE`) → Stage 4 (thorough or opt-in) → Completion Summary | Re-Render Mode, all Incremental sections, Resume from Checkpoint, Dry-Run Mode |
+| **full / standard / thorough** (default, incl. `rebuild`) | Prerequisites → Argument Parsing → Configuration Resolution → Plugin Version Gate → Configuration Summary → Stages 1a–1c → Stage 1d (unless `skip_abuse_case_verification`/`DRY_RUN`) → Stage 2 → Stage 3 (unless `SKIP_QA`/`DRY_RUN`/`PR_MODE`) → Stage 4 (thorough or opt-in) → Completion Summary | Re-Render Mode, all Incremental sections, Resume from Checkpoint, Dry-Run Mode |
 | **incremental** (auto or `--incremental`) | as full, **plus** Incremental Pre-Check → Incremental Fast-Path (null-change abort) → Full-Scan Recommendation Prompt → Incremental Mode. Parallel-STRIDE is **never** used here. | Resume from Checkpoint, Dry-Run Mode |
 | **`--rerender`** | Configuration Resolution → **Re-Render Mode** (skips Stage 1, re-renders + re-QAs from existing fragments) → Stage 3 | Stage 1 / 1c / Stage-2 authoring |
 | **resume** (`--resume` / checkpoint present) | **Resume from Checkpoint** first, then continue at the interrupted stage | sections already completed before the checkpoint |
@@ -60,10 +60,11 @@ the condition stated *in* the section wins.
 >   - Any per-phase entry inside Stage 1 (phases stream inline as the
 >     foreground Agent runs)
 >
-> The only `TaskCreate` calls allowed are the eight rows defined in
-> `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1a - Threat
-> Analysis`, `Stage 1b - Triage`, `Stage 1c - Abuse Case Verification`
-> (when `DRY_RUN=false`), `Stage 2 - Report Rendering`, conditional
+> The only `TaskCreate` calls allowed are the rows defined in
+> `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1a - Discovery
+> & Architecture`, `Stage 1b - Trust Boundary Assessment`, `Stage 1c -
+> Controls, STRIDE & Triage`, `Stage 1d - Abuse Case Verification`
+> (when enabled), `Stage 2 - Report Rendering`, conditional
 > `Stage 3 - QA Review`, conditional `Stage 4 - Architect Review`,
 > `Final summary + cleanup`).
 > Subjects must match **verbatim** — later `TaskUpdate` calls match by
@@ -79,7 +80,7 @@ the condition stated *in* the section wins.
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
 ┌──────────────────────────────────▼──────────────────────────────────┐
-│  Stage 1 — Threat Analysis & Triage                                 │
+│  Stages 1a–1c — Analysis pipeline                                   │
 │  Agent: appsec-threat-analyst (Sonnet, maxTurns=120)                │
 │  Env  : STAGE1_PHASE_LIMIT=8 (serial: 10b)                          │
 │  Out  : .recon-summary.md, .stride-*.json, .threats-merged.json,    │
@@ -776,8 +777,8 @@ Parse the user's arguments for the following flags:
 | `--no-qa` | `SKIP_QA=true` — skip the Stage 3 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1` and implied by `--assessment-depth quick`. | `false` at standard/thorough; `true` at quick |
 | `--qa-scan-repo` | `QA_SCAN_REPO=true` — compatibility flag for historical deep repo-scan behaviour. The expensive QA Pass 2c remains retired in the QA prompt; the flag is retained only so configuration summaries and older CI invocations stay stable. | `false` |
 | `--no-walkthroughs` | `SKIP_ATTACK_WALKTHROUGHS=true` — skip authoring `attack-walkthroughs.md` in Stage 2; the composer renders §3 with chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2. Also implied by `--assessment-depth quick`. | `false` at standard/thorough; `true` at quick |
-| `--abuse-cases` | `skip_abuse_case_verification=false` — force the Stage 1c abuse-case verifier fan-out ON at any depth (overrides the quick-depth default-off). Conflicts with `--no-abuse-cases`. | on at standard/thorough; off at quick |
-| `--no-abuse-cases` | `skip_abuse_case_verification=true` — force the Stage 1c abuse-case verifier fan-out OFF at any depth (skips matcher + verifiers + chain fold even at standard/thorough; §9 renders the not-applicable catalog and no finding is chain-elevated). Conflicts with `--abuse-cases`. | on at standard/thorough; off at quick |
+| `--abuse-cases` | `skip_abuse_case_verification=false` — force the Stage 1d abuse-case verifier fan-out ON at any depth (overrides the quick-depth default-off). Conflicts with `--no-abuse-cases`. | on at standard/thorough; off at quick |
+| `--no-abuse-cases` | `skip_abuse_case_verification=true` — force the Stage 1d abuse-case verifier fan-out OFF at any depth (skips matcher + verifiers + chain fold even at standard/thorough; §9 renders the not-applicable catalog and no finding is chain-elevated). Conflicts with `--abuse-cases`. | on at standard/thorough; off at quick |
 | `--abuse-case-file <path>` | Add a YAML case file below the target repository for this scan. May be repeated; paths outside the repository are rejected. | none |
 | `--only-abuse-case <ID>` | Restrict this scan's verification to active case IDs. May be repeated; an unknown ID fails the stage. | all active cases |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
@@ -1638,6 +1639,8 @@ Full run: discarding stale intermediate artifacts to avoid cross-contamination.
     .pre-render-repair-plan.json, .qa-repair-plan.json, .architect-repair-plan.json (stale repair signals)
     .stage-stats.jsonl, .run-issues.json, .run-issues-fixes.json (prior-run observability — must not bleed into this run's stats)
     .dispatch-waves.json (bounded STRIDE schedule and retry checkpoint)
+    .budget-critical, .budget-warning (prior-session turn-budget signals)
+    .trust-boundary-assessment-input.json, .trust-boundary-candidates.json (transient Stage-1b handoff)
   Preserved:
     threat-model.md, threat-model.yaml, threat-model.sarif.json (overwritten by orchestrator)
     .appsec-cache/ (baseline cache; used for incremental fingerprint comparison)
@@ -1659,7 +1662,10 @@ WIPED_COUNT=$(find . -maxdepth 1 \
      -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
      -o -name ".architect-repair-plan.json" \
      -o -name ".stage-stats.jsonl" -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \
-     -o -name ".preserved-provenance.json" -o -name ".dispatch-waves.json" \) \
+     -o -name ".preserved-provenance.json" -o -name ".dispatch-waves.json" \
+     -o -name ".budget-critical" -o -name ".budget-warning" \
+     -o -name ".trust-boundary-assessment-input.json" \
+     -o -name ".trust-boundary-candidates.json" \) \
   -print -delete 2>/dev/null | wc -l)
 # .stage-stats.jsonl + .run-issues.json + .run-issues-fixes.json are run-scoped
 # observability, NOT carried-forward state. Before 2026-06-13 the full-run wipe
@@ -2024,7 +2030,7 @@ Right after the handoff banner and **before** dispatching Stage 1, pre-create on
 
 **This is the ONLY place `TaskCreate` is allowed in the skill.** No earlier `TaskCreate` call is permitted — not for `Resolve config`, not for `Render Pre-flight summary`, not for `Pre-generate structural fragments` (intra-Stage-1 since M2.12), not for per-phase Stage 1 entries. If you have already created tasks earlier in the run (e.g. nudged by a Claude Code "task tools haven't been used recently" reminder during the preamble), **delete them via `TaskUpdate` before continuing** so the TaskList reflects exactly the eight spec'd rows below (`Preparing workspace`, `Stage 1a …`, `Stage 1b …`, `Stage 1c …`, `Stage 2 …`, conditional `Stage 3 …`, conditional `Stage 4 …`, `Final summary + cleanup`) — later `TaskUpdate` calls (stage lifecycle, completion-summary spinner clear at the end of the skill) match by subject and will silently no-op on drift, leaving the spinner hung.
 
-**Subjects must match verbatim.** The condition table below is the source of truth — do not paraphrase ("Stage 1 — dispatch appsec-threat-analyst" is wrong; the correct subject is "Stage 1a - Threat Analysis"). The exact strings are referenced by downstream `TaskUpdate` calls.
+**Subjects must match verbatim.** The condition table below is the source of truth.
 
 **Ordering invariant.** Task IDs are handed out monotonically by `TaskCreate`, so create the tasks in the exact order below.
 
@@ -2037,9 +2043,10 @@ TaskCreate subject="Preparing workspace"
 
 | Condition | Task subject | activeForm |
 |-----------|--------------|------------|
-| always | `Stage 1a - Threat Analysis` | `Running threat analysis` |
-| always | `Stage 1b - Triage` | `Running triage` |
-| `DRY_RUN=false` AND `skip_abuse_case_verification=false` | `Stage 1c - Abuse Case Verification` | `Verifying abuse-case chains` |
+| always | `Stage 1a - Discovery & Architecture` | `Running discovery and architecture` |
+| always | `Stage 1b - Trust Boundary Assessment` | `Assessing trust boundaries` |
+| always | `Stage 1c - Controls, STRIDE & Triage` | `Running controls, STRIDE, and triage` |
+| `DRY_RUN=false` AND `skip_abuse_case_verification=false` | `Stage 1d - Abuse Case Verification` | `Verifying abuse-case chains` |
 | always (M2.12) | `Stage 2 - Report Rendering` | `Rendering threat model report` |
 | `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 - QA Review` | `Running QA review` |
 | `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 - Architect Review` | `Running architect review` |
@@ -2048,10 +2055,11 @@ TaskCreate subject="Preparing workspace"
 
 **Final-row label is conditional on `KEEP_RUNTIME_FILES` (the `--keep-runtime-files` flag).** When runtime files are kept the post-pipeline transient-file cleanup is skipped (see "Post-summary cleanup" below), so the row must NOT advertise a cleanup step it will not perform — create it as `Final summary`. Otherwise create it as `Final summary + cleanup`. **Whichever subject you create, the closing `TaskUpdate` in "Post-summary cleanup" MUST use the SAME subject verbatim** (it matches by subject and silently no-ops on drift, which would hang the spinner). All other downstream references to this row resolve through that same `KEEP_RUNTIME_FILES` branch.
 
-**Stage 1 is exposed as three `Stage 1a/1b/1c` sub-rows (2026-06).** Threat analysis and triage formally belong to one work family, so they share the Stage-1 number with a letter suffix rather than consuming integer stages 2–4. The split is honest about what can show *live* progress:
-
-- `Stage 1a - Threat Analysis` and `Stage 1b - Triage` both run **inside the single `appsec-threat-analyst` dispatch** (`STAGE1_PHASE_LIMIT=10b`). The skill blocks on that one `Agent()` call and cannot drive a mid-dispatch transition, so both rows are marked `in_progress` together at dispatch and `completed` together on return — `1b` has no independent live phase (it is the analyst's Phase 10b). This is accepted: two static-but-truthful rows beat one opaque "Stage 1" row.
-- `Stage 1c - Abuse Case Verification` is the one Stage-1 sub-step with a **separate skill-level dispatch** (sonnet verifier fan-out), so it earns a real `in_progress → completed` lifecycle, driven by the §"Stage 1c — Abuse Case Verification" section. Created only when `DRY_RUN=false`. It is already recorded as `--stage 1 --variant abuse-verification` in `.stage-stats.jsonl`, so the `1c` label matches the existing stats model. Subjects must match verbatim and use hyphen-minus, not em-dash (same TUI-width precedent as the other rows).
+**Stage 1 has four truthful sub-stages.** Stage 1a and 1c are separate
+`appsec-threat-analyst` sessions. Stage 1b is the fresh
+`appsec-trust-boundary-analyst` session plus deterministic coverage gate.
+Stage 1d is the abuse verifier fan-out. Each has an independent
+`in_progress → completed` lifecycle and stats variant.
 
 **Stage 2 is now always pre-created (M2.12 — Sprint 3).** Previously only the recovery-dispatch path created it. The skill now splits Phase 11 at the Substep-3 / Substep-4 boundary: `STAGE1_PHASE_LIMIT=10b` keeps the deterministic Substeps 1–3 (counts, yaml write, baseline cache) in Stage 1, while the LLM compose work (Substeps 4–N) goes into a separate `appsec-threat-renderer` session so render-only work does not carry the full analyst prompt.
 
@@ -2109,6 +2117,11 @@ Behaviour:
 3. Ask the user whether to resume from the last completed phase or start fresh.
 4. If resuming, derive `RESUME_FROM_PHASE` **deterministically** from the checkpoint — never hand-compute `<N+1>`, because the phase field is a label, not an integer (`10b`, `9-merge` have no arithmetic successor, and `10b`+1 is undefined):
    - `status=completed` **and** `need_render=true` (Stage 1 finished, Stage 2 never ran — the `needs_stage2` state) → **`RESUME_FROM_PHASE=11`**. This skips Phases 1–10b and re-enters at Phase-11 compose only, reusing `.threats-merged.json` + `.triage-flags.json` verbatim — the same Stage-2-only scope as the STAGE11 recovery dispatch (see §"Stage 2 - Report Rendering (recovery dispatch)"). This is the value the `need_render` intercept's "dispatch Stage 2 only" recommendation resolves to.
+   - `phase=6 status=completed need_boundary_assessment=true` → dispatch only
+     Stage 1b against the immutable assessment-input path.
+   - `phase=7 status=started|aborted` → re-run Stage 1b; do not broaden reads.
+   - `phase=7 status=completed need_threat_analysis=true` → start Stage 1c with
+     **`RESUME_FROM_PHASE=8`** after the artifact/fingerprint resume guard.
    - `status=completed` at a **numeric** phase `N` → `RESUME_FROM_PHASE=N+1` (phase `N` is done; resume at the next phase).
    - `status=started` or `status=aborted` at phase `N` → `RESUME_FROM_PHASE=N` (phase `N` was interrupted mid-flight — re-run it, do **not** skip it).
 
@@ -2152,7 +2165,7 @@ fi
 
 The script prints a full diagnostic to stderr on abort (the unreachable URL, the `fail_mode`, and the remediation). On success `$OUTPUT_DIR/.requirements.yaml` is on disk and Step 2b of the context-resolver reuses it instead of fetching again.
 
-## Stage 1 — Threat Analysis & Triage
+## Stages 1a–1c — Analysis Pipeline
 
 > **⚠ ROUTING — read FIRST. `PARALLEL_STRIDE` was resolved during Configuration Resolution (default-ON for `MODE` ∈ {full, rebuild}; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).**
 > - **If `PARALLEL_STRIDE=true`** → you MUST take the **Parallel-STRIDE split** (Full-M1): dispatch Analyst-A with `STAGE1_PHASE_LIMIT=8`, then run `build_stride_dispatch_manifest.py` → `validate_dispatch_manifest.py` → dispatch one `appsec-stride-analyzer` per selected component in bounded parallel waves → dispatch Analyst-B with `RESUME_FROM_PHASE=9-merge`. The full procedure is **step 3 → "Parallel-STRIDE variant"** below. Do **NOT** do the default single `STAGE1_PHASE_LIMIT=10b` dispatch in this case.
@@ -2174,6 +2187,24 @@ Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Analysis 
 
 By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls stream directly to the chat so the user sees progress inline (Phase banners, sub-agent dispatches, file writes). No `Monitor` for the foreground Agent itself, no notification choreography — but a **background heartbeat watchdog** runs in parallel (see "Skill-layer heartbeat watchdog" above). **Exception:** when `LIVE_PHASE=true` (opt-in `APPSEC_LIVE_PHASE=1`) the dispatch is instead `run_in_background` + a live-phase Monitor so the current phase renders on the main console — see step 3 → "Live-phase variant" and §"Live-phase Monitor" above.
 
+**Dedicated trust-boundary migration (authoritative over the older monolithic
+wording below):** all analysis modes use these seams:
+
+1. Dispatch Stage 1a with `STAGE1_PHASE_LIMIT=6`, then run
+   `orchestration_controller.py post-stage1a`.
+2. Dispatch `appsec-trust-boundary-analyst` from the returned plugin-owned
+   `SKILL-thin-stage1b.md` instructions and run `finalize-stage1b`. Retry
+   malformed/missing candidate output once; never continue on a failed gate.
+3. Start Stage 1c with `RESUME_FROM_PHASE=8`. For parallel STRIDE its
+   Analyst-A also gets `STAGE1_PHASE_LIMIT=8`; serial/live gets
+   `STAGE1_PHASE_LIMIT=10b`. The manifest fallback from completed Phase 8
+   retains `RESUME_FROM_PHASE=9`.
+4. Run abuse verification as Stage 1d.
+
+Do not use the former Phase-1-through-8 Analyst-A dispatch. Any later paragraph
+that says Stage 1a/1b share one dispatch, that Phase 7 is inside Analyst-A, or
+that serial Stage 1 starts at Phase 1 is superseded by this block.
+
 0. **Snapshot prior artifact stats (all modes).** Capture `mtime + size` of `threat-model.yaml` and (if it exists) `threat-model.md` so the post-Stage-1 / post-Stage-2 gates can (a) detect a true no-op on incremental runs and (b) tell a freshly-rendered deliverable from a **stale prior** one. A full/rebuild re-run over an existing OUTPUT_DIR still has the previous `threat-model.md` on disk, so a bare `-f` existence check would misread a mid-Stage-1 death as success (DG-1). Capture in every mode; the cut-off detection below compares against this snapshot.
    ```bash
    YAML_PRE_STAGE1="missing"
@@ -2191,7 +2222,8 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
    export YAML_PRE_STAGE1 MD_PRE_STAGE1
    ```
 
-1. **Mark the Stage-1 tasks `in_progress`.** Call `TaskUpdate` on **both** the `Stage 1a - Threat Analysis` and `Stage 1b - Triage` tasks to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`). Both run inside this one analyst dispatch, so both go `in_progress` here and both go `completed` together on return (step 5) — `1b` has no separate live phase. Note: the TaskCreate subjects use hyphen-minus (`-`), not em-dash (`—`), because the TodoWrite TUI renderer mis-handles the em-dash's UTF-8 width (1 column / 3 bytes) on partial redraws — adjacent task labels visibly bleed into the em-dash position (e.g. `Final summary` + `Stage 3 — QA Review` rendered as `Final 3ummQA Review`). Same precedent: do not "fix" `-` → `—` in any of the eight stage subjects.
+1. Mark only `Stage 1a - Discovery & Architecture` in progress. Stage 1b and
+   Stage 1c transition independently at their real dispatch seams.
 
 2. **Start the heartbeat watchdog (M3.4).** Issue the heartbeat-loop Bash command with `run_in_background: true` and capture the returned `task_id` in `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`. See the "Skill-layer heartbeat watchdog" section above for the exact command. The watchdog runs in parallel with the foreground Stage 1 dispatch and ensures `.appsec-lock` heartbeats fire every 60 s regardless of orchestrator activity.
 
@@ -2205,7 +2237,11 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
    **— Parallel-STRIDE variant (`PARALLEL_STRIDE=true` — Full-M1, the DEFAULT for full/rebuild; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).** Instead of one monolithic analyst that inlines STRIDE serially, split Stage 1 so the skill (Level-0, can fan out) dispatches the per-component STRIDE analyzers in bounded waves:
 
-   3a. **Analyst-A** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on the `Stage 1a - Threat Analysis` task to set `activeForm: "Phases 1–8 — recon → architecture → controls"`. This is the only console signal the user gets while Analyst-A is blocking (its internal per-phase `PHASE_START` lines go to `.agent-run.log`, NOT the parent console — a blocking foreground sub-agent's interior never streams). The three coarse labels in 3a/3c/3d are inserted at the natural dispatch seams the orchestrator already controls — no background dispatch, no Monitor, no `LIVE_PHASE`. (Per-phase live ticking would require backgrounding Analyst-A/B; intentionally out of scope here.) Then: Agent call `description: "Threat Analysis and Triage"`, prompt sets **`STAGE1_PHASE_LIMIT=8`** (+ normal config). It runs Phases 1–8 + the Phase-9 dispatch-prep, writes `.stride-analyst-context.json` + `.dispatch-context/<id>/`, then stops (see `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT=8 — Analyst-A branch").
+   3a. **Stage-1c Analyst-A** — mark `Stage 1c - Controls, STRIDE & Triage`
+   active with `Phase 8 — controls and dispatch preparation`. Dispatch with
+   **`RESUME_FROM_PHASE=8` and `STAGE1_PHASE_LIMIT=8`**. It reuses the gated
+   canonical boundary catalog, runs Phase 8 plus Phase-9 dispatch prep, writes
+   `.stride-analyst-context.json` and stops before STRIDE.
 
    **Set `run_in_background: false` on this Agent call. Do NOT background it and do NOT end your turn after dispatching it** — step 3b below must run in the SAME turn, off the blocking return. This path has no Monitor and no completion-notification handler (those exist only in the `LIVE_PHASE` variant), so a backgrounded Analyst-A strands the run: the orchestrator's turn ends, nothing re-invokes it, and headless `claude -p` hard-kills the process at its background-task ceiling with no `threat-model.yaml` written — which also defeats the compose backstop in `run-headless.sh`, since that is gated on the yaml existing. Observed on fixture-e2e runs 29696937786 / 29700135164 / 29704358601 (killed at 767–775s); run 29697943011 on the same commit, fixture and depth passed in 46m39s, i.e. the failure mode is dispatch-compliance, not workload. Same rule and rationale as the recon fan-out one level down (`agents/appsec-threat-analyst.md` → "Use `run_in_background: false` for these recon agents").
 
@@ -2232,7 +2268,7 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
    3b-i. **Surface the component selection to the user (required console output).** The builder above prints a `STRIDE component selection (depth=…)` block — `ANALYZED (N)` each with its selection reason, then `SKIPPED (N)` each with its skip reason (e.g. `out-of-scope at depth=standard`). **Render that block to the user verbatim in your response** as a short banner, so the user sees exactly which components get a STRIDE pass and which are skipped and why, *before* the fan-out runs. (It is the console mirror of the report's §1 Scope + §11 Out of Scope, both built from the same `.stride-selection.json` → `meta.component_selection`.) If the builder's stdout is not in view, re-render it deterministically with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_stride_dispatch_manifest.py" --print-selection "$OUTPUT_DIR"`. Do not summarize it away or drop the skip reasons — the skipped list with reasons is the point.
 
-   3c. **Dispatch bounded STRIDE waves.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phase 9 — STRIDE (<N> components, waves of up to <STRIDE_CONCURRENCY>)"`.
+   3c. **Dispatch bounded STRIDE waves.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1c - Controls, STRIDE & Triage` to set `activeForm: "Phase 9 — STRIDE (<N> components, waves of up to <STRIDE_CONCURRENCY>)"`.
 
    Repeatedly run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" claim "$OUTPUT_DIR"` and parse the returned JSON. `status=complete` ends the loop. `status=claimed` contains only the unfinished components in the earliest incomplete wave; issue those Agent calls **together in one message** so the wave runs concurrently, then claim again. Attempt 1 is the normal dispatch and attempt 2 is the only retry. Attempts are persisted in `.dispatch-waves.json`, so resume cannot reset the budget. Exit 1 / `status=blocked` is fatal: stop before Analyst-B rather than publishing a report that silently omitted a selected component.
 
@@ -2246,14 +2282,17 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
    Never start Analyst-B unless this verification succeeds. `check_stride_dispatch.py` repeats the same coverage check in the post-Stage-1 gate and still independently verifies that real analyzer dispatches occurred.
 
-   3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis and Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
+   3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1c - Controls, STRIDE & Triage` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis and Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 
-   **— Serial variant (`PARALLEL_STRIDE=false` AND `LIVE_PHASE=false` — opt-out / incremental fallback).** Reached when `APPSEC_PARALLEL_STRIDE=0` is set, or in non-full/rebuild modes where the parallel split does not apply. Call the Agent tool with `description: "Threat Analysis and Triage"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b plus Phase 11 Substeps 1–3 (deterministic yaml write + baseline cache), without entering the LLM-heavy Substeps 4–N. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
+   **— Serial variant (`PARALLEL_STRIDE=false` AND `LIVE_PHASE=false`).**
+   Dispatch with **`RESUME_FROM_PHASE=8` and `STAGE1_PHASE_LIMIT=10b`** so it
+   runs Stage 1c only, then stops after deterministic YAML/baseline writing.
+   Do **not** set `run_in_background` — this is a blocking inline call.
 
    **— Live-phase variant (`LIVE_PHASE=true` — opt-in via `APPSEC_LIVE_PHASE=1`, experimental).** Same agent, same `description: "Threat Analysis and Triage"`, same `STAGE1_PHASE_LIMIT=10b` prompt and config as the Default variant — the ONLY differences are the dispatch mode and the control flow that follows. Set **`run_in_background: true`** on the Agent call so the Level-0 orchestrator is NOT blocked (a blocking foreground call would queue all async console output until it returns — verified by the 2026-06-04 spike). Capture the returned background agent id in `STAGE1_AGENT_ID`. Then drive the live-phase display:
 
    - **End your turn immediately after dispatching.** Do NOT proceed to step 4. Do NOT make any blocking tool call (Bash, foreground Agent) while waiting — any blocking call re-blocks the main loop and re-queues the Monitor events, defeating the whole mechanism. You will be re-invoked by notifications.
-   - **On each live-phase Monitor event** (task id `LIVE_PHASE_MONITOR_ID`): parse the phase/step text out of the event payload (e.g. `… PHASE_START   [Phase 3/11] ▶ Architecture Modeling…` → `Phase 3/11 — Architecture Modeling`; `STRIDE_PROGRESS stride_files=2 …` → `Phase 9/11 — STRIDE 2/5 components`) and call `TaskUpdate` on the `Stage 1a - Threat Analysis` task to set its `activeForm` to that text. This is what surfaces the live phase NAME on the console (the raw Monitor line shows only the static description). Do nothing else; end your turn again. If the payload has no parseable phase, skip the update.
+   - **On each live-phase Monitor event** (task id `LIVE_PHASE_MONITOR_ID`): parse the phase/step text out of the event payload (e.g. `… PHASE_START   [Phase 3/11] ▶ Architecture Modeling…` → `Phase 3/11 — Architecture Modeling`; `STRIDE_PROGRESS stride_files=2 …` → `Phase 9/11 — STRIDE 2/5 components`) and call `TaskUpdate` on the `Stage 1c - Controls, STRIDE & Triage` task to set its `activeForm` to that text. This is what surfaces the live phase NAME on the console (the raw Monitor line shows only the static description). Do nothing else; end your turn again. If the payload has no parseable phase, skip the update.
    - **On a `STRIDE_STALE` / `STRIDE_CANARY_TIMEOUT` / `STRIDE_COMPONENT_TIMEOUT` / `AGENT_ERROR` / `TOOL_ERROR` event:** surface it once as a short console line (these are the failure/terminal markers — do not stay silent), then keep waiting.
    - **On the `STAGE1_AGENT_ID` completion notification** (carries the `<usage>` block — same shape the Default variant reads inline): the dispatch is done. Proceed to **step 4** below and continue the normal flow (stop watchdog, stop Monitor, gates, stats). The `<usage>` from this completion notification is what step 6 records.
 
@@ -2272,7 +2311,8 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
    > **`TaskStop` is a deferred tool — load its schema first.** Unlike `TaskCreate`/`TaskUpdate`, `TaskStop` is frequently NOT in the pre-loaded tool set, so calling it directly fails with `InputValidationError: unexpected parameter`. Before the first `TaskStop` of the run, call `ToolSearch` with query `select:TaskStop` to load its schema. Its parameter is **`task_id`** (snake_case) — **not** `taskId`; passing `taskId` is the exact "Invalid tool parameters" failure observed on the 2026-06-01 juice-shop run. This applies to every `TaskStop` site below (Stage 2 / Stage 3 / Stage 4) — load the schema once, then reuse `task_id` each time.
 
-5. **On return, mark the Stage-1 tasks `completed`.** Call `TaskUpdate` to set **both** the `Stage 1a - Threat Analysis` and `Stage 1b - Triage` tasks to `completed`, then proceed to the **Phase-10b precondition gate** below.
+5. On return, mark `Stage 1c - Controls, STRIDE & Triage` completed, then
+   proceed to the Phase-10b precondition gate.
 
 6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table. (In the `LIVE_PHASE=true` variant the same `<usage>` block arrives in the background agent's **completion notification** — identical fields, identical extraction.)
 
@@ -2539,7 +2579,7 @@ This gate complements the SKILL-level fast-abort (exit codes 0/2 from `baseline_
 
 **This guarantees the `.triage-flags.json` v2 ranking block in every run.** Phase-10b Step 6 (`scripts/triage_compute_ranking.py`) computes `effective_severity`, `breach_distance`, `chain_role` and the multi-view `ranking` block deterministically — the LLM is not needed and, when it runs Step 6, "consistently mis-emits the ranking schema" (the file stays `version: 1` with no `ranking` block). The script is gated on `APPSEC_TRIAGE_DETERMINISTIC=1` **in its own environment**, but — exactly like the abuse-fold note below — env vars do not reach skill/agent Bash, so the analyst's Phase 10b silently takes the LLM fallback on every default run and the deterministic path is dead. Run it here with `--force` (the documented env-bypass) so the v2 ranking + yaml augmentation land independent of agent behaviour. This is the same "an LLM-prompt instruction is unreliable under turn pressure → the skill owns the deterministic step" decision as the STRIDE-dispatch / route-inventory / source-auth pre-passes.
 
-**Placement contract.** Runs **AFTER the Stage-2 no-op gate** (it rewrites the yaml + `.triage-flags.json`, which would break incremental no-op detection) and **AFTER `enforce_yaml_invariants`** (so breach-distance reads a cwe-canonical yaml). It is the bootstrap run that sets `ranking.computed_by`, which in turn **activates the Stage-1c abuse-fold below** (`--if-deterministic-owner`, previously a no-op because `computed_by` was never written). Idempotent and best-effort: a failure falls back to the pre-script `.triage-flags.json` rather than aborting after 25+ min of Stage 1.
+**Placement contract.** Runs **AFTER the Stage-2 no-op gate** (it rewrites the yaml + `.triage-flags.json`, which would break incremental no-op detection) and **AFTER `enforce_yaml_invariants`** (so breach-distance reads a cwe-canonical yaml). It is the bootstrap run that sets `ranking.computed_by`, which in turn **activates the Stage-1d abuse-fold below** (`--if-deterministic-owner`, previously a no-op because `computed_by` was never written). Idempotent and best-effort: a failure falls back to the pre-script `.triage-flags.json` rather than aborting after 25+ min of Stage 1.
 
 ```bash
 # Deterministic Phase-10b Step 6 — see "Deterministic Phase-10b ranking" above.
@@ -2632,17 +2672,17 @@ Behaviour contract:
 The YAML integrity gate that runs before this section will still pass after the emitter writes; the schema permits every field the emitters touch.
 
 ▶ **End of the initial-load portion.** Per `SKILL.md`, the initial read stops at
-the `LAZY-LOAD BOUNDARY` below. Stage 1c and every later stage remain unloaded.
+the `LAZY-LOAD BOUNDARY` below. Stage 1d and every later stage remain unloaded.
 Follow the bounded schedule in `SKILL.md`: after a completed Stage 1, load
-Stage 1c only when enabled; rerender and Stage-2-only recovery go directly to
+Stage 1d only when enabled; rerender and Stage-2-only recovery go directly to
 Stage 2. Load each later stage at its own boundary. **Do not read from this
 marker to EOF.**
 
 <!-- LAZY-LOAD BOUNDARY — use bounded stage-local reads after Stage 1 (see SKILL.md). -->
 
-## Stage 1c — Abuse Case Verification (visible skill-level stage)
+## Stage 1d — Abuse Case Verification (visible skill-level stage)
 
-**This is a first-class, user-visible stage** (formerly the invisible "Phase 10c"). It runs between Stage 1 and Stage 2, has its own `TaskList` row (`Stage 1c - Abuse Case Verification`), a handoff banner, a heartbeat watchdog, and a `.stage-stats.jsonl` record — so the verifier fan-out's cost, duration, and verdict reliability are visible in the completion summary and the §Run-Statistics breakdown (RC-2026-06: the 2026-06 juice-shop run lost 3/6 verifiers with no visibility because this work was unstaged).
+**This is a first-class, user-visible stage** (formerly the invisible "Phase 10c"). It runs between Stage 1 and Stage 2, has its own `TaskList` row (`Stage 1d - Abuse Case Verification`), a handoff banner, a heartbeat watchdog, and a `.stage-stats.jsonl` record — so the verifier fan-out's cost, duration, and verdict reliability are visible in the completion summary and the §Run-Statistics breakdown (RC-2026-06: the 2026-06 juice-shop run lost 3/6 verifiers with no visibility because this work was unstaged).
 
 **Why this lives at the skill level.** Abuse-case discovery → verifier fan-out → `.abuse-case-verdicts.json` is documented in `phase-group-threats.md` as running "after Phase 10b and before Phase 11". But Stage 1 is dispatched with `STAGE1_PHASE_LIMIT=10b`, whose analyst branch stops *after* Phase 10b plus the deterministic Phase-11 substeps 1–3 — it never reaches it. Running it here — after the YAML is final, before Stage 2 renders — closes the gap deterministically and keeps it out of Stage 1's turn budget.
 
@@ -2653,9 +2693,9 @@ Runs only when `DRY_RUN=false` **and** `skip_abuse_case_verification=false` (res
 ```bash
 SKIP_ABUSE=$(python3 -c "import json;print(str(json.load(open('$OUTPUT_DIR/.skill-config.json')).get('skip_abuse_case_verification',False)).lower())" 2>/dev/null || echo false)
 if [ "$DRY_RUN" = "true" ] || [ "$SKIP_ABUSE" = "true" ]; then
-  : # Stage 1c skipped — proceed directly to Stage 2. No TaskList row to update.
+  : # Stage 1d skipped — proceed directly to Stage 2. No TaskList row to update.
 else
-  : # run the full Stage 1c sequence below (steps 0–4).
+  : # run the full Stage 1d sequence below (steps 0–4).
 fi
 ```
 
@@ -2664,10 +2704,10 @@ fi
    STAGE_ABUSE_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
    ABUSE_PIPELINE_FAILED=0
    ```
-   - `TaskUpdate` `Stage 1c - Abuse Case Verification` → `in_progress`.
+   - `TaskUpdate` `Stage 1d - Abuse Case Verification` → `in_progress`.
    - Banner:
      ```
-     ▶ Stage 1c - Abuse Case Verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
+     ▶ Stage 1d - Abuse Case Verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
        ⟶ Chains each derived from §8 findings; verified step-by-step, then folded into §9
      ```
 
@@ -2770,7 +2810,7 @@ fi
        --tokens <sum_tokens> \
        ${STAGE_ABUSE_START_ISO:+--subagent-type appsec-advisor:appsec-abuse-case-verifier --since-iso "$STAGE_ABUSE_START_ISO"}
    ```
-   - `TaskUpdate` `Stage 1c - Abuse Case Verification` → `completed`.
+   - `TaskUpdate` `Stage 1d - Abuse Case Verification` → `completed`.
 
 The §9 fragment is **also** re-rendered idempotently in the Stage-3 pre-generation block (a backstop that picks up any late verdict change); rendering it here as well guarantees the FIRST Stage-2 compose already includes §9. Both calls read `.abuse-case-verdicts.json` (viable chains) **and** `.abuse-case-matches.json` (the generic catalog evaluated-but-not-applicable table) and are byte-identical given identical inputs.
 
@@ -3307,7 +3347,7 @@ Pass the following variables to the agent prompt:
 - `REFRESH_ACTOR_DISCOVERY=<true|false>` (when `true`, Phase 2.7 passes `--refresh-discovery` to resolve_actors.py and forces a new LLM discovery run even when the cache key is unchanged. Set by `--refresh-discovery` flag.)
 - `ORCHESTRATOR_MODEL=<model>` (sonnet-economy tier; resolves to the `sonnet` alias → the **host session model**, NOT a fixed `claude-sonnet-4-6` (a running loop cannot switch its own model — the orchestrator IS this session). Shown resolved in the Session-model transparency routing table. Override via `$APPSEC_ORCHESTRATOR_MODEL`.)
 - `RENDERER_MODEL=<model>` (default `sonnet` alias → the **host session model**; Stage-2 renderer has no other knob. Passed as the Agent `model` param on the single, parallel (§7 ‖ MS), and recovery dispatches. Pin to `claude-sonnet-5` (CISO framing) via `$APPSEC_RENDERER_MODEL`.)
-- `ABUSE_VERIFIER_MODEL=<model>` (default `sonnet` alias → the **host session model**; Stage-1c abuse-case verifier fan-out. Passed as the Agent `model` param AND the `MODEL_ID` prompt field. Pin to `claude-sonnet-5` (verdict decisiveness) via `$APPSEC_ABUSE_VERIFIER_MODEL`; 4.6 reintroduces `inconclusive` verdicts so it is never the default.)
+- `ABUSE_VERIFIER_MODEL=<model>` (default `sonnet` alias → the **host session model**; Stage-1d abuse-case verifier fan-out. Passed as the Agent `model` param AND the `MODEL_ID` prompt field. Pin to `claude-sonnet-5` (verdict decisiveness) via `$APPSEC_ABUSE_VERIFIER_MODEL`; 4.6 reintroduces `inconclusive` verdicts so it is never the default.)
 - `STRIDE_PROFILE_JSON=<inline-json>` (depth-reduction profile; default `{"stride_profile_label":"full"}`. Read by Phase 9 dispatch in `phase-group-threats.md` and forwarded to each STRIDE analyzer in Group A. Quick + sonnet-economy contains the A-F reduction flags.)
 - `REASONING_LABEL=<resolved summary>`
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)

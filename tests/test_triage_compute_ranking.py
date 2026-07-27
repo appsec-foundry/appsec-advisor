@@ -729,7 +729,7 @@ def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> 
     f1 = next(t for t in after1["threats"] if t["id"] == "F-1")
     assert f1["effective_severity"] == "High"
 
-    # Sidecars now appear (Stage 1c completed) — pass 2 must elevate to Critical.
+    # Sidecars now appear (Stage 1d completed) — pass 2 must elevate to Critical.
     verdicts, matches = _ac_docs("fully_viable")
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
     (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
@@ -749,7 +749,7 @@ def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> 
 def test_if_deterministic_owner_noop_without_marker(tmp_path: Path) -> None:
     """--if-deterministic-owner exits cleanly when no deterministic ranking marker exists.
 
-    Stage 1c (SKILL-impl step 3b2) re-runs the fold with this flag instead of the
+    Stage 1d re-runs the fold with this flag instead of the
     env feature flag — env vars don't reach skill-level Bash (gotcha 2026-06-10)."""
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml([]))
     res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": ""}, ["--if-deterministic-owner"])
@@ -775,14 +775,14 @@ def test_if_deterministic_owner_noop_on_llm_ranking(tmp_path: Path) -> None:
 
 
 def test_if_deterministic_owner_folds_chains_without_env(tmp_path: Path) -> None:
-    """End-to-end Stage 1c fold: deterministic marker present → the re-run works
+    """End-to-end Stage 1d fold: deterministic marker present → the re-run works
     WITHOUT the env flag and elevates the verified chain keystone."""
     threats = [{"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"}]
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
     # Phase 10b deterministic run writes the owner marker (ranking.computed_by).
     res0 = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
     assert res0.returncode == 0, res0.stderr
-    # Stage 1c: abuse sidecars appear, fold re-runs with --if-deterministic-owner
+    # Stage 1d: abuse sidecars appear, fold re-runs with --if-deterministic-owner
     # and the env flag explicitly UNSET (default-run conditions).
     verdicts, matches = _ac_docs("fully_viable")
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")

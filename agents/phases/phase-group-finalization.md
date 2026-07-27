@@ -1456,6 +1456,8 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.arch-coverage-threats.json` | Phase-9 bridge candidates from `arch_coverage_to_threats.py emit` — transient pre-merge buffer |
 | `$OUTPUT_DIR/.scan-manifest.txt` | optional scan manifest intermediate |
 | `$OUTPUT_DIR/.triage-ranking.json` | deterministic triage ranking intermediate |
+| `$OUTPUT_DIR/.trust-boundary-assessment-input.json` | bounded Stage-1b input handoff; durable coverage and canonical boundaries remain |
+| `$OUTPUT_DIR/.trust-boundary-candidates.json` | candidate-only Stage-1b agent output after deterministic promotion |
 | `$OUTPUT_DIR/.qa-prepass.json` | legacy QA pre-pass artifact from older/interrupted runs |
 | `$OUTPUT_DIR/.appsec-progress.json` | latest live progress snapshot |
 | `$OUTPUT_DIR/.skill-watchdog.tick` | skill-watchdog liveness marker |

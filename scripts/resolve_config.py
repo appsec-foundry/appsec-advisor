@@ -422,7 +422,7 @@ def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
     Default: abuse-case verification runs at standard/thorough and is SKIPPED
     at quick depth — the fast mode drops the per-candidate verifier fan-out
     (matcher + haiku/sonnet verifiers + chain fold), the most expensive part of
-    Stage 1c. ``--abuse-cases`` forces it on at any depth (incl. quick);
+    Stage 1d. ``--abuse-cases`` forces it on at any depth (incl. quick);
     ``--no-abuse-cases`` forces it off at any depth (incl. standard/thorough).
     The two flags are mutually exclusive (see ``CONFLICT_PAIRS``).
     """
@@ -1552,7 +1552,7 @@ def build_parser() -> argparse.ArgumentParser:
                    dest="no_walkthroughs",
                    help="Skip authoring attack-walkthroughs.md in Stage 2; "
                         "§3 falls back to chain-overview-only rendering.")
-    # Abuse-case verification gating (2026-06). Stage 1c runs a deterministic
+    # Abuse-case verification gating (2026-06). Stage 1d runs a deterministic
     # matcher + per-candidate verifier fan-out that confirms attack chains and
     # can elevate keystone findings. ON by default at standard/thorough; the
     # quick fast-mode skips it. --abuse-cases forces it on at any depth;
@@ -1563,7 +1563,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(overrides the quick-depth default-off).")
     p.add_argument("--no-abuse-cases", action="store_true", dest="no_abuse_cases",
                    help="Force abuse-case verification OFF at any depth "
-                        "(skip the Stage 1c verifier fan-out even at "
+                        "(skip the Stage 1d verifier fan-out even at "
                         "standard/thorough).")
     p.add_argument(
         "--abuse-case-file",
@@ -3095,7 +3095,7 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
         extras.append(f"requirements ({cfg['requirements_label']})")
     if cfg.get("architect_review"):
         extras.append(f"architect review ({cfg['architect_label']})")
-    # Abuse-case verification (Stage 1c) forced ON where it would otherwise be
+    # Abuse-case verification (Stage 1d) forced ON where it would otherwise be
     # off — i.e. explicit --abuse-cases at quick depth. The default-on
     # standard/thorough case is silent (not a deviation).
     if cfg.get("abuse_case_label") == "enabled (--abuse-cases)":
@@ -3111,8 +3111,8 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
             "walkthroughs "
             f"{cfg.get('skip_attack_walkthroughs_label', 'skipped')}"
         )
-    # Stage 1c abuse-case verifier fan-out (matcher + verifiers + chain fold) is
-    # the most expensive part of Stage 1c — surface whenever it is skipped
+    # Stage 1d abuse-case verifier fan-out (matcher + verifiers + chain fold) is
+    # the most expensive part of Stage 1d — surface whenever it is skipped
     # (explicit --no-abuse-cases, or the auto quick-depth default), mirroring how
     # QA / walkthroughs surface their skip.
     if cfg.get("skip_abuse_case_verification"):

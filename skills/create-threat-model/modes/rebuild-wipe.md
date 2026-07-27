@@ -64,7 +64,15 @@ else
        -o -name ".requirements.yaml" \
        -o -name ".prior-findings-index.json" -o -name ".stage1-resume-count" \
        -o -name ".triage-ranking.json" \
-       -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \) \
+       -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \
+       -o -name ".budget-critical" -o -name ".budget-warning" \
+       -o -name ".component-inventory-finalization.json" \
+       -o -name ".data-flows.json" \
+       -o -name ".trust-boundary-assessment-input.json" \
+       -o -name ".trust-boundary-candidates.json" \
+       -o -name ".trust-boundary-coverage.json" \
+       -o -name ".trust-boundary-diagnostics.json" \
+       -o -name ".trust-boundaries.json" \) \
     -print -delete 2>/dev/null)
   WIPED_COUNT=$(printf '%s\n' "$REMOVED_FILES" | grep -c .)
   # .fragments/ MUST be wiped — stale compose inputs from a prior contract

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json",
+  "title": "Untrusted trust-boundary analyst candidates",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "component_inventory_fingerprint",
+    "assessment_input_fingerprint",
+    "candidates",
+    "dispositions"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "component_inventory_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "assessment_input_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "candidates": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_key",
+          "name",
+          "from",
+          "to",
+          "kind",
+          "assumption",
+          "evidence",
+          "confidence",
+          "covered_signal_ids",
+          "covered_flow_ids"
+        ],
+        "properties": {
+          "candidate_key": {"type": "string", "pattern": "^candidate-[a-z0-9-]+$", "maxLength": 80},
+          "name": {"type": "string", "minLength": 1, "maxLength": 100},
+          "from": {"type": "string", "pattern": "^(?:external|[a-z][a-z0-9-]+)$"},
+          "to": {"type": "string", "pattern": "^(?:external|[a-z][a-z0-9-]+)$"},
+          "kind": {"type": "string", "enum": ["network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"]},
+          "assumption": {"type": "string", "minLength": 1, "maxLength": 240},
+          "evidence": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file"],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/]|[a-zA-Z][a-zA-Z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)"}
+                },
+                "line": {"type": "integer", "minimum": 1}
+              }
+            }
+          },
+          "confidence": {"type": "string", "enum": ["confirmed", "inferred", "unknown"]},
+          "covered_signal_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^signal-[a-z0-9-]+$"}},
+          "covered_flow_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^df-[0-9]{3,}$"}}
+        }
+      }
+    },
+    "dispositions": {
+      "type": "array",
+      "maxItems": 800,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["signal_id", "disposition", "candidate_keys", "rationale"],
+        "properties": {
+          "signal_id": {"type": "string", "pattern": "^signal-[a-z0-9-]+$"},
+          "disposition": {"type": "string", "enum": ["boundary", "same-trust", "not-applicable", "unresolved"]},
+          "candidate_keys": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^candidate-[a-z0-9-]+$"}},
+          "rationale": {"type": "string", "minLength": 1, "maxLength": 300}
+        }
+      }
+    }
+  }
+}

@@ -101,9 +101,9 @@ class TestParametric:
         # 32 × 0.6 × 1.0 + 0 (abuse off at quick) + 9 + 0 + 8 = 36.
         assert 33 <= result["total_min"] <= 39, result
 
-    def test_standard_includes_stage1c_abuse(self, tmp_path: Path):
+    def test_standard_includes_stage1b_and_stage1d(self, tmp_path: Path):
         """Standard depth runs the abuse-case fan-out by default → the
-        parametric total carries the Stage-1c additive (~5 min)."""
+        parametric total carries Stage 1b and the Stage-1d additive."""
         repo = tmp_path / "repo"
         repo.mkdir()
         for i in range(500):  # 1.0 size factor
@@ -122,12 +122,13 @@ class TestParametric:
             "--repo-root",
             str(repo),
         )
-        # 38 + 5 (abuse) + 8 + 7 + 8 (transition) = 66
-        assert result["stage1c_min"] == 5, result
-        assert result["total_min"] == 66, result
+        # 38 + 3 (boundary) + 5 (abuse) + 8 + 7 + 8 (transition) = 69
+        assert result["stage1b_min"] == 3, result
+        assert result["stage1d_min"] == 5, result
+        assert result["total_min"] == 69, result
 
-    def test_skip_abuse_cases_zeroes_stage1c(self, tmp_path: Path):
-        """--no-abuse-cases (→ --skip-abuse-cases) drops the Stage-1c additive."""
+    def test_skip_abuse_cases_zeroes_stage1d(self, tmp_path: Path):
+        """--no-abuse-cases (→ --skip-abuse-cases) drops the Stage-1d additive."""
         repo = tmp_path / "repo"
         repo.mkdir()
         for i in range(500):
@@ -147,8 +148,9 @@ class TestParametric:
             "--repo-root",
             str(repo),
         )
-        assert result["stage1c_min"] == 0, result
-        assert result["total_min"] == 61, result  # 38 + 0 + 8 + 7 + 8
+        assert result["stage1b_min"] == 3, result
+        assert result["stage1d_min"] == 0, result
+        assert result["total_min"] == 64, result  # 38 + 3 + 0 + 8 + 7 + 8
 
     def test_size_factor_brackets(self):
         """The _size_factor_from_files brackets are calibrated against the
@@ -452,7 +454,7 @@ class TestEdgeCases:
             str(tmp_path / "does-not-exist"),
         )
         assert result["source"] == "parametric"
-        # 38 × 0.6 + 5 (Stage-1c abuse) + 8 + 7 + 8 = 51
+        # 38 × 0.6 + 3 (boundary) + 5 (Stage-1d abuse) + 8 + 7 + 8 = 54
         assert 45 <= result["total_min"] <= 56, result
 
     def test_malformed_checkpoint_falls_through(self, tmp_path: Path):
@@ -541,7 +543,8 @@ class TestComponentDurations:
         assert source == "component_durations"
         # phase9 = max(160) + 30 = 190s; phase_other = 720s standard.
         assert breakdown["stage1"] == (190 + 720) / 60.0
-        assert breakdown["stage1c"] == 5.0
+        assert breakdown["stage1b"] == 3.0
+        assert breakdown["stage1d"] == 5.0
         assert breakdown["stage2"] == 8.0
         assert breakdown["total"] > breakdown["stage1"]
 
@@ -695,7 +698,8 @@ class TestOutputSchema:
         for key in (
             "source",
             "stage1_min",
-            "stage1c_min",
+            "stage1b_min",
+            "stage1d_min",
             "stage2_min",
             "stage3_min",
             "stage4_min",

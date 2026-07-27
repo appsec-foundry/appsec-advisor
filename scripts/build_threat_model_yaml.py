@@ -2021,6 +2021,7 @@ def main() -> int:
 
     # Load NEW sidecars (preferred)
     sidecar_components = _load_json(od / ".components.json")
+    sidecar_data_flows = _load_json(od / ".data-flows.json")
     sidecar_assets = _load_json(od / ".assets.json")
     sidecar_tb = _load_json(od / ".trust-boundaries.json")
     sidecar_sc = _load_json(od / ".security-controls.json")
@@ -2055,6 +2056,29 @@ def main() -> int:
     components = (sidecar_components or {}).get("components") or _carry_forward(
         prior_yaml, "components", ".components.json"
     )
+    data_flows = (sidecar_data_flows or {}).get("data_flows")
+    if data_flows is None:
+        data_flows = (prior_yaml or {}).get("data_flows") or []
+        sys.stderr.write(
+            "  DATA_FLOW_WARN: .data-flows.json is absent; retained legacy empty/prior topology. "
+            "New Stage-1a runs gate on the sidecar before boundary assessment.\n"
+        )
+    if sidecar_data_flows:
+        receipt = _load_json(od / ".component-inventory-finalization.json") or {}
+        expected = receipt.get("component_inventory_fingerprint")
+        actual = sidecar_data_flows.get("component_inventory_fingerprint")
+        if expected and actual != expected:
+            raise ValueError(".data-flows.json carries a stale component inventory fingerprint")
+        component_ids = {row.get("id") for row in components if isinstance(row, dict)}
+        allowed_endpoints = component_ids | {"external"}
+        flow_ids: set[str] = set()
+        for flow in data_flows:
+            flow_id = flow.get("id") if isinstance(flow, dict) else None
+            if not flow_id or flow_id in flow_ids:
+                raise ValueError(".data-flows.json contains missing or duplicate flow IDs")
+            flow_ids.add(flow_id)
+            if flow.get("from") not in allowed_endpoints or flow.get("to") not in allowed_endpoints:
+                raise ValueError(f"{flow_id} references an unknown component endpoint")
 
     # Incremental depth-downgrade preservation: re-inject prior threats of
     # re-analyzed components that a shallower re-scan dropped without an
@@ -2223,6 +2247,7 @@ def main() -> int:
         "meta": meta,
         "changelog": changelog,
         "components": components,
+        "data_flows": data_flows,
         "assets": assets,
         "attack_surface": attack_surface,
         "trust_boundaries": trust_boundaries,

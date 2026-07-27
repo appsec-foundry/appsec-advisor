@@ -23,6 +23,13 @@ An assessment produces a security architecture and threat model report based on 
 
 The Markdown and YAML outputs are generated from the same validated data.
 
+Trust-boundary assessment has its own stage. Discovery first finalizes the
+component registry and persists data flows; a fresh focused analyst then
+classifies every deterministic crossing signal. A coverage gate blocks STRIDE
+when signals are missing, stale, or malformed, while explicitly unresolved
+crossings remain visible for review. This separation also gives boundary work
+its own retry, resume checkpoint, timing, and audit artifacts.
+
 **Default outputs**
 
 - `threat-model.md` — human-readable report for engineers, architects, and security reviewers.

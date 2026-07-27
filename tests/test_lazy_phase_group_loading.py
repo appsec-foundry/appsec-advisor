@@ -234,15 +234,15 @@ def test_skill_impl_stage2_tail_lazy_loaded():
     )
     assert "LAZY-LOAD BOUNDARY" in skill, "SKILL.md must point the initial read at the LAZY-LOAD BOUNDARY"
 
-    # Exactly one boundary marker, and it defers Stage 1c plus later stages.
+    # Exactly one boundary marker, and it defers Stage 1d plus later stages.
     assert impl.count("<!-- LAZY-LOAD BOUNDARY") == 1, (
         "SKILL-impl.md must contain exactly one LAZY-LOAD BOUNDARY marker"
     )
     boundary_pos = impl.find("<!-- LAZY-LOAD BOUNDARY")
-    stage1c_pos = impl.find("## Stage 1c — Abuse Case Verification")
+    stage1d_pos = impl.find("## Stage 1d — Abuse Case Verification")
     stage2_pos = impl.find("## Stage 2 - Report Rendering")
-    assert 0 < boundary_pos < stage1c_pos < stage2_pos, (
-        "the LAZY-LOAD BOUNDARY marker must defer Stage 1c and every later stage"
+    assert 0 < boundary_pos < stage1d_pos < stage2_pos, (
+        "the LAZY-LOAD BOUNDARY marker must defer Stage 1d and every later stage"
     )
 
     # The bounded resume instruction must sit above the marker, and neither the
@@ -265,12 +265,12 @@ def test_skill_impl_stage2_tail_lazy_loaded():
     assert "rerender and Stage-2-only recovery go directly to\nStage 2" in prefix
 
 
-def test_thin_runtime_loads_stage1c_only_when_enabled():
+def test_thin_runtime_loads_stage1d_only_when_enabled():
     runtime = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
     assert "Read `SKILL-thin-stage1.md` in full" in runtime
     assert "Only when `SKIP_ABUSE_CASE_VERIFICATION=false`" in runtime
-    assert "read\n`SKILL-thin-stage1c.md` in full" in runtime
-    assert "Otherwise do not load any\nStage-1c instructions" in runtime
+    assert "read\n`SKILL-thin-stage1d.md` in full" in runtime
+    assert "Otherwise do not load any Stage-1d instructions" in runtime
     assert "SKILL-thin-stage2.md" in runtime
     assert "Do not load the Stage-2 slice" in runtime
 

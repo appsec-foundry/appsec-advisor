@@ -567,6 +567,47 @@ def _write_min_intermediates(out: Path) -> None:
     )
 
 
+def test_cli_persists_validated_data_flow_sidecar_into_yaml(tmp_path: Path):
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    out.mkdir()
+    _write_min_intermediates(out)
+    _write_json(out / ".components.json", {"schema_version": 1, "components": [{"id": "api", "name": "API"}]})
+    _write_json(
+        out / ".data-flows.json",
+        {
+            "schema_version": 1,
+            "component_inventory_fingerprint": "sha256:" + "1" * 64,
+            "data_flows": [
+                {
+                    "id": "df-001",
+                    "from": "external",
+                    "to": "api",
+                    "label": "HTTPS ingress",
+                    "protocol": "HTTPS",
+                    "data_classification": "Confidential",
+                    "direction": "request-response",
+                    "evidence": [],
+                    "provenance": "architecture",
+                }
+            ],
+        },
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(out), "--repo-root", str(repo), "--plugin-root", str(ROOT)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    rendered = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))
+    assert rendered["data_flows"][0]["id"] == "df-001"
+    assert rendered["data_flows"][0]["to"] == "api"
+
+
 def test_changelog_recovers_history_from_cache_mirror_when_yaml_lost(tmp_path: Path):
     """A lost/deleted threat-model.yaml must not silently reset the changelog to
     'first full scan'. main() rehydrates the prior history from the

@@ -172,6 +172,76 @@ class TestClassifyOrphaned:
         assert ".phase-epoch" in report["files"]
 
 
+class TestTrustBoundaryResumeGuard:
+    @staticmethod
+    def _stage1a_artifacts(out: Path) -> None:
+        for name in (
+            ".components.json",
+            ".component-inventory-finalization.json",
+            ".data-flows.json",
+            ".trust-boundary-assessment-input.json",
+        ):
+            (out / name).write_text("{}", encoding="utf-8")
+        (out / ".threat-modeling-context.md").write_text("# Context\n", encoding="utf-8")
+
+    def test_phase6_completed_allows_stage1b_resume(self, tmp_path):
+        self._stage1a_artifacts(tmp_path)
+        _write_checkpoint(tmp_path, phase=6, status="completed")
+
+        code, message = check_state._resume_guard_result(tmp_path, 900)
+
+        assert code == 0
+        assert "completed" in message
+
+    def test_phase6_missing_handoff_artifact_refuses_resume(self, tmp_path):
+        self._stage1a_artifacts(tmp_path)
+        (tmp_path / ".data-flows.json").unlink()
+        _write_checkpoint(tmp_path, phase=6, status="completed")
+
+        code, message = check_state._resume_guard_result(tmp_path, 900)
+
+        assert code == 3
+        assert ".data-flows.json" in message
+
+    def test_phase7_aborted_allows_boundary_retry_against_immutable_input(self, tmp_path):
+        self._stage1a_artifacts(tmp_path)
+        _write_checkpoint(tmp_path, phase=7, status="aborted")
+
+        code, _message = check_state._resume_guard_result(tmp_path, 900)
+
+        assert code == 0
+
+    def test_phase7_completed_rejects_stale_coverage_fingerprint(self, tmp_path):
+        self._stage1a_artifacts(tmp_path)
+        assessment = {
+            "component_inventory_fingerprint": "sha256:" + "1" * 64,
+            "assessment_input_fingerprint": "sha256:" + "2" * 64,
+        }
+        (tmp_path / ".trust-boundary-assessment-input.json").write_text(
+            json.dumps(assessment),
+            encoding="utf-8",
+        )
+        for name in (".trust-boundary-candidates.json", ".trust-boundary-coverage.json"):
+            (tmp_path / name).write_text(
+                json.dumps(
+                    {
+                        **assessment,
+                        "assessment_input_fingerprint": "sha256:" + "3" * 64,
+                        "status": "pass",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        for name in (".trust-boundaries.json", ".trust-boundary-diagnostics.json"):
+            (tmp_path / name).write_text("{}", encoding="utf-8")
+        _write_checkpoint(tmp_path, phase=7, status="completed")
+
+        code, message = check_state._resume_guard_result(tmp_path, 900)
+
+        assert code == 3
+        assert "stale or malformed" in message
+
+
 # ---------------------------------------------------------------------------
 # clean() — mutation
 # ---------------------------------------------------------------------------

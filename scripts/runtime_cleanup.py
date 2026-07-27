@@ -148,6 +148,10 @@ ALWAYS_FILES = [
     # Triage ranking written by triage_compute_ranking.py; the canonical
     # output is threat-model.yaml, so the intermediate file can be reaped.
     ".triage-ranking.json",
+    # Candidate/input are transient handoff artifacts. Canonical boundaries,
+    # coverage, finalized inventory receipt, and persisted flows are durable.
+    ".trust-boundary-assessment-input.json",
+    ".trust-boundary-candidates.json",
     # Deterministic QA pre-pass handoff; durable status is .qa-status.json
     # until post-QA cleanup and report content after completion.
     ".qa-prepass.json",
@@ -239,6 +243,9 @@ NEVER = {
     ".threats-merged.json",
     ".triage-flags.json",
     ".trust-boundary-diagnostics.json",
+    ".trust-boundary-coverage.json",
+    ".component-inventory-finalization.json",
+    ".data-flows.json",
     ".architect-review.md",
     ".requirements.yaml",
     ".appsec-cache",

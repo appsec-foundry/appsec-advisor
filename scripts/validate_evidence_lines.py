@@ -23,7 +23,7 @@ the active threat model is a current-risk snapshot, while the merged
 intermediate retains the audit verdict.
 
 Verdicts are persisted back into `.threats-merged.json` as well as
-`threat-model.yaml`. This is load-bearing, not bookkeeping: Stage 1c
+`threat-model.yaml`. This is load-bearing, not bookkeeping: Stage 1d
 regenerates `threat-model.yaml` from the merged intermediate
 (`SKILL-impl.md`, abuse-case branch), so a floor that wrote only to the YAML
 was silently discarded on every standard/thorough run — the depth tiers where

@@ -774,6 +774,32 @@ class TestTrustBoundaryDiagnostics:
         assert agg._extract_trust_boundary_diagnostics(tmp_path) == []
 
 
+class TestTrustBoundaryCoverage:
+    def test_unresolved_accounted_signals_are_visible_run_issue(self, tmp_path):
+        (tmp_path / ".trust-boundary-coverage.json").write_text(
+            _json.dumps(
+                {
+                    "schema_version": 1,
+                    "status": "pass",
+                    "issues": [
+                        {
+                            "code": "unresolved-signal",
+                            "signal_id": "signal-external-ingress-external-to-api",
+                            "message": "The enforcement point is unresolved.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        issues = agg._extract_trust_boundary_coverage(tmp_path)
+
+        assert len(issues) == 1
+        assert issues[0]["category"] == "trust_boundary_coverage"
+        assert issues[0]["evidence"]["signal_ids"] == ["signal-external-ingress-external-to-api"]
+
+
 class TestPerfAnomaliesCeilingAndHysteresis:
     def _pd(self, phase, dur, label="Lbl"):
         return {

@@ -685,6 +685,37 @@ def _extract_trust_boundary_diagnostics(output_dir: Path) -> list[dict]:
     ]
 
 
+def _extract_trust_boundary_coverage(output_dir: Path) -> list[dict]:
+    """Surface accounted-but-unresolved deterministic crossing signals."""
+    path = output_dir / ".trust-boundary-coverage.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    issues = data.get("issues") if isinstance(data, dict) else None
+    if not isinstance(issues, list) or not issues:
+        return []
+    signal_ids = sorted(
+        {row.get("signal_id") for row in issues if isinstance(row, dict) and isinstance(row.get("signal_id"), str)}
+    )
+    if not signal_ids:
+        return []
+    detail = f"{len(signal_ids)} trust-boundary signal(s) were accounted for but remain unresolved"
+    return [
+        {
+            "category": "trust_boundary_coverage",
+            "severity": "warning",
+            "title": detail,
+            "evidence": {
+                "log_file": ".trust-boundary-coverage.json",
+                "log_line": 1,
+                "raw_event": detail,
+                "signal_ids": signal_ids[:50],
+            },
+        }
+    ]
+
+
 def _extract_perf_anomalies(
     phase_durs: list[dict],
     depth: str,
@@ -1437,6 +1468,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_errors(hook_log, agent_log))
     issues.extend(_extract_warnings(hook_log))
     issues.extend(_extract_trust_boundary_diagnostics(output_dir))
+    issues.extend(_extract_trust_boundary_coverage(output_dir))
     issues.extend(_extract_budget_events(agent_log))
     issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))

@@ -587,6 +587,157 @@ def test_post_stage1_rejects_stale_yaml_without_completion_checkpoint(tmp_path):
         controller.post_stage1(output)
 
 
+def test_stage1a_to_stage1b_controller_handoff_and_promotion(tmp_path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / ".recon-summary.md").write_text("# Recon\n", encoding="utf-8")
+    (output / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {
+                        "id": "api",
+                        "name": "API",
+                        "description": "Internet-facing API",
+                        "paths": ["src/**"],
+                        "tier": "application",
+                        "deployment_zones": ["internet"],
+                        "handles_sensitive_data": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    controller._run_script(
+        "finalize_component_inventory.py",
+        ["--repo-root", str(repo), "--output-dir", str(output)],
+    )
+    receipt_path = output / ".component-inventory-finalization.json"
+    receipt_before = receipt_path.read_bytes()
+    receipt = json.loads(receipt_before)
+    (output / ".data-flows.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "component_inventory_fingerprint": receipt["component_inventory_fingerprint"],
+                "data_flows": [
+                    {
+                        "id": "df-001",
+                        "from": "external",
+                        "to": "api",
+                        "label": "HTTPS ingress",
+                        "protocol": "HTTPS",
+                        "data_classification": "Confidential",
+                        "direction": "request-response",
+                        "evidence": [],
+                        "provenance": "architecture",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output / ".assets.json").write_text(json.dumps({"schema_version": 1, "assets": []}), encoding="utf-8")
+    (output / ".attack-surface-overrides.json").write_text(
+        json.dumps({"schema_version": 1, "curations": {}, "additions": []}),
+        encoding="utf-8",
+    )
+    (output / ".appsec-checkpoint").write_text(
+        "phase=6 status=completed need_boundary_assessment=true\n",
+        encoding="utf-8",
+    )
+
+    stage1a = controller.post_stage1a(output)
+    assert stage1a["action"] == "dispatch_agent"
+    assert stage1a["stage"] == "stage1b"
+    assert stage1a["instruction_file"] == str(controller.THIN_STAGE1B_RUNTIME)
+    assert receipt_path.read_bytes() == receipt_before
+
+    assessment = json.loads((output / ".trust-boundary-assessment-input.json").read_text(encoding="utf-8"))
+    signal_id = assessment["signals"][0]["id"]
+    (output / ".trust-boundary-candidates.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "component_inventory_fingerprint": assessment["component_inventory_fingerprint"],
+                "assessment_input_fingerprint": assessment["assessment_input_fingerprint"],
+                "candidates": [
+                    {
+                        "candidate_key": "candidate-api-ingress",
+                        "name": "Internet to API",
+                        "from": "external",
+                        "to": "api",
+                        "kind": "network",
+                        "assumption": "The API authenticates and authorizes protected operations.",
+                        "evidence": [],
+                        "confidence": "inferred",
+                        "covered_signal_ids": [signal_id],
+                        "covered_flow_ids": ["df-001"],
+                    }
+                ],
+                "dispositions": [
+                    {
+                        "signal_id": signal_id,
+                        "disposition": "boundary",
+                        "candidate_keys": ["candidate-api-ingress"],
+                        "rationale": "An external client crosses into the API enforcement domain.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    stage1b = controller.finalize_stage1b(output)
+    assert stage1b["action"] == "run_gate"
+    assert stage1b["stage"] == "stage1b"
+    assert (output / ".appsec-checkpoint").read_text(encoding="utf-8") == (
+        "phase=7 status=completed need_threat_analysis=true\n"
+    )
+    coverage = json.loads((output / ".trust-boundary-coverage.json").read_text(encoding="utf-8"))
+    assert coverage["status"] == "pass"
+    assert coverage["signals"][0]["boundary_ids"] == ["tb-1"]
+
+
+def test_stage1a_budget_exhaustion_preserves_input_and_blocks_stage1b(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    for name in (
+        ".recon-summary.md",
+        ".components.json",
+        ".component-inventory-finalization.json",
+        ".data-flows.json",
+        ".assets.json",
+        ".attack-surface-overrides.json",
+    ):
+        (output / name).write_text("{}", encoding="utf-8")
+    (output / ".appsec-checkpoint").write_text(
+        "phase=6 status=completed need_boundary_assessment=true\n",
+        encoding="utf-8",
+    )
+    (output / ".budget-critical").write_text("{}", encoding="utf-8")
+
+    def fake_script(name, args, **kwargs):
+        if name == "build_trust_boundary_assessment_input.py":
+            (output / ".trust-boundary-assessment-input.json").write_text("{}", encoding="utf-8")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    with pytest.raises(controller.ControllerError, match="not dispatched"):
+        controller.post_stage1a(output)
+
+    assert (output / ".trust-boundary-assessment-input.json").is_file()
+    assert (output / ".appsec-checkpoint").read_text(encoding="utf-8") == (
+        "phase=7 status=aborted reason=budget-critical-before-boundary\n"
+    )
+
+
 def test_prepare_abuse_returns_bounded_parallel_action(tmp_path, monkeypatch):
     output = tmp_path / "out"
     output.mkdir()
@@ -602,8 +753,8 @@ def test_prepare_abuse_returns_bounded_parallel_action(tmp_path, monkeypatch):
     monkeypatch.setattr(controller, "_run_script", fake_script)
     action = controller.prepare_abuse(output)
     assert action["action"] == "dispatch_parallel"
-    assert action["stage"] == "stage1c"
-    assert action["instruction_file"] == str(controller.THIN_STAGE1C_RUNTIME)
+    assert action["stage"] == "stage1d"
+    assert action["instruction_file"] == str(controller.THIN_STAGE1D_RUNTIME)
     assert action["candidates"] == ["AC-T-001", "AC-T-002"]
     controller._validate_action(action)
 

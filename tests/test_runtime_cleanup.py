@@ -69,6 +69,8 @@ EXPECTED_WHITELIST_FILES = {
     ".dispatch-waves.json",
     ".scan-manifest.txt",
     ".triage-ranking.json",
+    ".trust-boundary-assessment-input.json",
+    ".trust-boundary-candidates.json",
     ".qa-prepass.json",
     # Latest live-progress snapshot; .agent-run.log is the durable audit trail.
     ".appsec-progress.json",

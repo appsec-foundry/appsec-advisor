@@ -10,12 +10,13 @@ the thin full/rebuild and rerender runtimes (the defaults; opt out with
 - `resolve_config.py` remains the source of truth for flags, paths, modes,
   models, depth, and output settings.
 - `orchestration_controller.py` owns thin-runtime selection, full/rebuild
-  preflight mutations, Stage-1 post-analysis gates and completion-checkpoint
+  preflight mutations, Stage-1a topology/finalization gate, Stage-1b candidate
+  promotion and coverage gate, Stage-1c post-analysis gates and checkpoint
   freshness, abuse-case match/finalize, Stage-2 structural preparation,
   rerender artifact preconditions, fixed next-action classification, and
   compact dispatch values.
 - `SKILL-full-runtime.md`, `SKILL-thin-stage1.md`,
-  `SKILL-thin-stage1c.md`, `SKILL-thin-stage2.md`, and
+  `SKILL-thin-stage1b.md`, `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and
   `SKILL-rerender-runtime.md` own user-visible output, Task lifecycle, and
   Level-0 Agent calls for their modes.
 - `stride_dispatch_waves.py` owns deterministic bounded-wave scheduling,
@@ -57,5 +58,5 @@ variance rather than the orchestrator runtime.
 Legacy mode also uses bounded post-Stage-1 reads: normal Stage 2, conditional
 recovery, Stage 3, optional Stage 4, completion, and error handling are loaded
 at their own boundaries rather than as one tail. The normal thin path instead
-uses compact dedicated Stage-1/1c/2 runtimes and never reads those legacy
-bodies. Both runtimes omit Stage 1c when abuse-case verification is disabled.
+uses compact dedicated Stage-1a/1b/1c/1d/2 runtimes and never reads those legacy
+bodies. Both runtimes omit Stage 1d when abuse-case verification is disabled.

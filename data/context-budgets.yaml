@@ -40,9 +40,12 @@ surfaces:
     # analysis tier (`STRIDE screening: <NAME>` for a cheap_stride entry) so the
     # agent list says which components run at screening depth. At 9200 the file
     # sat at 89.8%, leaving 14 bytes -- less than any wording of that rule costs.
-    max_bytes: 9400
-  thin_stage1c_runtime:
-    path: skills/create-threat-model/SKILL-thin-stage1c.md
+    max_bytes: 11000
+  thin_stage1b_runtime:
+    path: skills/create-threat-model/SKILL-thin-stage1b.md
+    max_bytes: 4300
+  thin_stage1d_runtime:
+    path: skills/create-threat-model/SKILL-thin-stage1d.md
     max_bytes: 3400
   thin_stage2_runtime:
     path: skills/create-threat-model/SKILL-thin-stage2.md
@@ -54,13 +57,13 @@ surfaces:
     max_bytes: 230000
   full_stage1_slice:
     path: skills/create-threat-model/SKILL-impl.md
-    start: "## Stage 1 — Threat Analysis & Triage"
+    start: "## Stages 1a–1c — Analysis Pipeline"
     end: "<!-- LAZY-LOAD BOUNDARY"
-    # Measured 56,358 bytes after moving Stage 1c behind the lazy boundary.
+    # Measured 56,358 bytes after moving Stage 1d behind the lazy boundary.
     max_bytes: 57500
-  full_stage1c_slice:
+  full_stage1d_slice:
     path: skills/create-threat-model/SKILL-impl.md
-    start: "## Stage 1c — Abuse Case Verification"
+    start: "## Stage 1d — Abuse Case Verification"
     end: "## Stage 2 - Report Rendering"
     max_bytes: 15000
   stage2_runtime_dispatch_slice:
@@ -96,12 +99,12 @@ aggregate:
   # copy of those commands, because SKILL-thin-stage1.md:4 forbids reading Stage
   # 1 out of SKILL-impl.md. Executable syntax is not discretionary prose -- trim
   # explanation before trimming a command line.
-  # Router + compact runtime + compact Stage-1 + conditional Stage-1c.
-  thin_full_pre_stage2_max_bytes: 33000
-  # Quick/explicit-skip runs never load the Stage-1c runtime.
-  thin_full_without_stage1c_max_bytes: 30000
+  # Router + compact runtime + compact Stage-1a/1c + Stage-1b + conditional Stage-1d.
+  thin_full_pre_stage2_max_bytes: 38000
+  # Quick/explicit-skip runs still load Stage 1b but never Stage 1d.
+  thin_full_without_stage1d_max_bytes: 35000
   # Cumulative thin control prose through the Stage-2 dispatch.
-  thin_full_through_stage2_max_bytes: 36500
+  thin_full_through_stage2_max_bytes: 41500
   # Router + rerender runtime. Stage-2 instructions are loaded only after the
   # controller has verified on-disk Stage-1 artifacts.
   thin_rerender_pre_stage2_max_bytes: 18000

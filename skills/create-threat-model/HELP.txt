@@ -198,11 +198,11 @@ ADVANCED
   --no-walkthroughs            Skip per-finding attack walkthroughs in §3
                                (implied by quick);
                                chain overview is still rendered
-  --abuse-cases                Force Stage 1c abuse-case verification ON at any
+  --abuse-cases                Force Stage 1d abuse-case verification ON at any
                                depth (default: on at standard/thorough, off at
                                quick). Confirms attack chains and may elevate
                                keystone findings (documented in §8 and §9)
-  --no-abuse-cases             Force Stage 1c abuse-case verification OFF at any
+  --no-abuse-cases             Force Stage 1d abuse-case verification OFF at any
                                depth (skip the verifier fan-out; §9 renders the
                                not-applicable catalog, no chain elevation)
   --abuse-case-file <path>     Add a YAML abuse-case file below the target

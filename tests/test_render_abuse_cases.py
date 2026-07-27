@@ -398,14 +398,14 @@ def test_main_preserves_fragment_when_verdicts_exist_but_all_not_applicable(tmp_
     # chain_verdict="not_applicable" (build_models → []) AND no matches have
     # structural_verdict="not_applicable" (build_catalog_evaluation → []),
     # main() must NOT delete an existing fragment — the sidecars prove that
-    # Stage 1c ran. Deleting would replace a §9 written by Stage 1c with an
+    # Stage 1d ran. Deleting would replace a §9 written by Stage 1d with an
     # empty placeholder, silently dropping abuse-case coverage from the report.
     frag_dir = tmp_path / ".fragments"
     frag_dir.mkdir()
     prior_frag = "## 9. Abuse Cases\n\n_No abuse-case chain was verified._\n"
     (frag_dir / "abuse-cases.md").write_text(prior_frag)
 
-    # .abuse-case-verdicts.json exists (Stage 1c ran) but all chains are not_applicable
+    # .abuse-case-verdicts.json exists (Stage 1d ran) but all chains are not_applicable
     (tmp_path / ".abuse-case-verdicts.json").write_text(
         json.dumps(
             {

@@ -57,6 +57,245 @@ def _row(name: str = "Public API", **overrides) -> dict:
     return row
 
 
+def _assessment(component_fp: str, input_fp: str, *, with_signal: bool = True) -> dict:
+    signal = {
+        "id": "signal-external-ingress-external-to-web-api",
+        "class": "external-ingress",
+        "from": "external",
+        "to": "web-api",
+        "mandatory": True,
+        "trigger": "runtime flow enters from external",
+        "false_positive_exclusions": ["test-only route"],
+        "evidence": [{"file": "src/auth.py", "line": 1}],
+        "provenance": ["architecture"],
+        "flow_ids": ["df-001"],
+    }
+    return {
+        "schema_version": 1,
+        "component_inventory_fingerprint": component_fp,
+        "assessment_input_fingerprint": input_fp,
+        "assessment_depth": "standard",
+        "components": [
+            {
+                "id": "web-api",
+                "name": "Web API",
+                "tier": "application",
+                "deployment_zones": ["internet"],
+                "handles_sensitive_data": True,
+                "paths": ["src/**"],
+            }
+        ],
+        "data_flows": [{"id": "df-001"}] if with_signal else [],
+        "signals": [signal] if with_signal else [],
+        "prior_boundary_identity_hints": [],
+        "source_context": {
+            "route_inventory": {"status": "missing", "routes": []},
+            "attack_surface_additions": [],
+            "cross_repository": {"status": "missing", "entries": []},
+            "recon_signals": {
+                "values": {
+                    "has_public_routes": False,
+                    "has_auth_surface": False,
+                    "has_role_concept": False,
+                    "has_ci_pipeline": False,
+                    "has_external_apis": False,
+                    "has_client_storage": False,
+                    "has_multi_tenancy_signal": False,
+                },
+                "evidence": [],
+            },
+            "boundary_declarations": {"status": "missing", "fingerprint": None, "keys": []},
+            "incremental": False,
+        },
+    }
+
+
+def _candidate_doc(component_fp: str, input_fp: str, *, with_signal: bool = True) -> dict:
+    if not with_signal:
+        return {
+            "schema_version": 1,
+            "component_inventory_fingerprint": component_fp,
+            "assessment_input_fingerprint": input_fp,
+            "candidates": [],
+            "dispositions": [],
+        }
+    return {
+        "schema_version": 1,
+        "component_inventory_fingerprint": component_fp,
+        "assessment_input_fingerprint": input_fp,
+        "candidates": [
+            {
+                "candidate_key": "candidate-1",
+                "name": "Internet to Web API",
+                "from": "external",
+                "to": "web-api",
+                "kind": "network",
+                "assumption": "Protected operations require authenticated and authorized requests.",
+                "evidence": [{"file": "src/auth.py", "line": 1}],
+                "confidence": "confirmed",
+                "covered_signal_ids": ["signal-external-ingress-external-to-web-api"],
+                "covered_flow_ids": ["df-001"],
+            }
+        ],
+        "dispositions": [
+            {
+                "signal_id": "signal-external-ingress-external-to-web-api",
+                "disposition": "boundary",
+                "candidate_keys": ["candidate-1"],
+                "rationale": "Requests enter the API process from an untrusted external network.",
+            }
+        ],
+    }
+
+
+def test_promote_candidates_writes_canonical_and_coverage(tmp_path: Path):
+    repo, out = _repo(tmp_path)
+    component_fp = "sha256:" + "1" * 64
+    input_fp = "sha256:" + "2" * 64
+    assessment = out / ".trust-boundary-assessment-input.json"
+    candidates = out / ".trust-boundary-candidates.json"
+    _write_json(assessment, _assessment(component_fp, input_fp))
+    _write_json(candidates, _candidate_doc(component_fp, input_fp))
+
+    canonical, coverage = prep.promote_candidates(
+        repo_root=repo,
+        output_dir=out,
+        candidates_path=candidates,
+        assessment_input_path=assessment,
+        prior_model=None,
+    )
+
+    assert canonical["trust_boundaries"][0]["id"] == "tb-1"
+    assert canonical["trust_boundaries"][0]["sources"] == ["detected"]
+    assert coverage["status"] == "pass"
+    assert coverage["signals"][0]["boundary_ids"] == ["tb-1"]
+
+
+def test_promote_candidates_rejects_unaccounted_signal(tmp_path: Path):
+    repo, out = _repo(tmp_path)
+    component_fp = "sha256:" + "1" * 64
+    input_fp = "sha256:" + "2" * 64
+    assessment = out / ".trust-boundary-assessment-input.json"
+    candidates = out / ".trust-boundary-candidates.json"
+    document = _candidate_doc(component_fp, input_fp)
+    document["dispositions"] = []
+    _write_json(assessment, _assessment(component_fp, input_fp))
+    _write_json(candidates, document)
+
+    with pytest.raises(ValueError, match="signal disposition mismatch"):
+        prep.promote_candidates(
+            repo_root=repo,
+            output_dir=out,
+            candidates_path=candidates,
+            assessment_input_path=assessment,
+            prior_model=None,
+        )
+
+
+def test_promote_candidates_rejects_confirmed_candidate_without_valid_evidence(tmp_path: Path):
+    repo, out = _repo(tmp_path)
+    component_fp = "sha256:" + "1" * 64
+    input_fp = "sha256:" + "2" * 64
+    assessment = out / ".trust-boundary-assessment-input.json"
+    candidates = out / ".trust-boundary-candidates.json"
+    document = _candidate_doc(component_fp, input_fp)
+    document["candidates"][0]["evidence"] = [{"file": "src/missing.py", "line": 1}]
+    _write_json(assessment, _assessment(component_fp, input_fp))
+    _write_json(candidates, document)
+
+    with pytest.raises(ValueError, match="confirmed confidence without valid repository evidence"):
+        prep.promote_candidates(
+            repo_root=repo,
+            output_dir=out,
+            candidates_path=candidates,
+            assessment_input_path=assessment,
+            prior_model=None,
+        )
+
+
+def test_promote_candidates_preserves_public_id_across_full_refresh(tmp_path: Path):
+    repo, out = _repo(tmp_path)
+    component_fp = "sha256:" + "1" * 64
+    input_fp = "sha256:" + "2" * 64
+    assessment = out / ".trust-boundary-assessment-input.json"
+    candidates = out / ".trust-boundary-candidates.json"
+    _write_json(assessment, _assessment(component_fp, input_fp))
+    _write_json(candidates, _candidate_doc(component_fp, input_fp))
+    first, _coverage = prep.promote_candidates(
+        repo_root=repo,
+        output_dir=out,
+        candidates_path=candidates,
+        assessment_input_path=assessment,
+        prior_model=None,
+    )
+    prior_model = out / "threat-model.yaml"
+    prior_model.write_text(yaml.safe_dump({"trust_boundaries": first["trust_boundaries"]}), encoding="utf-8")
+
+    second, _coverage = prep.promote_candidates(
+        repo_root=repo,
+        output_dir=out,
+        candidates_path=candidates,
+        assessment_input_path=assessment,
+        prior_model=prior_model,
+    )
+
+    assert [row["id"] for row in second["trust_boundaries"]] == ["tb-1"]
+
+
+def test_promote_candidates_accepts_explicit_empty_when_no_signals(tmp_path: Path):
+    repo, out = _repo(tmp_path)
+    component_fp = "sha256:" + "1" * 64
+    input_fp = "sha256:" + "2" * 64
+    assessment = out / ".trust-boundary-assessment-input.json"
+    candidates = out / ".trust-boundary-candidates.json"
+    _write_json(assessment, _assessment(component_fp, input_fp, with_signal=False))
+    _write_json(candidates, _candidate_doc(component_fp, input_fp, with_signal=False))
+
+    canonical, coverage = prep.promote_candidates(
+        repo_root=repo,
+        output_dir=out,
+        candidates_path=candidates,
+        assessment_input_path=assessment,
+        prior_model=None,
+    )
+
+    assert canonical["trust_boundaries"] == []
+    assert coverage["signals"] == []
+
+
+def test_promote_candidates_keeps_accounted_unresolved_signal_visible(tmp_path: Path):
+    repo, out = _repo(tmp_path)
+    component_fp = "sha256:" + "1" * 64
+    input_fp = "sha256:" + "2" * 64
+    assessment = out / ".trust-boundary-assessment-input.json"
+    candidates = out / ".trust-boundary-candidates.json"
+    document = _candidate_doc(component_fp, input_fp)
+    document["candidates"] = []
+    document["dispositions"] = [
+        {
+            "signal_id": "signal-external-ingress-external-to-web-api",
+            "disposition": "unresolved",
+            "candidate_keys": [],
+            "rationale": "The bounded evidence does not identify the enforcement point.",
+        }
+    ]
+    _write_json(assessment, _assessment(component_fp, input_fp))
+    _write_json(candidates, document)
+
+    canonical, coverage = prep.promote_candidates(
+        repo_root=repo,
+        output_dir=out,
+        candidates_path=candidates,
+        assessment_input_path=assessment,
+        prior_model=None,
+    )
+
+    assert canonical["trust_boundaries"] == []
+    assert coverage["status"] == "pass"
+    assert coverage["signals"][0]["disposition"] == "unresolved"
+    assert coverage["issues"][0]["code"] == "unresolved-signal"
+
+
 def test_normalize_migrates_legacy_without_promoting_absence(tmp_path: Path) -> None:
     repo, out = _repo(tmp_path)
     sidecar = out / ".trust-boundaries.json"

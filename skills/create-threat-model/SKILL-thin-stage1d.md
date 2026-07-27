@@ -1,14 +1,14 @@
-# Compact Thin Stage 1c
+# Compact Thin Stage 1d
 
 This stage runs only when `SKIP_ABUSE_CASE_VERIFICATION=false`. Do not read the
-Stage-1c body from `SKILL-impl.md`.
+Stage-1d body from `SKILL-impl.md`.
 
-1. Mark `Stage 1c - Abuse Case Verification` in progress, capture
+1. Mark `Stage 1d - Abuse Case Verification` in progress, capture
    `STAGE_ABUSE_START_ISO`, print this banner, and start the fixed heartbeat
    watchdog:
 
    ```text
-   ▶ Stage 1c - Abuse Case Verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
+   ▶ Stage 1d - Abuse Case Verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
      ⟶ Chains each derived from §8 findings; verified step-by-step, then folded into §9
    ```
 2. Run:
@@ -48,7 +48,7 @@ Stage-1c body from `SKILL-impl.md`.
      finalize-abuse --output-dir "$OUTPUT_DIR"
    ```
 
-   Require `action=run_gate`, `stage=stage1c`. The controller owns merge,
+   Require `action=run_gate`, `stage=stage1d`. The controller owns merge,
    finalize, verified-finding promotion, YAML rebuild, configured release gate,
    ranking fold, and §9 rendering.
 5. Send the final heartbeat, stop the watchdog, record the aggregated stats with

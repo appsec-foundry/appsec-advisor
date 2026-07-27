@@ -116,7 +116,7 @@ Emit this handoff banner:
 
 Read `SKILL-impl.md` only from `## Stage 2 - Report Rendering` through
 `### Handling turn-budget cut-offs`, then follow the Stage-2 instructions. Do
-not read the legacy preflight, rerender mode file, Stage 1, or Stage 1c.
+not read the legacy preflight, rerender mode file, or Stages 1a–1d.
 
 After the renderer returns, and again before the completion summary, run:
 

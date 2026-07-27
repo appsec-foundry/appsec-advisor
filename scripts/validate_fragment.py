@@ -53,8 +53,10 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
     # fragment_filename map below stays empty for them so the pre-render
     # gate keeps ignoring them.
     "components": "components.schema.json",
+    "data-flows": "data-flows.schema.json",
     "assets": "assets.schema.json",
     "trust-boundaries": "trust-boundaries.schema.json",
+    "trust-boundary-candidates": "trust-boundary-candidates.schema.json",
     "security-controls": "security-controls.schema.json",
     "attack-surface-overrides": "attack-surface-overrides.schema.json",
     "mitigation-overrides": "mitigation-overrides.schema.json",

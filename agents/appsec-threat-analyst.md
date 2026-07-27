@@ -550,6 +550,20 @@ The verifier is intentionally low-budget (≤40 turns, Sonnet-4.6 — Haiku prov
 
 ### STAGE1_PHASE_LIMIT — early-exit branch (M2.12 — Sprint 3)
 
+When `STAGE1_PHASE_LIMIT=6` is passed, this agent is the Stage-1a discovery
+coordinator. It runs Phases 1–6, but never Phase 7. Before exiting it must:
+
+1. persist `.components.json` and `.data-flows.json` in Phase 3;
+2. run `finalize_component_inventory.py` and ensure the data-flow sidecar uses
+   the resulting component fingerprint;
+3. persist `.assets.json` and `.attack-surface-overrides.json`;
+4. run `build_trust_boundary_assessment_input.py`; and
+5. write `phase=6 status=completed need_boundary_assessment=true`.
+
+Do not write `.trust-boundaries.json`, boundary candidates, controls, STRIDE
+outputs, merged threats, triage, or YAML in this branch. Stage 1b runs in the
+fresh `appsec-trust-boundary-analyst` context.
+
 When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 through 10b plus the **deterministic** Phase-11 substeps (1–3) and then **stops cleanly** without entering the LLM-heavy Phase-11 substeps (4–N). The skill's Stage 2 dispatcher picks those up in the smaller `appsec-threat-renderer` session.
 
 **Why Substeps 1–3 belong to Stage 1:** the skill calls `pregenerate_fragments.py` between Stage 1 and Stage 2 (`SKILL-impl.md:1455`), and that script hard-fails if `threat-model.yaml` is missing (`pregenerate_fragments.py:1996`). Likewise `compose_threat_model.py:5054-5056` requires yaml. So yaml MUST exist post-Stage-1, regardless of which agent session writes it. Splitting Phase 11 at the Substep-3 / Substep-4 boundary keeps the expensive LLM compose work in Stage 2's fresh budget while making the cheap deterministic prep work part of Stage 1's natural flow.
@@ -569,11 +583,17 @@ When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 th
 
 ### STAGE1_PHASE_LIMIT=8 — Analyst-A branch (Full-M1 parallel-STRIDE, default for full/rebuild)
 
-When `STAGE1_PHASE_LIMIT=8` is passed (set by the skill by default for `MODE` ∈ {full, rebuild}; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`), this agent is **Analyst-A**: it runs Phases 1–8 **plus the Phase-9 dispatch PREP** (component selection, dirty/slice-delta computation, taxonomy slices, and the `.dispatch-context/<id>/` per-component slices — everything in `phase-group-threats.md` *up to but NOT including* the STRIDE Agent dispatch), then **stops** so the **skill** (Level-0) can fan out the `appsec-stride-analyzer` dispatches in parallel. This replaces the serial inline STRIDE that runs when a single Level-1 analyst can't dispatch sub-agents.
+When `STAGE1_PHASE_LIMIT=8` is passed with `RESUME_FROM_PHASE=8` (set by the
+skill after the Stage-1b gate), this agent is the Stage-1c **Analyst-A**. It
+runs Phase 8 **plus the Phase-9 dispatch PREP** and then stops so the skill can
+fan out STRIDE. It must reuse the canonical Stage-1b
+`.trust-boundaries.json`; it must never re-run Phase 7 or read candidates as a
+semantic input.
 
 **Behaviour contract:**
 
-1. Run Phases 1–8 normally (produces `.components.json`, `.trust-boundaries.json`, `.security-controls.json`, recon, etc.).
+1. Validate the finalized component receipt and Stage-1b coverage artifact,
+   then run Phase 8. Component IDs are read-only in this stage.
 2. Run the **Phase-9 dispatch-prep only** (per `phase-group-threats.md`): component selection / dirty-set / slice-delta, the taxonomy-slice batch (`slice_taxonomy.py`), and the `.dispatch-context/<COMPONENT_ID>/` files (`prior-findings.json`, `known-threats.json`, `cross-repo.json`, `requirements-violations.json`). **Do NOT issue any STRIDE `Agent` call and do NOT inline STRIDE / write `.stride-*.json`.**
 3. Write **`$OUTPUT_DIR/.stride-analyst-context.json`** — a JSON object keyed by `component_id`, each value carrying the contextual fields the deterministic builder cannot reconstruct from disk: `interfaces`, `controls`, `known_secrets`, `known_vulns`, `known_llm_patterns`, and (ci-cd-pipeline only) `supply_chain_findings`, plus optional `estimated_threat_count`. These are exactly the per-component params you would otherwise have inlined into each STRIDE dispatch prompt (see `phase-group-threats.md` "For each component, use Agent tool"). Keep each value concise — the analyzer reads its own component slice too. An optional top-level `_stride_profile` key carries the STRIDE profile label/object.
 4. Write the checkpoint `phase=8 status=completed need_stride_dispatch=true` (single Bash call, co-execution rule).
@@ -582,7 +602,10 @@ When `STAGE1_PHASE_LIMIT=8` is passed (set by the skill by default for `MODE` �
 
 The skill then runs `build_stride_dispatch_manifest.py` (merging `.stride-analyst-context.json`) → `validate_dispatch_manifest.py` (hard gate) → dispatches one `appsec-stride-analyzer` per component **in parallel** → waits for all `.stride-<id>.json` → dispatches **Analyst-B** (`RESUME_FROM_PHASE=9-merge`) which runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3 (i.e., everything the `=10b` branch does *after* STRIDE).
 
-**Fallback:** if `APPSEC_PARALLEL_STRIDE=0` is set, or `MODE` ∉ {full, rebuild}, the skill uses `STAGE1_PHASE_LIMIT=10b` instead — the single-analyst flow runs and STRIDE is handled inline per the M1-lite escape clause (Phase 9).
+**Fallback:** if `APPSEC_PARALLEL_STRIDE=0` is set, the skill uses
+`RESUME_FROM_PHASE=8 STAGE1_PHASE_LIMIT=10b` instead. The Stage-1c analyst
+runs controls, STRIDE, merge, and triage inline without re-entering discovery
+or the boundary stage.
 
 **When `STAGE1_PHASE_LIMIT` is not set or has any other value**, the agent runs the full Phases 1–11 pipeline as before. This preserves backward compatibility for explicit single-stage invocations (e.g. resume-from-checkpoint flows that have already completed Phase 10b).
 

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/data-flows.schema.json",
+  "title": "Phase 3 sidecar — persisted data flows",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "component_inventory_fingerprint", "data_flows"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "component_inventory_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "data_flows": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"$ref": "#/$defs/data_flow"}
+    }
+  },
+  "$defs": {
+    "endpoint": {
+      "type": "string",
+      "pattern": "^(?:external|[a-z][a-z0-9-]+)$",
+      "maxLength": 128
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "not": {
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[a-zA-Z][a-zA-Z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)"
+          }
+        },
+        "line": {"type": "integer", "minimum": 1}
+      }
+    },
+    "data_flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from",
+        "to",
+        "label",
+        "protocol",
+        "data_classification",
+        "direction",
+        "evidence",
+        "provenance"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^df-[0-9]{3,}$"},
+        "from": {"$ref": "#/$defs/endpoint"},
+        "to": {"$ref": "#/$defs/endpoint"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "protocol": {"type": "string", "minLength": 1, "maxLength": 80},
+        "data_classification": {"type": "string", "minLength": 1, "maxLength": 80},
+        "direction": {
+          "type": "string",
+          "enum": ["unidirectional", "bidirectional", "request-response"]
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {"$ref": "#/$defs/evidence"}
+        },
+        "route_refs": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 120}
+        },
+        "interface_refs": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 120}
+        },
+        "provenance": {
+          "type": "string",
+          "enum": ["recon", "architecture", "route-extraction", "repo-declared"]
+        },
+        "threats": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^T-[0-9]{3,}$"}
+        }
+      }
+    }
+  }
+}

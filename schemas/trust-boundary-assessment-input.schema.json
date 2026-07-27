@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/trust-boundary-assessment-input.schema.json",
+  "title": "Bounded trust-boundary assessment input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "component_inventory_fingerprint",
+    "assessment_input_fingerprint",
+    "assessment_depth",
+    "components",
+    "data_flows",
+    "signals",
+    "prior_boundary_identity_hints",
+    "source_context"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "component_inventory_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "assessment_input_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "assessment_depth": {"type": "string", "enum": ["quick", "standard", "thorough"]},
+    "components": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "tier", "deployment_zones", "handles_sensitive_data", "paths"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]+$"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 80},
+          "tier": {"type": "string", "enum": ["client", "application", "data"]},
+          "deployment_zones": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 80}},
+          "handles_sensitive_data": {"type": "boolean"},
+          "paths": {"type": "array", "maxItems": 40, "items": {"type": "string", "maxLength": 512}}
+        }
+      }
+    },
+    "data_flows": {"type": "array", "maxItems": 500, "items": {"type": "object"}},
+    "signals": {
+      "type": "array",
+      "maxItems": 800,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "class",
+          "from",
+          "to",
+          "mandatory",
+          "trigger",
+          "false_positive_exclusions",
+          "evidence",
+          "provenance",
+          "flow_ids"
+        ],
+        "properties": {
+          "id": {"type": "string", "pattern": "^signal-[a-z0-9-]+$"},
+          "class": {
+            "type": "string",
+            "enum": [
+              "external-ingress",
+              "browser-to-server",
+              "cross-zone-flow",
+              "application-to-data-tier",
+              "third-party-or-cross-repository",
+              "identity-or-privilege-transition",
+              "in-process-isolation",
+              "build-and-deployment"
+            ]
+          },
+          "from": {"type": "string", "pattern": "^(?:external|[a-z][a-z0-9-]+)$"},
+          "to": {"type": "string", "pattern": "^(?:external|[a-z][a-z0-9-]+)$"},
+          "mandatory": {"type": "boolean"},
+          "trigger": {"type": "string", "minLength": 1, "maxLength": 240},
+          "false_positive_exclusions": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 180}},
+          "evidence": {"type": "array", "maxItems": 12, "items": {"type": "object"}},
+          "provenance": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 80}},
+          "flow_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^df-[0-9]{3,}$"}}
+        }
+      }
+    },
+    "prior_boundary_identity_hints": {
+      "type": "array",
+      "maxItems": 400,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^tb-[0-9]+$"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 100},
+          "from": {"type": "string", "maxLength": 128},
+          "to": {"type": "string", "maxLength": 128},
+          "declaration_key": {"type": "string", "maxLength": 80}
+        }
+      }
+    },
+    "source_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "route_inventory",
+        "attack_surface_additions",
+        "cross_repository",
+        "recon_signals",
+        "boundary_declarations",
+        "incremental"
+      ],
+      "properties": {
+        "route_inventory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "routes"],
+          "properties": {
+            "status": {"type": "string", "enum": ["present", "missing"]},
+            "routes": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "route_id",
+                  "method",
+                  "path",
+                  "authn_signal",
+                  "authz_signal",
+                  "management_surface",
+                  "evidence"
+                ],
+                "properties": {
+                  "route_id": {"type": "string", "pattern": "^R-[0-9]{3,5}$"},
+                  "method": {"type": "string", "maxLength": 16},
+                  "path": {"type": "string", "maxLength": 180},
+                  "authn_signal": {"type": "string", "maxLength": 32},
+                  "authz_signal": {"type": "string", "maxLength": 32},
+                  "management_surface": {"type": "boolean"},
+                  "evidence": {"type": "array", "maxItems": 1, "items": {"type": "object"}}
+                }
+              }
+            }
+          }
+        },
+        "attack_surface_additions": {
+          "type": "array",
+          "maxItems": 40,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["entry_point", "protocol", "auth_required"],
+            "properties": {
+              "entry_point": {"type": "string", "minLength": 1, "maxLength": 180},
+              "protocol": {"type": "string", "minLength": 1, "maxLength": 80},
+              "auth_required": {"type": ["boolean", "null"]}
+            }
+          }
+        },
+        "cross_repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "entries"],
+          "properties": {
+            "status": {"type": "string", "enum": ["present", "missing"]},
+            "entries": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "source", "interface", "type", "threat_model_status"],
+                "properties": {
+                  "name": {"type": "string", "minLength": 1, "maxLength": 100},
+                  "source": {"type": "string", "enum": ["declared", "sibling", "submodule", "recon"]},
+                  "interface": {"type": "string", "maxLength": 160},
+                  "type": {"type": "string", "maxLength": 40},
+                  "threat_model_status": {"type": "string", "maxLength": 20}
+                }
+              }
+            }
+          }
+        },
+        "recon_signals": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["values", "evidence"],
+          "properties": {
+            "values": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "has_public_routes",
+                "has_auth_surface",
+                "has_role_concept",
+                "has_ci_pipeline",
+                "has_external_apis",
+                "has_client_storage",
+                "has_multi_tenancy_signal"
+              ],
+              "properties": {
+                "has_public_routes": {"type": "boolean"},
+                "has_auth_surface": {"type": "boolean"},
+                "has_role_concept": {"type": "boolean"},
+                "has_ci_pipeline": {"type": "boolean"},
+                "has_external_apis": {"type": "boolean"},
+                "has_client_storage": {"type": "boolean"},
+                "has_multi_tenancy_signal": {"type": "boolean"}
+              }
+            },
+            "evidence": {"type": "array", "maxItems": 12, "items": {"type": "object"}}
+          }
+        },
+        "boundary_declarations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "fingerprint", "keys"],
+          "properties": {
+            "status": {"type": "string", "enum": ["present", "missing"]},
+            "fingerprint": {
+              "type": ["string", "null"],
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "keys": {
+              "type": "array",
+              "maxItems": 200,
+              "uniqueItems": true,
+              "items": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80}
+            }
+          }
+        },
+        "incremental": {"type": "boolean"}
+      }
+    }
+  }
+}

@@ -35,6 +35,9 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 NORMALIZED_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "trust-boundaries.schema.json"
 REPO_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundaries-repo.schema.yaml"
 DIAGNOSTICS_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-diagnostics.schema.json"
+CANDIDATES_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "trust-boundary-candidates.schema.json"
+ASSESSMENT_INPUT_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-assessment-input.schema.json"
+COVERAGE_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-coverage.schema.json"
 KINDS = {"network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"}
 LEGACY_FIELDS = {"controls", "description", "enforcement", "crossing_enforcement", "trust_level", "weakness"}
 NEUTRAL_LEGACY_ASSUMPTION = "Assumption not recorded in legacy model"
@@ -689,9 +692,11 @@ def normalize(
     sidecar: Path,
     prior_model: Path | None,
     output_dir: Path,
+    raw_sidecar: dict | None = None,
+    destination: Path | None = None,
 ) -> tuple[dict, list[str]]:
     repo_root, output_dir = repo_root.resolve(), output_dir.resolve()
-    raw = _read_json(sidecar, None)
+    raw = raw_sidecar if raw_sidecar is not None else _read_json(sidecar, None)
     if not isinstance(raw, dict) or not isinstance(raw.get("trust_boundaries"), list):
         raise ValueError(f"sidecar is missing or malformed: {sidecar}")
     prior, prior_rows = _prior_boundaries(prior_model)
@@ -727,7 +732,7 @@ def normalize(
     result = {"schema_version": 2, "trust_boundaries": merged}
     schema = json.loads(NORMALIZED_SCHEMA.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(result)
-    atomic_write_json(sidecar, result, sort_keys=False)
+    atomic_write_json(destination or sidecar, result, sort_keys=False)
     _write_declaration_fingerprint(output_dir, fingerprint)
     return result, warnings
 
@@ -1175,6 +1180,173 @@ def validate_finding_boundary_refs(
     return cleaned, diagnostics
 
 
+def promote_candidates(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    candidates_path: Path,
+    assessment_input_path: Path,
+    prior_model: Path | None,
+) -> tuple[dict, dict]:
+    """Validate candidate coverage and promote candidates into the catalog.
+
+    The LLM-authored file is never consumed by downstream stages. Public IDs,
+    endpoint resolution, declaration merging, sources, and status remain owned
+    by ``normalize``.
+    """
+    candidate_doc = _read_json(candidates_path, None)
+    assessment = _read_json(assessment_input_path, None)
+    if not isinstance(candidate_doc, dict) or not isinstance(assessment, dict):
+        raise ValueError("candidate or assessment-input artifact is missing/malformed")
+    for document, schema_path in (
+        (candidate_doc, CANDIDATES_SCHEMA),
+        (assessment, ASSESSMENT_INPUT_SCHEMA),
+    ):
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator(schema).validate(document)
+
+    for field in ("component_inventory_fingerprint", "assessment_input_fingerprint"):
+        if candidate_doc[field] != assessment[field]:
+            raise ValueError(f"candidate {field} does not match immutable assessment input")
+
+    component_ids = {row["id"] for row in assessment["components"]}
+    flow_ids = {row["id"] for row in assessment["data_flows"]}
+    signal_by_id = {row["id"]: row for row in assessment["signals"]}
+    if len(signal_by_id) != len(assessment["signals"]):
+        raise ValueError("assessment input contains duplicate signal IDs")
+    candidates = candidate_doc["candidates"]
+    candidate_by_key = {row["candidate_key"]: row for row in candidates}
+    if len(candidate_by_key) != len(candidates):
+        raise ValueError("candidate keys must be unique")
+    dispositions = candidate_doc["dispositions"]
+    disposition_by_signal = {row["signal_id"]: row for row in dispositions}
+    if len(disposition_by_signal) != len(dispositions):
+        raise ValueError("every signal must have exactly one disposition")
+    mandatory = {sid for sid, row in signal_by_id.items() if row.get("mandatory")}
+    if set(disposition_by_signal) != mandatory:
+        missing = sorted(mandatory - set(disposition_by_signal))
+        extra = sorted(set(disposition_by_signal) - mandatory)
+        raise ValueError(f"signal disposition mismatch (missing={missing}, extra={extra})")
+
+    allowed_endpoints = component_ids | {"external"}
+    referenced_candidates: set[str] = set()
+    for candidate in candidates:
+        key = candidate["candidate_key"]
+        if candidate["from"] not in allowed_endpoints or candidate["to"] not in allowed_endpoints:
+            raise ValueError(f"{key} references an unknown component endpoint")
+        covered_signals = set(candidate["covered_signal_ids"])
+        covered_flows = set(candidate["covered_flow_ids"])
+        if not covered_signals and not covered_flows:
+            raise ValueError(f"{key} covers no deterministic signal or data flow")
+        if not covered_signals <= set(signal_by_id):
+            raise ValueError(f"{key} references an unknown signal")
+        if not covered_flows <= flow_ids:
+            raise ValueError(f"{key} references an unknown data flow")
+    for signal_id, disposition in disposition_by_signal.items():
+        keys = disposition["candidate_keys"]
+        if disposition["disposition"] == "boundary" and not keys:
+            raise ValueError(f"{signal_id} boundary disposition has no candidate")
+        if disposition["disposition"] != "boundary" and keys:
+            raise ValueError(f"{signal_id} non-boundary disposition references candidates")
+        for key in keys:
+            candidate = candidate_by_key.get(key)
+            if candidate is None:
+                raise ValueError(f"{signal_id} references unknown candidate {key}")
+            if signal_id not in candidate["covered_signal_ids"]:
+                raise ValueError(f"{key} does not declare coverage of {signal_id}")
+            referenced_candidates.add(key)
+    unreferenced = set(candidate_by_key) - referenced_candidates
+    if unreferenced:
+        raise ValueError(f"candidates are not referenced by a boundary disposition: {sorted(unreferenced)}")
+
+    provisional_rows = []
+    for candidate in candidates:
+        row = {
+            key: deepcopy(candidate[key])
+            for key in ("name", "from", "to", "kind", "assumption", "evidence", "confidence")
+        }
+        row["evidence"] = _canonical_evidence(
+            repo_root,
+            row["evidence"],
+            [],
+            candidate["candidate_key"],
+        )
+        if row["confidence"] == "confirmed" and not row["evidence"]:
+            raise ValueError(
+                f"{candidate['candidate_key']} claims confirmed confidence without valid repository evidence"
+            )
+        provisional_rows.append(row)
+    provisional = {"schema_version": 2, "trust_boundaries": provisional_rows}
+    sidecar = output_dir / ".trust-boundaries.json"
+    canonical, _warnings = normalize(
+        repo_root=repo_root,
+        sidecar=sidecar,
+        prior_model=prior_model,
+        output_dir=output_dir,
+        raw_sidecar=provisional,
+        destination=sidecar,
+    )
+
+    canonical_rows = canonical["trust_boundaries"]
+    candidate_to_ids: dict[str, list[str]] = {}
+    for key, candidate in candidate_by_key.items():
+        exact = [
+            row["id"]
+            for row in canonical_rows
+            if row.get("from") == candidate["from"]
+            and row.get("to") == candidate["to"]
+            and str(row.get("name", "")).casefold() == candidate["name"].casefold()
+        ]
+        if not exact:
+            exact = [
+                row["id"]
+                for row in canonical_rows
+                if row.get("from") == candidate["from"] and row.get("to") == candidate["to"]
+            ]
+        candidate_to_ids[key] = sorted(set(exact), key=_numeric_id)
+
+    coverage_rows: list[dict] = []
+    issues: list[dict] = []
+    for signal_id in sorted(mandatory):
+        disposition = disposition_by_signal[signal_id]
+        boundary_ids = sorted(
+            {boundary_id for key in disposition["candidate_keys"] for boundary_id in candidate_to_ids.get(key, [])},
+            key=_numeric_id,
+        )
+        if disposition["disposition"] == "boundary" and not boundary_ids:
+            raise ValueError(f"{signal_id} did not promote to a canonical boundary")
+        if disposition["disposition"] == "unresolved":
+            issues.append(
+                {
+                    "code": "unresolved-signal",
+                    "signal_id": signal_id,
+                    "message": "The analyst accounted for this signal but could not resolve its trust disposition.",
+                }
+            )
+        coverage_rows.append(
+            {
+                "signal_id": signal_id,
+                "disposition": disposition["disposition"],
+                "candidate_keys": disposition["candidate_keys"],
+                "boundary_ids": boundary_ids,
+                "evidence": signal_by_id[signal_id]["evidence"],
+                "rationale": disposition["rationale"],
+            }
+        )
+    coverage = {
+        "schema_version": 1,
+        "component_inventory_fingerprint": assessment["component_inventory_fingerprint"],
+        "assessment_input_fingerprint": assessment["assessment_input_fingerprint"],
+        "status": "pass",
+        "signals": coverage_rows,
+        "issues": issues,
+    }
+    schema = json.loads(COVERAGE_SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(coverage)
+    atomic_write_json(output_dir / ".trust-boundary-coverage.json", coverage, sort_keys=False)
+    return canonical, coverage
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="operation", required=True)
@@ -1188,6 +1360,12 @@ def main(argv: list[str] | None = None) -> int:
     ctx.add_argument("--output-dir", type=Path, required=True)
     ctx.add_argument("--depth", choices=("quick", "standard", "thorough"), required=True)
     ctx.add_argument("--component", action="append", default=[])
+    promote = sub.add_parser("promote")
+    promote.add_argument("--repo-root", type=Path, required=True)
+    promote.add_argument("--output-dir", type=Path, required=True)
+    promote.add_argument("--candidates", type=Path, required=True)
+    promote.add_argument("--assessment-input", type=Path, required=True)
+    promote.add_argument("--prior-model", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.operation == "normalize":
@@ -1198,7 +1376,7 @@ def main(argv: list[str] | None = None) -> int:
                 output_dir=args.output_dir,
             )
             print(json.dumps({"boundaries": len(result["trust_boundaries"]), "warnings": len(warnings)}))
-        else:
+        elif args.operation == "contexts":
             audit = prepare_contexts(
                 repo_root=args.repo_root,
                 output_dir=args.output_dir,
@@ -1206,6 +1384,23 @@ def main(argv: list[str] | None = None) -> int:
                 depth=args.depth,
             )
             print(json.dumps({"components": len(audit["components"])}))
+        else:
+            canonical, coverage = promote_candidates(
+                repo_root=args.repo_root,
+                output_dir=args.output_dir,
+                candidates_path=args.candidates,
+                assessment_input_path=args.assessment_input,
+                prior_model=args.prior_model,
+            )
+            print(
+                json.dumps(
+                    {
+                        "boundaries": len(canonical["trust_boundaries"]),
+                        "signals": len(coverage["signals"]),
+                        "unresolved": len(coverage["issues"]),
+                    }
+                )
+            )
     except (OSError, ValueError, jsonschema.ValidationError) as exc:
         print(f"prepare_trust_boundary_context: {exc}", file=sys.stderr)
         return 1

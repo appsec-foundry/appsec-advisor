@@ -20,7 +20,7 @@ SCRIPTS = REPO_ROOT / "scripts"
 
 THIN_RUNTIMES = [
     SKILL_DIR / "SKILL-thin-stage1.md",
-    SKILL_DIR / "SKILL-thin-stage1c.md",
+    SKILL_DIR / "SKILL-thin-stage1d.md",
     SKILL_DIR / "SKILL-thin-stage2.md",
 ]
 
@@ -106,7 +106,7 @@ def _argparse_contract(script: str) -> tuple[set[str], list[str]]:
 def test_thin_runtime_names_every_script_it_depends_on() -> None:
     """A stage file must name the script it tells the orchestrator to run.
 
-    SKILL-thin-stage1c.md and SKILL-thin-stage2.md describe recording stats
+    SKILL-thin-stage1d.md and SKILL-thin-stage2.md describe recording stats
     ("record the aggregated stats as stage 1, variant abuse-verification") without
     ever naming record_stage_stats.py — unguessable from the prose alone.
     """

@@ -166,10 +166,13 @@ operative contract here:
 
 - Every `appsec-threat-analyst` dispatch receives all non-null aliases above as
   explicit `KEY=value` prompt lines, plus `APPSEC_TRIAGE_DETERMINISTIC=1`.
-- Analyst-A adds `STAGE1_PHASE_LIMIT=8`.
+- Discovery/architecture adds `STAGE1_PHASE_LIMIT=6`.
+- Stage-1c Analyst-A adds `RESUME_FROM_PHASE=8` and
+  `STAGE1_PHASE_LIMIT=8`.
 - Analyst-B adds `RESUME_FROM_PHASE=9-merge` and
   `STAGE1_PHASE_LIMIT=10b`.
-- The serial fallback adds `STAGE1_PHASE_LIMIT=10b`; a manifest-build fallback
+- The serial Stage-1c path adds `RESUME_FROM_PHASE=8` and
+  `STAGE1_PHASE_LIMIT=10b`; a manifest-build fallback
   also adds `RESUME_FROM_PHASE=9`.
 - Never set `RENDER_ONLY` on a Stage-1 analyst dispatch.
 - Preserve the user's `SCOPE` entries as data-only focus constraints. Do not
@@ -191,22 +194,24 @@ python3 -c 'import pathlib,time,sys; pathlib.Path(sys.argv[1]).write_text(str(in
 Create Task rows in this exact order and with these exact subjects:
 
 1. `Preparing workspace`; immediately mark completed.
-2. `Stage 1a - Threat Analysis`
-3. `Stage 1b - Triage`
-4. `Stage 1c - Abuse Case Verification` only when
+2. `Stage 1a - Discovery & Architecture`
+3. `Stage 1b - Trust Boundary Assessment`
+4. `Stage 1c - Controls, STRIDE & Triage`
+5. `Stage 1d - Abuse Case Verification` only when
    `SKIP_ABUSE_CASE_VERIFICATION=false`
-5. `Stage 2 - Report Rendering`
-6. `Stage 3 - QA Review` only when `SKIP_QA=false`
-7. `Stage 4 - Architect Review` only when `ARCHITECT_REVIEW=true`
-8. `Final summary` when `KEEP_RUNTIME_FILES=true`, otherwise
+6. `Stage 2 - Report Rendering`
+7. `Stage 3 - QA Review` only when `SKIP_QA=false`
+8. `Stage 4 - Architect Review` only when `ARCHITECT_REVIEW=true`
+9. `Final summary` when `KEEP_RUNTIME_FILES=true`, otherwise
    `Final summary + cleanup`
 
 Use the existing active forms:
 
 ```text
 Preparing workspace
-Running threat analysis
-Running triage
+Running discovery and architecture
+Assessing trust boundaries
+Running controls, STRIDE, and triage
 Verifying abuse-case chains
 Rendering threat model report
 Running QA review
@@ -219,16 +224,16 @@ Do not create any other Task rows.
 Then emit the normal handoff banner using the controller estimate:
 
 ```text
-▶ Stage 1/<TOTAL_STAGES> — Threat Analysis & Triage starting  (Stage 1: ~<EST_STAGE1> min, total: ~<EST_TOTAL> — <EST_SOURCE>)
+▶ Stage 1a/<TOTAL_STAGES> — Discovery & Architecture starting  (Stage 1: ~<EST_STAGE1> min, total: ~<EST_TOTAL> — <EST_SOURCE>)
 ```
 
-## 5. Stage 1 and Stage 1c
+## 5. Stages 1a–1d
 
 Read `SKILL-thin-stage1.md` in full and follow it. It replaces the verbose
 Stage-1 slice from `SKILL-impl.md` for this runtime; do not load that legacy
 slice. Only when `SKIP_ABUSE_CASE_VERIFICATION=false`, read
-`SKILL-thin-stage1c.md` in full and follow it. Otherwise do not load any
-Stage-1c instructions.
+`SKILL-thin-stage1d.md` in full as the Stage-1d abuse runtime and
+follow it. Otherwise do not load any Stage-1d instructions.
 
 If a Stage-1 dispatch returns as a stall/stream-watchdog failure, treat the
 filesystem as authoritative and still run the compact Stage-1 post-gate. A

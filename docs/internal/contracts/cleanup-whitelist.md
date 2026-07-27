@@ -34,6 +34,8 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .arch-coverage-threats.json
 .scan-manifest.txt
 .triage-ranking.json
+.trust-boundary-assessment-input.json
+.trust-boundary-candidates.json
 .qa-prepass.json
 .appsec-progress.json
 .skill-watchdog.tick

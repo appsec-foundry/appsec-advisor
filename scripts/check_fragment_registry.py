@@ -35,8 +35,10 @@ import yaml
 _SIDECAR_ONLY_TYPES = frozenset(
     {
         "components",
+        "data-flows",
         "assets",
         "trust-boundaries",
+        "trust-boundary-candidates",
         "security-controls",
         "attack-surface-overrides",
         "mitigation-overrides",

@@ -56,16 +56,13 @@ def test_bootstrap_table_includes_composition_stage_always(skill_impl_text):
 
 
 def test_stage_1_split_into_lettered_subrows(skill_impl_text):
-    # Stage 1 is exposed as three lettered sub-rows (2026-06): 1a/1b run
-    # inside the single analyst dispatch, 1c is the separate abuse-case
-    # verifier fan-out. Subjects use hyphen-minus (`-`), not em-dash (`—`),
-    # because the TodoWrite renderer mis-handles multi-byte em-dash widths
-    # and bleeds adjacent task labels into each other. The `&`/em-dash
-    # canonical names may still appear in headings/prose/stats where the
-    # rendering path is unaffected.
-    assert "`Stage 1a - Threat Analysis`" in skill_impl_text
-    assert "`Stage 1b - Triage`" in skill_impl_text
-    assert "`Stage 1c - Abuse Case Verification`" in skill_impl_text
+    # The analysis pipeline exposes four truthful stages: discovery and
+    # architecture, dedicated boundary assessment, controls/STRIDE/triage,
+    # and the conditional abuse verifier fan-out.
+    assert "`Stage 1a - Discovery & Architecture`" in skill_impl_text
+    assert "`Stage 1b - Trust Boundary Assessment`" in skill_impl_text
+    assert "`Stage 1c - Controls, STRIDE & Triage`" in skill_impl_text
+    assert "`Stage 1d - Abuse Case Verification`" in skill_impl_text
 
 
 # ---------------------------------------------------------------------------

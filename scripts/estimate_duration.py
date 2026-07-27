@@ -105,16 +105,25 @@ _STAGE4_ARCHITECT: dict[str, float] = {
     "thorough": 6.0,
 }
 
-# Stage 1c — Abuse-case verifier fan-out. A separate skill-level dispatch
+# Stage 1d — Abuse-case verifier fan-out. A separate skill-level dispatch
 # that runs after Phase 10b and before Stage 2 (single-pass sonnet, wall-clock
 # ≈ slowest verifier). Default-on at standard/thorough, off at quick. ~5 min
 # observed on juice-shop standard (2026-06). Gated by --skip-abuse-cases so
 # `--no-abuse-cases` zeroes it; quick is 0 because abuse is off there by
 # default and the estimator is not told about the rare --abuse-cases override.
-_STAGE1C_ABUSE: dict[str, float] = {
+_STAGE1D_ABUSE: dict[str, float] = {
     "quick": 0.0,
     "standard": 5.0,
     "thorough": 6.0,
+}
+
+# Dedicated Stage 1b trust-boundary assessment. Parametric until measured runs
+# provide an isolated stage statistic; do not derive it from the former
+# combined Phase-5–7 timestamps.
+_STAGE1B_BOUNDARY: dict[str, float] = {
+    "quick": 2.0,
+    "standard": 3.0,
+    "thorough": 4.0,
 }
 
 # Skill-layer transition buffer — pre-flight wipe, task-list bootstrap,
@@ -375,21 +384,23 @@ def _component_durations_estimate(
     phase_other_seconds = {"quick": 540, "standard": 720, "thorough": 900}.get(depth, 720)
     stage1_min = (phase_9_seconds + phase_other_seconds) / 60.0
     # Mirror the parametric additive structure (was a flat `+13` that
-    # silently dropped the Stage-1c abuse fan-out). Reuse the module
+    # silently dropped the Stage-1d abuse fan-out). Reuse the module
     # constants so this path tracks any future recalibration of them.
-    stage1c = _STAGE1C_ABUSE.get(depth, 0.0)
+    stage1b = _STAGE1B_BOUNDARY.get(depth, 0.0)
+    stage1d = _STAGE1D_ABUSE.get(depth, 0.0)
     stage2 = _STAGE2_COMPOSITION[depth]
     stage3 = _STAGE3_QA[depth]
     transition = _TRANSITION_BUFFER
     return (
         {
             "stage1": stage1_min,
-            "stage1c": stage1c,
+            "stage1b": stage1b,
+            "stage1d": stage1d,
             "stage2": stage2,
             "stage3": stage3,
             "stage4": 0.0,
             "transition": transition,
-            "total": stage1_min + stage1c + stage2 + stage3 + transition,
+            "total": stage1_min + stage1b + stage1d + stage2 + stage3 + transition,
         },
         "component_durations",
     )
@@ -491,16 +502,18 @@ def _parametric(
     size_factor = _size_factor_from_files(n_files)
     model_factor = _MODEL_FACTOR.get(reasoning_model, 1.0)
     stage1 = _STAGE1_BASE[depth] * size_factor * model_factor
-    stage1c = 0.0 if skip_abuse_cases else _STAGE1C_ABUSE.get(depth, 0.0)
+    stage1b = _STAGE1B_BOUNDARY[depth]
+    stage1d = 0.0 if skip_abuse_cases else _STAGE1D_ABUSE.get(depth, 0.0)
     stage2 = _STAGE2_COMPOSITION[depth]
     stage3 = 0.0 if skip_qa else _STAGE3_QA[depth]
     stage4 = _STAGE4_ARCHITECT[depth] if architect_review else 0.0
     transition = _TRANSITION_BUFFER
-    total = stage1 + stage1c + stage2 + stage3 + stage4 + transition
+    total = stage1 + stage1b + stage1d + stage2 + stage3 + stage4 + transition
     return (
         {
             "stage1": stage1,
-            "stage1c": stage1c,
+            "stage1b": stage1b,
+            "stage1d": stage1d,
             "stage2": stage2,
             "stage3": stage3,
             "stage4": stage4,
@@ -536,7 +549,7 @@ def main(argv: list[str]) -> int:
         "--skip-abuse-cases",
         action="store_true",
         help="abuse-case verifier fan-out is disabled (mirrors "
-        "skip_abuse_case_verification); drops the Stage-1c additive",
+        "skip_abuse_case_verification); drops the Stage-1d additive",
     )
     p.add_argument("--output-dir", required=True, type=Path)
     p.add_argument("--repo-root", required=True, type=Path)
@@ -597,7 +610,8 @@ def main(argv: list[str]) -> int:
     out = {
         "source": source,
         "stage1_min": int(round(breakdown["stage1"])),
-        "stage1c_min": int(round(breakdown.get("stage1c", 0.0))),
+        "stage1b_min": int(round(breakdown.get("stage1b", 0.0))),
+        "stage1d_min": int(round(breakdown.get("stage1d", 0.0))),
         "stage2_min": int(round(breakdown["stage2"])),
         "stage3_min": int(round(breakdown["stage3"])),
         "stage4_min": int(round(breakdown["stage4"])),

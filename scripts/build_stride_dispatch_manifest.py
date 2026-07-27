@@ -1214,39 +1214,49 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     # spare a component and why crown-jewel is not one of them.
     cheap_stride = bool(_read_json(output_dir / ".skill-config.json", {}).get("cheap_stride", False))
 
-    # Enumeration-completeness reconciliation: restore security-relevant units
-    # (auth / ci-cd / real-time) that Phase-3 folded into a coarser parent. The
-    # augmented inventory is persisted so it is the single source of truth for
-    # the selector here, the STRIDE fan-out, AND the downstream threat-model.yaml
-    # / heatmap / §1 scope (build_threat_model_yaml reads .components.json).
+    # Component reconciliation belongs to the Stage-1a finalization gate. Once
+    # its receipt exists, manifest construction is read-only with respect to
+    # component identity: any drift is a blocking producer defect.
+    #
+    # The receipt-less branch remains temporarily readable for old cached runs
+    # and direct module callers. Operational runtimes always run
+    # finalize_component_inventory.py before boundary assessment.
     repo_root = _guess_repo_root(output_dir)
     auth_evidence = _auth_evidence_files(output_dir)
-    orig_components = all_components
-    all_components, injected = reconcile_inventory(all_components, repo_root)
-    # Persist when reconciliation injected a unit OR collapsed same-id duplicates —
-    # both change the canonical inventory that compose / build_threat_model_yaml
-    # read. Gating on `injected` alone left pre-existing duplicates un-deduped in
-    # .components.json (duplicate C-NN rows in §arch).
-    if injected or all_components != orig_components:
-        payload = dict(cj) if isinstance(cj, dict) else {}
-        payload.setdefault("schema_version", 1)
-        payload["components"] = all_components
-        try:
-            (output_dir / ".components.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        except OSError:
-            pass
-        if injected:
-            sys.stderr.write(
-                "RECONCILE: injected "
-                + ", ".join(c["id"] for c in injected)
-                + " — security-relevant unit(s) evidenced in repo but absent from "
-                "Phase-3 enumeration (role-folded). Now in scope.\n"
+    finalization_receipt = output_dir / ".component-inventory-finalization.json"
+    if finalization_receipt.is_file():
+        from finalize_component_inventory import validate_receipt
+
+        validate_receipt(output_dir)
+        reconciled, injected = reconcile_inventory(all_components, repo_root)
+        if injected or reconciled != all_components:
+            raise ValueError(
+                "component inventory would change after trust-boundary assessment; "
+                "rerun finalize_component_inventory.py before Stage 1b"
             )
-        collapsed = len(orig_components) - len(all_components) + len(injected)
-        if collapsed > 0:
-            sys.stderr.write(
-                f"RECONCILE: collapsed {collapsed} duplicate same-id component entry(ies) into their canonical card.\n"
-            )
+    else:
+        orig_components = all_components
+        all_components, injected = reconcile_inventory(all_components, repo_root)
+        if injected or all_components != orig_components:
+            from _atomic_io import atomic_write_json
+
+            payload = dict(cj) if isinstance(cj, dict) else {"schema_version": 1}
+            payload["components"] = all_components
+            try:
+                atomic_write_json(output_dir / ".components.json", payload, sort_keys=False)
+            except OSError:
+                pass
+            if injected:
+                sys.stderr.write(
+                    "RECONCILE: injected "
+                    + ", ".join(row["id"] for row in injected)
+                    + " (receipt-less compatibility path; new runtimes finalize before Stage 1b).\n"
+                )
+            else:
+                sys.stderr.write(
+                    "RECONCILE_COMPAT: receipt-less legacy inventory changed during manifest build; "
+                    "new runtimes must finalize it before Stage 1b.\n"
+                )
 
     # Seed the LLM role onto components from analyst-context / Cat-13 recon
     # BEFORE selection, so a folded chatbot is floored into STRIDE scope.

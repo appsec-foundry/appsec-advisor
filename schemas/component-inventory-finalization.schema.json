@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/component-inventory-finalization.schema.json",
+  "title": "Finalized component inventory receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "component_inventory_fingerprint",
+    "component_ids",
+    "injected_component_ids",
+    "collapsed_duplicate_count"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "component_inventory_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "component_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]+$"}
+    },
+    "injected_component_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]+$"}
+    },
+    "collapsed_duplicate_count": {"type": "integer", "minimum": 0}
+  }
+}

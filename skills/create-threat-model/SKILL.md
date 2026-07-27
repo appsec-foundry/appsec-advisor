@@ -91,7 +91,7 @@ the initial load. After Stage 1, read only the stage-local ranges below, at the
 boundary where each is needed; do not read the whole tail at the Stage-2
 handoff:
 
-- Stage 1c: `## Stage 1c — Abuse Case Verification` to
+- Stage 1d: `## Stage 1d — Abuse Case Verification` to
   `## Stage 2 - Report Rendering`, only after a completed Stage 1 when enabled;
   skip it for rerender and Stage-2-only recovery paths.
 - Stage 2: `## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs`;

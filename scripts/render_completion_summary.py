@@ -1055,12 +1055,15 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
     # standby/suspend gap, flag it so the user sees WHERE the dead time was.
     idle_by_key = {(s.get("stage"), s.get("variant") or ""): s for s in timing.get("stages") or []}
     for stage, variant, name, agent, model, secs in stage_rows:
-        # ``abuse-verification`` is the Stage-1 sub-step rendered as "1c"
-        # everywhere else (TUI row, report table). Repair variants keep the
-        # numeric stage and surface the variant in the description.
-        label = "1c" if variant == "abuse-verification" else str(stage if stage is not None else "—")
+        stage1_labels = {
+            "discovery-architecture": "1a",
+            "trust-boundary-assessment": "1b",
+            "controls-stride-triage": "1c",
+            "abuse-verification": "1d",
+        }
+        label = stage1_labels.get(variant, str(stage if stage is not None else "—"))
         desc = name or f"Stage {stage}"
-        if variant and variant != "abuse-verification":
+        if variant and variant not in stage1_labels:
             desc = f"{desc} ({variant})"
         duration = _fmt_duration(secs) if secs > 0 else "(n/a)"
         stage_tag = f"Stage {label}".ljust(10)

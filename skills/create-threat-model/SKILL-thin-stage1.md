@@ -1,11 +1,15 @@
-# Compact Thin Stage 1
+# Compact Thin Stages 1a and 1c
 
-Authoritative only for `thin-full` full/rebuild runs. Forwarding is resident in
-`SKILL-full-runtime.md`; do not read Stage 1 from `SKILL-impl.md`.
+Authoritative only for `thin-full` full/rebuild runs. Stage 1b is loaded from
+`SKILL-thin-stage1b.md` between two fresh threat-analyst contexts.
+Do not read the Stage-1 analysis body from `SKILL-impl.md`.
 
 ## Invariants
 
-- `PARALLEL_STRIDE=true`: Analyst-A, bounded STRIDE waves, then Analyst-B;
+- Stage 1a uses `STAGE1_PHASE_LIMIT=6` and never executes Phase 7.
+- Stage 1b is a fresh candidate-only agent plus deterministic coverage gate.
+- Stage 1c always starts with `RESUME_FROM_PHASE=8`.
+- `PARALLEL_STRIDE=true`: Stage-1c Analyst-A, bounded STRIDE waves, then Analyst-B;
   never inline STRIDE.
 - Every analyst dispatch receives every non-null alias from the parent runtime
   plus `APPSEC_TRIAGE_DETERMINISTIC=1` and the branch-specific values below.
@@ -37,16 +41,44 @@ export YAML_PRE_STAGE1 MD_PRE_STAGE1
 rm -f "$OUTPUT_DIR/.stage1-resume-count"
 ```
 
-Capture `STAGE1_START_ISO`, mark both Stage-1 tasks in progress, and start the
-fixed heartbeat watchdog from the parent runtime. Retain its task id.
+Capture `STAGE1A_START_ISO`, mark Stage 1a in progress, and start the fixed
+heartbeat watchdog from the parent runtime. Retain its task id.
+
+## Stage 1a — Discovery & Architecture
+
+Dispatch foreground `appsec-advisor:appsec-threat-analyst` with description
+`Discovery and Architecture`, all aliases, and `STAGE1_PHASE_LIMIT=6`. On
+return, run:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+  post-stage1a --output-dir "$OUTPUT_DIR"
+```
+
+Record the Stage-1a Agent usage:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+  --stage 1 --variant discovery-architecture --name "Discovery & Architecture" \
+  --agent appsec-advisor:appsec-threat-analyst --model "$ORCHESTRATOR_MODEL" \
+  --duration-ms <ms> --tool-uses <n> --tokens <n> \
+  ${STAGE1A_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst \
+    --since-iso "$STAGE1A_START_ISO"} 2>/dev/null || true
+```
+
+Require `action=dispatch_agent`, `stage=stage1b`. Mark Stage 1a completed.
+Read the returned `instruction_file` in full and execute the dedicated Stage
+1b. Only after its coverage gate passes, mark Stage 1c in progress and
+capture `STAGE1C_START_ISO`, then continue below.
 
 ## Parallel STRIDE path
 
 Use this path when `PARALLEL_STRIDE=true`.
 
-1. Set Stage-1a to `Phases 1–8 — recon → architecture → controls`. Dispatch
+1. Set Stage-1c to `Phase 8 — controls and dispatch preparation`. Dispatch
    foreground `appsec-advisor:appsec-threat-analyst` as `Threat Analysis &
-   Triage` with all aliases and `STAGE1_PHASE_LIMIT=8`; record usage with
+   Triage` with all aliases, `RESUME_FROM_PHASE=8`, and
+   `STAGE1_PHASE_LIMIT=8`; record usage with
    `record_stage_stats.py --accumulate`.
 2. Build and validate the manifest:
 
@@ -103,7 +135,7 @@ Use this path when `PARALLEL_STRIDE=true`.
    --accumulate`. After the loop, run
    `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" verify
    "$OUTPUT_DIR"`; any non-zero result is fatal and Analyst-B must not run.
-5. After verification, set Stage-1a to `Phases 9–10b — merge → triage` and
+5. After verification, set Stage-1c to `Phases 9–10b — merge → triage` and
    dispatch Analyst-B foreground with description
    `Threat Analysis and Triage (merge+triage)`, all aliases,
    `RESUME_FROM_PHASE=9-merge`, and `STAGE1_PHASE_LIMIT=10b`. Record its usage
@@ -118,11 +150,11 @@ marker and warns about. Substitute the group's own subagent type and model.
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-    --stage 1 --name "Threat Analysis & Triage" \
+    --stage 1 --variant controls-stride-triage --name "Controls, STRIDE & Triage" \
     --agent appsec-advisor:appsec-threat-analyst --model "$ORCHESTRATOR_MODEL" \
     --duration-ms <ms> --tool-uses <n> --tokens <n> --accumulate \
-    ${STAGE1_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst \
-      --since-iso "$STAGE1_START_ISO"} 2>/dev/null || true
+    ${STAGE1C_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst \
+      --since-iso "$STAGE1C_START_ISO"} 2>/dev/null || true
 ```
 
 For the STRIDE waves pass `--agent appsec-advisor:appsec-stride-analyzer`,
@@ -133,21 +165,22 @@ Stats failures are non-blocking.
 
 When `PARALLEL_STRIDE=false`, dispatch one foreground
 `appsec-advisor:appsec-threat-analyst` with description
-`Threat Analysis and Triage`, all aliases, and `STAGE1_PHASE_LIMIT=10b`. Record
+`Threat Analysis and Triage`, all aliases, `RESUME_FROM_PHASE=8`, and
+`STAGE1_PHASE_LIMIT=10b`. Record
 one non-accumulating Stage-1 stats row from its usage.
 
 ## Close and gate
 
-After the final Stage-1 Agent return, send the final lock heartbeat, load
-`TaskStop` if needed, stop the watchdog, and mark Stage 1a and 1b completed.
+After the final Stage-1c Agent return, send the final lock heartbeat, load
+`TaskStop` if needed, stop the watchdog, and mark Stage 1c completed.
 Then run exactly:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
-  post-stage1 --output-dir "$OUTPUT_DIR"
+  post-stage1c --output-dir "$OUTPUT_DIR"
 ```
 
-Require `action=run_gate`, `stage=stage1`. When the abort reason reports missing
+Require `action=run_gate`, `stage=stage1c`. When the abort reason reports missing
 Stage-1 artifacts or an invalid Stage-1 completion checkpoint, load and follow
 only the failure/cut-off recovery range named by the parent runtime. Any other
 abort is fatal. Never dispatch Stage 1c or Stage 2 after an abort. The
