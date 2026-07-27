@@ -510,3 +510,235 @@ def test_finding_reference_requires_candidate_adjacency_and_owned_evidence() -> 
     )
     assert refs == []
     assert "non-candidate" in warnings[0]
+
+
+def _tiered_repo(tmp_path: Path) -> tuple[Path, Path]:
+    """Coarse owner (`routes/**`) plus a fine-grained component on one file."""
+    repo, out = _repo(tmp_path)
+    _write_json(
+        out / ".components.json",
+        {
+            "schema_version": 1,
+            "components": [
+                {"id": "web-api", "name": "Web API", "paths": ["server.ts", "routes/**"]},
+                {"id": "chat-egress", "name": "Chat Egress", "paths": ["routes/chat.ts"]},
+                # Claims server.ts as precisely as web-api does, but `ops/**`
+                # keeps it outside web-api's globs so candidate inheritance
+                # cannot fire and mask what the evidence rule alone decides.
+                {"id": "gateway", "name": "Gateway", "paths": ["server.ts", "ops/**"]},
+            ],
+        },
+    )
+    return repo, out
+
+
+def test_evidence_owner_reaches_the_component_implementing_an_external_crossing(tmp_path: Path) -> None:
+    """Regression (juice-shop 2026-07-27): tb-5 `backend-api -> external` is the
+    LLM egress, but the component owning that egress is never an endpoint, so it
+    was offered no boundary and the crossing shipped with zero linked findings."""
+    repo, out = _tiered_repo(tmp_path)
+    row = {
+        **_row("API to external LLM provider"),
+        "id": "tb-1",
+        "from": "web-api",
+        "to": "external",
+        "kind": "third-party",
+        "evidence": [{"file": "routes/chat.ts", "line": 9}],
+        "resolution_status": "resolved",
+        "sources": ["detected"],
+    }
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": [row]})
+
+    audit = prep.prepare_contexts(
+        repo_root=repo, output_dir=out, component_ids=["web-api", "chat-egress"], depth="standard"
+    )
+
+    assert audit["components"]["chat-egress"]["selected_ids"] == ["tb-1"]
+    reasons = audit["components"]["chat-egress"]["focus_reasons"]["tb-1"]
+    assert any("owns cited evidence" in reason for reason in reasons)
+
+
+def test_equally_specific_claim_does_not_create_adjacency(tmp_path: Path) -> None:
+    """`server.ts` sits in both components' globs. Matching on it loosely would
+    hand an admin-zone boundary to an unrelated component, so a tie is not
+    ownership."""
+    repo, out = _tiered_repo(tmp_path)
+    row = {
+        **_row("Authenticated user to admin zone"),
+        "id": "tb-1",
+        "from": "external",
+        "to": "web-api",
+        "kind": "privilege",
+        "evidence": [{"file": "server.ts", "line": 410}],
+        "resolution_status": "resolved",
+        "sources": ["detected"],
+    }
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": [row]})
+
+    audit = prep.prepare_contexts(
+        repo_root=repo, output_dir=out, component_ids=["web-api", "gateway"], depth="standard"
+    )
+
+    assert audit["components"]["web-api"]["selected_ids"] == ["tb-1"]
+    assert audit["components"]["gateway"]["selected_ids"] == []
+
+
+def test_evidence_owner_requires_the_endpoint_to_claim_the_file_too(tmp_path: Path) -> None:
+    """When the endpoint does not claim the cited file at all, topology and
+    evidence disagree. That is a data-quality problem to surface, not one to
+    paper over by handing the boundary to whoever owns the file."""
+    repo, out = _tiered_repo(tmp_path)
+    row = {
+        **_row("Worker egress"),
+        "id": "tb-1",
+        "from": "gateway",
+        "to": "external",
+        "kind": "third-party",
+        "evidence": [{"file": "routes/chat.ts", "line": 9}],
+        "resolution_status": "resolved",
+        "sources": ["detected"],
+    }
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": [row]})
+
+    audit = prep.prepare_contexts(
+        repo_root=repo, output_dir=out, component_ids=["gateway", "chat-egress"], depth="standard"
+    )
+
+    assert audit["components"]["chat-egress"]["selected_ids"] == []
+
+
+def test_component_without_own_candidates_inherits_from_its_containing_component(tmp_path: Path) -> None:
+    """Regression (juice-shop 2026-07-27): `auth` and `web3-nft` are role-folded
+    out of `backend-api` after Phase 3, so no boundary names them and both ran
+    17 findings' worth of STRIDE with no boundary context at all."""
+    repo, out = _repo(tmp_path)
+    _write_json(
+        out / ".components.json",
+        {
+            "schema_version": 1,
+            "components": [
+                {"id": "web-api", "name": "Web API", "paths": ["src/**"], "handles_sensitive_data": True},
+                {"id": "auth", "name": "Auth Surface", "paths": ["src/auth.py"]},
+            ],
+        },
+    )
+    row = {
+        **_row(),
+        "id": "tb-1",
+        # Evidence outside auth's own glob, so it cannot qualify as an evidence
+        # owner — inheritance is the only path that can reach it here.
+        "evidence": [{"file": "src/server.py", "line": 1}],
+        "resolution_status": "resolved",
+        "sources": ["detected"],
+    }
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": [row]})
+
+    audit = prep.prepare_contexts(repo_root=repo, output_dir=out, component_ids=["web-api", "auth"], depth="standard")
+
+    assert audit["components"]["auth"]["selected_ids"] == ["tb-1"]
+    assert audit["components"]["auth"]["inherited_from"] == "web-api"
+    reasons = audit["components"]["auth"]["focus_reasons"]["tb-1"]
+    assert any("inherited from containing component" in reason for reason in reasons)
+
+
+def test_inheritance_never_overrides_a_components_own_candidates(tmp_path: Path) -> None:
+    """Every folded sub-component is contained by its parent, so inheriting
+    unconditionally would push each one's own crossing out of the cap."""
+    repo, out = _tiered_repo(tmp_path)
+    rows = [
+        {
+            **_row("Chat egress"),
+            "id": "tb-1",
+            "from": "chat-egress",
+            "to": "external",
+            "kind": "third-party",
+            "resolution_status": "resolved",
+            "sources": ["detected"],
+        },
+        {
+            **_row("Public API"),
+            "id": "tb-2",
+            "from": "external",
+            "to": "web-api",
+            "resolution_status": "resolved",
+            "sources": ["detected"],
+        },
+    ]
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": rows})
+
+    audit = prep.prepare_contexts(
+        repo_root=repo, output_dir=out, component_ids=["web-api", "chat-egress"], depth="standard"
+    )
+
+    assert audit["components"]["chat-egress"]["selected_ids"] == ["tb-1"]
+    assert "inherited_from" not in audit["components"]["chat-egress"]
+
+
+def test_boundary_below_the_cap_everywhere_is_swapped_in_without_widening_it(tmp_path: Path) -> None:
+    """A crossing ranked just under the cap on its only eligible component
+    reaches no analyzer at all (juice-shop 2026-07-27: tb-5, rank 5 of 4). It is
+    swapped against a boundary another component already covers, so coverage
+    grows while each context keeps exactly `limit` rows."""
+    repo, out = _repo(tmp_path)
+    _write_json(
+        out / ".components.json",
+        {
+            "schema_version": 1,
+            "components": [
+                {"id": "web-api", "name": "Web API", "paths": ["src/**"], "handles_sensitive_data": True},
+                {"id": "edge", "name": "Edge", "paths": ["src/auth.py"]},
+            ],
+        },
+    )
+    # Only tb-2 cites the file `edge` claims exactly, so `edge` is eligible for
+    # that one alone and is the component that keeps it covered after the swap.
+    rows = [
+        {
+            **_row("Privileged entry"),
+            "id": "tb-1",
+            "kind": "privilege",
+            "evidence": [{"file": "src/priv.py", "line": 1}],
+        },
+        {**_row("Shared network entry"), "id": "tb-2", "evidence": [{"file": "src/auth.py", "line": 1}]},
+        {
+            **_row("Lowest ranked entry"),
+            "id": "tb-3",
+            "confidence": "inferred",
+            "evidence": [{"file": "src/other.py", "line": 1}],
+        },
+    ]
+    for row in rows:
+        row.update({"resolution_status": "resolved", "sources": ["detected"]})
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": rows})
+
+    audit = prep.prepare_contexts(repo_root=repo, output_dir=out, component_ids=["web-api", "edge"], depth="quick")
+
+    assert audit["coverage"]["uncovered_ids"] == []
+    assert audit["coverage"]["redistributed"] == {"tb-3": "web-api"}
+    # The cap is preserved exactly — this redistributes, it does not widen.
+    assert len(audit["components"]["web-api"]["selected_ids"]) == 2
+    assert "tb-3" in audit["components"]["web-api"]["selected_ids"]
+    assert audit["components"]["edge"]["selected_ids"] == ["tb-2"]
+
+
+def test_coverage_block_reports_a_boundary_no_component_can_take(tmp_path: Path) -> None:
+    """With more boundaries than capacity the gap is real; it gets reported
+    rather than papered over by widening the cap."""
+    repo, out = _repo(tmp_path)
+    rows = []
+    for index in range(1, 6):
+        rows.append(
+            {
+                **_row(f"Entry {index}"),
+                "id": f"tb-{index}",
+                "resolution_status": "resolved",
+                "sources": ["detected"],
+            }
+        )
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": rows})
+
+    audit = prep.prepare_contexts(repo_root=repo, output_dir=out, component_ids=["web-api"], depth="quick")
+
+    assert len(audit["components"]["web-api"]["selected_ids"]) == 2
+    assert audit["coverage"]["uncovered_ids"] == ["tb-3", "tb-4", "tb-5"]
+    assert audit["coverage"]["redistributed"] == {}

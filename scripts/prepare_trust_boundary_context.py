@@ -22,6 +22,12 @@ from typing import Any, Iterable
 import jsonschema
 import yaml
 from _atomic_io import atomic_write_json
+from reclassify_components import (  # shared path-ownership resolver — see _evidence_owners
+    _glob_specificity as _rc_glob_specificity,
+)
+from reclassify_components import (
+    _glob_to_regex as _rc_glob_to_regex,
+)
 from reserve_ids import ensure_counter_at_least, reserve
 from sanitize_perimeter_claims import sanitize_perimeter_prose
 
@@ -661,6 +667,99 @@ def _prior_boundary_refs(output_dir: Path) -> set[tuple[str, str]]:
     return result
 
 
+def _path_specificity(component: dict, file_path: str) -> int | None:
+    """Highest specificity among the component globs claiming ``file_path``."""
+    best: int | None = None
+    for glob in component.get("paths") or []:
+        if not isinstance(glob, str) or not glob.strip():
+            continue
+        glob = glob.strip()
+        if _rc_glob_to_regex(glob).search(file_path):
+            score = _rc_glob_specificity(glob)
+            best = score if best is None else max(best, score)
+    return best
+
+
+def _evidence_owners(boundary: dict, components: dict[str, dict], endpoint_ids: set[str]) -> set[str]:
+    """Components claiming a boundary's evidence more precisely than its endpoints.
+
+    Endpoint adjacency alone cannot name the component that *implements* a
+    crossing whose far side is ``external``. tb-5 ``backend-api -> external``
+    is the LLM egress, yet ``llm-integration`` is never an endpoint and was
+    therefore never offered the one boundary it owns — juice-shop 2026-07-27
+    shipped that boundary with zero linked findings for exactly this reason.
+    Ownership of the cited evidence file is the missing signal.
+
+    Two guards keep this from inventing adjacency:
+
+    * The endpoint must claim the evidence too. When it does not, the declared
+      topology and the cited evidence disagree — a data-quality problem this
+      function must surface rather than paper over by handing the boundary to
+      whichever component happens to own the file.
+    * The claim must be STRICTLY more specific. A file both sides claim equally
+      well says nothing about ownership: ``server.ts`` sits in both
+      ``backend-api`` and ``socket-io-realtime`` globs, and a loose match would
+      hand the "Admin Zone" boundary to the WebSocket gateway.
+
+    What remains is the narrow, intended case: the endpoint is the coarse owner
+    (``routes/**``) and a finer-grained component claims the exact file
+    (``routes/chat.ts``), so the latter is the component that implements it.
+    """
+    owners: set[str] = set()
+    resolvable_endpoints = endpoint_ids & set(components)
+    for entry in boundary.get("evidence") or []:
+        if not isinstance(entry, dict):
+            continue
+        file_path = str(entry.get("file") or "").strip()
+        if not file_path:
+            continue
+        endpoint_scores = [
+            score
+            for cid in resolvable_endpoints
+            if (score := _path_specificity(components[cid], file_path)) is not None
+        ]
+        baseline = max(endpoint_scores, default=None)
+        for cid, component in components.items():
+            if cid in endpoint_ids:
+                continue
+            score = _path_specificity(component, file_path)
+            if baseline is not None and score is not None and score > baseline:
+                owners.add(cid)
+    return owners
+
+
+def _glob_probe(glob: str) -> str:
+    """Representative concrete path for a component glob, for containment tests."""
+    return glob.replace("/**", "/_").replace("**", "_").replace("*", "_")
+
+
+def _containing_component_id(cid: str, components: dict[str, dict]) -> str | None:
+    """The coarse component whose globs already claim every path of ``cid``.
+
+    Role-folded components (an `auth` surface carved out of `backend-api`) are
+    reconciled into the dispatch set after Phase 3, so no boundary names them as
+    an endpoint and they start with no candidates at all — juice-shop
+    2026-07-27 ran `auth` and `web3-nft`, 17 findings between them, with zero
+    boundary context. Their parent's candidates are the closest correct answer.
+    """
+    own = [g.strip() for g in (components.get(cid, {}).get("paths") or []) if isinstance(g, str) and g.strip()]
+    if not own:
+        return None
+    parents: list[tuple[int, str]] = []
+    for pid, parent in components.items():
+        if pid == cid:
+            continue
+        globs = [g.strip() for g in (parent.get("paths") or []) if isinstance(g, str) and g.strip()]
+        if not globs:
+            continue
+        if all(any(_rc_glob_to_regex(g).search(_glob_probe(p)) for g in globs) for p in own):
+            parents.append((max(_rc_glob_specificity(g) for g in globs), pid))
+    if not parents:
+        return None
+    # Most specific containing component wins; id breaks ties deterministically.
+    return min(parents, key=lambda item: (-item[0], item[1]))[1]
+
+
 def _focus(boundary: dict, component: dict, prior_refs: set[tuple[str, str]]) -> tuple[str, list[str]]:
     reasons: list[str] = []
     cid = component.get("id")
@@ -725,6 +824,17 @@ def prepare_contexts(
                 file=sys.stderr,
             )
     prior_refs = _prior_boundary_refs(output_dir)
+    # Precomputed once per boundary: endpoint adjacency cannot name the
+    # component implementing an `-> external` crossing (see _evidence_owners).
+    evidence_owners = {
+        boundary["id"]: _evidence_owners(
+            boundary,
+            components,
+            {boundary.get("from"), boundary.get("to")} & component_id_set,
+        )
+        for boundary in boundaries
+        if boundary.get("id")
+    }
     selected_component_ids = list(dict.fromkeys(str(x) for x in component_ids if x))
     context_root = output_dir / ".dispatch-context"
     context_root.mkdir(parents=True, exist_ok=True)
@@ -734,6 +844,10 @@ def prepare_contexts(
         "max_candidates_per_component": BOUNDARY_CANDIDATE_LIMITS[depth],
         "components": {},
     }
+    # Selection is decided across all components at once (inheritance and the
+    # coverage guarantee below both need the global picture), so collect first
+    # and write the context files only once every list is final.
+    state: dict[str, dict[str, Any]] = {}
     for cid in selected_component_ids:
         context_path = context_root / cid / "trust-boundaries.json"
         try:
@@ -762,12 +876,16 @@ def prepare_contexts(
                 deferred.append(boundary["id"])
                 invalid.append(boundary["id"])
                 continue
-            if cid not in {boundary.get("from"), boundary.get("to")}:
+            is_endpoint = cid in {boundary.get("from"), boundary.get("to")}
+            owns_evidence = cid in evidence_owners.get(boundary["id"], set())
+            if not is_endpoint and not owns_evidence:
                 continue
             focus, reasons = _focus(boundary, component, prior_refs)
             if focus == "catalog-only" or (depth == "quick" and focus != "primary"):
                 deferred.append(boundary["id"])
                 continue
+            if owns_evidence and not is_endpoint:
+                reasons = [*reasons, "implements the crossing (owns cited evidence)"]
             rank = (
                 0 if (boundary["id"], cid) in prior_refs else 1,
                 0 if boundary.get("from") == "external" else 1,
@@ -779,8 +897,67 @@ def prepare_contexts(
             )
             candidates.append((rank, boundary, focus, reasons))
         candidates.sort(key=lambda item: item[0])
-        limit = BOUNDARY_CANDIDATE_LIMITS[depth]
-        chosen, omitted = candidates[:limit], candidates[limit:]
+        state[cid] = {"candidates": candidates, "deferred": deferred, "invalid": invalid, "inherited_from": None}
+
+    # A component with no candidates of its own inherits its parent's. Applied
+    # ONLY when the list is empty: giving every folded sub-component the
+    # parent's boundaries would crowd each one's own crossing out of the cap.
+    for cid, entry in state.items():
+        if entry["candidates"]:
+            continue
+        parent_id = _containing_component_id(cid, components)
+        parent = state.get(parent_id) if parent_id else None
+        if not parent or not parent["candidates"]:
+            continue
+        entry["candidates"] = [
+            (rank, boundary, focus, [*reasons, f"inherited from containing component {parent_id}"])
+            for rank, boundary, focus, reasons in parent["candidates"]
+        ]
+        entry["inherited_from"] = parent_id
+
+    limit = BOUNDARY_CANDIDATE_LIMITS[depth]
+    for entry in state.values():
+        entry["chosen"], entry["omitted"] = entry["candidates"][:limit], entry["candidates"][limit:]
+
+    # Coverage redistribution. The cap is per component, so a boundary ranked
+    # just below it reaches no analyzer at all and can never acquire a finding —
+    # juice-shop 2026-07-27 lost tb-5 (the LLM egress) this way, at rank 5 of 4
+    # on its only eligible component.
+    #
+    # The fix must not simply append past the cap: with more boundaries than
+    # capacity that degenerates into no cap at all. Instead swap, and only
+    # against a boundary some OTHER component already covers. Each component
+    # keeps exactly `limit` rows, and the trade is strictly positive — the
+    # displaced crossing is still analyzed elsewhere, the uncovered one stops
+    # being invisible. When nothing is displaceable the gap is real and gets
+    # reported below rather than papered over.
+    def _covered_elsewhere(bid: str, owner: str) -> bool:
+        return any(item[1]["id"] == bid for cid, entry in state.items() if cid != owner for item in entry["chosen"])
+
+    covered = {boundary["id"] for entry in state.values() for _r, boundary, _f, _rs in entry["chosen"]}
+    redistributed: dict[str, str] = {}
+    for boundary in boundaries:
+        bid = boundary.get("id")
+        if boundary.get("resolution_status") != "resolved" or bid in covered:
+            continue
+        best: tuple[str, tuple] | None = None
+        for cid, entry in state.items():
+            for item in entry["omitted"]:
+                if item[1]["id"] == bid and (best is None or item[0] < best[1][0]):
+                    best = (cid, item)
+        if best is None:
+            continue
+        cid, item = best
+        displaceable = [c for c in state[cid]["chosen"] if _covered_elsewhere(c[1]["id"], cid)]
+        if not displaceable:
+            continue
+        victim = max(displaceable, key=lambda c: c[0])
+        state[cid]["chosen"] = [c for c in state[cid]["chosen"] if c[1]["id"] != victim[1]["id"]] + [item]
+        state[cid]["omitted"] = [o for o in state[cid]["omitted"] if o[1]["id"] != bid] + [victim]
+        redistributed[bid] = cid
+        covered.add(bid)
+
+    for cid, entry in state.items():
         context_rows = [
             {
                 key: deepcopy(boundary[key])
@@ -788,24 +965,50 @@ def prepare_contexts(
                 if key in boundary
             }
             | {"focus": focus, "focus_reasons": reasons}
-            for _rank, boundary, focus, reasons in chosen
+            for _rank, boundary, focus, reasons in entry["chosen"]
         ]
         if context_rows:
             component_dir = context_root / cid
             component_dir.mkdir(parents=True, exist_ok=True)
             atomic_write_json(
-                context_path,
+                context_root / cid / "trust-boundaries.json",
                 {"schema_version": 1, "adjacent_trust_boundaries": context_rows},
                 sort_keys=False,
             )
         audit["components"][cid] = {
-            "eligible_ids": [item[1]["id"] for item in candidates],
-            "selected_ids": [item[1]["id"] for item in chosen],
-            "omitted_ids": [item[1]["id"] for item in omitted],
-            "deferred_ids": sorted(set(deferred), key=_numeric_id),
-            "invalid_ids": sorted(set(invalid), key=_numeric_id),
-            "focus_reasons": {item[1]["id"]: item[3] for item in candidates},
+            "eligible_ids": [item[1]["id"] for item in entry["candidates"]],
+            "selected_ids": [item[1]["id"] for item in entry["chosen"]],
+            "omitted_ids": [item[1]["id"] for item in entry["omitted"]],
+            "deferred_ids": sorted(set(entry["deferred"]), key=_numeric_id),
+            "invalid_ids": sorted(set(entry["invalid"]), key=_numeric_id),
+            "focus_reasons": {item[1]["id"]: item[3] for item in entry["candidates"]},
         }
+        if entry["inherited_from"]:
+            audit["components"][cid]["inherited_from"] = entry["inherited_from"]
+
+    # Coverage is only derivable by cross-referencing every component, so state
+    # it once. An uncovered resolved boundary reaches no analyzer and can never
+    # acquire a finding — that is a reportable gap, not a quiet omission.
+    resolved_ids = [b["id"] for b in boundaries if b.get("resolution_status") == "resolved"]
+    uncovered = [bid for bid in resolved_ids if bid not in covered]
+    audit["coverage"] = {
+        "resolved_ids": sorted(resolved_ids, key=_numeric_id),
+        "covered_ids": sorted(covered, key=_numeric_id),
+        "uncovered_ids": sorted(uncovered, key=_numeric_id),
+        "redistributed": redistributed,
+    }
+    for bid, cid in redistributed.items():
+        print(
+            f"TRUST_BOUNDARY_WARN: {bid}: swapped into {cid} to keep it covered — "
+            "it fell below the per-component cap everywhere",
+            file=sys.stderr,
+        )
+    for bid in uncovered:
+        print(
+            f"TRUST_BOUNDARY_WARN: {bid}: resolved boundary reached no STRIDE component — "
+            "it can acquire no findings this run",
+            file=sys.stderr,
+        )
     atomic_write_json(context_root / "trust-boundary-selection.json", audit, sort_keys=False)
     return audit
 

@@ -701,6 +701,19 @@ class TestEndToEnd:
         assert member["source"] == "stride"
         assert member["instances"] == [{"file": "src/auth/login.py", "line": 42, "severity": "High"}]
 
+    def test_collect_drops_an_empty_boundary_refs_list(self, mt, tmp_path):
+        """An analyzer that found no crossing still emits the key as `[]`. Both
+        cleanup paths only fire on a truthy value, so the empty list used to
+        survive into the delivered yaml and overstate how many findings carry a
+        boundary link (juice-shop 2026-07-27: key on 49, reference on 12)."""
+        _write_stride(tmp_path, "auth", [_threat(boundary_refs=[])])
+
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert all("boundary_refs" not in threat for threat in merged["threats"])
+
     def test_collect_records_auto_decisions_and_removes_agent_candidates(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat(threat_category_id="TH-01")])
         _write_stride(tmp_path, "api", [_threat(threat_category_id="TH-02", evidence={"file": "api.py", "line": 9})])

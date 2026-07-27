@@ -333,6 +333,13 @@ def _flatten_threats(pairs: list[tuple[str, dict]], output_dir: Path | None = No
             ev = t.get("evidence")
             if isinstance(ev, list):
                 t["evidence"] = ev[0] if ev and isinstance(ev[0], dict) else None
+            # An analyzer that found no crossing still emits the key as `[]`.
+            # Both cleanup paths below only fire on a truthy value, so an empty
+            # list would survive into the delivered yaml and misstate how many
+            # findings are actually linked (juice-shop 2026-07-27: 49 findings
+            # carried the key, 12 carried a reference).
+            if "boundary_refs" in t and not t["boundary_refs"]:
+                t.pop("boundary_refs")
             if t.get("boundary_refs"):
                 try:
                     from prepare_trust_boundary_context import validate_finding_boundary_refs

@@ -2122,6 +2122,9 @@ def main() -> int:
 
         for threat in threats:
             if not threat.get("boundary_refs"):
+                # Drop the key when it is present but empty, so the delivered
+                # yaml never implies a link the finding does not have.
+                threat.pop("boundary_refs", None)
                 continue
             refs, ref_warnings = validate_finding_boundary_refs(
                 threat,
