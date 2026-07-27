@@ -611,50 +611,65 @@ def test_weasyprint_renders_without_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Internet-facing trust boundaries — the manifold caption
+# Trust boundaries — architecture dividers at the tier transitions
 # ---------------------------------------------------------------------------
 
+_TRUST_STROKE = 'stroke="#475569"'
 
-def test_attack_manifold_is_captioned_with_the_internet_facing_boundaries():
-    """The red manifold is derived from the `external ->` crossings but shipped
-    unnamed, so a reader could not connect it to the §1 boundary catalogue."""
+
+def test_trust_boundary_is_drawn_as_a_divider_at_the_tier_transition():
+    """A trust boundary belongs to the architecture, so it is a divider between
+    trust zones — not an annotation on the attack vectors, which would make it
+    read as a property of the attack."""
     svg = _build(exposed=("app0", "app1"))
-    assert "tb-1 · tb-2  internet-facing" in svg
+    assert "trust boundary · tb-1 · tb-2" in svg
+    assert _TRUST_STROKE in svg
 
 
-def test_caption_names_no_boundary_when_none_is_internet_facing():
-    assert "internet-facing" not in _build(exposed=())
+def test_divider_sits_below_the_client_tier_not_above_it():
+    """The client tier runs on the user's device, so it is on the untrusted side
+    with the actors. The trust change happens at the client/application gap."""
+    svg = _build(exposed=("app0",))
+    root = ET.fromstring(svg)
+    ns = "{http://www.w3.org/2000/svg}"
+    divider_y = [float(el.get("y1")) for el in root.iter(f"{ns}line") if el.get("stroke") == "#475569"]
+    assert divider_y, "no trust-boundary divider drawn"
+
+    def band_y(label_start: str) -> float:
+        for el in root.iter(f"{ns}text"):
+            if (el.text or "").startswith(label_start):
+                return float(el.get("y"))
+        raise AssertionError(f"band label {label_start!r} not found")
+
+    # Between the client band's label and the application band's label.
+    assert band_y("Client Tier") < min(divider_y) < band_y("Application Tier")
 
 
-def test_caption_and_exposure_read_the_same_rows():
-    """An `inferred` crossing does not drive the manifold, so it must not be
-    named by the caption either — otherwise the picture and its own caption
-    would disagree about which boundaries were drawn."""
-    y, apd, tax = _model(exposed=("app0",))
-    y["trust_boundaries"][0]["confidence"] = "inferred"
-
-    svg = F.build_figure1_svg(y, apd, tax)
-
-    assert "internet-facing" not in svg
+def test_no_divider_without_a_boundary_crossing_a_tier_gap():
+    svg = _build(exposed=())
+    assert "trust boundary ·" not in svg
+    assert _TRUST_STROKE not in svg
 
 
-def test_caption_stays_one_line_when_many_boundaries_are_exposed():
-    """The manifold is a single element for the whole attacker zone; a caption
-    that grew unboundedly would reintroduce the noise that design removed."""
-    assert F._ingress_label(["tb-1", "tb-2", "tb-3", "tb-4", "tb-5"]) == "tb-1 · tb-2 · tb-3 +2  internet-facing"
-    assert F._ingress_label([]) == ""
+def test_divider_label_names_internet_facing_crossings_first():
+    """Internet-facing crossings are what a reader looks for, so they must
+    survive the truncation that keeps the caption on one line."""
+    label = F._divider_label(["tb-1", "tb-2", "tb-3", "tb-4", "tb-9"], {"tb-9"})
+    assert label == "trust boundary · tb-9 · tb-1 · tb-2 +2"
+    assert F._divider_label([]) == ""
 
 
-def test_privilege_crossings_are_not_named_by_the_caption():
-    """A user-to-admin crossing runs inside a component, not from `external`;
-    it is not part of the attack surface the manifold draws."""
+def test_boundary_inside_a_tier_is_named_in_the_band_instead_of_dropped():
+    """An application tier holding an untrusted component (or a privilege split
+    within one service) has a boundary that cannot be a band divider. It is
+    reported in the band header rather than silently omitted."""
     y, apd, tax = _model(exposed=("app0",))
     y["trust_boundaries"].append(
         {
             "id": "tb-9",
             "from": "app0",
-            "to": "app0",
-            "name": "User to admin zone",
+            "to": "app1",
+            "name": "Untrusted component in the application tier",
             "kind": "privilege",
             "confidence": "confirmed",
             "resolution_status": "resolved",
@@ -663,5 +678,27 @@ def test_privilege_crossings_are_not_named_by_the_caption():
 
     svg = F.build_figure1_svg(y, apd, tax)
 
-    assert "tb-1  internet-facing" in svg
-    assert "tb-9" not in svg
+    assert "internal: tb-9" in svg
+    # It is NOT promoted onto the tier divider, which separates zones.
+    assert "trust boundary · tb-1" in svg
+    assert "trust boundary · tb-1 · tb-9" not in svg
+
+
+def test_classification_separates_gap_crossings_from_intra_tier_boundaries():
+    y, _apd, _tax = _model(exposed=("app0",))
+    y["trust_boundaries"].append(
+        {
+            "id": "tb-9",
+            "from": "app0",
+            "to": "app1",
+            "name": "Intra-tier split",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    )
+    tier_of = {row["id"]: row["tier"] for row in y["components"]}
+
+    crossings, intra = F._classify_boundaries(y, tier_of)
+
+    assert crossings == {(0, 2): ["tb-1"]}
+    assert intra == {"application": ["tb-9"]}

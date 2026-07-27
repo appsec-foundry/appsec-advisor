@@ -219,6 +219,14 @@ _GHOST_H = 44  # height of a dimmed ghost band (empty canonical tier)
 _LEGGAP = 70  # right lane: hosts the red attack corridor (2 lanes), then the legend
 _LEGW = 226
 _EXPOSED = "#c0392b"  # internet-exposed marker (red = attacker-reachable)
+# Trust-boundary divider — slate, NOT the attack red. A trust boundary is a
+# property of the architecture: it exists whether or not anyone attacks it, so
+# it must not read as part of the attack vectors.
+_TRUST = "#475569"
+# The browser-side tiers. The client tier runs ON the user's device, so it sits
+# on the same side of the trust boundary as the actors — the boundary is the
+# client/server divide below it, not the actor band above it.
+_CLIENT_SIDE_TIERS = ("actors", "client")
 _ACTOR_H = 94
 # Capped on-page display width (px). The viewBox keeps the true coordinate
 # space, so the figure renders as a compact OVERVIEW but stays vector-crisp and
@@ -351,18 +359,73 @@ def _boundary_sort_key(boundary_id: str) -> tuple[int, str]:
     return (int(m.group(1)), "") if m else (10**9, boundary_id or "")
 
 
-def _ingress_label(boundary_ids: list[str], limit: int = 3) -> str:
-    """Caption for the attack manifold: the crossings it actually represents.
+def _zone_rank(tier: str | None) -> int | None:
+    """Trust zone of a tier. Client-side tiers collapse into one.
 
-    Truncated rather than allowed to grow — the manifold is one element for the
-    whole attacker zone, and a caption that wraps would reintroduce exactly the
-    visual noise the single-manifold design removed.
+    The client tier executes on the user's device, so it is on the SAME side of
+    the trust boundary as the actors: a request from the internet to the backend
+    does not become trusted by passing the SPA band. Collapsing them is what
+    puts the divider where the trust actually changes — below the client tier,
+    not above it.
+    """
+    if tier in _CLIENT_SIDE_TIERS:
+        return 0
+    return _TIERS.index(tier) if tier in _TIERS else None
+
+
+def _classify_boundaries(
+    yaml_data: dict, tier_of: dict[str, str]
+) -> tuple[dict[tuple[int, int], list[str]], dict[str, list[str]]]:
+    """Split resolved boundaries into tier-gap crossings and intra-tier ones.
+
+    Most trust boundaries sit at a tier transition and are drawn there. Some
+    legitimately live INSIDE a tier — an application tier holding an untrusted
+    component, or a privilege split within one service. Those cannot be a band
+    divider, so they are returned separately and attributed to their tier rather
+    than dropped: an unrepresented boundary is worse than an unplaced one.
+
+    Returns ``({(zone_a, zone_b): [ids]}, {tier: [ids]})``.
+    """
+    crossings: dict[tuple[int, int], list[str]] = {}
+    intra: dict[str, list[str]] = {}
+    for tb in yaml_data.get("trust_boundaries") or []:
+        if not isinstance(tb, dict) or tb.get("resolution_status") != "resolved":
+            continue
+        bid = str(tb.get("id") or "")
+        if not bid:
+            continue
+        ends = []
+        for key in ("from", "to"):
+            ep = (tb.get(key) or "").strip()
+            ends.append("actors" if ep.lower() == "external" else tier_of.get(ep))
+        zones = [_zone_rank(t) for t in ends]
+        if any(z is None for z in zones):
+            continue
+        lo, hi = min(zones), max(zones)
+        if lo == hi:
+            tier = ends[0] if ends[0] not in _CLIENT_SIDE_TIERS else ends[0]
+            intra.setdefault(tier, []).append(bid)
+        else:
+            crossings.setdefault((lo, hi), []).append(bid)
+    for value in (*crossings.values(), *intra.values()):
+        value.sort(key=_boundary_sort_key)
+    return crossings, intra
+
+
+def _divider_label(boundary_ids: list[str], priority_ids: set[str] | None = None, limit: int = 3) -> str:
+    """Caption for a trust-boundary divider: the crossings that traverse it.
+
+    Internet-facing crossings are named first — they are the ones a reader looks
+    for — and the tail collapses into a count. A caption that grew with the
+    model would wrap into the band below and undo the layout's width budget.
     """
     if not boundary_ids:
         return ""
-    shown = boundary_ids[:limit]
-    rest = len(boundary_ids) - len(shown)
-    return " · ".join(shown) + (f" +{rest}" if rest else "") + "  internet-facing"
+    priority = priority_ids or set()
+    ordered = sorted(boundary_ids, key=lambda b: (b not in priority, _boundary_sort_key(b)))
+    shown = ordered[:limit]
+    rest = len(ordered) - len(shown)
+    return "trust boundary · " + " · ".join(shown) + (f" +{rest}" if rest else "")
 
 
 def _internet_facing_boundaries(yaml_data: dict, component_ids: set[str]) -> list[dict]:
@@ -484,15 +547,17 @@ def build_figure1_svg(
     # listener) is reached THROUGH the app, never by a direct attacker arrow.
     exposed = set()
     component_ids = set(comp)
-    ingress_boundary_ids: list[str] = []
+    internet_facing_ids: set[str] = set()
     for tb in _internet_facing_boundaries(yaml_data, component_ids):
         to = (tb.get("to") or "").strip()
         if to in comp:
             exposed.add(to)
             if tb.get("id"):
-                ingress_boundary_ids.append(str(tb["id"]))
-    ingress_boundary_ids = sorted(set(ingress_boundary_ids), key=_boundary_sort_key)
+                internet_facing_ids.add(str(tb["id"]))
     exposed_tiers = {comp[cid]["tier"] for cid in exposed}
+    boundary_crossings, intra_tier_boundaries = _classify_boundaries(
+        yaml_data, {cid: row.get("tier") for cid, row in comp.items()}
+    )
     for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
         digit = idx + 1
         slug = (ap.get("class") or "").strip()
@@ -612,8 +677,25 @@ def build_figure1_svg(
         c.rect(band_left, ytop, bw or band_w, h, fill=bg, stroke=accent, sw=1.6, rx=10)
         _icon(c, tier, band_left + 26, ytop + 24, accent)
         c.text(band_left + 14, ytop + 54, f"{num})", size=15, fill=accent, anchor="start", weight="bold")
-        for i, ln in enumerate(_wrap(title or _TIER_TITLE[tier], _LG - 26, 12)):
+        lines = _wrap(title or _TIER_TITLE[tier], _LG - 26, 12)
+        for i, ln in enumerate(lines):
             c.text(band_left + 40, ytop + 52 + i * 15, ln, size=12, fill=accent, anchor="start", weight="bold")
+        # A trust boundary can also live INSIDE a tier — an untrusted component
+        # among trusted ones, or a privilege split within one service. It cannot
+        # be a band divider, so it is named in the band header instead of being
+        # dropped: an unrepresented boundary is worse than an unplaced one.
+        intra_ids = intra_tier_boundaries.get(tier) or []
+        ny = ytop + 52 + len(lines) * 15 + 11
+        if intra_ids and ny < ytop + h - 6:
+            c.line(band_left + 40, ny - 3.5, band_left + 54, ny - 3.5, stroke=_TRUST, sw=1.3, dash="4 3")
+            c.text(
+                band_left + 60,
+                ny,
+                "internal: " + " · ".join(intra_ids[:2]) + (f" +{len(intra_ids) - 2}" if len(intra_ids) > 2 else ""),
+                size=9,
+                fill=_TRUST,
+                anchor="start",
+            )
 
     # --- actors band: N attacker cards (red) + the legitimate user (green) ---
     gcol = _TIER_COLOR["application"][1]
@@ -932,10 +1014,31 @@ def build_figure1_svg(
     # the attacker is NOT on it. Its direct attack is the separate red arrow.
     flow_labels = ["uses", "API calls", "reads / writes"]
     bxc = cx0 + cw / 2
+    drawn_dividers: list[str] = []
     for i in range(len(bands) - 1):
         t0, yt0, h0 = bands[i]
         t1, yt1, _h1 = bands[i + 1]
         yf, yt = yt0 + h0, yt1
+        # Trust-boundary divider — drawn BEFORE the flow arrow so the request
+        # visibly crosses it, the way a DFD shows a flow traversing a boundary.
+        # It spans the band width because it separates two trust zones, not two
+        # boxes, and it is slate rather than attack-red: the boundary is part of
+        # the architecture and exists whether or not anyone attacks it.
+        z0, z1 = _zone_rank(t0), _zone_rank(t1)
+        gap_ids = boundary_crossings.get((z0, z1), []) if z0 is not None and z1 is not None else []
+        if gap_ids and z0 != z1:
+            ymid = (yf + yt) / 2
+            c.line(band_left, ymid, band_left + band_w, ymid, stroke=_TRUST, sw=1.4, dash="7 5")
+            c.text(
+                band_left + 8,
+                ymid - 5,
+                _divider_label(gap_ids, internet_facing_ids),
+                size=9.5,
+                fill=_TRUST,
+                anchor="start",
+                weight="bold",
+            )
+            drawn_dividers.extend(gap_ids)
         # A hop touching a ghost tier is not a real request hop — draw it dimmed
         # and dashed with no label, so the flow never implies a boundary crossing
         # that does not exist.
@@ -1025,24 +1128,6 @@ def build_figure1_svg(
         # Prominent origin node — drawn last so it sits on top of the feeder.
         c.circle(mx, atk_bottom, 7.5, fill="#ffffff", stroke=_EXPOSED, sw=2.2)
         c.circle(mx, atk_bottom, 3.0, fill=_EXPOSED, stroke=_EXPOSED, sw=1)
-        # Name the crossings the manifold already represents. The feeder IS the
-        # internet-facing trust boundary — it is derived from exactly those rows
-        # (see _internet_facing_boundaries) — but until now it was drawn
-        # unnamed, so the reader could not connect the red vectors to the §1
-        # boundary catalogue. This is a caption on existing geometry: no new
-        # line, nothing per actor, and the privilege crossings stay out (they
-        # run inside a component, not from `external`).
-        ingress_caption = _ingress_label(ingress_boundary_ids)
-        if ingress_caption:
-            c.text(
-                mx + 13,
-                feed_y - 6,
-                ingress_caption,
-                size=9.5,
-                fill=_EXPOSED,
-                anchor="start",
-                weight="bold",
-            )
 
     # ---- legend rail ----
     lx = band_left + band_w + _LEGGAP
@@ -1087,6 +1172,10 @@ def build_figure1_svg(
         # direct/indirect attack rows mirror the solid/dashed arrows drawn into
         # the tiers.
         r = 0
+        if drawn_dividers:
+            c.line(lx + 12, y0 + r * _RH - 3.5, lx + 34, y0 + r * _RH - 3.5, stroke=_TRUST, sw=1.4, dash="7 5")
+            c.text(lx + 40, y0 + r * _RH, "trust boundary (see §1)", size=10, fill=_INK, anchor="start")
+            r += 1
         if exposed:
             _globe(c, lx + 22, y0 + r * _RH - 3.5, 7, _EXPOSED)
             c.text(lx + 40, y0 + r * _RH, "internet-exposed entry point", size=10, fill=_INK, anchor="start")
@@ -1127,7 +1216,12 @@ def build_figure1_svg(
     has_direct = any(v["direct"] for v in tier_attacks.values())
     has_indirect = any(v["indirect"] for v in tier_attacks.values())
     diag_n_rows = (
-        (1 if exposed else 0) + (1 if has_direct else 0) + (1 if has_indirect else 0) + 2 + (1 if has_oos else 0)
+        (1 if exposed else 0)
+        + (1 if has_direct else 0)
+        + (1 if has_indirect else 0)
+        + (1 if drawn_dividers else 0)
+        + 2
+        + (1 if has_oos else 0)
     )
     ly = panel("Attack Scenarios — by actor", ly, scen_rows, len(actor_order) + len(scenarios))
     ly = panel("Severity", ly, sev_rows, 2)
