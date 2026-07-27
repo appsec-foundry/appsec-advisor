@@ -4432,107 +4432,38 @@ banners from "parametric" to "from last run on this repo" and pins the
 estimate to within ±5 % of reality.
 
 ```bash
-# Prefer the first ASSESSMENT_START timestamp in .agent-run.log (the actual
-# orchestrator-Phase-1 start) over the epoch markers. The markers are
-# captured before the Stage 1 Agent dispatch and therefore include any
-# user-confirm wait time on the permission prompt — which would inflate
-# last_run_seconds and corrupt the next run's estimate. The log timestamp is
-# only written once the orchestrator is actually running. Fallback chain:
-# log -> .scan-start-epoch FILE -> ASSESSMENT_START_EPOCH shell var -> skip.
-#
-# The `.scan-start-epoch` file (written at skill start) is the durable
-# fallback: the ASSESSMENT_START_EPOCH shell variable does NOT survive
-# across the skill's separate Bash invocations, so by the time this
-# finalization block runs it is usually empty -> "0" -> the write was
-# silently skipped and last_run_seconds never persisted (the gap that left
-# `last_run_seconds=None` in real anchor caches while component_durations
-# survived). Reading the file closes that hole without losing the log's
-# wait-time-excluding accuracy preference.
-RUN_START_EPOCH=$(python3 - "$OUTPUT_DIR/.agent-run.log" "$OUTPUT_DIR/.scan-start-epoch" "${ASSESSMENT_START_EPOCH:-0}" <<'PYEOF'
-import sys, re, datetime
-log_path, scan_start_path, fallback = sys.argv[1], sys.argv[2], sys.argv[3]
-ts_re = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s.*ASSESSMENT_START\b')
-try:
-    with open(log_path, encoding='utf-8', errors='replace') as fh:
-        for line in fh:
-            m = ts_re.match(line)
-            if m:
-                dt = datetime.datetime.strptime(m.group(1), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
-                print(int(dt.timestamp()))
-                sys.exit(0)
-except OSError:
-    pass
-# Durable file marker — survives across Bash invocations, unlike the shell var.
-try:
-    raw = open(scan_start_path, encoding='utf-8').read().strip()
-    if raw.isdigit() and int(raw) > 0:
-        print(int(raw))
-        sys.exit(0)
-except OSError:
-    pass
-print(fallback)
-PYEOF
-)
-if [ "$RUN_START_EPOCH" -gt 0 ]; then
-  RUN_END_EPOCH=$(date +%s)
-  RUN_SECONDS=$(( RUN_END_EPOCH - RUN_START_EPOCH ))
-  RUN_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  # Standby-correct the persisted figure. A run suspended mid-flight (machine
-  # standby) or with a hung dispatch produces a raw end-to-end RUN_SECONDS
-  # dominated by dead time (observed: 232 min for ~95 min of real work), which
-  # would poison the next run's estimate. run_timing.py isolates per-stage
-  # standby/suspend gaps (>10 min wall-minus-compute); prefer its net-of-standby
-  # wall when it is available AND shorter than the raw span. The displayed
-  # Completion Summary uses the same helper, so the persisted basis matches the
-  # "Net run (wall−sleep)" line the user just saw.
-  NET_WALL=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/run_timing.py" \
-      --output-dir "$OUTPUT_DIR" --net-wall-seconds 2>/dev/null)
-  if [ -n "$NET_WALL" ] && [ "$NET_WALL" -gt 0 ] 2>/dev/null && [ "$NET_WALL" -lt "$RUN_SECONDS" ]; then
-    RUN_SECONDS="$NET_WALL"
-  fi
-  CACHE_DIR="$OUTPUT_DIR/.appsec-cache"
-  CACHE_FILE="$CACHE_DIR/baseline.json"
-  mkdir -p "$CACHE_DIR" 2>/dev/null
-  if [ -f "$CACHE_FILE" ]; then
-    # Merge with existing baseline.json (don't clobber other fields).
-    # Pure-Python implementation — `jq` is not a hard dependency of the skill
-    # (Alpine, slim Docker images, vanilla WSL all ship without it). The
-    # earlier `jq` form failed silently on those systems and the field never
-    # made it to disk, defeating the entire estimation cache.
-    python3 - "$CACHE_FILE" "$RUN_SECONDS" "$MODE" "${ASSESSMENT_DEPTH:-standard}" "$RUN_ISO" <<'PYEOF'
-import json, sys, os
-path, secs, mode, depth, iso = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-try:
-    with open(path, encoding='utf-8') as fh:
-        data = json.load(fh)
-except Exception:
-    data = {}
-data['last_run_seconds'] = secs
-data['last_run_mode']    = mode
-data['last_run_depth']   = depth
-data['last_run_iso']     = iso
-tmp = path + '.tmp'
-with open(tmp, 'w', encoding='utf-8') as fh:
-    json.dump(data, fh, indent=2)
-os.replace(tmp, path)
-PYEOF
-  else
-    # No baseline yet (first-ever run) — minimal seed file. Other
-    # fields (manifest hashes, ID counters) get filled in by
-    # baseline_state.py on the next assessment.
-    cat > "$CACHE_FILE" <<EOF
-{
-  "last_run_seconds": $RUN_SECONDS,
-  "last_run_mode":    "$MODE",
-  "last_run_depth":   "${ASSESSMENT_DEPTH:-standard}",
-  "last_run_iso":     "$RUN_ISO"
-}
-EOF
-  fi
-fi
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/persist_run_baseline.py" \
+    --output-dir "$OUTPUT_DIR" \
+    --mode "$MODE" \
+    --depth "${ASSESSMENT_DEPTH:-standard}" \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+    --fallback-epoch "${ASSESSMENT_START_EPOCH:-0}" || true
 ```
 
-`RUN_START_EPOCH` is derived from the first `ASSESSMENT_START` line in `.agent-run.log` so that pre-dispatch user-confirm wait time is excluded from `last_run_seconds`. The durable `.scan-start-epoch` file is the next fallback (it survives across the skill's separate Bash invocations, unlike the in-memory `ASSESSMENT_START_EPOCH` shell variable, which is usually empty by the time this block runs — the historic cause of `last_run_seconds` never being written), and the shell variable is the last resort (and is still used by the deadline watchdog at §"Wall-time + cost deadline watchdog"). Best-effort: if all three signals are missing the cache write is skipped and the next-run estimator falls back to the parametric formula. The cache write itself uses `python3` rather than `jq`, so the field is persisted on systems without `jq` installed.
+**The script owns the cache field names — never write `baseline.json` by hand,
+and do not restate its keys here.** They are pinned in
+`scripts/persist_run_baseline.py` against both consumers (`estimate_duration.py`
+reads them, `baseline_state.py` carries them forward) and covered by
+`tests/test_persist_run_baseline.py`.
+
+This step used to be ~40 lines of inline bash that the orchestrator reproduced
+by hand. On 2026-07-27 a context compaction landed between the paragraph above
+and that block; the field names were reconstructed from the prose ("wall-clock +
+mode + depth") as `last_wall_seconds` / `last_mode` / `last_depth`. The estimator
+reads only `last_run_seconds`, so the cache looked populated while the next run's
+estimate silently fell back to the parametric formula (66 min instead of the
+measured 101 min). A misspelled key is indistinguishable from a missing one —
+hence a single owner, in code, with tests.
+
+The script resolves the start time itself, preferring the first
+`ASSESSMENT_START` line in `.agent-run.log` (which excludes pre-dispatch
+user-confirm wait time), then the durable `.scan-start-epoch` file, then
+`--fallback-epoch` (the `ASSESSMENT_START_EPOCH` shell variable is usually empty
+by the time finalization runs; it is still used by the deadline watchdog at
+§"Wall-time + cost deadline watchdog"). When `run_timing.py --net-wall-seconds`
+reports a smaller value, that one wins, so an idle run does not inflate the next
+estimate. Best-effort by contract: with no usable start signal the script reports
+the skip on stderr and exits 0 — the run never fails on this step.
 
 ### Persist per-component durations for next-run Phase-9 estimate (M5)
 
