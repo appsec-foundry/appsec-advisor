@@ -1006,9 +1006,7 @@ def test_every_bridged_threat_has_scenario_for_all_shipped_rules():
                 "positive_signals": [{"file": "a.ts", "line": 1, "signal": "x"}],
             }
         )
-    threats, _ = bridge.select_and_build(
-        {"anti_pattern_candidates": candidates, "threat_hypotheses": hypotheses}
-    )
+    threats, _ = bridge.select_and_build({"anti_pattern_candidates": candidates, "threat_hypotheses": hypotheses})
     assert len(threats) == len(candidates) + len(hypotheses)
     missing = [t["rule_id"] for t in threats if not _scenario_ok(t.get("scenario"))]
     assert not missing, f"rules producing a scenario-less threat: {missing}"
