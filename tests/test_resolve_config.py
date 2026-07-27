@@ -1614,8 +1614,11 @@ class TestRenderConfigurationSummary:
 
     def test_post_summary_repo_size_capped(self):
         out = rc.render_configuration_summary(_base_cfg(repo_size_capped=True, repo_size_source_files=99999))
-        assert "large repository" in out
+        assert "longer run expected" in out
         assert "99999" in out
+        # Runtime heads-up must not claim the repo is "large" — size is judged
+        # only on the orchestrator-window axis (see LARGE_REPO_SOURCE_FILE_THRESHOLD).
+        assert "large repo" not in out.lower()
 
 
 class TestSessionModelAdvisoryInPreflightBox:
@@ -2260,7 +2263,8 @@ class TestRunPlanNotes:
         verdict = {"will_run": True, "mode_line": "full"}
         cfg = _base_cfg(repo_size_capped=True, repo_size_source_files=12345)
         notes = rc._run_plan_notes(verdict, cfg, None, None, None)
-        assert any("Large repo (12345" in n for n in notes)
+        assert any("12345 source files" in n and "Longer run expected" in n for n in notes)
+        assert not any("large repo" in n.lower() for n in notes)
 
 
 class TestRenderRunPlan:

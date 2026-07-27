@@ -478,6 +478,10 @@ def resolve_cheap_stride(ns: argparse.Namespace, depth: str) -> dict:
 # (skill_watchdog.py: stride-stale 900s, per-component
 # timeout 480s) bounds any cold-cache hang instead of pre-emptively dropping
 # attack surface. Cost is controlled by the tier, not by blind spots.
+# User-facing text derived from this threshold states RUNTIME ("longer run
+# expected"), never repo SIZE. Size is judged on one axis only — the much higher
+# orchestrator-window threshold below — otherwise the pre-flight box contradicts
+# itself (a 650-file repo is "normal-sized" there and would read "large" here).
 LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
 
 # Orchestrator (session-model) recommendation threshold — DISTINCT from and much
@@ -559,7 +563,7 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
     # "large repo → longer run" heads-up.
     new_label = (
         f"{cfg['assessment_depth']} (criteria-selected components — "
-        f"large repo: {src_count} source files → longer run expected, "
+        f"{src_count} source files → longer run expected, "
         f"reasoning on default tier, "
         f"STRIDE turns: {cfg['stride_turns_simple']}/"
         f"{cfg['stride_turns_moderate']}/{cfg['stride_turns_complex']}, "
@@ -2852,8 +2856,9 @@ def _run_plan_notes(
 
     if cfg.get("repo_size_capped"):
         notes.append(
-            f"Large repo ({cfg.get('repo_size_source_files')} source files) → "
-            f"longer run expected; reasoning stays on the default tier and all "
+            f"Longer run expected ({cfg.get('repo_size_source_files')} source "
+            f"files above the {LARGE_REPO_SOURCE_FILE_THRESHOLD}-file runtime "
+            f"heads-up); reasoning stays on the default tier and all "
             f"criteria-selected components are analyzed (no attack surface dropped)."
         )
 
@@ -3251,7 +3256,8 @@ def _configuration_post_summary_notes(cfg: dict) -> list[str]:
         )
     if cfg.get("repo_size_capped"):
         post_lines.append(
-            f"Note: large repository ({cfg['repo_size_source_files']} source files) "
+            f"Note: {cfg['repo_size_source_files']} source files (above the "
+            f"{LARGE_REPO_SOURCE_FILE_THRESHOLD}-file runtime heads-up) "
             f"→ longer run expected. Reasoning stays on the default tier and all "
             f"criteria-selected components are still analyzed (no attack surface "
             f"dropped). Pass --assessment-depth thorough to also analyze internal-only "
