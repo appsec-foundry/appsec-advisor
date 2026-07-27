@@ -1,0 +1,568 @@
+diff --git a/scripts/persist_run_baseline.py b/scripts/persist_run_baseline.py
+new file mode 100644
+index 00000000..e8ad42c1
+--- /dev/null
++++ b/scripts/persist_run_baseline.py
+@@ -0,0 +1,212 @@
++#!/usr/bin/env python3
++"""persist_run_baseline.py — run-end writer for `.appsec-cache/baseline.json`.
++
++Persists the just-finished run's duration + mode + depth so the next
++invocation's `estimate_duration.py` can use it as its highest-priority data
++source (`source=last_run_cache` instead of `source=parametric`).
++
++WHY THIS IS A SCRIPT AND NOT A SKILL-LEVEL BASH BLOCK
++-----------------------------------------------------
++It used to be ~40 lines of inline bash in `SKILL-impl.md` that the orchestrator
++had to reproduce verbatim, including four exact JSON key names. That is a
++contract carried in prose, and it broke twice:
++
++  * 2026-06 — a later baseline write wiped the fields (fixed defensively in
++    `baseline_state.py` by carrying them forward).
++  * 2026-07-27 — the orchestrator resumed after a context compaction, read the
++    descriptive paragraph ("write the total wall-clock + mode + depth") but not
++    the bash block three lines below it, and invented `last_wall_seconds` /
++    `last_mode` / `last_depth`. `estimate_duration.py` reads only
++    `last_run_seconds`, so the cache looked populated while the estimator
++    silently fell back to the parametric formula (66 min instead of the
++    measured 101 min). Nothing detected it: a misspelled key is indistinguishable
++    from a missing one.
++
++Keeping the key names in code — with tests — removes the failure mode instead of
++documenting it. The skill layer now calls this and passes only run facts.
++
++START-TIME PRECEDENCE (unchanged from the original block)
++--------------------------------------------------------
++1. First ``ASSESSMENT_START`` timestamp in ``.agent-run.log`` — the actual
++   orchestrator start, which EXCLUDES time spent waiting on the permission
++   prompt. Including that wait would inflate the next run's estimate.
++2. The durable ``.scan-start-epoch`` file — survives across the skill's separate
++   Bash invocations, unlike an in-memory shell variable.
++3. ``--fallback-epoch`` (the caller's ``ASSESSMENT_START_EPOCH``), usually empty
++   by the time finalization runs.
++
++When ``run_timing.py --net-wall-seconds`` reports a SMALLER value (idle/standby
++excluded), that value wins: a run that sat idle must not teach the estimator
++that it takes that long.
++
++Best-effort by contract: with no usable start signal the write is skipped and
++the estimator falls back to the parametric formula. The skip is reported on
++stderr rather than passing silently.
++"""
++
++from __future__ import annotations
++
++import argparse
++import datetime
++import json
++import os
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++# The canonical field names. `estimate_duration._last_run_cache` reads exactly
++# these; `baseline_state.py` carries exactly these forward. Changing a name here
++# means changing it in all three places — that is the point of having one owner.
++KEY_SECONDS = "last_run_seconds"
++KEY_MODE = "last_run_mode"
++KEY_DEPTH = "last_run_depth"
++KEY_ISO = "last_run_iso"
++
++_ASSESSMENT_START_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s.*ASSESSMENT_START\b")
++
++
++def _epoch_from_log(log_path: Path) -> int | None:
++    """First ASSESSMENT_START timestamp, or None."""
++    try:
++        with log_path.open(encoding="utf-8", errors="replace") as fh:
++            for line in fh:
++                m = _ASSESSMENT_START_RE.match(line)
++                if m:
++                    dt = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%SZ").replace(
++                        tzinfo=datetime.timezone.utc
++                    )
++                    return int(dt.timestamp())
++    except OSError:
++        pass
++    return None
++
++
++def _epoch_from_marker(marker_path: Path) -> int | None:
++    try:
++        raw = marker_path.read_text(encoding="utf-8").strip()
++    except OSError:
++        return None
++    return int(raw) if raw.isdigit() and int(raw) > 0 else None
++
++
++def resolve_start_epoch(output_dir: Path, fallback_epoch: int | None) -> tuple[int | None, str]:
++    """Return (epoch, source_label) following the documented precedence."""
++    epoch = _epoch_from_log(output_dir / ".agent-run.log")
++    if epoch:
++        return epoch, "agent-run.log:ASSESSMENT_START"
++    epoch = _epoch_from_marker(output_dir / ".scan-start-epoch")
++    if epoch:
++        return epoch, ".scan-start-epoch"
++    if fallback_epoch and fallback_epoch > 0:
++        return fallback_epoch, "--fallback-epoch"
++    return None, "none"
++
++
++def _net_wall_seconds(output_dir: Path, plugin_root: Path | None) -> int | None:
++    """`run_timing.py --net-wall-seconds`, or None when unavailable."""
++    root = plugin_root or Path(__file__).resolve().parent.parent
++    script = root / "scripts" / "run_timing.py"
++    if not script.is_file():
++        script = Path(__file__).resolve().parent / "run_timing.py"
++    try:
++        out = subprocess.run(
++            [sys.executable, str(script), "--output-dir", str(output_dir), "--net-wall-seconds"],
++            capture_output=True,
++            text=True,
++            timeout=30,
++        )
++    except (OSError, subprocess.SubprocessError):
++        return None
++    raw = (out.stdout or "").strip()
++    return int(raw) if raw.isdigit() and int(raw) > 0 else None
++
++
++def persist(
++    output_dir: Path,
++    mode: str,
++    depth: str,
++    *,
++    fallback_epoch: int | None = None,
++    now_epoch: int | None = None,
++    plugin_root: Path | None = None,
++) -> dict | None:
++    """Write the run-end fields into `.appsec-cache/baseline.json`.
++
++    Returns the written fields, or None when no usable start signal exists
++    (the documented best-effort skip).
++    """
++    start_epoch, source = resolve_start_epoch(output_dir, fallback_epoch)
++    if start_epoch is None:
++        return None
++
++    end_epoch = now_epoch if now_epoch is not None else int(datetime.datetime.now(datetime.timezone.utc).timestamp())
++    seconds = end_epoch - start_epoch
++    if seconds <= 0:
++        return None
++
++    # Idle/standby-excluding measurement wins when it is smaller.
++    net_wall = _net_wall_seconds(output_dir, plugin_root)
++    if net_wall is not None and net_wall < seconds:
++        seconds = net_wall
++
++    iso = datetime.datetime.fromtimestamp(end_epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
++    fields = {KEY_SECONDS: seconds, KEY_MODE: mode, KEY_DEPTH: depth, KEY_ISO: iso}
++
++    cache_dir = output_dir / ".appsec-cache"
++    cache_dir.mkdir(parents=True, exist_ok=True)
++    cache_file = cache_dir / "baseline.json"
++
++    data: dict = {}
++    if cache_file.is_file():
++        try:
++            loaded = json.loads(cache_file.read_text(encoding="utf-8"))
++            if isinstance(loaded, dict):
++                data = loaded
++        except (OSError, json.JSONDecodeError):
++            data = {}  # a corrupt cache must not block the write
++    data.update(fields)
++
++    tmp = cache_file.with_suffix(".json.tmp")
++    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
++    os.replace(tmp, cache_file)
++
++    fields["_start_source"] = source
++    return fields
++
++
++def main(argv: list[str] | None = None) -> int:
++    ap = argparse.ArgumentParser(description="Persist run-end timing into .appsec-cache/baseline.json")
++    ap.add_argument("--output-dir", required=True, type=Path)
++    ap.add_argument("--mode", required=True)
++    ap.add_argument("--depth", default="standard")
++    ap.add_argument("--fallback-epoch", type=int, default=0, help="ASSESSMENT_START_EPOCH, if the caller still has it")
++    ap.add_argument("--plugin-root", type=Path, default=None)
++    ap.add_argument("--quiet", action="store_true")
++    args = ap.parse_args(argv)
++
++    written = persist(
++        args.output_dir,
++        args.mode,
++        args.depth,
++        fallback_epoch=args.fallback_epoch,
++        plugin_root=args.plugin_root,
++    )
++    if written is None:
++        # Visible, not silent: the next run will estimate parametrically.
++        sys.stderr.write(
++            "persist_run_baseline: no usable start signal "
++            "(.agent-run.log ASSESSMENT_START / .scan-start-epoch / --fallback-epoch) — "
++            "baseline not written; next run estimates parametrically\n"
++        )
++        return 0  # best-effort by contract: never fail the run
++    if not args.quiet:
++        print(
++            f"run-baseline: {written[KEY_SECONDS]}s ({written[KEY_MODE]}/{written[KEY_DEPTH]}) "
++            f"via {written['_start_source']}"
++        )
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/skills/create-threat-model/SKILL-impl.md b/skills/create-threat-model/SKILL-impl.md
+index 373612f6..cb39e22e 100644
+--- a/skills/create-threat-model/SKILL-impl.md
++++ b/skills/create-threat-model/SKILL-impl.md
+@@ -4432,107 +4432,38 @@ banners from "parametric" to "from last run on this repo" and pins the
+ estimate to within ±5 % of reality.
+
+ ```bash
+-# Prefer the first ASSESSMENT_START timestamp in .agent-run.log (the actual
+-# orchestrator-Phase-1 start) over the epoch markers. The markers are
+-# captured before the Stage 1 Agent dispatch and therefore include any
+-# user-confirm wait time on the permission prompt — which would inflate
+-# last_run_seconds and corrupt the next run's estimate. The log timestamp is
+-# only written once the orchestrator is actually running. Fallback chain:
+-# log -> .scan-start-epoch FILE -> ASSESSMENT_START_EPOCH shell var -> skip.
+-#
+-# The `.scan-start-epoch` file (written at skill start) is the durable
+-# fallback: the ASSESSMENT_START_EPOCH shell variable does NOT survive
+-# across the skill's separate Bash invocations, so by the time this
+-# finalization block runs it is usually empty -> "0" -> the write was
+-# silently skipped and last_run_seconds never persisted (the gap that left
+-# `last_run_seconds=None` in real anchor caches while component_durations
+-# survived). Reading the file closes that hole without losing the log's
+-# wait-time-excluding accuracy preference.
+-RUN_START_EPOCH=$(python3 - "$OUTPUT_DIR/.agent-run.log" "$OUTPUT_DIR/.scan-start-epoch" "${ASSESSMENT_START_EPOCH:-0}" <<'PYEOF'
+-import sys, re, datetime
+-log_path, scan_start_path, fallback = sys.argv[1], sys.argv[2], sys.argv[3]
+-ts_re = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s.*ASSESSMENT_START\b')
+-try:
+-    with open(log_path, encoding='utf-8', errors='replace') as fh:
+-        for line in fh:
+-            m = ts_re.match(line)
+-            if m:
+-                dt = datetime.datetime.strptime(m.group(1), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+-                print(int(dt.timestamp()))
+-                sys.exit(0)
+-except OSError:
+-    pass
+-# Durable file marker — survives across Bash invocations, unlike the shell var.
+-try:
+-    raw = open(scan_start_path, encoding='utf-8').read().strip()
+-    if raw.isdigit() and int(raw) > 0:
+-        print(int(raw))
+-        sys.exit(0)
+-except OSError:
+-    pass
+-print(fallback)
+-PYEOF
+-)
+-if [ "$RUN_START_EPOCH" -gt 0 ]; then
+-  RUN_END_EPOCH=$(date +%s)
+-  RUN_SECONDS=$(( RUN_END_EPOCH - RUN_START_EPOCH ))
+-  RUN_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+-  # Standby-correct the persisted figure. A run suspended mid-flight (machine
+-  # standby) or with a hung dispatch produces a raw end-to-end RUN_SECONDS
+-  # dominated by dead time (observed: 232 min for ~95 min of real work), which
+-  # would poison the next run's estimate. run_timing.py isolates per-stage
+-  # standby/suspend gaps (>10 min wall-minus-compute); prefer its net-of-standby
+-  # wall when it is available AND shorter than the raw span. The displayed
+-  # Completion Summary uses the same helper, so the persisted basis matches the
+-  # "Net run (wall−sleep)" line the user just saw.
+-  NET_WALL=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/run_timing.py" \
+-      --output-dir "$OUTPUT_DIR" --net-wall-seconds 2>/dev/null)
+-  if [ -n "$NET_WALL" ] && [ "$NET_WALL" -gt 0 ] 2>/dev/null && [ "$NET_WALL" -lt "$RUN_SECONDS" ]; then
+-    RUN_SECONDS="$NET_WALL"
+-  fi
+-  CACHE_DIR="$OUTPUT_DIR/.appsec-cache"
+-  CACHE_FILE="$CACHE_DIR/baseline.json"
+-  mkdir -p "$CACHE_DIR" 2>/dev/null
+-  if [ -f "$CACHE_FILE" ]; then
+-    # Merge with existing baseline.json (don't clobber other fields).
+-    # Pure-Python implementation — `jq` is not a hard dependency of the skill
+-    # (Alpine, slim Docker images, vanilla WSL all ship without it). The
+-    # earlier `jq` form failed silently on those systems and the field never
+-    # made it to disk, defeating the entire estimation cache.
+-    python3 - "$CACHE_FILE" "$RUN_SECONDS" "$MODE" "${ASSESSMENT_DEPTH:-standard}" "$RUN_ISO" <<'PYEOF'
+-import json, sys, os
+-path, secs, mode, depth, iso = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+-try:
+-    with open(path, encoding='utf-8') as fh:
+-        data = json.load(fh)
+-except Exception:
+-    data = {}
+-data['last_run_seconds'] = secs
+-data['last_run_mode']    = mode
+-data['last_run_depth']   = depth
+-data['last_run_iso']     = iso
+-tmp = path + '.tmp'
+-with open(tmp, 'w', encoding='utf-8') as fh:
+-    json.dump(data, fh, indent=2)
+-os.replace(tmp, path)
+-PYEOF
+-  else
+-    # No baseline yet (first-ever run) — minimal seed file. Other
+-    # fields (manifest hashes, ID counters) get filled in by
+-    # baseline_state.py on the next assessment.
+-    cat > "$CACHE_FILE" <<EOF
+-{
+-  "last_run_seconds": $RUN_SECONDS,
+-  "last_run_mode":    "$MODE",
+-  "last_run_depth":   "${ASSESSMENT_DEPTH:-standard}",
+-  "last_run_iso":     "$RUN_ISO"
+-}
+-EOF
+-  fi
+-fi
++python3 "$CLAUDE_PLUGIN_ROOT/scripts/persist_run_baseline.py" \
++    --output-dir "$OUTPUT_DIR" \
++    --mode "$MODE" \
++    --depth "${ASSESSMENT_DEPTH:-standard}" \
++    --plugin-root "$CLAUDE_PLUGIN_ROOT" \
++    --fallback-epoch "${ASSESSMENT_START_EPOCH:-0}" || true
+ ```
+
+-`RUN_START_EPOCH` is derived from the first `ASSESSMENT_START` line in `.agent-run.log` so that pre-dispatch user-confirm wait time is excluded from `last_run_seconds`. The durable `.scan-start-epoch` file is the next fallback (it survives across the skill's separate Bash invocations, unlike the in-memory `ASSESSMENT_START_EPOCH` shell variable, which is usually empty by the time this block runs — the historic cause of `last_run_seconds` never being written), and the shell variable is the last resort (and is still used by the deadline watchdog at §"Wall-time + cost deadline watchdog"). Best-effort: if all three signals are missing the cache write is skipped and the next-run estimator falls back to the parametric formula. The cache write itself uses `python3` rather than `jq`, so the field is persisted on systems without `jq` installed.
++**The script owns the cache field names — never write `baseline.json` by hand,
++and do not restate its keys here.** They are pinned in
++`scripts/persist_run_baseline.py` against both consumers (`estimate_duration.py`
++reads them, `baseline_state.py` carries them forward) and covered by
++`tests/test_persist_run_baseline.py`.
++
++This step used to be ~40 lines of inline bash that the orchestrator reproduced
++by hand. On 2026-07-27 a context compaction landed between the paragraph above
++and that block; the field names were reconstructed from the prose ("wall-clock +
++mode + depth") as `last_wall_seconds` / `last_mode` / `last_depth`. The estimator
++reads only `last_run_seconds`, so the cache looked populated while the next run's
++estimate silently fell back to the parametric formula (66 min instead of the
++measured 101 min). A misspelled key is indistinguishable from a missing one —
++hence a single owner, in code, with tests.
++
++The script resolves the start time itself, preferring the first
++`ASSESSMENT_START` line in `.agent-run.log` (which excludes pre-dispatch
++user-confirm wait time), then the durable `.scan-start-epoch` file, then
++`--fallback-epoch` (the `ASSESSMENT_START_EPOCH` shell variable is usually empty
++by the time finalization runs; it is still used by the deadline watchdog at
++§"Wall-time + cost deadline watchdog"). When `run_timing.py --net-wall-seconds`
++reports a smaller value, that one wins, so an idle run does not inflate the next
++estimate. Best-effort by contract: with no usable start signal the script reports
++the skip on stderr and exits 0 — the run never fails on this step.
+
+ ### Persist per-component durations for next-run Phase-9 estimate (M5)
+
+diff --git a/tests/test_persist_run_baseline.py b/tests/test_persist_run_baseline.py
+new file mode 100644
+index 00000000..4c04438e
+--- /dev/null
++++ b/tests/test_persist_run_baseline.py
+@@ -0,0 +1,202 @@
++"""Tests for scripts/persist_run_baseline.py — the run-end baseline writer.
++
++Context: the writer used to be inline bash in SKILL-impl.md that the
++orchestrator reproduced by hand, including four exact JSON key names. On
++2026-07-27 it resumed after a context compaction, read the descriptive
++paragraph but not the bash block below it, and wrote `last_wall_seconds` /
++`last_mode` / `last_depth`. `estimate_duration.py` reads only
++`last_run_seconds`, so the estimator silently fell back to the parametric
++formula. `test_written_cache_is_consumed_by_estimator` is the guard that would
++have caught it.
++"""
++
++from __future__ import annotations
++
++import importlib.util
++import json
++import sys
++from pathlib import Path
++
++import pytest
++
++REPO_ROOT = Path(__file__).parent.parent
++SCRIPT_PATH = REPO_ROOT / "scripts" / "persist_run_baseline.py"
++
++sys.path.insert(0, str(REPO_ROOT / "scripts"))
++
++
++def _load():
++    if "persist_run_baseline" in sys.modules:
++        return sys.modules["persist_run_baseline"]
++    spec = importlib.util.spec_from_file_location("persist_run_baseline", SCRIPT_PATH)
++    module = importlib.util.module_from_spec(spec)
++    sys.modules["persist_run_baseline"] = module
++    assert spec.loader is not None
++    spec.loader.exec_module(module)
++    return module
++
++
++prb = _load()
++
++
++def _read_cache(out: Path) -> dict:
++    return json.loads((out / ".appsec-cache" / "baseline.json").read_text(encoding="utf-8"))
++
++
++# ---------------------------------------------------------------------------
++# The regression that motivated this script
++# ---------------------------------------------------------------------------
++
++
++def test_written_cache_is_consumed_by_estimator(tmp_path: Path):
++    """End-to-end contract: what the writer writes, the reader must consume.
++
++    This is the test whose absence let the 2026-07-27 key-name drift through —
++    writer and reader agreed on nothing and neither side complained.
++    """
++    import estimate_duration
++
++    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
++    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
++
++    # `parametric_total` is the formula estimate, used only as a hang guard.
++    hit = estimate_duration._last_run_cache(tmp_path, "full", "standard", 90.0)
++    assert hit is not None, "estimator did not accept the cache the writer produced"
++    stages, source = hit
++    assert source == "last_run_cache"
++    assert abs(stages["total"] - 100.0) < 1.0
++
++
++def test_field_names_match_what_the_estimator_reads(tmp_path: Path):
++    """Pin the four canonical names against the reader's literals."""
++    src = (REPO_ROOT / "scripts" / "estimate_duration.py").read_text(encoding="utf-8")
++    for key in (prb.KEY_SECONDS, prb.KEY_MODE, prb.KEY_DEPTH):
++        assert f'"{key}"' in src, f"{key} is not read by estimate_duration.py"
++    assert prb.KEY_SECONDS == "last_run_seconds"
++    assert prb.KEY_MODE == "last_run_mode"
++    assert prb.KEY_DEPTH == "last_run_depth"
++    assert prb.KEY_ISO == "last_run_iso"
++
++
++def test_field_names_match_baseline_state_carry_forward():
++    """`baseline_state.py` carries these forward on rewrite; a name that drifts
++    apart from that list gets silently wiped by the next baseline write."""
++    src = (REPO_ROOT / "scripts" / "baseline_state.py").read_text(encoding="utf-8")
++    for key in (prb.KEY_SECONDS, prb.KEY_MODE, prb.KEY_DEPTH, prb.KEY_ISO):
++        assert f'"{key}"' in src, f"{key} missing from baseline_state carry-forward"
++
++
++# ---------------------------------------------------------------------------
++# Start-epoch precedence
++# ---------------------------------------------------------------------------
++
++
++def test_log_assessment_start_wins_over_marker(tmp_path: Path):
++    """The log excludes permission-prompt wait time and must take precedence."""
++    (tmp_path / ".agent-run.log").write_text(
++        "2026-07-27T05:00:00Z  [--------]  INFO   skill  ASSESSMENT_START  mode=full\n",
++        encoding="utf-8",
++    )
++    (tmp_path / ".scan-start-epoch").write_text("1", encoding="utf-8")
++    epoch, source = prb.resolve_start_epoch(tmp_path, None)
++    assert source == "agent-run.log:ASSESSMENT_START"
++    assert epoch == 1785128400
++
++
++def test_marker_file_used_when_log_has_no_assessment_start(tmp_path: Path):
++    (tmp_path / ".agent-run.log").write_text("2026-07-27T05:00:00Z INFO nothing here\n", encoding="utf-8")
++    (tmp_path / ".scan-start-epoch").write_text("4242", encoding="utf-8")
++    epoch, source = prb.resolve_start_epoch(tmp_path, None)
++    assert (epoch, source) == (4242, ".scan-start-epoch")
++
++
++def test_fallback_epoch_is_last_resort(tmp_path: Path):
++    epoch, source = prb.resolve_start_epoch(tmp_path, 999)
++    assert (epoch, source) == (999, "--fallback-epoch")
++
++
++def test_no_signal_skips_write_without_raising(tmp_path: Path):
++    assert prb.persist(tmp_path, "full", "standard") is None
++    assert not (tmp_path / ".appsec-cache" / "baseline.json").exists()
++
++
++def test_cli_never_fails_the_run_when_skipping(tmp_path: Path):
++    rc = prb.main(["--output-dir", str(tmp_path), "--mode", "full"])
++    assert rc == 0  # best-effort by contract
++
++
++# ---------------------------------------------------------------------------
++# Duration semantics
++# ---------------------------------------------------------------------------
++
++
++def test_net_wall_wins_when_smaller(tmp_path: Path, monkeypatch):
++    """An idle run must not teach the estimator that it takes that long."""
++    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
++    monkeypatch.setattr(prb, "_net_wall_seconds", lambda *a, **k: 600)
++    written = prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
++    assert written[prb.KEY_SECONDS] == 600
++
++
++def test_net_wall_ignored_when_larger(tmp_path: Path, monkeypatch):
++    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
++    monkeypatch.setattr(prb, "_net_wall_seconds", lambda *a, **k: 99999)
++    written = prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
++    assert written[prb.KEY_SECONDS] == 6000
++
++
++def test_non_positive_duration_is_not_persisted(tmp_path: Path):
++    (tmp_path / ".scan-start-epoch").write_text("5000", encoding="utf-8")
++    assert prb.persist(tmp_path, "full", "standard", now_epoch=5000) is None
++
++
++# ---------------------------------------------------------------------------
++# Cache merge behaviour
++# ---------------------------------------------------------------------------
++
++
++def test_existing_cache_keys_are_preserved(tmp_path: Path, monkeypatch):
++    """The writer owns four fields and must not disturb anything else —
++    component_durations and id_counters live in the same file."""
++    cache_dir = tmp_path / ".appsec-cache"
++    cache_dir.mkdir()
++    (cache_dir / "baseline.json").write_text(
++        json.dumps({"id_counters": {"T": 70}, "component_durations": {"backend-api": 120}}),
++        encoding="utf-8",
++    )
++    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
++    monkeypatch.setattr(prb, "_net_wall_seconds", lambda *a, **k: None)
++    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 300)
++
++    data = _read_cache(tmp_path)
++    assert data["id_counters"] == {"T": 70}
++    assert data["component_durations"] == {"backend-api": 120}
++    assert data[prb.KEY_SECONDS] == 300
++
++
++def test_corrupt_cache_does_not_block_the_write(tmp_path: Path, monkeypatch):
++    cache_dir = tmp_path / ".appsec-cache"
++    cache_dir.mkdir()
++    (cache_dir / "baseline.json").write_text("{not json", encoding="utf-8")
++    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
++    monkeypatch.setattr(prb, "_net_wall_seconds", lambda *a, **k: None)
++    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 300)
++    assert _read_cache(tmp_path)[prb.KEY_SECONDS] == 300
++
++
++def test_rerun_overwrites_only_the_owned_fields(tmp_path: Path, monkeypatch):
++    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
++    monkeypatch.setattr(prb, "_net_wall_seconds", lambda *a, **k: None)
++    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 300)
++    prb.persist(tmp_path, "incremental", "quick", now_epoch=1000 + 60)
++    data = _read_cache(tmp_path)
++    assert data[prb.KEY_SECONDS] == 60
++    assert data[prb.KEY_MODE] == "incremental"
++    assert data[prb.KEY_DEPTH] == "quick"
++
++
++def test_no_temp_file_left_behind(tmp_path: Path, monkeypatch):
++    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
++    monkeypatch.setattr(prb, "_net_wall_seconds", lambda *a, **k: None)
++    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 300)
++    assert list((tmp_path / ".appsec-cache").glob("*.tmp")) == []
