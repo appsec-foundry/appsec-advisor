@@ -346,6 +346,44 @@ def _grid(n: int) -> tuple[int, list[int]]:
     return rows, sizes
 
 
+def _boundary_sort_key(boundary_id: str) -> tuple[int, str]:
+    m = re.match(r"^tb-(\d+)$", boundary_id or "")
+    return (int(m.group(1)), "") if m else (10**9, boundary_id or "")
+
+
+def _ingress_label(boundary_ids: list[str], limit: int = 3) -> str:
+    """Caption for the attack manifold: the crossings it actually represents.
+
+    Truncated rather than allowed to grow — the manifold is one element for the
+    whole attacker zone, and a caption that wraps would reintroduce exactly the
+    visual noise the single-manifold design removed.
+    """
+    if not boundary_ids:
+        return ""
+    shown = boundary_ids[:limit]
+    rest = len(boundary_ids) - len(shown)
+    return " · ".join(shown) + (f" +{rest}" if rest else "") + "  internet-facing"
+
+
+def _internet_facing_boundaries(yaml_data: dict, component_ids: set[str]) -> list[dict]:
+    """Confirmed crossings whose SOURCE is the outside world.
+
+    Single source for two things that must never disagree: the exposure that
+    decides which tiers the attack manifold reaches, and the label that names
+    the manifold. Read from one place, the picture and its caption cannot drift
+    apart — an `inferred` crossing stays out of BOTH, so the figure never claims
+    a boundary it did not actually draw.
+    """
+    return [
+        tb
+        for tb in yaml_data.get("trust_boundaries") or []
+        if isinstance(tb, dict)
+        and boundary_endpoints_valid(tb, component_ids)
+        and tb.get("confidence") == "confirmed"
+        and (tb.get("from") or "").strip().lower() == "external"
+    ]
+
+
 def build_figure1_svg(
     yaml_data: dict,
     attack_paths_data: dict,
@@ -446,16 +484,14 @@ def build_figure1_svg(
     # listener) is reached THROUGH the app, never by a direct attacker arrow.
     exposed = set()
     component_ids = set(comp)
-    for tb in yaml_data.get("trust_boundaries") or []:
-        if (
-            isinstance(tb, dict)
-            and boundary_endpoints_valid(tb, component_ids)
-            and tb.get("confidence") == "confirmed"
-            and (tb.get("from") or "").strip().lower() == "external"
-        ):
-            to = (tb.get("to") or "").strip()
-            if to in comp:
-                exposed.add(to)
+    ingress_boundary_ids: list[str] = []
+    for tb in _internet_facing_boundaries(yaml_data, component_ids):
+        to = (tb.get("to") or "").strip()
+        if to in comp:
+            exposed.add(to)
+            if tb.get("id"):
+                ingress_boundary_ids.append(str(tb["id"]))
+    ingress_boundary_ids = sorted(set(ingress_boundary_ids), key=_boundary_sort_key)
     exposed_tiers = {comp[cid]["tier"] for cid in exposed}
     for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
         digit = idx + 1
@@ -989,6 +1025,24 @@ def build_figure1_svg(
         # Prominent origin node — drawn last so it sits on top of the feeder.
         c.circle(mx, atk_bottom, 7.5, fill="#ffffff", stroke=_EXPOSED, sw=2.2)
         c.circle(mx, atk_bottom, 3.0, fill=_EXPOSED, stroke=_EXPOSED, sw=1)
+        # Name the crossings the manifold already represents. The feeder IS the
+        # internet-facing trust boundary — it is derived from exactly those rows
+        # (see _internet_facing_boundaries) — but until now it was drawn
+        # unnamed, so the reader could not connect the red vectors to the §1
+        # boundary catalogue. This is a caption on existing geometry: no new
+        # line, nothing per actor, and the privilege crossings stay out (they
+        # run inside a component, not from `external`).
+        ingress_caption = _ingress_label(ingress_boundary_ids)
+        if ingress_caption:
+            c.text(
+                mx + 13,
+                feed_y - 6,
+                ingress_caption,
+                size=9.5,
+                fill=_EXPOSED,
+                anchor="start",
+                weight="bold",
+            )
 
     # ---- legend rail ----
     lx = band_left + band_w + _LEGGAP

@@ -608,3 +608,60 @@ def test_weasyprint_renders_without_error(tmp_path):
     # must not raise — verifies WeasyPrint accepts our flat SVG (incl. markers)
     wp.HTML(str(html)).write_pdf(str(tmp_path / "t.pdf"))
     assert (tmp_path / "t.pdf").stat().st_size > 2000
+
+
+# ---------------------------------------------------------------------------
+# Internet-facing trust boundaries — the manifold caption
+# ---------------------------------------------------------------------------
+
+
+def test_attack_manifold_is_captioned_with_the_internet_facing_boundaries():
+    """The red manifold is derived from the `external ->` crossings but shipped
+    unnamed, so a reader could not connect it to the §1 boundary catalogue."""
+    svg = _build(exposed=("app0", "app1"))
+    assert "tb-1 · tb-2  internet-facing" in svg
+
+
+def test_caption_names_no_boundary_when_none_is_internet_facing():
+    assert "internet-facing" not in _build(exposed=())
+
+
+def test_caption_and_exposure_read_the_same_rows():
+    """An `inferred` crossing does not drive the manifold, so it must not be
+    named by the caption either — otherwise the picture and its own caption
+    would disagree about which boundaries were drawn."""
+    y, apd, tax = _model(exposed=("app0",))
+    y["trust_boundaries"][0]["confidence"] = "inferred"
+
+    svg = F.build_figure1_svg(y, apd, tax)
+
+    assert "internet-facing" not in svg
+
+
+def test_caption_stays_one_line_when_many_boundaries_are_exposed():
+    """The manifold is a single element for the whole attacker zone; a caption
+    that grew unboundedly would reintroduce the noise that design removed."""
+    assert F._ingress_label(["tb-1", "tb-2", "tb-3", "tb-4", "tb-5"]) == "tb-1 · tb-2 · tb-3 +2  internet-facing"
+    assert F._ingress_label([]) == ""
+
+
+def test_privilege_crossings_are_not_named_by_the_caption():
+    """A user-to-admin crossing runs inside a component, not from `external`;
+    it is not part of the attack surface the manifold draws."""
+    y, apd, tax = _model(exposed=("app0",))
+    y["trust_boundaries"].append(
+        {
+            "id": "tb-9",
+            "from": "app0",
+            "to": "app0",
+            "name": "User to admin zone",
+            "kind": "privilege",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    )
+
+    svg = F.build_figure1_svg(y, apd, tax)
+
+    assert "tb-1  internet-facing" in svg
+    assert "tb-9" not in svg
