@@ -176,21 +176,31 @@ def test_collapse_consecutive_anchors_skips_fences():
     assert n == 0
 
 
-# --- apply_fixes: blockquote block skipped (897, 899-902) -----------------
+# --- apply_fixes: blockquote WRAPPER skipped, body wrapped (897, 899-902) --
+#
+# These two originally pinned "the whole blockquote block is skipped". That was
+# the characterised behaviour, not an intended one: it left the §1 critical-gaps
+# list — the only styled <blockquote> the report emits — with bare paths that no
+# fragment rewrite could reach, which the QA reference-format gate then raised as
+# a non-actionable manual_review (juice-shop 2026-07-27, F-010). The wrapper tags
+# stay untouched; the Markdown body is prose and is wrapped like any other line.
 
 
-def test_apply_fixes_blockquote_block_left_untouched():
-    text = "<blockquote>\nPath server.ts:12 inside blockquote stays bare\n</blockquote>\nOutside server.ts:12 prose\n"
+def test_apply_fixes_blockquote_wrapper_untouched_body_wrapped():
+    text = "<blockquote>\nPath server.ts:12 inside blockquote\n</blockquote>\nOutside server.ts:12 prose\n"
     out, _ = prose.apply_fixes(text)
-    # Inside-blockquote path NOT backticked; outside prose IS.
-    assert "Path server.ts:12 inside blockquote stays bare" in out
-    assert "`server.ts:12`" in out  # the outside occurrence
+    # The wrapper tags themselves are never rewritten...
+    assert "<blockquote>" in out
+    assert "</blockquote>" in out
+    # ...but the body is prose and gets the same treatment as the outside line.
+    assert "Path `server.ts:12` inside blockquote" in out
+    assert "Outside `server.ts:12` prose" in out
 
 
 # --- apply_code_formatting fence + blockquote + heading (973-988) ---------
 
 
-def test_apply_code_formatting_skips_fence_and_blockquote_and_heading():
+def test_apply_code_formatting_skips_fence_and_heading_but_wraps_blockquote_body():
     text = (
         "```\n"
         "code server.ts:1\n"
@@ -203,7 +213,8 @@ def test_apply_code_formatting_skips_fence_and_blockquote_and_heading():
     )
     out, _ = prose.apply_code_formatting(text)
     assert "code server.ts:1" in out  # fence untouched
-    assert "bq server.ts:2" in out  # blockquote untouched
+    assert "bq `server.ts:2`" in out  # blockquote BODY wrapped (wrapper is not)
+    assert "<blockquote>" in out and "</blockquote>" in out
     assert "# Heading server.ts:3" in out  # heading untouched
     assert "`server.ts:4`" in out  # prose backticked
 

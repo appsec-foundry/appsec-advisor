@@ -128,7 +128,18 @@ _EXTENSIONS = (
     "pub",
 )
 _PATH_RE = re.compile(
-    r"(?P<path>[A-Za-z][\w.-]*/[\w./-]+\.(?:"
+    # The leading `\.?` admits dot-directory roots — `.github/workflows/ci.yml`,
+    # `.circleci/config.yml`, `.claude/settings.json`. Without it the match
+    # started one char late (at `github`), and the adjacency guard below
+    # (`before in "._"`) then correctly discarded it rather than emit a
+    # half-wrapped ``.`github/...` `` — so the path stayed bare in EVERY
+    # context and the QA reference-format gate flagged it as a non-actionable
+    # `manual_review` the repair loop structurally cannot clear (juice-shop
+    # 2026-07-27, F-010 `.github/workflows/image_actions.yml:33`).
+    # Greedy `[\w.-]*` still claims the whole token when the dot is interior
+    # (`v1.github/x.yml` matches from `v`), so this only fires on a real
+    # dot-root.
+    r"(?P<path>\.?[A-Za-z][\w.-]*/[\w./-]+\.(?:"
     + "|".join(_EXTENSIONS)
     # `(?:-\d+)?` keeps a `:line-line` range inside the wrapped span; without it
     # the boundary below closes the backtick after `:20`, leaving `-25` bare.
@@ -549,6 +560,25 @@ _MD_LINK_LABEL_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
 # `_bulletize_relevant_findings` post-processor normalises `- ` to `— `
 # only AFTER the per-line wrap pass, so the hyphen form must match here too.
 _LINKED_TITLE_TAIL_RE = re.compile(r"\]\(#(?:f|t|m|th)-\d+\)\s*[—–-]\s[^\n|]*?(?=<br/?>|\||$)")
+
+
+def _html_block_body_wrappable(stripped: str) -> bool:
+    """True when a line inside an HTML `<blockquote>` block is plain Markdown
+    prose that should still get code-token backticking.
+
+    The styled `<blockquote>` the §1 Management-Summary critical-gaps list is
+    rendered in is presentation only — its BODY is ordinary prose. Skipping the
+    whole block meant `.github/workflows/image_actions.yml:33` stayed bare there
+    while every other section rendered it wrapped, and the QA reference-format
+    gate then raised a `manual_review` the repair loop structurally cannot clear
+    (it is composed, not authored in any fragment — juice-shop 2026-07-27, F-010).
+
+    Conservative boundary: any line carrying markup — the wrapper tags
+    themselves, `<br/>`, inline HTML — is left untouched. `_wrap_line`'s mask
+    does protect HTML attributes, but not rewriting those lines at all is the
+    cheaper guarantee and keeps this fix off the styled-wrapper path entirely.
+    """
+    return "<" not in stripped
 
 
 def _wrap_line(line: str) -> tuple[str, int]:
@@ -1239,7 +1269,12 @@ def apply_fixes(text: str) -> tuple[str, int]:
         if in_html_block:
             if "</blockquote>" in stripped:
                 in_html_block = False
-            out.append(raw)
+            if _html_block_body_wrappable(stripped):
+                new_line, n_bq = _wrap_line(line)
+                inline_fixes += n_bq
+                out.append(new_line + nl)
+            else:
+                out.append(raw)
             continue
         if is_heading:
             out.append(raw)
@@ -1324,7 +1359,14 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
         if in_html_block:
             if "</blockquote>" in stripped:
                 in_html_block = False
-            out.append(raw)
+            # Same rule as apply_fixes: the wrapper is presentation, its
+            # Markdown body still needs code-token backticking.
+            if _html_block_body_wrappable(stripped):
+                new_line, n_bq = _wrap_line(line)
+                total += n_bq
+                out.append(new_line + nl)
+            else:
+                out.append(raw)
             continue
         if stripped.startswith("#"):  # headings stay clean (no backticks)
             out.append(raw)
