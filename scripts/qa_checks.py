@@ -4108,6 +4108,15 @@ _AS_TABLE_HEADERS = ("Method", "Route", "Risk", "Notes")
 _AS_COL_WIDTHS = ("9%", "30%", "14%", "47%")
 _ASSET_TABLE_HEADERS = ("Asset", "Classification", "Description", "Linked Threats")
 _ASSET_COL_WIDTHS = ("22%", "13%", "32%", "33%")
+_TRUST_BOUNDARY_TABLE_HEADERS = (
+    "ID",
+    "Boundary / crossing",
+    "Kind / status",
+    "Assumption / confidence",
+    "Source",
+    "Linked findings",
+)
+_TRUST_BOUNDARY_COL_WIDTHS = ("7%", "25%", "15%", "34%", "9%", "10%")
 # Operational Strengths (2026-07-15): Gap merged into the Effectiveness cell;
 # Mitigates column shown only when at least one row carries a back-reference.
 # Two fixed-layout forms — 3-col (no Mitigates) and 4-col (with Mitigates).
@@ -4131,6 +4140,22 @@ _FIXED_LAYOUT_SPECS = (
         _ASSET_COL_WIDTHS,
         {0: "overflow-wrap:anywhere", 3: "overflow-wrap:anywhere"},
         frozenset({2}),  # Description (col 2) reflows; Linked Threats keeps its <br/> stack
+    ),
+    (
+        _TRUST_BOUNDARY_TABLE_HEADERS,
+        _TRUST_BOUNDARY_COL_WIDTHS,
+        {
+            0: "white-space:nowrap",
+            1: "overflow-wrap:anywhere",
+            2: "overflow-wrap:anywhere",
+            3: "overflow-wrap:anywhere",
+            4: "overflow-wrap:anywhere",
+            5: "overflow-wrap:anywhere",
+        },
+        # Compose exempts the table from synthetic 44-character soft breaks.
+        # The remaining <br> elements separate name/crossing, status/exposure,
+        # confidence, and finding links and are therefore structural.
+        frozenset(),
     ),
     (
         _STRENGTH_TABLE_HEADERS_3,
@@ -4163,7 +4188,8 @@ _FIXED_LAYOUT_SPECS = (
 )
 _AS_SEP_LINE_RE = re.compile(r"^\s*\|[\s:\-|]+\|\s*$")
 _AS_INLINE_TOKEN_RE = re.compile(
-    r"(?P<br><br\s*/?>)"
+    r'(?P<anchor><a id="tb-\d+"></a>)'
+    r"|(?P<br><br\s*/?>)"
     r"|\[(?P<ltext>[^\]]+)\]\((?P<lhref>[^)]+)\)"
     r"|\*\*(?P<bold>[^*]+)\*\*"
     # Italic: content excludes `_`/`*` AND `<` so a lone `_id`/`$where`-style
@@ -4192,7 +4218,9 @@ def _render_inline_md_to_html(text: str) -> str:
         for m in _AS_INLINE_TOKEN_RE.finditer(part):
             if m.start() > pos:
                 out.append(_as_html_escape(part[pos : m.start()]))
-            if m.group("br") is not None:
+            if m.group("anchor") is not None:
+                out.append(m.group("anchor"))
+            elif m.group("br") is not None:
                 out.append("<br/>")
             elif m.group("ltext") is not None:
                 href = _as_html_escape(m.group("lhref")).replace('"', "&quot;")

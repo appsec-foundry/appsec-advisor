@@ -96,6 +96,153 @@ def test_present_empty_v2_catalogue_is_authoritative(tmp_path: Path) -> None:
     assert result == {"schema_version": 2, "trust_boundaries": []}
 
 
+def test_juice_shop_prose_endpoints_are_resolved_conservatively(tmp_path: Path) -> None:
+    repo, out = _repo(tmp_path)
+    _write_json(
+        out / ".components.json",
+        {
+            "schema_version": 1,
+            "components": [
+                {"id": "frontend-spa", "name": "Frontend SPA", "paths": ["frontend/**"]},
+                {"id": "backend-api", "name": "Backend API Server", "paths": ["routes/**"]},
+                {"id": "database", "name": "SQLite Database", "paths": ["models/**"]},
+                {"id": "ci-cd-pipeline", "name": "CI/CD Pipeline", "paths": [".github/**"]},
+            ],
+        },
+    )
+
+    def captured(boundary_id: str, name: str, source: str, target: str, status: str) -> dict:
+        return {
+            "id": boundary_id,
+            "name": name,
+            "from": source,
+            "to": target,
+            "kind": "network",
+            "assumption": "The crossing requires a concrete and reviewable trust assumption.",
+            "evidence": [],
+            "confidence": "inferred",
+            "resolution_status": status,
+            "sources": ["detected"],
+        }
+
+    rows = [
+        captured("tb-1", "Internet entry", "Public Internet", "Backend API Server (port 3000)", "resolved"),
+        captured("tb-2", "Browser/API", "Angular SPA (browser)", "Backend API Server", "unresolved"),
+        captured("tb-3", "API/database", "Backend API Server", "SQLite Database", "resolved"),
+        captured(
+            "tb-4",
+            "LLM provider",
+            "Backend API Server (routes/chatbot.ts)",
+            "External OpenAI-compatible LLM endpoint",
+            "unresolved",
+        ),
+        captured(
+            "tb-5",
+            "OAuth provider",
+            "Angular SPA (browser)",
+            "Google OAuth v2 Authorization Server",
+            "unresolved",
+        ),
+        captured(
+            "tb-6",
+            "Build registries",
+            "GitHub Actions Runner",
+            "GitHub, npm Registry, Docker Hub",
+            "unresolved",
+        ),
+        captured(
+            "tb-7",
+            "Privilege boundary",
+            "Authenticated User (user/accounting role)",
+            "Admin-protected API endpoints",
+            "unresolved",
+        ),
+    ]
+    sidecar = out / ".trust-boundaries.json"
+    _write_json(sidecar, {"schema_version": 2, "trust_boundaries": rows})
+
+    result, _warnings = prep.normalize(repo_root=repo, sidecar=sidecar, prior_model=None, output_dir=out)
+    by_id = {row["id"]: row for row in result["trust_boundaries"]}
+
+    assert (by_id["tb-1"]["from"], by_id["tb-1"]["to"], by_id["tb-1"]["resolution_status"]) == (
+        "external",
+        "backend-api",
+        "resolved",
+    )
+    assert (by_id["tb-3"]["from"], by_id["tb-3"]["to"], by_id["tb-3"]["resolution_status"]) == (
+        "backend-api",
+        "database",
+        "resolved",
+    )
+    assert (by_id["tb-4"]["from"], by_id["tb-4"]["to"], by_id["tb-4"]["resolution_status"]) == (
+        "backend-api",
+        "external",
+        "resolved",
+    )
+    assert {boundary_id for boundary_id, row in by_id.items() if row["resolution_status"] == "unresolved"} == {
+        "tb-2",
+        "tb-5",
+        "tb-6",
+        "tb-7",
+    }
+    assert by_id["tb-2"]["from"] == "Angular SPA (browser)"
+    assert by_id["tb-5"]["to"] == "Google OAuth v2 Authorization Server"
+    diagnostics = json.loads((out / ".trust-boundary-diagnostics.json").read_text(encoding="utf-8"))
+    assert {item["boundary_id"] for item in diagnostics["issues"]} == {"tb-2", "tb-5", "tb-6", "tb-7"}
+
+
+def test_invalid_resolved_row_is_recomputed_and_diagnosed(tmp_path: Path) -> None:
+    repo, out = _repo(tmp_path)
+    sidecar = out / ".trust-boundaries.json"
+    _write_json(
+        sidecar,
+        {
+            "schema_version": 2,
+            "trust_boundaries": [
+                {
+                    **_row(id="tb-4", from_="Authenticated User", to="web-api"),
+                    "from": "Authenticated User",
+                    "resolution_status": "resolved",
+                    "sources": ["detected"],
+                }
+            ],
+        },
+    )
+
+    result, _warnings = prep.normalize(repo_root=repo, sidecar=sidecar, prior_model=None, output_dir=out)
+    row = result["trust_boundaries"][0]
+    assert row["id"] == "tb-4"
+    assert row["resolution_status"] == "unresolved"
+    diagnostics = json.loads((out / ".trust-boundary-diagnostics.json").read_text(encoding="utf-8"))
+    assert diagnostics["issues"][0]["code"] == "invalid_resolved_endpoint"
+    assert diagnostics["issues"][0]["side"] == "from"
+
+
+def test_contexts_defer_and_surface_persisted_invalid_resolved_row(tmp_path: Path) -> None:
+    repo, out = _repo(tmp_path)
+    row = {
+        **_row(id="tb-9"),
+        "from": "Public Internet",
+        "resolution_status": "resolved",
+        "sources": ["detected"],
+    }
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": [row]})
+
+    audit = prep.prepare_contexts(
+        repo_root=repo,
+        output_dir=out,
+        component_ids=["web-api"],
+        depth="standard",
+    )
+
+    component = audit["components"]["web-api"]
+    assert component["selected_ids"] == []
+    assert component["deferred_ids"] == ["tb-9"]
+    assert component["invalid_ids"] == ["tb-9"]
+    diagnostics = json.loads((out / ".trust-boundary-diagnostics.json").read_text(encoding="utf-8"))
+    assert diagnostics["issues"][0]["code"] == "invalid_resolved_endpoint"
+
+
 def test_reorder_and_unambiguous_rename_preserve_ids(tmp_path: Path) -> None:
     repo, out = _repo(tmp_path)
     prior = out / "prior.yaml"

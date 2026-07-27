@@ -10,6 +10,7 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.stride-*.json` | Per-component STRIDE fragments, plus the three pre-fan-out sidecars below |
 | `.threats-merged.json` | Canonical merged threat set |
 | `.triage-flags.json` | Triage-validator verdicts |
+| `.trust-boundary-diagnostics.json` | Canonical endpoint-resolution failures and ambiguity audit |
 | `.architect-review.md` | Stage-4 advisory output |
 | `.agent-run.log` | Structured agent run log |
 | `.hook-events.log` | Hook timing/diagnostic events |

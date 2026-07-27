@@ -339,6 +339,13 @@ def test_internet_exposed_marker_and_direct_attack_arrow():
         {"id": "tb-1", "from": "", "to": "app0", "confidence": "confirmed", "resolution_status": "unresolved"},
         {"id": "tb-1", "to": "app0", "confidence": "confirmed", "resolution_status": "unresolved"},
         {"id": "tb-1", "from": "external", "to": "app0", "confidence": "inferred", "resolution_status": "resolved"},
+        {
+            "id": "tb-1",
+            "from": "Public Internet",
+            "to": "Application (port 3000)",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        },
     ],
 )
 def test_incomplete_or_unconfirmed_boundary_does_not_imply_exposure(boundary):

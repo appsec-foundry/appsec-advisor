@@ -20,6 +20,8 @@ import html
 import math
 import re
 
+from prepare_trust_boundary_context import boundary_endpoints_valid
+
 # ---- palette ---------------------------------------------------------------
 _FONT = "Helvetica, Arial, sans-serif"
 _TIERS = ("actors", "client", "application", "data")
@@ -443,10 +445,11 @@ def build_figure1_svg(
     # behind the app (e.g. the data layer — SQLite/MarsDB has no network
     # listener) is reached THROUGH the app, never by a direct attacker arrow.
     exposed = set()
+    component_ids = set(comp)
     for tb in yaml_data.get("trust_boundaries") or []:
         if (
             isinstance(tb, dict)
-            and tb.get("resolution_status") == "resolved"
+            and boundary_endpoints_valid(tb, component_ids)
             and tb.get("confidence") == "confirmed"
             and (tb.get("from") or "").strip().lower() == "external"
         ):

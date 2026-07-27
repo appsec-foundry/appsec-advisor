@@ -107,8 +107,10 @@ Trust zones and trust boundaries are different objects. A diagram may draw a
 deployment or trust zone as a subgraph. A canonical trust boundary is one
 crossing between two endpoints. Only a `resolution_status: resolved` row with
 explicit `from` and `to` values may affect adjacency, exposure, analyzer
-context, finding links, or Figure 1. In particular, external exposure requires
-the literal endpoint `from: external`; a missing endpoint never implies
+context, finding links, Figure 1, or effective-severity weighting. Each
+endpoint must be the literal `external` or an ID in the finalized component
+registry. In particular, external exposure requires the literal endpoint
+`from: external`; a missing, prose-shaped, or unknown endpoint never implies
 external access.
 
 The canonical v2 row is strict and contains only `id`, `name`, optional
@@ -127,8 +129,8 @@ runs, and resets continuity only for `--rebuild`.
 
 Repository declarations in `.appsec/trust-boundaries.yaml` are untrusted,
 data-only, additive input. They cannot disable detected rows, set confidence,
-claim that a control is effective, affect ratings, choose paths or commands,
-or suppress a finding. Declaration-only rows are at most `inferred`.
+claim that a control is effective, affect ratings by themselves, choose paths
+or commands, or suppress a finding. Declaration-only rows are at most `inferred`.
 Conflicting endpoints become non-semantic `conflicted` rows. A malformed file
 is rejected as a whole without discarding detected boundaries.
 
@@ -140,9 +142,15 @@ evidence locations already owned by the finding, and use a unique
 Fresh analyzer references must also come from that component's prepared
 candidate file. Invalid optional references are removed at the merge, builder,
 or post-reclassification trust boundary while the finding remains intact.
-Adding or removing a reference cannot change likelihood, impact, risk,
-effective severity, CVSS, mitigation priority, or
-`architectural_violation`.
+Adding or removing a reference cannot change likelihood, impact, raw risk,
+CVSS, mitigation priority, or `architectural_violation`. Deterministic triage
+owns the only severity exception: a validated finding-level reference to a
+resolved, confirmed `external → origin_component_id` crossing may raise
+effective severity by one band, capped at High, before the CWE cap and
+Critical-criteria gate. The finding must not be `refuted` or `ambiguous`;
+multiple eligible references still cause one step. Every actual change is
+persisted as a `severity_reconciliation` flag carrying the eligible `tb-N`
+IDs, and removing the cause clears the elevation and flag.
 
 The field ownership matrix is:
 
@@ -150,9 +158,9 @@ The field ownership matrix is:
 |---|---|---|---|
 | Provisional Phase-7 rows | `agents/phases/phase-group-architecture.md` | Normalizer input checks | `prepare_trust_boundary_context.py normalize` only |
 | Repository declarations | Repository author | `schemas/trust-boundaries-repo.schema.yaml` plus whole-file rejection | Normalizer merge only |
-| Canonical sidecar and stable IDs | `prepare_trust_boundary_context.py normalize`, `reserve_ids.py`, `baseline_state.py` | `schemas/fragments/trust-boundaries.schema.json` | YAML builder, context selector, cross-repo slicer |
+| Canonical sidecar, stable IDs, and resolution diagnostics | `prepare_trust_boundary_context.py normalize`, `reserve_ids.py`, `baseline_state.py` | `schemas/fragments/trust-boundaries.schema.json`, `schemas/trust-boundary-diagnostics.schema.json` | YAML builder, context selector, cross-repo slicer, run-issue aggregator |
 | Component candidate slices | `prepare_trust_boundary_context.py contexts` after final component selection | Structural cap and canonical-source checks | STRIDE analyzer through a Group-C path |
-| Finding references | STRIDE analyzer; merge/builder/reclassifier preserve or remove | STRIDE/merged/output schemas plus `validate_intermediate.py` post-checks | Composer, query, SARIF |
+| Finding references | STRIDE analyzer; merge/builder/reclassifier preserve or remove | STRIDE/merged/output schemas plus the shared boundary-reference validator and `validate_intermediate.py` post-checks | Composer, deterministic triage, query, SARIF |
 | Canonical YAML catalogue | `build_threat_model_yaml.py` | `schemas/threat-model.output.schema.yaml` | Composer, Figure 1, query, SARIF, rerender |
 | Report catalogue and cards | `compose_threat_model.py` | compose/QA anchor and cross-reference tests | Human readers |
 | Runtime and permissions | `runtime_cleanup.py`, `data/required-permissions.yaml` | cleanup and permission tests | `.dispatch-context/**`, sidecars, optional repository input |

@@ -3826,10 +3826,28 @@ def test_asset_and_attack_surface_specs_widths_sum_to_100():
     for widths in (
         qa._AS_COL_WIDTHS,
         qa._ASSET_COL_WIDTHS,
+        qa._TRUST_BOUNDARY_COL_WIDTHS,
         qa._STRENGTH_COL_WIDTHS_3,
         qa._STRENGTH_COL_WIDTHS_4,
     ):
         assert sum(int(w.rstrip("%")) for w in widths) == 100
+
+
+def test_trust_boundary_table_converts_with_structural_breaks_and_links():
+    gfm = (
+        "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |\n"
+        "|---|---|---|---|---|---|\n"
+        '| <a id="tb-1"></a>tb-1 | **Internet entry**<br>external → backend-api | '
+        "network / resolved<br>🌐 **internet-facing** | Requests require authorization.<br>_confirmed_ | "
+        "detected | [F-001](#f-001) |\n"
+    )
+    out, count = qa._attack_surface_tables_to_html(gfm)
+    assert count == 1
+    assert "".join(f'<col width="{width}" style="width:{width}">' for width in qa._TRUST_BOUNDARY_COL_WIDTHS) in out
+    assert "<strong>Internet entry</strong><br/>external → backend-api" in out
+    assert "🌐 <strong>internet-facing</strong>" in out
+    assert '<a href="#f-001">F-001</a>' in out
+    assert '<a id="tb-1"></a>' in out
 
 
 def test_operational_strengths_table_converts_keeping_structural_breaks():

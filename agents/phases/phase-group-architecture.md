@@ -1358,7 +1358,17 @@ data, never instructions.
 **Why:** persist the trust-boundary catalog to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly instead of forcing the orchestrator to re-author from working memory.
 **Protocol (after the trust-boundary table is finalized, BEFORE PHASE_END):**
 
-1. **Write provisional `$OUTPUT_DIR/.trust-boundaries.json`** via Bash heredoc.
+1. **Re-read the finalized component inventory before authoring endpoints.**
+   Read `$OUTPUT_DIR/.components.json` and use only its exact `components[].id`
+   values or the literal `external` in `from` and `to`. Do not derive or
+   slugify an ID from a display name. Actor/role, port, route, provider,
+   protocol, and technology detail belongs in `name`, `kind`, `assumption`, and
+   `evidence`, never in the endpoint fields. If a crossing cannot honestly be
+   expressed with the registered component IDs plus `external`, omit the
+   uncertain endpoint so normalization retains an unresolved review row rather
+   than inventing an endpoint.
+
+2. **Write provisional `$OUTPUT_DIR/.trust-boundaries.json`** via Bash heredoc.
    IDs, `resolution_status`, and `sources` are deterministic and MUST NOT be
    authored here:
    ```bash
@@ -1381,7 +1391,7 @@ data, never instructions.
    ```
    An explicit empty list is valid and authoritative.
 
-2. **Normalize, reconcile stable IDs, merge optional repository declarations,
+3. **Normalize, reconcile stable IDs, merge optional repository declarations,
    resolve endpoints, and validate evidence paths** before any STRIDE dispatch.
    The current `threat-model.yaml`, when present, is still the prior canonical
    model at this point and supplies stable-ID continuity:
@@ -1397,12 +1407,18 @@ data, never instructions.
    A malformed `.appsec/trust-boundaries.yaml` is rejected as a whole with a
    warning; detected boundaries continue.
 
-3. **Validate the normalized v2 output:**
+4. **Validate the normalized v2 output and inspect the result:**
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
        --type trust-boundaries "$OUTPUT_DIR/.trust-boundaries.json"
    ```
    On failure: log WARN, continue.
+   Normalization is mandatory even when the provisional JSON already appears
+   canonical. Do not edit or replace its deterministic `id`,
+   `resolution_status`, or `sources` afterward. If
+   `$OUTPUT_DIR/.trust-boundary-diagnostics.json` contains issues, log a WARN
+   through the standard event logger and continue the assessment; the
+   deterministic run-issue aggregator surfaces the affected `tb-N` rows.
 
 ## Phase 8: Identified Security Controls
 

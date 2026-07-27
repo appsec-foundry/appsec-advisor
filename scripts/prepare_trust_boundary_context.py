@@ -28,12 +28,24 @@ from sanitize_perimeter_claims import sanitize_perimeter_prose
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 NORMALIZED_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "trust-boundaries.schema.json"
 REPO_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundaries-repo.schema.yaml"
+DIAGNOSTICS_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-diagnostics.schema.json"
 KINDS = {"network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"}
 LEGACY_FIELDS = {"controls", "description", "enforcement", "crossing_enforcement", "trust_level", "weakness"}
 NEUTRAL_LEGACY_ASSUMPTION = "Assumption not recorded in legacy model"
 MAX_BOUNDARY_ID = 999_999_999
 _ID_RE = re.compile(r"^tb-(\d+)$")
+_COMPONENT_ID_RE = re.compile(r"^[a-z][a-z0-9-]+$")
+_CANONICAL_ENDPOINT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,127}$")
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
+_EXTERNAL_ALIASES = {
+    "external",
+    "internet",
+    "the internet",
+    "public internet",
+    "outside network",
+    "untrusted network",
+}
 
 
 def _read_json(path: Path | None, default: Any = None) -> Any:
@@ -122,18 +134,79 @@ def _canonical_evidence(repo_root: Path, values: Any, warnings: list[str], label
     return result
 
 
-def _component_ids(sidecar: dict | None, prior: dict | None) -> set[str]:
+def _component_rows(sidecar: dict | None, prior: dict | None) -> list[dict]:
     rows = (sidecar or {}).get("components")
     if not isinstance(rows, list):
         rows = (prior or {}).get("components") or []
-    return {str(row["id"]) for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]}
+    return [
+        row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and _COMPONENT_ID_RE.fullmatch(row["id"])
+    ]
+
+
+def _component_ids(sidecar: dict | None, prior: dict | None) -> set[str]:
+    return {row["id"] for row in _component_rows(sidecar, prior)}
+
+
+def _endpoint_lookup_key(value: str) -> str:
+    """Conservative comparison form; never persisted as a public endpoint."""
+    stripped = _TRAILING_PAREN_RE.sub("", value.strip())
+    return " ".join(stripped.casefold().split())
+
+
+def _resolve_endpoint(value: Any, components: dict[str, dict]) -> tuple[str | None, str, list[str]]:
+    """Return ``(value, method, candidates)`` for one untrusted endpoint.
+
+    Resolved methods are ``exact_id``, ``external_literal``,
+    ``external_alias``, and ``component_name``. An unresolved result preserves
+    the bounded raw string for the review catalogue.
+    """
+    raw = _endpoint(value)
+    if raw is None:
+        return None, "missing", []
+    if raw == "external":
+        return "external", "external_literal", []
+    if raw in components:
+        return raw, "exact_id", []
+
+    key = _endpoint_lookup_key(raw)
+    if key in _EXTERNAL_ALIASES or key.startswith("external "):
+        return "external", "external_alias", []
+
+    by_name: dict[str, list[str]] = defaultdict(list)
+    for cid, row in components.items():
+        name = row.get("name")
+        if isinstance(name, str) and name.strip():
+            by_name[_endpoint_lookup_key(name)].append(cid)
+    matches = sorted(set(by_name.get(key, [])))
+    if len(matches) == 1:
+        return matches[0], "component_name", matches
+    return raw, "ambiguous" if matches else "unresolved", matches[:8]
+
+
+def boundary_endpoints_valid(boundary: dict, component_ids: set[str]) -> bool:
+    """Dynamic resolved-row invariant shared by all downstream consumers."""
+    if not isinstance(boundary, dict) or boundary.get("resolution_status") != "resolved":
+        return False
+    allowed = component_ids | {"external"}
+    return boundary.get("from") in allowed and boundary.get("to") in allowed
+
+
+def _boundary_endpoint_shape_valid(boundary: dict) -> bool:
+    if not isinstance(boundary, dict) or boundary.get("resolution_status") != "resolved":
+        return False
+    return all(
+        value == "external" or (isinstance(value, str) and _CANONICAL_ENDPOINT_RE.fullmatch(value))
+        for value in (boundary.get("from"), boundary.get("to"))
+    )
 
 
 def _normalize_row(
     raw: Any,
     *,
     repo_root: Path,
-    known_components: set[str],
+    components: dict[str, dict],
     legacy_input: bool,
     warnings: list[str],
     source: str,
@@ -142,8 +215,9 @@ def _normalize_row(
         _warn("ignored non-object boundary row", warnings)
         return None
     name = _clean_text(raw.get("name"), fallback="Unnamed trust boundary", limit=100)
-    label = str(raw.get("id") or raw.get("key") or name)
-    from_ep, to_ep = _endpoint(raw.get("from")), _endpoint(raw.get("to"))
+    label = _clean_text(raw.get("id") or raw.get("key") or name, fallback=name, limit=100)
+    from_ep, from_method, from_candidates = _resolve_endpoint(raw.get("from"), components)
+    to_ep, to_method, to_candidates = _resolve_endpoint(raw.get("to"), components)
     kind = raw.get("kind") if raw.get("kind") in KINDS else "network"
     assumption_raw = raw.get("assumption")
     is_legacy = legacy_input or bool(LEGACY_FIELDS.intersection(raw))
@@ -165,11 +239,33 @@ def _normalize_row(
         confidence = "inferred"
     elif confidence == "confirmed" and (not evidence or "detected" not in sources):
         confidence = "inferred"
-    valid_from = from_ep == "external" or from_ep in known_components
-    valid_to = to_ep == "external" or to_ep in known_components
+    valid_from = from_ep == "external" or from_ep in components
+    valid_to = to_ep == "external" or to_ep in components
     resolution = "resolved" if valid_from and valid_to else "unresolved"
+    resolution_details: list[dict] = []
     if resolution == "unresolved":
         _warn(f"{label}: unresolved endpoint(s) from={from_ep!r} to={to_ep!r}", warnings)
+        authored_resolved = raw.get("resolution_status") == "resolved"
+        for side, raw_value, valid, method, candidates in (
+            ("from", raw.get("from"), valid_from, from_method, from_candidates),
+            ("to", raw.get("to"), valid_to, to_method, to_candidates),
+        ):
+            if valid:
+                continue
+            bounded_raw = _endpoint(raw_value)
+            resolution_details.append(
+                {
+                    "code": "invalid_resolved_endpoint" if authored_resolved else "unresolved_endpoint",
+                    "side": side,
+                    "raw_value": bounded_raw or "",
+                    "reason": {
+                        "missing": "endpoint is missing or outside the 128-character bound",
+                        "ambiguous": "endpoint matches more than one component name",
+                        "unresolved": "no exact component name or explicit external marker",
+                    }.get(method, "endpoint does not satisfy the canonical contract"),
+                    "candidates": candidates,
+                }
+            )
     if LEGACY_FIELDS.intersection(raw):
         _warn(f"{label}: discarded legacy fields {sorted(LEGACY_FIELDS.intersection(raw))}", warnings)
     row: dict[str, Any] = {
@@ -185,6 +281,8 @@ def _normalize_row(
         row["from"] = from_ep
     if to_ep:
         row["to"] = to_ep
+    if resolution_details:
+        row["_resolution_details"] = resolution_details
     key = raw.get("declaration_key") or (raw.get("key") if source == "repo-declared" else None)
     if isinstance(key, str) and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", key) and len(key) <= 80:
         row["declaration_key"] = key
@@ -203,7 +301,7 @@ def _normalize_row(
 
 
 def _load_declarations(
-    repo_root: Path, known_components: set[str], warnings: list[str]
+    repo_root: Path, components: dict[str, dict], warnings: list[str]
 ) -> tuple[list[dict], str | None]:
     path = repo_root / ".appsec" / "trust-boundaries.yaml"
     if not path.is_file():
@@ -231,7 +329,7 @@ def _load_declarations(
             row := _normalize_row(
                 raw,
                 repo_root=repo_root,
-                known_components=known_components,
+                components=components,
                 legacy_input=False,
                 warnings=warnings,
                 source="repo-declared",
@@ -305,6 +403,15 @@ def _merge_declarations(
             target["resolution_status"] = "conflicted"
             target["sources"] = list(dict.fromkeys([*target["sources"], "repo-declared"]))
             declaration["resolution_status"] = "conflicted"
+            detail = {
+                "code": "conflicted_boundary",
+                "side": "both",
+                "raw_value": "",
+                "reason": "repository declaration conflicts with detected or prior canonical endpoints",
+                "candidates": [],
+            }
+            target.setdefault("_resolution_details", []).append(deepcopy(detail))
+            declaration.setdefault("_resolution_details", []).append(deepcopy(detail))
             _warn(f"declaration {key!r} conflicts with detected/prior endpoints; retained both rows", warnings)
             rows.append(declaration)
             continue
@@ -395,6 +502,88 @@ def _prior_boundaries(prior_model: Path | None) -> tuple[dict | None, list[dict]
     return prior, rows if isinstance(rows, list) else []
 
 
+def _canonicalize_prior_rows(rows: list[dict], components: dict[str, dict]) -> list[dict]:
+    """Canonicalize prior endpoints in memory for stable-ID migration matching."""
+    result: list[dict] = []
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        row = deepcopy(raw)
+        for side in ("from", "to"):
+            endpoint, method, _candidates = _resolve_endpoint(row.get(side), components)
+            if method in {"exact_id", "external_literal", "external_alias", "component_name"} and endpoint:
+                row[side] = endpoint
+        result.append(row)
+    return result
+
+
+def _write_diagnostics(output_dir: Path, rows: list[dict]) -> None:
+    issues: list[dict] = []
+    for row in rows:
+        for detail in row.pop("_resolution_details", []) or []:
+            if not isinstance(detail, dict):
+                continue
+            issues.append(
+                {
+                    "code": detail.get("code", "unresolved_endpoint"),
+                    "boundary_id": row.get("id", "tb-0"),
+                    "boundary_name": _clean_text(
+                        row.get("name"),
+                        fallback="Unnamed trust boundary",
+                        limit=100,
+                    ),
+                    "side": detail.get("side", "both"),
+                    "raw_value": _clean_text(detail.get("raw_value"), fallback="", limit=128),
+                    "reason": _clean_text(
+                        detail.get("reason"),
+                        fallback="endpoint does not satisfy the canonical contract",
+                        limit=240,
+                    ),
+                    "candidates": [
+                        value
+                        for value in detail.get("candidates", [])[:8]
+                        if isinstance(value, str) and _COMPONENT_ID_RE.fullmatch(value)
+                    ],
+                }
+            )
+    issues.sort(key=lambda item: (_numeric_id(item["boundary_id"]), item["side"], item["code"]))
+    result = {"schema_version": 1, "issues": issues}
+    schema = json.loads(DIAGNOSTICS_SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(result)
+    atomic_write_json(output_dir / ".trust-boundary-diagnostics.json", result, sort_keys=False)
+
+
+def _record_invalid_resolved_diagnostics(output_dir: Path, rows: list[dict]) -> None:
+    """Merge consumer-side invariant failures into the normalized diagnostics."""
+    path = output_dir / ".trust-boundary-diagnostics.json"
+    current = _read_json(path, {}) or {}
+    issues = [item for item in current.get("issues", []) if isinstance(item, dict)]
+    existing = {(item.get("code"), item.get("boundary_id"), item.get("side")) for item in issues}
+    for row in rows:
+        key = ("invalid_resolved_endpoint", row.get("id"), "both")
+        if key in existing:
+            continue
+        issues.append(
+            {
+                "code": "invalid_resolved_endpoint",
+                "boundary_id": row["id"],
+                "boundary_name": _clean_text(
+                    row.get("name"),
+                    fallback="Unnamed trust boundary",
+                    limit=100,
+                ),
+                "side": "both",
+                "raw_value": "",
+                "reason": "resolved row failed dynamic component endpoint validation before dispatch",
+                "candidates": [],
+            }
+        )
+    result = {"schema_version": 1, "issues": issues}
+    schema = json.loads(DIAGNOSTICS_SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(result)
+    atomic_write_json(path, result, sort_keys=False)
+
+
 def _write_declaration_fingerprint(output_dir: Path, fingerprint: str | None) -> None:
     cache = output_dir / ".appsec-cache" / "baseline.json"
     state = _read_json(cache, {}) or {}
@@ -419,7 +608,9 @@ def normalize(
         raise ValueError(f"sidecar is missing or malformed: {sidecar}")
     prior, prior_rows = _prior_boundaries(prior_model)
     components_data = _read_json(output_dir / ".components.json", {})
-    known_components = _component_ids(components_data, prior)
+    component_rows = _component_rows(components_data, prior)
+    components = {row["id"]: row for row in component_rows}
+    prior_rows = _canonicalize_prior_rows(prior_rows, components)
     warnings: list[str] = []
     legacy = raw.get("schema_version") != 2
     detected = [
@@ -429,19 +620,20 @@ def normalize(
             row := _normalize_row(
                 item,
                 repo_root=repo_root,
-                known_components=known_components,
+                components=components,
                 legacy_input=legacy,
                 warnings=warnings,
                 source="detected",
             )
         )
     ]
-    declarations, fingerprint = _load_declarations(repo_root, known_components, warnings)
+    declarations, fingerprint = _load_declarations(repo_root, components, warnings)
     merged = _merge_declarations(detected, declarations, prior_rows, warnings)
     _assign_ids(merged, prior_rows, output_dir, warnings)
     if len({row["id"] for row in merged}) != len(merged):
         raise ValueError("normalization produced duplicate trust-boundary IDs")
     merged.sort(key=lambda row: _numeric_id(row["id"]))
+    _write_diagnostics(output_dir, merged)
     result = {"schema_version": 2, "trust_boundaries": merged}
     schema = json.loads(NORMALIZED_SCHEMA.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(result)
@@ -505,9 +697,33 @@ def prepare_contexts(
     if depth not in BOUNDARY_CANDIDATE_LIMITS:
         raise ValueError(f"unknown assessment depth: {depth}")
     sidecar = _read_json(output_dir / ".trust-boundaries.json", {}) or {}
-    schema = json.loads(NORMALIZED_SCHEMA.read_text(encoding="utf-8"))
-    jsonschema.Draft202012Validator(schema).validate(sidecar)
     components = _component_map(output_dir)
+    component_id_set = set(components)
+    boundaries = [row for row in sidecar.get("trust_boundaries", []) if isinstance(row, dict)]
+    invalid_resolved = [
+        row
+        for row in boundaries
+        if row.get("resolution_status") == "resolved" and not boundary_endpoints_valid(row, component_id_set)
+    ]
+    # Fail open for the assessment but fail closed for boundary semantics. The
+    # strict schema correctly rejects prose endpoints on resolved rows; context
+    # preparation still needs to surface/defer such a persisted artifact rather
+    # than abort before the diagnostics path can run.
+    validation_doc = deepcopy(sidecar)
+    invalid_ids = {row.get("id") for row in invalid_resolved}
+    for row in validation_doc.get("trust_boundaries", []) if isinstance(validation_doc, dict) else []:
+        if isinstance(row, dict) and row.get("id") in invalid_ids:
+            row["resolution_status"] = "unresolved"
+    schema = json.loads(NORMALIZED_SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(validation_doc)
+    if invalid_resolved:
+        _record_invalid_resolved_diagnostics(output_dir, invalid_resolved)
+        for row in invalid_resolved:
+            print(
+                f"TRUST_BOUNDARY_WARN: {row.get('id')}: invalid resolved endpoints "
+                f"from={row.get('from')!r} to={row.get('to')!r}",
+                file=sys.stderr,
+            )
     prior_refs = _prior_boundary_refs(output_dir)
     selected_component_ids = list(dict.fromkeys(str(x) for x in component_ids if x))
     context_root = output_dir / ".dispatch-context"
@@ -531,14 +747,20 @@ def prepare_contexts(
                 "selected_ids": [],
                 "omitted_ids": [],
                 "deferred_ids": [],
+                "invalid_ids": [row["id"] for row in invalid_resolved],
                 "reason": "selected STRIDE component absent from reconciled inventory",
             }
             continue
         candidates: list[tuple[tuple, dict, str, list[str]]] = []
         deferred: list[str] = []
-        for boundary in sidecar.get("trust_boundaries", []):
+        invalid: list[str] = []
+        for boundary in boundaries:
             if boundary.get("resolution_status") != "resolved":
                 deferred.append(boundary["id"])
+                continue
+            if not boundary_endpoints_valid(boundary, component_id_set):
+                deferred.append(boundary["id"])
+                invalid.append(boundary["id"])
                 continue
             if cid not in {boundary.get("from"), boundary.get("to")}:
                 continue
@@ -581,6 +803,7 @@ def prepare_contexts(
             "selected_ids": [item[1]["id"] for item in chosen],
             "omitted_ids": [item[1]["id"] for item in omitted],
             "deferred_ids": sorted(set(deferred), key=_numeric_id),
+            "invalid_ids": sorted(set(invalid), key=_numeric_id),
             "focus_reasons": {item[1]["id"]: item[3] for item in candidates},
         }
     atomic_write_json(context_root / "trust-boundary-selection.json", audit, sort_keys=False)
@@ -594,6 +817,7 @@ def validate_finding_boundary_refs(
     origin_component_id: str | None,
     candidate_ids: set[str] | None,
     require_candidate: bool,
+    known_component_ids: set[str] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Fail-open validation for optional finding traceability.
 
@@ -629,6 +853,12 @@ def validate_finding_boundary_refs(
             reason = f"removed unknown boundary reference {boundary_id!r}"
         elif boundary.get("resolution_status") != "resolved" or boundary.get("confidence") != "confirmed":
             reason = f"removed non-confirmed/non-resolved boundary reference {boundary_id!r}"
+        elif (
+            not boundary_endpoints_valid(boundary, known_component_ids)
+            if known_component_ids is not None
+            else not _boundary_endpoint_shape_valid(boundary)
+        ):
+            reason = f"removed invalid-canonical-endpoint boundary reference {boundary_id!r}"
         elif origin_component_id is not None and origin != origin_component_id:
             reason = f"removed wrong-origin boundary reference {boundary_id!r}"
         elif not isinstance(origin, str) or origin not in {boundary.get("from"), boundary.get("to")}:

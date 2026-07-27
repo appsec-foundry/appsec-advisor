@@ -380,6 +380,9 @@ properties:
             required: [resolution_status]
           then:
             required: [from, to]
+            properties:
+              from: {pattern: "^(?:external|[A-Za-z][A-Za-z0-9-]{0,127})$"}
+              to: {pattern: "^(?:external|[A-Za-z][A-Za-z0-9-]{0,127})$"}
         - if:
             required: [declaration_key]
           then:

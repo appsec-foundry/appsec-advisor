@@ -71,7 +71,7 @@ required:
     category: file
 
   - entry: "Read(${OUTPUT_DIR}/.*)"
-    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.recon-summary.md, .trust-boundaries.json, .stride-*.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.recon-summary.md, .trust-boundaries.json, .trust-boundary-diagnostics.json, .stride-*.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"
@@ -79,7 +79,7 @@ required:
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"
-    reason: "agents and preparers write direct dotfile sidecars (.recon-summary.md, .trust-boundaries.json, .stride-*.json, .components.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents and preparers write direct dotfile sidecars (.recon-summary.md, .trust-boundaries.json, .trust-boundary-diagnostics.json, .stride-*.json, .components.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/**)"

@@ -99,7 +99,43 @@ def _load_abuse_case_titles(output_dir: Path) -> dict[str, str]:
     return titles
 
 
-def _chain_rationale(t: dict, ac_titles: dict[str, str]) -> str:
+def _load_external_boundary_elevations(output_dir: Path) -> dict[str, tuple[str, ...]]:
+    """Map threat IDs to the confirmed ingress boundaries that raised them.
+
+    The triage flag is the persisted audit record. Reading that record keeps
+    this emitter independent from ranking internals and ensures a later rerun
+    clears stale prose when the elevation no longer applies.
+    """
+    path = output_dir / ".triage-flags.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    result: dict[str, tuple[str, ...]] = {}
+    source_prefix = "triage_compute_ranking.py:external_boundary:"
+    for flag in doc.get("flags") or []:
+        if not isinstance(flag, dict) or flag.get("type") != "severity_reconciliation":
+            continue
+        source = str(flag.get("source") or "")
+        if not source.startswith(source_prefix):
+            continue
+        boundary_ids = tuple(
+            dict.fromkeys(token.strip() for token in source.removeprefix(source_prefix).split(",") if token.strip())
+        )
+        if not boundary_ids:
+            continue
+        for threat_id in flag.get("threat_ids") or []:
+            if threat_id:
+                result[str(threat_id)] = boundary_ids
+    return result
+
+
+def _chain_rationale(
+    t: dict,
+    ac_titles: dict[str, str],
+    *,
+    externally_elevated: bool = False,
+) -> str:
     """Provenance note documenting the role a verified abuse chain played in
     this finding's assessment.
 
@@ -131,7 +167,7 @@ def _chain_rationale(t: dict, ac_titles: dict[str, str]) -> str:
         chain_str += f", +{len(chains) - 2} more"
 
     elevated = _sev_rank(t.get("effective_severity") or "") > _sev_rank(t.get("risk") or t.get("severity") or "")
-    if elevated:
+    if elevated and not externally_elevated:
         eff_label = (t.get("effective_severity") or "").strip() or "a higher rating"
         return f"elevated to {eff_label} as a verified attack-chain {role} in {chain_str}; see §9"
     return f"verified attack-chain {role} in {chain_str}; see §9"
@@ -154,7 +190,13 @@ def _intrinsic_rationale(t: dict, baseline_high: set[str]) -> str:
     return ""
 
 
-def _rationale_for(t: dict, baseline_high: set[str], ac_titles: dict[str, str]) -> str:
+def _rationale_for(
+    t: dict,
+    baseline_high: set[str],
+    ac_titles: dict[str, str],
+    *,
+    external_boundary_ids: tuple[str, ...] = (),
+) -> str:
     """Compose the §8 Story-Card severity-line rationale.
 
     A code-verified abuse-chain note is the evidence-backed provenance the
@@ -162,14 +204,26 @@ def _rationale_for(t: dict, baseline_high: set[str], ac_titles: dict[str, str]) 
     is above the class baseline. When both apply they are combined (intrinsic
     first, chain provenance second) so neither signal is lost.
     """
-    chain = _chain_rationale(t, ac_titles)
+    externally_elevated = bool(external_boundary_ids) and _sev_rank(t.get("effective_severity") or "") > _sev_rank(
+        t.get("risk") or t.get("severity") or ""
+    )
+    chain = _chain_rationale(t, ac_titles, externally_elevated=externally_elevated)
     intrinsic = _intrinsic_rationale(t, baseline_high)
+    external = ""
+    if externally_elevated:
+        boundary_list = ", ".join(external_boundary_ids)
+        effective = (t.get("effective_severity") or "").strip() or "a higher rating"
+        external = (
+            f"elevated to {effective} because verified finding evidence ties the weakness "
+            f"to confirmed internet ingress {boundary_list}"
+        )
+
+    notes = [note for note in (intrinsic, external, chain) if note]
     if chain and intrinsic:
         # The generic CWE keystone note is subsumed by the precise chain note.
         if intrinsic == _KEYSTONE_NOTE:
-            return chain
-        return f"{intrinsic}; {chain}"
-    return chain or intrinsic
+            notes.remove(intrinsic)
+    return "; ".join(notes)
 
 
 def emit(output_dir: Path) -> tuple[int, int]:
@@ -188,6 +242,7 @@ def emit(output_dir: Path) -> tuple[int, int]:
 
     baseline_high = _load_baseline_high_cwes()
     ac_titles = _load_abuse_case_titles(output_dir)
+    external_elevations = _load_external_boundary_elevations(output_dir)
     threats = data.get("threats") or []
     annotated = 0
     changed = False
@@ -197,7 +252,13 @@ def emit(output_dir: Path) -> tuple[int, int]:
         if t.get("severity_rationale_manual"):
             annotated += 1
             continue
-        note = _rationale_for(t, baseline_high, ac_titles)
+        threat_id = str(t.get("id") or "")
+        note = _rationale_for(
+            t,
+            baseline_high,
+            ac_titles,
+            external_boundary_ids=external_elevations.get(threat_id, ()),
+        )
         prior = t.get("severity_rationale")
         if note:
             if prior != note:

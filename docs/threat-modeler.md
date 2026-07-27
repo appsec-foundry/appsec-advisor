@@ -382,7 +382,7 @@ Optional fields per entry: `evidence` (`file:line`), `pentest_ref`, `accepted_ri
 Use this optional file when deployment, tenancy, or ownership intent cannot be
 derived reliably from source. Declarations add or clarify catalogue rows; they
 cannot suppress detected boundaries, claim that a control is effective, or
-change a finding's rating.
+change a finding's rating by themselves.
 
 ```yaml
 boundaries:
@@ -410,9 +410,20 @@ for review but is never treated as an observed path or an ineffective control.
 Legacy sidecars remain displayable during rerender, but they do not receive new
 IDs or feed semantic consumers; a fresh scan is required to normalize them.
 
-The report's **Trust Boundaries** catalogue links a boundary to findings only
-when the finding has its own verified evidence for a gap at that crossing.
-Adjacency alone does not create a finding and does not affect severity.
+The report's **Trust Boundaries** catalogue distinguishes confirmed
+`internet-facing`, `outbound`, and `internal` crossings from `inferred` rows and
+rows that require review. It links a boundary to findings only when the finding
+has its own verified evidence for a gap at that crossing. Adjacency alone does
+not create a finding and does not affect severity.
+
+A validated finding-level link to a resolved, confirmed `external → component`
+ingress can raise effective severity by one band, up to `High`. The link must
+cite evidence already owned by that finding. Multiple ingress links still
+produce only one step, evidence marked `refuted` or `ambiguous` never qualifies,
+and the normal per-CWE severity caps still apply. Internal, outbound, inferred,
+unresolved, conflicted, dangling, wrong-origin, and evidence-free links do not
+change severity. Raw risk remains unchanged and every effective-severity change
+is recorded in the triage audit.
 Canonical YAML and the query command contain the complete catalogue; the
 Markdown catalogue is capped for readability, finding cards link only visible
 anchors, and SARIF carries linked IDs in result properties. Figure 1 remains a

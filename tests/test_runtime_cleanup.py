@@ -143,6 +143,7 @@ NEVER_CLEANUP = {
     ".dep-update-activity.json",
     ".threats-merged.json",
     ".triage-flags.json",
+    ".trust-boundary-diagnostics.json",
     ".architect-review.md",
     ".requirements.yaml",
     ".appsec-cache",

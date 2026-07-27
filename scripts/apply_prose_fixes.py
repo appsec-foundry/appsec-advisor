@@ -1230,6 +1230,63 @@ def _humanize_actor_ids(text: str) -> tuple[str, int]:
     return "".join(out_lines), count
 
 
+_TRUST_BOUNDARY_TABLE_HEADER = (
+    "ID",
+    "Boundary / crossing",
+    "Kind / status",
+    "Assumption / confidence",
+    "Source",
+    "Linked findings",
+)
+_TRUST_BOUNDARY_PROSE_COLUMNS = frozenset({1, 3})
+
+
+def _split_unescaped_table_pipes(line: str) -> list[str]:
+    """Split a GFM row at unescaped pipes while preserving exact cell text."""
+    parts: list[str] = []
+    start = 0
+    for index, char in enumerate(line):
+        if char != "|":
+            continue
+        backslashes = 0
+        cursor = index - 1
+        while cursor >= 0 and line[cursor] == "\\":
+            backslashes += 1
+            cursor -= 1
+        if backslashes % 2:
+            continue
+        parts.append(line[start:index])
+        start = index + 1
+    parts.append(line[start:])
+    return parts
+
+
+def _table_header_cells(line: str) -> tuple[str, ...]:
+    parts = _split_unescaped_table_pipes(line.strip())
+    if parts and parts[0] == "":
+        parts = parts[1:]
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    return tuple(part.strip() for part in parts)
+
+
+def _format_trust_boundary_table_row(line: str) -> tuple[str, int]:
+    """Format non-prose cells while keeping boundary narrative typography."""
+    parts = _split_unescaped_table_pipes(line)
+    if len(parts) < len(_TRUST_BOUNDARY_TABLE_HEADER) + 2:
+        return line, 0
+    total = 0
+    for part_index in range(1, len(parts) - 1):
+        column_index = part_index - 1
+        if column_index in _TRUST_BOUNDARY_PROSE_COLUMNS:
+            continue
+        formatted, n_wrap = _wrap_line(parts[part_index])
+        formatted, n_unwrap = _apply_label_as_code_unwrap(formatted)
+        parts[part_index] = formatted
+        total += n_wrap + n_unwrap
+    return "|".join(parts), total
+
+
 def apply_fixes(text: str) -> tuple[str, int]:
     """Apply all prose-fix classes outside fenced blocks. Returns
     (new_text, n_fixes_total)."""
@@ -1241,6 +1298,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
     padding_fixes = 0
     rhetorical_fixes = 0
     perimeter_fixes = 0
+    in_trust_boundary_table = False
     for raw in lines:
         # Strip trailing newline for inspection, restore at write time.
         nl = "\n" if raw.endswith("\n") else ""
@@ -1264,6 +1322,10 @@ def apply_fixes(text: str) -> tuple[str, int]:
         # snippets from accidental rewriting.
         is_heading = stripped.startswith("#")
         is_table_row = stripped.startswith("|")
+        if is_table_row and _table_header_cells(line) == _TRUST_BOUNDARY_TABLE_HEADER:
+            in_trust_boundary_table = True
+        elif not is_table_row:
+            in_trust_boundary_table = False
         if "<blockquote" in stripped:
             in_html_block = True
         if in_html_block:
@@ -1278,6 +1340,11 @@ def apply_fixes(text: str) -> tuple[str, int]:
             continue
         if is_heading:
             out.append(raw)
+            continue
+        if in_trust_boundary_table and is_table_row:
+            new_line, n_table = _format_trust_boundary_table_row(line)
+            inline_fixes += n_table
+            out.append(new_line + nl)
             continue
         # Path-wrapping runs on prose AND table rows. AI-padding /
         # rhetorical / perimeter passes stay prose-only — they would
@@ -1342,6 +1409,7 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
     out: list[str] = []
     in_fence = False
     in_html_block = False
+    in_trust_boundary_table = False
     total = 0
     for raw in lines:
         nl = "\n" if raw.endswith("\n") else ""
@@ -1354,6 +1422,11 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
         if in_fence:
             out.append(raw)
             continue
+        is_table_row = stripped.startswith("|")
+        if is_table_row and _table_header_cells(line) == _TRUST_BOUNDARY_TABLE_HEADER:
+            in_trust_boundary_table = True
+        elif not is_table_row:
+            in_trust_boundary_table = False
         if "<blockquote" in stripped:
             in_html_block = True
         if in_html_block:
@@ -1370,6 +1443,11 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
             continue
         if stripped.startswith("#"):  # headings stay clean (no backticks)
             out.append(raw)
+            continue
+        if in_trust_boundary_table and is_table_row:
+            new_line, n_table = _format_trust_boundary_table_row(line)
+            total += n_table
+            out.append(new_line + nl)
             continue
         new_line, n1 = _wrap_line(line)
         new_line, n5 = _apply_label_as_code_unwrap(new_line)

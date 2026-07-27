@@ -101,6 +101,99 @@ def _write_matches(out_dir: Path, mapping: dict[str, str]) -> None:
     )
 
 
+def _write_external_reconciliation(
+    out_dir: Path,
+    *,
+    threat_id: str = "T-001",
+    boundary_ids: tuple[str, ...] = ("tb-1",),
+) -> None:
+    (out_dir / ".triage-flags.json").write_text(
+        json.dumps(
+            {
+                "flags": [
+                    {
+                        "flag_id": "TF-001",
+                        "type": "severity_reconciliation",
+                        "severity": "info",
+                        "threat_ids": [threat_id],
+                        "message": "deterministic severity adjustment",
+                        "source": ("triage_compute_ranking.py:external_boundary:" + ",".join(boundary_ids)),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_external_boundary_elevation_uses_reconciliation_audit(tmp_path: Path) -> None:
+    out = _write(
+        tmp_path,
+        [
+            {
+                "id": "T-001",
+                "risk": "Medium",
+                "effective_severity": "High",
+                "cwe": "CWE-400",
+            }
+        ],
+    )
+    _write_external_reconciliation(out, boundary_ids=("tb-1", "tb-3"))
+
+    esr.emit(out)
+
+    note = _reload(out)[0]["severity_rationale"]
+    assert "elevated to High" in note
+    assert "confirmed internet ingress tb-1, tb-3" in note
+
+
+def test_external_boundary_audit_without_effective_change_emits_no_rationale(
+    tmp_path: Path,
+) -> None:
+    out = _write(
+        tmp_path,
+        [
+            {
+                "id": "T-001",
+                "risk": "Medium",
+                "effective_severity": "Medium",
+                "cwe": "CWE-400",
+                "severity_rationale": "stale exposure note",
+            }
+        ],
+    )
+    _write_external_reconciliation(out)
+
+    esr.emit(out)
+
+    assert "severity_rationale" not in _reload(out)[0]
+
+
+def test_external_elevation_does_not_misattribute_chain_elevation(tmp_path: Path) -> None:
+    out = _write(
+        tmp_path,
+        [
+            {
+                "id": "T-001",
+                "risk": "Medium",
+                "effective_severity": "High",
+                "cwe": "CWE-400",
+                "chain_role": "contributor",
+                "verified_chain_ids": ["AC-T-001"],
+            }
+        ],
+    )
+    _write_external_reconciliation(out)
+    _write_matches(out, {"AC-T-001": "Request Flood"})
+
+    esr.emit(out)
+
+    note = _reload(out)[0]["severity_rationale"]
+    assert "confirmed internet ingress tb-1" in note
+    assert "verified attack-chain contributor" in note
+    assert "elevated to High as a verified attack-chain" not in note
+
+
 def test_verified_chain_keystone_names_chain(tmp_path: Path) -> None:
     # Already Critical (no numeric elevation) — must still document the role.
     out = _write(

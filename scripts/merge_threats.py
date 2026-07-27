@@ -360,6 +360,7 @@ def _flatten_threats(pairs: list[tuple[str, dict]], output_dir: Path | None = No
                         origin_component_id=comp_id,
                         candidate_ids=candidate_ids,
                         require_candidate=not carried,
+                        known_component_ids={pair[0] for pair in pairs},
                     )
                     if refs:
                         t["boundary_refs"] = refs

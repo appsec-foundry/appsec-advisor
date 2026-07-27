@@ -2129,6 +2129,9 @@ def main() -> int:
                 origin_component_id=None,
                 candidate_ids=None,
                 require_candidate=False,
+                known_component_ids={
+                    row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)
+                },
             )
             if refs:
                 threat["boundary_refs"] = refs

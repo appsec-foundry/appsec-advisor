@@ -49,6 +49,10 @@ from typing import Any
 import _yaml_io
 import plugin_meta
 import yaml  # noqa: F401  (kept for downstream callers writing yaml)
+from prepare_trust_boundary_context import (
+    boundary_endpoints_valid,
+    validate_finding_boundary_refs,
+)
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PLUGIN_ROOT / "data"
@@ -427,7 +431,13 @@ def _apply_critical_criteria(
 
 
 def _compute_effective(
-    t: dict, chain_role: str | None, chain_severity: int, caps: dict, criteria: dict, breach_distance: int
+    t: dict,
+    chain_role: str | None,
+    chain_severity: int,
+    caps: dict,
+    criteria: dict,
+    breach_distance: int,
+    external_boundary_ids: tuple[str, ...] = (),
 ) -> tuple[str, list[str]]:
     """Returns (effective_severity_label, reasons[])."""
     raw_rank = _sev_rank(_finding_severity(t))
@@ -463,6 +473,17 @@ def _compute_effective(
             reasons.append(f"elevated:contributor_cap({_sev_label(target)})")
     elif chain_role == "contributor" and evidence_unverified:
         reasons.append(f"suppressed:evidence_{evidence_state}(contributor)")
+
+    # Evidence-backed external-ingress elevation. Component adjacency alone is
+    # never enough: callers pass only IDs from fully validated boundary_refs.
+    # This runs before per-CWE caps so exposure cannot bypass a class ceiling.
+    if external_boundary_ids and not evidence_unverified and eff < _sev_rank("High"):
+        target = min(eff + 1, _sev_rank("High"))
+        if target > eff:
+            eff = target
+            reasons.append(f"elevated:external_boundary({','.join(external_boundary_ids)})")
+    elif external_boundary_ids and evidence_unverified:
+        reasons.append(f"suppressed:evidence_{evidence_state}(external_boundary)")
 
     # Per-CWE cap
     cwe = _finding_cwe(t)
@@ -567,6 +588,44 @@ def _category_score(
 # ---------------------------------------------------------------------------
 
 
+def _external_boundary_ids_for_finding(
+    finding: dict,
+    *,
+    boundaries: list[dict],
+    component_ids: set[str],
+) -> tuple[tuple[str, ...], list[str]]:
+    """Return validated confirmed external-ingress relation IDs."""
+    origin = finding.get("component") or finding.get("component_id")
+    refs, diagnostics = validate_finding_boundary_refs(
+        finding,
+        boundaries=boundaries,
+        origin_component_id=origin if isinstance(origin, str) and origin else None,
+        candidate_ids=None,
+        require_candidate=False,
+        known_component_ids=component_ids,
+    )
+    boundary_by_id = {
+        row.get("id"): row for row in boundaries if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    eligible: set[str] = set()
+    for ref in refs:
+        boundary = boundary_by_id.get(ref.get("boundary_id"))
+        if not boundary or not boundary_endpoints_valid(boundary, component_ids):
+            continue
+        if (
+            boundary.get("confidence") == "confirmed"
+            and boundary.get("from") == "external"
+            and boundary.get("to") == ref.get("origin_component_id")
+        ):
+            eligible.add(boundary["id"])
+
+    def boundary_number(value: str) -> tuple[int, str]:
+        match = re.fullmatch(r"tb-(\d+)", value)
+        return (int(match.group(1)), value) if match else (10**9, value)
+
+    return tuple(sorted(eligible, key=boundary_number)), diagnostics
+
+
 def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     """Run Steps 6a-6g. Returns the v2 ``ranking`` block."""
     yaml_path = output_dir / "threat-model.yaml"
@@ -587,6 +646,12 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     caps = _load_yaml(DATA_DIR / "severity-caps.yaml", {})
     criteria = _load_yaml(DATA_DIR / "critical-criteria.yaml", {})
     taxonomy = _load_yaml(DATA_DIR / "cwe-taxonomy.yaml", {})
+    boundaries = [row for row in (yaml_data.get("trust_boundaries") or []) if isinstance(row, dict)]
+    component_ids = {
+        row["id"]
+        for row in (yaml_data.get("components") or [])
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
 
     # 6a — breach distance per finding
     bd_by_id: dict[str, int] = {}
@@ -632,6 +697,8 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     # 6c — effective severity per finding
     eff_by_id: dict[str, str] = {}
     eff_reasons_by_id: dict[str, list[str]] = {}
+    external_ids_by_id: dict[str, tuple[str, ...]] = {}
+    boundary_ref_diagnostics_by_id: dict[str, list[str]] = {}
     for t in findings:
         tid = _finding_id(t)
         if not tid:
@@ -641,14 +708,24 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         for ch in all_chains:
             if tid in (ch["keystones"] + ch["contributors"]):
                 chain_sev_rank = max(chain_sev_rank, _sev_rank(ch["severity"]))
-        eff, reasons = _compute_effective(t, role, chain_sev_rank, caps, criteria, bd_by_id.get(tid, 2))
+        external_ids, boundary_diagnostics = _external_boundary_ids_for_finding(
+            t,
+            boundaries=boundaries,
+            component_ids=component_ids,
+        )
+        external_ids_by_id[tid] = external_ids
+        boundary_ref_diagnostics_by_id[tid] = boundary_diagnostics
+        eff, reasons = _compute_effective(
+            t,
+            role,
+            chain_sev_rank,
+            caps,
+            criteria,
+            bd_by_id.get(tid, 2),
+            external_ids,
+        )
         eff_by_id[tid] = eff
         eff_reasons_by_id[tid] = reasons
-        if "effective_severity" not in t:
-            t["effective_severity"] = eff
-            t["chain_role"] = role or "none"
-            t["compound_chain_ids"] = chain_membership.get(tid, [])
-            t["verified_chain_ids"] = verified_membership.get(tid, [])
 
     # 6e — categories
     categories: list[dict] = yaml_data.get("threat_categories") or []
@@ -755,6 +832,27 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     for i, f in enumerate(fnd_scored, start=1):
         f["rank"] = i
 
+    finding_updates = []
+    for finding in findings:
+        tid = _finding_id(finding)
+        if not tid:
+            continue
+        finding_updates.append(
+            {
+                "id": tid,
+                "raw_severity": _finding_severity(finding),
+                "effective_severity": eff_by_id.get(tid, _finding_severity(finding)),
+                "breach_distance": bd_by_id.get(tid, 2),
+                "breach_distance_reason": bd_reason.get(tid, ""),
+                "chain_role": role_by_id.get(tid) or "none",
+                "compound_chain_ids": chain_membership.get(tid, []),
+                "verified_chain_ids": verified_membership.get(tid, []),
+                "reasons": eff_reasons_by_id.get(tid, []),
+                "external_boundary_ids": list(external_ids_by_id.get(tid, ())),
+                "boundary_ref_diagnostics": boundary_ref_diagnostics_by_id.get(tid, []),
+            }
+        )
+
     # 6g — mitigations ranked by addressed severity
     mits_ranked = _rank_mitigations(yaml_data.get("mitigations") or [], eff_by_id)
 
@@ -764,7 +862,17 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     )
 
     # Reconciliation summary
-    elevated = sum(1 for tid, reasons in eff_reasons_by_id.items() if any(r.startswith("elevated:") for r in reasons))
+    elevated_via_chain = sum(
+        1
+        for reasons in eff_reasons_by_id.values()
+        if any(reason.startswith(("elevated:keystone", "elevated:contributor")) for reason in reasons)
+    )
+    elevated_via_external = sum(
+        1
+        for update in finding_updates
+        if _sev_rank(update["effective_severity"]) > _sev_rank(update["raw_severity"])
+        and any(reason.startswith("elevated:external_boundary") for reason in update["reasons"])
+    )
     capped = sum(1 for tid, reasons in eff_reasons_by_id.items() if any(r.startswith("capped:") for r in reasons))
     contrib_capped = sum(
         1
@@ -773,6 +881,9 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     )
 
     return {
+        # Private hand-off consumed and removed by write_outputs. It is separate
+        # from the display-capped top-50 view so every finding is persisted.
+        "_finding_updates": finding_updates,
         "method": "impact-weighted-v2",
         "ranked_at": _now_iso(),
         "computed_by": "triage_compute_ranking.py (deterministic)",
@@ -798,9 +909,13 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             },
         },
         "reconciliation_summary": {
-            "findings_elevated_via_chain": elevated,
+            "findings_elevated_via_chain": elevated_via_chain,
+            "findings_elevated_via_external_boundary": elevated_via_external,
             "findings_capped_by_cwe": capped,
             "contributors_capped_at_high": contrib_capped,
+            "boundary_refs_rejected_before_ranking": sum(
+                len(items) for items in boundary_ref_diagnostics_by_id.values()
+            ),
             "chains_active": len(active_chains),
         },
     }
@@ -808,6 +923,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
 
 def _empty_ranking_block() -> dict:
     return {
+        "_finding_updates": [],
         "method": "impact-weighted-v2",
         "ranked_at": _now_iso(),
         "computed_by": "triage_compute_ranking.py (deterministic)",
@@ -831,8 +947,10 @@ def _empty_ranking_block() -> dict:
         },
         "reconciliation_summary": {
             "findings_elevated_via_chain": 0,
+            "findings_elevated_via_external_boundary": 0,
             "findings_capped_by_cwe": 0,
             "contributors_capped_at_high": 0,
+            "boundary_refs_rejected_before_ranking": 0,
             "chains_active": 0,
         },
     }
@@ -903,24 +1021,19 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
     yaml_path = output_dir / "threat-model.yaml"
     flags_path = output_dir / ".triage-flags.json"
 
-    # The yaml has been augmented in-place inside compute_ranking; persist.
     with yaml_path.open(encoding="utf-8") as fh:
         yaml_data = yaml.safe_load(fh)
-    # Re-apply augmented fields from ranking views back onto yaml.threats
+    finding_updates = [update for update in ranking.get("_finding_updates", []) if isinstance(update, dict)]
     findings_by_id = {_finding_id(t): t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)}
-    for f in ranking.get("views", {}).get("top_findings", {}).get("findings_ranked", []):
-        t = findings_by_id.get(f["id"])
+    for update in finding_updates:
+        t = findings_by_id.get(update.get("id"))
         if t is not None:
-            t["effective_severity"] = f["effective_severity"]
-            t["breach_distance"] = f["breach_distance"]
-            t["chain_role"] = f["chain_role"]
-            t["compound_chain_ids"] = f.get("compound_chain_ids", [])
-            t["verified_chain_ids"] = f.get("verified_chain_ids", [])
-    # Write yaml back
-    yaml_path.write_text(
-        yaml.safe_dump(yaml_data, sort_keys=False, allow_unicode=True, width=120),
-        encoding="utf-8",
-    )
+            t["effective_severity"] = update["effective_severity"]
+            t["breach_distance"] = update["breach_distance"]
+            t["breach_distance_reason"] = update.get("breach_distance_reason", "")
+            t["chain_role"] = update["chain_role"]
+            t["compound_chain_ids"] = update.get("compound_chain_ids", [])
+            t["verified_chain_ids"] = update.get("verified_chain_ids", [])
 
     # Update triage-flags.json
     if flags_path.is_file():
@@ -929,6 +1042,84 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
     else:
         flags = {"version": 1, "flags": [], "summary": {}}
     flags["version"] = 2
+    prior_flags = [flag for flag in (flags.get("flags") or []) if isinstance(flag, dict)]
+    stale_reconciliation_ids = {
+        flag.get("flag_id") for flag in prior_flags if flag.get("type") == "severity_reconciliation"
+    }
+    flags_list = [flag for flag in prior_flags if flag.get("type") != "severity_reconciliation"]
+    for threat in findings_by_id.values():
+        retained = [
+            flag_id for flag_id in (threat.get("triage_flags") or []) if flag_id not in stale_reconciliation_ids
+        ]
+        if retained:
+            threat["triage_flags"] = retained
+        else:
+            threat.pop("triage_flags", None)
+
+    max_flag_number = max(
+        (
+            int(match.group(1))
+            for flag in flags_list
+            if (match := re.fullmatch(r"TF-(\d+)", str(flag.get("flag_id") or "")))
+        ),
+        default=0,
+    )
+    next_flag_number = max_flag_number + 1
+    for update in sorted(finding_updates, key=lambda item: str(item.get("id") or "")):
+        threat_id = str(update.get("id") or "")
+        if _sev_rank(update.get("effective_severity", "")) <= _sev_rank(
+            update.get("raw_severity", "")
+        ) or not re.fullmatch(r"T-\d{3,}", threat_id):
+            continue
+        flag_id = f"TF-{next_flag_number:03d}"
+        next_flag_number += 1
+        reasons = [str(reason) for reason in update.get("reasons", []) if reason]
+        external_ids = [str(value) for value in update.get("external_boundary_ids", []) if value]
+        source = (
+            "triage_compute_ranking.py:external_boundary:" + ",".join(external_ids)
+            if any(reason.startswith("elevated:external_boundary") for reason in reasons) and external_ids
+            else "triage_compute_ranking.py"
+        )
+        flags_list.append(
+            {
+                "flag_id": flag_id,
+                "type": "severity_reconciliation",
+                "severity": "info",
+                "threat_ids": [threat_id],
+                "message": (
+                    f"Raw risk {update['raw_severity']}; effective severity "
+                    f"{update['effective_severity']} ({'; '.join(reasons) or 'deterministic context adjustment'})."
+                ),
+                "suggested_action": None,
+                "source": source,
+            }
+        )
+        threat = findings_by_id.get(threat_id)
+        if threat is not None:
+            threat.setdefault("triage_flags", []).append(flag_id)
+
+    # A pre-flight run may append new flags after reconciliation flags from the
+    # preceding ranking pass. Removing those stale reconciliation entries can
+    # therefore leave holes in the public TF-NNN sequence. Reindex all retained
+    # and regenerated flags atomically, including finding references.
+    flag_id_map: dict[str, str] = {}
+    for number, flag in enumerate(flags_list, start=1):
+        old_id = str(flag.get("flag_id") or "")
+        new_id = f"TF-{number:03d}"
+        flag_id_map[old_id] = new_id
+        flag["flag_id"] = new_id
+    for threat in findings_by_id.values():
+        remapped: list[str] = []
+        for old_id in threat.get("triage_flags") or []:
+            new_id = flag_id_map.get(str(old_id))
+            if new_id and new_id not in remapped:
+                remapped.append(new_id)
+        if remapped:
+            threat["triage_flags"] = remapped
+        else:
+            threat.pop("triage_flags", None)
+
+    flags["flags"] = flags_list
     # When compute_ranking is the create-owner (the pre-flight writer
     # triage_validate_ratings.py did not run), the stub above lacks the
     # schema-required root `generated_at` and the populated `summary` block.
@@ -937,19 +1128,24 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
     # threats_reviewed}). setdefault preserves real pre-flight values when the
     # file already existed — only the create-fallback path is filled in.
     flags.setdefault("generated_at", _now_iso())
-    flags_list = flags.get("flags") or []
-    summary = flags.setdefault("summary", {})
-    summary.setdefault("total_flags", len(flags_list))
-    summary.setdefault(
-        "warnings",
-        sum(1 for f in flags_list if isinstance(f, dict) and f.get("severity") == "warning"),
+    prior_summary = flags.get("summary") if isinstance(flags.get("summary"), dict) else {}
+    flags["summary"] = {
+        "total_flags": len(flags_list),
+        "warnings": sum(1 for flag in flags_list if flag.get("severity") == "warning"),
+        "info": sum(1 for flag in flags_list if flag.get("severity") == "info"),
+        "threats_reviewed": len(yaml_data.get("threats") or []),
+        **(
+            {"pre_flight_flags": prior_summary["pre_flight_flags"]}
+            if isinstance(prior_summary.get("pre_flight_flags"), int)
+            else {}
+        ),
+    }
+    flags["ranking"] = {key: value for key, value in ranking.items() if key != "_finding_updates"}
+
+    yaml_path.write_text(
+        yaml.safe_dump(yaml_data, sort_keys=False, allow_unicode=True, width=120),
+        encoding="utf-8",
     )
-    summary.setdefault(
-        "info",
-        sum(1 for f in flags_list if isinstance(f, dict) and f.get("severity") == "info"),
-    )
-    summary.setdefault("threats_reviewed", len(yaml_data.get("threats") or []))
-    flags["ranking"] = ranking
     flags_path.write_text(json.dumps(flags, indent=2, ensure_ascii=False), encoding="utf-8")
 
 

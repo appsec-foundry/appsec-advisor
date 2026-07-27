@@ -650,15 +650,39 @@ def test_blockquote_body_wrapping_is_idempotent():
 def test_fenced_code_inside_blockquote_is_still_skipped():
     """Fence tracking must keep priority over the new blockquote body path —
     a snippet inside the quote is code, not prose."""
-    src = (
-        "<blockquote>\n"
-        "\n"
-        "```yaml\n"
-        "uses: calibreapp/image-actions@main\n"
-        "```\n"
-        "\n"
-        "</blockquote>\n"
-    )
+    src = "<blockquote>\n\n```yaml\nuses: calibreapp/image-actions@main\n```\n\n</blockquote>\n"
     out, _ = prose.apply_fixes(src)
     assert "uses: calibreapp/image-actions@main" in out
     assert "`calibreapp" not in out
+
+
+_TRUST_BOUNDARY_GFM = (
+    "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |\n"
+    "|---|---|---|---|---|---|\n"
+    "| tb-4 | **Application to LLM**<br>Backend API Server (routes/chatbot.ts) → external | "
+    'third-party / resolved | The call uses app.options("*", cors()) and routes/chatbot.ts.<br>_confirmed_ | '
+    "detected | [F-001](#f-001) |\n"
+)
+
+
+def test_trust_boundary_narrative_columns_keep_prose_typography():
+    for formatter in (prose.apply_fixes, prose.apply_code_formatting):
+        out, _ = formatter(_TRUST_BOUNDARY_GFM)
+        assert "Backend API Server (routes/chatbot.ts)" in out
+        assert 'app.options("*", cors()) and routes/chatbot.ts' in out
+        assert "`routes/chatbot.ts`" not in out
+        assert "`app.options`" not in out
+        assert "[F-001](#f-001)" in out
+
+
+def test_trust_boundary_table_exemption_is_column_scoped_and_idempotent():
+    source = _TRUST_BOUNDARY_GFM.replace(
+        "detected |",
+        "source/file.yml |",
+    )
+    once, _ = prose.apply_code_formatting(source)
+    twice, n2 = prose.apply_code_formatting(once)
+    assert "`source/file.yml`" in once
+    assert "routes/chatbot.ts" in once and "`routes/chatbot.ts`" not in once
+    assert twice == once
+    assert n2 == 0

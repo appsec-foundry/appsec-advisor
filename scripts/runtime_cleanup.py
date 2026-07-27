@@ -73,6 +73,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .dep-update-activity.json        (Phase 10 — passive git-log cadence)
     .threats-merged.json
     .triage-flags.json
+    .trust-boundary-diagnostics.json
     .architect-review.md
     .requirements.yaml
     .stride-*.json
@@ -237,6 +238,7 @@ NEVER = {
     ".dep-update-activity.json",
     ".threats-merged.json",
     ".triage-flags.json",
+    ".trust-boundary-diagnostics.json",
     ".architect-review.md",
     ".requirements.yaml",
     ".appsec-cache",

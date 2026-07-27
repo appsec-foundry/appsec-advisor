@@ -97,6 +97,7 @@ from _manifest_readers import (
 # mutating the shared warned-CWE set.
 from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
 from pregenerate_fragments import gen_architecture_diagrams
+from prepare_trust_boundary_context import boundary_endpoints_valid
 from reclassify_components import (  # phantom-component backstop (see _resolve_phantom_component)
     _build_matcher as _rc_build_matcher,
 )
@@ -6554,7 +6555,11 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
 
     _tb_name: dict[tuple[str, str], str] = {}
     for _tb in ctx.yaml_data.get("trust_boundaries") or []:
-        if not isinstance(_tb, dict) or _tb.get("resolution_status") != "resolved":
+        if (
+            not isinstance(_tb, dict)
+            or not boundary_endpoints_valid(_tb, set(comp_tier))
+            or _tb.get("confidence") != "confirmed"
+        ):
             continue
         _frm = (_tb.get("from") or "").strip()
         _to = (_tb.get("to") or "").strip()
@@ -10903,6 +10908,7 @@ _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
     {
         ("Method", "Route", "Risk", "Notes"),
         ("Asset", "Classification", "Description", "Linked Threats"),
+        ("ID", "Boundary / crossing", "Kind / status", "Assumption / confidence", "Source", "Linked findings"),
         # Operational Strengths (2026-07-15): Gap merged into the Effectiveness
         # cell; Mitigates shown only when populated. Both the 3-col (no Mitigates)
         # and 4-col (with Mitigates) forms become fixed-layout HTML.
@@ -15128,7 +15134,7 @@ def _safe_boundary_text(value: Any, *, table: bool = False) -> str:
     text = html.escape(" ".join(str(value or "").split()), quote=False)
     # Imported/repository-authored strings remain text in Markdown and cannot
     # create links, HTML, anchors or extra table columns.
-    for char in ("\\", "[", "]", "(", ")"):
+    for char in ("\\", "[", "]"):
         text = text.replace(char, "\\" + char)
     if table:
         text = text.replace("|", "\\|")
@@ -15157,6 +15163,11 @@ def _ordered_trust_boundaries(ctx: RenderContext) -> list[dict]:
     linked = _boundary_link_index(ctx)
     selection = ((ctx.yaml_data.get("meta") or {}).get("boundary_selection") or {}).get("components") or {}
     selected_primary: set[str] = set()
+    component_ids = {
+        row["id"]
+        for row in ctx.yaml_data.get("components") or []
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
     for audit in selection.values() if isinstance(selection, dict) else []:
         if not isinstance(audit, dict):
             continue
@@ -15175,6 +15186,7 @@ def _ordered_trust_boundaries(ctx: RenderContext) -> list[dict]:
             0 if linked.get(boundary_id) else 1,
             0 if row.get("resolution_status") in {"conflicted", "unresolved"} else 1,
             0 if boundary_id in selected_primary else 1,
+            0 if _boundary_exposure(row, component_ids) == "internet-facing" else 1,
             0 if row.get("confidence") == "confirmed" else 1,
             _tb_number(row),
         )
@@ -15182,18 +15194,41 @@ def _ordered_trust_boundaries(ctx: RenderContext) -> list[dict]:
     return sorted(rows, key=key)
 
 
+def _boundary_exposure(row: dict, component_ids: set[str]) -> str:
+    if row.get("resolution_status") in {"unresolved", "conflicted"}:
+        return "review required"
+    if not boundary_endpoints_valid(row, component_ids):
+        return "review required"
+    if row.get("confidence") != "confirmed":
+        return "inferred"
+    source, target = row.get("from"), row.get("to")
+    if source == "external" and target in component_ids:
+        return "internet-facing"
+    if source in component_ids and target == "external":
+        return "outbound"
+    if source in component_ids and target in component_ids:
+        return "internal"
+    return "review required"
+
+
 def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     rows = _ordered_trust_boundaries(ctx)
     if not rows:
         return ""
     linked = _boundary_link_index(ctx)
+    component_ids = {
+        row["id"]
+        for row in ctx.yaml_data.get("components") or []
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
     shown = rows[:20]
     lines = [
         "### Trust Boundaries",
         "",
         "Canonical boundary crossings and the assumptions that must hold at each interface. "
-        "Adjacency is context only; a linked finding denotes an evidence-backed control gap "
-        "and does not change severity.",
+        "Adjacency is context only; a linked finding denotes an evidence-backed control gap. "
+        "Only a validated link to confirmed internet ingress may raise effective severity; "
+        "raw risk remains unchanged.",
         "",
         "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |",
         "|---|---|---|---|---|---|",
@@ -15206,7 +15241,9 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         )
         kind_status = (
             f"{_safe_boundary_text(row.get('kind'), table=True)} / "
-            f"{_safe_boundary_text(row.get('resolution_status'), table=True)}"
+            f"{_safe_boundary_text(row.get('resolution_status'), table=True)}<br>"
+            f"{'🌐 ' if _boundary_exposure(row, component_ids) == 'internet-facing' else ''}"
+            f"**{_boundary_exposure(row, component_ids)}**"
         )
         assumption = (
             f"{_safe_boundary_text(row.get('assumption'), table=True)}<br>"
@@ -15228,6 +15265,14 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
                 "`threat-model.yaml` and `query_threat_model.py`._",
             ]
         )
+    lines.extend(
+        [
+            "",
+            "_Source: `detected` = derived from inspected repository evidence; "
+            "`repo-declared` = supplied by `.appsec/trust-boundaries.yaml`; "
+            "`legacy` = migrated from an earlier boundary format._",
+        ]
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 
