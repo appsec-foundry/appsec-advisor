@@ -465,6 +465,25 @@ Trust boundaries are not only network boundaries. The following in-process cross
 
 In-process TBs appear in §6.11 (Infrastructure / Trust Boundaries) alongside network TBs with the same numbering scheme. They are **not** rendered in the C4 diagrams — the Data Flow Matrix rows and the §6.11 entries are their representation.
 
+**An in-process TB has BOTH endpoints inside the system.** Name the enforcing
+component on both sides (`backend-api` → `backend-api`), never `external` →
+component. A privilege change is enforced at the middleware, not at the network
+edge; anchoring it at `external` duplicates the perimeter crossing that must
+already exist and files the boundary away from the privilege boundaries it
+belongs with. (juice-shop 2026-07-27 emitted "Anonymous User to Authenticated
+Zone" as `external → backend-api`, leaving two rows with identical endpoints;
+the normalizer now re-anchors that shape deterministically.)
+
+**One boundary per enforcement point — not per protocol, port variant, or
+role.** A boundary earns its own row only when it asks its own question: *what
+must hold here, and does it?* An embedded WebSocket gateway reached through the
+same process and port as the REST API is ONE perimeter, even though the two
+channels differ. Where one channel across a shared boundary lacks a control
+another has, that asymmetry is a **finding at that boundary**, not a second
+boundary. Splitting it produces rows that get reviewed twice, dilute the
+catalogue, and crowd each other out of the bounded per-component context the
+STRIDE analyzers receive.
+
 ### Cross-repository dependency nodes in C4 diagrams
 
 When `.threat-modeling-context.md` contains a **Cross-Repository Dependency Threat Models** section with entries, and `.recon-summary.md` Section 7.25 lists SCM sibling projects or SaaS integrations, represent them in the Context diagram (and Container diagram if applicable) as external nodes with threat model coverage annotations:

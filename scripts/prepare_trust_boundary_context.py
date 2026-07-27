@@ -601,6 +601,88 @@ def _write_declaration_fingerprint(output_dir: Path, fingerprint: str | None) ->
     atomic_write_json(cache, state)
 
 
+def _glob_probe(glob: str) -> str:
+    """Representative concrete path for a glob, so globs can be matched as paths."""
+    return glob.replace("/**", "/_").replace("**", "_").replace("*", "_")
+
+
+def _contained_in(inner: dict, outer: dict) -> bool:
+    """True when every path of ``inner`` is already claimed by ``outer``."""
+    inner_paths = [g.strip() for g in (inner.get("paths") or []) if isinstance(g, str) and g.strip()]
+    outer_globs = [g.strip() for g in (outer.get("paths") or []) if isinstance(g, str) and g.strip()]
+    if not inner_paths or not outer_globs:
+        return False
+    return all(any(_rc_glob_to_regex(g).search(_glob_probe(p)) for g in outer_globs) for p in inner_paths)
+
+
+def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[str]) -> list[dict]:
+    """Collapse over-modelled boundaries before IDs are assigned.
+
+    A trust boundary earns its own row only when it asks its own question:
+    *what must hold here, and does it?* Splitting one enforcement point per
+    protocol or per role produces rows that are checked twice and clutter every
+    downstream view, while the real difference — one channel across the boundary
+    lacking a control — is a FINDING, not a second boundary.
+
+    Three narrow rules, each requiring positive evidence of redundancy:
+
+    1. Exact duplicates (same endpoints, kind AND name) are the same row emitted
+       twice.
+    2. A `privilege` crossing anchored at `external` that duplicates an existing
+       crossing's endpoints is mis-anchored: privilege changes are enforced
+       INSIDE the system (the model's own `backend-api -> backend-api` admin
+       boundary is the precedent), and the perimeter it names is already covered
+       by the row it duplicates. Its endpoints are moved inward rather than
+       merged away, so the privilege question survives.
+    3. Two internet-ingress crossings whose targets are the same code — one
+       component's paths fully contained in the other's — share one perimeter:
+       an embedded WebSocket gateway is reached through the same port and
+       process as the API it lives in. The inner one folds into the outer.
+    """
+    out: list[dict] = []
+    seen: dict[tuple, dict] = {}
+    for row in rows:
+        key = (row.get("from"), row.get("to"), row.get("kind"), (row.get("name") or "").strip().casefold())
+        if key in seen:
+            seen[key]["evidence"] = _merge_evidence(seen[key].get("evidence") or [], row.get("evidence") or [])
+            warnings.append(f"consolidated duplicate boundary {row.get('name')!r}")
+            continue
+        seen[key] = row
+        out.append(row)
+
+    endpoint_pairs = Counter((r.get("from"), r.get("to")) for r in out)
+    for row in out:
+        target = row.get("to")
+        if (
+            row.get("kind") == "privilege"
+            and row.get("from") == "external"
+            and target in components
+            and endpoint_pairs[(row.get("from"), target)] > 1
+        ):
+            warnings.append(
+                f"re-anchored privilege boundary {row.get('name')!r} to {target} — "
+                "a privilege change is enforced inside the system, and its perimeter "
+                "is already modelled by another crossing with the same endpoints"
+            )
+            row["from"] = target
+
+    ingress = [r for r in out if r.get("from") == "external" and r.get("to") in components]
+    folded: list[dict] = []
+    for row in ingress:
+        for other in ingress:
+            if other is row or other in folded or row.get("kind") != other.get("kind"):
+                continue
+            if _contained_in(components[row["to"]], components[other["to"]]):
+                other["evidence"] = _merge_evidence(other.get("evidence") or [], row.get("evidence") or [])
+                warnings.append(
+                    f"folded ingress boundary {row.get('name')!r} into {other.get('name')!r} — "
+                    f"{row['to']} is served by the same code as {other['to']}, so both name one perimeter"
+                )
+                folded.append(row)
+                break
+    return [r for r in out if r not in folded]
+
+
 def normalize(
     *,
     repo_root: Path,
@@ -635,6 +717,8 @@ def normalize(
     ]
     declarations, fingerprint = _load_declarations(repo_root, components, warnings)
     merged = _merge_declarations(detected, declarations, prior_rows, warnings)
+    # Before IDs exist, so consolidating costs no ID churn downstream.
+    merged = _consolidate(merged, components, warnings)
     _assign_ids(merged, prior_rows, output_dir, warnings)
     if len({row["id"] for row in merged}) != len(merged):
         raise ValueError("normalization produced duplicate trust-boundary IDs")

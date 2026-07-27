@@ -742,3 +742,98 @@ def test_coverage_block_reports_a_boundary_no_component_can_take(tmp_path: Path)
     assert len(audit["components"]["web-api"]["selected_ids"]) == 2
     assert audit["coverage"]["uncovered_ids"] == ["tb-3", "tb-4", "tb-5"]
     assert audit["coverage"]["redistributed"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Consolidation — one row per enforcement point
+# ---------------------------------------------------------------------------
+
+
+def _normalized(tmp_path: Path, rows: list[dict], components: list[dict] | None = None) -> tuple[list[dict], list[str]]:
+    repo, out = _repo(tmp_path)
+    if components is not None:
+        _write_json(out / ".components.json", {"schema_version": 1, "components": components})
+    sidecar = out / ".trust-boundaries.json"
+    _write_json(sidecar, {"schema_version": 2, "trust_boundaries": rows})
+    result, warnings = prep.normalize(repo_root=repo, sidecar=sidecar, prior_model=None, output_dir=out)
+    return result["trust_boundaries"], warnings
+
+
+def _resolved(**overrides) -> dict:
+    return {**_row(), "resolution_status": "resolved", "sources": ["detected"], **overrides}
+
+
+def test_identical_rows_collapse_into_one(tmp_path: Path) -> None:
+    rows, warnings = _normalized(
+        tmp_path, [_resolved(id="tb-1"), _resolved(id="tb-2", evidence=[{"file": "src/auth.py", "line": 2}])]
+    )
+
+    assert len(rows) == 1
+    assert any("consolidated duplicate" in w for w in warnings)
+    # The duplicate's evidence is kept, not discarded with the row.
+    assert {entry["line"] for entry in rows[0]["evidence"]} == {1, 2}
+
+
+def test_privilege_crossing_anchored_at_external_is_moved_inside(tmp_path: Path) -> None:
+    """A privilege change is enforced inside the system. Anchoring it at the
+    perimeter duplicates the network crossing that must already be there, and
+    scatters it away from the privilege boundaries it belongs with."""
+    rows, warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(id="tb-1", name="Internet to API", kind="network"),
+            _resolved(id="tb-2", name="Anonymous to authenticated", kind="privilege"),
+        ],
+    )
+
+    by_name = {row["name"]: row for row in rows}
+    assert by_name["Anonymous to authenticated"]["from"] == "web-api"
+    assert by_name["Anonymous to authenticated"]["to"] == "web-api"
+    assert by_name["Internet to API"]["from"] == "external"
+    assert any("re-anchored privilege boundary" in w for w in warnings)
+
+
+def test_lone_privilege_crossing_at_the_perimeter_is_left_alone(tmp_path: Path) -> None:
+    """Without a second row covering the same endpoints it is the only record of
+    that perimeter — moving it inward would lose the crossing entirely."""
+    rows, _warnings = _normalized(tmp_path, [_resolved(id="tb-1", kind="privilege")])
+
+    assert rows[0]["from"] == "external"
+
+
+def test_ingress_to_embedded_component_folds_into_its_host(tmp_path: Path) -> None:
+    """An embedded WebSocket gateway is reached through the same port and
+    process as the API it lives in, so both rows name one perimeter."""
+    components = [
+        {"id": "web-api", "name": "Web API", "paths": ["src/**"], "handles_sensitive_data": True},
+        {"id": "ws-gateway", "name": "WS Gateway", "paths": ["src/ws.py"]},
+    ]
+    rows, warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(id="tb-1", name="Internet to API", to="web-api"),
+            _resolved(id="tb-2", name="Internet to WS", to="ws-gateway"),
+        ],
+        components,
+    )
+
+    assert [row["to"] for row in rows] == ["web-api"]
+    assert any("folded ingress boundary" in w for w in warnings)
+
+
+def test_ingress_rows_to_unrelated_components_are_both_kept(tmp_path: Path) -> None:
+    """Folding is justified by shared code, not by both being internet-facing."""
+    components = [
+        {"id": "web-api", "name": "Web API", "paths": ["src/**"], "handles_sensitive_data": True},
+        {"id": "worker", "name": "Worker", "paths": ["worker/**"]},
+    ]
+    rows, _warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(id="tb-1", name="Internet to API", to="web-api"),
+            _resolved(id="tb-2", name="Internet to worker", to="worker"),
+        ],
+        components,
+    )
+
+    assert sorted(row["to"] for row in rows) == ["web-api", "worker"]
