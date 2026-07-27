@@ -698,7 +698,53 @@ def test_classification_separates_gap_crossings_from_intra_tier_boundaries():
     )
     tier_of = {row["id"]: row["tier"] for row in y["components"]}
 
-    crossings, intra = F._classify_boundaries(y, tier_of)
+    crossings, notes = F._classify_boundaries(y, tier_of)
 
     assert crossings == {(0, 2): ["tb-1"]}
-    assert intra == {"application": ["tb-9"]}
+    assert notes == {"application": {"internal": ["tb-9"]}}
+
+
+def test_outbound_boundary_is_not_placed_on_the_client_server_divider():
+    """Regression: `external` denotes two different things — the untrusted
+    client side as a SOURCE, a third party as a TARGET. Ordering the endpoints
+    by zone discarded the direction, so `backend -> LLM provider` landed on the
+    same divider as `internet -> backend`."""
+    y, apd, tax = _model(exposed=("app0",))
+    y["trust_boundaries"].append(
+        {
+            "id": "tb-9",
+            "from": "app0",
+            "to": "external",
+            "name": "API to external LLM provider",
+            "kind": "third-party",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    )
+    tier_of = {row["id"]: row["tier"] for row in y["components"]}
+
+    crossings, notes = F._classify_boundaries(y, tier_of)
+
+    assert crossings == {(0, 2): ["tb-1"]}, "egress must not join the ingress divider"
+    assert notes == {"application": {"outbound": ["tb-9"]}}
+
+    svg = F.build_figure1_svg(y, apd, tax)
+    assert "outbound: tb-9" in svg
+    assert "trust boundary · tb-1 · tb-9" not in svg
+
+
+def test_ingress_and_egress_between_the_same_pair_stay_apart():
+    """The two directions are different boundaries and must not collapse into
+    one divider entry just because they share endpoints."""
+    tier_of = {"api": "application"}
+    model = {
+        "trust_boundaries": [
+            {"id": "tb-1", "from": "external", "to": "api", "resolution_status": "resolved"},
+            {"id": "tb-2", "from": "api", "to": "external", "resolution_status": "resolved"},
+        ]
+    }
+
+    crossings, notes = F._classify_boundaries(model, tier_of)
+
+    assert crossings == {(0, 2): ["tb-1"]}
+    assert notes == {"application": {"outbound": ["tb-2"]}}

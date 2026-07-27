@@ -375,41 +375,65 @@ def _zone_rank(tier: str | None) -> int | None:
 
 def _classify_boundaries(
     yaml_data: dict, tier_of: dict[str, str]
-) -> tuple[dict[tuple[int, int], list[str]], dict[str, list[str]]]:
-    """Split resolved boundaries into tier-gap crossings and intra-tier ones.
+) -> tuple[dict[tuple[int, int], list[str]], dict[str, dict[str, list[str]]]]:
+    """Place resolved boundaries: tier dividers, intra-tier notes, outbound notes.
 
-    Most trust boundaries sit at a tier transition and are drawn there. Some
-    legitimately live INSIDE a tier — an application tier holding an untrusted
-    component, or a privilege split within one service. Those cannot be a band
-    divider, so they are returned separately and attributed to their tier rather
-    than dropped: an unrepresented boundary is worse than an unplaced one.
+    Direction decides placement, because ``external`` denotes two different
+    things. As a SOURCE it is the untrusted client side — the request enters the
+    system and crosses into a server tier. As a TARGET it is a third party we
+    call out to; the LLM provider and Docker Hub are not the user's browser, and
+    an egress crossing does not sit on the client/server divide at all. Ordering
+    the two endpoints by zone (min/max) discards exactly that distinction, which
+    put `backend -> LLM provider` on the same divider as `internet -> backend`.
 
-    Returns ``({(zone_a, zone_b): [ids]}, {tier: [ids]})``.
+    The three outcomes mirror ``_boundary_exposure`` in the composer:
+    internet-facing and internal crossings become dividers between the zones
+    they separate, outbound ones become a note on the tier they leave from, and
+    a crossing whose endpoints share a zone (an untrusted component among
+    trusted ones, or a privilege split inside one service) becomes an internal
+    note. Nothing is dropped: an unrepresented boundary is worse than an
+    unplaced one.
+
+    Returns ``({(zone_a, zone_b): [ids]}, {tier: {"internal"|"outbound": [ids]}})``.
     """
     crossings: dict[tuple[int, int], list[str]] = {}
-    intra: dict[str, list[str]] = {}
+    notes: dict[str, dict[str, list[str]]] = {}
+
+    def _note(tier: str | None, kind: str, bid: str) -> None:
+        if tier:
+            notes.setdefault(tier, {}).setdefault(kind, []).append(bid)
+
     for tb in yaml_data.get("trust_boundaries") or []:
         if not isinstance(tb, dict) or tb.get("resolution_status") != "resolved":
             continue
         bid = str(tb.get("id") or "")
         if not bid:
             continue
-        ends = []
-        for key in ("from", "to"):
-            ep = (tb.get(key) or "").strip()
-            ends.append("actors" if ep.lower() == "external" else tier_of.get(ep))
-        zones = [_zone_rank(t) for t in ends]
+        source = (tb.get("from") or "").strip()
+        target = (tb.get("to") or "").strip()
+        src_external = source.lower() == "external"
+        dst_external = target.lower() == "external"
+        if dst_external and not src_external:
+            _note(tier_of.get(source), "outbound", bid)
+            continue
+        if src_external and dst_external:
+            continue
+        src_tier = "actors" if src_external else tier_of.get(source)
+        dst_tier = tier_of.get(target)
+        zones = (_zone_rank(src_tier), _zone_rank(dst_tier))
         if any(z is None for z in zones):
             continue
-        lo, hi = min(zones), max(zones)
-        if lo == hi:
-            tier = ends[0] if ends[0] not in _CLIENT_SIDE_TIERS else ends[0]
-            intra.setdefault(tier, []).append(bid)
+        if zones[0] == zones[1]:
+            _note(dst_tier, "internal", bid)
         else:
-            crossings.setdefault((lo, hi), []).append(bid)
-    for value in (*crossings.values(), *intra.values()):
+            crossings.setdefault((min(zones), max(zones)), []).append(bid)
+
+    for value in crossings.values():
         value.sort(key=_boundary_sort_key)
-    return crossings, intra
+    for kinds in notes.values():
+        for value in kinds.values():
+            value.sort(key=_boundary_sort_key)
+    return crossings, notes
 
 
 def _divider_label(boundary_ids: list[str], priority_ids: set[str] | None = None, limit: int = 3) -> str:
@@ -555,7 +579,7 @@ def build_figure1_svg(
             if tb.get("id"):
                 internet_facing_ids.add(str(tb["id"]))
     exposed_tiers = {comp[cid]["tier"] for cid in exposed}
-    boundary_crossings, intra_tier_boundaries = _classify_boundaries(
+    boundary_crossings, boundary_notes = _classify_boundaries(
         yaml_data, {cid: row.get("tier") for cid, row in comp.items()}
     )
     for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
@@ -680,22 +704,26 @@ def build_figure1_svg(
         lines = _wrap(title or _TIER_TITLE[tier], _LG - 26, 12)
         for i, ln in enumerate(lines):
             c.text(band_left + 40, ytop + 52 + i * 15, ln, size=12, fill=accent, anchor="start", weight="bold")
-        # A trust boundary can also live INSIDE a tier — an untrusted component
-        # among trusted ones, or a privilege split within one service. It cannot
-        # be a band divider, so it is named in the band header instead of being
-        # dropped: an unrepresented boundary is worse than an unplaced one.
-        intra_ids = intra_tier_boundaries.get(tier) or []
+        # Boundaries that cannot be a band divider are named in the band header
+        # instead of being dropped: one INSIDE the tier (an untrusted component
+        # among trusted ones, or a privilege split within one service), and one
+        # leaving it OUTBOUND to a third party, which crosses no tier gap in the
+        # stack. An unrepresented boundary is worse than an unplaced one.
         ny = ytop + 52 + len(lines) * 15 + 11
-        if intra_ids and ny < ytop + h - 6:
+        for kind in ("internal", "outbound"):
+            ids = (boundary_notes.get(tier) or {}).get(kind) or []
+            if not ids or ny >= ytop + h - 6:
+                continue
             c.line(band_left + 40, ny - 3.5, band_left + 54, ny - 3.5, stroke=_TRUST, sw=1.3, dash="4 3")
             c.text(
                 band_left + 60,
                 ny,
-                "internal: " + " · ".join(intra_ids[:2]) + (f" +{len(intra_ids) - 2}" if len(intra_ids) > 2 else ""),
+                f"{kind}: " + " · ".join(ids[:2]) + (f" +{len(ids) - 2}" if len(ids) > 2 else ""),
                 size=9,
                 fill=_TRUST,
                 anchor="start",
             )
+            ny += 12
 
     # --- actors band: N attacker cards (red) + the legitimate user (green) ---
     gcol = _TIER_COLOR["application"][1]
