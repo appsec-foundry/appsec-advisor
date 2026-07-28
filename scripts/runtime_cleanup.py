@@ -217,6 +217,11 @@ POST_QA_FILES_IF_PASS = [
     # fixes are visible via git diff anyway.
     ".run-issues.json",
     ".run-issues-fixes.json",
+    # NOT listed here: .run-bugs.json (APPSEC_PLUGIN_DEV post-run diagnosis).
+    # The console block it feeds prints its own path as a follow-up pointer, so
+    # reaping it in the same run would leave that pointer dead. It exists only
+    # in plugin-developer mode, each run's diagnosis step deletes it before
+    # dispatch, and the deliverable never references it.
     # Wall-clock timing markers. The start epoch is written at run start and
     # the elapsed seconds at completion; the rendered figure is already in the
     # §Run Statistics block, so the markers are transient. Self-healing

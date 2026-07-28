@@ -52,6 +52,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-fragment-fixer": 30,  # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE)
     "appsec-reviewer": 40,  # embeddable diff-scoped security reviewer (requirements or best-practices); skill/CLI/direct
     "appsec-eval-judge": 30,  # dev/test semantic-quality judge for the eval-threat-model skill (JUDGE/VERIFY modes)
+    "appsec-run-diagnostician": 45,  # APPSEC_PLUGIN_DEV post-run diagnosis: 12 issues x ~2 grounding reads + startup + write
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -72,6 +73,7 @@ INTERNAL_AGENTS = {
     "appsec-abuse-case-verifier",
     "appsec-trust-boundary-analyst",
     "appsec-fragment-fixer",
+    "appsec-run-diagnostician",  # dispatched by the orchestrator at completion, never by the user
 }
 
 # The orchestrator is the only user-facing agent

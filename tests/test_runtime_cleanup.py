@@ -422,6 +422,20 @@ class TestScriptWhitelist:
     def test_post_arch_files_match(self, cleanup_py_text):
         assert self._extract_list(cleanup_py_text, "POST_ARCH_FILES_IF_PASS") == EXPECTED_POST_ARCH_FILES_IF_PASS
 
+    def test_run_bugs_sidecar_is_never_reaped(self, cleanup_py_text):
+        """`.run-bugs.json` must stay out of every cleanup list.
+
+        The `-- Plugin Diagnosis --` block prints the sidecar's path as a
+        follow-up pointer, so reaping it in the same run would leave that
+        pointer dead. It only ever exists under APPSEC_PLUGIN_DEV=1, and the
+        diagnosis step deletes it before dispatch so a stale one from an
+        earlier run can never be rendered.
+        """
+        for name in ("ALWAYS_FILES", "POST_QA_FILES_IF_PASS", "POST_ARCH_FILES_IF_PASS"):
+            assert ".run-bugs.json" not in self._extract_list(cleanup_py_text, name), (
+                f".run-bugs.json must not be in {name} — the diagnosis block points at it after the run"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Documentation in AGENTS.md
