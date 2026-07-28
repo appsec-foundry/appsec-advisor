@@ -5,7 +5,9 @@ Claude Code has no "plugin loaded" event, so the banner is emitted from the
 ``SessionStart`` hook and shown to the user through the ``systemMessage`` field.
 It reports the state a user would otherwise have to look up — whether this
 repository has a threat model, how bad it looks, how old it is — and offers the
-one command that state calls for.
+one command that state calls for. Outside a repository it shrinks to the plugin
+version and the help page: there is no project to report on, and a missing model
+is not news about a directory nobody meant to scan.
 
 The banner is decoration, not a contract. It must never delay or break session
 start, so every failure path is silent: on any error the script prints nothing
@@ -146,6 +148,20 @@ def _text(config: dict, key: str) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.split())[:200]
+
+
+def _in_repository(path: Path) -> bool:
+    """True when ``path`` sits inside a git working tree.
+
+    Walked instead of shelled out to: `git rev-parse` would cost a process on
+    every session start for a question a directory lookup answers. A worktree
+    or submodule carries `.git` as a file, hence ``exists`` rather than
+    ``is_dir``.
+    """
+    for candidate in (path, *path.parents):
+        if (candidate / ".git").exists():
+            return True
+    return False
 
 
 def _has_skill(name: str) -> bool:
@@ -419,7 +435,15 @@ def build_banner(cwd: str) -> str:
     prefix = _text(config, "headline")
 
     repo = Path(cwd)
-    status, action = _status_line(prefix, repo, repo / "docs" / "security")
+    output_dir = repo / "docs" / "security"
+
+    # Outside a project there is no state to report, and "no threat model" would
+    # be a complaint about a directory nobody meant to scan. Announce the plugin
+    # and where to read about it, nothing more.
+    if not _in_repository(repo) and not (output_dir / "threat-model.yaml").is_file():
+        return " · ".join(filter(None, [_identity(), _skill_command(HELP)]))
+
+    status, action = _status_line(prefix, repo, output_dir)
 
     banner = [status]
     actions = build_actions(action)

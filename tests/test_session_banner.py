@@ -49,6 +49,19 @@ mitigations:
 MANIFEST = json.loads((SCRIPT.parent.parent / ".claude-plugin" / "plugin.json").read_text())
 
 
+@pytest.fixture(autouse=True)
+def _tmp_path_is_a_repository(tmp_path):
+    """Make every tmp_path look like a working tree.
+
+    The banner only reports on a repository, and `_in_repository` walks up to
+    the filesystem root — so on a machine that happens to have `/tmp/.git`, a
+    bare tmp_path would pass for one and hide a regression. Creating the marker
+    explicitly makes the precondition part of the test instead of the host.
+    """
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    return tmp_path
+
+
 def write_model(
     repo: Path,
     generated: str = "2026-07-27T10:01:22Z",
@@ -141,6 +154,43 @@ def test_identity_rides_on_the_action_row_not_the_status_line(tmp_path):
     lines = run_hook(str(tmp_path)).splitlines()
     assert lines[0] == f"{session_banner.GLYPH_NONE} no threat model in docs/security/"
     assert lines[1].endswith(f"appsec-advisor {MANIFEST['version']}")
+
+
+# ---------------------------------------------------------------------------
+# Outside a repository
+# ---------------------------------------------------------------------------
+
+
+def test_outside_a_repository_only_the_plugin_and_help_are_announced(tmp_path, monkeypatch):
+    """A directory nobody meant to scan gets no complaint about a missing model."""
+    monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
+    assert session_banner.build_banner(str(tmp_path)) == (
+        f"appsec-advisor {MANIFEST['version']} · /appsec-advisor:help"
+    )
+
+
+def test_a_model_outside_a_repository_is_still_reported(tmp_path, monkeypatch):
+    """An --output directory need not be a working tree; the model still counts."""
+    monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
+    write_model(tmp_path)
+    assert "threat model" in session_banner.build_banner(str(tmp_path)).splitlines()[0]
+
+
+def test_repository_is_detected_from_a_parent(tmp_path):
+    nested = tmp_path / "src" / "api"
+    nested.mkdir(parents=True)
+    assert session_banner._in_repository(nested) is True
+
+
+def test_worktree_marker_file_counts_as_a_repository(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n", encoding="utf-8")
+    assert session_banner._in_repository(worktree) is True
+
+
+def test_filesystem_root_is_not_a_repository(tmp_path):
+    assert session_banner._in_repository(Path(tmp_path.anchor)) is False
 
 
 # ---------------------------------------------------------------------------
