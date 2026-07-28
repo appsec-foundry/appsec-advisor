@@ -1783,6 +1783,9 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
         return False
     if not md.is_file():
         return _block("compose_threat_model.py", "compose returned 0 but threat-model.md is absent")
+    # Carry the rendered verdict into the semantic model before cleanup reaps
+    # `.fragments/`, so every consumer can state the assessment's conclusion.
+    _run(str(SCRIPT_DIR / "emit_verdict_to_model.py"), str(output_dir))
     _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
     try:

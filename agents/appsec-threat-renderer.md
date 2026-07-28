@@ -724,7 +724,13 @@ Never write `$OUTPUT_DIR/threat-model.md` directly. The only legal writer is:
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
     --output-dir "$OUTPUT_DIR" \
     --strict
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_verdict_to_model.py" "$OUTPUT_DIR" || true
 ```
+
+The second call carries the verdict you authored in `ms-verdict.json` into
+`threat-model.yaml`. Cleanup deletes `.fragments/`, so without it the
+assessment's own conclusion survives only in the rendered Markdown. It writes
+YAML only — the Markdown mutation order is unaffected.
 
 **RC.B — Do NOT patch run-stat placeholders here.** This renderer cannot
 observe its own duration / token-count (those are only known after the

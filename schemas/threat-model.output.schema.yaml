@@ -1004,6 +1004,55 @@ properties:
         summary:
           type: string
 
+  # The assessment's own conclusion — the `### Verdict` block the rendered
+  # Management Summary leads with. Written by compose_threat_model.py after a
+  # successful render, from the LLM-authored `.fragments/ms-verdict.json`
+  # (which runtime_cleanup deletes) resolved to reader-facing ids. Absent on
+  # models composed before 2026-07 and on architecture-only documents.
+  verdict:
+    type: object
+    additionalProperties: true
+    required: [severity, opening, bullets]
+    properties:
+      severity:
+        description: Overall posture. green = production-ready, yellow = acceptable with caveats, red = not production-ready.
+        type: string
+        enum: [green, yellow, red]
+      opening:
+        description: One or two plain-language sentences stating the business posture and its consequence.
+        type: string
+      bullets_intro:
+        type: string
+      bullets:
+        description: Worst-case scenarios behind the verdict, in business language, most damaging first.
+        type: array
+        items:
+          type: object
+          additionalProperties: true
+          required: [title, body, findings]
+          properties:
+            title:
+              type: string
+            body:
+              type: string
+            findings:
+              description: Reader-facing finding ids (F-NNN) supporting this scenario.
+              type: array
+              items:
+                type: string
+                pattern: "^F-\\d{3,}$"
+            weaknesses:
+              description: Systemic weaknesses (W-NNN) the cited findings roll up to.
+              type: array
+              items:
+                type: string
+                pattern: "^W-\\d{3,}$"
+            verified_attack_path:
+              description: True when the cited findings anchor a fully viable abuse chain.
+              type: boolean
+      closing:
+        type: string
+
   # Optional blocks documented in CLAUDE.md but not always present.
   run_statistics:
     type: [object, "null"]

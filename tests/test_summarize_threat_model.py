@@ -107,24 +107,93 @@ def test_severity_counts_and_totals(tmp_path):
     }
 
 
-def test_severity_uses_effective_severity_precedence(tmp_path):
+def test_severity_ignores_effective_severity(tmp_path):
     import yaml
 
-    # effective_severity is the capped/canonical value the report ranks by; it
-    # must win over a differing raw `risk` (composer precedence).
+    # `effective_severity` carries abuse-chain elevation and drives §9 and the
+    # mitigation ranking, NOT the finding inventory: §8 buckets on `risk`.
+    # Ranking the overview by it reported 27 Critical against 15 in the register
+    # on a 2026-07 juice-shop run, and promoted a Medium CI/CD finding into
+    # "Top Critical".
     body = """\
         meta: {project: {name: Demo}}
         threats:
-          - {t_id: T-001, effective_severity: High, risk: Critical, title: capped down}
-          - {t_id: T-002, risk: Medium, title: risk fallback only}
+          - {t_id: T-001, effective_severity: Critical, risk: High, title: chain elevated}
+          - {t_id: T-002, risk: Medium, title: risk only}
     """
     _write_model(tmp_path, body)
     data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     summary = stm.build_summary(data, tmp_path)
-    assert summary["severity_counts"]["High"] == 1  # effective_severity wins
     assert summary["severity_counts"]["Critical"] == 0
-    assert summary["severity_counts"]["Medium"] == 1  # risk used when no effective_severity
+    assert summary["severity_counts"]["High"] == 1
+    assert summary["severity_counts"]["Medium"] == 1
     assert summary["criticals"] == []
+
+
+def test_findings_are_cited_by_report_id(tmp_path):
+    import yaml
+
+    # The report labels findings F-NNN; the yaml T-NNN survives only as a hidden
+    # anchor, and the visible T- family in the report is AC-T-NNN (abuse cases).
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    assert [t["id"] for t in summary["criticals"]] == ["F-001", "F-003"]
+    out = stm.render_text(summary, None, show_all=True)
+    assert "F-001" in out
+    assert "T-001" not in out
+
+
+def test_worst_case_prefers_the_persisted_verdict(tmp_path):
+    import yaml
+
+    # The verdict's bullets are the report's real worst case: business-language
+    # outcomes with their supporting findings. `critical_findings[]` is only the
+    # fallback — its `summary` is routinely a verbatim copy of the threat title,
+    # so it degrades to "the lowest-numbered Criticals".
+    body = """\
+        meta: {project: {name: Demo}}
+        threats:
+          - {t_id: T-001, risk: Critical, component: auth, title: secret}
+        mitigations:
+          - {id: M-001, priority: P1}
+        critical_findings:
+          - {threat_id: T-001, summary: secret, mitigation_id: M-001}
+        verdict:
+          severity: red
+          opening: The service is not safe to expose; anyone can reach admin data today.
+          bullets:
+            - title: Full admin takeover
+              body: Anyone can sign in as an administrator without a password.
+              findings: [F-001]
+              verified_attack_path: true
+          closing: Fix the credential handling before the next release.
+    """
+    _write_model(tmp_path, body)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    out = stm.render_text(summary, None, show_all=False)
+
+    assert "Verdict    🔴 not production-ready" in out
+    assert "anyone can reach admin data today" in out
+    assert "Fix the credential handling" in out
+    assert "Full admin takeover" in out
+    assert "✓ verified attack path" in out
+    assert "F-001" in out
+    # the weak fallback must not also render
+    assert "→ M-001 (P1)" not in out
+
+
+def test_verdict_block_omitted_when_model_has_none(tmp_path):
+    import yaml
+
+    # Models composed before the field existed carry no verdict. Omit the block
+    # rather than reconstructing one from the numbers.
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    summary = stm.build_summary(data, tmp_path)
+    assert summary["verdict"] is None
+    assert "Verdict" not in stm.render_text(summary, None, show_all=False)
 
 
 def test_worst_case_from_curated_critical_findings(tmp_path):
@@ -133,8 +202,8 @@ def test_worst_case_from_curated_critical_findings(tmp_path):
     body = """\
         meta: {project: {name: Demo}}
         threats:
-          - {t_id: T-001, effective_severity: Critical, component: auth, title: secret}
-          - {t_id: T-002, effective_severity: High, component: api, title: sqli}
+          - {t_id: T-001, risk: Critical, component: auth, title: secret}
+          - {t_id: T-002, risk: High, component: api, title: sqli}
         mitigations:
           - {id: M-001, priority: P1}
           - {id: M-002, priority: P2}
@@ -147,8 +216,8 @@ def test_worst_case_from_curated_critical_findings(tmp_path):
     data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     summary = stm.build_summary(data, tmp_path)
     wc = summary["worst_case"]
-    # unresolved threat dropped; Critical before High
-    assert [w["id"] for w in wc] == ["T-001", "T-002"]
+    # unresolved threat dropped; Critical before High; cited by report id
+    assert [w["id"] for w in wc] == ["F-001", "F-002"]
     assert wc[0]["summary"] == "full account takeover"  # verbatim
     assert wc[0]["mitigation_id"] == "M-001" and wc[0]["priority"] == "P1"
 
@@ -266,7 +335,7 @@ def test_criticals_only_and_sorted(tmp_path):
     summary = stm.build_summary(data, tmp_path)
 
     crit_ids = [c["id"] for c in summary["criticals"]]
-    assert crit_ids == ["T-001", "T-003"]
+    assert crit_ids == ["F-001", "F-003"]
     # threats_by_severity is severity-ordered then by id
     order = [t["severity"] for t in summary["threats_by_severity"]]
     assert order == ["Critical", "Critical", "High", "Medium"]
@@ -328,7 +397,7 @@ def test_render_text_all_groups(tmp_path):
     assert "Critical (2)" in out
     assert "High (1)" in out
     assert "Medium (1)" in out
-    assert "T-002" in out  # full list includes non-critical
+    assert "F-002" in out  # full list includes non-critical
 
 
 def test_render_status_line_folds_freshness():
@@ -375,7 +444,7 @@ def test_cli_renders_and_json(tmp_path):
     _write_model(tmp_path, SAMPLE)
     res = _run(["--output-dir", str(tmp_path)])
     assert res.returncode == 0
-    assert "Findings   4 threats across 2 components" in res.stdout
+    assert "Findings   4 findings across 2 components" in res.stdout
 
     resj = _run(["--output-dir", str(tmp_path), "--json"])
     payload = json.loads(resj.stdout)
@@ -408,7 +477,7 @@ def test_render_zero_findings_points_to_create(tmp_path):
     data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     summary = stm.build_summary(data, tmp_path)
     out = stm.render_text(summary, None, show_all=False)
-    assert "Findings   0 threats" in out
+    assert "Findings   0 findings" in out
     assert "create-threat-model to (re)scan" in out
     # no noise blocks when there is nothing to summarize
     assert "Critical" not in out and "Backlog" not in out
@@ -450,5 +519,10 @@ def test_render_text_names_the_ask_and_review_lanes(tmp_path):
 
     assert "/appsec-advisor:ask-threat-model" in out, "overview must point at the Q&A lane"
     assert "/appsec-advisor:review-threat-model" in out, "overview must point at the triage lane"
-    # The hint belongs at the very end, after Report — never above the facts.
-    assert out.rstrip().endswith("/appsec-advisor:review-threat-model")
+    # Near the top, not at the foot: a reader whose question this block cannot
+    # answer must see the other lane before scrolling 40 lines of numbers — and
+    # a trailing pointer is the line the invoking agent trims first.
+    lines = out.splitlines()
+    ask_at = next(i for i, ln in enumerate(lines) if "ask-threat-model" in ln)
+    findings_at = next(i for i, ln in enumerate(lines) if ln.startswith("Findings"))
+    assert ask_at < findings_at

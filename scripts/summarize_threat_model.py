@@ -3,11 +3,21 @@
 
 Powers ``/appsec-advisor:show-threat-model``. Read-only: it parses the
 committed semantic model and prints a compact at-a-glance summary —
-project + scan identity, severity breakdown, remediation backlog by
-priority + mitigation coverage, the top "worst case if nothing changes"
-scenarios, top-Critical findings, mitigation/control counts, and the report
-path. No LLM judgement, no network, no writes; output is byte-stable for a
-given input.
+project + scan identity, the report's verdict, the "worst case if nothing
+changes" scenarios, severity breakdown, remediation backlog by priority +
+mitigation coverage, top-Critical findings, mitigation/control counts, and
+the report path. No LLM judgement, no network, no writes; output is
+byte-stable for a given input.
+
+Everything here must be findable in ``threat-model.md``. Three rules keep
+that true, because each was broken at some point:
+
+* Findings are cited by the id the report shows (``F-NNN``), never the yaml
+  ``T-NNN`` — see ``_severity_rollup.display_id``.
+* Severity is the register basis (``risk``), not ``effective_severity``.
+* The verdict and its worst-case scenarios are read verbatim from the
+  persisted ``verdict`` block; when the model has none, the block is omitted
+  rather than reconstructed.
 
 Freshness is NOT computed here. The skill obtains the freshness verdict
 from ``threat_model_health.py --json`` (which wraps
@@ -44,7 +54,9 @@ import json
 import sys
 from pathlib import Path
 
-_SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
+import _severity_rollup
+
+_SEVERITY_ORDER = _severity_rollup.SEVERITY_ORDER
 _EFFECTIVENESS_ORDER = {"Missing": 0, "Weak": 1, "Partial": 2, "Adequate": 3}
 
 
@@ -54,17 +66,12 @@ _EFFECTIVENESS_ORDER = {"Missing": 0, "Weak": 1, "Partial": 2, "Adequate": 3}
 
 
 def _severity_label(threat: dict | None) -> str:
-    """Canonical severity for a threat, using the composer's
-    ``effective_severity → risk → severity`` precedence (documented in
-    ``build_threat_model_yaml.py``). ``effective_severity`` is the capped /
-    triage-adjusted value the rendered report and review-threat-model rank by,
-    so ``show`` reflects the same numbers the model actually presents rather
-    than the raw ``risk``."""
-    if not threat:
-        return ""
-    raw = (threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "").strip()
-    label = raw[:1].upper() + raw[1:].lower() if raw else ""
-    return label if label in _SEVERITY_ORDER else raw
+    """Canonical severity for a threat, on the §8 Findings Register basis
+    (``risk → severity``). Deliberately NOT ``effective_severity``: that
+    carries abuse-chain elevation and drives §9 and the mitigation ranking,
+    not the finding inventory. Ranking the overview by it made this block
+    disagree with every severity the report shows — see ``_severity_rollup``."""
+    return _severity_rollup.register_severity(threat)
 
 
 def _threat_title(threat: dict | None) -> str:
@@ -78,7 +85,11 @@ def _threat_title(threat: dict | None) -> str:
 
 
 def _threat_id(threat: dict) -> str:
-    return (threat.get("t_id") or threat.get("id") or "").strip()
+    """The id the reader can find in the report: ``F-NNN``, not the yaml
+    ``T-NNN``. The composer rewrites the visible label, so a ``T-NNN``
+    citation here matches nothing the reader can look up — the only visible
+    ``T-`` family in the report is ``AC-T-NNN`` (abuse cases)."""
+    return _severity_rollup.display_id((threat.get("t_id") or threat.get("id") or "").strip())
 
 
 def _project(data: dict) -> dict:
@@ -98,13 +109,20 @@ def _short_sha(sha: str) -> str:
     return (sha or "").strip()[:7]
 
 
-def _severity_counts(threats: list) -> dict:
-    counts = {k: 0 for k in _SEVERITY_ORDER}
-    for t in threats:
-        label = _severity_label(t)
-        if label in counts:
-            counts[label] += 1
-    return counts
+def _severity_counts(data: dict) -> dict:
+    """The report's own headline tally, keyed by canonical label.
+
+    Delegates to the Management-Summary basis so the histogram reproduces the
+    ``**Risk distribution:**`` line in ``threat-model.md`` exactly: folded
+    insecure-practice sites excluded, each design-risk weakness added once."""
+    raw = _severity_rollup.risk_distribution_counts(data)
+    return {
+        "Critical": raw["critical"],
+        "High": raw["high"],
+        "Medium": raw["medium"],
+        "Low": raw["low"],
+        "Informational": raw["info"],
+    }
 
 
 _PRIORITY_BANDS = ("P1", "P2", "P3")
@@ -132,20 +150,50 @@ def _coverage(threats: list) -> dict:
     return {"with_mitigation": with_m, "uncovered": len(threats) - with_m}
 
 
+def _verdict(data: dict) -> dict | None:
+    """The report's `### Verdict` block, read verbatim from ``verdict``.
+
+    Written by the composer after a successful render (the LLM fragment it
+    comes from is deleted by cleanup). Absent on models composed before the
+    field existed — callers degrade rather than invent a verdict."""
+    v = data.get("verdict")
+    if not isinstance(v, dict) or not (v.get("opening") or "").strip():
+        return None
+    bullets = [
+        {
+            "title": str(b.get("title") or "").strip(),
+            "body": str(b.get("body") or "").strip(),
+            "findings": [str(f).strip() for f in (b.get("findings") or []) if str(f).strip()],
+            "verified_attack_path": bool(b.get("verified_attack_path")),
+        }
+        for b in (v.get("bullets") or [])
+        if isinstance(b, dict) and str(b.get("title") or "").strip()
+    ]
+    return {
+        "severity": str(v.get("severity") or "").strip(),
+        "opening": str(v.get("opening") or "").strip(),
+        "bullets": bullets,
+        "closing": str(v.get("closing") or "").strip(),
+    }
+
+
 def _worst_case(threats: list, mitigations: list, critical_findings: list | None, limit: int = 3) -> list:
-    """The few concrete "if you do nothing" scenarios — mirrors
-    ``review_threat_model.build_worst_case``: read verbatim from the model's
-    curated ``critical_findings[]`` (``threat_id`` + one-line ``summary`` +
-    covering ``mitigation_id``), joined to severity / component / mitigation
-    priority, severity-ranked and capped. Falls back to the top Critical/High
-    threats' titles when the model curated none. Never authors text."""
+    """Fallback "if you do nothing" list for models with no persisted verdict.
+
+    Joins the model's ``critical_findings[]`` to severity / component /
+    mitigation priority, severity-ranked and capped, and degrades to the top
+    Critical/High titles when the model curated none. This is a weak
+    substitute: ``critical_findings[].summary`` is frequently just a copy of
+    the threat title, so the result reads as a list of weakness labels rather
+    than outcomes. The real worst case is ``verdict.bullets``, which the
+    renderer authors in business language; prefer it whenever present."""
     by_id = {_threat_id(t): t for t in threats if _threat_id(t)}
     mit_by_id = {str(m.get("id")).strip(): m for m in mitigations if isinstance(m, dict) and m.get("id")}
     out: list = []
     for c in critical_findings or []:
         if not isinstance(c, dict):
             continue
-        tid = str(c.get("threat_id") or "").strip()
+        tid = _severity_rollup.display_id(str(c.get("threat_id") or "").strip())
         t = by_id.get(tid)
         if not t:
             continue
@@ -223,12 +271,16 @@ def build_summary(data: dict, output_dir: Path) -> dict:
     """Reduce raw YAML to the structured summary the renderer consumes."""
     meta = data.get("meta") or {}
     git = meta.get("git") or {}
-    threats = [t for t in (data.get("threats") or []) if isinstance(t, dict)]
+    # Listed findings come from the §8 register (every non-refuted threat) so
+    # each one is a card the reader can open. The histogram above them is the
+    # Management-Summary tally, which folds practice sites and adds design-risk
+    # weaknesses — the render notes the delta rather than hiding findings.
+    threats = _severity_rollup.register_threats(data)
     components = data.get("components") or []
     mitigations = data.get("mitigations") or []
     controls = data.get("security_controls") or []
 
-    counts = _severity_counts(threats)
+    counts = _severity_counts(data)
 
     def _sort_key(t: dict) -> tuple:
         return (_SEVERITY_ORDER.get(_severity_label(t), 9), _threat_id(t))
@@ -254,6 +306,7 @@ def build_summary(data: dict, output_dir: Path) -> dict:
             "controls": len(controls),
         },
         "severity_counts": counts,
+        "verdict": _verdict(data),
         "backlog": _backlog_by_priority(mitigations),
         "coverage": _coverage(threats),
         "control_posture": _control_posture(controls),
@@ -299,11 +352,93 @@ _RECOMMEND_TEXT = {
 # ask-threat-model's job. Skill routing between the two is description-based and
 # will never be perfect, so the overview names the other lane itself — a
 # deterministic, zero-cost correction when the router lands here by mistake.
-_NEXT_STEP_HINT = (
-    "\nAsk        a question about a specific finding, coverage, or what to fix first"
-    "\n           → /appsec-advisor:ask-threat-model     act on findings"
-    " → /appsec-advisor:review-threat-model"
-)
+_NEXT_STEP_LINES = [
+    "Ask        a question about a specific finding, coverage, or what to fix first",
+    "           → /appsec-advisor:ask-threat-model",
+    "Act        on the findings → /appsec-advisor:review-threat-model",
+]
+
+# Posture flag of the report's `### Verdict`, in the report's own colours.
+_POSTURE_ICON = {"red": "🔴", "yellow": "🟡", "green": "🟢"}
+_POSTURE_LABEL = {
+    "red": "not production-ready",
+    "yellow": "acceptable with caveats",
+    "green": "production-ready",
+}
+
+_WRAP_WIDTH = 92
+_INDENT = " " * 11
+
+
+def _wrap(text: str, indent: str = _INDENT, width: int = _WRAP_WIDTH) -> list[str]:
+    """Wrap prose to the block's text column. Verbatim content, never edited —
+    only line-broken so a terminal reader sees the whole sentence."""
+    words = text.split()
+    lines: list[str] = []
+    cur = ""
+    for w in words:
+        candidate = f"{cur} {w}".strip()
+        if cur and len(indent) + len(candidate) > width:
+            lines.append(indent + cur)
+            cur = w
+        else:
+            cur = candidate
+    if cur:
+        lines.append(indent + cur)
+    return lines
+
+
+def _render_verdict_block(verdict: dict | None) -> list[str]:
+    """The report's own conclusion, printed verbatim.
+
+    This is the sentence the Management Summary leads with and the one a
+    product owner acts on. Omitted entirely — never substituted — when the
+    model carries no verdict (composed before the field existed)."""
+    if not verdict:
+        return []
+    sev = (verdict.get("severity") or "").strip().lower()
+    icon = _POSTURE_ICON.get(sev, "•")
+    label = _POSTURE_LABEL.get(sev, "")
+    head = f"Verdict    {icon} {label}" if label else f"Verdict    {icon}"
+    out = [head]
+    out.extend(_wrap(verdict["opening"]))
+    if verdict.get("closing"):
+        out.append("")
+        out.extend(_wrap(verdict["closing"]))
+    out.append("")
+    return out
+
+
+def _render_worst_case_block(summary: dict) -> list[str]:
+    """Worst-case scenarios — the verdict's own bullets when the model carries
+    them, otherwise the weaker ``critical_findings[]`` fallback."""
+    verdict = summary.get("verdict") or {}
+    bullets = verdict.get("bullets") or []
+    if bullets:
+        out = ["Worst case if nothing changes"]
+        for b in bullets:
+            head = f"  ⚠ {b['title']}"
+            if b.get("verified_attack_path"):
+                head += "   ✓ verified attack path"
+            out.append(head)
+            out.extend(_wrap(b["body"], indent=" " * 6))
+            if b.get("findings"):
+                out.append(" " * 6 + " · ".join(b["findings"]))
+        out.append("")
+        return out
+
+    worst = summary.get("worst_case") or []
+    if not worst:
+        return []
+    out = ["Worst case if nothing changes"]
+    for w in worst:
+        line = f"  ⚠ {w['id']:<7} {w['severity']} · {w['component']} · {w['summary']}"
+        if w["mitigation_id"]:
+            tail = f"{w['mitigation_id']} ({w['priority']})" if w["priority"] else w["mitigation_id"]
+            line += f"   → {tail}"
+        out.append(line)
+    out.append("")
+    return out
 
 
 def _bar(count: int, peak: int, width: int = 24) -> str:
@@ -363,19 +498,26 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
         buf.extend(render_status_line(freshness))
         buf.append("")
 
-    worst = summary.get("worst_case") or []
-    if worst:
-        buf.append("Worst case if nothing changes")
-        for w in worst:
-            line = f"  ⚠ {w['id']:<7} {w['severity']} · {w['component']} · {w['summary']}"
-            if w["mitigation_id"]:
-                tail = f"{w['mitigation_id']} ({w['priority']})" if w["priority"] else w["mitigation_id"]
-                line += f"   → {tail}"
-            buf.append(line)
-        buf.append("")
+    # The lane pointers sit here, not at the foot of the block: this overview is
+    # a FIXED fact set, and a reader whose actual question it cannot answer needs
+    # to know that before scrolling 40 lines of numbers.
+    buf.extend(_NEXT_STEP_LINES)
+    buf.append("")
 
-    buf.append(f"Findings   {totals['threats']} threats across {totals['components']} components")
-    if totals["threats"] == 0:
+    buf.extend(_render_verdict_block(summary.get("verdict")))
+    buf.extend(_render_worst_case_block(summary))
+
+    # The report's headline tally. It can differ from the number of cards in §8
+    # (practice sites fold into the weakness register, design-risk weaknesses
+    # are added once); say so instead of letting the reader find the gap.
+    total_findings = sum(counts.values())
+    buf.append(f"Findings   {total_findings} findings across {totals['components']} components")
+    if totals["threats"] != total_findings:
+        buf.append(
+            f"           §8 register lists {totals['threats']}"
+            " — the headline folds practice sites into the weakness register"
+        )
+    if total_findings == 0 and totals["threats"] == 0:
         buf.append("           no findings recorded — run /appsec-advisor:create-threat-model to (re)scan")
         buf.append("")
         buf.append(f"Report     {summary['report']}")
@@ -426,7 +568,6 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
         if weak:
             buf.append(f"Weakest    {' · '.join(weak[:4])}")
     buf.append(f"Report     {summary['report']}")
-    buf.append(_NEXT_STEP_HINT)
     return "\n".join(buf) + "\n"
 
 

@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import _safe_cond
+import _severity_rollup
 import jinja2
 import yaml
 from _atomic_io import atomic_write_text
@@ -253,6 +254,11 @@ class RenderContext:
     # loop in main(). Keyed by section_id, value = number of compose attempts
     # that had to run for that section to converge (1 = first try).
     section_retry_counts: dict[str, int] = field(default_factory=dict)
+    # The Management-Summary verdict resolved to reader-facing ids, stashed by
+    # _render_verdict. compose does not write it — emit_verdict_to_model.py
+    # persists it after the render. None when the verdict section did not
+    # render (architecture document).
+    verdict_export: dict[str, Any] | None = None
     # Per-section render-outcome manifest — one dict per entry in document.order,
     # populated by the render loop. Persisted to .render-integrity.json so the
     # completion summary can show "Report integrity: N%" and aggregate_run_issues
@@ -2623,72 +2629,62 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
 def _weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | None:
     """Return evidence and weakness counts without treating W as findings.
 
-    Returns ``(total, confirmed, implementation, design)`` or ``None`` when the
-    weakness register is empty (pre-P1 data → caller keeps legacy behaviour).
-
-    `confirmed` counts register findings that are NOT folded insecure-practice
-    sites. `implementation` / `design` count W-records. The legacy total is
-    retained for callers that need a combined assessment count, but the report
-    must never label it as a finding count.
+    Thin delegate — the rule lives in ``_severity_rollup`` so the overview
+    printed by ``show-threat-model`` computes it identically. See that module
+    for why the three tallies in the model differ.
     """
-    weaknesses = yaml_data.get("weaknesses") or []
-    if not weaknesses:
-        return None
-    # Design-level threats (architecture-coverage, coverage-gap,
-    # requirements-compliance, …) carry NO evidence_tier and must NOT inflate the
-    # confirmed tally — they are represented by their `design` weakness heading.
-    # Folded insecure-practice sites are likewise excluded. A code threat without
-    # a tier (legacy / added post-register) still counts as a confirmed finding.
-    # Keep in sync with _shared_sources.DESIGN_LEVEL_SOURCES.
-    _design_src = {
-        "requirements-compliance",
-        "known-threats",
-        "architecture-coverage",
-        "threat-hypothesis",
-        "architectural-anti-pattern",
-        "coverage-gap",
-    }
-    confirmed = sum(
-        1
-        for t in (yaml_data.get("threats") or [])
-        if (t.get("evidence_tier") or "confirmed-exploitable") != "insecure-practice"
-        and (t.get("source") or "").strip() not in _design_src
-        # RC.P2a: unverifiable/refuted evidence is not "confirmed-exploitable".
-        and (t.get("evidence_check") or "").strip() not in ("ambiguous", "refuted")
-    )
-    implementation = sum(1 for w in weaknesses if w.get("kind") == "implementation")
-    design = sum(1 for w in weaknesses if w.get("kind") == "design")
-    return (confirmed + implementation + design, confirmed, implementation, design)
+    return _severity_rollup.weakness_basis_breakdown(yaml_data)
 
 
 def _risk_distribution_counts(yaml_data: dict) -> dict[str, int]:
     """Severity tally for the verdict's Risk-distribution line.
 
-    Folded insecure-practice sites are excluded (they live under a weakness's
-    practice_evidence, not as standalone findings). A `design-risk` weakness is
-    added once at its heading severity: it has NO confirmed instance in
-    threats[], so a design-risk Critical (which may rank #1 per §9.3) would
-    otherwise be invisible here. `confirmed` weaknesses are already represented
-    by their instances in threats[] and are NOT re-added (no double-count).
+    Thin delegate — see ``_severity_rollup.risk_distribution_counts``.
     """
-    fold_practice = _weakness_basis_breakdown(yaml_data) is not None
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-    for t in yaml_data.get("threats") or []:
-        if fold_practice and (t.get("evidence_tier") == "insecure-practice"):
-            continue
-        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
-        if sev in counts:
-            counts[sev] += 1
-        elif sev in ("informational", "information"):
-            counts["info"] += 1
-    if fold_practice:
-        for w in yaml_data.get("weaknesses") or []:
-            if (w.get("severity_basis") or "") != "design-risk":
+    return _severity_rollup.risk_distribution_counts(yaml_data)
+
+
+def _build_verdict_export(ctx: RenderContext, data: dict, fmap: dict[str, list[str]]) -> dict:
+    """The verdict in a form the semantic model can carry.
+
+    Same content the Management Summary renders, resolved to the ids the
+    reader sees (``F-NNN`` / ``W-NNN``) and with the verified-attack-path
+    signal already decided, so a consumer needs neither the fragment nor the
+    markdown to reproduce it.
+    """
+    fw = _get_finding_weakness_map(ctx)
+    bullets: list[dict[str, Any]] = []
+    for b in data.get("bullets") or []:
+        findings: list[str] = []
+        weaknesses: list[str] = []
+        for raw in b.get("refs") or []:
+            fid = _severity_rollup.display_id(str(raw).strip().upper())
+            if not re.match(r"^F-\d+$", fid):
                 continue
-            sev = (w.get("severity") or "").strip().lower()
-            if sev in counts:
-                counts[sev] += 1
-    return counts
+            if fid not in findings:
+                findings.append(fid)
+            w = fw.get(fid)
+            if w and w.get("id") and w["id"] not in weaknesses:
+                weaknesses.append(w["id"])
+        bullets.append(
+            {
+                "title": str(b.get("title") or "").strip(),
+                "body": str(b.get("body") or "").strip(),
+                "findings": findings,
+                "weaknesses": weaknesses,
+                "verified_attack_path": bool(_verdict_bullet_badge(b.get("refs") or [], fmap)),
+            }
+        )
+    export: dict[str, Any] = {
+        "severity": str(data.get("severity") or "").strip(),
+        "opening": str(data.get("opening") or "").strip(),
+        "bullets": bullets,
+        "closing": str(data.get("closing") or "").strip(),
+    }
+    intro = str(data.get("bullets_intro") or "").strip()
+    if intro:
+        export["bullets_intro"] = intro
+    return export
 
 
 def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -2760,6 +2756,11 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
         _verdict_bullet_refs_suffix(b.get("refs") or [], ctx) + _verdict_bullet_badge(b.get("refs") or [], fmap)
         for b in (data.get("bullets") or [])
     ]
+    # Resolve the verdict to reader-facing ids and stash it. compose is
+    # read-only for threat-model.yaml (test_analysis_version_upgrade pins that a
+    # render never rewrites the model), so emit_verdict_to_model.py does the
+    # persisting; this only builds the payload, next to the code that renders it.
+    ctx.verdict_export = _build_verdict_export(ctx, data, fmap)
     tpl = env.get_template(section["template"])
     return (
         tpl.render(

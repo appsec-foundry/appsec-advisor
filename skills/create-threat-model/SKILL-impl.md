@@ -2967,6 +2967,9 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
            --output-dir "$OUTPUT_DIR" --strict $COMPOSE_MERMAID_ARG || COMPOSE_RC=$?
    fi
    if [ "$COMPOSE_RC" -eq 0 ]; then
+       # Carry the rendered verdict into threat-model.yaml before cleanup reaps
+       # `.fragments/`. Yaml-only; leaves the MD mutation order untouched.
+       python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_verdict_to_model.py" "$OUTPUT_DIR" || true
        # Compose succeeded → run QA (on a stale MD it would be noise) and write
        # the completed checkpoint the split agents deliberately skipped, so
        # STAGE11_CUTOFF detection sees the same clean signal the single-dispatch

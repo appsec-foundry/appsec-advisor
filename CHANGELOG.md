@@ -20,10 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - A finding with verified evidence at a confirmed internet ingress can now be raised by one severity band, up to High, while CWE caps still apply.
+- `show-threat-model` now opens with the report's verdict and the worst-case scenarios behind it, and points at the other skills before the numbers rather than after them.
+- `threat-model.yaml` now carries the report's verdict, so other tools can state the assessment's conclusion without reading the Markdown.
 
 ### Fixed
 
 - Trust-boundary tables now use canonical endpoints and clearly distinguish internet-facing, outbound, internal, inferred, and unresolved crossings.
+- `show-threat-model` cited findings by an identifier that appears nowhere in the report; it now uses the `F-NNN` identifiers the report shows.
+- `show-threat-model` reported severity counts that contradicted the report — 27 Critical against the report's 14 on a reference scan — and could list a Medium finding as Critical.
 
 ## 0.5.1-beta (2026-07-26)
 

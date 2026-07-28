@@ -64,12 +64,14 @@ WHAT IT SHOWS
   * Project + scan identity (commit, branch, model, depth, scan date)
   * Freshness: is the model still current, or has security-relevant code changed?
     (same change detection that drives the incremental-scan decision)
+  * The report's verdict — overall posture flag and the assessment's own
+    conclusion, verbatim from the Management Summary
+  * The "worst case if nothing changes" scenarios behind that verdict, with
+    the findings that support each and whether the attack path is verified
   * Findings by severity (Critical / High / Medium / Low)
   * Remediation backlog by mitigation priority (P1 / P2 / P3) and how many
     findings have a proposed mitigation vs. are uncovered
-  * The top "worst case if nothing changes" scenarios (from the model's
-    curated critical findings, with the covering mitigation)
-  * Top Critical threats (or all threats with --all)
+  * Top Critical findings (or all findings with --all)
   * Control posture: effectiveness mix (Missing / Weak / Partial / Adequate)
     and the weakest control domains
   * Mitigation and control counts, plus the rendered report path
@@ -154,9 +156,13 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" \
 EXIT=$?
 ```
 
-Print the renderer's output as the complete deliverable — do not add
-commentary. If the renderer exits `1` (no model found), it already prints the
-hint to run `/appsec-advisor:create-threat-model`; surface that as-is.
+Print the renderer's output **in full**, exactly as emitted, as the complete
+deliverable — do not add commentary, and do not drop, reorder or summarize any
+line. The `Ask` / `Act` lane pointers near the top are part of the block: they
+are how a reader whose actual question this block cannot answer finds
+`ask-threat-model`, so trimming them turns a misroute into a dead end. If the
+renderer exits `1` (no model found), it already prints the hint to run
+`/appsec-advisor:create-threat-model`; surface that as-is.
 
 Exit-code reference (for shell callers):
 - `0` — threat model present, overview rendered

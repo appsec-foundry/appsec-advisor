@@ -4292,6 +4292,28 @@ def test_verdict_no_badge_when_abuse_sidecar_absent(tmp_path: Path) -> None:
     assert "Full DB theft" in out and "blockquote" in out
 
 
+def test_verdict_export_resolves_reader_facing_ids(tmp_path: Path) -> None:
+    """The persisted verdict must carry the ids the report shows. `refs` come in
+    as a mix of T-NNN and F-NNN; the reader only ever sees F-NNN."""
+    ctx, env, section = _verdict_ctx_with_abuse(
+        tmp_path,
+        bullets=[
+            {"title": "Server takeover", "body": "A crafted order runs OS commands.", "refs": ["T-003", "F-003"]},
+            {"title": "Weak password policy", "body": "Short passwords are accepted.", "refs": ["F-050"]},
+        ],
+        abuse_cases=[{"id": "AC-T-002", "chain_verdict": "fully_viable", "matched_finding_ids": ["F-003"]}],
+    )
+    compose._render_verdict(ctx, env, section)
+    export = ctx.verdict_export
+    assert export["severity"] == "red"
+    assert export["opening"].startswith("Not production-ready")
+    # T-003 and F-003 are the same finding — cited once, in report form.
+    assert export["bullets"][0]["findings"] == ["F-003"]
+    assert export["bullets"][0]["verified_attack_path"] is True
+    assert export["bullets"][1]["findings"] == ["F-050"]
+    assert export["bullets"][1]["verified_attack_path"] is False
+
+
 def test_quick_banner_shows_n_of_m(tmp_path: Path) -> None:
     yaml_data = {"meta": {"component_selection": _cs_with_exclusions()}, "components": []}
     ctx = compose.RenderContext(
