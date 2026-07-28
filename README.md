@@ -186,6 +186,16 @@ Full guide: [`docs/dev-security-helper-usage.md`](docs/dev-security-helper-usage
 
 For persistent verbose event output and log rotation limits, see [Logging](docs/configuration.md#logging). The `--verbose` flag remains the normal per-run choice.
 
+## Where to start
+
+New to the plugin, or unsure which command fits? The help page prints a short
+command reference with example calls and works in a repository that has no
+threat model yet:
+
+```text
+/appsec-advisor:help
+```
+
 ## Report a failed run
 
 If a threat-model run fails, create an **anonymized** diagnostic bundle:

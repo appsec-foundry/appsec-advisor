@@ -1,5 +1,10 @@
 {
-  "_comment": "Plugin runtime config for external_context, pricing, logging, and organization_profile. JSON has no // comments; consumers that support local overrides read config.local.json, which is git-ignored.",
+  "_comment": "Plugin runtime config for banner, external_context, pricing, logging, and organization_profile. JSON has no // comments; consumers that support local overrides read config.local.json, which is git-ignored.",
+  "banner": {
+    "enabled": true,
+    "headline": null,
+    "url": "https://github.com/matthiasrohr/appsec-advisor"
+  },
   "external_context": {
     "enabled": true,
     "rest_url": null

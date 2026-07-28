@@ -236,6 +236,41 @@ Each field has a matching flag (`--report-title`, `--contact-name`,
 `--contact-email`, `--logo`) that wins for one run. Whatever you leave out uses
 the default cover.
 
+## Session banner
+
+Every session opens with a status line: whether the repository has a threat
+model, how old it is, and which skill to run next. Two fields customize it, and
+one turns it off:
+
+```yaml
+banner:
+  headline: "ACME AppSec Advisor"          # prepended to the status line
+  url: "https://git.acme.internal/appsec"  # printed by the help skill
+  enabled: true                            # false ships a build that opens silently
+```
+
+`headline` is prepended to the status line, which is otherwise state only — the
+model, its findings, its age. That part is always computed from the repository,
+so a configured headline can never claim a state that is not there.
+
+`url` is not printed in the banner; the `help` skill prints it under "More
+information". Point it at an internal repository or runbook.
+
+Packaging resolves these fields into the packaged `config.json`, because the
+banner runs as a SessionStart hook and must not depend on PyYAML. `--info-url`
+overrides `url` for one build; `--info-url ""` drops the line.
+
+Developers have the last word through `APPSEC_BANNER` in the `env` block of
+their `~/.claude/settings.json`: `0` silences a banner the organization enabled,
+`1` restores one it turned off.
+
+```json
+{ "env": { "APPSEC_BANNER": "0" } }
+```
+
+Removing the hook from `plugin_surface.hooks` also removes the banner, and drops
+the code with it.
+
 ## Actors
 
 Use the `actors:` block to add actors or disable default actor classes:

@@ -18,6 +18,7 @@ KEYWORDS_JSON = HOOKS_DIR / "steering_keywords.json"
 # Hook events the plugin currently registers. New events MUST also be added
 # here so missing wiring is caught.
 EXPECTED_HOOK_EVENTS = {
+    "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",

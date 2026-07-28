@@ -188,6 +188,74 @@ def test_patch_config(tmp_path):
     assert data["organization_profile"]["path"] == "org-profile/org-profile.yaml"
 
 
+def test_patch_config_keeps_upstream_url_when_no_info_url_given(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    upstream = {"banner": {"url": "https://github.com/matthiasrohr/appsec-advisor"}}
+    (build / "config.json").write_text(json.dumps(upstream), encoding="utf-8")
+    pkg.patch_config(build)
+    data = json.loads((build / "config.json").read_text())
+    assert data["banner"]["url"] == "https://github.com/matthiasrohr/appsec-advisor"
+
+
+def test_patch_config_sets_organization_info_url(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "config.json").write_text(json.dumps({}), encoding="utf-8")
+    pkg.patch_config(build, "https://git.internal.example/appsec")
+    data = json.loads((build / "config.json").read_text())
+    assert data["banner"]["url"] == "https://git.internal.example/appsec"
+
+
+def test_patch_config_takes_banner_overrides_from_the_org_profile(tmp_path):
+    build = tmp_path / "build"
+    (build / "org-profile").mkdir(parents=True)
+    (build / "org-profile" / "org-profile.yaml").write_text(
+        "organization:\n  id: acme\nbanner:\n  headline: ACME AppSec Advisor\n"
+        "  url: https://git.acme.internal/appsec\n  enabled: true\n",
+        encoding="utf-8",
+    )
+    (build / "config.json").write_text(json.dumps({"banner": {"url": "https://upstream.example"}}), encoding="utf-8")
+    pkg.patch_config(build)
+    banner = json.loads((build / "config.json").read_text())["banner"]
+    assert banner == {
+        "enabled": True,
+        "headline": "ACME AppSec Advisor",
+        "url": "https://git.acme.internal/appsec",
+    }
+
+
+def test_info_url_flag_overrides_the_org_profile(tmp_path):
+    build = tmp_path / "build"
+    (build / "org-profile").mkdir(parents=True)
+    (build / "org-profile" / "org-profile.yaml").write_text(
+        "banner:\n  url: https://profile.example\n", encoding="utf-8"
+    )
+    (build / "config.json").write_text(json.dumps({}), encoding="utf-8")
+    pkg.patch_config(build, "https://flag.example")
+    assert json.loads((build / "config.json").read_text())["banner"]["url"] == "https://flag.example"
+
+
+def test_patch_config_ignores_unknown_banner_keys_from_the_profile(tmp_path):
+    build = tmp_path / "build"
+    (build / "org-profile").mkdir(parents=True)
+    (build / "org-profile" / "org-profile.yaml").write_text(
+        "banner:\n  headline: ACME\n  rogue_key: injected\n", encoding="utf-8"
+    )
+    (build / "config.json").write_text(json.dumps({}), encoding="utf-8")
+    pkg.patch_config(build)
+    assert json.loads((build / "config.json").read_text())["banner"] == {"headline": "ACME"}
+
+
+def test_patch_config_empty_info_url_drops_the_banner_line(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "config.json").write_text(json.dumps({}), encoding="utf-8")
+    pkg.patch_config(build, "")
+    data = json.loads((build / "config.json").read_text())
+    assert data["banner"]["url"] is None
+
+
 # ---------------------------------------------------------------------------
 # Package-policy loading
 # ---------------------------------------------------------------------------

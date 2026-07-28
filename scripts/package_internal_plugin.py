@@ -190,13 +190,37 @@ def patch_plugin_json(build: Path, name: str, version: str, description: str | N
     plugin_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def patch_config(build: Path) -> None:
+def _org_profile_banner(build: Path) -> dict:
+    """Session-banner overrides declared in the packaged org profile.
+
+    The banner runs as a SessionStart hook and must stay free of a YAML
+    dependency, so the profile is resolved into config.json here at build time.
+    """
+    profile_path = build / "org-profile" / "org-profile.yaml"
+    if not profile_path.is_file():
+        return {}
+    banner = _load_yaml_or_json(profile_path).get("banner")
+    if not isinstance(banner, dict):
+        return {}
+    return {key: value for key, value in banner.items() if key in ("enabled", "headline", "url")}
+
+
+def patch_config(build: Path, info_url: str | None = None) -> None:
     config_path = build / "config.json"
     data = json.loads(config_path.read_text(encoding="utf-8"))
     data["organization_profile"] = {
         "enabled": True,
         "path": "org-profile/org-profile.yaml",
     }
+    banner = dict(data.get("banner") or {})
+    banner.update(_org_profile_banner(build))
+    if info_url is not None:
+        # The flag wins over the profile. An empty value drops the "more
+        # information" line; the upstream URL is wrong for an internal build
+        # either way.
+        banner["url"] = info_url or None
+    if banner:
+        data["banner"] = banner
     config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -630,7 +654,7 @@ HOOK_DESCRIPTIONS = {
 # Skills with their own detailed section in the README
 MAIN_SKILLS = ["create-threat-model", "audit-security-requirements", "verify-requirements"]
 # Skills grouped into a single utility section
-UTILITY_SKILLS = ["threat-model-health", "check-permissions", "status", "fix-run-issues", "clean-run-state"]
+UTILITY_SKILLS = ["help", "threat-model-health", "check-permissions", "status", "fix-run-issues", "clean-run-state"]
 
 
 def _skill_description(build: Path, skill: str) -> str:
@@ -827,6 +851,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--upstream-url", default=None, help="upstream plugin repository URL recorded in package-surface.json"
     )
     parser.add_argument(
+        "--info-url",
+        default=None,
+        help="internal documentation URL shown in the session banner; pass an empty value to drop the line",
+    )
+    parser.add_argument(
         "--readme", default=None, help="write generated README.md to this path (default: inside build tree)"
     )
     parser.add_argument(
@@ -864,7 +893,7 @@ def main(argv: list[str] | None = None) -> int:
     copy_source(source, build)
     overlay_org_profile(org_profile, build)
     patch_plugin_json(build, args.name, args.version, args.description)
-    patch_config(build)
+    patch_config(build, args.info_url)
     apply_package_surface_policy(build, package_policy, package_policy_path, args.upstream_url)
     surface_manifest = json.loads((build / SURFACE_MANIFEST).read_text(encoding="utf-8"))
     readme_path = Path(args.readme) if args.readme else None

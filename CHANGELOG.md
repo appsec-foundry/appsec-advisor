@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A session now opens with a status line: the threat model's project, its critical and high finding counts, when it was generated, and how many commits have landed since — plus the one command that state calls for.
+- New `help` skill: a short command reference with example calls, including in repositories that have no threat model yet.
+- Organizations can set the banner's headline and the help page's information URL in their org profile, or ship a build that opens silently. `APPSEC_BANNER=0` turns the banner off per developer, `1` back on.
 - Trust boundaries now have stable catalogue IDs, optional repository declarations, linked findings, and Markdown, YAML, query, and SARIF output.
 - Trust boundaries are now assessed in a dedicated stage after component identities and data flows are finalized, with complete crossing-signal coverage required before STRIDE starts.
 

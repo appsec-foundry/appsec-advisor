@@ -106,6 +106,21 @@ class TestMainConfig:
         errors = validate_config._validate_main_config(data, "test")
         assert any("unknown top-level keys" in e for e in errors)
 
+    def test_banner_url_must_be_http(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "banner": {"url": "file:///etc/passwd"},
+        }
+        errors = validate_config._validate_main_config(data, "test")
+        assert any("banner.url" in e for e in errors)
+
+    def test_banner_url_null_ok(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "banner": {"url": None},
+        }
+        assert validate_config._validate_main_config(data, "test") == []
+
     def test_organization_profile_disabled_ok(self, validate_config):
         data = {
             "external_context": {"enabled": False, "rest_url": None},

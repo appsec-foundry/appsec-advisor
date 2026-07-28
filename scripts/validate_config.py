@@ -36,6 +36,27 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
     if not isinstance(data, dict):
         return [f"{path}: root must be a JSON object"]
 
+    # banner (optional) — session-start message; 'url' is printed by the help skill
+    banner = data.get("banner")
+    if banner is not None:
+        if not isinstance(banner, dict):
+            errors.append(f"{path}: 'banner' must be an object")
+        else:
+            unknown_banner = set(banner.keys()) - {"enabled", "headline", "url"}
+            if unknown_banner:
+                errors.append(f"{path}: unknown keys in 'banner': {sorted(unknown_banner)}")
+            if banner.get("enabled") is not None and not isinstance(banner["enabled"], bool):
+                errors.append(f"{path}: 'banner.enabled' must be a boolean")
+            if banner.get("headline") is not None and not isinstance(banner["headline"], str):
+                errors.append(f"{path}: 'banner.headline' must be a string or null")
+            if banner.get("url") is not None:
+                if not isinstance(banner["url"], str):
+                    errors.append(f"{path}: 'banner.url' must be a string or null")
+                else:
+                    parsed = urlparse(banner["url"])
+                    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                        errors.append(f"{path}: 'banner.url' must be a valid http:// or https:// URL with a host")
+
     # external_context (required)
     ec = data.get("external_context")
     if ec is None:
@@ -116,7 +137,7 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
     # JSON has no native comments. The committed config permits a top-level
     # "_comment" field for human guidance while still rejecting operational
     # keys the runtime would silently ignore.
-    known_keys = {"_comment", "external_context", "pricing", "logging", "organization_profile"}
+    known_keys = {"_comment", "banner", "external_context", "pricing", "logging", "organization_profile"}
     unknown = set(data.keys()) - known_keys
     if unknown:
         errors.append(f"{path}: unknown top-level keys: {sorted(unknown)}")

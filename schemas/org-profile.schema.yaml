@@ -120,6 +120,40 @@ properties:
           absolute) or an http(s) URL. Staged into the output dir before
           rendering; a fetch/copy failure degrades gracefully to no logo.
 
+  banner:
+    type: object
+    additionalProperties: false
+    description: |
+      Session-start status banner. `package_internal_plugin.py` resolves these
+      fields into the packaged `config.json`, because the banner runs as a
+      SessionStart hook and stays free of a YAML dependency. A developer's
+      `APPSEC_BANNER` environment variable overrides all of them, in both
+      directions.
+    properties:
+      enabled:
+        type: boolean
+        description: |
+          Set false to ship a build whose sessions open silently. Removing the
+          hook from `plugin_surface.hooks` has the same effect and also drops
+          the code.
+      headline:
+        type: string
+        minLength: 1
+        maxLength: 120
+        description: |
+          Prepended to the status line, e.g. "ACME AppSec Advisor". What
+          follows — the model, its findings, its age — is always computed from
+          the repository and cannot be overridden.
+      url:
+        type: string
+        minLength: 1
+        maxLength: 2048
+        description: |
+          The URL the `help` skill prints under "More information". Point it at
+          the internal repository or runbook; omit it to keep the upstream URL,
+          or pass `--info-url ""` when packaging to drop the line entirely. The
+          session banner itself does not print it.
+
   default_preset:
     type: string
     pattern: "^[a-z0-9][a-z0-9_-]{1,62}$"
