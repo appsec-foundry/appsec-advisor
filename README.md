@@ -26,11 +26,15 @@ Workshop and design-review threat models become stale as the implementation chan
 
 Most automated security tools focus on dependencies, code patterns, secrets, and misconfigurations. `appsec-advisor` covers the gap to manual architecture review by identifying risks such as missing trust-boundary controls, implicit service trust, and unauthenticated internal paths.
 
+### What kind of threat model this is
+
+`appsec-advisor` produces a *technical* threat model grounded in the repository: components, trust boundaries, data flows, and STRIDE findings derived from code and configuration. It is not a *functional* or data-flow-diagram (DFD) threat model that starts from business processes or user stories. Use it to validate whether the implemented architecture matches the intended security design, not to map business-level assets and workflows.
+
 ### Why this isn't a SAST tool
 
 SAST finds implementation flaws in specific code paths. `appsec-advisor` models the system around them: components, trust boundaries, data flows, attacker goals, and missing controls. Its primary output is an architecture-level threat grounded in repository evidence.
 
-It complements rather than replaces code scanners. Threat modeling can surface risks with no vulnerable line to point to, such as missing authorization, an undefined trust boundary, or a service with excessive trust.
+It complements rather than replaces code scanners. Threat modeling can surface risks with no vulnerable line to point at, such as missing authorization, an undefined trust boundary, or a service with excessive trust.
 
 ## Security notes
 

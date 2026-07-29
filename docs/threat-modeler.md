@@ -23,6 +23,10 @@ An assessment produces a security architecture and threat model report based on 
 
 The Markdown and YAML outputs are generated from the same validated data.
 
+### Technical vs. functional threat modeling
+
+This skill generates a *technical* threat model. It starts from repository evidence — source files, manifests, and configuration — to identify components, trust boundaries, data flows, and STRIDE findings. It is intentionally distinct from *functional* or DFD-based threat modeling, which maps business processes, user workflows, and domain assets. Use the output to review whether the implemented technical architecture enforces the intended security design.
+
 Trust-boundary assessment has its own stage. Discovery first finalizes the
 component registry and persists data flows; a fresh focused analyst then
 classifies every deterministic crossing signal. A coverage gate blocks STRIDE
