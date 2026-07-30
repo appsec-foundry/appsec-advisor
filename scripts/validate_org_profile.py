@@ -17,7 +17,8 @@ and then enforces semantic rules that JSON Schema alone cannot express:
   * hooks entries must reference a script under the profile directory
     (${CLAUDE_PLUGIN_ROOT}/org-profile/...), not collide with an upstream hook
     id, and use matcher only for PreToolUse / PostToolUse
-  * skill_toggles keys must be known plugin skills
+  * skill_toggles keys must name a skill this build ships (derived from
+    skills/*/SKILL.md, plus whatever the package policy removed)
   * compatibility.core range must accept the current plugin version
 
 Exit codes
@@ -44,21 +45,50 @@ from urllib.parse import urlparse
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "org-profile.schema.yaml"
 
-# user-facing skills shipped by the plugin; this allowlist is authoritative
-# for skill_toggles keys. Keep this list in sync with skills/<name>/SKILL.md.
-KNOWN_SKILLS: set[str] = {
-    "create-threat-model",
-    "audit-security-requirements",
-    "check-permissions",
-    "clean-run-state",
-    "export-threat-model",
-    "fix-run-issues",
-    "install-baseline",
-    "publish-threat-model",
-    "status",
-    "threat-model-health",
-    "verify-baseline",
-}
+
+def known_skills(plugin_root: Path | None = None) -> set[str]:
+    """The skills a `skill_toggles` key may name — derived, never listed.
+
+    This used to be a hand-maintained set with the instruction to keep it in
+    sync with ``skills/<name>/SKILL.md``. It drifted, as a hand-mirrored
+    directory listing does: ten of twenty-one shipped skills were missing, and
+    naming one of them was not a no-op but a *hard validation error* that
+    aborted the package build. ``apply_skill_policy`` in the packager has always
+    read the directory instead; this is the same answer from the same place.
+
+    Deriving is also more correct than any list. The packager runs this
+    validator from the build tree *after* removing the skills the package
+    policy excluded, so the directory at that moment is exactly what the build
+    ships — and a runtime toggle can only gate a skill that is shipped. Skills
+    the policy removed are added back from the surface manifest, so naming one
+    stays a documented, redundant choice rather than an error, while a typo
+    still fails.
+
+    Fail-open on an empty result: if the directory is missing or unreadable,
+    every toggle would otherwise become an error and no build would pass. An
+    empty set means "cannot tell", and the caller skips the check.
+    """
+    root = plugin_root or PLUGIN_ROOT
+    shipped = {path.parent.name for path in (root / "skills").glob("*/SKILL.md") if path.is_file()}
+    if not shipped:
+        return set()
+    return shipped | _policy_removed_skills(root)
+
+
+def _policy_removed_skills(plugin_root: Path) -> set[str]:
+    """Skills the package policy removed from this build, per the surface manifest.
+
+    Present so an organization can exclude a skill from the package *and* keep
+    the documented toggle that says why, without the two contradicting.
+    """
+    manifest = plugin_root / ".claude-plugin" / "package-surface.json"
+    try:
+        with open(manifest, encoding="utf-8") as fh:
+            removed = json.load(fh).get("skills", {}).get("removed")
+    except Exception:  # noqa: BLE001 — no manifest in an upstream checkout
+        return set()
+    return {str(name) for name in removed} if isinstance(removed, list) else set()
+
 
 ALLOWED_OUTPUT_DIR_TOKENS: set[str] = {"repo_name", "repo_slug", "preset", "date"}
 
@@ -340,9 +370,12 @@ def _check_hooks(profile: dict, profile_dir: Path) -> list[str]:
 def _check_skill_toggles(profile: dict) -> list[str]:
     errors: list[str] = []
     toggles = profile.get("skill_toggles") or {}
+    known = known_skills()
     for skill, value in toggles.items():
-        if skill not in KNOWN_SKILLS:
-            errors.append(f"skill_toggles: unknown skill '{skill}'; known: {sorted(KNOWN_SKILLS)}")
+        # An empty set means the skills directory could not be read; skip the
+        # membership check rather than reject every toggle.
+        if known and skill not in known:
+            errors.append(f"skill_toggles: '{skill}' is not a skill in this build; shipped: {sorted(known)}")
         if isinstance(value, dict):
             if value.get("enabled") is False and not (value.get("reason") or "").strip():
                 errors.append(f"skill_toggles: '{skill}' is disabled and should provide a reason")

@@ -513,6 +513,65 @@ def test_main_json_output_invalid(tmp_path, capsys):
     assert payload["errors"]
 
 
+# ---------- skill_toggles keys are derived, not listed --------------------
+
+
+def test_known_skills_covers_every_shipped_skill():
+    """The old hand-maintained list had drifted: ten of twenty-one were missing,
+    and naming one was a hard error that aborted the package build."""
+    shipped = {p.parent.name for p in (REPO_ROOT / "skills").glob("*/SKILL.md")}
+    assert shipped, "no skills found — the derivation would silently pass"
+    assert shipped <= vop.known_skills()
+
+
+def test_every_shipped_skill_can_be_toggled(acme_profile):
+    for name in sorted({p.parent.name for p in (REPO_ROOT / "skills").glob("*/SKILL.md")}):
+        acme_profile["skill_toggles"] = {name: {"enabled": False, "reason": "central policy"}}
+        errors = [e for e in vop.validate(acme_profile, FIXTURE_DIR) if e.startswith("skill_toggles")]
+        assert errors == [], f"{name}: {errors}"
+
+
+def test_a_typo_is_still_rejected(acme_profile):
+    acme_profile["skill_toggles"] = {"revew-threat-model": True}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("not a skill in this build" in e for e in errors), errors
+
+
+def test_known_skills_derives_from_the_given_root(tmp_path):
+    (tmp_path / "skills" / "own-skill").mkdir(parents=True)
+    (tmp_path / "skills" / "own-skill" / "SKILL.md").write_text("---\nname: own-skill\n---\n", encoding="utf-8")
+    assert vop.known_skills(tmp_path) == {"own-skill"}
+
+
+def test_known_skills_fails_open_without_a_skills_directory(tmp_path):
+    """An empty result means "cannot tell" — rejecting every toggle would break
+    every build instead."""
+    assert vop.known_skills(tmp_path) == set()
+
+
+def test_unreadable_skills_directory_skips_the_check(acme_profile, monkeypatch, tmp_path):
+    monkeypatch.setattr(vop, "PLUGIN_ROOT", tmp_path)
+    acme_profile["skill_toggles"] = {"anything-at-all": True}
+    errors = [e for e in vop.validate(acme_profile, FIXTURE_DIR) if "not a skill" in e]
+    assert errors == []
+
+
+def test_a_skill_the_package_policy_removed_may_still_be_toggled(acme_profile, tmp_path, monkeypatch):
+    """An organization excludes a skill from the package and keeps the toggle
+    that documents why; the two must not contradict each other."""
+    (tmp_path / "skills" / "create-threat-model").mkdir(parents=True)
+    (tmp_path / "skills" / "create-threat-model" / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / ".claude-plugin" / "package-surface.json").write_text(
+        json.dumps({"skills": {"included": ["create-threat-model"], "removed": ["publish-threat-model"]}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(vop, "PLUGIN_ROOT", tmp_path)
+    acme_profile["skill_toggles"] = {"publish-threat-model": {"enabled": False, "reason": "release job"}}
+    errors = [e for e in vop.validate(acme_profile, FIXTURE_DIR) if "not a skill" in e]
+    assert errors == []
+
+
 # ---------- baseline block ------------------------------------------------
 
 

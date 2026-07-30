@@ -240,6 +240,33 @@ def _org_profile_baseline(build: Path) -> dict:
     return resolved
 
 
+def _org_profile_skill_toggles(build: Path) -> dict:
+    """The profile's skill policy, resolved into config.json at build time.
+
+    Without this the policy only exists in ``.org-profile-effective.json``,
+    which a run writes into its output directory — so a skill invoked before
+    any scan has ever happened found no policy and ran. Resolving it here gives
+    every session the same answer from the first command onwards, the way the
+    banner and baseline blocks already work.
+
+    Normalised to the ``{enabled, reason}`` shape so consumers see one form,
+    matching ``resolve_org_profile.normalize_skill_toggles``.
+    """
+    profile_path = build / "org-profile" / "org-profile.yaml"
+    if not profile_path.is_file():
+        return {}
+    toggles = _load_yaml_or_json(profile_path).get("skill_toggles")
+    if not isinstance(toggles, dict):
+        return {}
+    out: dict[str, dict] = {}
+    for name, value in toggles.items():
+        if isinstance(value, bool):
+            out[str(name)] = {"enabled": value, "reason": None}
+        elif isinstance(value, dict):
+            out[str(name)] = {"enabled": bool(value.get("enabled", True)), "reason": value.get("reason")}
+    return out
+
+
 def _prune_unused_baselines(build: Path, baseline: dict) -> None:
     """Drop the upstream bundled baseline when the build does not use it.
 
@@ -270,6 +297,9 @@ def patch_config(build: Path, info_url: str | None = None) -> None:
     if baseline:
         data["baseline"] = baseline
         _prune_unused_baselines(build, baseline)
+    toggles = _org_profile_skill_toggles(build)
+    if toggles:
+        data["skill_toggles"] = toggles
     banner = dict(data.get("banner") or {})
     banner.update(_org_profile_banner(build))
     if info_url is not None:

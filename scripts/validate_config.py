@@ -85,6 +85,26 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
                 if parsed.scheme not in ("http", "https") or not parsed.netloc:
                     errors.append(f"{path}: 'baseline.url' must be a valid http:// or https:// URL with a host")
 
+    # skill_toggles (optional) — the org profile's skill policy, resolved here
+    # at package time so the gate answers before any run has written the
+    # effective profile. Absent in an upstream build.
+    toggles = data.get("skill_toggles")
+    if toggles is not None:
+        if not isinstance(toggles, dict):
+            errors.append(f"{path}: 'skill_toggles' must be an object")
+        else:
+            for name, value in toggles.items():
+                if not isinstance(value, dict):
+                    errors.append(f"{path}: 'skill_toggles.{name}' must be an object")
+                    continue
+                unknown = set(value.keys()) - {"enabled", "reason"}
+                if unknown:
+                    errors.append(f"{path}: unknown keys in 'skill_toggles.{name}': {sorted(unknown)}")
+                if not isinstance(value.get("enabled"), bool):
+                    errors.append(f"{path}: 'skill_toggles.{name}.enabled' must be a boolean")
+                if value.get("reason") is not None and not isinstance(value["reason"], str):
+                    errors.append(f"{path}: 'skill_toggles.{name}.reason' must be a string or null")
+
     # external_context (required)
     ec = data.get("external_context")
     if ec is None:
@@ -173,6 +193,7 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
         "pricing",
         "logging",
         "organization_profile",
+        "skill_toggles",
     }
     unknown = set(data.keys()) - known_keys
     if unknown:

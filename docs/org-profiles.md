@@ -164,7 +164,7 @@ These rules apply in addition to the schema:
 - `target.repo == profile_default` requires `target.repo_path`.
 - `target.output_dir` may only use the tokens `{repo_name}`, `{repo_slug}`, `{preset}`, `{date}`, and may not resolve into `.git/`.
 - `requirements_yaml_url` must not embed credentials and must be http/s.
-- `skill_toggles` keys must be known user-facing skill names; disabled toggles must carry a reason.
+- `skill_toggles` keys must name a skill this build ships (or one the package policy removed); disabled toggles must carry a reason.
 - `baseline` needs an `id` whenever it sets a source; `baseline.url` must be http/s without credentials; `baseline.file` must exist under the profile directory and must declare the configured id.
 
 ## CI gates
@@ -424,9 +424,36 @@ User-facing skills can be disabled with a reason:
 - **Help-only**: `--help` still renders even when the skill is disabled. Exit code 10.
 - **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `threat-model-health`): the org profile can warn but never hard-blocks them. Exit code 20.
 
-Without an active org profile, all skills remain enabled.
+Any skill this build ships can be named. The key set is derived from
+`skills/*/SKILL.md` rather than kept as a list, so a skill added upstream — or
+one your profile adds — is togglable the moment it exists. A skill your
+package policy removed may still be named, so the toggle that documents *why*
+it is gone does not contradict the exclusion; a typo is still rejected.
 
-Skill toggles block commands at runtime. To remove a skill or hook from the package, use `org-profile/package-policy.yaml` as described in the packaging runbook.
+Without a skill policy, all skills remain enabled.
+
+### Where the policy is read from
+
+Two sources, in this order:
+
+1. `.org-profile-effective.json` — what the current run resolved, including
+   preset and CLI effects.
+2. `skill_toggles` in the packaged `config.json`, which packaging resolves from
+   this profile at build time.
+
+The second matters more than it looks. The effective profile is written by a
+`create-threat-model` run into its output directory, so before the first scan
+there was nothing to read and every skill ran — while `status` reported it as
+disabled. The packaged copy gives a fresh clone the same answer as a scanned
+one, the way the banner and baseline blocks already work.
+
+### Toggle or remove?
+
+Skill toggles block a command at runtime and explain why. To take a skill out
+of the package entirely — no command, no code, not in the README — use
+`plugin_surface.skills` in `org-profile/package-policy.yaml`, described in the
+packaging runbook. Use a toggle when people should learn what the policy is;
+use the package policy when the command should not exist.
 
 ## Security Coach
 

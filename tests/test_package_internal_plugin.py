@@ -385,6 +385,28 @@ def test_every_shipped_skill_has_a_readable_description():
         assert desc.strip() not in (">-", ">", "|", "|-"), f"{name}: block scalar leaked into the README"
 
 
+def test_skill_toggles_are_resolved_into_config(tmp_path):
+    """Without this the policy lived only in the effective profile a scan
+    writes, so a skill invoked before any scan found nothing and ran."""
+    build = tmp_path / "build"
+    write_profile(
+        build,
+        "skill_toggles:\n  publish-threat-model:\n    enabled: false\n    reason: Release job only.\n  status: true\n",
+    )
+    pkg.patch_config(build)
+    toggles = json.loads((build / "config.json").read_text())["skill_toggles"]
+    assert toggles["publish-threat-model"] == {"enabled": False, "reason": "Release job only."}
+    # Normalised to one shape, so consumers never see a raw bool.
+    assert toggles["status"] == {"enabled": True, "reason": None}
+
+
+def test_no_skill_toggles_block_without_a_profile_policy(tmp_path):
+    build = tmp_path / "build"
+    write_profile(build, "organization:\n  id: acme\n")
+    pkg.patch_config(build)
+    assert "skill_toggles" not in json.loads((build / "config.json").read_text())
+
+
 def test_patch_config_ignores_unknown_baseline_keys_from_the_profile(tmp_path):
     build = tmp_path / "build"
     write_profile(build, "baseline:\n  id: acme-sec-1.0\n  rogue_key: injected\n")

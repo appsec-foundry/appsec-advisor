@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Trust boundaries now have stable catalogue IDs, optional repository declarations, linked findings, and Markdown, YAML, query, and SARIF output.
 - Trust boundaries are now assessed in a dedicated stage after component identities and data flows are finalized, with complete crossing-signal coverage required before STRIDE starts.
 
+### Fixed
+
+- An organization's `skill_toggles` policy now takes effect from the first command in a session. It was only read from the file a scan writes into its output directory, so before any scan every skill ran while the status output reported it as disabled.
+- Any shipped skill can now be named in `skill_toggles`. Ten of the twenty-one — including `review-threat-model`, `ask-threat-model` and `update-threat-model` — were missing from an internal list, and naming one aborted the package build instead of doing nothing.
+
 ### Changed
 
 - A finding with verified evidence at a confirmed internet ingress can now be raised by one severity band, up to High, while CWE caps still apply.
