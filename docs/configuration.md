@@ -12,6 +12,8 @@ The root [`config.json`](../config.json) controls four independent runtime conce
 | `config.local.json` | Git-ignored local values for external context, pricing, or logging | Selected as a complete file by the context resolver, event logger, and cost verifier when present. It is not merged with `config.json`. |
 | `skills/audit-security-requirements/config.json` | Default requirements-catalog source | Separate from the root runtime configuration. |
 
+Files inside the repository you scan are not plugin configuration and are not listed here. Business context, known threats, and trust-boundary declarations live in the target repository and are documented under [Repo-local context](threat-modeler.md#repo-local-context).
+
 `config.local.json` is deliberately limited in scope. It can supply `external_context`, `pricing`, and `logging` to the consumers listed above. Organization-profile resolution, packaging, security steering, and static status summaries continue to read the committed `config.json`.
 
 Because the local file replaces the root file for its participating consumers, include every locally customized block that those consumers need. Do not put an organization-profile pointer only in `config.local.json`; it will not activate the profile.

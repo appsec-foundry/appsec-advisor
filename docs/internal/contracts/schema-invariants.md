@@ -134,6 +134,15 @@ or commands, or suppress a finding. Declaration-only rows are at most `inferred`
 Conflicting endpoints become non-semantic `conflicted` rows. A malformed file
 is rejected as a whole without discarding detected boundaries.
 
+Analyzer candidacy is separate from reference validity and deliberately wider. A
+component is offered a resolved crossing when it is an endpoint or owns the cited
+evidence file, so the component implementing an egress is analyzable without
+being an endpoint. It inherits its container's candidates only when it has none
+of its own. Confidence orders candidates; it never gates them. Each component is
+capped by depth (`BOUNDARY_CANDIDATE_LIMITS`), and quick depth admits `primary`
+focus only. No resolved crossing may be silently uncovered by those caps: it is
+redistributed to a component that can carry it, or reported as a gap.
+
 `boundary_refs[]` is optional finding traceability, not finding evidence and
 not a consolidation key. Each reference must target a resolved, confirmed
 canonical row, be adjacent to its required `origin_component_id`, repeat only

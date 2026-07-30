@@ -360,7 +360,7 @@ Example:
 
 ## Repo-local context
 
-Two optional files add team-owned context. Neither file can suppress a finding supported by repository evidence.
+Three optional files add team-owned context. None of them can suppress a finding supported by repository evidence.
 
 ### Business context — `docs/business-context.md`
 
@@ -420,9 +420,11 @@ refreshes the canonical catalogue and report without dispatching STRIDE
 analyzers for otherwise unchanged components.
 
 Detected boundaries use evidence confidence `confirmed`, `inferred`, or
-`unknown`. Only resolved, confirmed crossings may become analyzer candidates
-or Figure 1 exposure context. An unresolved or conflicted row remains visible
-for review but is never treated as an observed path or an ineffective control.
+`unknown`. Any resolved crossing may become an analyzer candidate; confidence
+only orders them. Figure 1 exposure and finding links additionally require
+`confirmed`, so an `inferred` crossing is analyzed but never linked. An
+unresolved or conflicted row remains visible for review but is never treated as
+an observed path or an ineffective control.
 Legacy sidecars remain displayable during rerender, but they do not receive new
 IDs or feed semantic consumers; a fresh scan is required to normalize them.
 
@@ -445,9 +447,11 @@ Markdown catalogue is capped for readability, finding cards link only visible
 anchors, and SARIF carries linked IDs in result properties. Figure 1 remains a
 summary and is not the canonical boundary view.
 
-Boundary finding links are best-effort enrichment. Candidate files are bounded
-by assessment depth (2/4/6 for quick/standard/thorough), read with the existing
-parallel context batch, and never add an analyzer turn or expand the incremental
+Boundary finding links are best-effort enrichment. Each component receives at
+most 2/4/6 candidate crossings for quick/standard/thorough; quick additionally
+keeps only a component's primary crossings. A resolved crossing that reaches no
+component is reported as a coverage gap. Candidates are read with the existing
+parallel context batch and never add an analyzer turn or expand the incremental
 dispatch set. A source-clean component may therefore retain its prior links
 until a later source-triggered, full, or rebuild run.
 

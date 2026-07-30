@@ -246,6 +246,7 @@ Use these routes to move from the overview into the detailed documentation witho
 | Goal | Start here |
 |---|---|
 | Run, focus, or configure a threat model | [Threat Modeler](docs/threat-modeler.md) |
+| Add business context, known threats, or trust-boundary declarations to a repository | [Repo-local context](docs/threat-modeler.md#repo-local-context) |
 | Configure external context, local pricing, logging, or an organization profile | [Advanced Configuration](docs/configuration.md) |
 | Choose an assessment depth or understand model cost | [Model Selection, Cost & Context Window](docs/model-selection.md) |
 | Configure and run requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |
@@ -295,7 +296,6 @@ For the contributor-level path map and the tests required for each kind of chang
 - Graduate developer-time guidance and change-review tools from experimental to supported.
 - Import third-party threat models as non-authoritative context and aggregate per-repository models into cross-repository views.
 - Analyze specifications as first-class input, emitting clearly labeled design findings only for explicit insecure statements.
-- Make trust boundaries stable and directly linkable from findings, including the violated assumption and attacker impact.
 - Let users override recon's component assessment (exposure, sensitivity, type) via a `.appsec/components.yaml` overlay to parametrize STRIDE coverage — escalation-only first, de-escalation logged and surfaced.
 - Publish a packaged marketplace release after the beta.
 
