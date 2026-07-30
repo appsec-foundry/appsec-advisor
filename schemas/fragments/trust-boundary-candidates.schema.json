@@ -12,9 +12,17 @@
     "dispositions"
   ],
   "properties": {
-    "schema_version": {"const": 1},
-    "component_inventory_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "assessment_input_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "schema_version": {
+      "const": 1
+    },
+    "component_inventory_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "assessment_input_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "candidates": {
       "type": "array",
       "maxItems": 500,
@@ -34,33 +42,97 @@
           "covered_flow_ids"
         ],
         "properties": {
-          "candidate_key": {"type": "string", "pattern": "^candidate-[a-z0-9-]+$", "maxLength": 80},
-          "name": {"type": "string", "minLength": 1, "maxLength": 100},
-          "from": {"type": "string", "pattern": "^(?:external|[a-z][a-z0-9-]+)$"},
-          "to": {"type": "string", "pattern": "^(?:external|[a-z][a-z0-9-]+)$"},
-          "kind": {"type": "string", "enum": ["network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"]},
-          "assumption": {"type": "string", "minLength": 1, "maxLength": 240},
+          "candidate_key": {
+            "type": "string",
+            "pattern": "^candidate-[a-z0-9-]+$",
+            "maxLength": 80
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^(?:external|[a-z][a-z0-9-]+)$"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^(?:external|[a-z][a-z0-9-]+)$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "network",
+              "process",
+              "identity",
+              "privilege",
+              "tenant",
+              "data-origin",
+              "third-party",
+              "build"
+            ]
+          },
+          "enforcement_point": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 120,
+            "description": "The single control that enforces this crossing (e.g. 'Express route middleware isAuthorized', 'OAuth authorization-code exchange', 'GITHUB_TOKEN scopes'). Two candidates naming the same enforcement point are the same boundary and are consolidated deterministically."
+          },
+          "assumption": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
           "evidence": {
             "type": "array",
             "maxItems": 5,
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["file"],
+              "required": [
+                "file"
+              ],
               "properties": {
                 "file": {
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 512,
-                  "not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/]|[a-zA-Z][a-zA-Z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)"}
+                  "not": {
+                    "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[a-zA-Z][a-zA-Z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)"
+                  }
                 },
-                "line": {"type": "integer", "minimum": 1}
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                }
               }
             }
           },
-          "confidence": {"type": "string", "enum": ["confirmed", "inferred", "unknown"]},
-          "covered_signal_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^signal-[a-z0-9-]+$"}},
-          "covered_flow_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^df-[0-9]{3,}$"}}
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "inferred",
+              "unknown"
+            ]
+          },
+          "covered_signal_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^signal-[a-z0-9-]+$"
+            }
+          },
+          "covered_flow_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^df-[0-9]{3,}$"
+            }
+          }
         }
       }
     },
@@ -70,12 +142,39 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["signal_id", "disposition", "candidate_keys", "rationale"],
+        "required": [
+          "signal_id",
+          "disposition",
+          "candidate_keys",
+          "rationale"
+        ],
         "properties": {
-          "signal_id": {"type": "string", "pattern": "^signal-[a-z0-9-]+$"},
-          "disposition": {"type": "string", "enum": ["boundary", "same-trust", "not-applicable", "unresolved"]},
-          "candidate_keys": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^candidate-[a-z0-9-]+$"}},
-          "rationale": {"type": "string", "minLength": 1, "maxLength": 300}
+          "signal_id": {
+            "type": "string",
+            "pattern": "^signal-[a-z0-9-]+$"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "boundary",
+              "same-trust",
+              "not-applicable",
+              "unresolved"
+            ]
+          },
+          "candidate_keys": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^candidate-[a-z0-9-]+$"
+            }
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
         }
       }
     }

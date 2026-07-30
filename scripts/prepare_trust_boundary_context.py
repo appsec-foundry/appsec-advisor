@@ -1180,6 +1180,269 @@ def validate_finding_boundary_refs(
     return cleaned, diagnostics
 
 
+# --------------------------------------------------------------------------- #
+# Deterministic consolidation (juice-shop 2026-07-30)
+#
+# `agents/appsec-trust-boundary-analyst.md` already defines a boundary as ONE
+# enforcement point and tells the analyst to "consolidate protocols or roles that
+# name one enforcement point" — but nothing downstream checked it, so every
+# candidate became a `tb-N` 1:1. A juice-shop run turned 19 signals into 6
+# boundaries with all 19 dispositions set to `boundary`; `same-trust` was never
+# used once. Two of the six were modelling errors: an in-process app→DB pair
+# presented as a privilege transition, and a Prometheus scrape modelled as
+# egress.
+# --------------------------------------------------------------------------- #
+_ROUTE_REGISTRATION_RE = re.compile(
+    r"\b(?:app|router|server)\s*\.\s*(?:get|post|put|patch|delete|head|options|all|use)\s*\(",
+)
+
+
+def _glob_matcher(pattern: str) -> re.Pattern[str]:
+    """Compile a path glob so `**` spans separators and `*` does not."""
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def _paths_contained(inner: list[str], outer: list[str]) -> bool:
+    """True when every glob in ``inner`` is covered by some glob in ``outer``.
+
+    Containment — not zone equality — is the reliable same-deployable signal.
+    juice-shop zones `sqlite-database` as `peer-service` while the boundary's own
+    assumption says "there is no separate network hop", so a zone comparison
+    would have missed it; `models/**` and `data/sequelize.ts` sitting inside
+    `models/**` + `data/**` would not.
+    """
+    if not inner or not outer:
+        return False
+    matchers = [_glob_matcher(p) for p in outer if isinstance(p, str) and p]
+    if not matchers:
+        return False
+    return all(
+        isinstance(candidate, str) and candidate and any(m.match(candidate) for m in matchers)
+        for candidate in inner
+    )
+
+
+def _same_deployable(a_paths: list[str], b_paths: list[str]) -> bool:
+    return _paths_contained(a_paths, b_paths) or _paths_contained(b_paths, a_paths)
+
+
+def _evidence_line(repo_root: Path, entry: dict) -> str:
+    """The single source line an evidence entry points at ("" when unreadable)."""
+    file_name = entry.get("file")
+    line_no = entry.get("line")
+    if not isinstance(file_name, str) or not isinstance(line_no, int) or line_no < 1:
+        return ""
+    target = (repo_root / file_name).resolve()
+    try:
+        target.relative_to(repo_root.resolve())
+    except ValueError:
+        return ""
+    try:
+        with target.open("r", encoding="utf-8", errors="replace") as handle:
+            for index, text in enumerate(handle, start=1):
+                if index == line_no:
+                    return text
+                if index > line_no:
+                    break
+    except OSError:
+        return ""
+    return ""
+
+
+_CONFIDENCE_RANK = {"unknown": 0, "inferred": 1, "confirmed": 2}
+
+
+def _crossing_class(candidate: dict) -> str:
+    if candidate.get("from") == "external":
+        return "ingress"
+    if candidate.get("to") == "external":
+        return "egress"
+    return "internal"
+
+
+def _consolidate_candidates(
+    candidates: list[dict],
+    *,
+    components: dict[str, dict],
+    repo_root: Path,
+) -> tuple[list[dict], dict[str, str], list[str]]:
+    """Normalize and merge candidates before they become canonical boundaries.
+
+    Three deterministic passes, all conservative:
+
+    1. **Direction** — a candidate modelled ``X → external`` whose own evidence
+       lands on a route registration is an ingress crossing; flip it.
+    2. **Same deployable** — endpoints that ship in one process are an internal
+       enforcement interface, so force ``kind: process``. They are NOT discarded:
+       the injection / mass-assignment / encryption-at-rest findings anchor here,
+       and dropping the row to `same-trust` would leave them nowhere to attach.
+       `same-trust` stays reserved for signals with no interface behind them.
+    3. **Merge** — candidates sharing one `enforcement_point` within the same
+       crossing class are one boundary. Merging happens ONLY on an explicit
+       enforcement point: over-merging destroys information silently, whereas
+       under-merging stays visible in the catalogue and is fixable next run.
+
+    Returns ``(surviving_candidates, alias_map, notes)``; ``alias_map`` maps every
+    original ``candidate_key`` to its survivor so signal promotion still resolves.
+    """
+    notes: list[str] = []
+    working = [deepcopy(row) for row in candidates]
+
+    for candidate in working:
+        key = candidate["candidate_key"]
+        if candidate.get("to") == "external" and candidate.get("from") in components:
+            if _looks_inbound(repo_root, candidate):
+                candidate["from"], candidate["to"] = "external", candidate["from"]
+                notes.append(
+                    f"{key}: direction corrected to ingress — evidence is a route registration, "
+                    f"not an outbound call"
+                )
+        if (
+            candidate.get("from") == "external"
+            and candidate.get("confidence") == "inferred"
+            and _ingress_is_evidenced(repo_root, candidate)
+        ):
+            candidate["confidence"] = "confirmed"
+            notes.append(
+                f"{key}: confidence inferred -> confirmed — cited evidence registers inbound routes"
+            )
+        source, target = candidate.get("from"), candidate.get("to")
+        if source in components and target in components:
+            if _same_deployable(
+                components[source].get("paths") or [],
+                components[target].get("paths") or [],
+            ) and candidate.get("kind") != "process":
+                notes.append(
+                    f"{key}: reclassified {candidate.get('kind')!r} -> 'process' — "
+                    f"{source} and {target} ship in one deployable"
+                )
+                candidate["kind"] = "process"
+
+    # Separation must be justified, not consolidation. A declared
+    # `enforcement_point` IS the justification: candidates that name one group by
+    # it, so two distinct controls at the same endpoints stay apart. Candidates
+    # that name none fall back to grouping by the crossing itself — same
+    # endpoints, same direction, no stated reason to be told apart, one boundary.
+    # The two schemes never mix: a declared point is a claim to separateness and
+    # is not absorbed by an undeclared neighbour.
+    groups: dict[tuple, list[dict]] = {}
+    for candidate in working:
+        point = candidate.get("enforcement_point")
+        if isinstance(point, str) and point.strip():
+            key = ("point", re.sub(r"\s+", " ", point.strip().casefold()), _crossing_class(candidate))
+        else:
+            key = ("crossing", candidate.get("from"), candidate.get("to"), _crossing_class(candidate))
+        groups.setdefault(key, []).append(candidate)
+
+    singles: list[dict] = []
+    merged: list[dict] = []
+    alias: dict[str, str] = {}
+    for members in groups.values():
+        survivor = members[0]
+        alias[survivor["candidate_key"]] = survivor["candidate_key"]
+        for other in members[1:]:
+            alias[other["candidate_key"]] = survivor["candidate_key"]
+            for field in ("covered_signal_ids", "covered_flow_ids"):
+                combined = list(survivor.get(field) or []) + list(other.get(field) or [])
+                survivor[field] = sorted(dict.fromkeys(combined))
+            seen_evidence = {
+                (e.get("file"), e.get("line")) for e in survivor.get("evidence") or [] if isinstance(e, dict)
+            }
+            for entry in other.get("evidence") or []:
+                marker = (entry.get("file"), entry.get("line")) if isinstance(entry, dict) else None
+                if marker and marker not in seen_evidence:
+                    seen_evidence.add(marker)
+                    survivor.setdefault("evidence", []).append(deepcopy(entry))
+            if _CONFIDENCE_RANK.get(other.get("confidence"), 0) > _CONFIDENCE_RANK.get(
+                survivor.get("confidence"), 0
+            ):
+                survivor["confidence"] = other["confidence"]
+            point = survivor.get("enforcement_point")
+            reason = (
+                f"same enforcement point {point!r}"
+                if point
+                else f"same crossing {survivor.get('from')} -> {survivor.get('to')}, "
+                "neither names a distinct enforcement point"
+            )
+            notes.append(f"{other['candidate_key']} merged into {survivor['candidate_key']} — {reason}")
+        merged.append(survivor)
+
+    order = {row["candidate_key"]: i for i, row in enumerate(candidates)}
+    merged.sort(key=lambda row: order.get(row["candidate_key"], 10**9))
+    return merged, alias, notes
+
+
+_EVIDENCE_SCAN_BYTES = 512_000
+
+
+def _file_registers_routes(repo_root: Path, file_name: str) -> bool:
+    """True when a cited evidence file registers at least one inbound route."""
+    if not isinstance(file_name, str) or not file_name:
+        return False
+    target = (repo_root / file_name).resolve()
+    try:
+        target.relative_to(repo_root.resolve())
+    except ValueError:
+        return False
+    try:
+        if not target.is_file():
+            return False
+        with target.open("r", encoding="utf-8", errors="replace") as handle:
+            return bool(_ROUTE_REGISTRATION_RE.search(handle.read(_EVIDENCE_SCAN_BYTES)))
+    except OSError:
+        return False
+
+
+def _ingress_is_evidenced(repo_root: Path, candidate: dict) -> bool:
+    """Does the repo actually show the inbound surface this candidate claims?
+
+    `confirmed` is what unlocks the entire external-ingress severity channel:
+    `appsec-stride-analyzer` may only emit a `boundary_refs[]` entry for a
+    confirmed boundary, and `triage_compute_ranking` only elevates on
+    `confirmed` + `from == "external"`. Leaving that judgement wholly to the
+    analyst made the channel unreachable on juice-shop — it marked exactly one
+    boundary `confirmed` and that one was outbound, so zero of six boundaries
+    were eligible and no finding could be elevated however strong its evidence.
+
+    Whether an inbound surface exists is a checkable fact rather than a
+    judgement, so verify it here: a cited evidence file that registers routes
+    proves the crossing. This only unlocks eligibility — elevation still requires
+    a finding-owned reference carrying its own evidence, and stays capped at High.
+    """
+    return any(
+        _file_registers_routes(repo_root, entry.get("file"))
+        for entry in candidate.get("evidence") or []
+        if isinstance(entry, dict)
+    )
+
+
+def _looks_inbound(repo_root: Path, candidate: dict) -> bool:
+    """True when the candidate's own evidence lands on a route registration.
+
+    A pull endpoint (`app.get('/metrics')`) is an INGRESS crossing however the
+    scraper is described in prose. Modelling it `component → external` both
+    invents a third-party egress boundary and mis-renders it: `figure1_svg`
+    routes any `to == "external"` row to an "outbound" note instead of a
+    perimeter divider.
+    """
+    for entry in candidate.get("evidence") or []:
+        if isinstance(entry, dict) and _ROUTE_REGISTRATION_RE.search(_evidence_line(repo_root, entry)):
+            return True
+    return False
+
+
 def promote_candidates(
     *,
     repo_root: Path,
@@ -1259,6 +1522,15 @@ def promote_candidates(
     if unreferenced:
         raise ValueError(f"candidates are not referenced by a boundary disposition: {sorted(unreferenced)}")
 
+    candidates, candidate_alias, consolidation_notes = _consolidate_candidates(
+        candidates,
+        components={row["id"]: row for row in assessment["components"]},
+        repo_root=repo_root,
+    )
+    candidate_by_key = {row["candidate_key"]: row for row in candidates}
+    for note in consolidation_notes:
+        print(f"trust-boundary-consolidation: {note}", file=sys.stderr)
+
     provisional_rows = []
     for candidate in candidates:
         row = {
@@ -1304,6 +1576,11 @@ def promote_candidates(
                 if row.get("from") == candidate["from"] and row.get("to") == candidate["to"]
             ]
         candidate_to_ids[key] = sorted(set(exact), key=_numeric_id)
+    # Dispositions still reference the pre-merge keys; point every alias at the
+    # survivor so signal promotion resolves after consolidation.
+    for original, survivor in candidate_alias.items():
+        if original not in candidate_to_ids:
+            candidate_to_ids[original] = list(candidate_to_ids.get(survivor, []))
 
     coverage_rows: list[dict] = []
     issues: list[dict] = []

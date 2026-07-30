@@ -1076,3 +1076,227 @@ def test_ingress_rows_to_unrelated_components_are_both_kept(tmp_path: Path) -> N
     )
 
     assert sorted(row["to"] for row in rows) == ["web-api", "worker"]
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic consolidation (juice-shop 2026-07-30)
+# --------------------------------------------------------------------------- #
+def _cand(key, *, frm, to, kind="network", point=None, conf="inferred", evidence=None, signals=None):
+    row = {
+        "candidate_key": key,
+        "name": f"{frm} to {to}",
+        "from": frm,
+        "to": to,
+        "kind": kind,
+        "assumption": "Something must remain true at this crossing for it to hold.",
+        "evidence": evidence if evidence is not None else [{"file": "src/auth.py", "line": 1}],
+        "confidence": conf,
+        "covered_signal_ids": signals if signals is not None else [f"signal-{key}"],
+        "covered_flow_ids": [],
+    }
+    if point:
+        row["enforcement_point"] = point
+    return row
+
+
+_COMPONENTS = {
+    "api": {"id": "api", "paths": ["server.ts", "routes/**", "models/**"]},
+    "db": {"id": "db", "paths": ["models/**"]},
+    "worker": {"id": "worker", "paths": ["worker/**"]},
+}
+
+
+def test_same_crossing_without_a_stated_reason_collapses(tmp_path: Path):
+    """Separation must be justified, not consolidation. Two candidates on one
+    crossing that name no distinct enforcement point are one boundary."""
+    merged, alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api"), _cand("c2", frm="external", to="api", kind="third-party")],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1"]
+    assert alias["c2"] == "c1"
+    assert merged[0]["covered_signal_ids"] == ["signal-c1", "signal-c2"]
+    assert any("merged into c1" in n for n in notes)
+
+
+def test_distinct_enforcement_points_stay_apart(tmp_path: Path):
+    """A declared enforcement point IS the reason to stay separate."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="external", to="api", point="Express route middleware isAuthorized"),
+            _cand("c2", frm="external", to="api", point="OAuth authorization-code exchange"),
+        ],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1", "c2"]
+
+
+def test_same_enforcement_point_merges_across_differing_names(tmp_path: Path):
+    merged, alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="external", to="api", point="Express route middleware"),
+            _cand("c2", frm="external", to="worker", point="express route MIDDLEWARE  "),
+        ],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1"]
+    assert alias["c2"] == "c1"
+
+
+def test_declared_point_is_not_absorbed_by_an_undeclared_neighbour(tmp_path: Path):
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="external", to="api"),
+            _cand("c2", frm="external", to="api", point="OAuth authorization-code exchange"),
+        ],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert sorted(c["candidate_key"] for c in merged) == ["c1", "c2"]
+
+
+def test_ingress_and_egress_never_merge(tmp_path: Path):
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api"), _cand("c2", frm="api", to="external")],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert sorted(c["candidate_key"] for c in merged) == ["c1", "c2"]
+
+
+def test_same_deployable_is_reclassified_to_process_not_discarded(tmp_path: Path):
+    """`db` paths sit inside `api` globs -> one process. The row survives as an
+    internal enforcement interface; discarding it would strand the injection and
+    data-access findings that anchor there."""
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="api", to="db", kind="network")],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert len(merged) == 1
+    assert merged[0]["kind"] == "process"
+    assert any("ship in one deployable" in n for n in notes)
+
+
+def test_separate_deployables_keep_their_kind(tmp_path: Path):
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="api", to="worker", kind="network")],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert merged[0]["kind"] == "network"
+
+
+def test_pull_endpoint_modelled_as_egress_is_corrected_to_ingress(tmp_path: Path):
+    """Direction is the flow of the REQUEST. `app.get('/metrics')` is scraped
+    from outside, so the crossing is inbound however the payload travels."""
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "server.ts").write_text(
+        "const x = 1\napp.get('/metrics', serveMetrics())\n", encoding="utf-8"
+    )
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="api", to="external", kind="third-party",
+               evidence=[{"file": "src/server.ts", "line": 2}])],
+        components=_COMPONENTS,
+        repo_root=repo,
+    )
+    assert (merged[0]["from"], merged[0]["to"]) == ("external", "api")
+    assert any("direction corrected" in n for n in notes)
+
+
+def test_genuine_outbound_call_keeps_its_direction(tmp_path: Path):
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "llm.ts").write_text(
+        "const res = await fetch(provider, { method: 'POST' })\n", encoding="utf-8"
+    )
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="api", to="external", kind="third-party",
+               evidence=[{"file": "src/llm.ts", "line": 1}])],
+        components=_COMPONENTS,
+        repo_root=repo,
+    )
+    assert (merged[0]["from"], merged[0]["to"]) == ("api", "external")
+    assert not any("direction corrected" in n for n in notes)
+
+
+def test_paths_contained_uses_glob_semantics_not_zone_labels():
+    assert prep._paths_contained(["models/**"], ["models/**", "routes/**"])
+    assert prep._paths_contained(["data/sequelize.ts"], ["data/**"])
+    assert prep._paths_contained(["routes/login.ts"], ["routes/**"])
+    assert not prep._paths_contained(["worker/**"], ["routes/**"])
+    # `*` must not span a separator.
+    assert not prep._paths_contained(["a/b/c.ts"], ["a/*"])
+
+
+def _repo_with(tmp_path: Path, rel: str, body: str) -> Path:
+    repo = tmp_path / "repo"
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+    return repo
+
+
+def test_ingress_confidence_is_upgraded_when_evidence_registers_routes(tmp_path: Path):
+    """`confirmed` gates the entire external-ingress severity channel. juice-shop
+    left every ingress boundary at `inferred`, so zero of six were eligible and
+    no finding could be elevated. Whether the inbound surface exists is a
+    checkable fact — verify it rather than trusting the analyst's caution."""
+    repo = _repo_with(tmp_path, "server.ts", "/*\n */\napp.get('/metrics', serve())\n")
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api", conf="inferred",
+               evidence=[{"file": "server.ts", "line": 1}])],
+        components=_COMPONENTS,
+        repo_root=repo,
+    )
+    assert merged[0]["confidence"] == "confirmed"
+    assert any("inferred -> confirmed" in n for n in notes)
+
+
+def test_ingress_without_route_evidence_stays_inferred(tmp_path: Path):
+    """A CI/CD or build boundary cites no inbound route — it must not be
+    upgraded just for being an `external ->` crossing."""
+    repo = _repo_with(tmp_path, ".github/workflows/ci.yml", "on: [push]\njobs: {}\n")
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api", kind="build", conf="inferred",
+               evidence=[{"file": ".github/workflows/ci.yml", "line": 1}])],
+        components=_COMPONENTS,
+        repo_root=repo,
+    )
+    assert merged[0]["confidence"] == "inferred"
+    assert not any("inferred -> confirmed" in n for n in notes)
+
+
+def test_egress_is_never_upgraded_by_the_ingress_rule(tmp_path: Path):
+    repo = _repo_with(tmp_path, "src/llm.ts", "await fetch(provider)\n")
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="api", to="external", kind="third-party", conf="inferred",
+               evidence=[{"file": "src/llm.ts", "line": 1}])],
+        components=_COMPONENTS,
+        repo_root=repo,
+    )
+    assert merged[0]["confidence"] == "inferred"
+
+
+def test_unknown_confidence_is_not_promoted(tmp_path: Path):
+    """Only `inferred` is upgraded — `unknown` means the analyst could not tell
+    what the crossing is, which route evidence alone does not resolve."""
+    repo = _repo_with(tmp_path, "server.ts", "app.post('/x', h())\n")
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api", conf="unknown",
+               evidence=[{"file": "server.ts", "line": 1}])],
+        components=_COMPONENTS,
+        repo_root=repo,
+    )
+    assert merged[0]["confidence"] == "unknown"
+
+
+def test_route_scan_does_not_escape_the_repo(tmp_path: Path):
+    outside = tmp_path / "outside.ts"
+    outside.write_text("app.get('/x', h())\n", encoding="utf-8")
+    repo = _repo_with(tmp_path, "keep.ts", "const x = 1\n")
+    assert prep._file_registers_routes(repo, "../outside.ts") is False

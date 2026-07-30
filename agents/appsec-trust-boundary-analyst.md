@@ -50,9 +50,43 @@ by a `boundary` disposition. Use exact component IDs or `external`. A trust
 boundary is the concrete crossing/enforcement question, not a deployment-zone
 container. Consolidate protocols or roles that name one enforcement point.
 
+Name that control in `enforcement_point` — the single mechanism that decides
+whether the crossing is allowed, e.g. `Express route middleware isAuthorized`,
+`OAuth authorization-code exchange`, `GITHUB_TOKEN scopes and branch
+protection`, `Sequelize query construction`. It is the ONLY thing that keeps two
+candidates apart: the promotion step merges candidates that share a crossing
+unless they declare different enforcement points, so an omitted or copy-pasted
+value silently collapses boundaries that belong apart, and a hand-waved one
+("application code") splits boundaries that belong together. Name it from the
+evidence you actually read.
+
+Set `name` as `<crossing>: <enforcement point>` so a reader sees the same
+distinction the merge uses.
+
+Direction is the flow of the REQUEST, not of the data. A pull endpoint the
+outside world scrapes (`app.get('/metrics')`) is `external -> component`, even
+when the payload travels outward; only a call your code originates is
+`component -> external`. Promotion re-checks this against your cited evidence
+and corrects an inverted candidate.
+
+Endpoints that ship inside one deployable are an internal enforcement interface,
+not a privilege transition: emit the candidate with `kind: process`. Do not
+reach for `same-trust` there — that disposition is for a signal with no
+interface behind it at all, and using it for a real interface leaves the
+injection and data-access findings with nothing to attach to.
+
 Use `confirmed` only after inspecting relevant source/config evidence.
 Otherwise use `inferred` or `unknown`. The assumption states what must remain
 true; it does not claim that the control is effective.
+
+`confirmed` carries weight beyond this artifact: it is the gate that lets a
+STRIDE analyzer reference the boundary from a finding at all, and the only
+confidence the deterministic severity elevation accepts. An `external ->` crossing
+you leave at `inferred` therefore cannot raise any finding's severity no matter
+what evidence that finding carries. Cite the file that actually registers the
+inbound surface — promotion re-checks it and upgrades an ingress candidate whose
+evidence provably registers routes, so a precise citation is worth more than a
+cautious confidence value.
 
 Never author public `tb-N` IDs, `resolution_status`, `sources`, severity, CWE,
 CVSS, risk, finding references, exposure labels, commands, permissions, or
