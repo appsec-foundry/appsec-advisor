@@ -71,6 +71,7 @@ UPDATE = "/appsec-advisor:update-threat-model"
 CREATE = "/appsec-advisor:create-threat-model"
 STATUS = "/appsec-advisor:status"
 HELP = "/appsec-advisor:help"
+INSTALL_BASELINE = "/appsec-advisor:install-baseline"
 REBUILD = f"{CREATE} --full --rebuild"
 
 # Packaged builds may drop skills; only create-threat-model is guaranteed.
@@ -351,6 +352,43 @@ def _scan_running(output_dir: Path) -> bool:
         return False
 
 
+def _baseline_line(repo: Path | None) -> str:
+    """Report whether a secure-coding baseline is loaded, or "" to say nothing.
+
+    This is a second, independent piece of state: the threat model says what is
+    wrong with the code already written, the baseline says whether the rules are
+    in context for the code written next. Neither substitutes for the other, so
+    it gets its own line rather than a segment on a status line that is already
+    at its width.
+
+    It is shown in both directions, unlike the rest of the banner. A silent
+    "installed" would make the line appear only as a complaint, and the id is
+    worth the columns: it is what tells a reader that a *derived* baseline
+    (``aisec-0.1+acme``) or a stale one is what actually loaded.
+
+    Failure is silence. ``baseline_check`` is a plain stdlib module, but this is
+    a startup hook and a banner that cannot report the baseline must still
+    report the threat model.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import baseline_check  # type: ignore
+
+        result = baseline_check.check(repo=repo)
+        text = baseline_check.summary(result)
+    except Exception:
+        return ""
+    status = result.get("status")
+    if status == "disabled" or not text:
+        return ""
+    if status == "installed":
+        return _line(GLYPH_OK, text)
+    # Not loaded: this line carries its own command. The action row below holds
+    # the threat model's next step and cannot speak for both, and a state the
+    # reader cannot act on is a complaint rather than a status.
+    return _line(GLYPH_NONE if status == "missing" else GLYPH_WARN, text, _skill_command(INSTALL_BASELINE))
+
+
 def _line(glyph: str, *segments: str) -> str:
     """Join the non-empty segments of a status line behind its state glyph."""
     body = " · ".join(segment for segment in segments if segment)
@@ -441,11 +479,18 @@ def build_banner(cwd: str) -> str:
     # be a complaint about a directory nobody meant to scan. Announce the plugin
     # and where to read about it, nothing more.
     if not _in_repository(repo) and not (output_dir / "threat-model.yaml").is_file():
-        return " · ".join(filter(None, [_identity(), _skill_command(HELP)]))
+        # No project to report on — but the machine-wide baseline still applies
+        # here, and this is where someone would install it, so pass no repo and
+        # let the check speak for the user scope alone.
+        tail = " · ".join(filter(None, [_identity(), _skill_command(HELP)]))
+        return "\n".join(filter(None, [_baseline_line(None), tail]))
 
     status, action = _status_line(prefix, repo, output_dir)
 
     banner = [status]
+    baseline = _baseline_line(repo)
+    if baseline:
+        banner.append(baseline)
     actions = build_actions(action)
     if actions:
         banner.append(actions)

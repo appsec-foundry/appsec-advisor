@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import tarfile
+from pathlib import Path
 
 import package_internal_plugin as pkg
 import pytest
@@ -234,6 +235,161 @@ def test_info_url_flag_overrides_the_org_profile(tmp_path):
     (build / "config.json").write_text(json.dumps({}), encoding="utf-8")
     pkg.patch_config(build, "https://flag.example")
     assert json.loads((build / "config.json").read_text())["banner"]["url"] == "https://flag.example"
+
+
+UPSTREAM_BASELINE = {
+    "baseline": {
+        "enabled": True,
+        "id": "aisec-0.1",
+        "name": "AI Secure Coding Baseline",
+        "url": "https://raw.githubusercontent.example/secure-coding-baseline.md",
+        "fallback_file": "data/baselines/secure-coding-baseline.md",
+        "install_filename": "secure-coding-baseline.md",
+    }
+}
+
+
+def write_profile(build: Path, body: str) -> None:
+    (build / "org-profile").mkdir(parents=True, exist_ok=True)
+    (build / "org-profile" / "org-profile.yaml").write_text(body, encoding="utf-8")
+    (build / "config.json").write_text(json.dumps(UPSTREAM_BASELINE), encoding="utf-8")
+
+
+def test_patch_config_keeps_the_default_baseline_without_a_profile(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "config.json").write_text(json.dumps(UPSTREAM_BASELINE), encoding="utf-8")
+    pkg.patch_config(build)
+    assert json.loads((build / "config.json").read_text())["baseline"] == UPSTREAM_BASELINE["baseline"]
+
+
+def test_org_baseline_replaces_the_upstream_source(tmp_path):
+    """The org owns the whole chain: a leftover upstream URL would be fetched,
+    fail the org's id check, and report a puzzling error."""
+    build = tmp_path / "build"
+    write_profile(
+        build,
+        "organization:\n  id: acme\nbaseline:\n  id: acme-sec-1.0\n"
+        "  name: ACME Secure Coding Baseline\n"
+        "  url: https://git.acme.internal/baseline.md\n",
+    )
+    pkg.patch_config(build)
+    baseline = json.loads((build / "config.json").read_text())["baseline"]
+    assert baseline["id"] == "acme-sec-1.0"
+    assert baseline["url"] == "https://git.acme.internal/baseline.md"
+    assert baseline["fallback_file"] is None, "the upstream copy carries a different id"
+    assert baseline["git"] is None
+
+
+def test_org_baseline_file_resolves_into_the_packaged_profile_directory(tmp_path):
+    build = tmp_path / "build"
+    write_profile(
+        build,
+        "baseline:\n  id: acme-sec-1.0\n  url: https://git.acme.internal/baseline.md\n  file: baselines/acme.md\n",
+    )
+    pkg.patch_config(build)
+    baseline = json.loads((build / "config.json").read_text())["baseline"]
+    assert baseline["fallback_file"] == "org-profile/baselines/acme.md"
+
+
+def test_org_baseline_accepts_a_git_source(tmp_path):
+    build = tmp_path / "build"
+    write_profile(
+        build,
+        "baseline:\n  id: acme-sec-1.0\n"
+        "  git:\n    url: git@git.acme.internal:appsec/baseline.git\n"
+        "    ref: main\n    path: secure-coding-baseline.md\n",
+    )
+    pkg.patch_config(build)
+    baseline = json.loads((build / "config.json").read_text())["baseline"]
+    assert baseline["git"]["path"] == "secure-coding-baseline.md"
+    assert baseline["url"] is None
+
+
+def test_org_can_disable_the_baseline_entirely(tmp_path):
+    """Disabling keeps the upstream source fields but turns the feature off."""
+    build = tmp_path / "build"
+    write_profile(build, "baseline:\n  enabled: false\n")
+    pkg.patch_config(build)
+    baseline = json.loads((build / "config.json").read_text())["baseline"]
+    assert baseline["enabled"] is False
+    assert baseline["url"] == UPSTREAM_BASELINE["baseline"]["url"]
+
+
+def test_org_baseline_drops_the_unused_upstream_copy(tmp_path):
+    """An org's own id would refuse the upstream copy, so shipping it is dead
+    weight — a third-party document under its own licence that nothing reads."""
+    build = tmp_path / "build"
+    write_profile(build, "baseline:\n  id: acme-sec-1.0\n  url: https://git.acme.internal/baseline.md\n")
+    bundled = build / "data" / "baselines"
+    bundled.mkdir(parents=True)
+    (bundled / "secure-coding-baseline.md").write_text("`baseline-id: aisec-0.1`\n", encoding="utf-8")
+    pkg.patch_config(build)
+    assert not bundled.exists()
+
+
+def test_the_default_build_keeps_the_bundled_copy(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "config.json").write_text(json.dumps(UPSTREAM_BASELINE), encoding="utf-8")
+    bundled = build / "data" / "baselines"
+    bundled.mkdir(parents=True)
+    (bundled / "secure-coding-baseline.md").write_text("`baseline-id: aisec-0.1`\n", encoding="utf-8")
+    pkg.patch_config(build)
+    assert (bundled / "secure-coding-baseline.md").is_file()
+
+
+def test_skill_description_reads_a_block_scalar(tmp_path):
+    """Several SKILL.md files write the description as `>-` with the value on the
+    following lines. A line scan returned the literal `>-`, and the packaged
+    README table shipped that as the skill's description."""
+    build = tmp_path / "build"
+    skill = build / "skills" / "install-baseline"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: install-baseline\ndescription: >-\n  Install the secure-coding baseline into\n"
+        "  Claude Code's instruction files. Second sentence dropped.\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+    desc = pkg._skill_description(build, "install-baseline")
+    assert desc == "Install the secure-coding baseline into Claude Code's instruction files."
+
+
+def test_skill_description_reads_a_plain_scalar(tmp_path):
+    build = tmp_path / "build"
+    skill = build / "skills" / "status"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: status\ndescription: Read-only overview. Does not modify anything.\n---\n",
+        encoding="utf-8",
+    )
+    assert pkg._skill_description(build, "status") == "Read-only overview."
+
+
+def test_skill_description_survives_malformed_frontmatter(tmp_path):
+    """A broken skill must not fail the build."""
+    build = tmp_path / "build"
+    skill = build / "skills" / "broken"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\ndescription: [unclosed\n---\n", encoding="utf-8")
+    assert pkg._skill_description(build, "broken") == ""
+
+
+def test_every_shipped_skill_has_a_readable_description():
+    """Guards the README table against the block-scalar regression returning."""
+    root = Path(__file__).resolve().parents[1]
+    for skill_md in sorted((root / "skills").glob("*/SKILL.md")):
+        name = skill_md.parent.name
+        desc = pkg._skill_description(root, name)
+        assert desc, f"{name}: no description resolved"
+        assert desc.strip() not in (">-", ">", "|", "|-"), f"{name}: block scalar leaked into the README"
+
+
+def test_patch_config_ignores_unknown_baseline_keys_from_the_profile(tmp_path):
+    build = tmp_path / "build"
+    write_profile(build, "baseline:\n  id: acme-sec-1.0\n  rogue_key: injected\n")
+    pkg.patch_config(build)
+    assert "rogue_key" not in json.loads((build / "config.json").read_text())["baseline"]
 
 
 def test_patch_config_ignores_unknown_banner_keys_from_the_profile(tmp_path):

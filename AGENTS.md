@@ -70,6 +70,7 @@ Code and schemas define behavior. Contract documents explain it. Tests guard aga
 | Cleanup and preserved state | `scripts/runtime_cleanup.py`, `docs/internal/contracts/cleanup-whitelist.md`, `docs/internal/contracts/audit-artifacts.md` | `tests/test_runtime_cleanup.py` |
 | Permissions | `data/required-permissions.yaml` | `tests/test_check_permissions.py` |
 | Org profiles and packaging | `schemas/org-profile.schema.yaml`, `docs/internal/contracts/org-profile-invariants.md` | org-profile, packaging, and smoke tests |
+| Secure-coding baseline | `scripts/baseline_check.py`, `scripts/install_baseline.py`, `config.json` → `baseline` | `tests/test_baseline_check.py`, `tests/test_install_baseline.py` |
 | Checkpoint and resume | checkpoint producers, `scripts/check_state.py`, consuming runtime | `tests/test_check_state*.py` |
 | Run status and liveness | `scripts/appsec_status.py --live`, `scripts/watch_run.py` | `docs/internal/runbooks/checking-run-status.md` |
 | Server-side dispatch and repair | `.github/workflows/`, preset JSON | `docs/internal/runbooks/server-side-dispatch.md` |

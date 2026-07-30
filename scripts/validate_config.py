@@ -57,6 +57,34 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
                     if parsed.scheme not in ("http", "https") or not parsed.netloc:
                         errors.append(f"{path}: 'banner.url' must be a valid http:// or https:// URL with a host")
 
+    # baseline (optional) — the secure-coding baseline the banner and the
+    # install / verify skills check for. An organization's own is resolved into
+    # this block at package time from its org profile.
+    baseline = data.get("baseline")
+    if baseline is not None:
+        if not isinstance(baseline, dict):
+            errors.append(f"{path}: 'baseline' must be an object")
+        else:
+            known = {"enabled", "id", "name", "url", "git", "fallback_file", "install_filename"}
+            unknown_baseline = set(baseline.keys()) - known
+            if unknown_baseline:
+                errors.append(f"{path}: unknown keys in 'baseline': {sorted(unknown_baseline)}")
+            if baseline.get("enabled") is not None and not isinstance(baseline["enabled"], bool):
+                errors.append(f"{path}: 'baseline.enabled' must be a boolean")
+            for key in ("id", "name", "url", "fallback_file", "install_filename"):
+                if baseline.get(key) is not None and not isinstance(baseline[key], str):
+                    errors.append(f"{path}: 'baseline.{key}' must be a string or null")
+            if baseline.get("git") is not None and not isinstance(baseline["git"], dict):
+                errors.append(f"{path}: 'baseline.git' must be an object or null")
+            # The id is what every check compares against; a source without one
+            # can never match, so the build would ship a baseline nothing accepts.
+            if not baseline.get("id") and any(baseline.get(k) for k in ("url", "git", "fallback_file")):
+                errors.append(f"{path}: 'baseline.id' is required when a source is configured")
+            if isinstance(baseline.get("url"), str) and baseline["url"]:
+                parsed = urlparse(baseline["url"])
+                if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                    errors.append(f"{path}: 'baseline.url' must be a valid http:// or https:// URL with a host")
+
     # external_context (required)
     ec = data.get("external_context")
     if ec is None:
@@ -137,7 +165,15 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
     # JSON has no native comments. The committed config permits a top-level
     # "_comment" field for human guidance while still rejecting operational
     # keys the runtime would silently ignore.
-    known_keys = {"_comment", "banner", "external_context", "pricing", "logging", "organization_profile"}
+    known_keys = {
+        "_comment",
+        "banner",
+        "baseline",
+        "external_context",
+        "pricing",
+        "logging",
+        "organization_profile",
+    }
     unknown = set(data.keys()) - known_keys
     if unknown:
         errors.append(f"{path}: unknown top-level keys: {sorted(unknown)}")

@@ -50,16 +50,31 @@ MANIFEST = json.loads((SCRIPT.parent.parent / ".claude-plugin" / "plugin.json").
 
 
 @pytest.fixture(autouse=True)
-def _tmp_path_is_a_repository(tmp_path):
-    """Make every tmp_path look like a working tree.
+def _tmp_path_is_a_repository(tmp_path, monkeypatch):
+    """Make every tmp_path look like a working tree, with an empty user scope.
 
     The banner only reports on a repository, and `_in_repository` walks up to
     the filesystem root — so on a machine that happens to have `/tmp/.git`, a
     bare tmp_path would pass for one and hide a regression. Creating the marker
     explicitly makes the precondition part of the test instead of the host.
+
+    ``HOME`` is redirected for the same reason: the baseline line reads
+    ``~/.claude/CLAUDE.md``, so a developer who has the baseline installed on
+    their own machine would otherwise get a different banner than CI.
     """
     (tmp_path / ".git").mkdir(exist_ok=True)
+    home = tmp_path / "_home"
+    (home / ".claude").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
     return tmp_path
+
+
+def install_baseline_for(repo: Path) -> None:
+    """Put the plugin's own baseline where the project scope loads it from."""
+    plugin_root = SCRIPT.parent.parent
+    config = json.loads((plugin_root / "config.json").read_text(encoding="utf-8"))["baseline"]
+    text = (plugin_root / config["fallback_file"]).read_text(encoding="utf-8")
+    (repo / "CLAUDE.md").write_text(text, encoding="utf-8")
 
 
 def write_model(
@@ -153,7 +168,7 @@ def test_identity_rides_on_the_action_row_not_the_status_line(tmp_path):
     """The status line pays a 27-column prefix; the action row does not."""
     lines = run_hook(str(tmp_path)).splitlines()
     assert lines[0] == f"{session_banner.GLYPH_NONE} no threat model in docs/security/"
-    assert lines[1].endswith(f"appsec-advisor {MANIFEST['version']}")
+    assert lines[-1].endswith(f"appsec-advisor {MANIFEST['version']}")
 
 
 # ---------------------------------------------------------------------------
@@ -164,9 +179,21 @@ def test_identity_rides_on_the_action_row_not_the_status_line(tmp_path):
 def test_outside_a_repository_only_the_plugin_and_help_are_announced(tmp_path, monkeypatch):
     """A directory nobody meant to scan gets no complaint about a missing model."""
     monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
-    assert session_banner.build_banner(str(tmp_path)) == (
-        f"appsec-advisor {MANIFEST['version']} · /appsec-advisor:help"
-    )
+    lines = session_banner.build_banner(str(tmp_path)).splitlines()
+    assert "threat model" not in " ".join(lines)
+    assert lines[-1] == f"appsec-advisor {MANIFEST['version']} · /appsec-advisor:help"
+
+
+def test_outside_a_repository_the_baseline_is_still_reported(tmp_path, monkeypatch):
+    """The machine-wide baseline applies here, and this is where it gets installed.
+
+    Unlike the threat model, it is not a claim about the current directory — so
+    reporting it outside a repository is information, not a complaint.
+    """
+    monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
+    lines = session_banner.build_banner(str(tmp_path)).splitlines()
+    assert lines[0].startswith(session_banner.GLYPH_NONE)
+    assert "not installed" in lines[0]
 
 
 def test_a_model_outside_a_repository_is_still_reported(tmp_path, monkeypatch):
@@ -330,7 +357,13 @@ def test_running_scan_is_marked_blue(tmp_path, monkeypatch):
     assert session_banner.build_banner(str(tmp_path)).startswith(session_banner.GLYPH_BUSY)
 
 
-def test_only_the_status_line_carries_a_glyph(tmp_path):
+def test_only_state_lines_carry_a_glyph(tmp_path):
+    """A glyph marks state. The action row is not state, so it carries none.
+
+    The banner has two state lines — the threat model and the secure-coding
+    baseline — and each is a verdict in its own right, so each gets a glyph.
+    What must stay glyph-free is the row of commands below them.
+    """
     write_model(tmp_path)
     glyphs = (
         session_banner.GLYPH_OK,
@@ -339,8 +372,87 @@ def test_only_the_status_line_carries_a_glyph(tmp_path):
         session_banner.GLYPH_NONE,
         session_banner.GLYPH_BUSY,
     )
-    for line in run_hook(str(tmp_path)).splitlines()[1:]:
-        assert not any(glyph in line for glyph in glyphs)
+    assert not any(glyph in run_hook(str(tmp_path)).splitlines()[-1] for glyph in glyphs)
+
+
+# ---------------------------------------------------------------------------
+# The secure-coding baseline line
+# ---------------------------------------------------------------------------
+
+
+def test_missing_baseline_is_reported_with_its_own_command(tmp_path):
+    """The action row speaks for the threat model, so this line carries its own.
+
+    A state the reader cannot act on is a complaint rather than a status.
+    """
+    write_model(tmp_path)
+    line = run_hook(str(tmp_path)).splitlines()[1]
+    assert line.startswith(session_banner.GLYPH_NONE)
+    assert "not installed" in line
+    assert "/appsec-advisor:install-baseline" in line
+
+
+def test_installed_baseline_is_reported_with_its_id(tmp_path):
+    """Shown in both directions: the id is what reveals a derived or stale one."""
+    write_model(tmp_path)
+    install_baseline_for(tmp_path)
+    line = run_hook(str(tmp_path)).splitlines()[1]
+    assert line.startswith(session_banner.GLYPH_OK)
+    assert "aisec-0.1" in line
+    assert "/appsec-advisor:" not in line, "nothing to act on when it is loaded"
+
+
+def test_baseline_line_sits_between_the_state_and_the_actions(tmp_path):
+    write_model(tmp_path)
+    lines = run_hook(str(tmp_path)).splitlines()
+    assert "threat model" in lines[0]
+    assert "Baseline" in lines[1]
+    assert lines[2].startswith("/appsec-advisor:")
+
+
+def test_a_baseline_in_the_repo_that_nothing_imports_is_reported_missing(tmp_path):
+    """Presence on disk is not loading — the banner must not claim otherwise."""
+    write_model(tmp_path)
+    plugin_root = SCRIPT.parent.parent
+    config = json.loads((plugin_root / "config.json").read_text(encoding="utf-8"))["baseline"]
+    (tmp_path / "secure-coding-baseline.md").write_text(
+        (plugin_root / config["fallback_file"]).read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    line = run_hook(str(tmp_path)).splitlines()[1]
+    assert line.startswith(session_banner.GLYPH_NONE)
+    assert "not loaded" in line, "on disk is not in context"
+    assert "aisec-0.1 ·" not in line, "an id here would read as loaded"
+
+
+def test_a_baseline_the_repo_carries_for_another_tool_is_named(tmp_path):
+    """It changes the next step from "install" to "connect what is there"."""
+    write_model(tmp_path)
+    plugin_root = SCRIPT.parent.parent
+    config = json.loads((plugin_root / "config.json").read_text(encoding="utf-8"))["baseline"]
+    (tmp_path / "AGENTS.md").write_text(
+        (plugin_root / config["fallback_file"]).read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    line = run_hook(str(tmp_path)).splitlines()[1]
+    assert "not loaded" in line
+    assert "AGENTS.md" in line
+
+
+def test_a_broken_baseline_check_does_not_break_the_banner(tmp_path, monkeypatch):
+    """Failure is silence: the threat model must still be reported."""
+    write_model(tmp_path)
+    monkeypatch.setattr(session_banner, "_baseline_line", lambda _repo: "")
+    lines = session_banner.build_banner(str(tmp_path)).splitlines()
+    assert len(lines) == 2
+    assert "threat model" in lines[0]
+
+
+def test_no_baseline_configured_drops_the_line(tmp_path, monkeypatch):
+    """A packaged build that configures none says nothing about it."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    write_model(repo)
+    packaged_root(tmp_path, ["create-threat-model"], monkeypatch)
+    assert len(session_banner.build_banner(str(repo)).splitlines()) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +463,7 @@ def test_only_the_status_line_carries_a_glyph(tmp_path):
 def test_action_row_offers_one_command_plus_help(tmp_path):
     write_model(tmp_path)
     lines = run_hook(str(tmp_path)).splitlines()
-    assert lines[1].startswith("/appsec-advisor:review-threat-model · /appsec-advisor:help")
+    assert lines[-1].startswith("/appsec-advisor:review-threat-model · /appsec-advisor:help")
 
 
 def test_status_line_carries_no_command(tmp_path):
@@ -378,7 +490,7 @@ def test_example_question_is_taken_from_the_ask_skill(tmp_path):
 
 
 def test_without_a_model_the_create_action_is_offered(tmp_path):
-    row = run_hook(str(tmp_path)).splitlines()[1]
+    row = run_hook(str(tmp_path)).splitlines()[-1]
     assert row.startswith("/appsec-advisor:create-threat-model · /appsec-advisor:help")
 
 
@@ -540,7 +652,7 @@ def test_no_information_line_in_the_banner(tmp_path):
     """The URL belongs to the help page; repeating it every session is noise."""
     message = run_hook(str(tmp_path))
     assert "more information" not in message
-    assert len(message.splitlines()) == 2
+    assert len(message.splitlines()) == 3  # threat model, baseline, actions
     assert not any(line.startswith("http") for line in message.splitlines())
     help_page = SCRIPT.parent.parent / "skills" / "help" / "SKILL.md"
     assert "More information" in help_page.read_text(encoding="utf-8")
@@ -576,7 +688,7 @@ def test_incompatible_analysis_version_demands_a_rebuild(tmp_path):
     write_model(tmp_path, analysis_version=max(MANIFEST["compatible_analysis_versions"]) + 1)
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
     assert "no longer compatible" in lines[0]
-    assert lines[1].startswith("/appsec-advisor:create-threat-model --full --rebuild")
+    assert lines[-1].startswith("/appsec-advisor:create-threat-model --full --rebuild")
 
 
 def test_supported_analysis_version_is_silent(tmp_path):

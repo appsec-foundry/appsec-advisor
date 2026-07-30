@@ -121,6 +121,54 @@ class TestMainConfig:
         }
         assert validate_config._validate_main_config(data, "test") == []
 
+    def test_baseline_block_ok(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "baseline": {
+                "enabled": True,
+                "id": "acme-sec-1.0",
+                "name": "ACME Secure Coding Baseline",
+                "url": "https://security.acme.example/baseline.md",
+                "git": None,
+                "fallback_file": "data/baselines/acme.md",
+                "install_filename": "secure-coding-baseline.md",
+            },
+        }
+        assert validate_config._validate_main_config(data, "test") == []
+
+    def test_baseline_unknown_key_rejected(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "baseline": {"id": "acme-sec-1.0", "rogue": 1},
+        }
+        errors = validate_config._validate_main_config(data, "test")
+        assert any("unknown keys in 'baseline'" in e for e in errors)
+
+    def test_baseline_source_without_an_id_rejected(self, validate_config):
+        """Every check compares against the id, so a source without one can never match."""
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "baseline": {"url": "https://security.acme.example/baseline.md"},
+        }
+        errors = validate_config._validate_main_config(data, "test")
+        assert any("'baseline.id' is required" in e for e in errors)
+
+    def test_baseline_url_must_be_http(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "baseline": {"id": "acme-sec-1.0", "url": "file:///etc/passwd"},
+        }
+        errors = validate_config._validate_main_config(data, "test")
+        assert any("baseline.url" in e for e in errors)
+
+    def test_baseline_cleared_source_is_ok(self, validate_config):
+        """Packaging nulls the upstream source when an org declares its own."""
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "baseline": {"id": "acme-sec-1.0", "url": None, "git": None, "fallback_file": None},
+        }
+        assert validate_config._validate_main_config(data, "test") == []
+
     def test_organization_profile_disabled_ok(self, validate_config):
         data = {
             "external_context": {"enabled": False, "rest_url": None},

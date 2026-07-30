@@ -513,6 +513,80 @@ def test_main_json_output_invalid(tmp_path, capsys):
     assert payload["errors"]
 
 
+# ---------- baseline block ------------------------------------------------
+
+
+def test_baseline_block_validates(acme_profile):
+    acme_profile["baseline"] = {
+        "id": "acme-sec-1.0",
+        "name": "ACME Secure Coding Baseline",
+        "url": "https://git.acme.internal/baseline.md",
+    }
+    assert vop.validate(acme_profile, FIXTURE_DIR) == []
+
+
+def test_baseline_git_source_validates(acme_profile):
+    acme_profile["baseline"] = {
+        "id": "acme-sec-1.0",
+        "git": {"url": "https://git.acme.internal/appsec/baseline.git", "ref": "main", "path": "baseline.md"},
+    }
+    assert vop.validate(acme_profile, FIXTURE_DIR) == []
+
+
+def test_baseline_unknown_key_fails(acme_profile):
+    acme_profile["baseline"] = {"id": "acme-sec-1.0", "rogue": "x"}
+    assert vop.validate(acme_profile, FIXTURE_DIR)
+
+
+def test_baseline_source_without_an_id_fails(acme_profile):
+    """The id is what every check compares against; a source without one is unusable."""
+    acme_profile["baseline"] = {"url": "https://git.acme.internal/baseline.md"}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("'id' is required" in e for e in errors), errors
+
+
+def test_baseline_url_with_credentials_fails(acme_profile):
+    acme_profile["baseline"] = {"id": "acme-sec-1.0", "url": "https://user:pw@git.acme.internal/baseline.md"}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("credentials" in e for e in errors), errors
+
+
+def test_baseline_url_scheme_must_be_http(acme_profile):
+    acme_profile["baseline"] = {"id": "acme-sec-1.0", "url": "file:///etc/passwd"}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("scheme" in e for e in errors), errors
+
+
+def test_baseline_file_must_exist(acme_profile):
+    acme_profile["baseline"] = {"id": "acme-sec-1.0", "file": "baselines/absent.md"}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("not found" in e for e in errors), errors
+
+
+def test_baseline_file_must_not_escape_the_profile_directory(acme_profile):
+    acme_profile["baseline"] = {"id": "acme-sec-1.0", "file": "../../../etc/passwd"}
+    assert vop.validate(acme_profile, FIXTURE_DIR)
+
+
+def test_baseline_file_must_declare_the_configured_id(acme_profile, tmp_path):
+    """Caught at package time, not at install time on somebody's laptop."""
+    (tmp_path / "baselines").mkdir()
+    (tmp_path / "baselines" / "acme.md").write_text("`baseline-id: other-9.9`\n", encoding="utf-8")
+    (tmp_path / "org-profile.yaml").write_text("x", encoding="utf-8")
+    acme_profile["baseline"] = {"id": "acme-sec-1.0", "file": "baselines/acme.md"}
+    errors = vop.validate(acme_profile, tmp_path)
+    assert any("would refuse it" in e for e in errors), errors
+
+
+def test_baseline_file_declaring_the_id_passes(acme_profile, tmp_path):
+    (tmp_path / "baselines").mkdir()
+    (tmp_path / "baselines" / "acme.md").write_text("`baseline-id: acme-sec-1.0`\n", encoding="utf-8")
+    acme_profile["baseline"] = {"id": "acme-sec-1.0", "file": "baselines/acme.md"}
+    # Scoped to baseline errors: tmp_path is not the fixture directory, so the
+    # profile's other relative paths do not resolve here.
+    assert [e for e in vop.validate(acme_profile, tmp_path) if e.startswith("baseline")] == []
+
+
 def test_module_runs_as_script():
     import subprocess
 

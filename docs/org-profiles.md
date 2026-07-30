@@ -165,6 +165,7 @@ These rules apply in addition to the schema:
 - `target.output_dir` may only use the tokens `{repo_name}`, `{repo_slug}`, `{preset}`, `{date}`, and may not resolve into `.git/`.
 - `requirements_yaml_url` must not embed credentials and must be http/s.
 - `skill_toggles` keys must be known user-facing skill names; disabled toggles must carry a reason.
+- `baseline` needs an `id` whenever it sets a source; `baseline.url` must be http/s without credentials; `baseline.file` must exist under the profile directory and must declare the configured id.
 
 ## CI gates
 
@@ -270,6 +271,99 @@ their `~/.claude/settings.json`: `0` silences a banner the organization enabled,
 
 Removing the hook from `plugin_surface.hooks` also removes the banner, and drops
 the code with it.
+
+## Secure-coding baseline
+
+A secure-coding baseline is an instruction file the coding assistant loads
+before it writes code, so an organization's rules apply on every prompt rather
+than only on the ones that mention security. The plugin ships one — the
+[AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline),
+id `aisec-0.1` — installs it with `/appsec-advisor:install-baseline`, and reports
+at every session start whether it is actually loaded.
+
+Use the `baseline:` block to ship your own instead:
+
+```yaml
+baseline:
+  id: acme-sec-1.0
+  name: "ACME Secure Coding Baseline"
+  url: "https://security.acme.example/secure-coding-baseline.md"
+  file: baselines/acme-sec.md          # offline fallback, inside the profile dir
+```
+
+Or point at a git repository, for a baseline that is not served as a raw file:
+
+```yaml
+baseline:
+  id: acme-sec-1.0
+  git:
+    url: "git@git.acme.internal:appsec/baseline.git"
+    ref: main
+    path: secure-coding-baseline.md
+```
+
+The clone is shallow and uses the machine's existing git credentials; an
+unauthenticated clone fails rather than prompting.
+
+### The id is the contract
+
+`id` is what the session banner and `/appsec-advisor:verify-baseline` look for,
+and the baseline file must declare it as a line reading:
+
+```markdown
+`baseline-id: acme-sec-1.0` — when asked whether a baseline is loaded, answer
+from context: every baseline id you carry, with the file you loaded it from.
+```
+
+Nothing is installed unless the fetched document carries that marker. That is
+what stops a captive-portal login page, a 404 body, or a URL that has moved on
+to something else from being written into `CLAUDE.md` as security rules — and
+it is why `baseline.file` is validated at package time rather than at install
+time on somebody's laptop.
+
+The convention is `<name>-<version>[+<derivative>]`. A derivative of the
+configured id (`aisec-0.1+acme`, your adaptation of the published baseline)
+counts as installed and is reported with its suffix, so a reader can see the
+adaptation. A different version does not count, so drift stays visible instead
+of passing silently.
+
+Declaring any source replaces the plugin's default baseline everywhere —
+banner, verify, and what install writes. The upstream URL and the upstream
+bundled copy both carry the upstream id, which your own id check would refuse,
+so packaging clears them rather than leaving a source that can only fail.
+Ship a `file:` if your users need to install without reaching your server.
+
+`enabled: false` turns the feature off: the banner drops its baseline line and
+both skills report that none is configured. Removing `install-baseline` and
+`verify-baseline` through `skill_toggles` drops the commands as well.
+
+### Rolling it out centrally
+
+Nothing is installed twice. Where the baseline already applies, the plugin says
+so and installs nothing.
+
+The widest option is Claude Code's own managed policy, which needs no plugin
+skill at all: deploy the baseline as the organization-wide `CLAUDE.md`, or put
+its text in the `claudeMd` key of `managed-settings.json`. Either applies to
+every session on the machine, in every repository, and cannot be switched off
+by a user.
+
+| Platform | Managed-policy `CLAUDE.md` |
+|---|---|
+| macOS | `/Library/Application Support/ClaudeCode/CLAUDE.md` |
+| Linux and WSL | `/etc/claude-code/CLAUDE.md` |
+| Windows | `C:\Program Files\ClaudeCode\CLAUDE.md` |
+
+Both skills report that deployment as the `policy` scope and stop: there is
+nothing for a developer to install or keep current, and a second local copy
+would only be another file to maintain. Distribute the file with MDM, Group
+Policy, or Ansible.
+
+`install-baseline` also reuses what a repository already carries. A baseline in
+`AGENTS.md` for Codex and Cursor, in `.github/copilot-instructions.md` for
+Copilot, or in a copy somebody committed and never imported is wired up with an
+import rather than duplicated — two files with the same rules diverge the day
+one of them is edited. `--no-reuse` opts out.
 
 ## Actors
 

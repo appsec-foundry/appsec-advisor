@@ -76,6 +76,19 @@ not contain the answer, you are told so.
 /appsec-advisor:create-threat-model --full --rebuild      clean slate, F-IDs may be reassigned
 ```
 
+## Secure coding, before the code exists
+
+A threat model finds what is already wrong. The secure-coding baseline is an
+instruction file the assistant loads before it writes anything, so the rules
+apply on every prompt — not only the ones that mention security.
+
+```text
+/appsec-advisor:install-baseline    menu: this machine, or this repository
+/appsec-advisor:verify-baseline     is it actually loaded? read-only, exits 1 if not
+```
+
+It loads at the next session start, not the one it was installed in.
+
 ## Everything else
 
 ```text

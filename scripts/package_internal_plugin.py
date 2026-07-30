@@ -205,6 +205,59 @@ def _org_profile_banner(build: Path) -> dict:
     return {key: value for key, value in banner.items() if key in ("enabled", "headline", "url")}
 
 
+def _org_profile_baseline(build: Path) -> dict:
+    """The organization's own secure-coding baseline, resolved into config.json.
+
+    Like the banner, this is read at build time so the SessionStart hook stays
+    free of a YAML dependency. Declaring any source *replaces* the plugin's
+    default baseline rather than merging with it: the upstream URL and the
+    upstream bundled copy both carry the upstream id, which the organization's
+    own id check would refuse anyway, so keeping them would only produce a
+    confusing failure. ``file`` is rewritten to the packaged profile path,
+    because the profile directory is where it lands in the build.
+    """
+    profile_path = build / "org-profile" / "org-profile.yaml"
+    if not profile_path.is_file():
+        return {}
+    baseline = _load_yaml_or_json(profile_path).get("baseline")
+    if not isinstance(baseline, dict):
+        return {}
+
+    resolved = {key: value for key, value in baseline.items() if key in ("enabled", "id", "name", "install_filename")}
+    if baseline.get("url"):
+        resolved["url"] = baseline["url"]
+    if isinstance(baseline.get("git"), dict):
+        resolved["git"] = baseline["git"]
+    if baseline.get("file"):
+        resolved["fallback_file"] = f"org-profile/{str(baseline['file']).lstrip('/')}"
+
+    if any(key in resolved for key in ("url", "git", "fallback_file")):
+        # An organization that names its own source owns the whole chain; a
+        # leftover upstream source would be fetched, fail the id check, and
+        # report a puzzling error.
+        for key in ("url", "git", "fallback_file"):
+            resolved.setdefault(key, None)
+    return resolved
+
+
+def _prune_unused_baselines(build: Path, baseline: dict) -> None:
+    """Drop the upstream bundled baseline when the build does not use it.
+
+    An organization that ships its own baseline never reads the copy in
+    ``data/baselines/`` — its id would not match, so an install would refuse it.
+    Leaving it in place ships a third-party document, under its own licence,
+    that the build's configuration never touches: dead weight in an internal
+    package and a puzzle for whoever audits it.
+    """
+    bundled_dir = build / "data" / "baselines"
+    if not bundled_dir.is_dir():
+        return
+    fallback = baseline.get("fallback_file")
+    if isinstance(fallback, str) and fallback.startswith("data/baselines/"):
+        return
+    shutil.rmtree(bundled_dir, ignore_errors=True)
+
+
 def patch_config(build: Path, info_url: str | None = None) -> None:
     config_path = build / "config.json"
     data = json.loads(config_path.read_text(encoding="utf-8"))
@@ -212,6 +265,11 @@ def patch_config(build: Path, info_url: str | None = None) -> None:
         "enabled": True,
         "path": "org-profile/org-profile.yaml",
     }
+    baseline = dict(data.get("baseline") or {})
+    baseline.update(_org_profile_baseline(build))
+    if baseline:
+        data["baseline"] = baseline
+        _prune_unused_baselines(build, baseline)
     banner = dict(data.get("banner") or {})
     banner.update(_org_profile_banner(build))
     if info_url is not None:
@@ -658,21 +716,44 @@ UTILITY_SKILLS = ["help", "threat-model-health", "check-permissions", "status", 
 
 
 def _skill_description(build: Path, skill: str) -> str:
+    """First sentence of a skill's description, for the packaged README table.
+
+    The frontmatter is parsed as YAML rather than scanned line by line. Several
+    skills write the description as a block scalar::
+
+        description: >-
+          Install the secure-coding baseline into ...
+
+    where the value is on the following lines — a line scan returned the literal
+    ``>-`` and the README table shipped that as the skill's description.
+    """
     skill_md = build / "skills" / skill / "SKILL.md"
     if not skill_md.exists():
         return ""
-    for line in skill_md.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line.startswith("description:"):
-            desc = line[len("description:") :].strip()
-            # Truncate at first sentence boundary for readability
-            for sep in (". ", ".\n"):
-                idx = desc.find(sep)
-                if idx != -1:
-                    desc = desc[: idx + 1]
-                    break
-            return desc
-    return ""
+    lines = skill_md.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return ""
+    try:
+        end = lines.index("---", 1)
+    except ValueError:
+        return ""
+    try:
+        import yaml
+
+        front = yaml.safe_load("\n".join(lines[1:end]))
+    except Exception:  # noqa: BLE001 — a malformed skill must not fail the build
+        return ""
+    desc = (front or {}).get("description") if isinstance(front, dict) else None
+    if not isinstance(desc, str):
+        return ""
+    # A block scalar folds into one line but keeps its newlines when literal;
+    # collapse whitespace so the value fits a Markdown table cell.
+    desc = " ".join(desc.split())
+    # Truncate at the first sentence boundary for readability.
+    idx = desc.find(". ")
+    if idx != -1:
+        desc = desc[: idx + 1]
+    return desc
 
 
 def _skill_section(name: str, org_name: str, skill: str, build: Path) -> str:

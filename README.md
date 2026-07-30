@@ -181,10 +181,13 @@ These developer tools provide security guidance while code is being written or r
 
 | Tool | Type | Scope | Entry point | When to use it |
 |---|---|---|---|---|
+| Secure-coding baseline | Skill | Instruction files | `/appsec-advisor:install-baseline` · `/appsec-advisor:verify-baseline` | Put secure-coding rules in the assistant's context before it writes code, and check that they actually loaded. |
 | [Security Coach hook](docs/dev-security-helper-usage.md#security-coach-hook) (*experimental*) | Hook | Prompt-time guidance | `APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-advisor` | Add security guidance to Claude's context while you write security-sensitive code. |
 | [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Agent | Change review engine | `appsec-reviewer` | Embed the reviewer in a Claude Code or Agent SDK workflow. |
 | [verify-requirements](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*) | Skill | Interactive diff review | `/appsec-advisor:verify-requirements` | Review current, staged, or base-ref changes from an interactive Claude Code session. |
 | [appsec-reviewer-cli](docs/dev-security-helper-usage.md#appsec-reviewer-cli) (*experimental*) | CLI | CI diff review | `appsec-reviewer-cli review --diff origin/main --output security-review.md` | Run the same requirements review headlessly in CI or other automation. |
+
+The secure-coding baseline is an instruction file Claude Code loads before it writes code, so the rules apply on every prompt rather than only on the ones that mention security. The plugin ships the [AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline) and reports at every session start whether it is loaded; an organization can ship its own instead — see [Secure-coding baseline](docs/org-profiles.md#secure-coding-baseline).
 
 Full guide: [`docs/dev-security-helper-usage.md`](docs/dev-security-helper-usage.md) · Requirements catalog setup: [`docs/harvester.md`](docs/harvester.md) · Security Coach: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 

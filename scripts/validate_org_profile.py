@@ -53,9 +53,11 @@ KNOWN_SKILLS: set[str] = {
     "clean-run-state",
     "export-threat-model",
     "fix-run-issues",
+    "install-baseline",
     "publish-threat-model",
     "status",
     "threat-model-health",
+    "verify-baseline",
 }
 
 ALLOWED_OUTPUT_DIR_TOKENS: set[str] = {"repo_name", "repo_slug", "preset", "date"}
@@ -233,6 +235,52 @@ def _check_requirements_url(profile: dict) -> list[str]:
     return errors
 
 
+def _check_baseline(profile: dict, profile_dir: Path) -> list[str]:
+    """Structural checks for the baseline block that JSON Schema cannot express.
+
+    The id is the whole contract — every check and the install-time refusal
+    compare against it — so a source without one is caught here rather than at
+    install time on somebody's laptop. The bundled fallback is verified the same
+    way: it must exist, and it must actually declare the configured id, or the
+    offline install path silently produces a file the next check reports as not
+    loaded.
+    """
+    errors: list[str] = []
+    baseline = profile.get("baseline")
+    if not isinstance(baseline, dict):
+        return errors
+
+    baseline_id = baseline.get("id")
+    has_source = any(baseline.get(key) for key in ("url", "git", "file"))
+    if has_source and not baseline_id:
+        errors.append("baseline: 'id' is required when a source (url / git / file) is set")
+
+    url = baseline.get("url")
+    if isinstance(url, str) and url:
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            errors.append("baseline.url must not embed credentials")
+        if parsed.scheme not in ("http", "https"):
+            errors.append(f"baseline.url scheme '{parsed.scheme}' is not http/https")
+
+    rel = baseline.get("file")
+    if isinstance(rel, str) and rel:
+        resolved, err = _resolve_under(profile_dir, rel)
+        if err:
+            errors.append(f"baseline.file: {err}")
+        elif resolved is None or not resolved.is_file():
+            errors.append(f"baseline.file: file not found at '{rel}'")
+        elif baseline_id:
+            text = resolved.read_text(encoding="utf-8", errors="replace")
+            found = re.findall(r"baseline-id:\s*`?([A-Za-z0-9][A-Za-z0-9._+-]*)", text)
+            if not any(f == baseline_id or f.startswith(baseline_id + "+") for f in found):
+                got = ", ".join(found) if found else "no baseline id at all"
+                errors.append(
+                    f"baseline.file '{rel}' declares {got}, not '{baseline_id}' — the install would refuse it"
+                )
+    return errors
+
+
 def _check_mcp(profile: dict) -> list[str]:
     """Structural checks for the mcp.servers block that JSON Schema cannot express:
     each server must be reachable (url or command), and a server url must not
@@ -392,6 +440,7 @@ def validate(profile: Any, profile_dir: Path, plugin_version: str | None = None)
     errors += _check_requirements_url(profile)
     errors += _check_mcp(profile)
     errors += _check_hooks(profile, profile_dir)
+    errors += _check_baseline(profile, profile_dir)
     errors += _check_skill_toggles(profile)
     errors += _check_compatibility(profile, plugin_version or _read_plugin_version())
     errors += _check_abuse_cases(profile, profile_dir)

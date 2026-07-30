@@ -154,6 +154,99 @@ properties:
           or pass `--info-url ""` when packaging to drop the line entirely. The
           session banner itself does not print it.
 
+  baseline:
+    type: object
+    additionalProperties: false
+    description: |
+      The secure-coding baseline this organization installs into Claude Code's
+      instruction files — the rules the assistant loads before it writes code.
+      Declaring it here replaces the plugin's default baseline everywhere: the
+      session-start banner, `/appsec-advisor:verify-baseline`, and what
+      `/appsec-advisor:install-baseline` installs.
+
+      `package_internal_plugin.py` resolves this block into the packaged
+      `config.json`, because the banner runs as a SessionStart hook and stays
+      free of a YAML dependency.
+
+      `id` is the whole contract. The baseline file must declare it as a line
+      reading `baseline-id: <id>`, and that marker is what every check looks
+      for; a document that does not carry it is refused rather than installed,
+      which is what stops a login page or a 404 body from being written in as
+      security rules. The convention is `<name>-<version>[+<derivative>]`
+      (`acme-sec-1.0`, or `aisec-0.1+acme` for an adaptation of the published
+      baseline) — see docs/org-profiles.md.
+    properties:
+      enabled:
+        type: boolean
+        description: |
+          Set false to ship a build that neither checks for nor installs a
+          baseline. The banner drops its baseline line and both skills report
+          that none is configured. Removing the two skills through
+          `skill_toggles` also drops the commands.
+      id:
+        type: string
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._+-]{0,79}$"
+        description: |
+          The id the baseline file declares, e.g. `acme-sec-1.0`. Required
+          whenever this block sets a source. A derivative (`<id>+suffix`) of
+          the configured id counts as installed and is reported with its
+          suffix; a different version does not, so drift stays visible.
+      name:
+        type: string
+        minLength: 1
+        maxLength: 120
+        description: |
+          Display name used in the banner and both skills, e.g.
+          "ACME Secure Coding Baseline".
+      url:
+        type: string
+        minLength: 1
+        maxLength: 2048
+        description: |
+          http(s) URL of the baseline markdown file itself — a raw-file URL, not
+          a rendered page. Subject to `policy.url_allowlist` when that is set.
+          Takes precedence over `git`.
+      git:
+        type: object
+        additionalProperties: false
+        required: [url, path]
+        description: |
+          A baseline kept in a git repository rather than served as a raw file.
+          Cloned shallowly with the machine's existing git credentials; an
+          unauthenticated clone fails rather than prompting.
+        properties:
+          url:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          ref:
+            type: string
+            minLength: 1
+            maxLength: 120
+            description: "Branch or tag to clone; defaults to the repository's HEAD."
+          path:
+            type: string
+            minLength: 1
+            maxLength: 240
+            description: Path of the baseline file inside the repository.
+      file:
+        type: string
+        minLength: 1
+        maxLength: 240
+        description: |
+          Optional fallback copy shipped inside the profile directory, used when
+          `url` / `git` cannot be reached — an air-gapped machine, a proxy, an
+          outage. Path is relative to the profile directory. Without it, a build
+          that declares its own baseline has no offline install path, because
+          the plugin's bundled copy is a different baseline and would be refused
+          by the id check.
+      install_filename:
+        type: string
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\\.md$"
+        description: |
+          Filename written into the repository or `~/.claude/` on install
+          (default: `secure-coding-baseline.md`).
+
   default_preset:
     type: string
     pattern: "^[a-z0-9][a-z0-9_-]{1,62}$"
