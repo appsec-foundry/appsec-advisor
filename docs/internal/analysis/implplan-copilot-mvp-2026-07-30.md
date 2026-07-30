@@ -124,6 +124,38 @@ The required architectural boundary is semantic:
 Introduce a small host descriptor only if it removes repeated branching. Do not
 add a generic abstraction framework before two concrete callers need it.
 
+## Keeping the two control planes aligned
+
+The failure this section prevents: someone changes one host's prompts, agents,
+or stage set, the other host is not updated, and the divergence surfaces months
+later as a quality difference nobody can attribute. Three rules, in the order
+they do the work.
+
+1. **Do not duplicate what both hosts need.** Host-neutral semantics — prose
+   rules, the finding-title contract, severity and CVSS rules, secret handling,
+   QA cross-reference rules — stay in the 22 files under `agents/shared/` and
+   are referenced, never copied. Only the loading line is host-specific, and
+   Phase 1 already replaces it with an asset-root path. A Copilot profile that
+   inlines shared text has created the drift, not the later edit.
+2. **Make the stage set data, not prose.** Stage, required sidecar, schema, and
+   sole output authority belong in one registry both control planes and the
+   tests read. Adding a stage to one host then fails the other host's test
+   instead of passing silently.
+3. **Extend the existing drift guards across both agent sets.**
+   `tests/test_agent_definitions.py` already asserts that report-producing
+   agents reference `agents/shared/prose-style.md` and caps inline copies of
+   shared log templates. Both currently glob `agents/*.md`; they must also
+   cover `.github/agents/*.agent.md`. This runs in the unit-test lane on every
+   push, not in the expensive replay.
+
+Do not pin hashes of one host's prompt to the other's. Claude prompts change
+often, the pin would be bumped reflexively, and a warning nobody reads is worse
+than none.
+
+What genuinely cannot be shared — tool names, dispatch semantics, approval and
+execution model — is listed explicitly as not parity-tracked. Keep that list
+short and review it when it grows.
+
 ## Required artifact and safety contracts
 
 1. Continue using the existing sidecar graph: component inventory, recon
@@ -192,7 +224,11 @@ Audit every production command used by the MVP for:
 - embedded shell commands in repair plans, event payloads, and user-facing
   remediation strings.
 
-The audit must produce a caller-to-command matrix. About 28 scripts mention
+The audit must produce a caller-to-command matrix, and that matrix is a
+versioned list plus a test, not a note: the commands named host-neutral must
+not read `CLAUDE_PLUGIN_ROOT` or resolve `.claude/` paths, and a new one that
+does fails the unit-test lane. Without that gate the shared core drifts back
+into the Claude control plane one commit at a time. About 28 scripts mention
 `CLAUDE_PLUGIN_ROOT` today, so state the reachable subset explicitly before
 editing. Do not broaden every script preemptively: only commands reachable from
 the MVP state machine are in scope, plus their direct metadata, permission, and
@@ -310,8 +346,9 @@ contracted report sections and their own sidecars; folding them into recon
 drops Sections 1 through 6 from the output.
 
 Each profile must name only the tools it needs and declare its read/write
-authority. Reuse shared prose and contract resources where they are genuinely
-host-neutral. Translate tool instructions such as `Read`, `Grep`, `Write`,
+authority. Reference the shared prose and contract resources under
+`agents/shared/` through the asset root; copying their text into a profile is
+what makes the two hosts diverge. Translate tool instructions such as `Read`, `Grep`, `Write`,
 `Agent`, and Claude task calls into Copilot's actual tools and execution model.
 
 Agent responsibilities:
@@ -450,6 +487,10 @@ Add focused tests for:
    the pinned order, and the auto-emitters run after every YAML build.
 9. The packaging decision for the Copilot surface, asserted against the
    package-surface manifest so a silent drop fails the build.
+10. Cross-host alignment: the shared-resource reference assertions and the
+    inline-copy ceilings in `tests/test_agent_definitions.py` cover
+    `.github/agents/*.agent.md` as well as `agents/*.md`, the stage registry
+    is complete for both hosts, and the host-neutral command list holds.
 
 Keep `scripts/e2e_fixture.sh` as a Claude-only regression check: it invokes
 `run-headless.sh` and requires the `claude` CLI. It proves the shared core
@@ -495,6 +536,7 @@ Existing files this MVP changes:
 | `scripts/baseline_check.py` | host-specific instruction discovery |
 | `scripts/validate_org_profile.py` | host projection, explicit unsupported-feature error |
 | `scripts/resolve_config.py` | asset-root and host input |
+| `tests/test_agent_definitions.py` | shared-reference and inline-copy guards cover both agent sets |
 | `CHANGELOG.md`, `AGENTS.md` | one bullet, one change-map row |
 
 `scripts/resolve_config.py` is listed in ruff's `extend-exclude`; never run
@@ -550,7 +592,7 @@ repeated branching; otherwise the provider input stays inside the controller.
 | Render state stops after the composer | Placeholders and unenriched YAML ship as a finished report | Model the post-compose chain as its own state; test the pinned mutation order. |
 | Copilot surface lives under `.github/` | The repair loop cannot touch it, and an organization build drops it silently | Record the repair-loop exclusion instead of weakening the Gate; decide and test the packaging rule before the first file lands. |
 | Hook event mismatch | Missing telemetry or misleading success state | Make telemetry additive; state transitions and gates remain deterministic. |
-| Copied prompts diverge | Claude and Copilot findings/report quality drift | Share contracts/prose where possible; keep only host adapters separate; add cross-host fixture checks. |
+| One host is changed, the other is not | Findings and report quality drift apart, and nobody can attribute the difference | Reference `agents/shared/` instead of copying; make the stage set a registry both hosts read; extend the existing reference assertions and inline-copy ceilings to both agent sets so a one-sided change fails on push. |
 | Weaker MVP path bypasses safety checks | Security regression | Define mandatory scripts per state; add negative tests for skipped redaction, schema, and QA gates. |
 | Copilot environment or cloud execution differs from local CLI | Unsupported scripts/dependencies or data exposure | Scope MVP to Copilot CLI first; do not claim cloud-agent support until a separate environment compatibility review completes. |
 | Organization profile is already partly Claude-specific | Copilot profiles can fail validation or silently lose hook/policy behavior | Project only supported blocks for the MVP; reject unsupported blocks explicitly; preserve existing Claude validation. |
