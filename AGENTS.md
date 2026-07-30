@@ -136,10 +136,9 @@ Two limits to know:
 - **Agents cannot be added or changed.** They are core-owned, and their tool
   allow-lists contain no MCP tools — so a configured MCP server is available to
   the session and to org skills, but the analysis pipeline never calls it.
-- **Skills and MCP servers have a second, older path** in the packaging-template
-  repository (`org-skills/`, `org-mcp.json`). Prefer the profile blocks above:
-  they are validated, refuse a name that collides with an upstream skill, and
-  appear in the surface manifest.
+- **`skills` is not in a release yet.** The packaging-template repository still
+  ships its own skills through `org-skills/`, and switches to the profile block
+  once a release carries it. MCP servers already come from the profile there.
 
 ## Runtime rules
 
