@@ -7,13 +7,32 @@ and `.hook-events.log` in the latest juice-shop output directory. Single sample;
 numbers as indicative. The measured critical path is solid for this run, but its shape is not yet
 proven across repositories or renderer configurations.
 
-Verification status: checked on 2026-07-27 against the current resolver, controller, composer,
-pregenerator, rerender runtime, SCA-practice producer, run logs, and generated artifacts. The
-measured timeline is reproducible. Several original implementation conclusions were corrected
-below, most importantly quick-mode composition, rerender dispatch, placeholder counts, and the
-quality of the Stage-1 SCA evidence. The relevant resolver, controller, quick-structure,
-legacy-emitter, and SCA-emitter test groups pass (59 tests); they confirm the current behavior, not
-the unimplemented optimization projections.
+Verification status: the code and contract claims were re-checked on 2026-07-30 against the
+resolver, controller, composer, pregenerator, rerender runtime, secarch agent definition, §6
+authoring contract, and SCA-practice producer. All of them hold.
+
+**The measurements below are not reproducible.** Their source run no longer exists: no log in any
+juice-shop output directory carries the cited timestamps. The surviving run in that directory is a
+different one (8 STRIDE components in the text below, 6 on disk) and disagrees on figures the
+recommendation leans on:
+
+| Measured below | Surviving run on disk |
+|---|---|
+| Stage 2 = 14m49s | 13m24s |
+| Agent M idle 8m53s | ~2m50s between the last MS write and Agent S returning |
+| Agent M writes four fragments | five |
+| §6 fragment 53,292 characters, 34 F-IDs | 71,555 characters, 31 F-IDs |
+| §6.11 12,769 · §6.2 8,603 · section total 51,868 | 14,639 · 13,684 · 70,130 |
+| 3× `RUN_ABORTED` on `validate_intermediate`, 3m58s lost | no `RUN_ABORTED`, no `INVALID` in either log |
+| Phase 10a 13m03s · 10b 4m40s · Phase 8 1m48s · Phase 10 38s | 9m17s · 5m54s · 4m35s · 4m11s |
+
+Only the deterministic parts match: §6.12 (437 characters) and the chapter preamble (1,424 vs
+1,425). Treat every absolute number below as a lost single sample, not as a baseline. Re-measure
+before using any of them; do not re-derive them speculatively.
+
+The structural findings do not depend on those numbers and stand: the two implementation blockers,
+the §6.2/§6.3 coupling, the incomplete rerender mode containment, and the SCA producer defect.
+Step 0 (the SCA producer fix) has since been implemented.
 
 **Depth scope — measured at standard; normally applicable to standard and thorough.**
 `resolve_enrich_arch_fragments` turns `enrich_arch_fragments` off by default at quick depth, and
@@ -73,6 +92,9 @@ Worth noting separately: the 3m58s block at 04:25:55 is pure loss. `validate_int
 failed three times with `INVALID: threats[66]: 'scenario' is a required property` (logged as
 `RUN_ABORTED`) before the run recovered. That is a producer-side schema defect, not a
 performance-tuning question, and it is cheaper to fix than anything discussed above.
+
+**Unverified.** No `RUN_ABORTED` and no `INVALID` line survives in either log on disk, so this item
+cannot be confirmed or costed. If the defect is real it will reappear; do not chase it from here.
 
 ## Measured Stage-2 timeline
 
@@ -366,13 +388,20 @@ copy all frozen structure from the scaffold and insert only validated prose payl
 
 ## Recommendation
 
-**Do not build the parallel split yet.** The measured bottleneck is real, but the cheapest safe
-optimization is validated grounding, not more writers. The source assessment cannot be called
-known-good until its producer is fixed, and the predicted saving has not been benchmarked.
+**Do not build the parallel split.** Not "not yet" — the Step-2 gate below is already unmet on the
+only evidence that still exists. The gate asks for a repeated Agent S ↔ Agent M gap of at least two
+minutes or 30%, whichever is larger; 30% of Agent S is roughly 3.6 minutes, and the surviving run's
+gap is about 2m50s. Agent S is still the critical path, but not by enough to justify a new
+multi-artifact contract.
 
-### Step 0 — fix the evidence producer
+Reopen this only from a fresh, repeated measurement — not from the numbers above.
 
-Correct `scripts/emit_sca_practice.py` before reusing its prose:
+### Step 0 — fix the evidence producer (done)
+
+Implemented: `classify_sca_scanning` now matches only executable step values (`_executable_lines`),
+CodeQL is no longer credited as dependency scanning, and bare tool-name tokens were replaced by
+invocation and action-reference forms. On the juice-shop reference the control moved from
+`Adequate` — citing a PR-spam regex — to `Missing`. What the fix had to do:
 
 - inspect parsed executable workflow steps rather than raw line-token matches,
 - exclude comments, regex literals, PR body scanners, examples, and other non-executable mentions,
@@ -383,6 +412,9 @@ Correct `scripts/emit_sca_practice.py` before reusing its prose:
 - replay the juice-shop fixture and verify that `pr-compliance.yml:168` is no longer credited.
 
 This is a producer fix, not a renderer workaround.
+
+One tradeoff was accepted deliberately: a scanner shelled out from inside a `github-script` body is
+no longer credited. Inspecting those bodies is what produced the false evidence.
 
 ### Step 1 — add a validated grounding pack without changing the handoff
 
@@ -440,7 +472,8 @@ per-section slices and a deterministic assembler. The assembler must:
 Add two §6 agents only when the single-agent, evidence-grounded, no-echo path still exceeds the
 Step-2 gate. Keep §6.2 and §6.3 together. Either give §6.13 to the same agent and validate verdict
 agreement or author it in a serial synthesis tail. Split by *new-prose characters*, not rendered
-size: the measured balanced partition is 6.2–6.8 (20,392) ‖ 6.9–6.13 (16,084).
+size: the partition measured here was 6.2–6.8 (20,392) ‖ 6.9–6.13 (16,084) — recompute it from the
+run you benchmark, because per-section sizes vary enough between runs to move the boundary.
 
 Before enabling it by default, demonstrate:
 
@@ -457,6 +490,6 @@ Before enabling it by default, demonstrate:
 
 - **3m58s of pure loss** from three `RUN_ABORTED` retries on `validate_intermediate.py`
   (`threats[66]: 'scenario' is a required property`). A producer-side schema defect, cheaper to fix
-  than anything above.
+  than anything above — but unverified, see the note in the full-run context section.
 - **STRIDE totals 27m50s (27 %)** — prep 3m04s, fan-out 18m55s, merge 5m51s — of which roughly
   4.5 min is dispatch and resume latency with no analyzer running.
