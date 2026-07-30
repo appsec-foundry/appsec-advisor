@@ -46,8 +46,16 @@ control plane:
   lives in `agents/*.md`; lifecycle integrations live in
   `.claude-plugin/plugin.json`, `.claude/settings.json`, and
   `hooks/hooks.json`.
-- The current primary analyst prompt is too large to copy into a Copilot custom
-  agent profile. Copilot custom-agent prompts have a 30,000-character limit.
+- The current primary analyst prompt cannot be copied into one Copilot custom
+  agent profile: `agents/appsec-threat-analyst.md` is about 151,000 characters,
+  `agents/appsec-stride-analyzer.md` about 64,000, and
+  `skills/create-threat-model/SKILL-impl.md` about 375,000. The Copilot
+  custom-agent prompt limit itself is an external claim and is verified in
+  Phase 0, not here.
+- The full run is not four analysis stages. Recon covers Phases 1, 2, 2.5, 2.6
+  and 2.7; architecture modeling covers Phases 3, 3b, 4, 5, 6, 7 and 8; STRIDE
+  is Phase 9; posture, evidence verification and triage are Phases 10, 10a and
+  10b; rendering and finalization are Phase 11.
 
 The implementation must preserve the deterministic layer as the authority.
 LLM agents may only produce or review contracted intermediate files. They must
@@ -59,8 +67,8 @@ directly.
 ### In scope
 
 1. A repository skill under `.github/skills/create-threat-model/`.
-2. Copilot agent profiles for recon, component STRIDE analysis, triage,
-   fragment rendering, and QA.
+2. Copilot agent profiles for recon, architecture modeling, trust-boundary
+   analysis, component STRIDE analysis, triage, fragment rendering, and QA.
 3. Full runs at `quick` and `standard` depth.
 4. Existing deterministic preflight, schema validation, path/URL guards,
    known-secret redaction, composition, QA, YAML, and SARIF export.
@@ -74,6 +82,9 @@ directly.
 
 - Incremental analysis and carry-forward state.
 - Abuse-case fan-out and architect-review repair loops.
+- The sampled LLM evidence verifier of Phase 10a. Its deterministic floor,
+  `scripts/validate_evidence_lines.py`, stays mandatory, so no finding ships
+  with an unresolved evidence pointer.
 - Per-phase cost routing and exact Sonnet/Opus selection parity.
 - PDF, Threat Dragon, and pentest-task exports.
 - Live watchdog/status UI parity.
@@ -119,8 +130,16 @@ add a generic abstraction framework before two concrete callers need it.
    `.threats-merged.json`, triage sidecars, fragments, and QA status.
 2. Preserve public `T-NNN` / `F-NNN` identity behavior. Incremental behavior
    is out of scope, but a new host must not alter full-run allocation.
-3. `compose_threat_model.py --strict` remains the only final Markdown writer.
-4. The structured YAML builder remains the authoritative YAML writer.
+3. `compose_threat_model.py --strict` remains the only composer of
+   `threat-model.md`, and no agent may write that file. Deterministic passes
+   still mutate it afterwards in the order AGENTS.md pins: `apply_prose_fixes.py`,
+   then `qa_checks.py autofix`, then `render_completion_summary.py
+   --patch-placeholders` as the only post-review mutation. A Copilot render
+   state that stops after the composer ships unpatched placeholders.
+4. `build_threat_model_yaml.py` remains the only builder of
+   `threat-model.yaml`, and no agent may write that file. The auto-emitters run
+   after it and enrich the built document; rebuilding the YAML discards their
+   output, so the emitter pass must follow every build.
 5. Existing path guards, URL guards, secret scanning/redaction, and
    post-scan secret checks remain mandatory on every Copilot path.
 6. Repository content, hook configuration, imported reports, and external
@@ -147,6 +166,9 @@ version can:
    semantics.
 7. Run multiple component analyses with bounded parallelism, or reliably fall
    back to serial processing.
+8. Accept a custom-agent prompt of a known maximum size. Record the documented
+   limit and whether an oversized prompt fails loudly or is truncated
+   silently; Phase 3 sizing depends on the answer.
 
 Record the exact supported capability, fallback, and version in a concise
 internal compatibility note. Do not assume that custom-agent availability
@@ -169,9 +191,11 @@ Audit every production command used by the MVP for:
 - embedded shell commands in repair plans, event payloads, and user-facing
   remediation strings.
 
-The audit must produce a caller-to-command matrix. Do not broaden every script
-preemptively: only commands reachable from the MVP state machine are in scope,
-plus their direct metadata, permission, and repair-plan dependencies.
+The audit must produce a caller-to-command matrix. About 28 scripts mention
+`CLAUDE_PLUGIN_ROOT` today, so state the reachable subset explicitly before
+editing. Do not broaden every script preemptively: only commands reachable from
+the MVP state machine are in scope, plus their direct metadata, permission, and
+repair-plan dependencies.
 
 For each affected command, prefer an existing explicit `--plugin-root`
 argument. Where none exists, add a narrowly named `--asset-root` or
@@ -189,9 +213,12 @@ The following current seams require explicit design changes:
    skill tool policy and never treats an absent `.claude/settings.json` as a
    successful Claude configuration.
 2. `build_threat_model_yaml.py:_plugin_version()` reads
-   `.claude-plugin/plugin.json` directly. Generalize the existing
-   `plugin_meta.py` seam so both hosts emit consistent product and analysis
-   version metadata without requiring Copilot to ship a fake Claude manifest.
+   `.claude-plugin/plugin.json` directly and does not import `plugin_meta.py`;
+   the two are independent readers. Generalize the `plugin_meta.py` seam and
+   route `_plugin_version()` through it, so both hosts emit consistent product
+   and analysis version metadata without requiring Copilot to ship a fake
+   Claude manifest. Generalizing `plugin_meta.py` alone changes nothing in the
+   YAML builder.
 3. QA repair plans currently embed `$CLAUDE_PLUGIN_ROOT` commands. Replace
    agent-consumed command strings with an explicit asset-root value or a
    structured remediation action resolved by the host adapter. A Copilot
@@ -246,11 +273,18 @@ limit:
 
 ```text
 .github/agents/appsec-recon.agent.md
+.github/agents/appsec-architecture.agent.md
+.github/agents/appsec-trust-boundary.agent.md
 .github/agents/appsec-stride.agent.md
 .github/agents/appsec-triage.agent.md
 .github/agents/appsec-render.agent.md
 .github/agents/appsec-qa.agent.md
 ```
+
+These seven profiles absorb the work of twenty Claude agents. Architecture
+modeling and trust-boundary analysis get their own profiles because they own
+contracted report sections and their own sidecars; folding them into recon
+drops Sections 1 through 6 from the output.
 
 Each profile must name only the tools it needs and declare its read/write
 authority. Reuse shared prose and contract resources where they are genuinely
@@ -261,11 +295,17 @@ Agent responsibilities:
 
 | Agent | Inputs | Sole output authority |
 |---|---|---|
-| Recon | target source, deterministic scanner output | recon/component/context sidecars |
+| Recon | target source, deterministic scanner output | recon/context sidecars, actor sidecar |
+| Architecture | recon sidecars, architecture-coverage artifacts | `.components.json`, `.data-flows.json`, `.assets.json`, `.attack-surface-overrides.json`, `.security-controls.json` |
+| Trust boundary | component inventory and data flows | trust-boundary candidate and canonical artifacts |
 | STRIDE | one dispatch manifest entry and scoped evidence | one `.stride-<component>.json` |
 | Triage | merged threats and deterministic severity data | triage/mitigation sidecars |
 | Render | validated structured artifacts and section contract | fragment files only |
 | QA | rendered report, YAML, contract outputs | QA status and repair plan only |
+
+Attack walkthroughs have no sidecar contract today; Phase 4 authors them as
+report prose. For the MVP the render agent writes them as a fragment from the
+architecture and threat sidecars, so no agent writes into the report itself.
 
 Initially dispatch STRIDE serially unless Phase 0 proves safe fan-out. Preserve
 the per-component isolation contract even when serial: each call receives one
@@ -280,8 +320,15 @@ Extend the deterministic orchestration controller, or add a narrowly scoped
 host-neutral companion, with these states:
 
 ```text
-preflight -> recon -> stride -> triage -> render -> qa -> complete
+preflight -> recon -> architecture -> stride -> merge -> triage
+          -> render -> qa -> finalize -> complete
 ```
+
+`architecture` covers Phases 3 through 8 including trust boundaries. `merge`
+runs the deterministic merge and the evidence-line validation floor.
+`finalize` runs the post-compose
+mutation chain named in the artifact contracts; without it the report ships
+unpatched placeholders and unenriched YAML.
 
 The controller must persist an explicit state record with:
 
@@ -301,8 +348,9 @@ Keep the existing Claude controller path working. Do not mix host conditionals
 through the current large runtime instructions; use the controller state record
 as the cross-host handoff.
 
-**Exit criterion:** an injected failure in recon, STRIDE, triage, render, or QA
-produces a non-success terminal record and no falsely successful final report.
+**Exit criterion:** an injected failure in recon, architecture, STRIDE, merge,
+triage, render, QA, or finalize produces a non-success terminal record and no
+falsely successful final report.
 
 ### Phase 5 — Integrate baseline and requirements capabilities
 
@@ -376,6 +424,8 @@ Add focused tests for:
 6. Baseline and requirements integration, including the host-specific baseline
    discovery result and the controller permission-provider decision.
 7. Version metadata and repair-plan command generation across both hosts.
+8. The finalize state: prose fixes, QA autofix, and placeholder patching run in
+   the pinned order, and the auto-emitters run after every YAML build.
 
 Keep `scripts/e2e_fixture.sh` as a Claude-only regression check: it invokes
 `run-headless.sh` and requires the `claude` CLI. It proves the shared core
@@ -415,6 +465,8 @@ existing structural assertions.
 | Model selection differs by host | Cost, quality, or review-depth drift | Treat model routing as host-specific; record the actual model in run metadata; do not claim Claude model parity. |
 | Claude metadata leaks into Copilot reports | `plugin_version` and `analysis_version` silently become wrong, affecting compatibility decisions | Generalize `plugin_meta.py`; test YAML metadata for both hosts. |
 | Claude paths in repair sidecars | Copilot repair steps execute invalid or unintended paths | Emit host-resolved structured remediation; test all agent-consumed command strings. |
+| Architecture stages read as part of recon | Sections 1–6, trust boundaries, and the STRIDE component manifest never get produced | Give architecture and trust boundaries their own states and agent profiles; assert their sidecars before STRIDE starts. |
+| Render state stops after the composer | Placeholders and unenriched YAML ship as a finished report | Model the post-compose chain as its own state; test the pinned mutation order. |
 | Hook event mismatch | Missing telemetry or misleading success state | Make telemetry additive; state transitions and gates remain deterministic. |
 | Copied prompts diverge | Claude and Copilot findings/report quality drift | Share contracts/prose where possible; keep only host adapters separate; add cross-host fixture checks. |
 | Weaker MVP path bypasses safety checks | Security regression | Define mandatory scripts per state; add negative tests for skipped redaction, schema, and QA gates. |
@@ -426,7 +478,8 @@ existing structural assertions.
 ## Deferred work after MVP
 
 1. Incremental runs and stable-ID carry-forward replay.
-2. Bounded parallel STRIDE and abuse-case verifier waves.
+2. Bounded parallel STRIDE, the sampled evidence verifier, and abuse-case
+   verifier waves.
 3. QA repair and architect-review repair loops.
 4. PDF, Threat Dragon, and pentest-task exports.
 5. Copilot-native organization profile overlay and packaging/distribution.
@@ -444,7 +497,7 @@ Expected capability levels are:
 | Area | MVP target | Mature Copilot target |
 |---|---:|---:|
 | Deterministic scanning, contracts, rendering, YAML/SARIF | 90–100% | 95–100% |
-| Recon, STRIDE, triage, QA analysis | 65–80% | 80–90% |
+| Recon, architecture, trust boundaries, STRIDE, triage, QA analysis | 65–80% | 80–90% |
 | Baseline and requirements gates | 80–90% | 90–100% |
 | Hooks, telemetry, interactive UX | 40–60% | 70–85% |
 | Claude packaging and per-stage model routing | 0–30% | 40–60% |
@@ -478,9 +531,19 @@ capability spike determine whether the measured implementation meets them.
 - Claude hooks: `hooks/hooks.json`
 - Claude permissions: `.claude/settings.json`,
   `data/required-permissions.yaml`
+- Full-run phase set and sidecar contracts: `agents/phases/phase-group-recon.md`,
+  `phase-group-architecture.md`, `phase-group-threats.md`,
+  `phase-group-finalization.md`, `schemas/fragments/`
 - Deterministic report contracts: `data/sections-contract.yaml`, `schemas/`,
   `scripts/compose_threat_model.py`, `scripts/build_threat_model_yaml.py`,
   `scripts/qa_checks.py`
+- Post-compose mutation chain: `scripts/apply_prose_fixes.py`,
+  `scripts/qa_checks.py autofix`, `scripts/render_completion_summary.py`,
+  `scripts/validate_evidence_lines.py`
+- Host seams named in Phase 1: `scripts/orchestration_controller.py:783`,
+  `scripts/check_permissions.py:134`, `scripts/build_threat_model_yaml.py:117`,
+  `scripts/plugin_meta.py`, `scripts/qa_checks.py:2458`,
+  `scripts/baseline_check.py:106`, `scripts/validate_org_profile.py:338`
 - Baseline: `scripts/install_baseline.py`, `scripts/baseline_check.py`,
   `config.json`
 - Requirements: `scripts/fetch_requirements.py`,
