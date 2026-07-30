@@ -197,7 +197,10 @@ that list for complete coverage. Review it when it grows.
    after it and enrich the built document; rebuilding the YAML discards their
    output, so the emitter pass must follow every build.
 5. Existing path guards, URL guards, secret scanning/redaction, and
-   post-scan secret checks remain mandatory on every Copilot path.
+   post-scan secret checks remain mandatory on every Copilot path. Copilot's
+   own `--secret-env-vars` redacts environment values from tool output; it
+   does not scan the analyzed repository or the produced report and is not a
+   substitute for any of the checks above.
 6. Repository content, hook configuration, imported reports, and external
    context remain untrusted data, never agent instructions.
 7. Copilot hooks are observability and ergonomics mechanisms. They are not
@@ -255,7 +258,13 @@ What remains open, and what the spike must still establish:
    dispatch is the only reliable shape.
 5. How a user decision is obtained without Claude `AskUserQuestion` semantics;
    `--no-ask-user` implies an `ask_user` tool exists.
-6. Capacity. The profile limit is not the binding constraint — the per-turn
+6. Whether a non-interactive run can be scoped to named tools with
+   `--allow-tool`, or whether `--allow-all-tools` is genuinely required as the
+   help text states. This decides whether the MVP's minimal-allowlist
+   mitigation is achievable at all on the scripted path, so it is a security
+   question, not an ergonomics one. Record the answer with the tool names the
+   pipeline actually needs.
+7. Capacity. The profile limit is not the binding constraint — the per-turn
    context is. The largest single stage bodies are Phase 9 STRIDE at about
    124,000 characters, Phase 11 finalization at about 138,000, Phase 3
    architecture modeling at about 66,000, and Phase 8 security controls at
@@ -363,6 +372,11 @@ is what this product is and what the Claude side already does. Loose
 `.github/` files are the repository-local mechanism and are the right shape for
 developing and testing the skill, not necessarily for shipping it. A plugin
 subdirectory also sidesteps both collisions below.
+
+The rest of this plan writes `.github/skills`, `.github/agents` and
+`.github/hooks` because that is the repository-local layout. Read them as the
+chosen Copilot root: if the surface ships as a plugin, the same files move
+under the plugin directory and every rule about them still applies.
 
 If the surface does live under `.github/`, two repository mechanisms already
 treat that path as infrastructure rather than product, and both must be decided
@@ -557,8 +571,10 @@ fail the Copilot run exactly through their current deterministic exit behavior.
 
 ### Phase 6 — Add minimal Copilot hooks
 
-Add a repository hook configuration under `.github/hooks/` only after Phase 0
-confirms the supported schema and event payloads.
+Hooks are bundled by plugins; whether a repository path such as
+`.github/hooks/` is also read is a Phase 0 question. Add the hook
+configuration only after that answer and the supported schema and event
+payloads are recorded.
 
 MVP hook responsibilities:
 
@@ -606,11 +622,12 @@ Keep `scripts/e2e_fixture.sh` as a Claude-only regression check: it invokes
 `run-headless.sh` and requires the `claude` CLI. It proves the shared core
 continues to work for Claude, but cannot validate the Copilot surface.
 
-Add a distinct Copilot E2E replay path against the same fixture and oracle. It
-may use a scripted Copilot CLI invocation only if Phase 0 validates reliable
-non-interactive execution. Otherwise define a repeatable approved interactive
-procedure that captures the generated artifacts before the deterministic oracle
-runs. The Copilot acceptance path must validate:
+Add a distinct Copilot E2E replay path against the same fixture and oracle.
+Non-interactive execution is available — `-p` with `--allow-all-tools` and
+`--output-format json` for JSONL — so the replay is scripted, and the earlier
+fallback to an approved interactive procedure is not needed. Record which tool
+scope the script runs under, per the Phase 0 answer. The Copilot acceptance
+path must validate:
 
 - required sections;
 - schema-valid YAML and SARIF;
@@ -706,7 +723,7 @@ repeated branching; otherwise the provider input stays inside the controller.
 | Copilot custom-agent prompt limit | Prompt truncation silently drops safety rules | Split agents by phase; test profile size; retain shared contracts as explicit resources. |
 | A stage's instructions exceed the per-turn context | Coverage is cut to fit, and the report cannot show what was skipped | Measure capacity in Phase 0; design a slicing equivalent before writing profiles; stop rather than trim safety rules. |
 | Rewritten phase instructions are not parity-tracked | The largest divergence surface drifts while every test passes | Name the phase groups in the not-tracked list; rely on the semantic evaluation, not on tests, to detect it. |
-| Different tool and permission semantics | Unsafe writes or repeated interactive failures | Use minimal tool allowlists; preserve Python path guards; document trust/approvals; test rejected tool paths. |
+| Different tool and permission semantics | Unsafe writes or repeated interactive failures | Use minimal tool allowlists where the scripted path allows them; preserve Python path guards and `--add-dir` scoping regardless; document trust/approvals; test rejected tool paths. |
 | Mandatory Claude permission gate blocks Copilot | Every controller preparation aborts before analysis | Add and test an explicit host-specific permission provider; preserve the current Claude provider and failure text. |
 | Model selection differs by host | Cost, quality, or review-depth drift | Treat model routing as host-specific; record the actual model in run metadata; do not claim Claude model parity. |
 | A weaker report is indistinguishable from a Claude one | Readers trust an analysis at a depth it does not have | Emit `meta.host` and show it in the report; measure the gap with the semantic evaluation before Phase 2. |
