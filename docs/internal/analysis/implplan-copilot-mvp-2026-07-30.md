@@ -23,10 +23,11 @@ The MVP supports `quick` and `standard` full scans. It preserves the existing
 schemas, stable-ID rules, evidence requirements, severity caps, redaction,
 deterministic renderer, and QA gates.
 
-The target command is:
+The target command is (`--assessment-depth`, not `--depth`;
+`scripts/resolve_config.py:1477`):
 
 ```text
-/create-threat-model --depth standard --yaml --sarif
+/create-threat-model --assessment-depth standard --yaml --sarif
 ```
 
 Copilot may expose a skill by name rather than the Claude plugin namespace.
@@ -55,7 +56,7 @@ control plane:
 - The full run is not four analysis stages. Recon covers Phases 1, 2, 2.5, 2.6
   and 2.7; architecture modeling covers Phases 3, 3b, 4, 5, 6, 7 and 8; STRIDE
   is Phase 9; posture, evidence verification and triage are Phases 10, 10a and
-  10b; rendering and finalization are Phase 11.
+  10b; abuse cases are Phase 10c; rendering and finalization are Phase 11.
 
 The implementation must preserve the deterministic layer as the authority.
 LLM agents may only produce or review contracted intermediate files. They must
@@ -219,11 +220,14 @@ The following current seams require explicit design changes:
    and analysis version metadata without requiring Copilot to ship a fake
    Claude manifest. Generalizing `plugin_meta.py` alone changes nothing in the
    YAML builder.
-3. QA repair plans currently embed `$CLAUDE_PLUGIN_ROOT` commands. Replace
-   agent-consumed command strings with an explicit asset-root value or a
-   structured remediation action resolved by the host adapter. A Copilot
-   repair consumer must never expand an unset Claude variable into a relative
-   `/scripts/...` path.
+3. Three agent-consumed command strings embed `$CLAUDE_PLUGIN_ROOT` today:
+   `qa_checks.py:2458`, `qa_checks.py:2738`, and `compose_threat_model.py:18258`.
+   Replace all three with an explicit asset-root value or a structured
+   remediation action resolved by the host adapter. A Copilot repair consumer
+   must never expand an unset Claude variable into a relative `/scripts/...`
+   path. The `${CLAUDE_PLUGIN_ROOT}/org-profile/` marker in
+   `validate_org_profile.py:338` is not one of these; it is the org-profile
+   hook contract and belongs to Phase 5.
 4. The baseline checker currently proves that a baseline is loaded through
    Claude instruction discovery. Define a Copilot instruction-discovery
    strategy and make baseline verification host-aware. Do not interpret its
@@ -344,10 +348,9 @@ preflight -> recon -> architecture -> stride -> merge -> triage
 ```
 
 `architecture` covers Phases 3 through 8 including trust boundaries. `merge`
-runs the deterministic merge and the evidence-line validation floor.
-`finalize` runs the post-compose
-mutation chain named in the artifact contracts; without it the report ships
-unpatched placeholders and unenriched YAML.
+runs the deterministic merge and the evidence-line validation floor. `finalize`
+runs the post-compose mutation chain named in the artifact contracts; without
+it the report ships unpatched placeholders and unenriched YAML.
 
 The controller must persist an explicit state record with:
 
@@ -475,6 +478,63 @@ limitations below.
 Claude regression replay and the distinct Copilot replay both satisfy the
 existing structural assertions.
 
+## File inventory
+
+Derived from the phases above and checked against the current tree. Paths under
+"new" are fixed only where a phase names them; the rest are proposals.
+
+Existing files this MVP changes:
+
+| File | Change |
+|---|---|
+| `scripts/orchestration_controller.py` | permission-provider input, MVP states |
+| `scripts/build_threat_model_yaml.py` | route `_plugin_version` through `plugin_meta` |
+| `scripts/plugin_meta.py` | host-neutral metadata resolution |
+| `scripts/qa_checks.py` | two agent-consumed command strings |
+| `scripts/compose_threat_model.py` | one agent-consumed command string |
+| `scripts/baseline_check.py` | host-specific instruction discovery |
+| `scripts/validate_org_profile.py` | host projection, explicit unsupported-feature error |
+| `scripts/resolve_config.py` | asset-root and host input |
+| `CHANGELOG.md`, `AGENTS.md` | one bullet, one change-map row |
+
+`scripts/resolve_config.py` is listed in ruff's `extend-exclude`; never run
+`ruff format` against it.
+
+Asset-root plumbing reaches further only where a reachable command lacks the
+argument. Twenty-two scripts already accept `--plugin-root`, including the
+controller, the YAML builder, `fetch_requirements.py`, and
+`resolve_requirements_source.py`. Reachable and still missing it:
+`scan_excludes.py`, `coverage_checks.py`, `architecture_coverage_checks.py`,
+`canonicalize_component_id.py`, `validate_config.py`, `source_auth_scanner.py`,
+`mass_assignment_scanner.py`, `agent_logger.py`. Twenty-three scripts read
+`CLAUDE_PLUGIN_ROOT` from the environment; the Claude-runtime half — watchdogs,
+budget, steering, banner — stays out of the MVP graph.
+
+Two files change only if a decision goes that way:
+`scripts/package_internal_plugin.py:34` if the Copilot surface ships in
+organization builds, and `data/required-permissions.yaml` if the Claude route
+gains a command.
+
+Untouched: `agents/*.md`, `skills/create-threat-model/`, `hooks/hooks.json`,
+`.claude/settings.json`, `schemas/`, `data/sections-contract.yaml`,
+`templates/`.
+
+New files:
+
+| Path | Fixed by |
+|---|---|
+| `.github/skills/create-threat-model/SKILL.md` | Phase 2 |
+| `.github/agents/appsec-{recon,architecture,trust-boundary,stride,triage,render,qa}.agent.md` | Phase 3 |
+| `.github/hooks/` configuration | Phase 6, schema from Phase 0 |
+| `scripts/copilot_event_adapter.py` | proposal — Phase 6 payload normalization |
+| `scripts/copilot_e2e_fixture.sh` | proposal — Phase 7 replay |
+| eight to nine `tests/test_*.py` | Phase 7 test list; every new `scripts/` module needs one |
+| `docs/copilot-threat-modeling.md` | Phase 7 user document |
+| Phase 0 compatibility note under `docs/internal/analysis/` | Phase 0 |
+
+A separate host permission-provider module is created only if it removes
+repeated branching; otherwise the provider input stays inside the controller.
+
 ## Risks, side effects, and required mitigations
 
 | Risk | Impact | Mitigation and proof |
@@ -564,8 +624,9 @@ capability spike determine whether the measured implementation meets them.
   `scripts/validate_evidence_lines.py`
 - Host seams named in Phase 1: `scripts/orchestration_controller.py:783`,
   `scripts/check_permissions.py:134`, `scripts/build_threat_model_yaml.py:117`,
-  `scripts/plugin_meta.py`, `scripts/qa_checks.py:2458`,
-  `scripts/baseline_check.py:106`, `scripts/validate_org_profile.py:338`
+  `scripts/plugin_meta.py:64`, `scripts/qa_checks.py:2458` and `:2738`,
+  `scripts/compose_threat_model.py:18258`, `scripts/baseline_check.py:111`,
+  `scripts/validate_org_profile.py:338`, `scripts/resolve_config.py:3276`
 - Baseline: `scripts/install_baseline.py`, `scripts/baseline_check.py`,
   `config.json`
 - Requirements: `scripts/fetch_requirements.py`,
