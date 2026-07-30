@@ -57,11 +57,11 @@ def test_bootstrap_table_includes_composition_stage_always(skill_impl_text):
 
 def test_stage_1_split_into_lettered_subrows(skill_impl_text):
     # The analysis pipeline exposes four truthful stages: discovery and
-    # architecture, dedicated boundary assessment, controls/STRIDE/triage,
+    # architecture, dedicated boundary assessment, threat analysis/triage,
     # and the conditional abuse verifier fan-out.
     assert "`Stage 1a - Discovery & Architecture`" in skill_impl_text
     assert "`Stage 1b - Trust Boundary Assessment`" in skill_impl_text
-    assert "`Stage 1c - Controls, STRIDE & Triage`" in skill_impl_text
+    assert "`Stage 1c - Threat Analysis & Triage`" in skill_impl_text
     assert "`Stage 1d - Abuse Case Verification`" in skill_impl_text
 
 

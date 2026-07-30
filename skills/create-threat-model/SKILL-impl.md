@@ -63,7 +63,7 @@ the condition stated *in* the section wins.
 > The only `TaskCreate` calls allowed are the rows defined in
 > `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1a - Discovery
 > & Architecture`, `Stage 1b - Trust Boundary Assessment`, `Stage 1c -
-> Controls, STRIDE & Triage`, `Stage 1d - Abuse Case Verification`
+> Threat Analysis & Triage`, `Stage 1d - Abuse Case Verification`
 > (when enabled), `Stage 2 - Report Rendering`, conditional
 > `Stage 3 - QA Review`, conditional `Stage 4 - Architect Review`,
 > `Final summary + cleanup`).
@@ -2045,7 +2045,7 @@ TaskCreate subject="Preparing workspace"
 |-----------|--------------|------------|
 | always | `Stage 1a - Discovery & Architecture` | `Running discovery and architecture` |
 | always | `Stage 1b - Trust Boundary Assessment` | `Assessing trust boundaries` |
-| always | `Stage 1c - Controls, STRIDE & Triage` | `Running controls, STRIDE, and triage` |
+| always | `Stage 1c - Threat Analysis & Triage` | `Running threat analysis and triage` |
 | `DRY_RUN=false` AND `skip_abuse_case_verification=false` | `Stage 1d - Abuse Case Verification` | `Verifying abuse-case chains` |
 | always (M2.12) | `Stage 2 - Report Rendering` | `Rendering threat model report` |
 | `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 - QA Review` | `Running QA review` |
@@ -2237,7 +2237,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
 
    **— Parallel-STRIDE variant (`PARALLEL_STRIDE=true` — Full-M1, the DEFAULT for full/rebuild; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).** Instead of one monolithic analyst that inlines STRIDE serially, split Stage 1 so the skill (Level-0, can fan out) dispatches the per-component STRIDE analyzers in bounded waves:
 
-   3a. **Stage-1c Analyst-A** — mark `Stage 1c - Controls, STRIDE & Triage`
+   3a. **Stage-1c Analyst-A** — mark `Stage 1c - Threat Analysis & Triage`
    active with `Phase 8 — controls and dispatch preparation`. Dispatch with
    **`RESUME_FROM_PHASE=8` and `STAGE1_PHASE_LIMIT=8`**. It reuses the gated
    canonical boundary catalog, runs Phase 8 plus Phase-9 dispatch prep, writes
@@ -2268,7 +2268,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
 
    3b-i. **Surface the component selection to the user (required console output).** The builder above prints a `STRIDE component selection (depth=…)` block — `ANALYZED (N)` each with its selection reason, then `SKIPPED (N)` each with its skip reason (e.g. `out-of-scope at depth=standard`). **Render that block to the user verbatim in your response** as a short banner, so the user sees exactly which components get a STRIDE pass and which are skipped and why, *before* the fan-out runs. (It is the console mirror of the report's §1 Scope + §11 Out of Scope, both built from the same `.stride-selection.json` → `meta.component_selection`.) If the builder's stdout is not in view, re-render it deterministically with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_stride_dispatch_manifest.py" --print-selection "$OUTPUT_DIR"`. Do not summarize it away or drop the skip reasons — the skipped list with reasons is the point.
 
-   3c. **Dispatch bounded STRIDE waves.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1c - Controls, STRIDE & Triage` to set `activeForm: "Phase 9 — STRIDE (<N> components, waves of up to <STRIDE_CONCURRENCY>)"`.
+   3c. **Dispatch bounded STRIDE waves.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1c - Threat Analysis & Triage` to set `activeForm: "Phase 9 — STRIDE (<N> components, waves of up to <STRIDE_CONCURRENCY>)"`.
 
    Repeatedly run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" claim "$OUTPUT_DIR"` and parse the returned JSON. `status=complete` ends the loop. `status=claimed` contains only the unfinished components in the earliest incomplete wave; issue those Agent calls **together in one message** so the wave runs concurrently, then claim again. Attempt 1 is the normal dispatch and attempt 2 is the only retry. Attempts are persisted in `.dispatch-waves.json`, so resume cannot reset the budget. Exit 1 / `status=blocked` is fatal: stop before Analyst-B rather than publishing a report that silently omitted a selected component.
 
@@ -2282,7 +2282,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
 
    Never start Analyst-B unless this verification succeeds. `check_stride_dispatch.py` repeats the same coverage check in the post-Stage-1 gate and still independently verifies that real analyzer dispatches occurred.
 
-   3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1c - Controls, STRIDE & Triage` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis and Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
+   3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1c - Threat Analysis & Triage` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis and Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 
    **— Serial variant (`PARALLEL_STRIDE=false` AND `LIVE_PHASE=false`).**
    Dispatch with **`RESUME_FROM_PHASE=8` and `STAGE1_PHASE_LIMIT=10b`** so it
@@ -2292,7 +2292,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
    **— Live-phase variant (`LIVE_PHASE=true` — opt-in via `APPSEC_LIVE_PHASE=1`, experimental).** Same agent, same `description: "Threat Analysis and Triage"`, same `STAGE1_PHASE_LIMIT=10b` prompt and config as the Default variant — the ONLY differences are the dispatch mode and the control flow that follows. Set **`run_in_background: true`** on the Agent call so the Level-0 orchestrator is NOT blocked (a blocking foreground call would queue all async console output until it returns — verified by the 2026-06-04 spike). Capture the returned background agent id in `STAGE1_AGENT_ID`. Then drive the live-phase display:
 
    - **End your turn immediately after dispatching.** Do NOT proceed to step 4. Do NOT make any blocking tool call (Bash, foreground Agent) while waiting — any blocking call re-blocks the main loop and re-queues the Monitor events, defeating the whole mechanism. You will be re-invoked by notifications.
-   - **On each live-phase Monitor event** (task id `LIVE_PHASE_MONITOR_ID`): parse the phase/step text out of the event payload (e.g. `… PHASE_START   [Phase 3/11] ▶ Architecture Modeling…` → `Phase 3/11 — Architecture Modeling`; `STRIDE_PROGRESS stride_files=2 …` → `Phase 9/11 — STRIDE 2/5 components`) and call `TaskUpdate` on the `Stage 1c - Controls, STRIDE & Triage` task to set its `activeForm` to that text. This is what surfaces the live phase NAME on the console (the raw Monitor line shows only the static description). Do nothing else; end your turn again. If the payload has no parseable phase, skip the update.
+   - **On each live-phase Monitor event** (task id `LIVE_PHASE_MONITOR_ID`): parse the phase/step text out of the event payload (e.g. `… PHASE_START   [Phase 3/11] ▶ Architecture Modeling…` → `Phase 3/11 — Architecture Modeling`; `STRIDE_PROGRESS stride_files=2 …` → `Phase 9/11 — STRIDE 2/5 components`) and call `TaskUpdate` on the `Stage 1c - Threat Analysis & Triage` task to set its `activeForm` to that text. This is what surfaces the live phase NAME on the console (the raw Monitor line shows only the static description). Do nothing else; end your turn again. If the payload has no parseable phase, skip the update.
    - **On a `STRIDE_STALE` / `STRIDE_CANARY_TIMEOUT` / `STRIDE_COMPONENT_TIMEOUT` / `AGENT_ERROR` / `TOOL_ERROR` event:** surface it once as a short console line (these are the failure/terminal markers — do not stay silent), then keep waiting.
    - **On the `STAGE1_AGENT_ID` completion notification** (carries the `<usage>` block — same shape the Default variant reads inline): the dispatch is done. Proceed to **step 4** below and continue the normal flow (stop watchdog, stop Monitor, gates, stats). The `<usage>` from this completion notification is what step 6 records.
 
@@ -2311,7 +2311,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
 
    > **`TaskStop` is a deferred tool — load its schema first.** Unlike `TaskCreate`/`TaskUpdate`, `TaskStop` is frequently NOT in the pre-loaded tool set, so calling it directly fails with `InputValidationError: unexpected parameter`. Before the first `TaskStop` of the run, call `ToolSearch` with query `select:TaskStop` to load its schema. Its parameter is **`task_id`** (snake_case) — **not** `taskId`; passing `taskId` is the exact "Invalid tool parameters" failure observed on the 2026-06-01 juice-shop run. This applies to every `TaskStop` site below (Stage 2 / Stage 3 / Stage 4) — load the schema once, then reuse `task_id` each time.
 
-5. On return, mark `Stage 1c - Controls, STRIDE & Triage` completed, then
+5. On return, mark `Stage 1c - Threat Analysis & Triage` completed, then
    proceed to the Phase-10b precondition gate.
 
 6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table. (In the `LIVE_PHASE=true` variant the same `<usage>` block arrives in the background agent's **completion notification** — identical fields, identical extraction.)

@@ -150,7 +150,7 @@ marker and warns about. Substitute the group's own subagent type and model.
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-    --stage 1 --variant controls-stride-triage --name "Controls, STRIDE & Triage" \
+    --stage 1 --variant threat-analysis-triage --name "Threat Analysis & Triage" \
     --agent appsec-advisor:appsec-threat-analyst --model "$ORCHESTRATOR_MODEL" \
     --duration-ms <ms> --tool-uses <n> --tokens <n> --accumulate \
     ${STAGE1C_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst \

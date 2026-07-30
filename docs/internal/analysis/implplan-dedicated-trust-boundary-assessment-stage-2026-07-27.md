@@ -27,7 +27,7 @@ Stage 1b — Trust Boundary Assessment
   Phase 7a: candidate assessment in a fresh context
   Phase 7b: deterministic normalization and coverage gate
 
-Stage 1c — Controls, STRIDE & Triage
+Stage 1c — Threat Analysis & Triage
   Phase 8
   Phase 9 dispatch preparation and bounded STRIDE waves
   Phases 9-merge, 10, and 10b
@@ -712,7 +712,7 @@ Proposed Task subjects:
 ```text
 Stage 1a - Discovery & Architecture
 Stage 1b - Trust Boundary Assessment
-Stage 1c - Controls, STRIDE & Triage
+Stage 1c - Threat Analysis & Triage
 Stage 1d - Abuse Case Verification
 Stage 2 - Report Rendering
 Stage 3 - QA Review

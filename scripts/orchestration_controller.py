@@ -1374,7 +1374,7 @@ def finalize_stage1b(output_dir: Path) -> dict[str, Any]:
 
 
 def post_stage1c(output_dir: Path) -> dict[str, Any]:
-    """Compatibility wrapper for the renamed controls/STRIDE/triage stage."""
+    """Compatibility wrapper for the renamed threat-analysis/triage stage."""
     action = post_stage1(output_dir)
     action["stage"] = "stage1c"
     return action

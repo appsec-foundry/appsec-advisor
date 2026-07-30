@@ -196,7 +196,7 @@ Create Task rows in this exact order and with these exact subjects:
 1. `Preparing workspace`; immediately mark completed.
 2. `Stage 1a - Discovery & Architecture`
 3. `Stage 1b - Trust Boundary Assessment`
-4. `Stage 1c - Controls, STRIDE & Triage`
+4. `Stage 1c - Threat Analysis & Triage`
 5. `Stage 1d - Abuse Case Verification` only when
    `SKIP_ABUSE_CASE_VERIFICATION=false`
 6. `Stage 2 - Report Rendering`
@@ -211,7 +211,7 @@ Use the existing active forms:
 Preparing workspace
 Running discovery and architecture
 Assessing trust boundaries
-Running controls, STRIDE, and triage
+Running threat analysis and triage
 Verifying abuse-case chains
 Rendering threat model report
 Running QA review

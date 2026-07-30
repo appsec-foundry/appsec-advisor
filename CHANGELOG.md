@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Stage 1c is now labeled `Threat Analysis & Triage` in the task list and run summary.
 - Session banner redesigned: identity and help on the first line, threat-model and coding-baseline domains on their own lines, commands on the object they act on, no status glyphs, and no review link when the model is calm and current.
 - A finding with verified evidence at a confirmed internet ingress can now be raised by one severity band, up to High, while CWE caps still apply.
 - `show-threat-model` now opens with the report's verdict and the worst-case scenarios behind it, and points at the other skills before the numbers rather than after them.

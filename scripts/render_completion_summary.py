@@ -1058,7 +1058,8 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
         stage1_labels = {
             "discovery-architecture": "1a",
             "trust-boundary-assessment": "1b",
-            "controls-stride-triage": "1c",
+            "threat-analysis-triage": "1c",
+            "controls-stride-triage": "1c",  # legacy variant label
             "abuse-verification": "1d",
         }
         label = stage1_labels.get(variant, str(stage if stage is not None else "—"))
