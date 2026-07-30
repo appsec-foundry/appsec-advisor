@@ -290,14 +290,21 @@ For the contributor-level path map and the tests required for each kind of chang
 
 ## Roadmap
 
-- Evaluate proposed changes before merge with scoped threat-model updates for branches, pull requests, and merge requests.
-- Extend beyond Claude Code to other coding agents (OpenAI Codex, GitHub Copilot, and similar), keeping the analysis engine agent-agnostic. GitHub Copilot CLI is the first target: it runs the same deterministic core, schemas, and gates behind a second host adapter, and reports state which host produced them. The implementation plan and its capacity spike are in [docs/internal/analysis/implplan-copilot-mvp-2026-07-30.md](docs/internal/analysis/implplan-copilot-mvp-2026-07-30.md) and [plan-copilot-capacity-spike-2026-07-30.md](docs/internal/analysis/plan-copilot-capacity-spike-2026-07-30.md). Nothing is committed to a release until that spike has run.
-- Broaden production readiness across more languages, architectures, and deployment models, including performance on large multi-component repositories.
-- Graduate developer-time guidance and change-review tools from experimental to supported.
-- Import third-party threat models as non-authoritative context and aggregate per-repository models into cross-repository views.
-- Analyze specifications as first-class input, emitting clearly labeled design findings only for explicit insecure statements.
-- Let users override recon's component assessment (exposure, sensitivity, type) via a `.appsec/components.yaml` overlay to parametrize STRIDE coverage — escalation-only first, de-escalation logged and surfaced.
-- Publish a packaged marketplace release after the beta.
+Nothing here carries a date, and the order is rough intent rather than a commitment.
+
+- **Other coding agents**: a scan needs Claude Code today. GitHub Copilot CLI is the first alternative — the Python core, schemas, and gates stay the same, only the agent layer around them is new, and each report names the agent that produced it. Whether a Copilot session has the context capacity for the pipeline is the open question; a [spike](docs/internal/analysis/plan-copilot-capacity-spike-2026-07-30.md) answers it before any of this reaches a release, and the [implementation plan](docs/internal/analysis/implplan-copilot-mvp-2026-07-30.md) covers the rest.
+
+- **Change-scoped scans**: a threat-model update for a branch, pull request, or merge request, so a change can be assessed before it merges. The [developer-time tools](docs/dev-security-helper-usage.md) that already review a diff are experimental and become supported on the way.
+
+- **Component overrides**: exposure, sensitivity, and type are inferred from the repository, and that inference decides how deeply STRIDE covers a component. A `.appsec/components.yaml` overlay will correct it. Raising coverage lands first; lowering it is logged and shown in the report, because it removes analysis.
+
+- **Specifications as input**: a design finding is emitted only where a specification states something insecure outright, labeled as coming from the spec rather than from the implementation.
+
+- **Imported threat models**: a model from another tool becomes context for the analysis, never a source of findings on its own.
+
+- **Cross-repository view**: the per-repository models of a system combined into one view, instead of read one at a time.
+
+- **Larger and more varied codebases**: more languages, architectures, and deployment models, and runs that stay workable on large multi-component repositories. Continuous rather than a single change.
 
 ## Related projects
 
