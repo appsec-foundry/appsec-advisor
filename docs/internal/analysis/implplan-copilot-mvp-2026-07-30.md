@@ -218,35 +218,64 @@ that list for complete coverage. Review it when it grows.
 
 ### Phase 0 — Capability spike and compatibility record
 
-Before production changes, create a short-lived Copilot CLI compatibility
-fixture outside the product flow. Verify the installed and supported Copilot
-version can:
+Part of this is already answered. The following was read from GitHub Copilot
+CLI 1.0.76 itself, not from documentation, and holds for that version:
 
-1. Discover a repository skill in `.github/skills`.
-2. Discover repository custom agents in `.github/agents`.
-3. Invoke a selected custom agent from a skill or provide an acceptable
-   bounded alternative.
-4. Run the required shell and file tools under explicit approvals.
-5. Run repository hooks from `.github/hooks` and expose the event payloads
-   needed by telemetry.
-6. Handle a user decision without relying on Claude `AskUserQuestion`
-   semantics.
-7. Run multiple component analyses with bounded parallelism, or reliably fall
-   back to serial processing.
-8. Accept a custom-agent prompt of a known maximum size. Record the documented
-   limit and whether an oversized prompt fails loudly or is truncated
-   silently; Phase 3 sizing depends on the answer.
-9. Carry the instruction volume a stage actually needs. The profile limit is
-   not the binding constraint — the per-turn context is. `phase-group-recon.md`
-   is about 33,000 characters, `phase-group-architecture.md` about 186,000,
-   `phase-group-threats.md` about 159,000, and `phase-group-finalization.md`
-   about 150,000. Claude reads these in bounded slices at phase boundaries.
-   Measure whether a Copilot agent can hold one stage's instructions plus the
-   analyzed source in a single turn, and whether it can load them in slices if
-   it cannot.
+| Question | Answer |
+|---|---|
+| Skill discovery | `.github/skills/`, `.agents/skills/`, **`.claude/skills/`**, `~/.copilot/skills/`, plugins, and `copilot skill add` |
+| Custom agents | `--agent <agent>`; `customAgents.defaultLocalOnly` implies org and enterprise agents exist too |
+| Non-interactive runs | `-p/--prompt`, `--allow-all-tools` required, `-s/--silent`, `--output-format json` as JSONL |
+| Tool approvals | `--allow-tool`, `--deny-tool`, `--available-tools`, `--excluded-tools`, `--add-dir`, plus a command sandbox |
+| Subagents | exist — session limits state that subagents share the parent's budget |
+| Context capacity | `--context <tier>` with `default` and `long_context` |
+| Instruction discovery | `--no-custom-instructions` disables loading of `AGENTS.md` and related files, so Copilot CLI loads them natively |
+| Cost unit | AI credits, capped per session with `--max-ai-credits`, soft cap observed only after a response |
+| Secret handling | `--secret-env-vars` strips values from shell and MCP environments and redacts them from output |
+| Model and effort | `--model`, `--effort` from `none` to `max` |
+
+The largest finding is the delivery vehicle. Copilot CLI has a plugin system
+that bundles skills, agents, hooks, MCP servers, and LSP servers, and installs
+from `owner/repo`, `owner/repo:path`, a git URL, or a marketplace. That is the
+direct analogue of the Claude plugin, and it is a better home for this product
+than loose `.github/` files. In the checkout used here `copilot plugins list`
+reported the command as unavailable, so confirm whether the subsystem is gated
+before designing against it.
+
+What remains open, and what the spike must still establish:
+
+1. Where custom agents are discovered from, and whether a skill can invoke a
+   named one programmatically rather than the user selecting it with
+   `--agent`. The whole dispatch design rests on this.
+2. The custom-agent prompt size limit, and whether an oversized prompt fails
+   loudly or is truncated silently.
+3. Whether hooks come only from plugins or also from a repository path, and
+   which event payloads they receive.
+4. Whether subagent fan-out is programmable and bounded, or whether serial
+   dispatch is the only reliable shape.
+5. How a user decision is obtained without Claude `AskUserQuestion` semantics;
+   `--no-ask-user` implies an `ask_user` tool exists.
+6. Capacity. The profile limit is not the binding constraint — the per-turn
+   context is. The largest single stage bodies are Phase 9 STRIDE at about
+   124,000 characters, Phase 11 finalization at about 138,000, Phase 3
+   architecture modeling at about 66,000, and Phase 8 security controls at
+   about 42,000. Much of Phase 9 and Phase 11 is dispatch and logging protocol
+   that the deterministic controller absorbs, so measure the residue an agent
+   actually needs, at both `--context` tiers.
 
 Phase 0 measures capacity, not only capability. A yes on every feature above
 still leaves the MVP unbuildable if a stage's instructions do not fit.
+
+**The decisive experiment.** Do not test these questions abstractly. Take one
+stage, the fixture, and an oracle that already exists: build a minimal custom
+agent for architecture modeling, run it non-interactively over the synthetic
+fixture with `copilot -p ... --allow-all-tools --output-format json`, and
+require a `.components.json` that passes `scripts/validate_fragment.py`.
+Compare it against the Claude golden sidecar for the same fixture. That single
+run answers dispatch, tool approvals, capacity, and output quality together,
+and it produces the first data point for the stop threshold. Architecture
+modeling is the right stage: it is the largest body of genuine analysis
+guidance, where STRIDE's larger number is mostly dispatch protocol.
 
 Record the exact supported capability, fallback, and version in a concise
 internal compatibility note. Do not assume that custom-agent availability
@@ -310,10 +339,13 @@ The following current seams require explicit design changes:
    `validate_org_profile.py:338` is not one of these; it is the org-profile
    hook contract and belongs to Phase 5.
 4. The baseline checker currently proves that a baseline is loaded through
-   Claude instruction discovery. Define a Copilot instruction-discovery
-   strategy and make baseline verification host-aware. Do not interpret its
-   existing "unloaded Copilot candidate" result as proof that a Copilot
-   session has the baseline in context.
+   Claude instruction discovery. Copilot CLI loads `AGENTS.md` and related
+   files natively — `--no-custom-instructions` exists to turn that off — so
+   the Copilot discovery set is knowable rather than hypothetical. Make
+   baseline verification host-aware against that set, and keep the existing
+   result honest: `AGENTS.md` carrying a baseline proves nothing about a
+   Claude session, which is exactly what the current "unloaded candidate"
+   classification says.
 
 Do not change behavior for the existing Claude invocation. Add regression tests
 for both the default path and an explicitly supplied root.
@@ -325,10 +357,17 @@ permission failure and metadata behavior.
 
 ### Phase 2 — Define the Copilot skill entry point
 
-Two repository mechanisms already treat `.github/` as infrastructure rather
-than product, and both must be decided before the first Copilot file lands.
-They apply equally to `.github/agents/` in Phase 3 and `.github/hooks/` in
-Phase 6.
+Decide the delivery vehicle first. Copilot CLI installs plugins that bundle
+skills, agents, and hooks from a repository or a subdirectory within one, which
+is what this product is and what the Claude side already does. Loose
+`.github/` files are the repository-local mechanism and are the right shape for
+developing and testing the skill, not necessarily for shipping it. A plugin
+subdirectory also sidesteps both collisions below.
+
+If the surface does live under `.github/`, two repository mechanisms already
+treat that path as infrastructure rather than product, and both must be decided
+before the first file lands. They apply equally to `.github/agents/` in Phase 3
+and `.github/hooks/` in Phase 6.
 
 1. The repair agent refuses any change touching `.github/`
    (`.github/workflows/repair-agent.yml:362`). Product files placed there stay
