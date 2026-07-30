@@ -39,7 +39,57 @@ CANDIDATES_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "trust-boundary-cand
 ASSESSMENT_INPUT_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-assessment-input.schema.json"
 COVERAGE_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-coverage.schema.json"
 KINDS = {"network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"}
+# `kind` mixes three questions: HOW the crossing happens (network/process),
+# WHAT changes across it (identity/privilege/tenant/data-origin) and WHO operates
+# the far side (third-party/build). The values are therefore neither disjoint nor
+# parallel — an OAuth callback is `identity` AND a network crossing, so the
+# analyst has to guess an undocumented precedence. Internally we branch on two
+# orthogonal axes instead. `kind` stays the sole authored/wire value (analyst,
+# `.appsec/trust-boundaries.yaml`, legacy models, renderer, exports); the axes are
+# DERIVED from it in one deterministic place, so there is never a second
+# authority to keep in sync and no repo declaration has to be migrated.
+SURFACES = {"network", "in-process", "build-pipeline"}
+TRANSITIONS = {"identity", "privilege", "tenant", "data-origin", "operator"}
+_KIND_AXES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "network": ("network", ()),
+    "process": ("in-process", ()),
+    "identity": ("network", ("identity",)),
+    "privilege": ("network", ("privilege",)),
+    "tenant": ("network", ("tenant",)),
+    "data-origin": ("network", ("data-origin",)),
+    "third-party": ("network", ("operator",)),
+    "build": ("build-pipeline", ("operator",)),
+}
 LEGACY_FIELDS = {"controls", "description", "enforcement", "crossing_enforcement", "trust_level", "weakness"}
+# Values that name no specific control. Kept as an explicit list rather than a
+# schema `pattern`: genericness is not lexical (a pattern banning "code" would
+# also reject "OAuth authorization-code exchange"), and a schema rejection would
+# fail the whole artifact where dropping the field degrades safely.
+_GENERIC_ENFORCEMENT_POINTS = {
+    "application",
+    "application code",
+    "application layer",
+    "application logic",
+    "auth",
+    "authentication",
+    "authorization",
+    "backend",
+    "code",
+    "controller",
+    "express",
+    "express app",
+    "framework",
+    "handler",
+    "middleware",
+    "network",
+    "route handler",
+    "router",
+    "server",
+    "service",
+    "system",
+    "validation",
+    "web server",
+}
 NEUTRAL_LEGACY_ASSUMPTION = "Assumption not recorded in legacy model"
 MAX_BOUNDARY_ID = 999_999_999
 _ID_RE = re.compile(r"^tb-(\d+)$")
@@ -211,6 +261,49 @@ def _boundary_endpoint_shape_valid(boundary: dict) -> bool:
     )
 
 
+def _axes_for_kind(kind: Any) -> tuple[str, list[str]]:
+    """Split a legacy ``kind`` into (surface, transition[]).
+
+    Total over ``KINDS`` and defaulting exactly like the ``kind`` normalization
+    itself (unknown -> network), so the derivation can never fail a row.
+    """
+    surface, transitions = _KIND_AXES.get(kind if isinstance(kind, str) else "", ("network", ()))
+    return surface, list(transitions)
+
+
+def _apply_axes(rows: Iterable[dict]) -> None:
+    """(Re-)derive the orthogonal axes after every path that can set ``kind``."""
+    for row in rows:
+        if isinstance(row, dict):
+            row["surface"], row["transition"] = _axes_for_kind(row.get("kind"))
+
+
+def _clean_enforcement_point(value: Any) -> str | None:
+    """Whitespace-normalized enforcement point, or None when it says nothing.
+
+    A generic value is worse than an absent one. Grouping by enforcement point
+    deliberately ignores the endpoints (one control can guard several crossings),
+    so "application code" pasted onto three candidates would merge boundaries that
+    share nothing but a filler string — the silent over-merge the fallback path is
+    designed to avoid. Dropping it here routes those candidates back to the
+    conservative crossing-based grouping instead.
+    """
+    if not isinstance(value, str):
+        return None
+    text = re.sub(r"\s+", " ", value.strip())
+    if len(text) < 3 or len(text) > 120:
+        return None
+    probe = re.sub(r"^(?:the|a|an)\s+", "", text.casefold()).strip(" .-")
+    if probe in _GENERIC_ENFORCEMENT_POINTS:
+        return None
+    return text
+
+
+def _covered_components(value: Any, components: Iterable[str]) -> list[str]:
+    known = set(components)
+    return sorted({item for item in value if isinstance(item, str) and item in known}) if isinstance(value, list) else []
+
+
 def _normalize_row(
     raw: Any,
     *,
@@ -290,6 +383,20 @@ def _normalize_row(
         row["from"] = from_ep
     if to_ep:
         row["to"] = to_ep
+    # Provenance and consolidation record. `enforcement_point` used to be dropped
+    # at promotion, which left the merge decision unauditable in the finished
+    # model and unrecoverable on the next run; `confidence_basis` separates an
+    # analyst's `confirmed` from a deterministically upgraded one; and
+    # `covers_components` is what lets a finding in a folded-in component still
+    # reference the boundary that now names its deployable.
+    point = _clean_enforcement_point(raw.get("enforcement_point"))
+    if point:
+        row["enforcement_point"] = point
+    if raw.get("confidence_basis") in {"analyst", "route-evidence"} and confidence == "confirmed":
+        row["confidence_basis"] = raw["confidence_basis"]
+    covers = _covered_components(raw.get("covers_components"), components)
+    if len(covers) > 1:
+        row["covers_components"] = covers[:24]
     if resolution_details:
         row["_resolution_details"] = resolution_details
     key = raw.get("declaration_key") or (raw.get("key") if source == "repo-declared" else None)
@@ -677,6 +784,11 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
                 continue
             if _contained_in(components[row["to"]], components[other["to"]]):
                 other["evidence"] = _merge_evidence(other.get("evidence") or [], row.get("evidence") or [])
+                # The folded-in component keeps a claim on the surviving row, so a
+                # finding it owns can still reference the perimeter it sits behind.
+                other["covers_components"] = sorted(
+                    {*(other.get("covers_components") or []), *(row.get("covers_components") or []), other["to"], row["to"]}
+                )
                 warnings.append(
                     f"folded ingress boundary {row.get('name')!r} into {other.get('name')!r} — "
                     f"{row['to']} is served by the same code as {other['to']}, so both name one perimeter"
@@ -722,6 +834,8 @@ def normalize(
     ]
     declarations, fingerprint = _load_declarations(repo_root, components, warnings)
     merged = _merge_declarations(detected, declarations, prior_rows, warnings)
+    # After declaration merging, which is the last thing that can change `kind`.
+    _apply_axes(merged)
     # Before IDs exist, so consolidating costs no ID churn downstream.
     merged = _consolidate(merged, components, warnings)
     _assign_ids(merged, prior_rows, output_dir, warnings)
@@ -849,6 +963,19 @@ def _containing_component_id(cid: str, components: dict[str, dict]) -> str | Non
     return min(parents, key=lambda item: (-item[0], item[1]))[1]
 
 
+def _transitions(boundary: dict) -> set[str]:
+    """The trust-change axis, tolerating rows that predate the derivation."""
+    stored = boundary.get("transition")
+    if isinstance(stored, list):
+        return {item for item in stored if item in TRANSITIONS}
+    return set(_axes_for_kind(boundary.get("kind"))[1])
+
+
+def _surface(boundary: dict) -> str:
+    stored = boundary.get("surface")
+    return stored if stored in SURFACES else _axes_for_kind(boundary.get("kind"))[0]
+
+
 def _focus(boundary: dict, component: dict, prior_refs: set[tuple[str, str]]) -> tuple[str, list[str]]:
     reasons: list[str] = []
     cid = component.get("id")
@@ -858,13 +985,15 @@ def _focus(boundary: dict, component: dict, prior_refs: set[tuple[str, str]]) ->
         reasons.append("prior verified boundary reference")
     if boundary.get("from") == "external":
         reasons.append("explicit external entry")
-    if boundary.get("kind") in {"identity", "privilege", "tenant"}:
-        reasons.append(f"{boundary['kind']} transition")
-    if boundary.get("kind") in {"third-party", "build"}:
-        reasons.append(f"{boundary['kind']} crossing")
+    transitions = _transitions(boundary)
+    principal = sorted(transitions & {"identity", "privilege", "tenant"})
+    if principal:
+        reasons.append(f"{'/'.join(principal)} transition")
+    if "operator" in transitions:
+        reasons.append(f"operator crossing ({_surface(boundary)})")
     if reasons:
         return "primary", reasons
-    if boundary.get("kind") == "data-origin":
+    if "data-origin" in transitions:
         reasons.append("data-origin transition")
     if component.get("handles_sensitive_data"):
         reasons.append("crossing into sensitive-data component")
@@ -965,7 +1094,7 @@ def prepare_contexts(
                 deferred.append(boundary["id"])
                 invalid.append(boundary["id"])
                 continue
-            is_endpoint = cid in {boundary.get("from"), boundary.get("to")}
+            is_endpoint = cid in {boundary.get("from"), boundary.get("to"), *(boundary.get("covers_components") or [])}
             owns_evidence = cid in evidence_owners.get(boundary["id"], set())
             if not is_endpoint and not owns_evidence:
                 continue
@@ -975,12 +1104,13 @@ def prepare_contexts(
                 continue
             if owns_evidence and not is_endpoint:
                 reasons = [*reasons, "implements the crossing (owns cited evidence)"]
+            transitions = _transitions(boundary)
             rank = (
                 0 if (boundary["id"], cid) in prior_refs else 1,
                 0 if boundary.get("from") == "external" else 1,
-                0 if boundary.get("kind") in {"identity", "privilege", "tenant"} else 1,
-                0 if boundary.get("kind") == "data-origin" and component.get("handles_sensitive_data") else 1,
-                0 if boundary.get("kind") in {"third-party", "build"} else 1,
+                0 if transitions & {"identity", "privilege", "tenant"} else 1,
+                0 if "data-origin" in transitions and component.get("handles_sensitive_data") else 1,
+                0 if "operator" in transitions else 1,
                 {"confirmed": 0, "inferred": 1, "unknown": 2}.get(boundary.get("confidence"), 2),
                 _numeric_id(boundary["id"]),
             )
@@ -1153,7 +1283,11 @@ def validate_finding_boundary_refs(
             reason = f"removed invalid-canonical-endpoint boundary reference {boundary_id!r}"
         elif origin_component_id is not None and origin != origin_component_id:
             reason = f"removed wrong-origin boundary reference {boundary_id!r}"
-        elif not isinstance(origin, str) or origin not in {boundary.get("from"), boundary.get("to")}:
+        elif not isinstance(origin, str) or origin not in {
+            boundary.get("from"),
+            boundary.get("to"),
+            *(boundary.get("covers_components") or []),
+        }:
             reason = f"removed non-adjacent boundary reference {boundary_id!r}"
         elif require_candidate and (candidate_ids is None or boundary_id not in candidate_ids):
             reason = f"removed current-run non-candidate boundary reference {boundary_id!r}"
@@ -1238,6 +1372,40 @@ def _same_deployable(a_paths: list[str], b_paths: list[str]) -> bool:
     return _paths_contained(a_paths, b_paths) or _paths_contained(b_paths, a_paths)
 
 
+def _deployable_root(component_id: Any, components: dict[str, dict]) -> Any:
+    """The outermost component whose paths contain ``component_id``'s.
+
+    Same primitive as `_same_deployable`, walked transitively: `auth-service`
+    (`routes/login.ts`, `lib/insecurity.ts`) sits inside `backend-api`
+    (`routes/**`, `lib/**`), so both name one process and one perimeter.
+
+    Deliberately NOT derived from `deployment_zones` (see `_paths_contained`) and
+    not from Dockerfile/compose: neither exists as structured per-component data,
+    and a compose file describes a deployment variant rather than the tree under
+    assessment. A component that is contained by nobody is its own deployable.
+    """
+    if component_id not in components:
+        return component_id
+    current = component_id
+    for _ in range(len(components)):
+        own = [p for p in (components[current].get("paths") or []) if isinstance(p, str) and p]
+        if not own:
+            return current
+        outer = [
+            cid
+            for cid, row in components.items()
+            if cid != current
+            and _paths_contained(own, [p for p in (row.get("paths") or []) if isinstance(p, str) and p])
+            # Mutual containment is not nesting; leaving it to the id tie-break
+            # below would make the root depend on iteration order.
+            and not _paths_contained([p for p in (row.get("paths") or []) if isinstance(p, str) and p], own)
+        ]
+        if not outer:
+            return current
+        current = sorted(outer)[0]
+    return current
+
+
 def _evidence_line(repo_root: Path, entry: dict) -> str:
     """The single source line an evidence entry points at ("" when unreadable)."""
     file_name = entry.get("file")
@@ -1262,6 +1430,12 @@ def _evidence_line(repo_root: Path, entry: dict) -> str:
 
 
 _CONFIDENCE_RANK = {"unknown": 0, "inferred": 1, "confirmed": 2}
+
+
+def _grouping_endpoint(candidate: dict, crossing_class: str, components: dict[str, dict]) -> Any:
+    """The inner endpoint a crossing is grouped by (deployable for ingress)."""
+    target = candidate.get("to")
+    return _deployable_root(target, components) if crossing_class == "ingress" else target
 
 
 def _crossing_class(candidate: dict) -> str:
@@ -1290,9 +1464,13 @@ def _consolidate_candidates(
        and dropping the row to `same-trust` would leave them nowhere to attach.
        `same-trust` stays reserved for signals with no interface behind them.
     3. **Merge** — candidates sharing one `enforcement_point` within the same
-       crossing class are one boundary. Merging happens ONLY on an explicit
-       enforcement point: over-merging destroys information silently, whereas
-       under-merging stays visible in the catalogue and is fixable next run.
+       crossing class are one boundary; those naming none fall back to the
+       crossing itself, with ingress compared per deployable rather than per
+       component label. A merge spanning components records them in
+       `covers_components` so nothing loses its anchor. Over-merging destroys
+       information silently, whereas under-merging stays visible in the
+       catalogue and is fixable next run — so every widening here is bounded by
+       evidence (path containment) and by `kind`.
 
     Returns ``(surviving_candidates, alias_map, notes)``; ``alias_map`` maps every
     original ``candidate_key`` to its survivor so signal promotion still resolves.
@@ -1302,6 +1480,17 @@ def _consolidate_candidates(
 
     for candidate in working:
         key = candidate["candidate_key"]
+        authored_point = candidate.get("enforcement_point")
+        cleaned_point = _clean_enforcement_point(authored_point)
+        if cleaned_point is None and isinstance(authored_point, str) and authored_point.strip():
+            notes.append(
+                f"{key}: discarded generic enforcement point {authored_point.strip()!r} — "
+                "it names no specific control, so the crossing decides the grouping"
+            )
+        if cleaned_point is None:
+            candidate.pop("enforcement_point", None)
+        else:
+            candidate["enforcement_point"] = cleaned_point
         if candidate.get("to") == "external" and candidate.get("from") in components:
             if _looks_inbound(repo_root, candidate):
                 candidate["from"], candidate["to"] = "external", candidate["from"]
@@ -1315,8 +1504,12 @@ def _consolidate_candidates(
             and _ingress_is_evidenced(repo_root, candidate)
         ):
             candidate["confidence"] = "confirmed"
+            # Stamped so a reader (and a later run) can tell a deterministic
+            # upgrade from an analyst's own source inspection — the catalogue
+            # shows the same word for both.
+            candidate["confidence_basis"] = "route-evidence"
             notes.append(
-                f"{key}: confidence inferred -> confirmed — cited evidence registers inbound routes"
+                f"{key}: confidence inferred -> confirmed — cited evidence line registers an inbound route"
             )
         source, target = candidate.get("from"), candidate.get("to")
         if source in components and target in components:
@@ -1337,13 +1530,35 @@ def _consolidate_candidates(
     # endpoints, same direction, no stated reason to be told apart, one boundary.
     # The two schemes never mix: a declared point is a claim to separateness and
     # is not absorbed by an undeclared neighbour.
+    #
+    # The fallback compares the crossing, not the component label. Components are
+    # a logical model: juice-shop splits one Express process into `backend-api`,
+    # `auth-service`, `chat-service` and `realtime-channel`, so `external ->
+    # backend-api` and `external -> auth-service` are one perimeter — one port,
+    # one process, one enforcement surface — that a literal endpoint comparison
+    # keeps apart, which is exactly the fragmentation this pass exists to undo.
+    # Two narrow guards keep the widening honest:
+    #   * only INGRESS widens. On egress the far side is a specific third party
+    #     (`chat-service -> external` is an LLM API, `backend-api -> external` a
+    #     metrics collector); collapsing those by deployable would merge two
+    #     unrelated dependencies into one row.
+    #   * `kind` joins the key. Crossings into one process still differ in what
+    #     they enforce — an OAuth assertion is not the generic HTTPS perimeter —
+    #     and without it the widening would swallow that distinction.
     groups: dict[tuple, list[dict]] = {}
     for candidate in working:
         point = candidate.get("enforcement_point")
+        crossing_class = _crossing_class(candidate)
         if isinstance(point, str) and point.strip():
-            key = ("point", re.sub(r"\s+", " ", point.strip().casefold()), _crossing_class(candidate))
+            key = ("point", point.casefold(), crossing_class)
         else:
-            key = ("crossing", candidate.get("from"), candidate.get("to"), _crossing_class(candidate))
+            key = (
+                "crossing",
+                candidate.get("from"),
+                _grouping_endpoint(candidate, crossing_class, components),
+                crossing_class,
+                candidate.get("kind"),
+            )
         groups.setdefault(key, []).append(candidate)
 
     singles: list[dict] = []
@@ -1377,6 +1592,29 @@ def _consolidate_candidates(
                 "neither names a distinct enforcement point"
             )
             notes.append(f"{other['candidate_key']} merged into {survivor['candidate_key']} — {reason}")
+        # A merge that spans components must say which ones it absorbed: the
+        # surviving row names one endpoint, but the STRIDE dispatch, the
+        # boundary-reference validator and the ingress elevation all ask "is this
+        # finding's component adjacent to this boundary?". Without the record,
+        # consolidating would silently REMOVE the elevation channel from every
+        # component that got folded in.
+        absorbed = sorted(
+            {
+                endpoint
+                for member in members
+                for endpoint in (member.get("from"), member.get("to"))
+                if endpoint in components
+            }
+        )
+        if len(absorbed) > 1:
+            root = _deployable_root(survivor.get("to"), components)
+            if _crossing_class(survivor) == "ingress" and root in absorbed and root != survivor.get("to"):
+                notes.append(
+                    f"{survivor['candidate_key']}: target {survivor.get('to')} -> {root} — "
+                    "the merged crossings enter one deployable, which names the perimeter"
+                )
+                survivor["to"] = root
+            survivor["covers_components"] = absorbed
         merged.append(survivor)
 
     order = {row["candidate_key"]: i for i, row in enumerate(candidates)}
@@ -1384,29 +1622,23 @@ def _consolidate_candidates(
     return merged, alias, notes
 
 
-_EVIDENCE_SCAN_BYTES = 512_000
+_EVIDENCE_CONTEXT_RADIUS = 3
 
 
-def _file_registers_routes(repo_root: Path, file_name: str) -> bool:
-    """True when a cited evidence file registers at least one inbound route."""
-    if not isinstance(file_name, str) or not file_name:
-        return False
-    target = (repo_root / file_name).resolve()
-    try:
-        target.relative_to(repo_root.resolve())
-    except ValueError:
-        return False
-    try:
-        if not target.is_file():
-            return False
-        with target.open("r", encoding="utf-8", errors="replace") as handle:
-            return bool(_ROUTE_REGISTRATION_RE.search(handle.read(_EVIDENCE_SCAN_BYTES)))
-    except OSError:
-        return False
+def _evidence_context(repo_root: Path, entry: dict, radius: int = _EVIDENCE_CONTEXT_RADIUS) -> str:
+    """The cited line plus a small window, so a wrapped call still matches."""
+    line_no = entry.get("line")
+    if not isinstance(line_no, int):
+        return ""
+    lines = [
+        _evidence_line(repo_root, {**entry, "line": probe})
+        for probe in range(max(1, line_no - radius), line_no + radius + 1)
+    ]
+    return "".join(lines)
 
 
 def _ingress_is_evidenced(repo_root: Path, candidate: dict) -> bool:
-    """Does the repo actually show the inbound surface this candidate claims?
+    """Does the cited evidence actually show the inbound surface it claims?
 
     `confirmed` is what unlocks the entire external-ingress severity channel:
     `appsec-stride-analyzer` may only emit a `boundary_refs[]` entry for a
@@ -1416,13 +1648,19 @@ def _ingress_is_evidenced(repo_root: Path, candidate: dict) -> bool:
     boundary `confirmed` and that one was outbound, so zero of six boundaries
     were eligible and no finding could be elevated however strong its evidence.
 
-    Whether an inbound surface exists is a checkable fact rather than a
-    judgement, so verify it here: a cited evidence file that registers routes
-    proves the crossing. This only unlocks eligibility — elevation still requires
-    a finding-owned reference carrying its own evidence, and stays capped at High.
+    The check reads the CITED LINE (plus a small window for wrapped calls), not
+    the whole file. A file-level scan asks a different question than the
+    candidate answers: juice-shop's `server.ts` holds 172 route registrations, so
+    every candidate citing it anywhere would pass regardless of what its own
+    evidence points at. The direction correction next to this already demands the
+    cited line, and it decides strictly less — the weaker check cannot be the one
+    guarding the stronger effect.
+
+    This only unlocks eligibility — elevation still requires a finding-owned
+    reference carrying its own evidence, and stays capped at High.
     """
     return any(
-        _file_registers_routes(repo_root, entry.get("file"))
+        _ROUTE_REGISTRATION_RE.search(_evidence_context(repo_root, entry))
         for entry in candidate.get("evidence") or []
         if isinstance(entry, dict)
     )
@@ -1537,6 +1775,12 @@ def promote_candidates(
             key: deepcopy(candidate[key])
             for key in ("name", "from", "to", "kind", "assumption", "evidence", "confidence")
         }
+        # Carried, not dropped: without these the finished model cannot show why
+        # two crossings became one row, and the next run cannot reproduce the
+        # decision from `threat-model.yaml`.
+        for optional in ("enforcement_point", "confidence_basis", "covers_components"):
+            if candidate.get(optional):
+                row[optional] = deepcopy(candidate[optional])
         row["evidence"] = _canonical_evidence(
             repo_root,
             row["evidence"],
@@ -1608,6 +1852,24 @@ def promote_candidates(
                 "boundary_ids": boundary_ids,
                 "evidence": signal_by_id[signal_id]["evidence"],
                 "rationale": disposition["rationale"],
+            }
+        )
+    # Visibility instead of a required field. Making `enforcement_point`
+    # mandatory would buy presence, not specificity: the predictable filler
+    # ("application code") groups by a string that ignores endpoints, so it
+    # merges unrelated crossings silently, while an omitted one degrades into the
+    # conservative, visible crossing fallback. Report the gap and let the next
+    # run close it.
+    without_point = sorted(row["candidate_key"] for row in candidates if not row.get("enforcement_point"))
+    for candidate_key in without_point:
+        issues.append(
+            {
+                "code": "missing-enforcement-point",
+                "candidate_key": candidate_key,
+                "message": (
+                    "No specific enforcement point was named, so this crossing was consolidated by its "
+                    "endpoints alone. Naming the control keeps genuinely distinct crossings apart."
+                ),
             }
         )
     coverage = {

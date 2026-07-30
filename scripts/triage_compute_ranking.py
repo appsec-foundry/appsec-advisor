@@ -612,10 +612,15 @@ def _external_boundary_ids_for_finding(
         boundary = boundary_by_id.get(ref.get("boundary_id"))
         if not boundary or not boundary_endpoints_valid(boundary, component_ids):
             continue
+        # `covers_components` are the components a consolidation folded into this
+        # row. They are behind the same perimeter, so they stay eligible —
+        # otherwise merging two ingress crossings would quietly delete the
+        # elevation channel for every component that lost its own row.
+        behind_boundary = {boundary.get("to"), *(boundary.get("covers_components") or [])}
         if (
             boundary.get("confidence") == "confirmed"
             and boundary.get("from") == "external"
-            and boundary.get("to") == ref.get("origin_component_id")
+            and ref.get("origin_component_id") in behind_boundary
         ):
             eligible.add(boundary["id"])
 

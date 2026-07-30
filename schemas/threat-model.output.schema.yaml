@@ -400,6 +400,21 @@ properties:
           type: string
           pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
           maxLength: 80
+        # Derived axes (see schemas/fragments/trust-boundaries.schema.json):
+        # `kind` remains the authored vocabulary, these are what the pipeline reads.
+        surface: {type: string, enum: [network, in-process, build-pipeline]}
+        transition:
+          type: array
+          uniqueItems: true
+          maxItems: 5
+          items: {type: string, enum: [identity, privilege, tenant, data-origin, operator]}
+        enforcement_point: {type: string, minLength: 3, maxLength: 120}
+        confidence_basis: {type: string, enum: [analyst, route-evidence]}
+        covers_components:
+          type: array
+          uniqueItems: true
+          maxItems: 24
+          items: {type: string, minLength: 1, maxLength: 128}
       allOf:
         - if:
             properties: {resolution_status: {const: resolved}}

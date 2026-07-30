@@ -254,6 +254,41 @@ def test_confirmed_external_boundary_ref_elevates_and_is_audited(tmp_path: Path)
     assert summary["findings_elevated_via_external_boundary"] == 1
 
 
+def test_consolidated_boundary_still_elevates_a_folded_in_component(tmp_path: Path) -> None:
+    """Consolidating two ingress crossings into one row must not delete the
+    elevation channel for the component that lost its own row: `auth` ships in
+    the same process as `api` and sits behind the same perimeter."""
+    data = _external_boundary_yaml()
+    data["components"].append({"id": "auth"})
+    data["trust_boundaries"][0]["covers_components"] = ["api", "auth"]
+    data["threats"][0]["component"] = "auth"
+    data["threats"][0]["boundary_refs"][0]["origin_component_id"] = "auth"
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    finding = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
+    assert finding["effective_severity"] == "High"
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert flags["ranking"]["reconciliation_summary"]["findings_elevated_via_external_boundary"] == 1
+
+
+def test_component_outside_the_boundary_is_not_elevated(tmp_path: Path) -> None:
+    """`covers_components` widens adjacency only to what was actually merged."""
+    data = _external_boundary_yaml()
+    data["components"].append({"id": "worker"})
+    data["threats"][0]["component"] = "worker"
+    data["threats"][0]["boundary_refs"][0]["origin_component_id"] = "worker"
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    finding = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
+    assert finding["effective_severity"] == "Medium"
+
+
 def test_component_exposure_without_finding_ref_does_not_elevate(tmp_path: Path) -> None:
     _write_yaml(
         tmp_path / "threat-model.yaml",

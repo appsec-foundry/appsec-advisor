@@ -15197,6 +15197,44 @@ def _ordered_trust_boundaries(ctx: RenderContext) -> list[dict]:
     return sorted(rows, key=key)
 
 
+_BOUNDARY_SURFACE_LABELS = {
+    "network": "network",
+    "in-process": "in-process",
+    "build-pipeline": "build pipeline",
+}
+_BOUNDARY_KIND_AXES = {
+    "network": ("network", ()),
+    "process": ("in-process", ()),
+    "identity": ("network", ("identity",)),
+    "privilege": ("network", ("privilege",)),
+    "tenant": ("network", ("tenant",)),
+    "data-origin": ("network", ("data-origin",)),
+    "third-party": ("network", ("operator",)),
+    "build": ("build-pipeline", ("operator",)),
+}
+
+
+def _boundary_kind_label(row: dict) -> str:
+    """Kind cell text: the crossing mechanism plus what actually changes.
+
+    A row with no trust transition — an app→DB pair inside one process — is an
+    enforcement interface, not a trust boundary, and the catalogue used to list
+    it indistinguishably from the internet perimeter. Saying so costs one cell
+    and stops the table from over-claiming.
+    """
+    surface = row.get("surface")
+    transition = row.get("transition")
+    if surface not in _BOUNDARY_SURFACE_LABELS or not isinstance(transition, list):
+        surface, transition = _BOUNDARY_KIND_AXES.get(str(row.get("kind")), ("network", ()))
+    changes = [str(item) for item in transition if item]
+    label = _BOUNDARY_SURFACE_LABELS.get(surface, "network")
+    if changes:
+        return f"{label} · {' + '.join(changes)}"
+    if surface == "in-process":
+        return f"{label} — enforcement interface, no trust transition"
+    return label
+
+
 def _boundary_exposure(row: dict, component_ids: set[str]) -> str:
     if row.get("resolution_status") in {"unresolved", "conflicted"}:
         return "review required"
@@ -15239,18 +15277,26 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
     for row in shown:
         boundary_id = row["id"]
         crossing = f"{row.get('from') or '?'} → {row.get('to') or '?'}"
+        covers = [str(cid) for cid in row.get("covers_components") or [] if cid and cid != row.get("to")]
+        if covers:
+            crossing += f" (covers {', '.join(covers)})"
         boundary = (
             f"**{_safe_boundary_text(row.get('name'), table=True)}**<br>{_safe_boundary_text(crossing, table=True)}"
         )
+        if row.get("enforcement_point"):
+            boundary += f"<br>_enforced at: {_safe_boundary_text(row['enforcement_point'], table=True)}_"
         kind_status = (
-            f"{_safe_boundary_text(row.get('kind'), table=True)} / "
+            f"{_safe_boundary_text(_boundary_kind_label(row), table=True)} / "
             f"{_safe_boundary_text(row.get('resolution_status'), table=True)}<br>"
             f"{'🌐 ' if _boundary_exposure(row, component_ids) == 'internet-facing' else ''}"
             f"**{_boundary_exposure(row, component_ids)}**"
         )
+        confidence = str(row.get("confidence") or "")
+        if row.get("confidence_basis") == "route-evidence":
+            confidence += " (route evidence)"
         assumption = (
             f"{_safe_boundary_text(row.get('assumption'), table=True)}<br>"
-            f"_{_safe_boundary_text(row.get('confidence'), table=True)}_"
+            f"_{_safe_boundary_text(confidence, table=True)}_"
         )
         sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
         finding_links = (

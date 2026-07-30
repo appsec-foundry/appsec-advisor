@@ -40,12 +40,23 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["code", "signal_id", "message"],
+        "required": ["code", "message"],
         "properties": {
-          "code": {"type": "string", "enum": ["unresolved-signal"]},
+          "code": {"type": "string", "enum": ["unresolved-signal", "missing-enforcement-point"]},
           "signal_id": {"type": "string", "pattern": "^signal-[a-z0-9-]+$"},
+          "candidate_key": {"type": "string", "pattern": "^candidate-[a-z0-9-]+$", "maxLength": 80},
           "message": {"type": "string", "minLength": 1, "maxLength": 300}
-        }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"code": {"const": "unresolved-signal"}}, "required": ["code"]},
+            "then": {"required": ["signal_id"]}
+          },
+          {
+            "if": {"properties": {"code": {"const": "missing-enforcement-point"}}, "required": ["code"]},
+            "then": {"required": ["candidate_key"]}
+          }
+        ]
       }
     }
   }

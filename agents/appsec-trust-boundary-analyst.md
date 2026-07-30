@@ -53,12 +53,16 @@ container. Consolidate protocols or roles that name one enforcement point.
 Name that control in `enforcement_point` — the single mechanism that decides
 whether the crossing is allowed, e.g. `Express route middleware isAuthorized`,
 `OAuth authorization-code exchange`, `GITHUB_TOKEN scopes and branch
-protection`, `Sequelize query construction`. It is the ONLY thing that keeps two
-candidates apart: the promotion step merges candidates that share a crossing
-unless they declare different enforcement points, so an omitted or copy-pasted
-value silently collapses boundaries that belong apart, and a hand-waved one
-("application code") splits boundaries that belong together. Name it from the
-evidence you actually read.
+protection`, `Sequelize query construction`. It is what keeps two candidates
+apart: the promotion step merges candidates that share a crossing unless they
+declare different enforcement points, so a copy-pasted value silently collapses
+boundaries that belong apart. Name it from the evidence you actually read.
+
+A filler value is worse than none. Promotion discards generic strings
+("application code", "middleware", "the server") and falls back to grouping the
+crossing by its endpoints, which is the conservative, visible outcome — so omit
+the field rather than inventing one when the evidence does not show a specific
+control. The omission is reported, not punished.
 
 Set `name` as `<crossing>: <enforcement point>` so a reader sees the same
 distinction the merge uses.

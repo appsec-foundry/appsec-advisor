@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -1110,7 +1111,7 @@ def test_same_crossing_without_a_stated_reason_collapses(tmp_path: Path):
     """Separation must be justified, not consolidation. Two candidates on one
     crossing that name no distinct enforcement point are one boundary."""
     merged, alias, notes = prep._consolidate_candidates(
-        [_cand("c1", frm="external", to="api"), _cand("c2", frm="external", to="api", kind="third-party")],
+        [_cand("c1", frm="external", to="api"), _cand("c2", frm="external", to="api")],
         components=_COMPONENTS,
         repo_root=tmp_path,
     )
@@ -1118,6 +1119,19 @@ def test_same_crossing_without_a_stated_reason_collapses(tmp_path: Path):
     assert alias["c2"] == "c1"
     assert merged[0]["covered_signal_ids"] == ["signal-c1", "signal-c2"]
     assert any("merged into c1" in n for n in notes)
+
+
+def test_same_crossing_with_differing_kinds_stays_apart(tmp_path: Path):
+    """`kind` is a weaker separation claim than `enforcement_point`, but it is
+    still one: a generic HTTPS perimeter and an operator crossing on the same
+    endpoints ask different enforcement questions, and merging them would let
+    whichever candidate came first silently decide which question survives."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api"), _cand("c2", frm="external", to="api", kind="third-party")],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1", "c2"]
 
 
 def test_distinct_enforcement_points_stay_apart(tmp_path: Path):
@@ -1156,6 +1170,216 @@ def test_declared_point_is_not_absorbed_by_an_undeclared_neighbour(tmp_path: Pat
         repo_root=tmp_path,
     )
     assert sorted(c["candidate_key"] for c in merged) == ["c1", "c2"]
+
+
+# --------------------------------------------------------------------------- #
+# Deployable-scoped ingress consolidation
+# --------------------------------------------------------------------------- #
+_NESTED_COMPONENTS = {
+    "api": {"id": "api", "paths": ["server.ts", "routes/**", "lib/**"]},
+    "auth": {"id": "auth", "paths": ["routes/login.ts", "lib/insecurity.ts"]},
+    "worker": {"id": "worker", "paths": ["worker/**"]},
+}
+
+
+def test_deployable_root_walks_path_containment_not_zones():
+    assert prep._deployable_root("auth", _NESTED_COMPONENTS) == "api"
+    assert prep._deployable_root("api", _NESTED_COMPONENTS) == "api"
+    assert prep._deployable_root("worker", _NESTED_COMPONENTS) == "worker"
+    assert prep._deployable_root("external", _NESTED_COMPONENTS) == "external"
+
+
+def test_ingress_into_one_deployable_is_one_perimeter(tmp_path: Path):
+    """The split into `api` and `auth` is a logical view of one Express process;
+    two ingress crossings into it are one perimeter, and the surviving row must
+    record the component it absorbed so that component keeps its anchor."""
+    merged, alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="auth"), _cand("c2", frm="external", to="api")],
+        components=_NESTED_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1"]
+    assert alias["c2"] == "c1"
+    assert merged[0]["to"] == "api"
+    assert merged[0]["covers_components"] == ["api", "auth"]
+    assert any("names the perimeter" in n for n in notes)
+
+
+def test_deployable_widening_does_not_cross_kinds(tmp_path: Path):
+    """An OAuth assertion into the process is not the generic HTTPS perimeter."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api"), _cand("c2", frm="external", to="auth", kind="identity")],
+        components=_NESTED_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1", "c2"]
+    assert "covers_components" not in merged[0]
+
+
+def test_egress_is_never_widened_by_deployable(tmp_path: Path):
+    """On egress the far side is a specific third party; two dependencies of one
+    process are two boundaries however tightly the callers ship together."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="auth", to="external", kind="third-party"),
+            _cand("c2", frm="api", to="external", kind="third-party"),
+        ],
+        components=_NESTED_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1", "c2"]
+
+
+def test_lone_ingress_target_keeps_its_own_endpoint(tmp_path: Path):
+    """Widening only ever merges; it never rewrites an endpoint on its own."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="auth")],
+        components=_NESTED_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert merged[0]["to"] == "auth"
+    assert "covers_components" not in merged[0]
+
+
+# --------------------------------------------------------------------------- #
+# Enforcement-point hygiene
+# --------------------------------------------------------------------------- #
+def test_generic_enforcement_points_fall_back_to_the_crossing(tmp_path: Path):
+    """A filler value groups by a string that ignores endpoints, so it would
+    merge unrelated crossings. Dropping it restores the conservative fallback."""
+    merged, _alias, notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="external", to="api", point="application code"),
+            _cand("c2", frm="external", to="worker", point="The application code"),
+        ],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1", "c2"]
+    assert all("enforcement_point" not in c for c in merged)
+    assert any("discarded generic enforcement point" in n for n in notes)
+
+
+def test_specific_enforcement_point_survives(tmp_path: Path):
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api", point="  Express route   middleware isAuthorized ")],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert merged[0]["enforcement_point"] == "Express route middleware isAuthorized"
+
+
+# --------------------------------------------------------------------------- #
+# Route evidence: the cited line, not the file
+# --------------------------------------------------------------------------- #
+def _repo_with_routes(tmp_path: Path, cited_line: int) -> list[dict]:
+    source = ["// header\n"] * 40 + ["app.get('/metrics', handler)\n"] + ["// tail\n"] * 40
+    (tmp_path / "server.ts").write_text("".join(source), encoding="utf-8")
+    return [{"file": "server.ts", "line": cited_line}]
+
+
+def test_ingress_upgrade_requires_the_cited_line(tmp_path: Path):
+    """server.ts registering routes somewhere is not evidence that THIS crossing
+    exists — juice-shop's has 172 of them, which would confirm every candidate."""
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api", evidence=_repo_with_routes(tmp_path, cited_line=5))],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert merged[0]["confidence"] == "inferred"
+    assert "confidence_basis" not in merged[0]
+    assert not any("confirmed" in n for n in notes)
+
+
+def test_ingress_upgrade_stamps_its_basis(tmp_path: Path):
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api", evidence=_repo_with_routes(tmp_path, cited_line=41))],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert merged[0]["confidence"] == "confirmed"
+    assert merged[0]["confidence_basis"] == "route-evidence"
+
+
+def test_ingress_upgrade_tolerates_a_wrapped_call(tmp_path: Path):
+    """A registration split across lines still anchors at the cited statement."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api", evidence=_repo_with_routes(tmp_path, cited_line=43))],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert merged[0]["confidence"] == "confirmed"
+
+
+# --------------------------------------------------------------------------- #
+# Derived axes
+# --------------------------------------------------------------------------- #
+def test_axes_are_derived_from_every_kind():
+    assert prep._axes_for_kind("identity") == ("network", ["identity"])
+    assert prep._axes_for_kind("process") == ("in-process", [])
+    assert prep._axes_for_kind("build") == ("build-pipeline", ["operator"])
+    assert prep._axes_for_kind("third-party") == ("network", ["operator"])
+    # Unknown input defaults exactly like the `kind` normalization itself.
+    assert prep._axes_for_kind("nonsense") == ("network", [])
+    assert set(prep._KIND_AXES) == prep.KINDS
+
+
+def test_covered_component_may_reference_the_consolidated_boundary() -> None:
+    """The reference validator has to accept the same adjacency the merge created,
+    otherwise consolidation silently strips every folded-in component's refs."""
+    boundary = {
+        "id": "tb-1",
+        "from": "external",
+        "to": "api",
+        "covers_components": ["api", "auth"],
+        "resolution_status": "resolved",
+        "confidence": "confirmed",
+    }
+    evidence = {"file": "routes/login.ts", "line": 7}
+    finding = {
+        "evidence": [evidence],
+        "boundary_refs": [
+            {
+                "boundary_id": "tb-1",
+                "origin_component_id": "auth",
+                "rationale": "The cited login route accepts unauthenticated requests at this perimeter.",
+                "evidence_locations": [evidence],
+            }
+        ],
+    }
+    refs, diagnostics = prep.validate_finding_boundary_refs(
+        finding,
+        boundaries=[boundary],
+        origin_component_id="auth",
+        candidate_ids=None,
+        require_candidate=False,
+        known_component_ids={"api", "auth"},
+    )
+    assert [ref["boundary_id"] for ref in refs] == ["tb-1"]
+    assert diagnostics == []
+
+    outsider = deepcopy(finding)
+    outsider["boundary_refs"][0]["origin_component_id"] = "worker"
+    refs, diagnostics = prep.validate_finding_boundary_refs(
+        outsider,
+        boundaries=[boundary],
+        origin_component_id="worker",
+        candidate_ids=None,
+        require_candidate=False,
+        known_component_ids={"api", "auth", "worker"},
+    )
+    assert refs == []
+    assert any("non-adjacent" in d for d in diagnostics)
+
+
+def test_normalized_rows_carry_the_axes(tmp_path: Path) -> None:
+    rows, _warnings = _normalized(
+        tmp_path,
+        [_resolved(id="tb-1", name="OAuth callback", to="web-api", kind="identity")],
+        [{"id": "web-api", "name": "Web API", "paths": ["src/**"]}],
+    )
+    assert rows[0]["surface"] == "network"
+    assert rows[0]["transition"] == ["identity"]
 
 
 def test_ingress_and_egress_never_merge(tmp_path: Path):
@@ -1299,4 +1523,10 @@ def test_route_scan_does_not_escape_the_repo(tmp_path: Path):
     outside = tmp_path / "outside.ts"
     outside.write_text("app.get('/x', h())\n", encoding="utf-8")
     repo = _repo_with(tmp_path, "keep.ts", "const x = 1\n")
-    assert prep._file_registers_routes(repo, "../outside.ts") is False
+    assert prep._evidence_context(repo, {"file": "../outside.ts", "line": 1}) == ""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="api", evidence=[{"file": "../outside.ts", "line": 1}])],
+        components=_COMPONENTS,
+        repo_root=repo,
+    )
+    assert merged[0]["confidence"] == "inferred"

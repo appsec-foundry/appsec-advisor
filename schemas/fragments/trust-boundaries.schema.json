@@ -48,7 +48,38 @@
         "to": {"type": "string", "minLength": 1, "maxLength": 128},
         "kind": {
           "type": "string",
-          "enum": ["network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"]
+          "enum": ["network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"],
+          "description": "Authored/wire taxonomy. Retained as the sole input vocabulary and for display; `surface` and `transition` are derived from it and are what the pipeline branches on."
+        },
+        "surface": {
+          "type": "string",
+          "enum": ["network", "in-process", "build-pipeline"],
+          "description": "HOW the crossing happens. Derived from `kind`; never authored."
+        },
+        "transition": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 5,
+          "items": {"type": "string", "enum": ["identity", "privilege", "tenant", "data-origin", "operator"]},
+          "description": "WHAT changes across the crossing. Derived from `kind`; empty means an enforcement interface without a trust transition."
+        },
+        "enforcement_point": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120,
+          "description": "The single control that enforces this crossing, carried through from the candidate so the consolidation decision stays auditable. Generic values are dropped during promotion."
+        },
+        "confidence_basis": {
+          "type": "string",
+          "enum": ["analyst", "route-evidence"],
+          "description": "Present only on `confirmed` rows: whether the analyst inspected the evidence or a deterministic route-evidence check upgraded it."
+        },
+        "covers_components": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 24,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128},
+          "description": "Components absorbed when crossings were consolidated. Treated as adjacent to this boundary by dispatch, reference validation and ingress elevation."
         },
         "assumption": {"type": "string", "minLength": 1, "maxLength": 240},
         "evidence": {
