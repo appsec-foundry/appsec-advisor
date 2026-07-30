@@ -275,16 +275,13 @@ What remains open, and what the spike must still establish:
 Phase 0 measures capacity, not only capability. A yes on every feature above
 still leaves the MVP unbuildable if a stage's instructions do not fit.
 
-**The decisive experiment.** Do not test these questions abstractly. Take one
-stage, the fixture, and an oracle that already exists: build a minimal custom
-agent for architecture modeling, run it non-interactively over the synthetic
-fixture with `copilot -p ... --allow-all-tools --output-format json`, and
-require a `.components.json` that passes `scripts/validate_fragment.py`.
-Compare it against the Claude golden sidecar for the same fixture. That single
-run answers dispatch, tool approvals, capacity, and output quality together,
-and it produces the first data point for the stop threshold. Architecture
-modeling is the right stage: it is the largest body of genuine analysis
-guidance, where STRIDE's larger number is mostly dispatch protocol.
+**The decisive experiment** is specified in
+`plan-copilot-capacity-spike-2026-07-30.md`: architecture modeling over the
+synthetic fixture, run at three instruction sizes, gated by
+`scripts/validate_fragment.py` and compared against the Claude sidecar for the
+same fixture. It answers dispatch, tool scoping, capacity and output quality in
+one pass, and the gap between its tiers is what the stop threshold is set from.
+Run it before any production change.
 
 Record the exact supported capability, fallback, and version in a concise
 internal compatibility note. Do not assume that custom-agent availability
