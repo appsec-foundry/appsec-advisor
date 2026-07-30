@@ -1294,7 +1294,17 @@ def test_trust_boundary_catalog_exposure_and_review_labels(tmp_path: Path) -> No
     assert "**inferred**" in rendered
 
 
-def test_trust_boundary_external_sort_is_only_a_tie_breaker(tmp_path: Path) -> None:
+def test_trust_boundary_catalogue_is_ordered_by_id(tmp_path: Path) -> None:
+    """The §1 catalogue is a lookup table, so it reads in `tb-N` order.
+
+    It used to sort risk-first — linked findings, primary selection,
+    internet-facing, confirmed — which reordered the table on ordinary
+    attributes its own "Linked findings" and "Kind / status" columns already
+    show. juice-shop 2026-07-30 rendered a catalogue running tb-5, tb-1, tb-3,
+    tb-4, tb-2, where the leading criterion was decided by the 2 of 59 findings
+    that happened to carry a `boundary_refs[]` entry. Only `conflicted` /
+    `unresolved` still floats, because that is an exceptional state.
+    """
     rows = [
         _canonical_boundary(1, "Unlinked external"),
         {
@@ -1324,7 +1334,35 @@ def test_trust_boundary_external_sort_is_only_a_tie_breaker(tmp_path: Path) -> N
         triage={},
         fragments_dir=tmp_path,
     )
-    assert [row["id"] for row in compose._ordered_trust_boundaries(ctx)] == ["tb-2", "tb-3", "tb-1"]
+    # tb-3 is unresolved and hoists; tb-1 precedes tb-2 by id even though only
+    # tb-2 carries a linked finding and only tb-1 faces the internet.
+    assert [row["id"] for row in compose._ordered_trust_boundaries(ctx)] == ["tb-3", "tb-1", "tb-2"]
+
+
+def test_healthy_trust_boundary_catalogue_starts_at_tb_1(tmp_path: Path) -> None:
+    """With no broken rows the order is plain `tb-N` — nothing floats."""
+    rows = [
+        {**_canonical_boundary(3, "Third"), "from": "C-01", "to": "C-02"},
+        _canonical_boundary(1, "First"),
+        {**_canonical_boundary(2, "Second"), "confidence": "confirmed"},
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={
+            "components": [{"id": "C-01"}, {"id": "C-02"}],
+            "trust_boundaries": rows,
+            "threats": [
+                {
+                    "id": "T-001",
+                    "boundary_refs": [{"boundary_id": "tb-3", "origin_component_id": "C-01"}],
+                }
+            ],
+        },
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    assert [row["id"] for row in compose._ordered_trust_boundaries(ctx)] == ["tb-1", "tb-2", "tb-3"]
 
 
 def test_finding_boundary_gap_links_only_to_visible_catalogue_rows(tmp_path: Path) -> None:

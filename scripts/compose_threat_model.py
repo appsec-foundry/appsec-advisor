@@ -15169,35 +15169,28 @@ def _boundary_link_index(ctx: RenderContext) -> dict[str, list[str]]:
 
 
 def _ordered_trust_boundaries(ctx: RenderContext) -> list[dict]:
+    """§1 catalogue order: `tb-N`, with broken rows hoisted.
+
+    This is a lookup table — cross-references throughout the report point at
+    `#tb-N`, so a reader arrives knowing the id and scans the ID column for it.
+    It used to sort risk-first (linked findings, then primary selection,
+    internet-facing, confirmed), which reordered the catalogue on ordinary
+    attributes that the table's own "Linked findings" and "Kind / status" columns
+    already show. On juice-shop that surfaced as a catalogue starting at tb-5 and
+    ending at tb-2 for no reason visible in the rendered table — and the leading
+    criterion was decided by whichever boundary happened to collect a
+    `boundary_refs[]` entry, which is 2 findings out of 59. Severity ordering has
+    a home: §8 Findings Register.
+
+    `conflicted` / `unresolved` still float to the top. That is an exceptional
+    state — normally zero rows — so it does not scramble the healthy case, and
+    those rows are the ones a reader must not skim past.
+    """
     rows = [row for row in ctx.yaml_data.get("trust_boundaries") or [] if isinstance(row, dict)]
-    linked = _boundary_link_index(ctx)
-    selection = ((ctx.yaml_data.get("meta") or {}).get("boundary_selection") or {}).get("components") or {}
-    selected_primary: set[str] = set()
-    component_ids = {
-        row["id"]
-        for row in ctx.yaml_data.get("components") or []
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
-    }
-    for audit in selection.values() if isinstance(selection, dict) else []:
-        if not isinstance(audit, dict):
-            continue
-        reasons = audit.get("focus_reasons") or {}
-        for boundary_id in audit.get("selected_ids") or []:
-            reason_text = " ".join(reasons.get(boundary_id) or []).lower()
-            if any(
-                marker in reason_text
-                for marker in ("external", "identity", "privilege", "tenant", "third-party", "build", "prior verified")
-            ):
-                selected_primary.add(boundary_id)
 
     def key(row: dict) -> tuple:
-        boundary_id = row.get("id")
         return (
-            0 if linked.get(boundary_id) else 1,
             0 if row.get("resolution_status") in {"conflicted", "unresolved"} else 1,
-            0 if boundary_id in selected_primary else 1,
-            0 if _boundary_exposure(row, component_ids) == "internet-facing" else 1,
-            0 if row.get("confidence") == "confirmed" else 1,
             _tb_number(row),
         )
 
