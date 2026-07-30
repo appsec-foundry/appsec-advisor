@@ -101,11 +101,12 @@ file format that carries threats and mitigations into OWASP ThreatAtlas — that
 tool's own exports restore geometry and drop every finding.
 
 While it is alpha, keep it out of the `--formats all` expansion; a test pins
-that. The export is deliberately lossy and best-effort: Threat Dragon has no
-field for CVSS, CWE, evidence locations, mitigation priority or requirements
-traceability, so those are folded into each threat's description, and thin or
-inconsistent input degrades to a warning on stderr rather than a failed export.
-`threat-model.md` stays authoritative and SARIF stays the scanner export.
+that. The export is deliberately lossy and best-effort: what has no Threat
+Dragon field is folded into text or dropped, and thin input degrades to a
+stderr warning rather than a failed export. Emitted values stay inside Threat
+Dragon's own vocabulary, pinned by their schema and a golden export in
+`tests/fixtures/threat-dragon/`. `threat-model.md` stays authoritative and
+SARIF stays the scanner export.
 
 ### Runtime artifact cleanup
 

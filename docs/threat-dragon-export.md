@@ -42,9 +42,11 @@ interchange format and the only one that gets our work across.
 | `components[]` | DFD elements — `tier: client` → actor, `application` → process, `data` → store (legacy `kind` is the fallback, unknown defaults to process) |
 | `data_flows[]` | flows between elements; endpoints resolve by component id or name, and the reserved `external` endpoint becomes an actor |
 | `threats[]` | threats on their component's element |
-| `threats[].stride` | threat type — becomes the category in ThreatAtlas |
-| `threats[].risk` | severity; ThreatAtlas turns Critical/High/Medium/Low into likelihood and impact 5/4/3/2 |
+| `threats[].stride` | threat type, in Threat Dragon's own spelling (`Information disclosure`) — becomes the category in ThreatAtlas |
+| `threats[].risk` | severity; ThreatAtlas turns Critical/High/Medium/Low into likelihood and impact 5/4/3/2, and an unrated threat exports as Threat Dragon's `TBD` |
+| `threats[].cvss_v4.base_score` | the threat's `score` field; the vector goes into the description |
 | `mitigations[]` | the threat's mitigation text, linked from either side |
+| `mitigations[].kind: accept_risk` | threat status `Accepted`, when no other mitigation is linked |
 
 Every threat title keeps its report anchor — `[F-012] Missing authorization on …`
 — and the description ends with a pointer back to `threat-model.md`.
@@ -52,11 +54,12 @@ Every threat title keeps its report anchor — `[F-012] Missing authorization on
 ## What is lost
 
 Threat Dragon's schema is much narrower than ours. These have no field to land
-in and are folded into the threat description as text: **CVSS v4**, **CWE**,
-**evidence file and line**, **evidence tier**, **finding source**. These are
-dropped entirely: **mitigation priority and effort** (kept only as a text
-qualifier), **requirements traceability**, **abuse cases**, **actors**, **attack
-surface**, **assets**, **walkthroughs**, and the **weakness register**.
+in and are folded into the threat description as text: the **CVSS v4 vector**,
+**CWE**, **evidence summary, file and line**, **evidence tier**, **finding
+source**. These are dropped entirely: **mitigation priority and effort** (kept
+only as a text qualifier), **requirements traceability**, **abuse cases**,
+**actors**, **attack surface**, **assets**, **walkthroughs**, and the
+**weakness register**.
 
 **Trust boundaries are dropped.** Ours are a `from`/`to` pair with a kind and an
 assumption; Threat Dragon wants a geometric box or curve, and ThreatAtlas skips
@@ -76,8 +79,10 @@ threat-modeling tools.
   Dragon canvas until you open the flow.
 - **One diagram.** ThreatAtlas reads `detail.diagrams[0]` and ignores the rest,
   so the whole model is flattened into a single diagram.
-- **Every threat is exported as `Open`.** Our mitigations are proposed, not
-  verified as implemented, so claiming `Mitigated` would be untrue.
+- **Threats are exported as `Open`, apart from accepted risks.** Our
+  mitigations are proposed, not verified as implemented, so claiming
+  `Mitigated` would be untrue; `accept_risk` is the one kind that records a
+  decision already taken.
 - **Layout is a fixed three-column grid** (actors, processes, stores). It keeps
   the output byte-stable; rearrange it in the target tool.
 - **Large models import slowly into ThreatAtlas.** Its importer issues two to

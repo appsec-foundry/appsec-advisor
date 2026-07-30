@@ -11,11 +11,11 @@ Dragon path is the one file format that also creates its threats and
 mitigations.
 
 ALPHA — the mapping may change between releases. Threat Dragon's schema is
-much narrower than ours, so this export is lossy by construction: CVSS, CWE,
-structured evidence, mitigation priority/effort, requirements traceability,
-abuse cases, actors and trust boundaries have no field to land in. What does
-not fit a field is folded into the threat description as text, and every
-threat keeps its `F-NNN` anchor in the title so a reader can walk back to
+much narrower than ours, so this export is lossy by construction: CWE,
+structured evidence and mitigation priority/effort have no field of their own
+and are folded into text; requirements traceability, abuse cases, actors and
+trust boundaries have no counterpart at all and are dropped. Every threat
+keeps its `F-NNN` anchor in the title so a reader can walk back to
 `threat-model.md`.
 
 Best-effort by design: a thin or legacy-shaped yaml still produces a usable
@@ -54,15 +54,18 @@ EXTERNAL_REF = "external"
 # bidirectional for diagramming purposes.
 BIDIRECTIONAL_DIRECTIONS = {"bidirectional", "request-response", "both"}
 
-# Threat Dragon's own STRIDE labels. Ours already match; anything else is
-# passed through so a non-STRIDE source stays readable in the editor.
-STRIDE_LABELS = {
-    "Spoofing",
-    "Tampering",
-    "Repudiation",
-    "Information Disclosure",
-    "Denial of Service",
-    "Elevation of Privilege",
+# Threat Dragon's own STRIDE labels (`td.vue/src/i18n/en.json`,
+# `threats.model.stride`) are sentence case where ours are title case. Map onto
+# theirs so the editor's type dropdown offers one spelling instead of two — it
+# appends an unrecognised type to the option list rather than rejecting it.
+# Anything not STRIDE passes through so a foreign category stays readable.
+STRIDE_TO_TD = {
+    "spoofing": "Spoofing",
+    "tampering": "Tampering",
+    "repudiation": "Repudiation",
+    "information disclosure": "Information disclosure",
+    "denial of service": "Denial of service",
+    "elevation of privilege": "Elevation of privilege",
 }
 
 # Node geometry. Fixed columns keep the output byte-stable — no layout engine,
@@ -113,6 +116,19 @@ RISK_TO_SEVERITY = {
     "low": "Low",
     "informational": "Low",
 }
+
+# Threat Dragon's severity control is a radio group over TBD/Low/Medium/High/
+# Critical, so an unrated threat has a value; omitting the field would leave
+# the control blank. ThreatAtlas' map misses `TBD` and an absent severity
+# alike, importing either unscored.
+SEVERITY_UNRATED = "TBD"
+
+# `threatStatus` in `td.vue/src/service/threats/status.js`. Our mitigations are
+# proposed, not verified as implemented, so a threat stays Open — except where
+# the only proposal is to accept the risk, which is a decision already taken.
+# ThreatAtlas maps `accepted` onto its own accepted state.
+STATUS_OPEN = "Open"
+STATUS_ACCEPTED = "Accepted"
 
 
 def _default_tool_version() -> str:
@@ -181,12 +197,30 @@ def _shape_for(component: dict) -> tuple[str, str]:
     return TIER_TO_SHAPE.get(tier, TIER_TO_SHAPE["application"])
 
 
-def _severity_for(threat: dict) -> str | None:
+def _severity_for(threat: dict) -> str:
     for key in ("risk", "severity", "impact"):
         mapped = RISK_TO_SEVERITY.get(_text(threat.get(key)).lower())
         if mapped:
             return mapped
-    return None
+    return SEVERITY_UNRATED
+
+
+def _status_for(mitigations: list[dict]) -> str:
+    """`accept_risk` is the one mitigation kind that records a decision rather
+    than a proposal. A threat whose every linked mitigation accepts the risk is
+    Accepted; one with any actionable mitigation, or none at all, stays Open."""
+    if mitigations and all(_text(m.get("kind")) == "accept_risk" for m in mitigations):
+        return STATUS_ACCEPTED
+    return STATUS_OPEN
+
+
+def _cvss_score(threat: dict) -> str:
+    """Threat Dragon's free-text `score` field is the one place a numeric
+    rating fits — the editor labels it "custom score/risk"."""
+    cvss = threat.get("cvss_v4")
+    if isinstance(cvss, dict) and isinstance(cvss.get("base_score"), (int, float)):
+        return str(cvss["base_score"])
+    return ""
 
 
 def _evidence_entries(threat: dict) -> list[dict]:
@@ -261,14 +295,16 @@ def _threat_description(threat: dict) -> str:
     if facts:
         blocks.append("\n".join(facts))
 
-    evidence = _evidence_entries(threat)
-    if evidence:
-        lines = []
-        for entry in evidence:
-            line = entry.get("line")
-            file_ref = _text(entry.get("file"))
-            lines.append(f"- {file_ref}:{line}" if isinstance(line, int) and line > 0 else f"- {file_ref}")
-        blocks.append("Evidence:\n" + "\n".join(lines))
+    evidence_lines: list[str] = []
+    summary = _text(threat.get("evidence_summary"))
+    if summary:
+        evidence_lines.append(summary)
+    for entry in _evidence_entries(threat):
+        line = entry.get("line")
+        file_ref = _text(entry.get("file"))
+        evidence_lines.append(f"- {file_ref}:{line}" if isinstance(line, int) and line > 0 else f"- {file_ref}")
+    if evidence_lines:
+        blocks.append("Evidence:\n" + "\n".join(evidence_lines))
 
     if fid:
         blocks.append(f"Full finding: threat-model.md#{fid.lower()} ({fid})")
@@ -321,23 +357,28 @@ def _build_threat_cell(threat: dict, number: int, mitigations: list[dict]) -> di
     cell: dict[str, Any] = {
         "id": fid or f"threat-{number}",
         "title": f"[{fid}] {title}" if fid else title,
-        "type": stride if stride in STRIDE_LABELS else (stride or "Other"),
-        "status": "Open",
+        "type": STRIDE_TO_TD.get(stride.lower(), stride or "Other"),
+        "status": _status_for(mitigations),
+        "severity": _severity_for(threat),
         "description": _threat_description(threat),
         "mitigation": _mitigation_text(mitigations),
         "modelType": DIAGRAM_TYPE,
         "number": number,
     }
-    severity = _severity_for(threat)
-    if severity:
-        cell["severity"] = severity
+    score = _cvss_score(threat)
+    if score:
+        cell["score"] = score
     return cell
 
 
 def _build_node(cid: str, name: str, description: str, shape: str, tm_type: str, index: int) -> dict:
     x = COLUMN_X.get(shape, COLUMN_X["process"])
     return {
-        "id": cid,
+        # `cells[].id` carries minLength 2 in the Threat Dragon v2 schema, and a
+        # one-character component id would put the whole file outside it. Every
+        # lookup keys off the source reference, so padding the emitted id here
+        # stays local to the cell.
+        "id": cid if len(cid) > 1 else f"td-{cid}",
         "shape": shape,
         "zIndex": 1,
         "visible": True,
@@ -414,14 +455,18 @@ def build_threat_dragon(
                 f"no components[] in the yaml — synthesised {len(nodes)} node(s) from threat component references"
             )
 
+    # The placeholder is itself a catch-all, so unresolved threats land on it
+    # instead of on a second element drawn at the same coordinates.
+    unassigned: dict | None = None
     if not nodes:
-        nodes.append(_build_node("C-SYSTEM", project, "", "process", "tm.Process", 0))
-        by_id["C-SYSTEM"] = nodes[0]
-        by_name[project.lower()] = nodes[0]
+        per_shape_index["process"] = 1
+        unassigned = _build_node("C-SYSTEM", project, "", "process", "tm.Process", 0)
+        nodes.append(unassigned)
+        by_id["C-SYSTEM"] = unassigned
+        by_name[project.lower()] = unassigned
         warnings.append("no components and no threat component references — emitted a single placeholder node")
 
     # ── Threats ────────────────────────────────────────────────────────────
-    unassigned: dict | None = None
     number = 0
     for threat in threats:
         number += 1
@@ -443,7 +488,7 @@ def build_threat_dragon(
             node = unassigned
             warnings.append(
                 f"threat {_display_id(_threat_id(threat)) or '(no id)'} references unknown component "
-                f"{ref!r} — attached to the Unassigned element"
+                f"{ref!r} — attached to the {node['data']['name']!r} element"
             )
         cell = _build_threat_cell(threat, number, _linked_mitigations(threat, mitigations))
         node["data"]["threats"].append(cell)
@@ -536,8 +581,9 @@ def build_threat_dragon(
             "owner": owner,
             "description": (
                 f"Generated by appsec-advisor {tool_version} — ALPHA Threat Dragon export. "
-                "Lossy by design: CVSS, CWE, evidence locations, mitigation priority and "
-                "requirements traceability are folded into the threat descriptions. "
+                "Lossy by design: CWE, evidence locations and mitigation detail are folded "
+                "into text; requirements traceability, abuse cases, actors and trust "
+                "boundaries have no counterpart and are dropped. "
                 "See threat-model.md for the authoritative report."
             ),
             "id": 0,

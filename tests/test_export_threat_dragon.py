@@ -35,6 +35,14 @@ COMPOSE_YAML = FIXTURES / "compose" / "threat-model.yaml"
 # and `tests/test_new_schemas.py` validate the output schema against.
 SCHEMA_VALID_YAML = FIXTURES / "schema" / "threat-model.valid.yaml"
 
+TD_DIR = FIXTURES / "threat-dragon"
+# Threat Dragon's own model schema, and the source/golden pair pinning the
+# mapping. See TD_DIR/README.md for provenance and how to regenerate.
+TD_SCHEMA = TD_DIR / "owasp.threat-dragon-v2.schema.json"
+GOLDEN_YAML = TD_DIR / "threat-model.source.yaml"
+GOLDEN_JSON = TD_DIR / "threat-model.threatdragon.golden.json"
+GOLDEN_TOOL_VERSION = "0.0.0-test"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -286,9 +294,56 @@ def test_informational_degrades_to_low():
     assert _all_threats(doc)[0]["severity"] == "Low"
 
 
-def test_missing_risk_omits_severity_rather_than_inventing_one():
+def test_missing_risk_becomes_tbd_rather_than_an_invented_rating():
+    """`TBD` is Threat Dragon's own value for an unrated threat, so the
+    severity control has a selection. ThreatAtlas imports it unscored, exactly
+    as it would an absent severity."""
     doc, _ = etd.build_threat_dragon(_model(threats=[{"id": "T-001", "component": "C-02", "title": "X"}]))
-    assert "severity" not in _all_threats(doc)[0]
+    assert _all_threats(doc)[0]["severity"] == "TBD"
+
+
+def test_stride_category_uses_threat_dragons_own_spelling():
+    """Ours is title case, Threat Dragon's is sentence case. Emitting theirs
+    keeps the editor's type dropdown at one option instead of two."""
+    doc, _ = etd.build_threat_dragon(
+        _model(
+            threats=[
+                {"id": "T-001", "component": "C-02", "stride": "Information Disclosure", "title": "A"},
+                {"id": "T-002", "component": "C-02", "stride": "Denial of Service", "title": "B"},
+                {"id": "T-003", "component": "C-02", "stride": "Elevation of Privilege", "title": "C"},
+            ]
+        )
+    )
+    assert [t["type"] for t in _all_threats(doc)] == [
+        "Information disclosure",
+        "Denial of service",
+        "Elevation of privilege",
+    ]
+
+
+def test_cvss_base_score_lands_in_the_score_field():
+    """Threat Dragon's free-text `score` is the one numeric rating field it
+    has; the vector stays in the description because nothing holds it."""
+    doc, _ = etd.build_threat_dragon(
+        _model(
+            threats=[
+                {
+                    "id": "T-001",
+                    "component": "C-02",
+                    "title": "X",
+                    "cvss_v4": {"base_score": 8.7, "vector": "CVSS:4.0/AV:N"},
+                }
+            ]
+        )
+    )
+    threat = _all_threats(doc)[0]
+    assert threat["score"] == "8.7"
+    assert "CVSS:4.0/AV:N" in threat["description"]
+
+
+def test_threat_without_cvss_has_no_score_field():
+    doc, _ = etd.build_threat_dragon(_model())
+    assert "score" not in _all_threats(doc)[0]
 
 
 def test_description_folds_in_the_fields_threat_dragon_cannot_hold():
@@ -299,6 +354,27 @@ def test_description_folds_in_the_fields_threat_dragon_cannot_hold():
     assert "CWE-89" in description
     assert "- routes/search.ts:42" in description
     assert "threat-model.md#f-001" in description
+
+
+def test_evidence_summary_heads_the_evidence_block():
+    """The prose naming the concrete evidence is a separate field from
+    `scenario` and is where the file references get their meaning."""
+    doc, _ = etd.build_threat_dragon(
+        _model(
+            threats=[
+                {
+                    "id": "T-001",
+                    "component": "C-02",
+                    "title": "X",
+                    "scenario": "Search is injectable.",
+                    "evidence_summary": "`db.query` concatenates `q` at search.ts:42.",
+                    "evidence": [{"file": "search.ts", "line": 42}],
+                }
+            ]
+        )
+    )
+    description = _all_threats(doc)[0]["description"]
+    assert "Evidence:\n`db.query` concatenates `q` at search.ts:42.\n- search.ts:42" in description
 
 
 def test_description_includes_cvss_when_present():
@@ -350,6 +426,28 @@ def test_mitigation_links_from_either_side_and_either_vocabulary():
     mitigation = _all_threats(doc)[0]["mitigation"]
     assert mitigation.count("M-001") == 1
     assert "Why: w" in mitigation and "How: h" in mitigation
+
+
+def test_accepted_risk_is_the_one_status_that_is_not_open():
+    """`accept_risk` records a decision that has been taken, unlike every other
+    kind, which proposes work. `Accepted` is Threat Dragon's own status value
+    and ThreatAtlas maps it onto its accepted state."""
+    doc, _ = etd.build_threat_dragon(
+        _model(mitigations=[{"id": "M-001", "title": "Accept", "threat_ids": ["T-001"], "kind": "accept_risk"}])
+    )
+    assert _all_threats(doc)[0]["status"] == "Accepted"
+
+
+def test_a_threat_with_any_actionable_mitigation_stays_open():
+    doc, _ = etd.build_threat_dragon(
+        _model(
+            mitigations=[
+                {"id": "M-001", "title": "Accept", "threat_ids": ["T-001"], "kind": "accept_risk"},
+                {"id": "M-002", "title": "Fix", "threat_ids": ["T-001"], "kind": "fix"},
+            ]
+        )
+    )
+    assert _all_threats(doc)[0]["status"] == "Open"
 
 
 def test_unlinked_mitigation_is_not_attached():
@@ -501,6 +599,43 @@ def test_empty_model_still_yields_one_element():
     assert len(_nodes(doc)) == 1
     assert doc["detail"]["threatTop"] == 0
     assert any("placeholder" in w for w in warnings)
+
+
+def test_the_placeholder_is_the_unassigned_sink():
+    """A placeholder and an Unassigned element are the same catch-all. Two of
+    them would be drawn on top of each other, since each takes the first row of
+    the process column."""
+    doc, _ = etd.build_threat_dragon({"threats": [{"id": "T-001", "title": "X"}]})
+    nodes = _nodes(doc)
+    assert [c["id"] for c in nodes] == ["C-SYSTEM"]
+    assert len(nodes[0]["data"]["threats"]) == 1
+
+
+def test_no_two_elements_share_a_position():
+    doc, _ = etd.build_threat_dragon(
+        _model(
+            threats=[{"id": "T-001", "component": "Ghost", "title": "X"}],
+            data_flows=[{"from": "external", "to": "C-01", "label": "a"}],
+        )
+    )
+    positions = [(c["position"]["x"], c["position"]["y"]) for c in _nodes(doc)]
+    assert len(set(positions)) == len(positions)
+
+
+def test_a_one_character_id_is_padded_to_the_schema_minimum():
+    """`cells[].id` has minLength 2 in the Threat Dragon v2 schema. Endpoints
+    still resolve, because lookups key off the source reference."""
+    doc, warnings = etd.build_threat_dragon(
+        _model(
+            components=[{"id": "a", "name": "A"}, {"id": "b", "name": "B"}],
+            threats=[],
+            data_flows=[{"from": "a", "to": "b", "label": "x"}],
+        )
+    )
+    assert warnings == []
+    assert [c["id"] for c in _nodes(doc)] == ["td-a", "td-b"]
+    assert _flows(doc)[0]["source"] == {"cell": "td-a"}
+    assert _flows(doc)[0]["target"] == {"cell": "td-b"}
 
 
 def test_trust_boundaries_are_reported_as_dropped():
@@ -732,8 +867,74 @@ def test_production_vocabulary_exports_cleanly():
 
 
 # ---------------------------------------------------------------------------
+# Threat Dragon's own schema
+# ---------------------------------------------------------------------------
+#
+# Threat Dragon compiles `threat-dragon-v2.schema.json` with ajv and validates
+# every model it opens against it. A model that misses it still opens, with a
+# "does not strictly match schema" warning — which is exactly the state this
+# export must not ship in. Validating here is what makes "the file opens in
+# Threat Dragon" a checked claim rather than a hopeful one.
+
+
+@pytest.fixture(scope="module")
+def td_validator():
+    jsonschema = pytest.importorskip("jsonschema")
+    return jsonschema.Draft7Validator(json.loads(TD_SCHEMA.read_text(encoding="utf-8")))
+
+
+def _assert_td_valid(td_validator, doc: dict) -> None:
+    errors = [f"{'/'.join(str(p) for p in e.path)}: {e.message}" for e in td_validator.iter_errors(doc)]
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param({}, id="empty"),
+        pytest.param(_model(), id="tidy"),
+        pytest.param(_model(components=[{"id": "a", "name": "A"}], threats=[], data_flows=[]), id="short-ids"),
+        pytest.param(
+            _model(components=[], data_flows=[], threats=[{"id": "T-001", "component": "Ghost", "title": "X"}]),
+            id="synthesised",
+        ),
+        pytest.param(
+            _model(threats=[{"id": "T-001", "component": "C-02", "stride": "Privacy", "title": "X"}]),
+            id="foreign-category",
+        ),
+    ],
+)
+def test_output_matches_threat_dragons_own_schema(td_validator, model):
+    _assert_td_valid(td_validator, etd.build_threat_dragon(model)[0])
+
+
+@pytest.mark.parametrize("path", [SCHEMA_VALID_YAML, COMPOSE_YAML, GOLDEN_YAML])
+def test_fixture_exports_match_threat_dragons_own_schema(td_validator, path):
+    _assert_td_valid(td_validator, etd.build_threat_dragon(yaml.safe_load(path.read_text()))[0])
+
+
+# ---------------------------------------------------------------------------
 # Determinism and CLI
 # ---------------------------------------------------------------------------
+
+
+def test_golden_export_is_unchanged(tmp_path: Path):
+    """One schema-valid model through the whole mapping, pinned byte for byte:
+    three tiers, an `external` endpoint, CVSS, an accepted risk, evidence.
+    A diff here is a mapping change — review it, then regenerate deliberately
+    (see tests/fixtures/threat-dragon/README.md)."""
+    out = tmp_path / "threat-model.threatdragon.json"
+    result = _run(
+        "--threat-model",
+        str(GOLDEN_YAML),
+        "--output",
+        str(out),
+        "--tool-version",
+        GOLDEN_TOOL_VERSION,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert out.read_text(encoding="utf-8") == GOLDEN_JSON.read_text(encoding="utf-8")
 
 
 def test_output_is_byte_stable():

@@ -1,0 +1,123 @@
+meta:
+  schema_version: 1
+  project: Golden Shop
+  generated: "2026-07-30T00:00:00Z"
+  mode: full
+  model: sonnet
+  team_owner: Platform Security
+
+components:
+  - id: web-ui
+    name: Web UI
+    tier: client
+    paths: ["frontend/**"]
+  - id: rest-api
+    name: REST API
+    tier: application
+    paths: ["src/api/**"]
+  - id: order-db
+    name: Order DB
+    tier: data
+    paths: ["db/**"]
+
+data_flows:
+  - id: df-001
+    from: external
+    to: web-ui
+    label: browse catalog
+    protocol: HTTPS
+    data_classification: Public
+    direction: request-response
+  - id: df-002
+    from: rest-api
+    to: order-db
+    label: persist order
+    protocol: TCP
+    data_classification: Confidential
+    direction: unidirectional
+
+assets:
+  - name: Customer orders
+    classification: Confidential
+    description: Order records including billing addresses.
+
+attack_surface:
+  - entry_point: GET /api/search
+    protocol: HTTPS
+    auth_required: false
+    notes: Public product search.
+
+trust_boundaries:
+  - id: tb-1
+    name: Internet to Web UI
+    from: external
+    to: web-ui
+    kind: network
+    assumption: Requests reaching the Web UI are terminated at the CDN and rate limited.
+    evidence: []
+    confidence: inferred
+    resolution_status: resolved
+    sources: [detected]
+
+security_controls:
+  - domain: Authorization
+    control: Session cookie validation
+    effectiveness: Partial
+    linked_threats: [T-001]
+
+threats:
+  - id: T-001
+    component: rest-api
+    stride: Tampering
+    title: SQL injection in product search
+    scenario: The search handler builds SQL with a template literal from the untrusted `q` parameter.
+    evidence_summary: "`db.query(`SELECT * FROM products WHERE name LIKE '%${q}%'`)` at search.ts:42 concatenates the raw parameter."
+    impact_description: An attacker reads the full product and order tables and can write arbitrary rows.
+    likelihood: High
+    impact: Critical
+    risk: Critical
+    cwe: CWE-89
+    evidence_tier: confirmed-exploitable
+    source: stride
+    evidence:
+      - file: src/api/search.ts
+        line: 42
+    cvss_v4:
+      base_score: 9.3
+      vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N"
+      severity: Critical
+      source: stride-analyzer
+    mitigation_ids: [M-001]
+  - id: T-002
+    component: order-db
+    stride: Information Disclosure
+    title: Order table readable by the reporting role
+    scenario: The reporting role holds SELECT on the full order table including billing addresses.
+    likelihood: Low
+    impact: Medium
+    risk: Low
+    source: stride
+    evidence:
+      - file: db/grants.sql
+        line: 17
+    mitigation_ids: [M-002]
+
+mitigations:
+  - id: M-001
+    title: Parameterize the product search query
+    threat_ids: [T-001]
+    priority: P1
+    effort: Medium
+    kind: fix
+    steps:
+      - Replace the template literal with a parameterized query.
+      - Add a lint rule that rejects string-built SQL.
+    verification: sqlmap reports no injectable parameter against /api/search.
+  - id: M-002
+    title: Accept the reporting role's read access
+    threat_ids: [T-002]
+    priority: P4
+    effort: Low
+    kind: accept_risk
+    steps:
+      - Reporting runs inside the same trust zone and the data is already in its dashboards.
