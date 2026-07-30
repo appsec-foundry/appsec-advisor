@@ -96,6 +96,14 @@ directly.
 Do not add an output mode that is less safe than the existing full pipeline
 merely to simplify the first Copilot integration.
 
+At `quick` depth the Copilot run drops the same stages the Claude run drops,
+Phase 2.7 actor discovery among them. State the delta in the user document
+instead of leaving two depth labels that mean different things per host.
+
+The Copilot surface is experimental and must be gated so it cannot be mistaken
+for a supported path, the way the alpha Threat Dragon export is kept out of
+`--formats all` and pinned by a test. Decide the gate in Phase 2 and pin it.
+
 ## Target architecture
 
 ```text
@@ -179,6 +187,17 @@ short and review it when it grows.
    context remain untrusted data, never agent instructions.
 7. Copilot hooks are observability and ergonomics mechanisms. They are not
    security boundaries and cannot replace deterministic enforcement.
+8. Every report states which host produced it. Add a `host` field to the
+   `meta` block in `schemas/threat-model.output.schema.yaml` next to
+   `reasoning_model` and `assessment_depth`, and surface it in the report.
+   The two hosts emit the same sections, schemas and finding IDs at different
+   analysis depth, so a reader who cannot tell them apart cannot judge what
+   the report is worth. No Copilot artifact ships without this field.
+9. Artifacts do not cross hosts. A run refuses a prior model, cache, or
+   baseline written by the other host rather than carrying its IDs forward.
+   Incremental analysis is out of scope, but `.appsec-cache/baseline.json`
+   and the stable IDs persist, so a Claude run over a Copilot-produced model
+   is a real situation and must fail with an explicit message.
 
 ## Implementation phases
 
@@ -398,6 +417,11 @@ The controller must persist an explicit state record with:
 - failure category; and
 - terminal result.
 
+A failed run must leave a diagnosable artifact, not only a non-zero exit:
+`scripts/aggregate_run_issues.py` and `scripts/render_run_diagnosis.py` already
+produce one from the event log, so the Copilot path feeds the same writers
+rather than inventing a second failure format.
+
 It must reject invalid transitions and report incomplete output as failure.
 The Copilot skill invokes one transition at a time; it does not infer completion
 from assistant prose. A failed or interrupted run remains diagnosable without
@@ -511,9 +535,18 @@ runs. The Copilot acceptance path must validate:
 - severity and evidence gates; and
 - no writes outside allowed output paths.
 
+Every test in this list belongs in the push and pull-request lane
+(`.github/workflows/tests.yml`), not behind a manual dispatch. The full replay
+is expensive and runs on `workflow_dispatch`; a guard that only fires there
+does not prevent drift, it records it afterwards.
+
 Add an English user document that states supported Copilot versions, supported
-MVP modes, setup/trust requirements, expected outputs, and the known
-limitations below.
+MVP modes, the `quick` stage delta, setup/trust requirements, expected outputs,
+and the known limitations below. It must also state where repository content
+goes: the two hosts send the analyzed source to different vendors under
+different terms. This product reads customer code to model threats, so the
+data flow of the tool itself is a fact a reader has to be able to check, not
+an implementation detail.
 
 **Exit criterion:** targeted tests, `make lint`, and `make test` pass, and the
 Claude regression replay and the distinct Copilot replay both satisfy the
@@ -536,6 +569,7 @@ Existing files this MVP changes:
 | `scripts/baseline_check.py` | host-specific instruction discovery |
 | `scripts/validate_org_profile.py` | host projection, explicit unsupported-feature error |
 | `scripts/resolve_config.py` | asset-root and host input |
+| `schemas/threat-model.output.schema.yaml` | `meta.host` field |
 | `tests/test_agent_definitions.py` | shared-reference and inline-copy guards cover both agent sets |
 | `CHANGELOG.md`, `AGENTS.md` | one bullet, one change-map row |
 
@@ -586,6 +620,7 @@ repeated branching; otherwise the provider input stays inside the controller.
 | Different tool and permission semantics | Unsafe writes or repeated interactive failures | Use minimal tool allowlists; preserve Python path guards; document trust/approvals; test rejected tool paths. |
 | Mandatory Claude permission gate blocks Copilot | Every controller preparation aborts before analysis | Add and test an explicit host-specific permission provider; preserve the current Claude provider and failure text. |
 | Model selection differs by host | Cost, quality, or review-depth drift | Treat model routing as host-specific; record the actual model in run metadata; do not claim Claude model parity. |
+| A weaker report is indistinguishable from a Claude one | Readers trust an analysis at a depth it does not have | Emit `meta.host` and show it in the report; measure the gap with the semantic evaluation before Phase 2. |
 | Claude metadata leaks into Copilot reports | `plugin_version` and `analysis_version` silently become wrong, affecting compatibility decisions | Generalize `plugin_meta.py`; test YAML metadata for both hosts. |
 | Claude paths in repair sidecars | Copilot repair steps execute invalid or unintended paths | Emit host-resolved structured remediation; test all agent-consumed command strings. |
 | Architecture stages read as part of recon | Sections 1–6, trust boundaries, and the STRIDE component manifest never get produced | Give architecture and trust boundaries their own states and agent profiles; assert their sidecars before STRIDE starts. |
@@ -630,11 +665,41 @@ Expected capability levels are:
 These are planning estimates, not release claims. The fixture replay and
 capability spike determine whether the measured implementation meets them.
 
+## Decision gate and stop criterion
+
+The structural acceptance list proves the report is well-formed. It says
+nothing about whether the findings are right, which is the axis where the two
+hosts actually differ. Close that before Phase 2, not after Phase 7.
+
+1. **Measure the difference, do not estimate it.** Run both hosts over the
+   same fixture and compare with the existing semantic evaluation,
+   `scripts/eval_threat_model.py` and its `eval-threat-model` skill. Report
+   findings found by one host and missed by the other, severity disagreement,
+   and evidence quality — not counts alone.
+2. **Fix the threshold before the number exists.** Name the miss rate, the
+   severity drift, and the false-positive rate at which the MVP is stopped
+   rather than improved. A threshold chosen after seeing the result is not a
+   threshold. Record it in the Phase 0 compatibility note.
+3. **Budget wall-clock too.** Serial per-component STRIDE is the fallback
+   design, so record run duration next to quality. A run that takes several
+   times the Claude baseline is a product decision, not a tuning detail.
+4. **Keep the exit cheap.** If the MVP is stopped, deleting `.github/skills`,
+   `.github/agents`, `.github/hooks`, the Copilot adapter scripts and their
+   tests must remove the whole surface. Phase 1 stays: a host-neutral core
+   with a pinned command list is worth having on its own, and it is what makes
+   any later host cheap. Do not let Copilot-shaped constraints reach into
+   `scripts/` beyond the asset-root contract.
+
+Both the threshold and the go/no-go belong to a named owner, recorded with the
+compatibility note. An MVP with no one authorized to stop it gets improved
+indefinitely instead of decided.
+
 ## Execution order for a follow-on agent
 
 1. Read this plan, `AGENTS.md`, `CONTRIBUTING.md`, and the referenced
    controller, skill, agent, hook, schema, and test files before editing.
 2. Complete Phase 0 and record results before choosing a dispatch design.
+   Record the stop threshold and the owner in the same note.
 3. Implement phases in order. Do not start an agent-profile port before the
    asset-root contract is proven.
 4. For each phase, add tests before or with behavior changes and run the
