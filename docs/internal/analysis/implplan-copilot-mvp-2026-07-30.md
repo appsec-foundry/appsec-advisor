@@ -276,20 +276,30 @@ Phase 0 measures capacity, not only capability. A yes on every feature above
 still leaves the MVP unbuildable if a stage's instructions do not fit.
 
 **The decisive experiment** is specified in
-`plan-copilot-capacity-spike-2026-07-30.md`: architecture modeling over the
-synthetic fixture, run at three instruction sizes, gated by
-`scripts/validate_fragment.py` and compared against the Claude sidecar for the
-same fixture. It answers dispatch, tool scoping, capacity and output quality in
-one pass, and the gap between its tiers is what the stop threshold is set from.
-Run it before any production change.
+`plan-copilot-capacity-spike-2026-07-30.md` and built in `spike/`: architecture
+modeling over the synthetic fixture, run at three instruction sizes with
+`./spike/run.sh A|B|C`, gated by `scripts/validate_fragment.py` and compared
+against the Claude sidecar for the same fixture. It answers dispatch, tool
+scoping, capacity and output quality in one pass, and the gap between its tiers
+is what the stop threshold is set from. Run it before any production change.
+
+One number from building it already bears on the plan: of Phase 3's 66,000
+characters only about 11,000 concern component enumeration, and the remainder
+specifies diagrams, layer tables and section themes that this MVP assigns to
+the render stage. If that ratio holds for the other stages, the per-agent
+instruction volume is a fraction of the phase-group sizes, and the capacity
+question is far less binding than those totals suggest. The spike is what
+turns that from an observation into a measurement.
 
 Record the exact supported capability, fallback, and version in a concise
 internal compatibility note. Do not assume that custom-agent availability
 implies programmable subagent fan-out.
 
-**Exit criterion:** a checked-in design decision names the supported Copilot
-execution mode and the serial fallback. No MVP work may depend on unverified
-subagent dispatch semantics.
+**Exit criterion:** the spike has run at all three tiers and its numbers are
+recorded, and a checked-in design decision names the supported Copilot
+execution mode, the serial fallback, the tool scope a scripted run gets, the
+stop threshold, and the owner. No MVP work may depend on unverified subagent
+dispatch semantics.
 
 ### Phase 1 — Make the deterministic core host-neutral
 

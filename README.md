@@ -291,7 +291,7 @@ For the contributor-level path map and the tests required for each kind of chang
 ## Roadmap
 
 - Evaluate proposed changes before merge with scoped threat-model updates for branches, pull requests, and merge requests.
-- Extend beyond Claude Code to other coding agents (OpenAI Codex, GitHub Copilot, and similar), keeping the analysis engine agent-agnostic.
+- Extend beyond Claude Code to other coding agents (OpenAI Codex, GitHub Copilot, and similar), keeping the analysis engine agent-agnostic. GitHub Copilot CLI is the first target: it runs the same deterministic core, schemas, and gates behind a second host adapter, and reports state which host produced them. The implementation plan and its capacity spike are in [docs/internal/analysis/implplan-copilot-mvp-2026-07-30.md](docs/internal/analysis/implplan-copilot-mvp-2026-07-30.md) and [plan-copilot-capacity-spike-2026-07-30.md](docs/internal/analysis/plan-copilot-capacity-spike-2026-07-30.md). Nothing is committed to a release until that spike has run.
 - Broaden production readiness across more languages, architectures, and deployment models, including performance on large multi-component repositories.
 - Graduate developer-time guidance and change-review tools from experimental to supported.
 - Import third-party threat models as non-authoritative context and aggregate per-repository models into cross-repository views.
