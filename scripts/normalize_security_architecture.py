@@ -254,6 +254,109 @@ def _coverage_labels(rules_map: dict) -> list[str]:
     return labels or ["Security assessment", "Relevant findings"]
 
 
+def _covered_label(rules_map: dict) -> str:
+    _key, rule = _rule_lookup(rules_map, "control_subsection_coverage")
+    if rule is None:
+        return "Controls covered"
+    return (rule.get("controls_covered_label") or "Controls covered").strip()
+
+
+# Separator repair applied after a link is spliced out of a `**Controls
+# covered:**` list. Order matters: collapse doubled separators first, then the
+# separator-before-terminator case, then a dangling trailing separator.
+_COVERED_SEP_FIXES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"[ \t]*([,·])[ \t]*(?=[,·])"), ""),
+    (re.compile(r"[ \t]*[,·][ \t]*(?=\.)"), ""),
+    (re.compile(r"[ \t]*[,·][ \t]*$"), "."),
+    (re.compile(r"[ \t]{2,}"), " "),
+)
+
+
+def _unescape_md(s: str) -> str:
+    r"""Drop backslashes escaping a non-word char (`Socket\.IO` -> `Socket.IO`).
+
+    Mirrors the identical helper inside
+    ``qa_checks.check_control_subsection_coverage`` so link-label vs heading
+    comparison here matches the gate's comparison exactly.
+    """
+    return re.sub(r"\\([^\w\s])", r"\1", s)
+
+
+def _label_matches_heading(label: str, heading: str) -> bool:
+    """Detection parity with ``check_control_subsection_coverage._heading_matches``."""
+    label = _unescape_md(qc._strip_md(label))
+    heading = _unescape_md(qc._strip_md(heading))
+    if label == heading:
+        return True
+    return _NUM_PREFIX_RE.sub("", heading).strip() == label
+
+
+def _drop_covered_links(
+    seg: _Seg,
+    folded_headings: list[str],
+    controls_label: str,
+    section_title: str,
+    changes: list[str],
+) -> None:
+    """Remove `**Controls covered:**` links whose target heading was folded away.
+
+    ``_fold_nonmechanism_auth_subsections`` demotes a non-mechanism ``####``
+    heading to a bold label inside its parent. The parent's ``**Controls
+    covered:**`` line is MECHANICALLY derived by
+    ``pregenerate_fragments.py`` (marked "LLM must not re-author it") and still
+    links to the heading that no longer exists — which
+    ``check_control_subsection_coverage`` reports as BLOCKING ("links to X, but
+    no matching `#### X` subsection exists").
+
+    That state is unwinnable for the repair loop: ``apply_repair_plan.py``
+    classifies the violation as non-mechanical, so it costs a full
+    ``appsec-fragment-fixer`` dispatch, and the fixer may not re-author the
+    LOCKED line anyway. Folding and the covered-list must therefore stay
+    consistent within this pass. Mutates ``seg.body`` in place.
+    """
+    if not folded_headings:
+        return
+    body = "".join(seg.body)
+    label_re = re.compile(
+        r"(\*\*\s*" + re.escape(controls_label) + r"\s*:?\s*\*\*[ \t]*)"
+        r"(?P<body>.*?)(?=\n\s*\*\*[A-Z][^*\n]{2,80}:?\*\*|\n####\s|\n###\s|\Z)",
+        re.DOTALL,
+    )
+    m = label_re.search(body)
+    if m is None:
+        return  # no covered-list in this section — nothing to keep in sync
+
+    covered = m.group("body")
+    dropped: list[str] = []
+    for heading in folded_headings:
+        for link in qc._MD_LINK_RE.finditer(covered):
+            if _label_matches_heading(link.group(1), heading):
+                covered = covered[: link.start()] + covered[link.end() :]
+                dropped.append(heading)
+                break
+    if not dropped:
+        return
+
+    # Repair separators left behind by the splice, per line so a multi-line
+    # (bulleted) covered-list keeps its shape.
+    repaired_lines = []
+    for line in covered.split("\n"):
+        for pattern, repl in _COVERED_SEP_FIXES:
+            line = pattern.sub(repl, line)
+        repaired_lines.append(line)
+    covered = "\n".join(repaired_lines)
+    # A drop of the FIRST entry leaves the separator directly after the label.
+    covered = re.sub(r"^[ \t]*[,·][ \t]*", "", covered)
+
+    new_body = body[: m.start("body")] + covered + body[m.end("body") :]
+    seg.body = new_body.splitlines(keepends=True)
+    for heading in dropped:
+        changes.append(
+            f"auth_method_decomposition: dropped folded §{section_title} "
+            f"`**{controls_label}:**` link {heading!r} (its #### heading no longer exists)"
+        )
+
+
 def _ensure_subsection_labels(md: str, rules_map: dict, changes: list[str]) -> str:
     _key, rule = _rule_lookup(rules_map, "control_subsection_coverage")
     if rule is None:
@@ -388,14 +491,21 @@ def _fold_nonmechanism_auth_subsections(md: str, rules_map: dict, changes: list[
                 break
 
     # Pass 2 — apply the folds that survived the guard.
+    folded: list[str] = []
     for child_idx, heading, _is_forbidden in candidates:
         seg = segs[child_idx]
         seg.level = 0
         seg.heading = ""
         seg.raw = f"**{heading}.**\n\n"
+        folded.append(heading)
         changes.append(
             f"auth_method_decomposition: folded non-mechanism §{section_title} #### {heading!r} into its parent"
         )
+
+    # Pass 3 — keep the parent's `**Controls covered:**` list in sync. A folded
+    # heading that is still linked there is a dangling link that
+    # check_control_subsection_coverage reports as BLOCKING.
+    _drop_covered_links(segs[idx], folded, _covered_label(rules_map), section_title, changes)
     return _serialize(segs)
 
 

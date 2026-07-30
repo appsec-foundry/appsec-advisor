@@ -369,3 +369,116 @@ def test_fold_still_demotes_non_mechanism_when_a_peer_survives():
     assert "Login Rate Limiting" in sec
     assert "#### 6.2.2 Login Rate Limiting" not in sec
     assert any("folded non-mechanism" in c for c in changes)
+
+
+# --------------------------------------------------------------------------- #
+# Folding must keep the parent `**Controls covered:**` list in sync.
+#
+# juice-shop 2026-07-30: pregenerate_fragments.py emits the covered-list
+# MECHANICALLY from the H4 headings it just wrote ("correct by construction",
+# marked "LLM must not re-author it"), then this normalizer folded
+# `#### Authentication Rate Limiting` — a heading that is neither whitelisted
+# nor forbidden-pattern-matched — and left the link behind. The dangling link
+# is BLOCKING in check_control_subsection_coverage, apply_repair_plan.py
+# classifies it as non-mechanical, and the resulting appsec-fragment-fixer
+# dispatch cannot fix it without re-authoring the LOCKED line.
+# --------------------------------------------------------------------------- #
+_COVERED_BLOCK = "**Security assessment**\n\nx\n\n**Relevant findings**\n\n- none\n\n"
+
+
+def _covered_fixture(names, sep=", ", tail="."):
+    links = sep.join(f"[{n}](#{n.lower().replace(' ', '-')})" for n in names)
+    md = (
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n"
+        f"**Controls covered:** {links}{tail}\n\n"
+    )
+    for n in names:
+        md += f"#### {n}\n\n" + _COVERED_BLOCK
+    return md
+
+
+def _covered_line(md: str) -> str:
+    return next((l for l in md.splitlines() if l.startswith("**Controls covered:**")), "")
+
+
+@pytest.mark.parametrize(
+    "position, names",
+    [
+        ("last", ["Password-Based Login", "User Registration", "Authentication Rate Limiting"]),
+        ("first", ["Authentication Rate Limiting", "Password-Based Login", "User Registration"]),
+        ("middle", ["Password-Based Login", "Authentication Rate Limiting", "User Registration"]),
+    ],
+)
+def test_folded_heading_is_dropped_from_controls_covered(tmp_path, position, names):
+    """Normalization must preserve coverage-cleanliness — at any list position.
+
+    Unlike the other rules in this module (where the LLM dropped structure and
+    the gate fails *before* normalization), here the normalizer itself is the
+    source of the defect: the input is consistent (every link has its H4), and
+    folding is what breaks it. So the invariant is preservation, not repair.
+    """
+    md = _covered_fixture(names)
+    assert not qc.check_control_subsection_coverage(_write(tmp_path, md)).issues, (
+        "fixture must start coverage-clean — link and H4 both present"
+    )
+
+    out, changes = nrm.normalize_text(md)
+    line = _covered_line(out)
+
+    assert "Authentication Rate Limiting](#" not in line
+    assert len(qc._MD_LINK_RE.findall(line)) == 2, f"peer links lost: {line}"
+    assert "**Authentication Rate Limiting.**" in out, "authored evidence must survive the fold"
+    assert any("dropped folded" in c for c in changes)
+    # No separator debris from the splice.
+    assert ", ," not in line and ", ." not in line and "  " not in line
+    assert not line.rstrip().endswith(",")
+    assert not qc.check_control_subsection_coverage(_write(tmp_path, out)).issues
+
+
+@pytest.mark.parametrize("sep, tail", [(" · ", "."), (", ", "")])
+def test_controls_covered_drop_handles_separator_variants(tmp_path, sep, tail):
+    names = ["Password-Based Login", "User Registration", "Authentication Rate Limiting"]
+    out, _changes = nrm.normalize_text(_covered_fixture(names, sep=sep, tail=tail))
+    line = _covered_line(out)
+    assert len(qc._MD_LINK_RE.findall(line)) == 2
+    assert not line.rstrip().endswith(",") and not line.rstrip().endswith("·")
+    assert " · ·" not in line and ", ," not in line
+    assert not qc.check_control_subsection_coverage(_write(tmp_path, out)).issues
+
+
+def test_controls_covered_drop_is_idempotent():
+    """Design contract: re-running on normalized text is a no-op."""
+    md = _covered_fixture(
+        ["Password-Based Login", "User Registration", "Authentication Rate Limiting"]
+    )
+    once, _ = nrm.normalize_text(md)
+    twice, changes = nrm.normalize_text(once)
+    assert twice == once
+    assert changes == []
+
+
+def test_guard_kept_heading_keeps_its_covered_link(tmp_path):
+    """When the 'would empty the section' guard keeps a heading, its link stays.
+
+    Dropping the link of a heading that was NOT folded would invert the bug.
+    """
+    names = ["Authentication Rate Limiting", "Credential Rotation Policy"]
+    out, changes = nrm.normalize_text(_covered_fixture(names))
+    assert any("only remaining subsection" in c for c in changes), "guard did not fire"
+    kept = [qc._strip_md(l) for l in qc._MD_LINK_RE.findall(_covered_line(out))]
+    assert kept == ["Authentication Rate Limiting"]
+    assert not qc.check_control_subsection_coverage(_write(tmp_path, out)).issues
+
+
+def test_fold_without_controls_covered_line_does_not_crash():
+    """§6.2 with no covered-list at all: fold still applies, no exception."""
+    md = (
+        "## 6. Security Architecture\n\n"
+        "### 6.2 Identity and Authentication Controls\n\n**Assessment:** text.\n\n"
+        "#### Password-Based Login\n\n" + _COVERED_BLOCK +
+        "#### Authentication Rate Limiting\n\n" + _COVERED_BLOCK
+    )
+    out, changes = nrm.normalize_text(md)
+    assert "**Authentication Rate Limiting.**" in out
+    assert not any("dropped folded" in c for c in changes)
