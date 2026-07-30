@@ -172,6 +172,158 @@ def test_classify_sca_scanning_records_line_evidence(tmp_path: Path) -> None:
     assert ev == [".github/workflows/ci.yml:2"]
 
 
+# --- Executable-step detection: true scanner invocations are credited ------
+
+
+def test_scanner_in_block_scalar_is_credited(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(
+        repo / ".github" / "workflows" / "ci.yml",
+        "jobs:\n  audit:\n    steps:\n      - name: Audit\n        run: |\n          npm ci\n          npm audit\n",
+    )
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Adequate"
+    assert ev == [".github/workflows/ci.yml:7"]
+
+
+def test_dependency_review_action_reference_is_credited(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(
+        repo / ".github" / "workflows" / "review.yml",
+        "jobs:\n  review:\n    steps:\n      - uses: actions/dependency-review-action@v4\n",
+    )
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Adequate"
+    assert ev == [".github/workflows/review.yml:4"]
+
+
+def test_gitlab_script_list_is_credited(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(repo / ".gitlab-ci.yml", "audit:\n  script:\n    - npm ci\n    - npm audit\n")
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Adequate"
+    assert ev == [".gitlab-ci.yml:4"]
+
+
+def test_jenkinsfile_shell_step_is_credited(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(repo / "Jenkinsfile", "pipeline {\n  stages {\n    // audit stage\n    sh 'npm audit'\n  }\n}\n")
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Adequate"
+    assert ev == ["Jenkinsfile:4"]
+
+
+# --- Executable-step detection: tool names in data are not evidence --------
+
+
+def test_tool_names_inside_github_script_body_are_not_credited(tmp_path: Path) -> None:
+    """A PR-spam scorer naming scanners in a regex does not run one."""
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(
+        repo / ".github" / "workflows" / "pr-compliance.yml",
+        "jobs:\n"
+        "  triage:\n"
+        "    steps:\n"
+        "      - uses: actions/github-script@v7\n"
+        "        with:\n"
+        "          script: |\n"
+        "            const tools = /semgrep|snyk|trivy|grype|zap/i;\n"
+        "            if (tools.test(title)) score += 25;\n",
+    )
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Missing"
+    assert ev == []
+
+
+def test_commented_out_scanner_is_not_credited(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(
+        repo / ".github" / "workflows" / "ci.yml",
+        "jobs:\n  build:\n    steps:\n      - run: |\n          # npm audit is disabled for now\n          npm ci\n",
+    )
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Missing"
+    assert ev == []
+
+
+def test_scanner_name_in_step_label_is_not_credited(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(
+        repo / ".github" / "workflows" / "ci.yml",
+        "jobs:\n  build:\n    steps:\n      - name: npm audit (tracked in BACKLOG-12)\n        run: npm ci\n",
+    )
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Missing"
+    assert ev == []
+
+
+def test_codeql_alone_is_not_credited_as_sca(tmp_path: Path) -> None:
+    """CodeQL is code scanning; dependency scanning is a separate feature."""
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(
+        repo / ".github" / "workflows" / "codeql.yml",
+        "jobs:\n"
+        "  analyze:\n"
+        "    steps:\n"
+        "      - uses: github/codeql-action/init@v3\n"
+        "        with:\n"
+        "          languages: javascript\n"
+        "      - uses: github/codeql-action/analyze@v3\n",
+    )
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Missing"
+    assert ev == []
+
+
+def test_bare_grype_token_without_arguments_is_not_credited(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(repo / ".github" / "workflows" / "ci.yml", "steps:\n  - run: echo grype\n")
+    eff, _ = sca.classify_sca_scanning(repo)
+    assert eff == "Missing"
+
+
+def test_grype_invocation_is_credited(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(repo / ".github" / "workflows" / "ci.yml", "steps:\n  - run: grype dir:.\n")
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Adequate"
+    assert ev == [".github/workflows/ci.yml:2"]
+
+
+def test_codeql_plus_tool_name_regex_repo_is_missing(tmp_path: Path) -> None:
+    """Both signals that produced false SCA evidence, in one repo."""
+    repo = tmp_path / "repo"
+    _write(repo / "package.json", "{}\n")
+    _write(repo / "package-lock.json", "{}\n")
+    _write(
+        repo / ".github" / "workflows" / "codeql-analysis.yml",
+        "jobs:\n  analyze:\n    steps:\n      - uses: github/codeql-action/init@v3\n",
+    )
+    _write(
+        repo / ".github" / "workflows" / "pr-compliance.yml",
+        "jobs:\n"
+        "  triage:\n"
+        "    steps:\n"
+        "      - uses: actions/github-script@v7\n"
+        "        with:\n"
+        "          script: |\n"
+        "            const t = /snyk|trivy|grype/i;\n",
+    )
+    eff, ev = sca.classify_sca_scanning(repo)
+    assert eff == "Missing"
+    assert ev == []
+
+
 # ---------------------------------------------------------------------------
 # Auto-updates / renovate / dependabot multi-eco coverage
 # ---------------------------------------------------------------------------

@@ -73,14 +73,28 @@ SCA_CONTROLS = (CONTROL_SCANNING, CONTROL_UPDATES, CONTROL_LOCKFILE)
 # Tools that count as "blocking" SCA when found in CI workflow YAML.
 # Conservative — only well-known dedicated tools and language-native
 # audit commands. A repo using a homegrown shell script is not credited.
+#
+# Every token must describe an *invocation*: a command with its
+# subcommand, or a marketplace action reference. A bare tool name is not
+# enough — tool names appear in comments, PR templates, and string data,
+# and crediting them produced false SCA evidence (see the `grype`
+# alternation inside a PR-spam regex, 2026-07).
+#
+# CodeQL is deliberately absent. `github/codeql-action` is code scanning
+# (SAST); dependency scanning is a separate GitHub feature, so a CodeQL
+# workflow alone must not be credited as SCA.
 _SCA_TOOL_TOKENS = (
     r"\bsnyk\s+test\b",
     r"\bsnyk\s+monitor\b",
+    r"\bsnyk/actions\b",
     r"\btrivy\s+fs\b",
     r"\btrivy\s+repo\b",
-    r"\bgrype\b",
+    r"\baquasecurity/trivy-action\b",
+    r"\bgrype\s+\S",
+    r"\banchore/scan-action\b",
     r"\bosv-scanner\b",
     r"\bdependency-check\b",
+    r"\bactions/dependency-review-action\b",
     r"\bnpm\s+audit\b",
     r"\bpip-audit\b",
     r"\bcargo\s+audit\b",
@@ -89,9 +103,25 @@ _SCA_TOOL_TOKENS = (
     r"\bdotnet\s+list\s+package\s+--vulnerable\b",
     r"\bgovulncheck\b",
     r"\bmend\b|\bwhitesource\b",
-    r"\bgithub/codeql-action\b",  # CodeQL covers SCA via dep-graph too
 )
 _SCA_TOOL_RE = re.compile("|".join(_SCA_TOOL_TOKENS), re.IGNORECASE)
+
+# --- Executable-step detection -------------------------------------------
+#
+# Keys whose value — inline or as a following block scalar / list — is a
+# shell command or an action reference.
+_EXEC_KEY_RE = re.compile(r"^(\s*)(?:-\s+)?(run|script|before_script|after_script|uses)\s*:\s*(.*)$")
+
+# `with:` opens a non-executable region. An `actions/github-script` step
+# keeps JavaScript under `with: script:`; tool names quoted in that
+# JavaScript are data, not invocations.
+_NON_EXEC_KEY_RE = re.compile(r"^(\s*)(?:-\s+)?(with)\s*:\s*(.*)$")
+
+_COMMENT_RE = re.compile(r"^\s*(?:#|//)")
+
+# A value that only opens a block scalar / list — the command follows on
+# the indented lines below.
+_BLOCK_OPENERS = frozenset({"", "|", ">", "|-", ">-", "|+", ">+"})
 
 _CI_FILE_GLOBS = (
     ".github/workflows/*.yml",
@@ -184,15 +214,86 @@ def _read_ci_files(repo_root: Path) -> list[tuple[Path, str]]:
     return out
 
 
+def _executable_lines(path: Path, text: str) -> list[tuple[int, str]]:
+    """Return the (line number, inspectable text) pairs of a CI definition
+    that actually run something.
+
+    A tool name is only evidence when the pipeline invokes it. This filter
+    keeps the values of `run` / `script` / `before_script` / `after_script`
+    and `uses`, including their block-scalar and list bodies, and drops
+    everything else: comments, `name:` labels, `if:` conditions, and any
+    `with:` body (where `actions/github-script` keeps JavaScript).
+
+    `Jenkinsfile` is Groovy, not YAML — there is no key structure to walk,
+    so every non-comment line stays inspectable.
+
+    Accepted false negative: a scanner shelled out from inside a
+    `github-script` body is not credited. Inspecting those bodies is what
+    produced the false evidence this filter exists to prevent.
+    """
+    lines = text.splitlines()
+    if path.name == "Jenkinsfile":
+        return [(i, line) for i, line in enumerate(lines, start=1) if line.strip() and not _COMMENT_RE.match(line)]
+
+    out: list[tuple[int, str]] = []
+    exec_indent: int | None = None
+    suppress_indent: int | None = None
+    for i, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue  # blank lines are legal inside a block scalar
+        leading = len(line) - len(line.lstrip())
+        if suppress_indent is not None and leading <= suppress_indent:
+            suppress_indent = None
+        if exec_indent is not None and leading <= exec_indent:
+            exec_indent = None
+        if _COMMENT_RE.match(line):
+            continue
+
+        non_exec = _NON_EXEC_KEY_RE.match(line)
+        if non_exec:
+            suppress_indent = non_exec.start(2)
+            continue
+        if suppress_indent is not None:
+            continue
+
+        key = _EXEC_KEY_RE.match(line)
+        if key:
+            value = key.group(3).strip()
+            if value in _BLOCK_OPENERS:
+                exec_indent = key.start(2)
+            else:
+                out.append((i, value))
+            continue
+        if exec_indent is not None:
+            out.append((i, line))
+    return out
+
+
 def classify_sca_scanning(repo_root: Path) -> tuple[str, list[str]]:
-    """Return (Adequate|Partial|Missing, evidence_file_lines)."""
+    """Return (Adequate|Partial|Missing, evidence_file_lines).
+
+    Inspected signal: dependency-vulnerability scanners invoked by a CI
+    definition — `_SCA_TOOL_RE` matched against executable step values
+    only (`_executable_lines`).
+
+    Trigger: at least one matching invocation. `Adequate` when the number
+    of CI files carrying one is at least the number of detected package
+    ecosystems, otherwise `Partial`; no match at all is `Missing`.
+
+    False-positive exclusions: comments, `name:`/`if:` text, `with:`
+    bodies, bare tool names without a subcommand, and CodeQL — none of
+    those run a dependency scanner.
+
+    Required evidence: the `<ci file>:<line>` of the invocation itself,
+    which is what the control assessment and any meta-finding cite.
+    """
     ci_files = _read_ci_files(repo_root)
     if not ci_files:
         return "Missing", []
     hits: list[str] = []
     for path, text in ci_files:
-        for i, line in enumerate(text.splitlines(), start=1):
-            if _SCA_TOOL_RE.search(line):
+        for i, value in _executable_lines(path, text):
+            if _SCA_TOOL_RE.search(value):
                 rel = str(path.relative_to(repo_root)) if path.is_relative_to(repo_root) else str(path)
                 hits.append(f"{rel}:{i}")
                 break

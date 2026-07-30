@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Automated SCA scanning` is now rated only from scanners the pipeline actually invokes. A tool name in a comment, a step label, or string data no longer counts as evidence, and a CodeQL workflow on its own no longer counts as dependency scanning.
 - Skills an organization disabled through `skill_toggles` are now actually refused, with the configured reason — whether the command is typed or Claude invokes it. Nothing enforced the policy before. Recovery skills stay reachable, so a broken run can still be cleaned up.
 - An organization's `skill_toggles` policy now takes effect from the first command in a session. It was only read from the file a scan writes into its output directory, so before any scan every skill ran while the status output reported it as disabled.
 - Any shipped skill can now be named in `skill_toggles`. Ten of the twenty-one — including `review-threat-model`, `ask-threat-model` and `update-threat-model` — were missing from an internal list, and naming one aborted the package build instead of doing nothing.
