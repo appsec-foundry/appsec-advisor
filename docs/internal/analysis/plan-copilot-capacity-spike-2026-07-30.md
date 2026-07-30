@@ -39,11 +39,19 @@ whole spike is cheap to repeat.
 
 ## The three instruction tiers
 
-| Tier | Profile content | Size |
+| Tier | Prompt content | Size |
 |---|---|---|
-| A | Contract only: schema fields, the `tier` enum, path rules, where to write | ~4k |
-| B | A plus the Phase 3 enumeration heuristics — what counts as a component, when components are merged | ~18k |
-| C | A plus the full Phase 3 body, loaded at run time | 66k |
+| A | Contract only: schema fields, the `tier` enum, the zone vocabulary, path rules, where to write | 2.8k |
+| B | A plus the two production sections that bear on this stage, verbatim: `### Architecture modeling` and `### Phase 3 sidecar` | 14.4k |
+| C | A plus an instruction to read the whole Phase 3 body from the checkout first | 3.3k prompt, 66k read at run time |
+
+Phase 3 is 66,000 characters, but only about 11,000 of it concerns component
+enumeration; the rest specifies C4 diagrams, layer heatmap tables, the §2.4
+themes and section numbering. In the MVP design that rendering belongs to the
+render stage, not to this agent. Tier B is therefore what a careful port would
+produce, and tier C is what a wholesale port would produce — C measures whether
+an agent still writes a clean sidecar when most of its instruction is about
+something else.
 
 Read the outcome like this:
 
@@ -59,28 +67,20 @@ The gap between B and C is the number the stop threshold is set from.
 
 ## Procedure
 
-Run against a copy, never against the repository itself.
+The harness is `spike/`: one prompt per tier, `run.sh`, and `compare.py`. Each
+run works on a throwaway copy of the fixture and never writes into the
+repository.
 
 ```bash
-SPIKE=$(mktemp -d)
-cp -r tests/fixtures/e2e/synthetic-repo "$SPIKE/repo"
-mkdir -p "$SPIKE/out-A"
-
-copilot -p "$(cat spike/prompt-A.md)" \
-  -C "$SPIKE/repo" \
-  --add-dir "$SPIKE/out-A" \
-  --allow-tool shell --allow-tool write \
-  --output-format json --no-ask-user \
-  --max-ai-credits 30 > "$SPIKE/log-A.jsonl"
-
-python3 scripts/validate_fragment.py components "$SPIKE/out-A/.components.json"
-python3 spike/compare.py "$SPIKE/out-A/.components.json" \
-  tests/fixtures/e2e/_last-run/.components.json
+./spike/run.sh A     # then B, then C
 ```
 
-Repeat for tiers B and C.
+`run.sh` copies the fixture, runs the tier, gates the result with
+`validate_fragment.py`, compares it against the oracle, and prints the tail of
+the JSONL for the usage numbers. Set `SPIKE_DIR` to keep all three tiers in one
+directory, `MAX_AI_CREDITS` to change the cap.
 
-The `--allow-tool` form is deliberate. Copilot's help calls `--allow-all-tools`
+The `--allow-tool` form it uses is deliberate. Copilot's help calls `--allow-all-tools`
 required for non-interactive mode; this run establishes whether a scripted run
 can instead be scoped to named tools. If it fails, that is a recorded finding —
 the MVP's minimal-allowlist mitigation would then be unreachable on the
@@ -99,6 +99,11 @@ threshold and the named owner the plan requires.
 ## Constraints
 
 Copilot needs authentication and network access, so the spike runs outside a
-restricted sandbox. Keep the harness under an untracked `spike/` directory: it
-is throwaway scaffolding, not product code, and nothing in it may be imported
-by `scripts/`.
+restricted sandbox. `spike/` is experiment scaffolding, not product code:
+nothing in `scripts/` may import from it, and it is deleted with the rest of
+the Copilot surface if the MVP is stopped.
+
+The fixture is 36 files and about 96,000 characters. What this costs says
+nothing about a production run, which is orders of magnitude larger. The spike
+measures feasibility and quality; operating cost belongs to the decision gate
+in the MVP plan, measured against a real repository.
