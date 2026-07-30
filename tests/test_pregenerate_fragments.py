@@ -1546,6 +1546,58 @@ class TestD15Legend:
         md = pf.gen_architecture_diagrams(data)
         assert "asynchronous" in md.lower()
 
+    def test_legend_never_advertises_an_arrow_no_diagram_draws(self):
+        """juice-shop 2026-07-30 — the `==>` bullet was gated on model shape
+        (`trust_boundaries` non-empty AND flows exist), not on emission. The only
+        `==>` emitter is the legacy §2.4 boundary-subgraph builder, which the
+        contract-driven compact path short-circuits past, so §2 advertised a
+        cross-boundary arrow style no rendered diagram drew.
+        """
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [
+                {"id": "a", "name": "A", "paths": ["x"], "tier": "application"},
+                {"id": "b", "name": "B", "paths": ["y"], "tier": "data"},
+            ],
+            "data_flows": [{"from": "a", "to": "b", "protocol": "HTTPS"}],
+            "trust_boundaries": [
+                {
+                    "id": "tb-1",
+                    "name": "Perimeter",
+                    "from": "external",
+                    "to": "a",
+                    "kind": "network",
+                    "confidence": "inferred",
+                    "resolution_status": "resolved",
+                }
+            ],
+        }
+        md = pf.gen_architecture_diagrams(data)
+        legend = [ln for ln in md.splitlines() if "**Legend:**" in ln]
+        assert legend, "legend should still render"
+
+        # One-directional invariant: the legend may stay silent about a
+        # convention (§2.3 draws `-.->` as its fixed attack-edge style whether or
+        # not the model has async flows), but it must never advertise one that no
+        # diagram draws. Over-advertising is the defect.
+        drawn = pf._diagram_arrow_tokens(md)
+        for token in ("-->", "-.->", "==>"):
+            if any(f"`{token}`" in ln for ln in legend):
+                assert token in drawn, f"legend advertises {token!r} but no diagram draws it"
+
+        assert "==>" not in drawn, "fixture assumption: compact §2.4 draws no `==>`"
+        assert not any("`==>`" in ln for ln in legend), "the `==>` bullet must be gone"
+
+    def test_diagram_arrow_tokens_ignores_prose_outside_mermaid(self):
+        """HTML comments and backticked literals in §2 prose must not count as
+        edge styles — otherwise the gate re-introduces the false advertisement."""
+        rendered = (
+            "<!-- a comment with --> inside -->\n"
+            "Some prose mentioning `==>` in backticks.\n"
+            "```mermaid\nflowchart TD\n  A --> B\n```\n"
+        )
+        assert pf._diagram_arrow_tokens(rendered) == {"-->"}
+
 
 class TestD15ExternalServicesCategorised:
     """A — meta.external_services[] categorised by direction."""

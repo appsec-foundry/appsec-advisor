@@ -748,3 +748,76 @@ def test_ingress_and_egress_between_the_same_pair_stay_apart():
 
     assert crossings == {(0, 2): ["tb-1"]}
     assert notes == {"application": {"outbound": ["tb-2"]}}
+
+
+# ---- legend legibility ------------------------------------------------------
+def _lines_with_stroke(svg: str, stroke: str) -> list[dict]:
+    import re
+
+    out = []
+    for tag in re.findall(r"<line [^>]*>", svg):
+        if f'stroke="{stroke}"' not in tag:
+            continue
+        attrs = dict(re.findall(r'([\w-]+)="([^"]*)"', tag))
+        attrs["_width"] = abs(float(attrs["x2"]) - float(attrs["x1"]))
+        out.append(attrs)
+    return out
+
+
+def _boundary_model():
+    y, apd, tax = _model()
+    y["trust_boundaries"] = [
+        {
+            "id": "tb-1",
+            "name": "Perimeter",
+            "from": "external",
+            "to": "app0",
+            "kind": "network",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    ]
+    return y, apd, tax
+
+
+def test_boundary_legend_swatch_is_not_the_faintest_row():
+    """juice-shop 2026-07-30 — the legend swatch inherited the divider's
+    ``sw=1.4, dash="7 5"``. That reads across a ~700-unit band but not across a
+    22-unit swatch: at the delivered scale (viewBox 1080 → width 760) it lands
+    under one device pixel with fewer than two dashes, so the row was reported as
+    missing even though it renders.
+    """
+    y, apd, tax = _boundary_model()
+    svg = F.build_figure1_svg(y, apd, tax)
+    assert "trust boundary (see" in svg, "fixture must draw a divider + legend row"
+
+    swatches = [ln for ln in _lines_with_stroke(svg, F._TRUST) if ln["_width"] < 40]
+    assert swatches, "no legend swatch found"
+    boundary_swatch = swatches[0]
+
+    # Select siblings by shared left edge, NOT by width: `_EXPOSED` also strokes
+    # thin globe markers inside the tier bands, and including those dropped the
+    # comparison floor to 0.9 — which let the pre-fix 1.4 sail through.
+    lx = boundary_swatch["x1"]
+    others = [
+        float(a["stroke-width"])
+        for a in (
+            _lines_with_stroke(svg, F._EXPOSED) + _lines_with_stroke(svg, F._BACKBONE)
+        )
+        if a["x1"] == lx and a["_width"] < 40
+    ]
+    assert others, "expected sibling legend swatches to compare against"
+    assert float(boundary_swatch["stroke-width"]) >= min(others), (
+        "boundary swatch must not be thinner than its neighbours in the legend"
+    )
+
+
+def test_boundary_divider_in_the_figure_keeps_its_own_dash():
+    """The legibility fix is legend-only — the in-figure divider spans the band
+    width, where the wider dash is correct and must not be narrowed with it."""
+    y, apd, tax = _boundary_model()
+    svg = F.build_figure1_svg(y, apd, tax)
+
+    dividers = [ln for ln in _lines_with_stroke(svg, F._TRUST) if ln["_width"] > 100]
+    assert dividers, "expected a full-width divider"
+    assert all(d["stroke-dasharray"] == "7 5" for d in dividers)

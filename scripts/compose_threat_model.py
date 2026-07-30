@@ -5881,6 +5881,15 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         "top threats per component. The in-figure legend on the right explains the attack scenarios, "
         "severity dots and symbols."
     )
+    # Name the boundary dividers only when the builder actually drew them —
+    # `figure1_svg.diag_rows` gates its own legend row on `drawn_dividers`, and a
+    # caption that promises an element the figure omits is the same defect as the
+    # §2 `==>` legend bullet.
+    if "trust boundary" in (svg or ""):
+        intro += (
+            " Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids "
+            "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
+        )
     # Embed inline when the CLI flag is set OR the skill persisted the choice in
     # .skill-config.json — the latter lets `/create-threat-model --embed-figures`
     # work through the renderer/recompose paths without threading a flag to each.

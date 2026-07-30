@@ -711,20 +711,51 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     # architecture). Single block so we don't repeat the legend three
     # times. Only emit when the diagrams actually use the relevant
     # conventions — avoids cluttering small/legacy yamls.
-    legend_lines = _maybe_render_legend(yaml_data, components)
+    legend_lines = _maybe_render_legend(yaml_data, components, "\n".join(lines))
     if legend_lines:
         lines.extend(legend_lines)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _maybe_render_legend(yaml_data: dict, components: list[dict]) -> list[str]:
+_MERMAID_BLOCK_RE = re.compile(r"```mermaid\n(.*?)```", re.DOTALL)
+
+
+def _diagram_arrow_tokens(rendered: str) -> set[str]:
+    """Arrow conventions actually emitted inside the rendered ```mermaid blocks.
+
+    Scoped to fenced mermaid blocks on purpose: the surrounding §2 prose carries
+    HTML comments (``<!-- ... -->``) and backticked literals that would otherwise
+    register as edge styles.
+    """
+    tokens: set[str] = set()
+    for block in _MERMAID_BLOCK_RE.findall(rendered or ""):
+        for token in ("==>", "-.->", "-->"):
+            if token in block:
+                tokens.add(token)
+    return tokens
+
+
+def _maybe_render_legend(
+    yaml_data: dict,
+    components: list[dict],
+    rendered_diagrams: str | None = None,
+) -> list[str]:
     """M3.3 / D1.5 (J) — Build a context-aware legend block.
 
     Each entry is included only when the corresponding convention is
     actually present in the rendered diagrams, so the legend remains
     relevant. Order: edge styles first (from most → least common),
     severity highlight last.
+
+    When ``rendered_diagrams`` is supplied the edge-style entries are gated on
+    the ACTUAL emitted mermaid text rather than on model shape. Deriving them
+    from the model was the juice-shop 2026-07-30 defect: `==>` is emitted only
+    by the legacy §2.4 boundary-subgraph builder, which
+    ``_technology_architecture_mermaid`` short-circuits past whenever the
+    contract defines ``diagram_compactness."2.4 Technology Architecture"`` — so
+    the legend advertised a cross-boundary arrow style that no rendered diagram
+    drew, contradicting this docstring.
     """
     flows = yaml_data.get("data_flows") or []
     has_async = any(isinstance(f, dict) and _is_async_protocol(f.get("protocol", "")) for f in flows)
@@ -733,6 +764,15 @@ def _maybe_render_legend(yaml_data: dict, components: list[dict]) -> list[str]:
     )
     boundaries = yaml_data.get("trust_boundaries") or []
     has_cross_boundary = bool(boundaries) and has_flows
+    if rendered_diagrams is not None:
+        # Restrictive only — never permissive. The model decides whether a
+        # convention is IN SCOPE; the rendered text decides whether it was
+        # actually drawn. Letting the text alone switch a bullet on would make
+        # an empty model emit a legend for its placeholder diagrams.
+        emitted = _diagram_arrow_tokens(rendered_diagrams)
+        has_flows = has_flows and "-->" in emitted
+        has_async = has_async and "-.->" in emitted
+        has_cross_boundary = has_cross_boundary and "==>" in emitted
     crit_counts, high_counts = _threat_counts_per_component(yaml_data)
     has_highlight = any(v >= 3 for v in crit_counts.values()) or any(v >= 2 for v in high_counts.values())
 

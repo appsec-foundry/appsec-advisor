@@ -1201,7 +1201,13 @@ def build_figure1_svg(
         # the tiers.
         r = 0
         if drawn_dividers:
-            c.line(lx + 12, y0 + r * _RH - 3.5, lx + 34, y0 + r * _RH - 3.5, stroke=_TRUST, sw=1.4, dash="7 5")
+            # Swatch weight/dash deliberately DIVERGE from the divider drawn into
+            # the figure (sw=1.4, dash="7 5"). That pattern reads fine across a
+            # ~700-unit band but not across a 22-unit swatch: at the delivered
+            # render scale (viewBox 1080 → width 760 ≈ 0.70) a 1.4 stroke lands
+            # under one device pixel and "7 5" leaves fewer than two dashes, so
+            # the row went unnoticed next to the 2.0–2.6 weights below it.
+            c.line(lx + 12, y0 + r * _RH - 3.5, lx + 34, y0 + r * _RH - 3.5, stroke=_TRUST, sw=2.0, dash="4 3")
             c.text(lx + 40, y0 + r * _RH, "trust boundary (see §1)", size=10, fill=_INK, anchor="start")
             r += 1
         if exposed:
