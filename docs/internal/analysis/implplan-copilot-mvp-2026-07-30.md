@@ -240,6 +240,24 @@ permission failure and metadata behavior.
 
 ### Phase 2 — Define the Copilot skill entry point
 
+Two repository mechanisms already treat `.github/` as infrastructure rather
+than product, and both must be decided before the first Copilot file lands.
+They apply equally to `.github/agents/` in Phase 3 and `.github/hooks/` in
+Phase 6.
+
+1. The repair agent refuses any change touching `.github/`
+   (`.github/workflows/repair-agent.yml:362`). Product files placed there stay
+   permanently outside the automated repair loop. Carving a path exception into
+   that check is not an option: it is a security boundary and AGENTS.md forbids
+   weakening it. Accept the exclusion and record it, or host the Copilot surface
+   outside `.github/` if Copilot discovery allows it.
+2. `.github` is a top-level exclude in the internal packaging build
+   (`scripts/package_internal_plugin.py:34`), so an organization build would
+   drop the entire Copilot surface without a warning. Decide whether the MVP
+   ships in org builds. If it does, the exclusion needs a narrowed rule and the
+   package-surface manifest must account for the Copilot files; if it does not,
+   state that in the user document rather than leaving a silent omission.
+
 Add:
 
 ```text
@@ -265,6 +283,7 @@ arbitrary home directories for the first matching checkout.
 
 **Exit criterion:** Copilot discovers the skill and the skill runs the
 deterministic preflight against the E2E fixture without starting an analysis.
+The repair-loop exclusion and the packaging decision are recorded.
 
 ### Phase 3 — Split analysis into bounded Copilot agents
 
@@ -426,6 +445,8 @@ Add focused tests for:
 7. Version metadata and repair-plan command generation across both hosts.
 8. The finalize state: prose fixes, QA autofix, and placeholder patching run in
    the pinned order, and the auto-emitters run after every YAML build.
+9. The packaging decision for the Copilot surface, asserted against the
+   package-surface manifest so a silent drop fails the build.
 
 Keep `scripts/e2e_fixture.sh` as a Claude-only regression check: it invokes
 `run-headless.sh` and requires the `claude` CLI. It proves the shared core
@@ -467,6 +488,7 @@ existing structural assertions.
 | Claude paths in repair sidecars | Copilot repair steps execute invalid or unintended paths | Emit host-resolved structured remediation; test all agent-consumed command strings. |
 | Architecture stages read as part of recon | Sections 1–6, trust boundaries, and the STRIDE component manifest never get produced | Give architecture and trust boundaries their own states and agent profiles; assert their sidecars before STRIDE starts. |
 | Render state stops after the composer | Placeholders and unenriched YAML ship as a finished report | Model the post-compose chain as its own state; test the pinned mutation order. |
+| Copilot surface lives under `.github/` | The repair loop cannot touch it, and an organization build drops it silently | Record the repair-loop exclusion instead of weakening the Gate; decide and test the packaging rule before the first file lands. |
 | Hook event mismatch | Missing telemetry or misleading success state | Make telemetry additive; state transitions and gates remain deterministic. |
 | Copied prompts diverge | Claude and Copilot findings/report quality drift | Share contracts/prose where possible; keep only host adapters separate; add cross-host fixture checks. |
 | Weaker MVP path bypasses safety checks | Security regression | Define mandatory scripts per state; add negative tests for skipped redaction, schema, and QA gates. |
@@ -548,5 +570,6 @@ capability spike determine whether the measured implementation meets them.
   `config.json`
 - Requirements: `scripts/fetch_requirements.py`,
   `scripts/requirements_report.py`, `scripts/requirements_gate.py`
-- Existing packaging behavior: `scripts/package_internal_plugin.py`,
-  `docs/internal-plugin-packaging.md`
+- Existing packaging behavior: `scripts/package_internal_plugin.py:34`
+  (`.github` top-level exclude), `docs/internal-plugin-packaging.md`
+- Repair-loop path refusal: `.github/workflows/repair-agent.yml:362`
