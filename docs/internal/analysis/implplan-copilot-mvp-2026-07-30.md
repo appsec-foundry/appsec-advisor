@@ -129,8 +129,12 @@ The required architectural boundary is semantic:
 - All host adapters invoke the same deterministic commands and exchange the
   same schema-validated sidecars.
 
-Introduce a small host descriptor only if it removes repeated branching. Do not
-add a generic abstraction framework before two concrete callers need it.
+Four behaviors vary by host: permission checking, product and analysis version
+metadata, baseline instruction discovery, and remediation resolution. That is
+the host interface, and Phase 1 names it as one small descriptor instead of
+discovering it as four unrelated branches. It stays that size: a descriptor
+with four members is not an abstraction framework, and nothing else joins it
+before a concrete caller needs it.
 
 ## Keeping the two control planes aligned
 
@@ -140,11 +144,21 @@ later as a quality difference nobody can attribute. Three rules, in the order
 they do the work.
 
 1. **Do not duplicate what both hosts need.** Host-neutral semantics — prose
-   rules, the finding-title contract, severity and CVSS rules, secret handling,
-   QA cross-reference rules — stay in the 22 files under `agents/shared/` and
-   are referenced, never copied. Only the loading line is host-specific, and
-   Phase 1 already replaces it with an asset-root path. A Copilot profile that
-   inlines shared text has created the drift, not the later edit.
+   rules, the finding-title contract, secret handling, QA cross-reference
+   rules — stay under `agents/shared/` and are referenced, never copied. Only
+   the loading line is host-specific, and Phase 1 already replaces it with an
+   asset-root path. A Copilot profile that inlines shared text has created the
+   drift, not the later edit.
+
+   Be honest about the reach of this rule. Eight shared files are referenced
+   by the agent set today, roughly 25,000 characters, dominated by
+   `prose-style.md`. The analytical instruction itself lives in the phase
+   groups — about 528,000 characters across four files — and is shaped by the
+   Claude runtime: `cat "$CLAUDE_PLUGIN_ROOT/..."` blocks, Agent-tool dispatch,
+   log heredocs, phase protocol. It cannot be referenced as-is and has to be
+   rewritten for Copilot. That fork is the largest divergence surface in this
+   MVP, it is not covered by rules 1 to 3, and pretending otherwise is how the
+   two hosts drift apart while every test stays green.
 2. **Make the stage set data, not prose.** Stage, required sidecar, schema, and
    sole output authority belong in one registry both control planes and the
    tests read. Adding a stage to one host then fails the other host's test
@@ -161,8 +175,9 @@ often, the pin would be bumped reflexively, and a warning nobody reads is worse
 than none.
 
 What genuinely cannot be shared — tool names, dispatch semantics, approval and
-execution model — is listed explicitly as not parity-tracked. Keep that list
-short and review it when it grows.
+execution model, and the rewritten phase instructions — is listed explicitly as
+not parity-tracked, with the phase groups named file by file so nobody mistakes
+that list for complete coverage. Review it when it grows.
 
 ## Required artifact and safety contracts
 
@@ -221,6 +236,17 @@ version can:
 8. Accept a custom-agent prompt of a known maximum size. Record the documented
    limit and whether an oversized prompt fails loudly or is truncated
    silently; Phase 3 sizing depends on the answer.
+9. Carry the instruction volume a stage actually needs. The profile limit is
+   not the binding constraint — the per-turn context is. `phase-group-recon.md`
+   is about 33,000 characters, `phase-group-architecture.md` about 186,000,
+   `phase-group-threats.md` about 159,000, and `phase-group-finalization.md`
+   about 150,000. Claude reads these in bounded slices at phase boundaries.
+   Measure whether a Copilot agent can hold one stage's instructions plus the
+   analyzed source in a single turn, and whether it can load them in slices if
+   it cannot.
+
+Phase 0 measures capacity, not only capability. A yes on every feature above
+still leaves the MVP unbuildable if a stage's instructions do not fit.
 
 Record the exact supported capability, fallback, and version in a concise
 internal compatibility note. Do not assume that custom-agent availability
@@ -382,6 +408,13 @@ Agent responsibilities:
 | Render | validated structured artifacts and section contract | fragment files only |
 | QA | rendered report, YAML, contract outputs | QA status and repair plan only |
 
+A stage's instructions do not fit in its profile, so the profile carries the
+contract and loads the rest. Claude solves this by reading the phase groups in
+bounded slices at phase boundaries, which is a Claude-runtime mechanism pinned
+by AGENTS.md; Copilot needs its own equivalent, decided from the Phase 0
+capacity measurement. A profile that simply points at a 186,000-character file
+and hopes is not a design.
+
 Attack walkthroughs have no sidecar contract today; Phase 4 authors them as
 report prose. For the MVP the render agent writes them as a fragment from the
 architecture and threat sidecars, so no agent writes into the report itself.
@@ -395,8 +428,16 @@ fixture; schema failures stop the pipeline before the next stage.
 
 ### Phase 4 — Implement the MVP state machine
 
-Extend the deterministic orchestration controller, or add a narrowly scoped
-host-neutral companion, with these states:
+Decide extend-versus-companion before writing the state machine; it is the most
+structural choice in the MVP and must not fall to whoever implements first.
+Extend `orchestration_controller.py` when the MVP states fit the existing
+`action` vocabulary in `schemas/orchestration-action.schema.json` — `abort`,
+`dispatch_agent`, `run_gate`, `complete` and the rest already cover the shape.
+Add a companion only when Phase 0 forces a dispatch model the Claude action
+vocabulary cannot express, and then the companion owns its own schema and the
+two state machines get a test that pins them to the same state set.
+
+The chosen path gets these states:
 
 ```text
 preflight -> recon -> architecture -> stride -> merge -> triage
@@ -407,6 +448,12 @@ preflight -> recon -> architecture -> stride -> merge -> triage
 runs the deterministic merge and the evidence-line validation floor. `finalize`
 runs the post-compose mutation chain named in the artifact contracts; without
 it the report ships unpatched placeholders and unenriched YAML.
+
+The state record is the cross-host handoff, so it is a contracted artifact and
+needs a schema like every other one — either an extension of
+`schemas/orchestration-action.schema.json` or its own file, validated on write.
+Listing its fields in prose is the exception this plan tells everyone else not
+to make.
 
 The controller must persist an explicit state record with:
 
@@ -570,6 +617,7 @@ Existing files this MVP changes:
 | `scripts/validate_org_profile.py` | host projection, explicit unsupported-feature error |
 | `scripts/resolve_config.py` | asset-root and host input |
 | `schemas/threat-model.output.schema.yaml` | `meta.host` field |
+| `schemas/orchestration-action.schema.json` | MVP states, unless a companion owns its own schema |
 | `tests/test_agent_definitions.py` | shared-reference and inline-copy guards cover both agent sets |
 | `CHANGELOG.md`, `AGENTS.md` | one bullet, one change-map row |
 
@@ -617,6 +665,8 @@ repeated branching; otherwise the provider input stays inside the controller.
 |---|---|---|
 | Copilot cannot deterministically fan out to custom agents | Lost throughput or incomplete coverage | Use serial per-component dispatch first; require a manifest-completeness gate before triage. |
 | Copilot custom-agent prompt limit | Prompt truncation silently drops safety rules | Split agents by phase; test profile size; retain shared contracts as explicit resources. |
+| A stage's instructions exceed the per-turn context | Coverage is cut to fit, and the report cannot show what was skipped | Measure capacity in Phase 0; design a slicing equivalent before writing profiles; stop rather than trim safety rules. |
+| Rewritten phase instructions are not parity-tracked | The largest divergence surface drifts while every test passes | Name the phase groups in the not-tracked list; rely on the semantic evaluation, not on tests, to detect it. |
 | Different tool and permission semantics | Unsafe writes or repeated interactive failures | Use minimal tool allowlists; preserve Python path guards; document trust/approvals; test rejected tool paths. |
 | Mandatory Claude permission gate blocks Copilot | Every controller preparation aborts before analysis | Add and test an explicit host-specific permission provider; preserve the current Claude provider and failure text. |
 | Model selection differs by host | Cost, quality, or review-depth drift | Treat model routing as host-specific; record the actual model in run metadata; do not claim Claude model parity. |
