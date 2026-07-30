@@ -8,13 +8,11 @@
 
 > ⚠️ **Beta — not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin for repository-based threat modeling. It derives a security architecture model from code, identifies trust boundaries and data flows, applies STRIDE, and produces reviewable findings.
+`appsec-advisor` is a Claude Code plugin for repository-based *technical threat modeling*. It derives a security architecture model from code, identifies trust boundaries and data flows, applies STRIDE, and produces reviewable findings and a mitigation plan.
 
 Beyond threat modeling, it supports requirements audits, change reviews, and CI gates. AppSec teams can tailor it for internal use; see [Enterprise rollout](#enterprise-rollout).
 
 [Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Workflow](docs/threat-modeler.md#threat-model-lifecycle) · [Documentation](#documentation) · [Project structure](#project-structure) · [Contributing](#contributing)
-
-**Model compatibility.** `appsec-advisor` supports current Anthropic models and is tuned for Sonnet 5. Economy defaults keep token-heavy work on Sonnet 4.6 and use Sonnet 5 selectively; explicit per-agent pins remain available. Each scan prints the resolved routing. See [Session Model](docs/threat-modeler.md#session-model).
 
 ---
 
@@ -22,17 +20,17 @@ Beyond threat modeling, it supports requirements audits, change reviews, and CI 
 
 ### The problem
 
-Workshop and design-review threat models become stale as the implementation changes.
+Workshop and design-review threat models become stale as the implementation changes, and most automated security tools focus on dependencies, code patterns, secrets, and misconfigurations — not on the architecture in between.
 
-Most automated security tools focus on dependencies, code patterns, secrets, and misconfigurations. `appsec-advisor` covers the gap to manual architecture review by identifying risks such as missing trust-boundary controls, implicit service trust, and unauthenticated internal paths.
+`appsec-advisor` covers the gap to manual architecture review by identifying risks such as missing trust-boundary controls, implicit service trust, and unauthenticated internal paths. Because the model is derived from the repository, re-running a scan keeps it current instead of letting it drift from the code.
 
 ### What kind of threat model this is
 
-`appsec-advisor` produces a *technical* threat model grounded in the repository: components, trust boundaries, data flows, and STRIDE findings derived from code and configuration. It is not a *functional* or data-flow-diagram (DFD) threat model that starts from business processes or user stories. Use it to validate whether the implemented architecture matches the intended security design, not to map business-level assets and workflows.
+`appsec-advisor` produces a *technical* threat model grounded in the repository: components, trust boundaries, data flows, and STRIDE findings derived from code and configuration. It is not a *functional* threat model that starts from business processes or user stories. Use it to find weaknesses in the architecture as actually implemented, not to map business-level assets and workflows.
 
 ### Why this isn't a SAST tool
 
-SAST finds implementation flaws in specific code paths. `appsec-advisor` models the system around them: components, trust boundaries, data flows, attacker goals, and missing controls. Its primary output is an architecture-level threat grounded in repository evidence.
+SAST finds implementation flaws in specific code paths. `appsec-advisor` models the system around them — attacker goals, missing controls, and the trust relationships between components — and its primary output is an architecture-level threat model grounded in repository evidence.
 
 It complements rather than replaces code scanners. Threat modeling can surface risks with no vulnerable line to point at, such as missing authorization, an undefined trust boundary, or a service with excessive trust.
 
@@ -50,6 +48,8 @@ It complements rather than replaces code scanners. Threat modeling can surface r
 ## Quick start
 
 Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Mermaid dependencies add stricter diagram validation; see the [Threat Modeler reference](docs/threat-modeler.md).
+
+**Model compatibility.** `appsec-advisor` supports current Anthropic models and is tuned for Sonnet 5. Economy defaults keep token-heavy work on Sonnet 4.6 and use Sonnet 5 selectively; explicit per-agent pins remain available. Each scan prints the resolved routing. See [Session Model](docs/threat-modeler.md#session-model).
 
 **1. Start Claude Code in the target repository**
 
@@ -301,7 +301,13 @@ For the contributor-level path map and the tests required for each kind of chang
 
 ## Related projects
 
-- **[matthiasrohr/appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template)**: Template for an internal package with organization defaults and requirements. It distributes `appsec-advisor` rather than competing with it.
+### Companion repositories
+
+- **[matthiasrohr/appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template)**: Template for an internal package with organization defaults and requirements. It holds the organization profile, package policy, and CI configuration, and consumes a pinned upstream release — see [Enterprise rollout](#enterprise-rollout).
+
+- **[matthiasrohr/ai-secure-coding-baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline)**: The secure-coding rules `install-baseline` writes into a coding assistant's instruction files, published and versioned separately under CC BY 4.0. The plugin bundles a copy as an offline fallback; an organization can point the same mechanism at its own baseline.
+
+### Comparable tools
 
 - **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)**: Claude Code harness that runs multi-agent STRIDE and AI threat analysis over an architecture description, which you write or have it generate from the codebase. Its focus is that description as the unit of analysis, which keeps it stack-agnostic, whereas `appsec-advisor` analyzes the repository itself and ties each finding to evidence in the code.
 
@@ -309,11 +315,11 @@ For the contributor-level path map and the tests required for each kind of chang
 
 - **[OWASP pytm](https://github.com/OWASP/pytm)**: Shift-left framework that generates diagrams and threats from a system defined in Python. Its focus is a model developers author and version by hand, whereas `appsec-advisor` derives it from the repository.
 
-- **[OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/)**: Open-source diagramming tool for threat models, as a desktop app or a web application. Its focus is the diagram a modeler draws and the threats they attach to it, whereas `appsec-advisor` derives that model from the repository. `--formats threatdragon` writes its v2 JSON, so a generated model opens as an editable diagram — and, since ThreatAtlas reads the same format, is the way findings reach a workshop tool.
+- **[OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/)**: Open-source diagramming tool for threat models, as a desktop app or a web application. Its focus is the diagram a modeler draws and the threats they attach to it, whereas `appsec-advisor` derives that model from the repository. `--formats threatdragon` (alpha) writes its v2 JSON, so a generated model opens in Threat Dragon as an editable diagram with its threats attached — see the [export reference](docs/threat-dragon-export.md).
 
-- **[OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/)**: Self-hosted web application for team-based threat modeling sessions on shared data flow diagrams. Its focus is the workshop and its record, whereas `appsec-advisor` keeps a code-derived model current between sessions. The two combine well: bring the derived components, trust boundaries, and data flows into the session instead of drawing them from memory.
+- **[OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/)**: Self-hosted web application for team-based threat modeling sessions on shared data flow diagrams. Its focus is the workshop and its record, whereas `appsec-advisor` keeps a code-derived model current between sessions. The two combine well: a generated model imports via **Diagram → Import** as Threat Dragon JSON (`--formats threatdragon`, alpha), which brings the derived components, data flows, threats, and mitigations into the session instead of drawing them from memory. That is the only import shape ThreatAtlas accepts that carries findings — its other three drop them and restore geometry alone.
 
-- **[OWASP Precogly](https://github.com/precogly/precogly)**: Self-hosted platform with a DFD editor, curated library packs, and compliance traceability, for architects running a threat modeling program. Its focus is the program-wide system of record, whereas `appsec-advisor` generates the per-repository model next to the code. Both combine well: the generated model is a starting point for the maintained DFD, and findings can be tracked against the program's requirements.
+- **[OWASP Precogly](https://github.com/precogly/precogly)**: Self-hosted platform with a DFD editor, curated library packs, and compliance traceability, for architects running a threat modeling program. Its focus is the program-wide system of record, whereas `appsec-advisor` generates the per-repository model next to the code. The two combine well: the generated model is a starting point for the maintained DFD, and findings can be tracked against the program's requirements.
 
 - **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)**: Anthropic's codebase vulnerability scanner for Enterprise plans. Its focus is exploitable implementation flaws, whereas `appsec-advisor` covers what has no vulnerable line to point at, such as missing authorization or an undefined trust boundary.
 
