@@ -75,6 +75,7 @@ Code and schemas define behavior. Contract documents explain it. Tests guard aga
 | Run status and liveness | `scripts/appsec_status.py --live`, `scripts/watch_run.py` | `docs/internal/runbooks/checking-run-status.md` |
 | Server-side dispatch and repair | `.github/workflows/`, preset JSON | `docs/internal/runbooks/server-side-dispatch.md` |
 | Runtime logging | `scripts/event_log.py`, `agents/shared/logging-standard.md` | event-log and hook tests |
+| Threat Dragon / ThreatAtlas export | `scripts/export_threat_dragon.py`, `docs/threat-dragon-export.md` | `tests/test_export_threat_dragon.py` |
 
 ## Reference notes that stay here
 
@@ -87,6 +88,19 @@ Phase-9 dispatch keeps this order:
 3. Group C: volatile `.dispatch-context/` paths; do not inline those files.
 
 The canonical layout is in `agents/phases/phase-group-threats.md` → Dispatch. `tests/test_dispatch_prompt_cache_order.py` guards it.
+
+### Threat Dragon export (alpha)
+
+`--formats threatdragon` writes OWASP Threat Dragon v2 JSON. It is the only
+file format that carries threats and mitigations into OWASP ThreatAtlas — that
+tool's own exports restore geometry and drop every finding.
+
+While it is alpha, keep it out of the `--formats all` expansion; a test pins
+that. The export is deliberately lossy and best-effort: Threat Dragon has no
+field for CVSS, CWE, evidence locations, mitigation priority or requirements
+traceability, so those are folded into each threat's description, and thin or
+inconsistent input degrades to a warning on stderr rather than a failed export.
+`threat-model.md` stays authoritative and SARIF stays the scanner export.
 
 ### Runtime artifact cleanup
 

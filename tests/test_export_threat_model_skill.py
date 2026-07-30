@@ -186,12 +186,49 @@ def test_skill_file_exists():
         "html",
         "sarif",
         "pentest",
+        "threatdragon",
         "export_sarif.py",
         "render_pentest_tasks.py",
         "export_pdf.py",
         "export_html.py",
+        "export_threat_dragon.py",
     ):
         assert keyword in content, f"SKILL.md missing keyword: {keyword}"
+
+
+def test_threat_dragon_is_alpha_and_opt_in():
+    """The alpha format must not ride along with `--formats all`, and the help
+    block must say so — otherwise every run starts shipping it."""
+    content = (ROOT / "skills" / "export-threat-model" / "SKILL.md").read_text()
+    assert "`all` (any element) → `pdf,html,sarif,pentest`." in content, (
+        "threatdragon must stay out of the `all` expansion while it is alpha"
+    )
+    assert "ALPHA" in content
+    assert "threat-model.threatdragon.json" in content
+
+
+def test_threat_dragon_helper_runs_standalone(tmp_path: Path):
+    output_dir = _setup_output_dir(tmp_path)
+    td_out = output_dir / "threat-model.threatdragon.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "export_threat_dragon.py"),
+            "--threat-model",
+            str(output_dir / "threat-model.yaml"),
+            "--output",
+            str(td_out),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    with td_out.open() as f:
+        doc = json.load(f)
+    cells = doc["detail"]["diagrams"][0]["cells"]
+    assert cells, "an element-less diagram is rejected by both importers"
+    titles = [t["title"] for c in cells for t in c["data"]["threats"]]
+    assert any(t.startswith("[F-001] ") for t in titles)
 
 
 def test_html_helper_cli_present():

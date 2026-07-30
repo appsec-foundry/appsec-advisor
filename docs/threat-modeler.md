@@ -58,9 +58,14 @@ Optional formats can also be generated from an existing assessment:
 /appsec-advisor:export-threat-model --formats sarif
 /appsec-advisor:export-threat-model --formats html
 /appsec-advisor:export-threat-model --formats pentest --pentest-target https://staging.example.com
+
+# Alpha: OWASP Threat Dragon JSON, which also imports into OWASP ThreatAtlas
+/appsec-advisor:export-threat-model --formats threatdragon
 ```
 
-SARIF and pentest tasks are generated from `threat-model.yaml` without model calls. PDF and HTML are converted from `threat-model.md`. Diagram rendering also requires `mmdc` and Chrome or Chromium. Check the export dependencies with:
+The Threat Dragon export is alpha and is not part of the default set — request it by name. It is lossy, because Threat Dragon's schema holds much less than ours; see [Threat Dragon export](threat-dragon-export.md).
+
+SARIF, pentest tasks and Threat Dragon are generated from `threat-model.yaml` without model calls. PDF and HTML are converted from `threat-model.md`. Diagram rendering also requires `mmdc` and Chrome or Chromium. Check the export dependencies with:
 
 ```text
 /appsec-advisor:export-threat-model --check-only

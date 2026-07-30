@@ -1,6 +1,6 @@
 ---
 name: export-threat-model
-description: Re-export a finished threat-model.yaml/.md into PDF + HTML + SARIF + pentest-tasks artifacts. Standalone post-processing — does not analyze the repo, does not run any agent. SARIF and pentest-tasks are derived deterministically from threat-model.yaml; PDF and HTML are converted from threat-model.md (requires pandoc; PDF also needs weasyprint plus mmdc+Chrome for Mermaid diagrams, or --no-mermaid).
+description: Re-export a finished threat-model.yaml/.md into PDF + HTML + SARIF + pentest-tasks artifacts, or the alpha OWASP Threat Dragon / ThreatAtlas JSON. Standalone post-processing — does not analyze the repo, does not run any agent. SARIF, pentest-tasks and Threat Dragon are derived deterministically from threat-model.yaml; PDF and HTML are converted from threat-model.md (requires pandoc; PDF also needs weasyprint plus mmdc+Chrome for Mermaid diagrams, or --no-mermaid).
 ---
 
 You are exporting an existing threat model into one or more artifact formats. This skill is **standalone post-processing** — do not analyze the repository, do not dispatch any agent, do not modify the source `threat-model.md` or `threat-model.yaml`. The skill reads those two files and writes the requested exports.
@@ -10,7 +10,7 @@ You are exporting an existing threat model into one or more artifact formats. Th
 If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
 
 ```
-/appsec-advisor:export-threat-model — Re-export a threat model into PDF / HTML / SARIF / pentest-tasks.
+/appsec-advisor:export-threat-model — Re-export a threat model into PDF / HTML / SARIF / pentest-tasks / Threat Dragon.
 
 USAGE
   /appsec-advisor:export-threat-model [FLAGS]
@@ -28,8 +28,10 @@ FLAGS
                            <output>/threat-model.md for markup exports.
   --output-pdf <path>      Exact PDF destination. Implies --formats pdf when
                            --formats is not explicitly provided.
-  --formats <csv>          Comma-separated subset of: pdf, html, sarif, pentest, all
-                           (default: all)
+  --formats <csv>          Comma-separated subset of: pdf, html, sarif, pentest,
+                           threatdragon, all   (default: all)
+                           threatdragon is ALPHA and is NOT part of `all` —
+                           request it explicitly.
   --pentest-format <name>  Pentest dialect: generic|strix (default: generic)
   --pentest-target <url>   Optional base URL for the pentest target
   --no-mermaid             Skip Mermaid SVG pre-rendering for PDF/HTML
@@ -47,17 +49,27 @@ DEPENDENCIES (installed by the user, not by this plugin)
                 + npx puppeteer browsers install chrome   (or apt install
                 chromium and set PUPPETEER_EXECUTABLE_PATH)
                 PDF aborts if missing; pass --no-mermaid to skip diagrams.
-  pyyaml        Required for SARIF + pentest. apt install python3-yaml | pip install pyyaml
+  pyyaml        Required for SARIF + pentest + threatdragon.
+                apt install python3-yaml | pip install pyyaml
 
 OUTPUTS
-  <exports-dir>/threat-model.pdf           (when pdf ∈ formats)
-  <exports-dir>/threat-model.html          (when html ∈ formats)
-  <exports-dir>/threat-model.sarif.json    (when sarif ∈ formats)
-  <exports-dir>/pentest-tasks.yaml         (when pentest ∈ formats)
+  <exports-dir>/threat-model.pdf                 (when pdf ∈ formats)
+  <exports-dir>/threat-model.html                (when html ∈ formats)
+  <exports-dir>/threat-model.sarif.json          (when sarif ∈ formats)
+  <exports-dir>/pentest-tasks.yaml               (when pentest ∈ formats)
+  <exports-dir>/threat-model.threatdragon.json   (when threatdragon ∈ formats)
+
+THREAT DRAGON EXPORT (ALPHA)
+  OWASP Threat Dragon v2 JSON. Opens in Threat Dragon and imports into OWASP
+  ThreatAtlas (Diagram → Import). Lossy by construction — Threat Dragon has no
+  field for CVSS, CWE, evidence locations, mitigation priority or requirements
+  traceability, so those are folded into each threat's description and every
+  threat keeps its F-NNN anchor. See docs/threat-dragon-export.md.
 
 EXAMPLES
   /appsec-advisor:export-threat-model
   /appsec-advisor:export-threat-model --formats sarif,pentest
+  /appsec-advisor:export-threat-model --formats threatdragon
   /appsec-advisor:export-threat-model --formats html
   /appsec-advisor:export-threat-model --formats pdf --no-mermaid
   /appsec-advisor:export-threat-model --formats pdf --input ./report.md --output-pdf ./report.pdf
@@ -111,10 +123,10 @@ If the invocation contains **any** token that is not one of the recognized flags
 
 Normalize `FORMATS`:
 - Split on comma, lowercase, strip whitespace.
-- `all` (any element) → `pdf,html,sarif,pentest`.
-- Reject any token that is not in `{pdf, html, sarif, pentest, all}` with a clear error and exit `2`.
+- `all` (any element) → `pdf,html,sarif,pentest`. **`threatdragon` is alpha and is deliberately not in `all`** — it ships only when the user names it.
+- Reject any token that is not in `{pdf, html, sarif, pentest, threatdragon, all}` with a clear error and exit `2`.
 
-Set boolean flags `DO_PDF`, `DO_HTML`, `DO_SARIF`, `DO_PENTEST` from the resolved set.
+Set boolean flags `DO_PDF`, `DO_HTML`, `DO_SARIF`, `DO_PENTEST`, `DO_THREATDRAGON` from the resolved set.
 
 ## Step 3 — Preflight
 
@@ -128,8 +140,8 @@ mkdir -p "$EXPORTS_DIR"
 
 PREFLIGHT_FAIL=0
 
-# Yaml needed for sarif + pentest
-if [ "$DO_SARIF" = "true" ] || [ "$DO_PENTEST" = "true" ]; then
+# Yaml needed for sarif + pentest + threatdragon
+if [ "$DO_SARIF" = "true" ] || [ "$DO_PENTEST" = "true" ] || [ "$DO_THREATDRAGON" = "true" ]; then
   if [ ! -f "$INPUT_YAML" ]; then
     echo "ERROR: threat-model.yaml not found at $INPUT_YAML" >&2
     PREFLIGHT_FAIL=2
@@ -170,7 +182,7 @@ fi
 
 ## Step 4 — Run exports
 
-Execute the requested format helpers in order: SARIF → pentest → HTML → PDF (markup outputs last). Each helper's exit code propagates the first non-zero result back to the user.
+Execute the requested format helpers in order: SARIF → pentest → Threat Dragon → HTML → PDF (markup outputs last). Each helper's exit code propagates the first non-zero result back to the user.
 
 **Run the HTML/PDF helpers UNSANDBOXED.** Mermaid rendering (used by both `export_html.py` and `export_pdf.py`) shells out to a headless Chrome via mmdc/Puppeteer, whose `process_singleton` calls `socket()` at launch — a syscall the Bash sandbox blocks (`Operation not permitted`, EPERM, path-independent). Sandboxed, `export_pdf.py` aborts with "Mermaid renderer cannot run …" and writes **no** PDF (a diagram-less PDF is a broken deliverable, not a silent fallback). Dispatch this block with the **sandbox disabled** so diagrams render. The abort message means the sandbox — re-run unsandboxed; do **not** reach for `--no-mermaid` (that is only for a deliberately diagram-less export).
 
@@ -190,6 +202,13 @@ if [ "$DO_PENTEST" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
                 --dialect $PENTEST_FORMAT"
   [ -n "$PENTEST_TARGET_URL" ] && PENTEST_ARGS="$PENTEST_ARGS --target-url $PENTEST_TARGET_URL"
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_pentest_tasks.py" $PENTEST_ARGS \
+    || EXIT_CODE=4
+fi
+
+if [ "$DO_THREATDRAGON" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_threat_dragon.py" \
+    --threat-model "$INPUT_YAML" \
+    --output       "$EXPORTS_DIR/threat-model.threatdragon.json" \
     || EXIT_CODE=4
 fi
 
