@@ -737,6 +737,8 @@ def remove_stale_archive(name: str, version: str, dist_dir: Path) -> None:
 HOOK_DESCRIPTIONS = {
     "agent-logger": "Logs all tool calls and agent actions for audit and debugging.",
     "security-coach": "Intercepts tool calls and provides real-time security guidance.",
+    "session-banner": "Opens each session with the repository's threat-model and baseline status.",
+    "skill-policy-gate": "Blocks skills this organization disabled, on both the typed and the model-invoked path.",
 }
 
 # Skills with their own detailed section in the README

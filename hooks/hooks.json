@@ -29,6 +29,25 @@
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/skill_policy_gate.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/skill_policy_gate.py"
+          }
+        ]
       }
     ],
     "PostToolUse": [

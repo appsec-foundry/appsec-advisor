@@ -418,7 +418,13 @@ Each `llm_context.documents` file:
 
 ## Skill toggles
 
-User-facing skills can be disabled with a reason:
+Skills can be disabled with a reason. The policy is enforced by the
+`skill-policy-gate` hook, which covers both ways a skill is reached: a person
+typing `/<plugin>:<skill>`, and Claude invoking it through the `Skill` tool.
+Enforcement sits outside the model on purpose — a check written into a skill's
+prose is an instruction, and an instruction can be skipped.
+
+A disabled skill is refused with the organization's reason:
 
 - **User skills** (e.g. `export-threat-model`, `publish-threat-model`): blocked with the reason printed. Exit code 30.
 - **Help-only**: `--help` still renders even when the skill is disabled. Exit code 10.

@@ -20,6 +20,9 @@ KEYWORDS_JSON = HOOKS_DIR / "steering_keywords.json"
 EXPECTED_HOOK_EVENTS = {
     "SessionStart",
     "UserPromptSubmit",
+    # A typed /<plugin>:<skill> command never reaches PreToolUse, so the org
+    # skill policy needs this event to cover direct invocation as well.
+    "UserPromptExpansion",
     "PreToolUse",
     "PostToolUse",
     "Stop",
