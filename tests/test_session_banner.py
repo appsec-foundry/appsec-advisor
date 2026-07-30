@@ -138,6 +138,25 @@ def run_hook(cwd: str) -> str:
     return json.loads(result.stdout)["systemMessage"]
 
 
+def tm_line(message: str) -> str:
+    """Return the threat-model domain line."""
+    for line in message.splitlines():
+        if line.startswith("threat model"):
+            return line
+    raise AssertionError(f"no threat model line in:\n{message}")
+
+
+def baseline_line(message: str) -> str | None:
+    for line in message.splitlines():
+        if line.startswith("coding baseline"):
+            return line
+    return None
+
+
+def identity_line(message: str) -> str:
+    return message.splitlines()[0]
+
+
 # ---------------------------------------------------------------------------
 # End-to-end: stdout contract
 # ---------------------------------------------------------------------------
@@ -145,17 +164,22 @@ def run_hook(cwd: str) -> str:
 
 def test_reports_missing_model(tmp_path):
     message = run_hook(str(tmp_path))
-    assert "no threat model in docs/security/" in message
-    assert "/appsec-advisor:create-threat-model" in message
+    assert identity_line(message).startswith(f"appsec-advisor {MANIFEST['version']}")
+    assert "/appsec-advisor:help" in identity_line(message)
+    assert tm_line(message) == (
+        "threat model · none in docs/security/ · /appsec-advisor:create-threat-model"
+    )
 
 
 def test_reports_existing_model(tmp_path):
     write_model(tmp_path)
     message = run_hook(str(tmp_path))
-    assert "acme-api" in message
-    assert "2 threats" in message
-    assert "27 Jul 2026" in message
-    assert "/appsec-advisor:review-threat-model" in message
+    line = tm_line(message)
+    assert "acme-api" in line
+    assert "2 total" in line
+    assert "27 Jul 2026" in line
+    # Default fixture has no Critical/High → calm → no review command.
+    assert "/appsec-advisor:review-threat-model" not in line
 
 
 def test_assessment_depth_is_left_out(tmp_path):
@@ -164,11 +188,26 @@ def test_assessment_depth_is_left_out(tmp_path):
     assert "standard" not in run_hook(str(tmp_path))
 
 
-def test_identity_rides_on_the_action_row_not_the_status_line(tmp_path):
-    """The status line pays a 27-column prefix; the action row does not."""
+def test_identity_is_on_the_first_line_with_help(tmp_path):
+    """Identity pays the SessionStart prefix tax; domain lines keep full width."""
     lines = run_hook(str(tmp_path)).splitlines()
-    assert lines[0] == f"{session_banner.GLYPH_NONE} no threat model in docs/security/"
-    assert lines[-1].endswith(f"appsec-advisor {MANIFEST['version']}")
+    assert lines[0] == f"appsec-advisor {MANIFEST['version']} · /appsec-advisor:help"
+    assert lines[1].startswith("threat model")
+
+
+def test_layout_is_identity_then_threat_model_then_baseline(tmp_path):
+    write_model(tmp_path)
+    lines = run_hook(str(tmp_path)).splitlines()
+    assert lines[0].startswith("appsec-advisor")
+    assert lines[1].startswith("threat model")
+    assert lines[2].startswith("coding baseline")
+
+
+def test_banner_carries_no_status_glyphs(tmp_path):
+    write_severities(tmp_path, "effective_severity", ["Critical", "High"])
+    banner = run_hook(str(tmp_path))
+    for glyph in ("🟢", "🟠", "🔴", "⚪", "🔵"):
+        assert glyph not in banner
 
 
 # ---------------------------------------------------------------------------
@@ -179,9 +218,11 @@ def test_identity_rides_on_the_action_row_not_the_status_line(tmp_path):
 def test_outside_a_repository_only_the_plugin_and_help_are_announced(tmp_path, monkeypatch):
     """A directory nobody meant to scan gets no complaint about a missing model."""
     monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
+    # Silence baseline so this case is identity-only when baseline is healthy/disabled.
+    monkeypatch.setattr(session_banner, "_baseline_line", lambda _repo: "")
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
     assert "threat model" not in " ".join(lines)
-    assert lines[-1] == f"appsec-advisor {MANIFEST['version']} · /appsec-advisor:help"
+    assert lines == [f"appsec-advisor {MANIFEST['version']} · /appsec-advisor:help"]
 
 
 def test_outside_a_repository_the_baseline_is_still_reported(tmp_path, monkeypatch):
@@ -192,15 +233,17 @@ def test_outside_a_repository_the_baseline_is_still_reported(tmp_path, monkeypat
     """
     monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
-    assert lines[0].startswith(session_banner.GLYPH_NONE)
-    assert "not installed" in lines[0]
+    assert lines[0].startswith("appsec-advisor")
+    assert lines[1].startswith("coding baseline")
+    assert "not installed" in lines[1]
 
 
 def test_a_model_outside_a_repository_is_still_reported(tmp_path, monkeypatch):
     """An --output directory need not be a working tree; the model still counts."""
     monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
     write_model(tmp_path)
-    assert "threat model" in session_banner.build_banner(str(tmp_path)).splitlines()[0]
+    lines = session_banner.build_banner(str(tmp_path)).splitlines()
+    assert any(line.startswith("threat model") for line in lines)
 
 
 def test_repository_is_detected_from_a_parent(tmp_path):
@@ -240,10 +283,11 @@ def plain(text: str) -> str:
     return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
-def test_critical_and_high_are_counted_and_marked(tmp_path):
+def test_critical_and_high_are_counted_severity_first(tmp_path):
     write_severities(tmp_path, "effective_severity", ["Critical", "Critical", "High", "Medium"])
-    first = plain(run_hook(str(tmp_path))).splitlines()[0]
-    assert "4 threats (2 CRITICAL, 1 high)" in first
+    line = plain(tm_line(run_hook(str(tmp_path))))
+    assert line.startswith("threat model · acme-api · 2 CRITICAL · 1 high · 4 total")
+    assert "/appsec-advisor:review-threat-model" in line
 
 
 def test_effective_severity_wins_over_risk(tmp_path):
@@ -254,25 +298,26 @@ def test_effective_severity_wins_over_risk(tmp_path):
         "meta:\n  project: acme-api\nthreats:\n- local_id: T-001\n  risk: Critical\n  effective_severity: Medium\n",
         encoding="utf-8",
     )
-    assert "CRITICAL" not in session_banner.build_banner(str(tmp_path)).splitlines()[0]
+    assert "CRITICAL" not in tm_line(session_banner.build_banner(str(tmp_path)))
 
 
 def test_risk_is_used_when_effective_severity_is_absent(tmp_path):
     write_severities(tmp_path, "risk", ["Critical", "High"])
-    first = run_hook(str(tmp_path)).splitlines()[0]
-    assert "1 CRITICAL" in first and "1 high" in first
+    line = tm_line(run_hook(str(tmp_path)))
+    assert "1 CRITICAL" in line and "1 high" in line
 
 
 def test_clean_model_shows_no_severity_marks(tmp_path):
     write_severities(tmp_path, "effective_severity", ["Medium", "Low"])
-    first = run_hook(str(tmp_path)).splitlines()[0]
-    assert "2 threats" in first
-    assert "CRITICAL" not in first and "high" not in first
+    line = tm_line(run_hook(str(tmp_path)))
+    assert "2 total" in line
+    assert "CRITICAL" not in line and " high" not in line
+    assert "/appsec-advisor:review-threat-model" not in line
 
 
 def test_state_line_names_what_the_numbers_are(tmp_path):
     write_model(tmp_path)
-    assert run_hook(str(tmp_path)).splitlines()[0].startswith(f"{session_banner.GLYPH_OK} threat model")
+    assert tm_line(run_hook(str(tmp_path))).startswith("threat model")
 
 
 def test_project_name_is_shown_only_when_it_is_not_this_repository(tmp_path):
@@ -280,23 +325,32 @@ def test_project_name_is_shown_only_when_it_is_not_this_repository(tmp_path):
     repo = tmp_path / "web-shop"
     repo.mkdir()
     write_model(repo)  # fixture project is "acme-api"
-    assert "threat model: acme-api" in session_banner.build_banner(str(repo))
+    assert "threat model · acme-api ·" in tm_line(session_banner.build_banner(str(repo)))
 
     same = tmp_path / "acme-api"
     same.mkdir()
     write_model(same)
-    first = session_banner.build_banner(str(same)).splitlines()[0]
-    assert "acme-api" not in first
+    line = tm_line(session_banner.build_banner(str(same)))
+    assert line.startswith("threat model · 2 total")
+    assert "acme-api" not in line
 
 
-def test_a_single_threat_is_not_pluralized(tmp_path):
-    write_severities(tmp_path, "effective_severity", ["Critical"])
-    assert "1 threat (" in run_hook(str(tmp_path))
+def test_zero_findings_uses_no_findings_wording(tmp_path):
+    out = tmp_path / "docs" / "security"
+    out.mkdir(parents=True)
+    (out / "threat-model.yaml").write_text(
+        "meta:\n  project: acme-api\n  generated: '2026-07-27T10:01:22Z'\nthreats: []\n",
+        encoding="utf-8",
+    )
+    assert "no findings" in tm_line(run_hook(str(tmp_path)))
 
 
-def test_timestamp_carries_the_time_and_its_zone(tmp_path):
+def test_timestamp_is_date_only(tmp_path):
     write_model(tmp_path)
-    assert "27 Jul 2026 10:01 UTC" in run_hook(str(tmp_path))
+    message = run_hook(str(tmp_path))
+    assert "27 Jul 2026" in message
+    assert "10:01" not in message
+    assert "UTC" not in message
 
 
 # ---------------------------------------------------------------------------
@@ -313,66 +367,52 @@ def test_banner_carries_no_ansi_escapes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# State glyphs
+# Commands follow pressure / stale / calm rules
 # ---------------------------------------------------------------------------
 
 
-def test_current_model_is_marked_green(tmp_path):
-    write_model(tmp_path)
-    assert run_hook(str(tmp_path)).startswith(session_banner.GLYPH_OK)
+def test_critical_findings_offer_review(tmp_path):
+    write_severities(tmp_path, "effective_severity", ["Critical"])
+    assert "/appsec-advisor:review-threat-model" in tm_line(run_hook(str(tmp_path)))
 
 
-def test_stale_model_is_marked_amber(tmp_path):
+def test_high_findings_offer_review(tmp_path):
+    write_severities(tmp_path, "effective_severity", ["High"])
+    assert "/appsec-advisor:review-threat-model" in tm_line(run_hook(str(tmp_path)))
+
+
+def test_calm_current_model_offers_no_threat_model_command(tmp_path):
+    write_severities(tmp_path, "effective_severity", ["Medium", "Low"])
+    line = tm_line(run_hook(str(tmp_path)))
+    assert "/appsec-advisor:" not in line
+
+
+def test_stale_model_offers_update_not_review(tmp_path):
     init_repo(tmp_path)
-    write_model(tmp_path, generated="2026-01-01T00:00:00Z")
+    write_severities(tmp_path, "effective_severity", ["Critical"])
+    # Overwrite generated to an old stamp so commits count as drift.
+    model = tmp_path / "docs" / "security" / "threat-model.yaml"
+    text = model.read_text(encoding="utf-8")
+    model.write_text(text.replace("2026-07-27T10:01:22Z", "2026-01-01T00:00:00Z"), encoding="utf-8")
     for i in range(session_banner.STALE_COMMITS):
         commit(tmp_path, f"file{i}.txt", "2026-02-01T12:00:00+00:00")
-    assert session_banner.build_banner(str(tmp_path)).startswith(session_banner.GLYPH_WARN)
+    line = tm_line(session_banner.build_banner(str(tmp_path)))
+    assert "/appsec-advisor:update-threat-model" in line
+    assert "review-threat-model" not in line
 
 
-def test_critical_findings_turn_the_glyph_red_on_a_current_model(tmp_path):
-    """One glyph, one claim: current but full of criticals is not a green state."""
-    write_severities(tmp_path, "effective_severity", ["Critical"])
-    assert run_hook(str(tmp_path)).startswith(session_banner.GLYPH_ALERT)
-
-
-def test_high_findings_turn_the_glyph_amber(tmp_path):
-    write_severities(tmp_path, "effective_severity", ["High"])
-    assert run_hook(str(tmp_path)).startswith(session_banner.GLYPH_WARN)
-
-
-def test_clean_current_model_is_the_only_green_state(tmp_path):
-    write_severities(tmp_path, "effective_severity", ["Medium", "Low"])
-    assert run_hook(str(tmp_path)).startswith(session_banner.GLYPH_OK)
-
-
-def test_incompatible_model_is_marked_red(tmp_path):
+def test_incompatible_model_demands_rebuild(tmp_path):
     write_model(tmp_path, analysis_version=max(MANIFEST["compatible_analysis_versions"]) + 1)
-    assert session_banner.build_banner(str(tmp_path)).startswith(session_banner.GLYPH_ALERT)
+    line = tm_line(session_banner.build_banner(str(tmp_path)))
+    assert "incompatible" in line
+    assert line.endswith("/appsec-advisor:create-threat-model --full --rebuild")
 
 
-def test_running_scan_is_marked_blue(tmp_path, monkeypatch):
+def test_running_scan_offers_status(tmp_path, monkeypatch):
     write_model(tmp_path)
     monkeypatch.setattr(session_banner, "_scan_running", lambda _dir: True)
-    assert session_banner.build_banner(str(tmp_path)).startswith(session_banner.GLYPH_BUSY)
-
-
-def test_only_state_lines_carry_a_glyph(tmp_path):
-    """A glyph marks state. The action row is not state, so it carries none.
-
-    The banner has two state lines — the threat model and the secure-coding
-    baseline — and each is a verdict in its own right, so each gets a glyph.
-    What must stay glyph-free is the row of commands below them.
-    """
-    write_model(tmp_path)
-    glyphs = (
-        session_banner.GLYPH_OK,
-        session_banner.GLYPH_WARN,
-        session_banner.GLYPH_ALERT,
-        session_banner.GLYPH_NONE,
-        session_banner.GLYPH_BUSY,
-    )
-    assert not any(glyph in run_hook(str(tmp_path)).splitlines()[-1] for glyph in glyphs)
+    line = tm_line(session_banner.build_banner(str(tmp_path)))
+    assert line == "threat model · scan in progress · /appsec-advisor:status"
 
 
 # ---------------------------------------------------------------------------
@@ -381,33 +421,21 @@ def test_only_state_lines_carry_a_glyph(tmp_path):
 
 
 def test_missing_baseline_is_reported_with_its_own_command(tmp_path):
-    """The action row speaks for the threat model, so this line carries its own.
-
-    A state the reader cannot act on is a complaint rather than a status.
-    """
+    """Baseline command stays on the baseline line, not a footer."""
     write_model(tmp_path)
-    line = run_hook(str(tmp_path)).splitlines()[1]
-    assert line.startswith(session_banner.GLYPH_NONE)
-    assert "not installed" in line
-    assert "/appsec-advisor:install-baseline" in line
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line is not None
+    assert line.startswith("coding baseline · not installed")
+    assert line.endswith("/appsec-advisor:install-baseline")
 
 
-def test_installed_baseline_is_reported_with_its_id(tmp_path):
-    """Shown in both directions: the id is what reveals a derived or stale one."""
+def test_installed_baseline_omits_the_line(tmp_path):
+    """Healthy baseline is silence — constant confirmation is session-start noise."""
     write_model(tmp_path)
     install_baseline_for(tmp_path)
-    line = run_hook(str(tmp_path)).splitlines()[1]
-    assert line.startswith(session_banner.GLYPH_OK)
-    assert "aisec-0.1" in line
-    assert "/appsec-advisor:" not in line, "nothing to act on when it is loaded"
-
-
-def test_baseline_line_sits_between_the_state_and_the_actions(tmp_path):
-    write_model(tmp_path)
-    lines = run_hook(str(tmp_path)).splitlines()
-    assert "threat model" in lines[0]
-    assert "Baseline" in lines[1]
-    assert lines[2].startswith("/appsec-advisor:")
+    message = run_hook(str(tmp_path))
+    assert baseline_line(message) is None
+    assert "aisec-0.1" not in message
 
 
 def test_a_baseline_in_the_repo_that_nothing_imports_is_reported_missing(tmp_path):
@@ -418,10 +446,10 @@ def test_a_baseline_in_the_repo_that_nothing_imports_is_reported_missing(tmp_pat
     (tmp_path / "secure-coding-baseline.md").write_text(
         (plugin_root / config["fallback_file"]).read_text(encoding="utf-8"), encoding="utf-8"
     )
-    line = run_hook(str(tmp_path)).splitlines()[1]
-    assert line.startswith(session_banner.GLYPH_NONE)
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line is not None
     assert "not loaded" in line, "on disk is not in context"
-    assert "aisec-0.1 ·" not in line, "an id here would read as loaded"
+    assert "on disk in" in line
 
 
 def test_a_baseline_the_repo_carries_for_another_tool_is_named(tmp_path):
@@ -432,7 +460,8 @@ def test_a_baseline_the_repo_carries_for_another_tool_is_named(tmp_path):
     (tmp_path / "AGENTS.md").write_text(
         (plugin_root / config["fallback_file"]).read_text(encoding="utf-8"), encoding="utf-8"
     )
-    line = run_hook(str(tmp_path)).splitlines()[1]
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line is not None
     assert "not loaded" in line
     assert "AGENTS.md" in line
 
@@ -443,7 +472,8 @@ def test_a_broken_baseline_check_does_not_break_the_banner(tmp_path, monkeypatch
     monkeypatch.setattr(session_banner, "_baseline_line", lambda _repo: "")
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
     assert len(lines) == 2
-    assert "threat model" in lines[0]
+    assert lines[0].startswith("appsec-advisor")
+    assert "threat model" in lines[1]
 
 
 def test_no_baseline_configured_drops_the_line(tmp_path, monkeypatch):
@@ -452,24 +482,20 @@ def test_no_baseline_configured_drops_the_line(tmp_path, monkeypatch):
     repo.mkdir()
     write_model(repo)
     packaged_root(tmp_path, ["create-threat-model"], monkeypatch)
-    assert len(session_banner.build_banner(str(repo)).splitlines()) == 2
+    lines = session_banner.build_banner(str(repo)).splitlines()
+    assert baseline_line("\n".join(lines)) is None
+    assert len(lines) == 2
 
 
 # ---------------------------------------------------------------------------
-# Action hints and the information URL
+# Help and examples
 # ---------------------------------------------------------------------------
 
 
-def test_action_row_offers_one_command_plus_help(tmp_path):
+def test_help_lives_on_the_identity_line(tmp_path):
     write_model(tmp_path)
-    lines = run_hook(str(tmp_path)).splitlines()
-    assert lines[-1].startswith("/appsec-advisor:review-threat-model · /appsec-advisor:help")
-
-
-def test_status_line_carries_no_command(tmp_path):
-    """State and action are separate roles; mixing them made both harder to see."""
-    write_model(tmp_path)
-    assert "/appsec-advisor:" not in run_hook(str(tmp_path)).splitlines()[0]
+    first = identity_line(run_hook(str(tmp_path)))
+    assert first.endswith("/appsec-advisor:help")
 
 
 def test_examples_live_on_the_help_page_not_in_the_banner(tmp_path):
@@ -489,9 +515,8 @@ def test_example_question_is_taken_from_the_ask_skill(tmp_path):
     assert '"what are the critical findings?"' in description
 
 
-def test_without_a_model_the_create_action_is_offered(tmp_path):
-    row = run_hook(str(tmp_path)).splitlines()[-1]
-    assert row.startswith("/appsec-advisor:create-threat-model · /appsec-advisor:help")
+def test_without_a_model_the_create_action_is_on_the_threat_model_line(tmp_path):
+    assert tm_line(run_hook(str(tmp_path))).endswith("/appsec-advisor:create-threat-model")
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +529,8 @@ def configured(tmp_path, banner: dict, monkeypatch) -> Path:
     root = tmp_path / "configured"
     (root / "skills" / "create-threat-model").mkdir(parents=True)
     (root / "skills" / "create-threat-model" / "SKILL.md").write_text("x", encoding="utf-8")
+    (root / "skills" / "help").mkdir(parents=True)
+    (root / "skills" / "help" / "SKILL.md").write_text("x", encoding="utf-8")
     (root / ".claude-plugin").mkdir()
     (root / ".claude-plugin" / "plugin.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
     (root / "config.json").write_text(json.dumps({"banner": banner}), encoding="utf-8")
@@ -512,24 +539,27 @@ def configured(tmp_path, banner: dict, monkeypatch) -> Path:
     return root
 
 
-def test_headline_replaces_the_plugin_identity(tmp_path, monkeypatch):
+def test_headline_replaces_the_plugin_name_on_the_identity_line(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     configured(tmp_path, {"headline": "ACME AppSec Advisor"}, monkeypatch)
-    first = session_banner.build_banner(str(repo)).splitlines()[0]
-    assert first.startswith(f"{session_banner.GLYPH_NONE} ACME AppSec Advisor ·")
-    assert "appsec-advisor 0" not in first
+    first = identity_line(session_banner.build_banner(str(repo)))
+    assert first.startswith(f"ACME AppSec Advisor {MANIFEST['version']}")
+    assert not first.startswith("appsec-advisor")
+    assert first.endswith("/appsec-advisor:help")
 
 
 def test_headline_does_not_replace_the_computed_state(tmp_path, monkeypatch):
-    """The headline is an identity label; the state after it stays derived."""
+    """The headline is an identity label; threat-model facts stay on their line."""
     repo = tmp_path / "repo"
     repo.mkdir()
     write_model(repo)
     configured(tmp_path, {"headline": "ACME AppSec Advisor"}, monkeypatch)
-    first = session_banner.build_banner(str(repo)).splitlines()[0]
-    assert "acme-api" in first
-    assert "27 Jul 2026" in first
+    message = session_banner.build_banner(str(repo))
+    assert identity_line(message).startswith("ACME AppSec Advisor")
+    line = tm_line(message)
+    assert "acme-api" in line
+    assert "27 Jul 2026" in line
 
 
 def test_multiline_headline_is_flattened(tmp_path, monkeypatch):
@@ -537,6 +567,7 @@ def test_multiline_headline_is_flattened(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     configured(tmp_path, {"headline": "ACME\nmore information https://evil.example"}, monkeypatch)
+    # No baseline configured in fake root → identity only when no model.
     assert len(session_banner.build_banner(str(repo)).splitlines()) == 2
 
 
@@ -602,14 +633,15 @@ def packaged_root(tmp_path, skills: list[str], monkeypatch) -> Path:
     return root
 
 
-def test_dropped_skills_leave_the_row_without_dangling_commands(tmp_path, monkeypatch):
+def test_dropped_skills_leave_no_dangling_commands(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
-    write_model(repo)
+    write_severities(repo, "effective_severity", ["Critical"])
     packaged_root(tmp_path, ["create-threat-model"], monkeypatch)
     lines = session_banner.build_banner(str(repo)).splitlines()
+    assert lines[0] == "appsec-advisor"
     assert not any("review-threat-model" in line or ":help" in line for line in lines)
-    assert lines[1] == "appsec-advisor"
+    assert tm_line("\n".join(lines)).startswith("threat model")
 
 
 def test_dropped_update_skill_falls_back_to_incremental_mode(tmp_path, monkeypatch):
@@ -620,19 +652,9 @@ def test_dropped_update_skill_falls_back_to_incremental_mode(tmp_path, monkeypat
     for i in range(session_banner.STALE_COMMITS):
         commit(repo, f"file{i}.txt", "2026-02-01T12:00:00+00:00")
     packaged_root(tmp_path, ["create-threat-model"], monkeypatch)
-    row = session_banner.build_banner(str(repo)).splitlines()[1]
-    assert "update-threat-model" not in row
-    assert row.startswith("/appsec-advisor:create-threat-model --incremental")
-
-
-def test_status_line_never_carries_a_command(tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    write_model(repo)
-    packaged_root(tmp_path, ["create-threat-model"], monkeypatch)
-    first = session_banner.build_banner(str(repo)).splitlines()[0]
-    assert "/appsec-advisor:" not in first
-    assert first.endswith("27 Jul 2026 10:01 UTC")
+    line = tm_line(session_banner.build_banner(str(repo)))
+    assert "update-threat-model" not in line
+    assert line.endswith("/appsec-advisor:create-threat-model --incremental")
 
 
 def test_create_threat_model_is_always_available(tmp_path, monkeypatch):
@@ -644,7 +666,7 @@ def test_create_threat_model_is_always_available(tmp_path, monkeypatch):
 def test_namespace_literals_are_rewritable_by_packaging(tmp_path):
     """Packaging rewrites `appsec-advisor:` in .py files; the constants must match."""
     source = SCRIPT.read_text(encoding="utf-8")
-    for constant in ("REVIEW", "UPDATE", "CREATE", "STATUS"):
+    for constant in ("REVIEW", "UPDATE", "CREATE", "STATUS", "HELP", "INSTALL_BASELINE"):
         assert f'{constant} = "/appsec-advisor:' in source
 
 
@@ -652,7 +674,7 @@ def test_no_information_line_in_the_banner(tmp_path):
     """The URL belongs to the help page; repeating it every session is noise."""
     message = run_hook(str(tmp_path))
     assert "more information" not in message
-    assert len(message.splitlines()) == 3  # threat model, baseline, actions
+    assert len(message.splitlines()) == 3  # identity, threat model, baseline
     assert not any(line.startswith("http") for line in message.splitlines())
     help_page = SCRIPT.parent.parent / "skills" / "help" / "SKILL.md"
     assert "More information" in help_page.read_text(encoding="utf-8")
@@ -687,20 +709,20 @@ def test_local_config_overrides_the_configured_url(tmp_path, monkeypatch):
 def test_incompatible_analysis_version_demands_a_rebuild(tmp_path):
     write_model(tmp_path, analysis_version=max(MANIFEST["compatible_analysis_versions"]) + 1)
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
-    assert "no longer compatible" in lines[0]
-    assert lines[-1].startswith("/appsec-advisor:create-threat-model --full --rebuild")
+    assert "incompatible" in tm_line("\n".join(lines))
+    assert tm_line("\n".join(lines)).endswith("/appsec-advisor:create-threat-model --full --rebuild")
 
 
 def test_supported_analysis_version_is_silent(tmp_path):
     write_model(tmp_path, analysis_version=min(MANIFEST["compatible_analysis_versions"]))
-    assert "no longer compatible" not in session_banner.build_banner(str(tmp_path))
+    assert "incompatible" not in session_banner.build_banner(str(tmp_path))
 
 
 def test_missing_analysis_version_is_treated_as_compatible(tmp_path):
     out = tmp_path / "docs" / "security"
     out.mkdir(parents=True)
     (out / "threat-model.yaml").write_text("meta:\n  project: acme-api\n", encoding="utf-8")
-    assert "no longer compatible" not in session_banner.build_banner(str(tmp_path))
+    assert "incompatible" not in session_banner.build_banner(str(tmp_path))
 
 
 # ---------------------------------------------------------------------------
@@ -715,16 +737,20 @@ def test_stale_model_recommends_update(tmp_path):
         commit(tmp_path, f"file{i}.txt", "2026-02-01T12:00:00+00:00")
     message = session_banner.build_banner(str(tmp_path))
     assert f"+{session_banner.STALE_COMMITS} commits" in message
-    assert "/appsec-advisor:update-threat-model" in message
+    assert "/appsec-advisor:update-threat-model" in tm_line(message)
 
 
 def test_fresh_model_below_threshold_is_not_stale(tmp_path):
     init_repo(tmp_path)
-    write_model(tmp_path, generated="2026-01-01T00:00:00Z")
+    write_severities(tmp_path, "effective_severity", ["High"])
+    model = tmp_path / "docs" / "security" / "threat-model.yaml"
+    text = model.read_text(encoding="utf-8")
+    model.write_text(text.replace("2026-07-27T10:01:22Z", "2026-01-01T00:00:00Z"), encoding="utf-8")
     commit(tmp_path, "only.txt", "2026-02-01T12:00:00+00:00")
-    message = session_banner.build_banner(str(tmp_path))
-    assert "+1 commits" in message
-    assert "/appsec-advisor:review-threat-model" in message
+    line = tm_line(session_banner.build_banner(str(tmp_path)))
+    assert "+1 commits" in line
+    assert "/appsec-advisor:review-threat-model" in line
+    assert "update-threat-model" not in line
 
 
 def test_commits_before_generation_do_not_count(tmp_path):
@@ -759,7 +785,7 @@ def test_degrades_on_unexpected_model_content(tmp_path, content):
     out.mkdir(parents=True)
     (out / "threat-model.yaml").write_text(content, encoding="utf-8")
     message = run_hook(str(tmp_path))
-    assert "threat model" in message.splitlines()[0]
+    assert "threat model" in tm_line(message)
 
 
 def test_unreadable_stdin_stays_silent():
@@ -783,7 +809,7 @@ def test_active_scan_replaces_model_line(tmp_path, monkeypatch):
     monkeypatch.setattr(session_banner, "_scan_running", lambda _dir: True)
     message = session_banner.build_banner(str(tmp_path))
     assert "scan in progress" in message
-    assert "/appsec-advisor:status" in message
+    assert "/appsec-advisor:status" in tm_line(message)
 
 
 def test_scan_running_ignores_missing_lock(tmp_path):

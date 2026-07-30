@@ -239,20 +239,25 @@ the default cover.
 
 ## Session banner
 
-Every session opens with a status line: whether the repository has a threat
-model, how old it is, and which skill to run next. Two fields customize it, and
-one turns it off:
+Every session opens with a short status banner:
+
+1. **Identity** — plugin name and version (or your `headline`) plus `help` when packaged.
+2. **Threat model** — findings, age, drift, and the one skill that state calls for.
+3. **Coding baseline** — only when the expected baseline is missing or mismatched.
+
+There are no status glyphs. Commands sit on the domain they act on. Two fields
+customize the banner, and one turns it off:
 
 ```yaml
 banner:
-  headline: "ACME AppSec Advisor"          # prepended to the status line
+  headline: "ACME AppSec Advisor"          # replaces the plugin name on the identity line
   url: "https://git.acme.internal/appsec"  # printed by the help skill
   enabled: true                            # false ships a build that opens silently
 ```
 
-`headline` is prepended to the status line, which is otherwise state only — the
-model, its findings, its age. That part is always computed from the repository,
-so a configured headline can never claim a state that is not there.
+`headline` is branding on the identity line only. Threat-model facts are always
+computed from the repository, so a configured headline can never claim a state
+that is not there.
 
 `url` is not printed in the banner; the `help` skill prints it under "More
 information". Point it at an internal repository or runbook.
@@ -278,8 +283,8 @@ A secure-coding baseline is an instruction file the coding assistant loads
 before it writes code, so an organization's rules apply on every prompt rather
 than only on the ones that mention security. The plugin ships one — the
 [AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline),
-id `aisec-0.1` — installs it with `/appsec-advisor:install-baseline`, and reports
-at every session start whether it is actually loaded.
+id `aisec-0.1` — installs it with `/appsec-advisor:install-baseline`, and the session
+banner flags it when it is missing or mismatched.
 
 Use the `baseline:` block to ship your own instead:
 

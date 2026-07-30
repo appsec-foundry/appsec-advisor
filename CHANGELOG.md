@@ -15,9 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `install-baseline` skill: installs a secure-coding baseline into Claude Code's instruction files, so the rules are in context before code is written. Menu-driven — this machine, this repository, or this repository without touching `CLAUDE.md`. It fetches the published baseline and falls back to the copy bundled in the plugin when the URL cannot be reached.
 - New `verify-baseline` skill: read-only check of which baseline is actually loaded, from which scope and through which file. Exits non-zero when it is not, so CI can gate on it. A baseline sitting in the repository that nothing imports is reported as not loaded, because it is not.
 - Nothing is installed twice. A baseline deployed organization-wide through Claude Code's managed policy is recognized and left alone, and one a repository already carries for another tool — `AGENTS.md`, `.github/copilot-instructions.md` — or in a copy nothing imports is wired up with an import rather than duplicated.
-- The session banner now reports the secure-coding baseline alongside the threat model — its id and scope when loaded, the install command when not.
+- The session banner reports the coding baseline when it is missing or mismatched, with the install command on that line.
 - Organizations can ship their own secure-coding baseline in their org profile, referenced by http(s) URL or git repository and identified by their own baseline id, which is then what the banner and `verify-baseline` check for.
-- A session now opens with a status line: the threat model's critical and high finding counts, when it was generated, and how many commits have landed since — plus the one command that state calls for. Outside a repository it shows only the plugin version and the help page.
+- A session now opens with a status banner: plugin identity and help, then the threat model (severity-first facts and the one command that state calls for), then the coding baseline when it needs attention.
 - New `help` skill: a short command reference with example calls, including in repositories that have no threat model yet.
 - Organizations can set the banner's headline and the help page's information URL in their org profile, or ship a build that opens silently. `APPSEC_BANNER=0` turns the banner off per developer, `1` back on.
 - Trust boundaries now have stable catalogue IDs, optional repository declarations, linked findings, and Markdown, YAML, query, and SARIF output.
@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Session banner redesigned: identity and help on the first line, threat-model and coding-baseline domains on their own lines, commands on the object they act on, no status glyphs, and no review link when the model is calm and current.
 - A finding with verified evidence at a confirmed internet ingress can now be raised by one severity band, up to High, while CWE caps still apply.
 - `show-threat-model` now opens with the report's verdict and the worst-case scenarios behind it, and points at the other skills before the numbers rather than after them.
 - `threat-model.yaml` now carries the report's verdict, so other tools can state the assessment's conclusion without reading the Markdown.

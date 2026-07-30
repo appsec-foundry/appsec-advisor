@@ -6,8 +6,17 @@ Claude Code has no "plugin loaded" event, so the banner is emitted from the
 It reports the state a user would otherwise have to look up — whether this
 repository has a threat model, how bad it looks, how old it is — and offers the
 one command that state calls for. Outside a repository it shrinks to the plugin
-version and the help page: there is no project to report on, and a missing model
-is not news about a directory nobody meant to scan.
+identity (and coding-baseline status when relevant): there is no project to
+report on, and a missing model is not news about a directory nobody meant to scan.
+
+Layout (see docs/internal/analysis/plan-session-banner-redesign-2026-07-29.md):
+
+1. Who + help — plugin identity (or org ``banner.headline``) and ``help`` when packaged.
+2. Threat model — fixed label, severity-first facts, object-local command when needed.
+3. Coding baseline — only when missing/mismatched; install command on that line.
+
+No color glyphs. Commands sit on the domain they act on. A calm, current model
+carries facts only — no habitual review link.
 
 The banner is decoration, not a contract. It must never delay or break session
 start, so every failure path is silent: on any error the script prints nothing
@@ -31,14 +40,14 @@ The hook is registered with ``matcher: "startup"`` on purpose. ``SessionStart``
 also fires for ``clear`` and ``compact``, where a plugin-load announcement would
 describe a load that never happened.
 
-Keep the status line short. Claude Code prefixes the message with
+Keep the status lines short. Claude Code prefixes the message with
 "SessionStart:startup says: ", which costs the *first* line 27 columns that the
-continuation lines get back — an otherwise reasonable line wraps there and
-breaks mid-token.
+continuation lines get back — identity + help stays on that taxed line so the
+threat-model facts keep full width below.
 
 Configuration lives in the ``banner`` block of ``config.json`` (``config.local.json``
-wins when present): ``headline`` puts an organization's own name in front of the
-status line and ``enabled: false`` silences the banner for a packaged build.
+wins when present): ``headline`` puts an organization's own name on the identity
+line and ``enabled: false`` silences the banner for a packaged build.
 ``url`` in the same block is *not* printed here — the help skill prints it, so an
 organization points it at an internal repository or runbook. Organizations author
 all three in their org profile; packaging resolves them into ``config.json``.
@@ -46,6 +55,8 @@ all three in their org profile; packaging resolves them into ``config.json``.
 ``APPSEC_BANNER`` is the user's own switch and outranks all of it in both
 directions — set it in the ``env`` block of ``~/.claude/settings.json``.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -79,20 +90,9 @@ REBUILD = f"{CREATE} --full --rebuild"
 # fallback — the others are simply left out when absent.
 INCREMENTAL = f"{CREATE} --incremental"
 
-# A bare "or just ask" does not say what about, so it teaches nothing. A real
-# question does, and this one is quoted from ask-threat-model's own description
-# so it routes there instead of to show-threat-model.
-QUESTION_HINT = 'or ask "what are the critical findings?"'
-
-# One glyph, one claim: can this security picture be relied on right now? Both
-# unfixed risk and drift since the scan degrade that, so both feed it. Two
-# separate marks were tried and read worse — a green dot beside red "27
-# CRITICAL" is taken as an all-clear before anyone parses the distinction.
-GLYPH_OK = "🟢"
-GLYPH_WARN = "🟠"
-GLYPH_ALERT = "🔴"
-GLYPH_NONE = "⚪"
-GLYPH_BUSY = "🔵"
+# Fixed domain labels — short, stable, and independent of org display names.
+LABEL_THREAT_MODEL = "threat model"
+LABEL_CODING_BASELINE = "coding baseline"
 
 _TOP_LEVEL_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:")
 _META_FIELD = re.compile(r"^  ([a-z_]+): (.*)$")
@@ -182,32 +182,36 @@ def _skill_command(command: str, fallback: str = "") -> str:
 
 
 def _identity() -> str:
-    """Name and version of the running build, from its own manifest.
-
-    It rides on the action row, not the status line: that line already pays 27
-    columns for Claude Code's "SessionStart:startup says: " prefix, and an
-    identity in front of it pushed the state into a second visual line.
-    """
+    """Name and version of the running build, from its own manifest."""
     manifest = _manifest()
     name = manifest.get("name") or "appsec-advisor"
     version = manifest.get("version")
     return f"{name} {version}" if version else name
 
 
-def build_actions(command: str) -> str:
-    """Compose the action row: the command this state calls for, help, identity.
+def _identity_line(config: dict) -> str:
+    """Who is speaking, plus help when the skill is packaged.
 
-    One command, not a menu, and it carries no verb label — the command names
-    say what they do. Everything else lives on the help page, which is the right
-    place for examples and flags; a row shown at every session start earns its
-    space by staying short enough to read.
+    ``banner.headline`` replaces the plugin name (org product branding) but
+    keeps the version so packaged builds stay identifiable. Help is global, so
+    it lives here rather than on a domain line.
     """
-    parts = [command] if command else []
+    headline = _text(config, "headline")
+    version = _manifest().get("version")
+    if headline:
+        head = f"{headline} {version}" if version else headline
+    else:
+        head = _identity()
+    parts = [head]
     help_page = _skill_command(HELP)
     if help_page:
         parts.append(help_page)
-    parts.append(_identity())
     return " · ".join(parts)
+
+
+def _join(*segments: str) -> str:
+    """Join non-empty banner segments with the standard separator."""
+    return " · ".join(segment for segment in segments if segment)
 
 
 def _blocks(lines: list[str]) -> dict[str, list[str]]:
@@ -269,18 +273,6 @@ def _severity_counts(block: list[str]) -> dict[str, int]:
     return counts
 
 
-def _severity_summary(counts: dict[str, int]) -> str:
-    """Render "27 CRITICAL, 29 high", omitting the levels that are absent.
-
-    Uppercase, not colour. This line appears at every session start, and an
-    emphasis that fires every time stops being one; red text beside a coloured
-    glyph is also the classic failure case for red-green colour blindness.
-    Capitals in a monospace line carry the weight in every client and theme.
-    """
-    labels = {"critical": "CRITICAL", "high": "high"}
-    return ", ".join(f"{counts[level]} {labels[level]}" for level in ("critical", "high") if counts[level])
-
-
 def _incompatible_analysis_version(meta: dict[str, str]) -> str | None:
     """Return the model's analysis version when this build can no longer read it.
 
@@ -321,16 +313,16 @@ def _commits_since(repo: Path, generated: str) -> int | None:
 
 
 def _short_date(generated: str) -> str:
-    """Render an ISO timestamp as ``27 Jul 2026 10:01 UTC``, or pass it through.
+    """Render an ISO timestamp as ``27 Jul 2026``, or pass it through.
 
-    The zone is spelled out because the stored value is UTC while the reader's
-    clock usually is not; a bare time would look wrong by the offset.
+    Session-start drift is a day-scale signal; the clock and zone cost width
+    without changing the next step. Unparseable values are shown raw.
     """
     try:
         stamp = datetime.strptime(generated, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     except ValueError:
         return generated
-    return f"{stamp.day} {stamp:%b %Y %H:%M} UTC"
+    return f"{stamp.day} {stamp:%b %Y}"
 
 
 def _scan_running(output_dir: Path) -> bool:
@@ -353,18 +345,11 @@ def _scan_running(output_dir: Path) -> bool:
 
 
 def _baseline_line(repo: Path | None) -> str:
-    """Report whether a secure-coding baseline is loaded, or "" to say nothing.
+    """Report a coding-baseline problem, or "" when there is nothing to say.
 
-    This is a second, independent piece of state: the threat model says what is
-    wrong with the code already written, the baseline says whether the rules are
-    in context for the code written next. Neither substitutes for the other, so
-    it gets its own line rather than a segment on a status line that is already
-    at its width.
-
-    It is shown in both directions, unlike the rest of the banner. A silent
-    "installed" would make the line appear only as a complaint, and the id is
-    worth the columns: it is what tells a reader that a *derived* baseline
-    (``aisec-0.1+acme``) or a stale one is what actually loaded.
+    Installed-and-matching is silence: constant green confirmation is noise at
+    every session start. Missing, mismatched, or on-disk-but-unloaded states get
+    a line, with ``install-baseline`` only when that skill is still packaged.
 
     Failure is silence. ``baseline_check`` is a plain stdlib module, but this is
     a startup hook and a banner that cannot report the baseline must still
@@ -375,41 +360,47 @@ def _baseline_line(repo: Path | None) -> str:
         import baseline_check  # type: ignore
 
         result = baseline_check.check(repo=repo)
-        text = baseline_check.summary(result)
     except Exception:
         return ""
+
     status = result.get("status")
-    if status == "disabled" or not text:
+    if status in (None, "disabled", "installed"):
         return ""
-    if status == "installed":
-        return _line(GLYPH_OK, text)
-    # Not loaded: this line carries its own command. The action row below holds
-    # the threat model's next step and cannot speak for both, and a state the
-    # reader cannot act on is a complaint rather than a status.
-    return _line(GLYPH_NONE if status == "missing" else GLYPH_WARN, text, _skill_command(INSTALL_BASELINE))
+
+    carriers = sorted({Path(item["file"]).name for item in result.get("present_unloaded") or []})
+    on_disk = f"on disk in {', '.join(carriers)}" if carriers else ""
+
+    if status == "other":
+        expected = result.get("expected_id") or "?"
+        found = ", ".join(sorted({m["id"] for m in result.get("other") or []})) or "other"
+        facts = _join(f"expected {expected}", f"found {found}", on_disk)
+    elif carriers:
+        # File exists for another tool or waits to be wired — not "not installed".
+        facts = _join("not loaded", on_disk)
+    else:
+        facts = "not installed"
+
+    return _join(LABEL_CODING_BASELINE, facts, _skill_command(INSTALL_BASELINE))
 
 
-def _line(glyph: str, *segments: str) -> str:
-    """Join the non-empty segments of a status line behind its state glyph."""
-    body = " · ".join(segment for segment in segments if segment)
-    return f"{glyph} {body}" if glyph else body
+def _threat_model_command(*, stale: bool, pressure: bool) -> str:
+    """One primary command for the threat-model line, or empty when calm."""
+    if stale:
+        return _skill_command(UPDATE, INCREMENTAL)
+    if pressure:
+        return _skill_command(REVIEW)
+    return ""
 
 
-def _status_line(prefix: str, repo: Path, output_dir: Path) -> tuple[str, str]:
-    """Describe the current state.
-
-    Returns the status line and the command this state calls for. The line
-    itself stays free of commands so the two
-    roles do not compete for the reader's eye — state here, actions on the row
-    below.
-    """
+def _threat_model_line(repo: Path, output_dir: Path) -> str:
+    """Describe the threat-model domain, with an object-local command when needed."""
     if _scan_running(output_dir):
-        return _line(GLYPH_BUSY, prefix, "scan in progress"), _skill_command(STATUS)
+        return _join(LABEL_THREAT_MODEL, "scan in progress", _skill_command(STATUS))
 
     try:
         lines = (output_dir / "threat-model.yaml").read_text(encoding="utf-8").splitlines()
     except OSError:
-        return _line(GLYPH_NONE, prefix, "no threat model in docs/security/"), CREATE
+        return _join(LABEL_THREAT_MODEL, "none in docs/security/", CREATE)
 
     blocks = _blocks(lines)
     meta = _read_meta(blocks.get("meta", []))
@@ -419,45 +410,45 @@ def _status_line(prefix: str, repo: Path, output_dir: Path) -> tuple[str, str]:
 
     outdated = _incompatible_analysis_version(meta)
     if outdated:
-        return (
-            _line(GLYPH_ALERT, prefix, f"threat model built with analysis v{outdated}, no longer compatible"),
+        return _join(
+            LABEL_THREAT_MODEL,
+            f"analysis v{outdated} incompatible",
             REBUILD,
         )
 
-    severity = _severity_summary(counts)
-    total = _count_threats(blocks.get("threats", []))
-    threats = f"{total} threat" if total == 1 else f"{total} threats"
-    if severity:
-        threats += f" ({severity})"
-
+    segments: list[str] = [LABEL_THREAT_MODEL]
     # Name what the numbers are. The project name is only worth the columns when
     # it is not the directory the session is already in — a model produced with
     # --repo / --output describes something else, and that is worth saying.
-    label = "threat model" if project == repo.name else f"threat model: {project}"
+    if project != repo.name:
+        segments.append(project)
+
+    if counts["critical"]:
+        segments.append(f"{counts['critical']} CRITICAL")
+    if counts["high"]:
+        segments.append(f"{counts['high']} high")
+
+    total = _count_threats(blocks.get("threats", []))
+    segments.append("no findings" if total == 0 else f"{total} total")
 
     # No assessment depth here: it describes how the report was produced, which
     # is a detail of the report, not a decision the reader makes at session start.
-    facts = [label, threats]
     if generated:
-        facts.append(_short_date(generated))
+        segments.append(_short_date(generated))
 
     # Drift is shown as a number from the first commit on, not only past the
     # staleness threshold. Silence would otherwise mean both "nothing changed"
     # and "could not tell" — no git history, unparseable timestamp.
     commits = _commits_since(repo, generated) if generated else None
     if commits:
-        facts.append(f"+{commits} commits")
+        segments.append(f"+{commits} commits")
 
     stale = commits is not None and commits >= STALE_COMMITS
-    if counts["critical"]:
-        glyph = GLYPH_ALERT
-    elif counts["high"] or stale:
-        glyph = GLYPH_WARN
-    else:
-        glyph = GLYPH_OK
-
-    action = _skill_command(UPDATE, INCREMENTAL) if stale else _skill_command(REVIEW)
-    return _line(glyph, prefix, *facts), action
+    pressure = bool(counts["critical"] or counts["high"])
+    command = _threat_model_command(stale=stale, pressure=pressure)
+    if command:
+        segments.append(command)
+    return _join(*segments)
 
 
 def build_banner(cwd: str) -> str:
@@ -466,34 +457,20 @@ def build_banner(cwd: str) -> str:
     if _suppressed(config):
         return ""
 
-    # No plugin name or version by default: Claude Code already prefixes the
-    # message with "SessionStart:startup says:", the commands below carry the
-    # namespace, and that prefix costs the first line 27 columns it does not
-    # have. Organizations that want their name there set `headline`.
-    prefix = _text(config, "headline")
-
     repo = Path(cwd)
     output_dir = repo / "docs" / "security"
+    identity = _identity_line(config)
 
-    # Outside a project there is no state to report, and "no threat model" would
-    # be a complaint about a directory nobody meant to scan. Announce the plugin
-    # and where to read about it, nothing more.
+    # Outside a project there is no threat-model state to report, and "no threat
+    # model" would be a complaint about a directory nobody meant to scan.
+    # Announce who we are, and coding-baseline status when it needs action.
     if not _in_repository(repo) and not (output_dir / "threat-model.yaml").is_file():
-        # No project to report on — but the machine-wide baseline still applies
-        # here, and this is where someone would install it, so pass no repo and
-        # let the check speak for the user scope alone.
-        tail = " · ".join(filter(None, [_identity(), _skill_command(HELP)]))
-        return "\n".join(filter(None, [_baseline_line(None), tail]))
+        return "\n".join(filter(None, [identity, _baseline_line(None)]))
 
-    status, action = _status_line(prefix, repo, output_dir)
-
-    banner = [status]
+    banner = [identity, _threat_model_line(repo, output_dir)]
     baseline = _baseline_line(repo)
     if baseline:
         banner.append(baseline)
-    actions = build_actions(action)
-    if actions:
-        banner.append(actions)
     return "\n".join(banner)
 
 
