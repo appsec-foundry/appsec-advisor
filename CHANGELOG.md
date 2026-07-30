@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Organizations can ship their own skills in their org profile, alongside the upstream ones. An added skill appears in the packaged README, can be excluded by the package policy, and can be disabled by `skill_toggles` like any other. A name that collides with an upstream skill, or frontmatter that would not pass for one, fails the build.
 - New `install-baseline` skill: installs a secure-coding baseline into Claude Code's instruction files, so the rules are in context before code is written. Menu-driven — this machine, this repository, or this repository without touching `CLAUDE.md`. It fetches the published baseline and falls back to the copy bundled in the plugin when the URL cannot be reached.
 - New `verify-baseline` skill: read-only check of which baseline is actually loaded, from which scope and through which file. Exits non-zero when it is not, so CI can gate on it. A baseline sitting in the repository that nothing imports is reported as not loaded, because it is not.
 - Nothing is installed twice. A baseline deployed organization-wide through Claude Code's managed policy is recognized and left alone, and one a repository already carries for another tool — `AGENTS.md`, `.github/copilot-instructions.md` — or in a copy nothing imports is wired up with an import rather than duplicated.

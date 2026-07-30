@@ -482,6 +482,92 @@ def apply_skill_policy(build: Path, surface: dict) -> dict:
     return {"included": sorted(keep), "removed": removed}
 
 
+# Where an org profile keeps the skills it adds, unless it says otherwise.
+ORG_SKILLS_GLOB = "skills/*/SKILL.md"
+
+
+def overlay_org_skills(build: Path) -> list[str]:
+    """Copy the skills the org profile adds into the plugin's skills directory.
+
+    Claude Code discovers skills by convention — every ``skills/<name>/SKILL.md``
+    under the plugin root — so adding one is a directory copy. It has to happen
+    before the package policy runs, or ``plugin_surface.skills`` could not name
+    an added skill and would reject it as unknown.
+
+    Two refusals rather than a silent result:
+
+    * A name that collides with an upstream skill aborts the build. Overwriting
+      ``create-threat-model`` with an organization's own file would replace the
+      pipeline's entry point without anyone deciding to.
+    * Frontmatter that would not pass for an upstream skill aborts too. The
+      description is the only text the model sees when choosing a skill, so a
+      malformed one degrades routing quietly instead of failing.
+    """
+    profile_dir = build / "org-profile"
+    profile_path = profile_dir / "org-profile.yaml"
+    if not profile_path.is_file():
+        return []
+    block = _load_yaml_or_json(profile_path).get("skills")
+    if not isinstance(block, dict):
+        return []
+    pattern = str(block.get("add") or ORG_SKILLS_GLOB)
+
+    upstream = _available_skills(build)
+    added: list[str] = []
+    for skill_md in sorted(profile_dir.glob(pattern)):
+        source = skill_md.parent
+        name = source.name
+        _require_inside(profile_dir, skill_md, "skills.add")
+        _validate_org_skill(skill_md, name)
+        if name in upstream:
+            _die(
+                f"org profile adds skill '{name}', which the plugin already ships. "
+                f"Rename it — replacing an upstream skill would change what its command does."
+            )
+        if name in added:
+            _die(f"org profile adds skill '{name}' more than once")
+        shutil.copytree(source, build / "skills" / name)
+        added.append(name)
+    return added
+
+
+def _require_inside(root: Path, path: Path, label: str) -> None:
+    """Abort when ``path`` escapes ``root`` — a glob must not reach outside."""
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        _die(f"package policy {label}: '{path}' resolves outside the profile directory")
+
+
+def _validate_org_skill(skill_md: Path, directory: str) -> None:
+    """Hold an added skill to the same frontmatter rules as an upstream one."""
+    lines = skill_md.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].strip() != "---":
+        _die(f"org skill '{directory}': SKILL.md does not start with a '---' frontmatter delimiter")
+    try:
+        end = lines.index("---", 1)
+    except ValueError:
+        _die(f"org skill '{directory}': frontmatter is not terminated by a closing '---'")
+    try:
+        import yaml
+
+        front = yaml.safe_load("\n".join(lines[1:end]))
+    except Exception as exc:  # noqa: BLE001
+        _die(f"org skill '{directory}': frontmatter is not valid YAML: {exc}")
+    if not isinstance(front, dict):
+        _die(f"org skill '{directory}': frontmatter must be a mapping")
+    unknown = set(front) - {"name", "description"}
+    if unknown:
+        _die(f"org skill '{directory}': unsupported frontmatter keys {sorted(unknown)}")
+    name, description = front.get("name"), front.get("description")
+    if name != directory:
+        _die(f"org skill '{directory}': frontmatter name '{name}' must match the directory name")
+    if not isinstance(description, str) or not description.strip():
+        _die(f"org skill '{directory}': a non-empty description is required")
+    if len(description) > 1024:
+        _die(f"org skill '{directory}': description is {len(description)} characters; the limit is 1024")
+
+
 def _org_profile_hooks(build: Path) -> dict:
     """Hook definitions declared in the packaged org profile (top-level `hooks`).
 
@@ -638,7 +724,14 @@ def apply_package_surface_policy(
     build: Path, policy: dict, policy_path: Path | None, upstream_url: str | None = None
 ) -> None:
     surface = _policy_surface(policy)
+    # Added first, so the package policy can name an org skill like any other
+    # and so the manifest counts it among what this build ships.
+    org_added = overlay_org_skills(build)
     skills = apply_skill_policy(build, surface)
+    if org_added:
+        # Recorded separately, the way org hooks are: the artifact surface has
+        # to say which parts are the organization's own.
+        skills["org_added"] = sorted(org_added)
     hooks = apply_hook_policy(build, surface)
     mcp_servers = apply_mcp_policy(build, surface)
     write_surface_manifest(build, policy_path, skills, hooks, upstream_url, mcp_servers)

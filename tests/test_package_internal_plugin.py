@@ -407,6 +407,120 @@ def test_no_skill_toggles_block_without_a_profile_policy(tmp_path):
     assert "skill_toggles" not in json.loads((build / "config.json").read_text())
 
 
+# ---------------------------------------------------------------------------
+# Skills an organization adds
+# ---------------------------------------------------------------------------
+
+
+ORG_SKILL = "---\nname: {name}\ndescription: An ACME-internal release gate.\n---\n\nBody.\n"
+
+
+def write_org_skill(build: Path, name: str, body: str | None = None, directory: str | None = None) -> Path:
+    skill = build / "org-profile" / "skills" / (directory or name)
+    skill.mkdir(parents=True, exist_ok=True)
+    (skill / "SKILL.md").write_text(body if body is not None else ORG_SKILL.format(name=name), encoding="utf-8")
+    return skill
+
+
+def org_profile_with_skills(build: Path, add: str = "skills/*/SKILL.md") -> None:
+    (build / "org-profile").mkdir(parents=True, exist_ok=True)
+    (build / "org-profile" / "org-profile.yaml").write_text(
+        f"organization:\n  id: acme\nskills:\n  add: {add!r}\n", encoding="utf-8"
+    )
+    (build / "skills").mkdir(exist_ok=True)
+
+
+def test_an_org_skill_is_copied_into_the_build(tmp_path):
+    build = tmp_path / "build"
+    org_profile_with_skills(build)
+    write_org_skill(build, "acme-release-check")
+    assert pkg.overlay_org_skills(build) == ["acme-release-check"]
+    assert (build / "skills" / "acme-release-check" / "SKILL.md").is_file()
+
+
+def test_no_skills_block_adds_nothing(tmp_path):
+    build = tmp_path / "build"
+    (build / "org-profile").mkdir(parents=True)
+    (build / "org-profile" / "org-profile.yaml").write_text("organization:\n  id: acme\n", encoding="utf-8")
+    assert pkg.overlay_org_skills(build) == []
+
+
+def test_a_name_colliding_with_an_upstream_skill_aborts(tmp_path):
+    """Replacing create-threat-model would change what its command does."""
+    build = tmp_path / "build"
+    org_profile_with_skills(build)
+    (build / "skills" / "create-threat-model").mkdir(parents=True)
+    (build / "skills" / "create-threat-model" / "SKILL.md").write_text("upstream", encoding="utf-8")
+    write_org_skill(build, "create-threat-model")
+    with pytest.raises(SystemExit):
+        pkg.overlay_org_skills(build)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "no frontmatter at all\n",
+        "---\nname: acme-release-check\n",  # unterminated
+        "---\nname: acme-release-check\n---\n",  # no description
+        "---\nname: acme-release-check\ndescription: '   '\n---\n",  # blank description
+        "---\nname: acme-release-check\ndescription: x\nrogue: 1\n---\n",  # unsupported key
+        "---\nname: wrong-name\ndescription: x\n---\n",  # name != directory
+        "---\ndescription: [unclosed\n---\n",  # invalid YAML
+    ],
+)
+def test_frontmatter_that_would_fail_upstream_aborts(tmp_path, body):
+    """The description is the only text the model sees when choosing a skill."""
+    build = tmp_path / "build"
+    org_profile_with_skills(build)
+    write_org_skill(build, "acme-release-check", body=body)
+    with pytest.raises(SystemExit):
+        pkg.overlay_org_skills(build)
+
+
+def test_an_over_long_description_aborts(tmp_path):
+    build = tmp_path / "build"
+    org_profile_with_skills(build)
+    body = f"---\nname: acme-release-check\ndescription: {'x' * 1025}\n---\n"
+    write_org_skill(build, "acme-release-check", body=body)
+    with pytest.raises(SystemExit):
+        pkg.overlay_org_skills(build)
+
+
+def test_a_glob_escaping_the_profile_directory_aborts(tmp_path):
+    build = tmp_path / "build"
+    org_profile_with_skills(build, add="../../elsewhere/*/SKILL.md")
+    outside = tmp_path / "elsewhere" / "sneaky"
+    outside.mkdir(parents=True)
+    (outside / "SKILL.md").write_text(ORG_SKILL.format(name="sneaky"), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        pkg.overlay_org_skills(build)
+
+
+def test_added_skills_are_recorded_as_org_owned(tmp_path):
+    """The artifact surface has to say which parts are the organization's own."""
+    build = tmp_path / "build"
+    org_profile_with_skills(build)
+    write_org_skill(build, "acme-release-check")
+    (build / "skills" / "create-threat-model").mkdir(parents=True)
+    (build / "skills" / "create-threat-model" / "SKILL.md").write_text("x", encoding="utf-8")
+    pkg.apply_package_surface_policy(build, {}, None)
+    skills = json.loads((build / pkg.SURFACE_MANIFEST).read_text())["skills"]
+    assert skills["org_added"] == ["acme-release-check"]
+    assert "acme-release-check" in skills["included"]
+
+
+def test_the_package_policy_can_exclude_an_added_skill(tmp_path):
+    """Added before the policy runs, so it can be named like any other skill."""
+    build = tmp_path / "build"
+    org_profile_with_skills(build)
+    write_org_skill(build, "acme-release-check")
+    (build / "skills" / "create-threat-model").mkdir(parents=True)
+    (build / "skills" / "create-threat-model" / "SKILL.md").write_text("x", encoding="utf-8")
+    policy = {"plugin_surface": {"skills": {"exclude": ["acme-release-check"]}}}
+    pkg.apply_package_surface_policy(build, policy, None)
+    assert not (build / "skills" / "acme-release-check").exists()
+
+
 def test_patch_config_ignores_unknown_baseline_keys_from_the_profile(tmp_path):
     build = tmp_path / "build"
     write_profile(build, "baseline:\n  id: acme-sec-1.0\n  rogue_key: injected\n")

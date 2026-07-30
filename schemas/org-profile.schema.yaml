@@ -154,6 +154,37 @@ properties:
           or pass `--info-url ""` when packaging to drop the line entirely. The
           session banner itself does not print it.
 
+  skills:
+    type: object
+    additionalProperties: false
+    description: |
+      Skills this organization adds to the packaged plugin, alongside the
+      upstream ones. Claude Code discovers skills by convention — every
+      `skills/<name>/SKILL.md` under the plugin root — so packaging copies each
+      matched directory into the build.
+
+      Two things are refused rather than resolved quietly. A name that collides
+      with an upstream skill aborts the build, because replacing, say,
+      `create-threat-model` would change what its command does without anyone
+      deciding to. And frontmatter that would not pass for an upstream skill
+      aborts too: `name` must match the directory, `description` must be
+      non-empty and at most 1024 characters, and no other keys are allowed.
+
+      Added skills take part in everything upstream ones do — the package
+      policy can exclude them, `skill_toggles` can disable them, and the
+      namespace-leak check applies, so an org skill must use its own command
+      namespace. They are listed under `skills.org_added` in
+      `package-surface.json` so the artifact surface stays auditable.
+    properties:
+      add:
+        type: string
+        minLength: 1
+        maxLength: 240
+        default: "skills/*/SKILL.md"
+        description: |
+          Glob for the skills to add, relative to the profile directory, matching
+          each SKILL.md. Must stay inside the profile directory.
+
   baseline:
     type: object
     additionalProperties: false

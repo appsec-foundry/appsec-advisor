@@ -416,6 +416,46 @@ Each `llm_context.documents` file:
 - is scanned for common secret formats
 - is treated as untrusted reference data
 
+## Adding your own skills
+
+An organization can ship its own skills alongside the upstream ones. Put each
+in the profile directory and point at them:
+
+```yaml
+skills:
+  add: "skills/*/SKILL.md"     # the default; relative to the profile directory
+```
+
+```text
+org-profile/
+  org-profile.yaml
+  skills/
+    acme-release-check/
+      SKILL.md
+```
+
+Claude Code discovers skills by convention — every `skills/<name>/SKILL.md`
+under the plugin root — so packaging copies each matched directory into the
+build. An added skill is a skill in every other respect: it appears in the
+packaged README, `plugin_surface.skills` can exclude it, `skill_toggles` can
+disable it, and the `skill-policy-gate` hook enforces that toggle.
+
+Two things abort the build rather than resolve quietly:
+
+- **A name that collides with an upstream skill.** Replacing, say,
+  `create-threat-model` would change what its command does without anyone
+  deciding to.
+- **Frontmatter that would not pass for an upstream skill.** `name` must match
+  the directory, `description` must be non-empty and at most 1024 characters,
+  and no other keys are allowed. The description is the only text the model
+  sees when choosing a skill, so a malformed one degrades routing silently.
+
+Write your skill's commands in your own namespace. The namespace-leak check
+fails the build if the upstream one appears anywhere in the package.
+
+Added skills are listed under `skills.org_added` in `package-surface.json`, kept
+distinct from the upstream ones so the artifact surface stays auditable.
+
 ## Skill toggles
 
 Skills can be disabled with a reason. The policy is enforced by the
