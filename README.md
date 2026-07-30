@@ -107,6 +107,15 @@ Updates preserve finding IDs; questions are read-only and cite them. Review deci
 
 For depth, cost, focused scans, actors, and repository context, see the [Threat Modeler reference](docs/threat-modeler.md).
 
+## What's new in 0.5.1-beta & 0.5.2-beta
+
+- **First-class trust boundaries.** Assessed in a dedicated stage, drawn in the architecture diagram, and referenced by the findings that cross them — a confirmed internet-facing crossing can raise a finding's severity.
+- **Secure-coding baseline — a new capability next to threat modeling.** `install-baseline` writes the bundled [AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline) into Claude Code's instruction files, so the rules reach every prompt before code is written; `verify-baseline` lets CI gate on it.
+- **Cheap-STRIDE depth tier**, on by default outside thorough scans. The internal tail is screened on a smaller budget; exposed and data-carrying components keep full depth, and all six STRIDE categories still run everywhere.
+- **Threat Dragon export (alpha).** `--formats threatdragon` writes Threat Dragon v2 JSON — the one interchange format that carries threats and mitigations into both Threat Dragon and OWASP ThreatAtlas.
+- **Session status banner.** Flags the threat model or baseline when either needs attention; `/appsec-advisor:help` lists the commands.
+- **Extended org profiles.** Ship your own skills and baseline, configure the banner, disable individual skills.
+
 ## What's new in 0.5-beta
 
 **Ask questions about your threat model — just type them in the Claude Code console.** No command to remember: the new `ask-threat-model` skill picks up any question about the model, so there is no report to re-read and no export to grep:
@@ -299,6 +308,8 @@ For the contributor-level path map and the tests required for each kind of chang
 - **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)**: LLM-generated STRIDE threat models and attack trees from a short application description. Its focus is a model in minutes for a security engineer, whereas `appsec-advisor` is a repeatable pipeline with schema-validated artifacts and CI gates. The overlap is larger here; the useful split is by stage, with a description-based model at design time and a code-derived one once the repository exists.
 
 - **[OWASP pytm](https://github.com/OWASP/pytm)**: Shift-left framework that generates diagrams and threats from a system defined in Python. Its focus is a model developers author and version by hand, whereas `appsec-advisor` derives it from the repository.
+
+- **[OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/)**: Open-source diagramming tool for threat models, as a desktop app or a web application. Its focus is the diagram a modeler draws and the threats they attach to it, whereas `appsec-advisor` derives that model from the repository. `--formats threatdragon` writes its v2 JSON, so a generated model opens as an editable diagram — and, since ThreatAtlas reads the same format, is the way findings reach a workshop tool.
 
 - **[OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/)**: Self-hosted web application for team-based threat modeling sessions on shared data flow diagrams. Its focus is the workshop and its record, whereas `appsec-advisor` keeps a code-derived model current between sessions. The two combine well: bring the derived components, trust boundaries, and data flows into the session instead of drawing them from memory.
 
