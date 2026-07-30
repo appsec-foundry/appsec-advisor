@@ -100,6 +100,47 @@ The canonical layout is in `agents/phases/phase-group-threats.md` → Dispatch. 
 
 Cheap-stride is the per-component STRIDE **depth** tier — on by default at quick and standard, off at thorough, overridable with `--cheap-stride` / `--no-cheap-stride` (`resolve_cheap_stride`). Screened components get a flat 8-turn pass with `ESTIMATED_THREAT_COUNT=low`; all six STRIDE categories stay mandatory, so this is a pacing lever, never a coverage cut. `build_stride_dispatch_manifest._cheap_stride_target` decides who qualifies and is the only place to change it: auth, frontend, LLM, internet-exposed, file-upload, realtime, data-store and core-backend components keep full depth, and so does anything whose reachability is unknown — the same fail-safe the ceiling-drop rule uses. Do not key the spare list on `handles_sensitive_data`; it over-tags. Rationale and the measured cost/coverage tradeoff: `docs/threat-modeler.md` and `docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md`.
 
+### What an organization can package
+
+An internal build is produced by `scripts/package_internal_plugin.py` from an
+org profile plus an optional package policy. This is the whole surface — an
+organization extends the plugin through these, never by editing core files.
+
+`org-profile.yaml`, validated by `schemas/org-profile.schema.yaml`:
+
+| Block | What it adds or changes |
+|---|---|
+| `organization`, `api_version`, `compatibility` | Identity and the core-version range the profile accepts |
+| `default_preset`, `presets` | Scan defaults: depth, outputs, incremental, quality, verification, guardrails |
+| `policy` | `disable_opus`, `url_allowlist` for every remote fetch |
+| `branding` | Report cover title, contact, logo |
+| `banner` | Session-start line: `headline`, `url`, or `enabled: false` |
+| `baseline` | The organization's own secure-coding baseline, by http(s) `url` or `git`, under its own `id` |
+| `requirements` | Requirements catalog source, fail mode, and gate defaults |
+| `llm_context` | Org markdown documents loaded as analysis context |
+| `security_coach` | Prompt-time steering: own baseline text and topics |
+| `actors` | Add actor definitions, disable default actor classes |
+| `abuse_cases` | Add abuse cases, disable library ones |
+| `skills` | Add the organization's own skills (`skills.add` glob) |
+| `skill_toggles` | Disable a skill at runtime with a reason, enforced by `skill-policy-gate` |
+| `hooks` | The organization's own Claude Code hooks |
+| `mcp` | The organization's own MCP servers, emitted as the plugin's `.mcp.json` |
+
+`package-policy.yaml` decides what the build ships: `plugin_surface.skills`,
+`.hooks` and `.mcp_servers` each take an `include` **or** an `exclude` list.
+`create-threat-model` cannot be removed. What was kept and what was dropped is
+recorded in `.claude-plugin/package-surface.json`.
+
+Two limits to know:
+
+- **Agents cannot be added or changed.** They are core-owned, and their tool
+  allow-lists contain no MCP tools — so a configured MCP server is available to
+  the session and to org skills, but the analysis pipeline never calls it.
+- **Skills and MCP servers have a second, older path** in the packaging-template
+  repository (`org-skills/`, `org-mcp.json`). Prefer the profile blocks above:
+  they are validated, refuse a name that collides with an upstream skill, and
+  appear in the surface manifest.
+
 ## Runtime rules
 
 ### Orchestration and context
