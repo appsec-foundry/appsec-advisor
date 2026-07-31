@@ -74,6 +74,7 @@ Code and schemas define behavior. Contract documents explain it. Tests guard aga
 | Report prose and presentation | `agents/shared/prose-style.md`, `agents/shared/prose-samples.md`, composer/QA/prose-fix emitters | `tests/test_agent_definitions.py`, compose and QA tests |
 | Cleanup and preserved state | `scripts/runtime_cleanup.py`, `docs/internal/contracts/cleanup-whitelist.md`, `docs/internal/contracts/audit-artifacts.md` | `tests/test_runtime_cleanup.py` |
 | Permissions | `data/required-permissions.yaml` | `tests/test_check_permissions.py` |
+| Test-target specifics in production code | `data/test-target-vocabulary.yaml` | `tests/test_check_target_specificity.py` |
 | Org profiles and packaging | `schemas/org-profile.schema.yaml`, `docs/internal/contracts/org-profile-invariants.md` | org-profile, packaging, and smoke tests |
 | Secure-coding baseline | `scripts/baseline_check.py`, `scripts/install_baseline.py`, `config.json` → `baseline` | `tests/test_baseline_check.py`, `tests/test_install_baseline.py` |
 | Checkpoint and resume | checkpoint producers, `scripts/check_state.py`, consuming runtime | `tests/test_check_state*.py` |

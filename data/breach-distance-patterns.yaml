@@ -48,9 +48,7 @@ route_guard_indicators:
         - "server.ts"
         - "app.use('/ftp'"
         - "app.use('/metrics'"
-        - "app.use('/support/logs'"
         - "app.use('/api-docs'"
-        - "app.use('/encryptionkeys'"
       authenticated_route_hints:
         - "routes/basket"
         - "routes/order"

@@ -681,7 +681,7 @@ sequenceDiagram
     end
 ```
 
-**Participant alias quoting.** Any `participant X as Y` where `Y` contains `(`, `)`, `:`, `/`, or `,` MUST wrap `Y` in double quotes. Bad: `participant DB as SQLite (data/juiceshop.sqlite)`. Good: `participant DB as "SQLite (data/juiceshop.sqlite)"`.
+**Participant alias quoting.** Any `participant X as Y` where `Y` contains `(`, `)`, `:`, `/`, or `,` MUST wrap `Y` in double quotes. Bad: `participant DB as SQLite (data/app.sqlite)`. Good: `participant DB as "SQLite (data/app.sqlite)"`.
 
 ### Node-label derivation rule — MANDATORY
 

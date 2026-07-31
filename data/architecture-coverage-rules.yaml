@@ -225,7 +225,7 @@ hard_rules:
     finding_when:
       - "jwt.verify / jws.verify called WITHOUT an explicit algorithms allowlist"
       - "Secret length <= 32 chars for HS256/384/512"
-      - "Verification key publicly served from /encryptionkeys/, /.well-known/, or similar"
+      - "Verification key publicly served from an unauthenticated route such as /.well-known/"
     not_a_finding_when:
       - "Algorithms allowlist explicitly pins RS256/ES256 etc."
       - "Public key is rotated and served from a managed JWKS endpoint with kid"

@@ -62,13 +62,13 @@ attack steps. If you cannot say the step as one action a reader could perform,
 cut it.
 
 **Avoid (code-flow narration, over-detailed — one "step" carrying four facts):**
-> `verify()` at `lib/insecurity.ts:55` calls `jws.verify(token, publicKey)`
+> `verify()` at `lib/auth.ts:55` calls `jws.verify(token, publicKey)`
 > without a third argument or an `algorithms:` allowlist, so the algorithm named
 > in the attacker-supplied JWT header is trusted implicitly rather than pinned
 > server-side to RS256; `isAuthorized()` (line 52) has the same gap.
 
 **Prefer (attacker actions, one per step):**
-> 1. Download the RSA public key served at `/encryptionkeys`.
+> 1. Download the RSA public key served at `/.well-known/jwks.json`.
 > 2. Forge a JWT with `alg:HS256`, signing it with that public key as the HMAC
 >    secret and setting `role: admin` — the server pins no algorithm, so it
 >    accepts the forgery.

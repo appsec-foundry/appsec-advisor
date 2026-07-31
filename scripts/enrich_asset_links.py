@@ -186,8 +186,6 @@ _ASSET_CLASS_RULES: list[tuple[str, tuple[str, ...]]] = [
             "encryption key",
             "signing key",
             "secret key",
-            "/encryptionkeys",
-            "premium.key",
             "key material",
         ),
     ),

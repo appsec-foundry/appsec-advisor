@@ -211,8 +211,8 @@ def _recommend_stage1_excessive_duration(issue: dict, output_dir: Path) -> dict:
                 "type": "manual_review",
                 "target": ".agent-run.log",
                 "details": (
-                    "Inspect SESSION_STOP entries and the cost field. The 2026-04-25 "
-                    "juice-shop incident lost $51 to a runaway 8h Phase-1 — same shape."
+                    "Inspect SESSION_STOP entries and the cost field. A runaway Phase-1 "
+                    "of this shape has cost $51 over 8 hours before being noticed."
                 ),
             },
             {

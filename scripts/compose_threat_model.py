@@ -17734,7 +17734,7 @@ _CATEGORY_KEYWORD_MAP: list[tuple[list[str], str]] = [
     ),
     (["file upload", "path traversal", "zip slip", "yaml bomb", "local file read", "file read via"], "TH-07"),
     (["ssrf", "server-side request forgery"], "TH-08"),
-    (["/ftp", "/encryptionkeys", "/support/logs", "unauthenticated", "metrics endpoint"], "TH-09"),
+    (["unauthenticated", "metrics endpoint", "directory listing"], "TH-09"),
     (["xss", "domsanitizer", "bypasssecuritytrust"], "TH-11"),
     (["denial of service", "rate limit", "rate-limit", "dos", "event loop"], "TH-12"),
     (["csrf"], "TH-15"),

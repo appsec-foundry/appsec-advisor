@@ -942,9 +942,8 @@ def main(argv: list[str]) -> int:
         help="Idle window (seconds since last .agent-run.log update) after a "
         "Phase 11 Substep 2 STEP_START before SUBSTEP2_IDLE fires "
         "(default 300 = 5 min, override via env APPSEC_SUBSTEP2_IDLE_SECONDS). "
-        "Set 0 to disable. Catches the 1h 39m stall pattern observed in the "
-        "2026-05-25 juice-shop run where the LLM ignored the Substep-2 "
-        "single-Bash-call rule and pre-validated intermediates instead.",
+        "Set 0 to disable. Catches the multi-hour stall where the LLM ignores "
+        "the Substep-2 single-Bash-call rule and pre-validates intermediates.",
     )
     p.add_argument(
         "--run-idle-seconds",
@@ -957,8 +956,8 @@ def main(argv: list[str]) -> int:
         "240 = 4 min (just under the 5-min prompt-cache TTL, so it warns "
         "before a stall turns into a cold re-prefill). Override via env "
         "APPSEC_RUN_IDLE_SECONDS. Set 0 to disable. Catches the standard-tier "
-        "API-latency stalls that cost the 2026-05-31 juice-shop run ~23 min in "
-        "the unmonitored recon/context phase.",
+        "API-latency stalls that cost ~23 min in the unmonitored recon/context "
+        "phase.",
     )
     p.add_argument(
         "--max-iterations", type=int, default=None, help="Optional cap on iterations (test hook; not for production)."

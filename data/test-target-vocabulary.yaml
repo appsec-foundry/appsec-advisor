@@ -1,0 +1,33 @@
+# Vocabulary of the repositories this plugin is exercised against.
+#
+# `scripts/check_target_specificity.py` reads this file to keep test-target
+# specifics out of production behavior (AGENTS.md → "Production behavior must
+# work for arbitrary repositories"). Two kinds, enforced differently:
+#
+#   names      Repository names. Allowed in prose and comments, where they
+#              record which run produced a calibration or exposed a defect.
+#              Rejected in code contexts — string literals, code spans, help
+#              text — because those reach a user or steer a prompt.
+#
+#   artifacts  Paths, files, and routes that exist in one target repository
+#              and nowhere else. Rejected in every context: a heuristic keyed
+#              on them scores the test target higher than any real repository,
+#              which makes the plugin's own coverage look better than it is.
+#
+# Add a target when you start testing against it. Only list an artifact that
+# cannot plausibly occur in an unrelated codebase.
+
+targets:
+  juice-shop:
+    repository: https://github.com/juice-shop/juice-shop
+    names:
+      - juice-shop
+      - juiceshop
+      - juice_shop
+      - bkimminich
+    artifacts:
+      - "/encryptionkeys"
+      - "premium.key"
+      - "/#/score-board"
+      - "acquisitions.md"
+      - "juicy_malware"

@@ -47,8 +47,8 @@ OUTPUT
                                .sarif.json / .pdf / .html / pentest-tasks-<slug>.yaml)
                                so several models share one directory without
                                overwriting. Bare --slug picks a random postfix;
-                               --slug <value> uses it (e.g. juice-shop-quick →
-                               threat-model-juice-shop-quick.md). Default: none.
+                               --slug <value> uses it (e.g. payments-api-quick →
+                               threat-model-payments-api-quick.md). Default: none.
 
 DEPTH & MODEL
   --assessment-depth <level>   quick | standard (default) | thorough

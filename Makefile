@@ -105,6 +105,7 @@ fix:  ## Auto-repair the mechanical gate failures (ruff lint + format), then lis
 	@echo "Auto-repair done. Stages 3-6 are NOT auto-fixable by design (fix the producer, not the symptom):"
 	@echo "  - validate_config.py        -> correct the offending config field"
 	@echo "  - check_fragment_registry   -> align the registry maps (docs/internal/runbooks/adding-a-section.md)"
+	@echo "  - check_target_specificity  -> make the rule generic, or move the target name into a comment"
 	@echo "  - pytest / coverage         -> separate pre-existing from new failures; add tests, don't lower the floor"
 	@echo "  - check_release_meta.py     -> reconcile pyproject version / git tag / CHANGELOG heading"
 	@echo ""
@@ -126,6 +127,7 @@ check:  ## Continuous gate: lint, format, config, drift, full test suite (no cov
 	@ruff format --check scripts/ tests/ hooks/
 	@python3 scripts/validate_config.py .
 	@python3 scripts/check_fragment_registry.py
+	@python3 scripts/check_target_specificity.py
 	@# Run WITHOUT --cov: coverage enables `[tool.coverage.run] patch=["subprocess"]`,
 	@# which instruments every child interpreter. The subprocess-heavy integration
 	@# tests (e.g. test_incremental_mode spawning run-headless.sh) then crawl and the
