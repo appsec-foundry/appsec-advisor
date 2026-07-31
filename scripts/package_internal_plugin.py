@@ -840,7 +840,15 @@ HOOK_DESCRIPTIONS = {
 # Skills with their own detailed section in the README
 MAIN_SKILLS = ["create-threat-model", "audit-security-requirements", "verify-requirements"]
 # Skills grouped into a single utility section
-UTILITY_SKILLS = ["help", "threat-model-health", "check-permissions", "status", "fix-run-issues", "clean-run-state"]
+UTILITY_SKILLS = [
+    "help",
+    "threat-model-health",
+    "check-permissions",
+    "status",
+    "fix-run-issues",
+    "diagnose-run",
+    "clean-run-state",
+]
 
 
 def _skill_description(build: Path, skill: str) -> str:

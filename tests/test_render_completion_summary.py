@@ -605,6 +605,15 @@ class TestRenderRunIssues:
         assert any("Auto-fix available" in l for l in lines)
         assert any("fix-run-issues" in l for l in lines)
 
+    def test_diagnose_run_pointer_shown_with_plugin_dev(self):
+        """The root-cause pass runs after the summary, so the block points at it."""
+        lines = rcs.render_run_issues(self._make_data(), plugin_dev=True)
+        assert any("diagnose-run" in l for l in lines)
+
+    def test_diagnose_run_pointer_hidden_by_default(self):
+        lines = rcs.render_run_issues(self._make_data())
+        assert not any("diagnose-run" in l for l in lines)
+
     def test_report_error_pointer_shown_by_default(self):
         lines = rcs.render_run_issues(self._make_data())
         assert any("report-error" in l for l in lines)

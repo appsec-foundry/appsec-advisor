@@ -1312,6 +1312,9 @@ def render_run_issues(data: Optional[dict], plugin_dev: bool = False) -> list[st
         if n_auto > 0:
             lines.append(f"  Auto-applicable     : {n_auto} of {len(issues)} fix(es) ready to apply")
             lines.append("  Apply fixes         : /appsec-advisor:fix-run-issues")
+        # These are symptoms. The root-cause pass is a sub-agent, so it runs on
+        # request after this summary — never inside the figures it would inflate.
+        lines.append("  Root causes         : /appsec-advisor:diagnose-run")
     else:
         lines.append("  Report this issue   : /appsec-advisor:report-error")
         lines.append("                        Builds a local, anonymised bundle. Nothing is sent.")

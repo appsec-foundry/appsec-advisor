@@ -41,6 +41,11 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .skill-watchdog.tick
 ```
 
+## Opt-outs
+
+- `--keep-runtime-files` / `KEEP_RUNTIME_FILES=true` skips cleanup entirely.
+- `--keep-run-issues` holds back `.run-issues.json` alone. The run passes it when it offered a plugin diagnosis that was not taken, because `/appsec-advisor:diagnose-run` reads that file later.
+
 ## Always-cleaned directories
 
 ```text

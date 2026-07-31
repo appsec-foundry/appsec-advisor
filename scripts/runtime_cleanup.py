@@ -93,6 +93,7 @@ Invocation:
 
   python3 runtime_cleanup.py <OUTPUT_DIR> [--stage all|pre-qa|post-qa|post-architect]
                                           [--keep-runtime-files]
+                                          [--keep-run-issues]              # deferred plugin diagnosis
                                           [--force]                        # bypass safety gates
                                           [--json]
 
@@ -212,7 +213,8 @@ POST_QA_FILES_IF_PASS = [
     # is bypassed, so a degraded-integrity sidecar is preserved for inspection.
     ".render-integrity.json",
     # M2.15 — Sprint 7 observability. Reaped on success; the canonical
-    # persistence is the §Run Issues appendix in threat-model.md.
+    # persistence is the §Run Issues appendix in threat-model.md. Held back by
+    # --keep-run-issues when a plugin diagnosis was offered and deferred.
     # The .run-issues-fixes.json (audit trail) is also reaped — applied
     # fixes are visible via git diff anyway.
     ".run-issues.json",
@@ -349,6 +351,7 @@ def run_cleanup(
     stage: str,
     keep_runtime_files: bool,
     force: bool,
+    keep_run_issues: bool = False,
 ) -> dict[str, Any]:
     """Execute the cleanup. Returns a structured report (also written to log)."""
     report: dict[str, Any] = {
@@ -404,6 +407,13 @@ def run_cleanup(
         else:
             report["preserved"].append(".architect-status.json / .architect-repair-plan.json — architect not clean")
 
+    if keep_run_issues and ".run-issues.json" in files:
+        # A plugin diagnosis was offered and not taken. `.run-issues.json` is the
+        # diagnostician's input, so reaping it here would leave the deferred
+        # /appsec-advisor:diagnose-run with nothing to read.
+        files = [name for name in files if name != ".run-issues.json"]
+        report["preserved"].append(".run-issues.json — plugin diagnosis still available")
+
     # --- perform the removals ------------------------------------------------
     for name in files:
         if name in NEVER:
@@ -456,6 +466,11 @@ def main(argv: list[str]) -> int:
     p.add_argument(
         "--force", action="store_true", help="Bypass safety gates (ignore KEEP_RUNTIME_FILES, missing md, log errors)."
     )
+    p.add_argument(
+        "--keep-run-issues",
+        action="store_true",
+        help="Hold .run-issues.json back from the whitelist so a deferred plugin diagnosis keeps its input.",
+    )
     p.add_argument("--json", action="store_true", help="Print structured JSON report")
     args = p.parse_args(argv)
 
@@ -468,6 +483,7 @@ def main(argv: list[str]) -> int:
         stage=args.stage,
         keep_runtime_files=args.keep_runtime_files,
         force=args.force,
+        keep_run_issues=args.keep_run_issues,
     )
     if args.json:
         print(json.dumps(report, indent=2))

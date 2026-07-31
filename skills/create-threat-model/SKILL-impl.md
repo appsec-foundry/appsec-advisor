@@ -4248,72 +4248,6 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/aggregate_run_issues.py" \
     "$OUTPUT_DIR" --depth "${ASSESSMENT_DEPTH:-standard}" || true
 ```
 
-### Plugin diagnosis (only when `APPSEC_PLUGIN_DEV=1`)
-
-The aggregator records *symptoms* — most of its recommendations carry
-`category: "investigate"`, i.e. "a `TOOL_ERROR` fired at log line 812", not
-"`scripts/merge_threats.py:412` writes a component id the renderer cannot
-resolve". In plugin-developer mode, close that gap: dispatch
-`appsec-advisor:appsec-run-diagnostician` to re-read the issues next to this
-repository's own code and decide, per issue, whether the symptom is a plugin
-defect (with a `file:line` root cause) or an environment / expected condition.
-It is read-only against the plugin, writes `.run-bugs.json` and nothing else,
-and never applies a fix — `/appsec-advisor:fix-run-issues` remains the only
-writing path and stays manual.
-
-Resolve the gate first. A shipped install must never pay for this step, and an
-issue-free run has nothing to diagnose:
-
-```bash
-# Delete any sidecar left by an earlier run FIRST. It is deliberately not in the
-# cleanup whitelist (the block below prints its path as a follow-up pointer), so
-# without this a run whose diagnosis is skipped or fails would render, or leave
-# behind, a stale diagnosis of a different run.
-rm -f "$OUTPUT_DIR/.run-bugs.json"
-
-RUN_DIAGNOSIS=false
-if [ "${APPSEC_PLUGIN_DEV:-}" = "1" ] && [ "${DRY_RUN:-false}" != "true" ]; then
-  RUN_DIAGNOSIS=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('$OUTPUT_DIR/.run-issues.json'))
-except Exception:
-    print('false'); sys.exit()
-print('true' if d.get('issues') and d.get('run_status') != 'clean' else 'false')
-" 2>/dev/null || echo false)
-fi
-```
-
-When `RUN_DIAGNOSIS` is `false`, skip straight to the budget-warning banner
-below. When it is `true`, invoke the `appsec-advisor:appsec-run-diagnostician`
-agent — Agent tool `description`: `"Diagnose plugin bugs from this run"`, with
-`run_in_background: false`. Do **not** end your turn until it returns. Pass in
-the prompt:
-
-- `OUTPUT_DIR=<absolute output path>`
-- `REPO_ROOT=<absolute repo path>`
-- `PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT`
-- `ASSESSMENT_DEPTH=<quick|standard|thorough>`
-- `EXAMINE_CAP=12`
-- `MODEL_ID=<the model the agent runs on>`
-
-Then render the block deterministically. Reproduce its stdout **verbatim as
-response text** (the Claude Code UI collapses Bash results, so a block that
-lives only in the tool output is invisible); never hand-author it and never
-substitute the agent's one-line return for it:
-
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_run_diagnosis.py" \
-    --output-dir "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"
-```
-
-The script owns the format and validates `.run-bugs.json` against
-`schemas/run-bugs.schema.json`; a missing, malformed, or schema-violating
-sidecar prints one stderr warning and nothing else. **Non-fatal throughout** —
-a diagnosis of a run that already produced a valid threat model must never fail
-that run, so a failed dispatch, an empty sidecar, or a script error all continue
-to the completion summary unchanged.
-
 **Budget warning banner (turn-budget exhaustion / wrap-up).**
 
 Before rendering the completion summary, surface any agent that hit its
@@ -4585,6 +4519,87 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_component_durations.py" \
 
 Best-effort: failure here is non-fatal — the next run falls through to `last_run_cache` or `parametric` source.
 
+### Plugin diagnosis offer (only when `APPSEC_PLUGIN_DEV=1`)
+
+The aggregator records *symptoms* — most of its recommendations carry
+`category: "investigate"`, i.e. "a `TOOL_ERROR` fired at log line 812", not
+"`scripts/merge_threats.py:412` writes a component id the renderer cannot
+resolve". `appsec-advisor:appsec-run-diagnostician` closes that gap: it re-reads
+the issues next to this repository's own code and decides, per issue, whether
+the symptom is a plugin defect (with a `file:line` root cause) or an
+environment / expected condition. It is read-only against the plugin, writes
+`.run-bugs.json` and nothing else, and never applies a fix —
+`/appsec-advisor:fix-run-issues` remains the only writing path and stays manual.
+
+**It runs here, after the completion summary, and only on request.** The
+diagnostician is a sub-agent: dispatching it inside the run put its wall-clock
+into `Total scan (wall)` (computed from `.scan-start-epoch` above) and its
+tokens into the headless cost total, which reports subagent usage. Both figures
+then described the scan plus its own diagnosis. Offering it after the numbers
+are rendered keeps them about the scan.
+
+Resolve the gate first. A shipped install must never pay for this step, and an
+issue-free run has nothing to diagnose:
+
+```bash
+# Delete any sidecar left by an earlier run FIRST, so a declined or failed
+# diagnosis cannot leave a stale diagnosis of a different run behind.
+rm -f "$OUTPUT_DIR/.run-bugs.json"
+
+DIAGNOSIS_OFFER=false
+if [ "${APPSEC_PLUGIN_DEV:-}" = "1" ] && [ "${DRY_RUN:-false}" != "true" ]; then
+  DIAGNOSIS_OFFER=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$OUTPUT_DIR/.run-issues.json'))
+except Exception:
+    print('false'); sys.exit()
+print('true' if d.get('issues') and d.get('run_status') != 'clean' else 'false')
+" 2>/dev/null || echo false)
+fi
+```
+
+When `DIAGNOSIS_OFFER` is `false`, go straight to the cleanup below.
+
+When it is `true` and `APPSEC_HEADLESS` is **not** `1`, ask with
+`AskUserQuestion` — one question, header `Diagnosis`, phrased around the issue
+count the summary just printed (`N plugin issues identified in this run. Run a
+root-cause assessment now?`), two options: run it now (state that it costs a
+sub-agent dispatch and is not counted in the figures above), or skip it and run
+`/appsec-advisor:diagnose-run` later. This question sits after the completion
+summary, so the pre-flight hard rule in `SKILL.md` does not reach it. Under
+`APPSEC_HEADLESS=1` never ask: the Run Issues block already carries the
+`/appsec-advisor:diagnose-run` pointer.
+
+On *run it now*, invoke the `appsec-advisor:appsec-run-diagnostician` agent —
+Agent tool `description`: `"Diagnose plugin bugs from this run"`, with
+`run_in_background: false`. Do **not** end your turn until it returns. Pass in
+the prompt:
+
+- `OUTPUT_DIR=<absolute output path>`
+- `REPO_ROOT=<absolute repo path>`
+- `PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT`
+- `ASSESSMENT_DEPTH=<quick|standard|thorough>`
+- `EXAMINE_CAP=12`
+- `MODEL_ID=<the model the agent runs on>`
+
+Then render the block deterministically. Reproduce its stdout **verbatim as
+response text** (the Claude Code UI collapses Bash results, so a block that
+lives only in the tool output is invisible); never hand-author it and never
+substitute the agent's one-line return for it:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_run_diagnosis.py" \
+    --output-dir "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"
+```
+
+The script owns the format and validates `.run-bugs.json` against
+`schemas/run-bugs.schema.json`; a missing, malformed, or schema-violating
+sidecar prints one stderr warning and nothing else. **Non-fatal throughout** —
+a diagnosis of a run that already produced a valid threat model must never fail
+that run, so a failed dispatch, an empty sidecar, or a script error all continue
+to the cleanup unchanged.
+
 ### Post-summary cleanup
 
 After the script returns, call `TaskUpdate` on the final task to set status `completed`. **Use the same subject you created in Stage Task List Bootstrap** — `Final summary` when `KEEP_RUNTIME_FILES=true`, otherwise `Final summary + cleanup`. (This is the final task on the list, so once it flips the whole Stage-1→cleanup sequence shows completed across the board.)
@@ -4593,7 +4608,8 @@ Then run the deterministic post-pipeline transient-file cleanup (whitelist pinne
 
 ```bash
 if [ "$KEEP_RUNTIME_FILES" != "true" ]; then
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa >/dev/null 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa \
+        $( [ "${DIAGNOSIS_OFFER:-false}" = "true" ] && echo "--keep-run-issues" ) >/dev/null 2>&1 || true
     if [ "$ARCHITECT_REVIEW" = "true" ]; then
         python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-architect >/dev/null 2>&1 || true
     fi
@@ -4605,7 +4621,7 @@ rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
 rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 ```
 
-`post-qa` runs the Phase 11 whitelist plus QA-specific artifacts (`.qa-status.json`, empty `.qa-repair-plan.json`, `.fragments/`). `post-architect` additively removes architect-review status files. Exit code 1 (safety-gate block) is silenced with `|| true` — the summary has already been printed. Both `runtime_cleanup.py` invocations are skipped under `--keep-runtime-files` so the kept artifacts survive, matching the conditional `Final summary` task label (no "+ cleanup" advertised when no cleanup runs).
+`post-qa` runs the Phase 11 whitelist plus QA-specific artifacts (`.qa-status.json`, empty `.qa-repair-plan.json`, `.fragments/`). `--keep-run-issues` holds `.run-issues.json` back from that whitelist, so a diagnosis offered but not taken still has its input when `/appsec-advisor:diagnose-run` runs later. `post-architect` additively removes architect-review status files. Exit code 1 (safety-gate block) is silenced with `|| true` — the summary has already been printed. Both `runtime_cleanup.py` invocations are skipped under `--keep-runtime-files` so the kept artifacts survive, matching the conditional `Final summary` task label (no "+ cleanup" advertised when no cleanup runs).
 
 ### Section numbering (native, contiguous)
 

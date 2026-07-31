@@ -1,6 +1,6 @@
 ---
 name: appsec-run-diagnostician
-description: "INTERNAL — dispatched at the end of a create-threat-model run when APPSEC_PLUGIN_DEV=1. Reads the deterministic .run-issues.json, decides per issue whether the symptom is a defect in this plugin or an environment/expected condition, and — only for confirmed plugin bugs — names the producing file:line and the causal path. Read-only against the plugin; writes .run-bugs.json and nothing else."
+description: "INTERNAL — dispatched on request when APPSEC_PLUGIN_DEV=1, either from the offer after a create-threat-model run's completion summary or from /appsec-advisor:diagnose-run. Reads the deterministic .run-issues.json, decides per issue whether the symptom is a defect in this plugin or an environment/expected condition, and — only for confirmed plugin bugs — names the producing file:line and the causal path. Read-only against the plugin; writes .run-bugs.json and nothing else."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 45

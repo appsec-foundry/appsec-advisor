@@ -738,12 +738,19 @@ Add `--plugin-dev` (or set `APPSEC_PLUGIN_DEV=1`) for the fuller breakdown. Use
 the same `--depth` the run used, so the checks match what that run was expected
 to produce.
 
-With `APPSEC_PLUGIN_DEV=1` set, a run that recorded issues also ends with a
-`-- Plugin Diagnosis --` block. The `appsec-run-diagnostician` agent reads those
-issues against the plugin's own code and separates real plugin defects — each
-with a `file:line` root cause — from environment and expected conditions. It is
-read-only and writes `$OUTPUT_DIR/.run-bugs.json`; to re-render that block from
-an already-finished run:
+Those issues are symptoms. The `appsec-run-diagnostician` agent reads them
+against the plugin's own code and separates real plugin defects — each with a
+`file:line` root cause — from environment and expected conditions. It is
+read-only and writes `$OUTPUT_DIR/.run-bugs.json`.
+
+**A headless run never dispatches it.** As a sub-agent it would add its
+wall-clock and tokens to the run's own duration and cost, and headless is where
+those figures are measured. The run instead keeps `.run-issues.json` on disk;
+diagnose it afterwards with `/appsec-advisor:diagnose-run` in an interactive
+session, which asks nothing and reports the same block. An interactive run
+offers the same step after its completion summary.
+
+To re-render the block from an already-diagnosed run:
 
 ```bash
 python3 scripts/render_run_diagnosis.py --output-dir "$OUTPUT_DIR"

@@ -623,6 +623,31 @@ class TestRunCleanupEdges:
         assert not any("QA not clean" in note for note in report["preserved"])
         assert not (out / ".qa-status.json").exists()
 
+    def test_post_qa_reaps_run_issues_by_default(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        _write_json(out / ".qa-status.json", {"status": "pass"})
+        _write_json(out / ".run-issues.json", {"issues": [{"severity": "error"}]})
+        report = rc.run_cleanup(out, stage="post-qa", keep_runtime_files=False, force=False)
+        assert ".run-issues.json" in report["removed"]
+        assert not (out / ".run-issues.json").exists()
+
+    def test_keep_run_issues_preserves_the_diagnosis_input(self, tmp_path):
+        """A deferred /appsec-advisor:diagnose-run needs .run-issues.json to survive."""
+        out = _completed_output_dir(tmp_path)
+        _write_json(out / ".qa-status.json", {"status": "pass"})
+        _write_json(out / ".run-issues.json", {"issues": [{"severity": "error"}]})
+        report = rc.run_cleanup(out, stage="post-qa", keep_runtime_files=False, force=False, keep_run_issues=True)
+        assert (out / ".run-issues.json").exists()
+        assert ".run-issues.json" not in report["removed"]
+        assert any("plugin diagnosis" in note for note in report["preserved"])
+
+    def test_keep_run_issues_leaves_the_rest_of_the_wave_alone(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        _write_json(out / ".qa-status.json", {"status": "pass"})
+        _write_json(out / ".run-issues-fixes.json", {"applied": []})
+        report = rc.run_cleanup(out, stage="post-qa", keep_runtime_files=False, force=False, keep_run_issues=True)
+        assert ".run-issues-fixes.json" in report["removed"]
+
     def test_directory_removed_and_not_present(self, tmp_path):
         out = _completed_output_dir(tmp_path)
         prog = out / ".progress"
