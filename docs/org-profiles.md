@@ -296,6 +296,10 @@ baseline:
   file: baselines/acme-sec.md          # offline fallback, inside the profile dir
 ```
 
+`name` is what the session banner and both skills call it. Leave it out and they
+say `secure-coding baseline` — declaring your own baseline never puts the
+plugin's product name on your rules.
+
 Or point at a git repository, for a baseline that is not served as a raw file:
 
 ```yaml

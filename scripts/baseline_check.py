@@ -123,6 +123,12 @@ def _plugin_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+# Display name for a build whose baseline block sets none. Generic on purpose:
+# it heads the banner line and both skills, so a name inherited from elsewhere
+# would put someone else's product name on this build's rules.
+DEFAULT_NAME = "secure-coding baseline"
+
+
 def load_config(plugin_root: Path | None = None) -> dict:
     """Return the ``baseline`` block, with the plugin defaults filled in.
 
@@ -146,7 +152,7 @@ def load_config(plugin_root: Path | None = None) -> dict:
     config = {
         "enabled": block.get("enabled", True) is not False,
         "id": _clean(block.get("id")),
-        "name": _clean(block.get("name")) or "secure-coding baseline",
+        "name": _clean(block.get("name")) or DEFAULT_NAME,
         "url": _clean(block.get("url")),
         "git": git if isinstance(git, dict) else None,
         "fallback_file": _clean(block.get("fallback_file")),
@@ -416,14 +422,29 @@ def check(
     return result
 
 
-# "user" is the flag value; "machine" is what it means. The banner has room for
-# the clearer word, and "org policy" says outright that it is not the reader's
-# to change.
-SCOPE_LABELS = {"project": "project", "user": "machine", "policy": "org policy"}
+# The scope names are the flag values; these say what each one means for the
+# reader. The distinction that matters is whose install it is: "this repo" ships
+# with the repository and reaches whoever clones it, while "user" is
+# ``~/.claude/`` — the reader's own setup, which reaches all their projects but
+# no colleague, so it is named for the machine rather than for that reach.
+# "org policy" says outright that it is not the reader's to change.
+SCOPE_LABELS = {"project": "this repo", "user": "this machine", "policy": "org policy"}
+
+
+def scope_text(scopes: object) -> str:
+    """Render scopes narrowest-first, e.g. ``this repo+this machine``.
+
+    Public because the banner labels two sets of records — the loaded baseline
+    and any foreign one beside it — and both have to read the same way.
+    """
+    if not isinstance(scopes, (list, tuple, set, frozenset)):
+        return ""
+    ordered = sorted({str(scope) for scope in scopes}, key=lambda s: _SCOPE_ORDER.get(s, 9))
+    return "+".join(SCOPE_LABELS.get(scope, scope) for scope in ordered)
 
 
 def _scope_labels(result: dict) -> str:
-    return "+".join(SCOPE_LABELS.get(scope, scope) for scope in result.get("scopes") or [])
+    return scope_text(result.get("scopes"))
 
 
 def summary(result: dict) -> str:

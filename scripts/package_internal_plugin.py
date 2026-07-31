@@ -231,11 +231,14 @@ def _org_profile_baseline(build: Path) -> dict:
     if baseline.get("file"):
         resolved["fallback_file"] = f"org-profile/{str(baseline['file']).lstrip('/')}"
 
-    if any(key in resolved for key in ("url", "git", "fallback_file")):
-        # An organization that names its own source owns the whole chain; a
+    if any(key in resolved for key in ("id", "url", "git", "fallback_file")):
+        # An organization that names its own baseline owns the whole chain; a
         # leftover upstream source would be fetched, fail the id check, and
-        # report a puzzling error.
-        for key in ("url", "git", "fallback_file"):
+        # report a puzzling error. The display name goes the same way: inherited,
+        # it would head the banner and both skills with the upstream product
+        # name over the organization's own rules. Cleared, the generic default
+        # applies until the profile sets one.
+        for key in ("url", "git", "fallback_file", "name"):
             resolved.setdefault(key, None)
     return resolved
 

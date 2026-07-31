@@ -281,6 +281,29 @@ def test_org_baseline_replaces_the_upstream_source(tmp_path):
     assert baseline["git"] is None
 
 
+def test_org_baseline_without_a_name_does_not_inherit_the_upstream_one(tmp_path):
+    """The display name heads the banner and both skills: the organization's own
+    rules must not appear under the plugin's product name."""
+    build = tmp_path / "build"
+    write_profile(
+        build,
+        "baseline:\n  id: acme-sec-1.0\n  url: https://git.acme.internal/baseline.md\n",
+    )
+    pkg.patch_config(build)
+    baseline = json.loads((build / "config.json").read_text())["baseline"]
+    assert baseline["name"] is None, "an omitted name falls back to the generic default"
+
+
+def test_org_baseline_keeps_the_name_the_profile_sets(tmp_path):
+    build = tmp_path / "build"
+    write_profile(
+        build,
+        "baseline:\n  id: acme-sec-1.0\n  name: ACME Secure Baseline\n  url: https://git.acme.internal/baseline.md\n",
+    )
+    pkg.patch_config(build)
+    assert json.loads((build / "config.json").read_text())["baseline"]["name"] == "ACME Secure Baseline"
+
+
 def test_org_baseline_file_resolves_into_the_packaged_profile_directory(tmp_path):
     build = tmp_path / "build"
     write_profile(

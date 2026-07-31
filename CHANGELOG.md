@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `verify-baseline` skill: reports which baseline is loaded and through which file, and exits non-zero when none is, so CI can gate on it.
 - New `remove-baseline` skill: stops an installed baseline loading by dropping its import, and deletes the file only after confirming the path.
 - New `help` skill: a short command reference with example calls.
-- A session now opens with a status banner: plugin identity and help, then the threat model, then the coding baseline when it needs attention. `APPSEC_BANNER=0` turns it off.
+- A session now opens with a status banner: plugin identity and help, then the threat model, then the secure-coding baseline under its configured name, with its id and scope. `APPSEC_BANNER=0` turns it off.
 - Organizations can ship their own skills in their org profile.
 - Organizations can ship their own secure-coding baseline in their org profile, by http(s) URL or git repository.
 - Organizations can set the banner headline and help URL in their org profile, or ship a build that opens silently.

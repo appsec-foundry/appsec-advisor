@@ -47,6 +47,10 @@ mitigations:
 
 
 MANIFEST = json.loads((SCRIPT.parent.parent / ".claude-plugin" / "plugin.json").read_text())
+CONFIG = json.loads((SCRIPT.parent.parent / "config.json").read_text(encoding="utf-8"))
+# The banner heads the baseline line with the configured name, so the tests read
+# it from the same place the hook does rather than pinning this build's wording.
+BASELINE_NAME = CONFIG["baseline"]["name"]
 
 
 @pytest.fixture(autouse=True)
@@ -69,12 +73,21 @@ def _tmp_path_is_a_repository(tmp_path, monkeypatch):
     return tmp_path
 
 
-def install_baseline_for(repo: Path) -> None:
-    """Put the plugin's own baseline where the project scope loads it from."""
+def baseline_text() -> str:
+    """The plugin's own bundled baseline, carrying the configured id."""
     plugin_root = SCRIPT.parent.parent
     config = json.loads((plugin_root / "config.json").read_text(encoding="utf-8"))["baseline"]
-    text = (plugin_root / config["fallback_file"]).read_text(encoding="utf-8")
-    (repo / "CLAUDE.md").write_text(text, encoding="utf-8")
+    return (plugin_root / config["fallback_file"]).read_text(encoding="utf-8")
+
+
+def install_baseline_for(repo: Path) -> None:
+    """Put the plugin's own baseline where the project scope loads it from."""
+    (repo / "CLAUDE.md").write_text(baseline_text(), encoding="utf-8")
+
+
+def install_baseline_for_user(repo: Path) -> None:
+    """Put the plugin's own baseline in the machine-wide scope of the test HOME."""
+    (repo / "_home" / ".claude" / "CLAUDE.md").write_text(baseline_text(), encoding="utf-8")
 
 
 def write_model(
@@ -148,7 +161,7 @@ def tm_line(message: str) -> str:
 
 def baseline_line(message: str) -> str | None:
     for line in message.splitlines():
-        if line.startswith("coding baseline"):
+        if line.startswith(BASELINE_NAME):
             return line
     return None
 
@@ -200,7 +213,7 @@ def test_layout_is_identity_then_threat_model_then_baseline(tmp_path):
     lines = run_hook(str(tmp_path)).splitlines()
     assert lines[0].startswith("appsec-advisor")
     assert lines[1].startswith("threat model")
-    assert lines[2].startswith("coding baseline")
+    assert lines[2].startswith(BASELINE_NAME)
 
 
 def test_banner_carries_no_status_glyphs(tmp_path):
@@ -234,7 +247,7 @@ def test_outside_a_repository_the_baseline_is_still_reported(tmp_path, monkeypat
     monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
     assert lines[0].startswith("appsec-advisor")
-    assert lines[1].startswith("coding baseline")
+    assert lines[1].startswith(BASELINE_NAME)
     assert "not installed" in lines[1]
 
 
@@ -425,17 +438,59 @@ def test_missing_baseline_is_reported_with_its_own_command(tmp_path):
     write_model(tmp_path)
     line = baseline_line(run_hook(str(tmp_path)))
     assert line is not None
-    assert line.startswith("coding baseline · not installed")
+    assert line.startswith(f"{BASELINE_NAME} · not installed")
     assert line.endswith("/appsec-advisor:install-baseline")
 
 
-def test_installed_baseline_omits_the_line(tmp_path):
-    """Healthy baseline is silence — constant confirmation is session-start noise."""
+def test_installed_baseline_names_its_id_and_scope(tmp_path):
+    """Which rules are in context, and from where — without running a command."""
     write_model(tmp_path)
     install_baseline_for(tmp_path)
-    message = run_hook(str(tmp_path))
-    assert baseline_line(message) is None
-    assert "aisec-0.1" not in message
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line == f"{BASELINE_NAME} · aisec-0.1 · this repo"
+
+
+def test_an_organizations_baseline_appears_under_its_own_name(tmp_path, monkeypatch):
+    """An org that ships its own baseline should not read a foreign product name."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    write_model(repo)
+    root = packaged_root(tmp_path, ["create-threat-model", "install-baseline"], monkeypatch)
+    (root / "config.json").write_text(
+        json.dumps({"baseline": {"enabled": True, "id": "acme-sec-1.0", "name": "ACME Secure Baseline"}}),
+        encoding="utf-8",
+    )
+    (repo / "CLAUDE.md").write_text("baseline-id: `acme-sec-1.0`\n", encoding="utf-8")
+    line = next(line for line in session_banner.build_banner(str(repo)).splitlines() if "ACME" in line)
+    assert line == "ACME Secure Baseline · acme-sec-1.0 · this repo"
+
+
+def test_a_second_different_baseline_beside_the_loaded_one_is_named(tmp_path):
+    """Both rule sets are in context; naming only the expected id calls that healthy."""
+    write_model(tmp_path)
+    install_baseline_for_user(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("baseline-id: `acme-sec-1.0`\n", encoding="utf-8")
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line == f"{BASELINE_NAME} · aisec-0.1 · this machine · also acme-sec-1.0 in this repo"
+
+
+def test_a_declared_derivative_beside_the_baseline_is_not_a_foreign_one(tmp_path):
+    """``<id>+suffix`` is the same rules adapted, so it counts as loaded, not as drift."""
+    write_model(tmp_path)
+    install_baseline_for_user(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("baseline-id: `aisec-0.1+acme`\n", encoding="utf-8")
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line == f"{BASELINE_NAME} · aisec-0.1, aisec-0.1+acme · this repo+this machine"
+    assert "also" not in line
+
+
+def test_installed_baseline_carries_no_command(tmp_path):
+    """A loaded baseline asks nothing of the reader."""
+    write_model(tmp_path)
+    install_baseline_for(tmp_path)
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line is not None
+    assert "install-baseline" not in line
 
 
 def test_a_baseline_in_the_repo_that_nothing_imports_is_reported_missing(tmp_path):

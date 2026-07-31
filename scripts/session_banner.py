@@ -6,14 +6,15 @@ Claude Code has no "plugin loaded" event, so the banner is emitted from the
 It reports the state a user would otherwise have to look up — whether this
 repository has a threat model, how bad it looks, how old it is — and offers the
 one command that state calls for. Outside a repository it shrinks to the plugin
-identity (and coding-baseline status when relevant): there is no project to
-report on, and a missing model is not news about a directory nobody meant to scan.
+identity and the coding-baseline status: there is no project to report on, and a
+missing model is not news about a directory nobody meant to scan.
 
 Layout (see docs/internal/analysis/plan-session-banner-redesign-2026-07-29.md):
 
 1. Who + help — plugin identity (or org ``banner.headline``) and ``help`` when packaged.
 2. Threat model — fixed label, severity-first facts, object-local command when needed.
-3. Coding baseline — only when missing/mismatched; install command on that line.
+3. Secure coding baseline — id and scope when loaded, otherwise the problem and
+   the install command on that same line.
 
 No color glyphs. Commands sit on the domain they act on. A calm, current model
 carries facts only — no habitual review link.
@@ -90,9 +91,10 @@ REBUILD = f"{CREATE} --full --rebuild"
 # fallback — the others are simply left out when absent.
 INCREMENTAL = f"{CREATE} --incremental"
 
-# Fixed domain labels — short, stable, and independent of org display names.
+# Fixed domain label. The baseline line is headed by the ``baseline`` block's
+# own ``name`` instead, so an organization's baseline appears under its name;
+# ``baseline_check.DEFAULT_NAME`` covers a build that sets none.
 LABEL_THREAT_MODEL = "threat model"
-LABEL_CODING_BASELINE = "coding baseline"
 
 _TOP_LEVEL_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:")
 _META_FIELD = re.compile(r"^  ([a-z_]+): (.*)$")
@@ -345,11 +347,17 @@ def _scan_running(output_dir: Path) -> bool:
 
 
 def _baseline_line(repo: Path | None) -> str:
-    """Report a coding-baseline problem, or "" when there is nothing to say.
+    """Report the coding-baseline state, or "" when there is nothing to say.
 
-    Installed-and-matching is silence: constant green confirmation is noise at
-    every session start. Missing, mismatched, or on-disk-but-unloaded states get
-    a line, with ``install-baseline`` only when that skill is still packaged.
+    An installed baseline is named with its id and the scope it loads from, so a
+    reader can see which rules are in context without running a command.
+    Missing, mismatched, or on-disk-but-unloaded states get a line too, with
+    ``install-baseline`` only when that skill is still packaged. A build that
+    configures no baseline stays silent — there is nothing to report.
+
+    The line is headed by the baseline's own configured name, so an organization
+    that ships its own baseline sees it under that name rather than a generic
+    label.
 
     Failure is silence. ``baseline_check`` is a plain stdlib module, but this is
     a startup hook and a banner that cannot report the baseline must still
@@ -364,8 +372,27 @@ def _baseline_line(repo: Path | None) -> str:
         return ""
 
     status = result.get("status")
-    if status in (None, "disabled", "installed"):
+    if status in (None, "disabled"):
         return ""
+
+    label = _text(result, "name") or baseline_check.DEFAULT_NAME
+
+    if status == "installed":
+        ids = ", ".join(sorted({m["id"] for m in result.get("matches") or []}))
+        scopes = baseline_check.scope_text(result.get("scopes"))
+        # A different baseline loaded beside the configured one. Claude Code
+        # loads every instruction file it finds, so a project baseline does not
+        # replace the one in ~/.claude/ — both rule sets are in context at once
+        # and can contradict each other. Naming only the expected id would call
+        # that state healthy.
+        others = result.get("other") or []
+        beside = ""
+        if others:
+            found = ", ".join(sorted({item["id"] for item in others}))
+            where = baseline_check.scope_text([item["scope"] for item in others])
+            beside = f"also {found} in {where}" if where else f"also {found}"
+        # No command: which of two rule sets to drop is a decision, not a repair.
+        return _join(label, ids, scopes, beside)
 
     carriers = sorted({Path(item["file"]).name for item in result.get("present_unloaded") or []})
     on_disk = f"on disk in {', '.join(carriers)}" if carriers else ""
@@ -380,7 +407,7 @@ def _baseline_line(repo: Path | None) -> str:
     else:
         facts = "not installed"
 
-    return _join(LABEL_CODING_BASELINE, facts, _skill_command(INSTALL_BASELINE))
+    return _join(label, facts, _skill_command(INSTALL_BASELINE))
 
 
 def _threat_model_command(*, stale: bool, pressure: bool) -> str:

@@ -113,7 +113,7 @@ For depth, cost, focused scans, actors, and repository context, see the [Threat 
 - **Secure-coding baseline — a new capability next to threat modeling.** `install-baseline` writes the bundled [AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline) into Claude Code's instruction files, so the rules reach every prompt before code is written; `verify-baseline` lets CI gate on it.
 - **Cheap-STRIDE depth tier**, on by default outside thorough scans. The internal tail is screened on a smaller budget; exposed and data-carrying components keep full depth, and all six STRIDE categories still run everywhere.
 - **Threat Dragon export (alpha).** `--formats threatdragon` writes Threat Dragon v2 JSON — the one interchange format that carries threats and mitigations into both Threat Dragon and OWASP ThreatAtlas.
-- **Session status banner.** Flags the threat model or baseline when either needs attention; `/appsec-advisor:help` lists the commands.
+- **Session status banner.** Reports the threat model and the loaded secure-coding baseline, and flags either when it needs attention; `/appsec-advisor:help` lists the commands.
 - **Extended org profiles.** Ship your own skills and baseline, configure the banner, disable individual skills.
 
 ## What's new in 0.5-beta

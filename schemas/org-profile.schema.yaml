@@ -228,7 +228,9 @@ properties:
         maxLength: 120
         description: |
           Display name used in the banner and both skills, e.g.
-          "ACME Secure Coding Baseline".
+          "ACME Secure Coding Baseline". Omit it and they say
+          "secure-coding baseline"; a build that declares its own baseline never
+          inherits the plugin's product name for it.
       url:
         type: string
         minLength: 1
