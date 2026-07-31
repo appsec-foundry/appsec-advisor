@@ -339,8 +339,13 @@ so packaging clears them rather than leaving a source that can only fail.
 Ship a `file:` if your users need to install without reaching your server.
 
 `enabled: false` turns the feature off: the banner drops its baseline line and
-both skills report that none is configured. Removing `install-baseline` and
-`verify-baseline` through `skill_toggles` drops the commands as well.
+all three baseline skills report that none is configured. Removing
+`install-baseline`, `verify-baseline` and `remove-baseline` through
+`skill_toggles` drops the commands as well.
+
+An organization that mandates the baseline should disable `remove-baseline`
+that way, with a reason naming the policy. The stronger answer is Claude Code's
+managed policy below, which no local command can undo.
 
 ### Rolling it out centrally
 

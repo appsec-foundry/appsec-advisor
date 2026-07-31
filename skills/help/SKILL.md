@@ -85,6 +85,7 @@ apply on every prompt — not only the ones that mention security.
 ```text
 /appsec-advisor:install-baseline    menu: this machine, or this repository
 /appsec-advisor:verify-baseline     is it actually loaded? read-only, exits 1 if not
+/appsec-advisor:remove-baseline     stop it loading; keeps the file unless told otherwise
 ```
 
 It loads at the next session start, not the one it was installed in.
