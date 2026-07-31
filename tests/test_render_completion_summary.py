@@ -605,6 +605,22 @@ class TestRenderRunIssues:
         assert any("Auto-fix available" in l for l in lines)
         assert any("fix-run-issues" in l for l in lines)
 
+    def test_report_error_pointer_shown_by_default(self):
+        lines = rcs.render_run_issues(self._make_data())
+        assert any("report-error" in l for l in lines)
+        assert any("Nothing is sent." in l for l in lines)
+
+    def test_report_error_pointer_hidden_with_plugin_dev(self):
+        lines = rcs.render_run_issues(self._make_data(), plugin_dev=True)
+        assert not any("report-error" in l for l in lines)
+
+    def test_report_error_pointer_needs_an_error(self):
+        data = self._make_data(n_auto=0)
+        data["issues"][0]["severity"] = "warning"
+        data["summary"]["errors"] = 0
+        data["summary"]["warnings"] = 1
+        assert not any("report-error" in l for l in rcs.render_run_issues(data))
+
     def test_issue_title_always_shown(self):
         lines = rcs.render_run_issues(self._make_data())
         assert any("Agent exceeded maxTurns" in l for l in lines)

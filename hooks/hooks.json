@@ -38,6 +38,15 @@
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/skill_policy_gate.py"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plugin_write_gate.py"
+          }
+        ]
       }
     ],
     "UserPromptExpansion": [

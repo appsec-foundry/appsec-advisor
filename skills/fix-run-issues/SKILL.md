@@ -13,8 +13,8 @@ This skill is **non-invasive by default**. It only modifies plugin files
 when ALL of:
 
 0. **Plugin-developer mode is on** — `APPSEC_PLUGIN_DEV=1` is set in the
-   environment. This is the master switch: self-modification of the plugin
-   is a development-only behavior. In a shipped/end-user install the flag is
+   environment. This is the master switch, enforced outside this prompt by
+   `scripts/plugin_write_gate.py`. In a shipped/end-user install the flag is
    unset, so the skill runs **read-only** — it prints every fix's guidance
    but writes to no plugin file. AND
 1. The issue's `fix_recommendation.auto_applicable == true` AND

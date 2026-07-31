@@ -1230,7 +1230,9 @@ def render_run_issues(data: Optional[dict], plugin_dev: bool = False) -> list[st
 
     Fix suggestions (auto-applicable hints + /fix-run-issues call) are only
     shown when plugin_dev=True — they target plugin internals and are not
-    actionable for end users.
+    actionable for end users. Those runs get the /report-error pointer instead,
+    and only when the run recorded an error: a warning, a perf anomaly, or a
+    recovery that worked is not worth a bug report.
     """
     if not data:
         return []
@@ -1276,9 +1278,13 @@ def render_run_issues(data: Optional[dict], plugin_dev: bool = False) -> list[st
     if len(issues) > 2:
         lines.append(f"                        ({len(issues) - 2} more — see .run-issues.json)")
 
-    if plugin_dev and n_auto > 0:
-        lines.append(f"  Auto-applicable     : {n_auto} of {len(issues)} fix(es) ready to apply")
-        lines.append("  Apply fixes         : /appsec-advisor:fix-run-issues")
+    if plugin_dev:
+        if n_auto > 0:
+            lines.append(f"  Auto-applicable     : {n_auto} of {len(issues)} fix(es) ready to apply")
+            lines.append("  Apply fixes         : /appsec-advisor:fix-run-issues")
+    elif n_err > 0:
+        lines.append("  Report this issue   : /appsec-advisor:report-error")
+        lines.append("                        Builds a local, anonymised bundle. Nothing is sent.")
 
     lines.append("")
     return lines

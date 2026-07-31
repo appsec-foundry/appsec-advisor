@@ -22,9 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Organizations can set the banner headline and help URL in their org profile, or ship a build that opens silently.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
 - Trust boundaries are now assessed in their own stage once components and data flows are settled, before STRIDE starts.
+- A run that recorded an error now points at `/appsec-advisor:report-error`, which builds a local anonymised bundle and sends nothing.
 
 ### Fixed
 
+- Writes to the plugin's own source are now refused unless `APPSEC_PLUGIN_DEV=1`, enforced by a hook instead of an instruction the model could skip.
 - `Automated SCA scanning` is now rated only from scanners the pipeline actually invokes. A tool name in a comment, a step label, or string data no longer counts as evidence, and a CodeQL workflow on its own no longer counts as dependency scanning.
 - Skills an organization disabled through `skill_toggles` are now actually refused, with the configured reason — whether the command is typed or Claude invokes it. Nothing enforced the policy before. Recovery skills stay reachable, so a broken run can still be cleaned up.
 - An organization's `skill_toggles` policy now takes effect from the first command in a session. It was only read from the file a scan writes into its output directory, so before any scan every skill ran while the status output reported it as disabled.
