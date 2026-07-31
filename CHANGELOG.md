@@ -13,7 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New alpha export: `--formats threatdragon` writes OWASP Threat Dragon v2 JSON, which also imports into OWASP ThreatAtlas. See `docs/threat-dragon-export.md`.
 - New `install-baseline` skill: installs a secure-coding baseline into Claude Code's instruction files, for this machine or a single repository.
-- Baseline installs recognize a baseline that is already there and import it instead of adding a second copy.
 - New `verify-baseline` skill: reports which baseline is loaded and through which file, and exits non-zero when none is, so CI can gate on it.
 - New `help` skill: a short command reference with example calls.
 - A session now opens with a status banner: plugin identity and help, then the threat model, then the coding baseline when it needs attention. `APPSEC_BANNER=0` turns it off.
@@ -21,32 +20,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Organizations can ship their own secure-coding baseline in their org profile, by http(s) URL or git repository.
 - Organizations can set the banner headline and help URL in their org profile, or ship a build that opens silently.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
-- Trust boundaries are now assessed in their own stage once components and data flows are settled, before STRIDE starts.
 - A run that recorded an error now points at `/appsec-advisor:report-error`, which builds a local anonymised bundle and sends nothing.
 
 ### Fixed
 
-- Writes to the plugin's own source are now refused unless `APPSEC_PLUGIN_DEV=1`, enforced by a hook instead of an instruction the model could skip.
 - `Automated SCA scanning` is now rated only from scanners the pipeline actually invokes. A tool name in a comment, a step label, or string data no longer counts as evidence, and a CodeQL workflow on its own no longer counts as dependency scanning.
 - Skills an organization disabled through `skill_toggles` are now actually refused, with the configured reason — whether the command is typed or Claude invokes it. Nothing enforced the policy before. Recovery skills stay reachable, so a broken run can still be cleaned up.
 - An organization's `skill_toggles` policy now takes effect from the first command in a session. It was only read from the file a scan writes into its output directory, so before any scan every skill ran while the status output reported it as disabled.
 - Any shipped skill can now be named in `skill_toggles`. Ten of the twenty-one — including `review-threat-model`, `ask-threat-model` and `update-threat-model` — were missing from an internal list, and naming one aborted the package build instead of doing nothing.
+- Trust-boundary tables now use canonical endpoints and clearly distinguish internet-facing, outbound, internal, inferred, and unresolved crossings.
+- `show-threat-model` cited findings by an identifier that appears nowhere in the report; it now uses the `F-NNN` identifiers the report shows.
+- `show-threat-model` reported severity counts that contradicted the report — 27 Critical against the report's 14 on a reference scan — and could list a Medium finding as Critical.
 
 ### Changed
 
 - The `Run Issues` block now appears only when something reached the delivered report; a slow phase, a budget warning, or a recovery that worked no longer makes a sound run look broken.
-- The Stage-1 rows are now labeled `Discovery & Architecture Modeling`, `Trust Boundary Analysis`, and `Control & Threat Analysis, Triage` in the task list and run summary.
-- Session banner redesigned: identity and help on the first line, threat-model and coding-baseline domains on their own lines, commands on the object they act on, no status glyphs, and no review link when the model is calm and current.
 - A finding with verified evidence at a confirmed internet ingress can now be raised by one severity band, up to High, while CWE caps still apply.
 - `show-threat-model` now opens with the report's verdict and the worst-case scenarios behind it, and points at the other skills before the numbers rather than after them.
 - `threat-model.yaml` now carries the report's verdict, so other tools can state the assessment's conclusion without reading the Markdown.
 - Findings of the same kind at different trust boundaries now stay separate instead of consolidating into one row.
-
-### Fixed
-
-- Trust-boundary tables now use canonical endpoints and clearly distinguish internet-facing, outbound, internal, inferred, and unresolved crossings.
-- `show-threat-model` cited findings by an identifier that appears nowhere in the report; it now uses the `F-NNN` identifiers the report shows.
-- `show-threat-model` reported severity counts that contradicted the report — 27 Critical against the report's 14 on a reference scan — and could list a Medium finding as Critical.
 
 ## 0.5.1-beta (2026-07-26)
 
