@@ -1,4 +1,4 @@
-# Compact Thin Stage 1b — Trust Boundary Assessment
+# Compact Thin Stage 1b — Trust Boundary Analysis
 
 Authoritative for the dedicated trust-boundary agent handoff. Stage 1a has
 already finalized component identity and persisted topology. Stage 1c must not
@@ -7,10 +7,10 @@ start until the deterministic coverage gate passes.
 ## Dispatch
 
 1. Capture `STAGE1B_START_ISO`, mark
-   `Stage 1b - Trust Boundary Assessment` in progress, and emit:
+   `Stage 1b - Trust Boundary Analysis` in progress, and emit:
 
    ```text
-   ▶ Stage 1b - Trust Boundary Assessment starting
+   ▶ Stage 1b - Trust Boundary Analysis starting
    ```
 
    Then record the truthful Phase-7 start:
@@ -22,7 +22,7 @@ start until the deterministic coverage gate passes.
    ```
 
 2. Dispatch foreground `appsec-advisor:appsec-trust-boundary-analyst` in a
-   fresh context with description `Trust Boundary Assessment`. Reduce
+   fresh context with description `Trust Boundary Analysis`. Reduce
    `ORCHESTRATOR_MODEL` to its bare `sonnet`/`opus`/`haiku` Agent alias, pass
    that alias explicitly as `model`, and provide only:
 
@@ -85,7 +85,7 @@ discovery or STRIDE:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-  --stage 1 --variant trust-boundary-assessment --name "Trust Boundary Assessment" \
+  --stage 1 --variant trust-boundary-assessment --name "Trust Boundary Analysis" \
   --agent appsec-advisor:appsec-trust-boundary-analyst \
   --model "<bare ORCHESTRATOR_MODEL alias>" \
   --duration-ms <ms> --tool-uses <n> --tokens <n> \

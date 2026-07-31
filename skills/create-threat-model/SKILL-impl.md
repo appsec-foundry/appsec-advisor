@@ -62,8 +62,8 @@ the condition stated *in* the section wins.
 >
 > The only `TaskCreate` calls allowed are the rows defined in
 > `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1a - Discovery
-> & Architecture`, `Stage 1b - Trust Boundary Assessment`, `Stage 1c -
-> Threat Analysis & Triage`, `Stage 1d - Abuse Case Verification`
+> & Architecture Modeling`, `Stage 1b - Trust Boundary Analysis`, `Stage 1c -
+> Control & Threat Analysis, Triage`, `Stage 1d - Abuse Case Verification`
 > (when enabled), `Stage 2 - Report Rendering`, conditional
 > `Stage 3 - QA Review`, conditional `Stage 4 - Architect Review`,
 > `Final summary + cleanup`).
@@ -180,7 +180,7 @@ if [ "$VALIDATE_EXIT" -ne 0 ]; then
 fi
 ```
 
-The resolved value must also be passed verbatim in the Stage 1 and Stage 3 agent prompts (see "Stage 1 — Threat Analysis & Triage" below).
+The resolved value must also be passed verbatim in the Stage 1 and Stage 3 agent prompts (see "Stages 1a–1c — Analysis Pipeline" below).
 
 ### Early flag validation (fail-fast)
 
@@ -2006,7 +2006,7 @@ esac
 Then print a blank line and the Stage 1 handoff banner. When `VERBOSE_REPORT=true` is resolved, append a single hint line so the user knows where the extra output is going to appear:
 
 ```
-▶ Stage 1/<total_stages> — Threat Analysis & Triage starting  (Stage 1: ~<EST_STAGE1> min, total: ~<EST_TOTAL> — <SOURCE_HINT>)
+▶ Stage 1/<total_stages> — Analysis Pipeline starting  (Stage 1: ~<EST_STAGE1> min, total: ~<EST_TOTAL> — <SOURCE_HINT>)
 ```
 
 When `VERBOSE_REPORT=true`, add one extra line directly underneath (exactly this text, no other variants):
@@ -2043,9 +2043,9 @@ TaskCreate subject="Preparing workspace"
 
 | Condition | Task subject | activeForm |
 |-----------|--------------|------------|
-| always | `Stage 1a - Discovery & Architecture` | `Running discovery and architecture` |
-| always | `Stage 1b - Trust Boundary Assessment` | `Assessing trust boundaries` |
-| always | `Stage 1c - Threat Analysis & Triage` | `Running threat analysis and triage` |
+| always | `Stage 1a - Discovery & Architecture Modeling` | `Modeling architecture` |
+| always | `Stage 1b - Trust Boundary Analysis` | `Analyzing trust boundaries` |
+| always | `Stage 1c - Control & Threat Analysis, Triage` | `Analyzing controls and threats` |
 | `DRY_RUN=false` AND `skip_abuse_case_verification=false` | `Stage 1d - Abuse Case Verification` | `Verifying abuse-case chains` |
 | always (M2.12) | `Stage 2 - Report Rendering` | `Rendering threat model report` |
 | `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 - QA Review` | `Running QA review` |
@@ -2181,7 +2181,7 @@ The script prints a full diagnostic to stderr on abort (the unreachable URL, the
 
 **Architecture change in M2.12 / M3.8:** Stage 1 runs Phases 1–10b **plus the deterministic Phase 11 Substeps 1–3** (counts pre-compute, canonical `threat-model.yaml` write, baseline-cache update). The LLM-heavy Phase 11 Substeps 4–N (fragment authoring, `compose_threat_model.py`, QA, SARIF/pentest exports) are dispatched as a separate **Stage 2** renderer session so the budget-cheap deterministic prep work stays in Stage 1's natural flow while the expensive compose work gets its own fresh budget and a smaller prompt. The full contract lives in `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT — early-exit branch".
 
-Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Analysis and Triage"` as the Agent tool `description` (spelled out: the console HTML-escapes an `&` in a description and never decodes it back, so `&` renders as `&amp;`. The stage NAME keeps its `&` — reports, `record_stage_stats --name`, and the section anchors are unaffected). The orchestrator handles Phases 1–10b and Phase 11 Substeps 1–3 internally (recon, context, architecture, STRIDE, merge, triage, yaml write, baseline-cache update). The LLM compose work (Phase 11 Substeps 4–N) is handled by Stage 2. Do **not** invoke any other agent from the skill level here.
+Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Control and Threat Analysis, Triage"` as the Agent tool `description` (spelled out: the console HTML-escapes an `&` in a description and never decodes it back, so `&` renders as `&amp;`. The stage NAME keeps its `&` — reports, `record_stage_stats --name`, and the section anchors are unaffected). The orchestrator handles Phases 1–10b and Phase 11 Substeps 1–3 internally (recon, context, architecture, STRIDE, merge, triage, yaml write, baseline-cache update). The LLM compose work (Phase 11 Substeps 4–N) is handled by Stage 2. Do **not** invoke any other agent from the skill level here.
 
 ### Dispatch
 
@@ -2222,7 +2222,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
    export YAML_PRE_STAGE1 MD_PRE_STAGE1
    ```
 
-1. Mark only `Stage 1a - Discovery & Architecture` in progress. Stage 1b and
+1. Mark only `Stage 1a - Discovery & Architecture Modeling` in progress. Stage 1b and
    Stage 1c transition independently at their real dispatch seams.
 
 2. **Start the heartbeat watchdog (M3.4).** Issue the heartbeat-loop Bash command with `run_in_background: true` and capture the returned `task_id` in `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`. See the "Skill-layer heartbeat watchdog" section above for the exact command. The watchdog runs in parallel with the foreground Stage 1 dispatch and ensures `.appsec-lock` heartbeats fire every 60 s regardless of orchestrator activity.
@@ -2237,7 +2237,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
 
    **— Parallel-STRIDE variant (`PARALLEL_STRIDE=true` — Full-M1, the DEFAULT for full/rebuild; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).** Instead of one monolithic analyst that inlines STRIDE serially, split Stage 1 so the skill (Level-0, can fan out) dispatches the per-component STRIDE analyzers in bounded waves:
 
-   3a. **Stage-1c Analyst-A** — mark `Stage 1c - Threat Analysis & Triage`
+   3a. **Stage-1c Analyst-A** — mark `Stage 1c - Control & Threat Analysis, Triage`
    active with `Phase 8 — controls and dispatch preparation`. Dispatch with
    **`RESUME_FROM_PHASE=8` and `STAGE1_PHASE_LIMIT=8`**. It reuses the gated
    canonical boundary catalog, runs Phase 8 plus Phase-9 dispatch prep, writes
@@ -2268,7 +2268,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
 
    3b-i. **Surface the component selection to the user (required console output).** The builder above prints a `STRIDE component selection (depth=…)` block — `ANALYZED (N)` each with its selection reason, then `SKIPPED (N)` each with its skip reason (e.g. `out-of-scope at depth=standard`). **Render that block to the user verbatim in your response** as a short banner, so the user sees exactly which components get a STRIDE pass and which are skipped and why, *before* the fan-out runs. (It is the console mirror of the report's §1 Scope + §11 Out of Scope, both built from the same `.stride-selection.json` → `meta.component_selection`.) If the builder's stdout is not in view, re-render it deterministically with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_stride_dispatch_manifest.py" --print-selection "$OUTPUT_DIR"`. Do not summarize it away or drop the skip reasons — the skipped list with reasons is the point.
 
-   3c. **Dispatch bounded STRIDE waves.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1c - Threat Analysis & Triage` to set `activeForm: "Phase 9 — STRIDE (<N> components, waves of up to <STRIDE_CONCURRENCY>)"`.
+   3c. **Dispatch bounded STRIDE waves.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1c - Control & Threat Analysis, Triage` to set `activeForm: "Phase 9 — STRIDE (<N> components, waves of up to <STRIDE_CONCURRENCY>)"`.
 
    Repeatedly run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/stride_dispatch_waves.py" claim "$OUTPUT_DIR"` and parse the returned JSON. `status=complete` ends the loop. `status=claimed` contains only the unfinished components in the earliest incomplete wave; issue those Agent calls **together in one message** so the wave runs concurrently, then claim again. Attempt 1 is the normal dispatch and attempt 2 is the only retry. Attempts are persisted in `.dispatch-waves.json`, so resume cannot reset the budget. Exit 1 / `status=blocked` is fatal: stop before Analyst-B rather than publishing a report that silently omitted a selected component.
 
@@ -2282,17 +2282,17 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
 
    Never start Analyst-B unless this verification succeeds. `check_stride_dispatch.py` repeats the same coverage check in the post-Stage-1 gate and still independently verifies that real analyzer dispatches occurred.
 
-   3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1c - Threat Analysis & Triage` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis and Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
+   3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1c - Control & Threat Analysis, Triage` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Control and Threat Analysis, Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 
    **— Serial variant (`PARALLEL_STRIDE=false` AND `LIVE_PHASE=false`).**
    Dispatch with **`RESUME_FROM_PHASE=8` and `STAGE1_PHASE_LIMIT=10b`** so it
    runs Stage 1c only, then stops after deterministic YAML/baseline writing.
    Do **not** set `run_in_background` — this is a blocking inline call.
 
-   **— Live-phase variant (`LIVE_PHASE=true` — opt-in via `APPSEC_LIVE_PHASE=1`, experimental).** Same agent, same `description: "Threat Analysis and Triage"`, same `STAGE1_PHASE_LIMIT=10b` prompt and config as the Default variant — the ONLY differences are the dispatch mode and the control flow that follows. Set **`run_in_background: true`** on the Agent call so the Level-0 orchestrator is NOT blocked (a blocking foreground call would queue all async console output until it returns — verified by the 2026-06-04 spike). Capture the returned background agent id in `STAGE1_AGENT_ID`. Then drive the live-phase display:
+   **— Live-phase variant (`LIVE_PHASE=true` — opt-in via `APPSEC_LIVE_PHASE=1`, experimental).** Same agent, same `description: "Control and Threat Analysis, Triage"`, same `STAGE1_PHASE_LIMIT=10b` prompt and config as the Default variant — the ONLY differences are the dispatch mode and the control flow that follows. Set **`run_in_background: true`** on the Agent call so the Level-0 orchestrator is NOT blocked (a blocking foreground call would queue all async console output until it returns — verified by the 2026-06-04 spike). Capture the returned background agent id in `STAGE1_AGENT_ID`. Then drive the live-phase display:
 
    - **End your turn immediately after dispatching.** Do NOT proceed to step 4. Do NOT make any blocking tool call (Bash, foreground Agent) while waiting — any blocking call re-blocks the main loop and re-queues the Monitor events, defeating the whole mechanism. You will be re-invoked by notifications.
-   - **On each live-phase Monitor event** (task id `LIVE_PHASE_MONITOR_ID`): parse the phase/step text out of the event payload (e.g. `… PHASE_START   [Phase 3/11] ▶ Architecture Modeling…` → `Phase 3/11 — Architecture Modeling`; `STRIDE_PROGRESS stride_files=2 …` → `Phase 9/11 — STRIDE 2/5 components`) and call `TaskUpdate` on the `Stage 1c - Threat Analysis & Triage` task to set its `activeForm` to that text. This is what surfaces the live phase NAME on the console (the raw Monitor line shows only the static description). Do nothing else; end your turn again. If the payload has no parseable phase, skip the update.
+   - **On each live-phase Monitor event** (task id `LIVE_PHASE_MONITOR_ID`): parse the phase/step text out of the event payload (e.g. `… PHASE_START   [Phase 3/11] ▶ Architecture Modeling…` → `Phase 3/11 — Architecture Modeling`; `STRIDE_PROGRESS stride_files=2 …` → `Phase 9/11 — STRIDE 2/5 components`) and call `TaskUpdate` on the `Stage 1c - Control & Threat Analysis, Triage` task to set its `activeForm` to that text. This is what surfaces the live phase NAME on the console (the raw Monitor line shows only the static description). Do nothing else; end your turn again. If the payload has no parseable phase, skip the update.
    - **On a `STRIDE_STALE` / `STRIDE_CANARY_TIMEOUT` / `STRIDE_COMPONENT_TIMEOUT` / `AGENT_ERROR` / `TOOL_ERROR` event:** surface it once as a short console line (these are the failure/terminal markers — do not stay silent), then keep waiting.
    - **On the `STAGE1_AGENT_ID` completion notification** (carries the `<usage>` block — same shape the Default variant reads inline): the dispatch is done. Proceed to **step 4** below and continue the normal flow (stop watchdog, stop Monitor, gates, stats). The `<usage>` from this completion notification is what step 6 records.
 
@@ -2311,7 +2311,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
 
    > **`TaskStop` is a deferred tool — load its schema first.** Unlike `TaskCreate`/`TaskUpdate`, `TaskStop` is frequently NOT in the pre-loaded tool set, so calling it directly fails with `InputValidationError: unexpected parameter`. Before the first `TaskStop` of the run, call `ToolSearch` with query `select:TaskStop` to load its schema. Its parameter is **`task_id`** (snake_case) — **not** `taskId`; passing `taskId` is the exact "Invalid tool parameters" failure observed on the 2026-06-01 juice-shop run. This applies to every `TaskStop` site below (Stage 2 / Stage 3 / Stage 4) — load the schema once, then reuse `task_id` each time.
 
-5. On return, mark `Stage 1c - Threat Analysis & Triage` completed, then
+5. On return, mark `Stage 1c - Control & Threat Analysis, Triage` completed, then
    proceed to the Phase-10b precondition gate.
 
 6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table. (In the `LIVE_PHASE=true` variant the same `<usage>` block arrives in the background agent's **completion notification** — identical fields, identical extraction.)
@@ -2327,7 +2327,7 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
    # Serial / live-phase variant — single dispatch, no --accumulate.
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
        --stage 1 \
-       --name "Threat Analysis & Triage" \
+       --name "Control & Threat Analysis, Triage" \
        --agent appsec-advisor:appsec-threat-analyst \
        --model "$STRIDE_MODEL" \
        --duration-ms <duration_ms_from_usage> \
@@ -2338,21 +2338,21 @@ that serial Stage 1 starts at Phase 1 is superseded by this block.
    # Parallel-STRIDE variant — one --accumulate call per group as it returns.
    # (a) Analyst-A:
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-       --stage 1 --name "Threat Analysis & Triage" \
+       --stage 1 --name "Control & Threat Analysis, Triage" \
        --agent appsec-advisor:appsec-threat-analyst --model "$STRIDE_MODEL" \
        --accumulate \
        --duration-ms <analyst_a_duration_ms> --tool-uses <analyst_a_tools> --tokens <analyst_a_tokens> \
        ${STAGE1_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst --since-iso "$STAGE1_START_ISO"}
    # (b) STRIDE fan-out — pass the SUM of all N analyzers' <usage> values:
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-       --stage 1 --name "Threat Analysis & Triage" \
+       --stage 1 --name "Control & Threat Analysis, Triage" \
        --agent appsec-advisor:appsec-threat-analyst --model "$STRIDE_MODEL" \
        --accumulate \
        --duration-ms <sum_stride_duration_ms> --tool-uses <sum_stride_tools> --tokens <sum_stride_tokens> \
        ${STAGE1_START_ISO:+--subagent-type appsec-advisor:appsec-stride-analyzer --since-iso "$STAGE1_START_ISO"}
    # (c) Analyst-B:
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-       --stage 1 --name "Threat Analysis & Triage" \
+       --stage 1 --name "Control & Threat Analysis, Triage" \
        --agent appsec-advisor:appsec-threat-analyst --model "$STRIDE_MODEL" \
        --accumulate \
        --duration-ms <analyst_b_duration_ms> --tool-uses <analyst_b_tools> --tokens <analyst_b_tokens> \
@@ -3297,7 +3297,7 @@ The lock file is removed (but `.appsec-checkpoint`, `.threat-modeling-context.md
 - When the counter has reached the cap and `STAGE1_CUTOFF=true` fires again, do **not** dispatch another resume. Instead, treat this as a hard abort (see "Exhausted resumes" below) — this prevents rare recursive cut-off→resume→cut-off chains from burning tokens indefinitely.
 - On successful completion (`threat-model.md` exists), the counter file is cleaned up by `runtime_cleanup.py` along with the other transient artifacts.
 
-**Recovery path.** If `STAGE1_CUTOFF=true` **and** the resume counter is below `MAX_STAGE1_RESUMES`, spawn another `appsec-advisor:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Threat Analysis and Triage (resume)"` and a prompt that:
+**Recovery path.** If `STAGE1_CUTOFF=true` **and** the resume counter is below `MAX_STAGE1_RESUMES`, spawn another `appsec-advisor:appsec-threat-analyst` Agent call (fresh turn budget) with the description `"Control and Threat Analysis, Triage (resume)"` and a prompt that:
 
 1. Tells the agent to skip Phases 1–8 entirely because their outputs are on disk (`.recon-summary.md`, `.threat-modeling-context.md`).
 2. Lists every `.stride-<component>.json` file under `$OUTPUT_DIR` and instructs the agent not to re-dispatch STRIDE analyzers.

@@ -194,9 +194,9 @@ python3 -c 'import pathlib,time,sys; pathlib.Path(sys.argv[1]).write_text(str(in
 Create Task rows in this exact order and with these exact subjects:
 
 1. `Preparing workspace`; immediately mark completed.
-2. `Stage 1a - Discovery & Architecture`
-3. `Stage 1b - Trust Boundary Assessment`
-4. `Stage 1c - Threat Analysis & Triage`
+2. `Stage 1a - Discovery & Architecture Modeling`
+3. `Stage 1b - Trust Boundary Analysis`
+4. `Stage 1c - Control & Threat Analysis, Triage`
 5. `Stage 1d - Abuse Case Verification` only when
    `SKIP_ABUSE_CASE_VERIFICATION=false`
 6. `Stage 2 - Report Rendering`
@@ -209,9 +209,9 @@ Use the existing active forms:
 
 ```text
 Preparing workspace
-Running discovery and architecture
-Assessing trust boundaries
-Running threat analysis and triage
+Modeling architecture
+Analyzing trust boundaries
+Analyzing controls and threats
 Verifying abuse-case chains
 Rendering threat model report
 Running QA review
@@ -224,7 +224,7 @@ Do not create any other Task rows.
 Then emit the normal handoff banner using the controller estimate:
 
 ```text
-▶ Stage 1a/<TOTAL_STAGES> — Discovery & Architecture starting  (Stage 1: ~<EST_STAGE1> min, total: ~<EST_TOTAL> — <EST_SOURCE>)
+▶ Stage 1a/<TOTAL_STAGES> — Discovery & Architecture Modeling starting  (Stage 1: ~<EST_STAGE1> min, total: ~<EST_TOTAL> — <EST_SOURCE>)
 ```
 
 ## 5. Stages 1a–1d

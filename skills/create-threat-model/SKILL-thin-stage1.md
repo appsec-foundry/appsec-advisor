@@ -44,10 +44,10 @@ rm -f "$OUTPUT_DIR/.stage1-resume-count"
 Capture `STAGE1A_START_ISO`, mark Stage 1a in progress, and start the fixed
 heartbeat watchdog from the parent runtime. Retain its task id.
 
-## Stage 1a — Discovery & Architecture
+## Stage 1a — Discovery & Architecture Modeling
 
 Dispatch foreground `appsec-advisor:appsec-threat-analyst` with description
-`Discovery and Architecture`, all aliases, and `STAGE1_PHASE_LIMIT=6`. On
+`Discovery and Architecture Modeling`, all aliases, and `STAGE1_PHASE_LIMIT=6`. On
 return, run:
 
 ```bash
@@ -59,7 +59,7 @@ Record the Stage-1a Agent usage:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-  --stage 1 --variant discovery-architecture --name "Discovery & Architecture" \
+  --stage 1 --variant discovery-architecture --name "Discovery & Architecture Modeling" \
   --agent appsec-advisor:appsec-threat-analyst --model "$ORCHESTRATOR_MODEL" \
   --duration-ms <ms> --tool-uses <n> --tokens <n> \
   ${STAGE1A_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst \
@@ -76,8 +76,8 @@ capture `STAGE1C_START_ISO`, then continue below.
 Use this path when `PARALLEL_STRIDE=true`.
 
 1. Set Stage-1c to `Phase 8 — controls and dispatch preparation`. Dispatch
-   foreground `appsec-advisor:appsec-threat-analyst` as `Threat Analysis &
-   Triage` with all aliases, `RESUME_FROM_PHASE=8`, and
+   foreground `appsec-advisor:appsec-threat-analyst` as `Control and Threat
+   Analysis, Triage` with all aliases, `RESUME_FROM_PHASE=8`, and
    `STAGE1_PHASE_LIMIT=8`; record usage with
    `record_stage_stats.py --accumulate`.
 2. Build and validate the manifest:
@@ -137,7 +137,7 @@ Use this path when `PARALLEL_STRIDE=true`.
    "$OUTPUT_DIR"`; any non-zero result is fatal and Analyst-B must not run.
 5. After verification, set Stage-1c to `Phases 9–10b — merge → triage` and
    dispatch Analyst-B foreground with description
-   `Threat Analysis and Triage (merge+triage)`, all aliases,
+   `Control and Threat Analysis, Triage (merge+triage)`, all aliases,
    `RESUME_FROM_PHASE=9-merge`, and `STAGE1_PHASE_LIMIT=10b`. Record its usage
    with `--accumulate`.
 
@@ -150,7 +150,7 @@ marker and warns about. Substitute the group's own subagent type and model.
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-    --stage 1 --variant threat-analysis-triage --name "Threat Analysis & Triage" \
+    --stage 1 --variant threat-analysis-triage --name "Control & Threat Analysis, Triage" \
     --agent appsec-advisor:appsec-threat-analyst --model "$ORCHESTRATOR_MODEL" \
     --duration-ms <ms> --tool-uses <n> --tokens <n> --accumulate \
     ${STAGE1C_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst \
@@ -165,7 +165,7 @@ Stats failures are non-blocking.
 
 When `PARALLEL_STRIDE=false`, dispatch one foreground
 `appsec-advisor:appsec-threat-analyst` with description
-`Threat Analysis and Triage`, all aliases, `RESUME_FROM_PHASE=8`, and
+`Control and Threat Analysis, Triage`, all aliases, `RESUME_FROM_PHASE=8`, and
 `STAGE1_PHASE_LIMIT=10b`. Record
 one non-accumulating Stage-1 stats row from its usage.
 

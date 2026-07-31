@@ -218,7 +218,7 @@ ADVANCED
   --qa-scan-repo               Deep-scan repo for unlinked file references in QA
 
 PIPELINE
-  Stage 1   Threat Analysis & Triage
+  Stage 1   Analysis
               Phase 1    Recon scan (+ .recon-signals.json for Actor Layer)
               Phase 2.5  Config/IaC scan
               Phase 2.7  Actor discovery (standard/thorough only)
