@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `Run Issues` block now appears only when something reached the delivered report; a slow phase, a budget warning, or a recovery that worked no longer makes a sound run look broken.
 - The Stage-1 rows are now labeled `Discovery & Architecture Modeling`, `Trust Boundary Analysis`, and `Control & Threat Analysis, Triage` in the task list and run summary.
 - Session banner redesigned: identity and help on the first line, threat-model and coding-baseline domains on their own lines, commands on the object they act on, no status glyphs, and no review link when the model is calm and current.
 - A finding with verified evidence at a confirmed internet ingress can now be raised by one severity band, up to High, while CWE caps still apply.

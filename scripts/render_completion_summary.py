@@ -1224,15 +1224,36 @@ def extract_run_issues(output_dir: Path) -> Optional[dict]:
     return data
 
 
+# Error-severity categories that say something about how long the run took, not
+# about what it produced. A user whose report is complete and correct cannot act
+# on either, so neither reaches them.
+PERF_ONLY_CATEGORIES = frozenset({"perf_anomaly_phase", "stage1_excessive_duration"})
+
+
+def user_visible_issues(issues: list[dict]) -> list[dict]:
+    """The issues worth showing someone who is not developing this plugin.
+
+    Severity `error` is the floor: a warning, a perf anomaly, and a recovery that
+    worked all describe a run that still delivered. What survives is the set that
+    can have reached the deliverable — an agent or tool that failed, a render
+    that failed, an unresolved repair plan, a run that never completed.
+    """
+    return [
+        issue
+        for issue in issues
+        if issue.get("severity") == "error" and issue.get("category") not in PERF_ONLY_CATEGORIES
+    ]
+
+
 def render_run_issues(data: Optional[dict], plugin_dev: bool = False) -> list[str]:
     """Render the conditional `-- Run Issues --` block. Returns empty list
     on clean runs so the caller can extend unconditionally.
 
-    Fix suggestions (auto-applicable hints + /fix-run-issues call) are only
-    shown when plugin_dev=True — they target plugin internals and are not
-    actionable for end users. Those runs get the /report-error pointer instead,
-    and only when the run recorded an error: a warning, a perf anomaly, or a
-    recovery that worked is not worth a bug report.
+    A plugin developer sees every recorded issue plus its fix suggestion. An end
+    user sees only what reached their deliverable — `user_visible_issues` decides
+    that — and nothing at all when none did, because an issue they cannot act on
+    is noise that makes a sound run look broken. Their block ends in the
+    /report-error pointer rather than the /fix-run-issues call.
     """
     if not data:
         return []
@@ -1241,13 +1262,22 @@ def render_run_issues(data: Optional[dict], plugin_dev: bool = False) -> list[st
     if not issues:
         return []
 
-    lines: list[str] = []
-    lines.append("  -- Run Issues ---------------------------------------------")
     n_err = summary.get("errors", 0)
     n_warn = summary.get("warnings", 0)
     n_perf = summary.get("perf_anomalies", 0)
     n_rec = summary.get("recovery_events", 0)
     n_auto = summary.get("auto_applicable_fixes", 0)
+
+    if not plugin_dev:
+        issues = user_visible_issues(issues)
+        if not issues:
+            return []
+        # The filtered set is errors only, so the other buckets no longer
+        # describe what is on screen.
+        n_err, n_warn, n_perf, n_rec = len(issues), 0, 0, 0
+
+    lines: list[str] = []
+    lines.append("  -- Run Issues ---------------------------------------------")
     bits = []
     if n_err:
         bits.append(f"{n_err} error{'s' if n_err != 1 else ''}")
@@ -1282,7 +1312,7 @@ def render_run_issues(data: Optional[dict], plugin_dev: bool = False) -> list[st
         if n_auto > 0:
             lines.append(f"  Auto-applicable     : {n_auto} of {len(issues)} fix(es) ready to apply")
             lines.append("  Apply fixes         : /appsec-advisor:fix-run-issues")
-    elif n_err > 0:
+    else:
         lines.append("  Report this issue   : /appsec-advisor:report-error")
         lines.append("                        Builds a local, anonymised bundle. Nothing is sent.")
 
@@ -1942,8 +1972,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.issues_only:
         # Failure-path diagnostics: surface whatever aggregate_run_issues.py
         # recorded, independent of a rendered report. Errors first, top 2 shown.
-        lines = render_run_issues(extract_run_issues(args.output_dir), plugin_dev=args.plugin_dev)
-        print("\n".join(lines) if lines else "  Run issues          : none recorded")
+        data = extract_run_issues(args.output_dir)
+        lines = render_run_issues(data, plugin_dev=args.plugin_dev)
+        if lines:
+            print("\n".join(lines))
+        else:
+            # An empty block after filtering is not an empty aggregator.
+            recorded = bool((data or {}).get("issues"))
+            state = "none affecting the report" if recorded else "none recorded"
+            print(f"  Run issues          : {state}")
         return 0
 
     cfg = {

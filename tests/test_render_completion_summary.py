@@ -614,13 +614,6 @@ class TestRenderRunIssues:
         lines = rcs.render_run_issues(self._make_data(), plugin_dev=True)
         assert not any("report-error" in l for l in lines)
 
-    def test_report_error_pointer_needs_an_error(self):
-        data = self._make_data(n_auto=0)
-        data["issues"][0]["severity"] = "warning"
-        data["summary"]["errors"] = 0
-        data["summary"]["warnings"] = 1
-        assert not any("report-error" in l for l in rcs.render_run_issues(data))
-
     def test_issue_title_always_shown(self):
         lines = rcs.render_run_issues(self._make_data())
         assert any("Agent exceeded maxTurns" in l for l in lines)
@@ -628,6 +621,74 @@ class TestRenderRunIssues:
     def test_empty_data_returns_empty(self):
         assert rcs.render_run_issues(None) == []
         assert rcs.render_run_issues({"schema_version": 1, "issues": [], "summary": {}}) == []
+
+
+class TestUserVisibleIssues:
+    """What an end user is shown when APPSEC_PLUGIN_DEV is off."""
+
+    def _data(self, *issues: dict) -> dict:
+        return {
+            "schema_version": 1,
+            "issues": list(issues),
+            "summary": {
+                "errors": sum(1 for i in issues if i["severity"] == "error"),
+                "warnings": sum(1 for i in issues if i["severity"] == "warning"),
+                "perf_anomalies": 0,
+                "recovery_events": 0,
+                "auto_applicable_fixes": 0,
+            },
+        }
+
+    @pytest.mark.parametrize(
+        "category",
+        [
+            "agent_error",
+            "tool_error",
+            "render_failed",
+            "max_turns_subagent",
+            "inline_shortcut_unresolved",
+            "run_incomplete",
+        ],
+    )
+    def test_errors_that_reach_the_deliverable_are_kept(self, category: str):
+        issue = {"severity": "error", "category": category, "title": "x"}
+        assert rcs.user_visible_issues([issue]) == [issue]
+
+    @pytest.mark.parametrize("category", ["perf_anomaly_phase", "stage1_excessive_duration"])
+    def test_perf_only_errors_are_dropped(self, category: str):
+        assert rcs.user_visible_issues([{"severity": "error", "category": category, "title": "slow"}]) == []
+
+    @pytest.mark.parametrize("severity", ["warning", "info"])
+    def test_below_error_is_dropped(self, severity: str):
+        assert rcs.user_visible_issues([{"severity": severity, "category": "tool_error", "title": "x"}]) == []
+
+    def test_block_is_suppressed_when_nothing_survives(self):
+        data = self._data(
+            {"severity": "warning", "category": "budget_warn", "title": "Budget warning"},
+            {"severity": "error", "category": "perf_anomaly_phase", "title": "Phase 9 ran long"},
+        )
+        assert rcs.render_run_issues(data) == []
+
+    def test_the_same_run_is_still_fully_visible_to_a_developer(self):
+        data = self._data(
+            {"severity": "warning", "category": "budget_warn", "title": "Budget warning"},
+            {"severity": "error", "category": "perf_anomaly_phase", "title": "Phase 9 ran long"},
+        )
+        lines = rcs.render_run_issues(data, plugin_dev=True)
+        assert any("Phase 9 ran long" in l for l in lines)
+        assert any("Budget warning" in l for l in lines)
+
+    def test_counts_describe_only_what_is_on_screen(self):
+        data = self._data(
+            {"severity": "error", "category": "render_failed", "title": "RENDER_FAILED: section 7"},
+            {"severity": "warning", "category": "budget_warn", "title": "Budget warning"},
+            {"severity": "error", "category": "perf_anomaly_phase", "title": "Phase 9 ran long"},
+        )
+        lines = rcs.render_run_issues(data)
+        status = next(l for l in lines if "Status" in l)
+        assert "1 issue(s) (1 error)" in status
+        assert not any("warning" in l for l in lines)
+        assert not any("Phase 9 ran long" in l for l in lines)
 
 
 class TestCLISmoke:
@@ -696,6 +757,29 @@ class TestCLISmoke:
         )
         assert r.returncode == 0
         assert "none recorded" in r.stdout
+
+    def test_issues_only_distinguishes_filtered_from_empty(self, tmp_path: Path):
+        """Issues were recorded but none reached the report — say which it is."""
+        (tmp_path / ".run-issues.json").write_text(
+            '{"schema_version": 1, "run_status": "issues", '
+            '"summary": {"errors": 0, "warnings": 1}, '
+            '"issues": [{"severity": "warning", "category": "budget_warn", "title": "budget"}]}'
+        )
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--issues-only",
+                "--output-dir",
+                str(tmp_path),
+                "--repo-root",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0
+        assert "none affecting the report" in r.stdout
 
     def test_minimal_full_run(self, tmp_path: Path):
         out = self._minimal_output_dir(tmp_path)
