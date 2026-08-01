@@ -75,19 +75,19 @@ def _load(path: Path) -> dict:
         return {}
 
 
-def _screening_ids(output_dir: Path) -> set[str]:
-    """Component ids dispatched at screening depth, from the dispatch manifest.
+def _light_ids(output_dir: Path) -> set[str] | None:
+    """Component ids dispatched at light depth, from the dispatch manifest.
 
     ``build_stride_dispatch_manifest.py`` marks every cheap-stride entry with
     ``cheap_stride: true``, so the tier is known deterministically here — the
     poller never has to infer it from the turn budget. Absent or unreadable
-    manifest → empty set, i.e. every component renders as full depth, which is
-    the truthful fallback when the tier cannot be established.
+    manifest → ``None``: the tier could not be established, so no entry claims
+    one. Printing ``(full)`` there would assert a depth nobody verified.
     """
     manifest = _load(output_dir / ".stride-dispatch-manifest.json")
     components = manifest.get("components") if isinstance(manifest, dict) else None
     if not isinstance(components, list):
-        return set()
+        return None
     return {
         str(c.get("component_id"))
         for c in components
@@ -95,13 +95,23 @@ def _screening_ids(output_dir: Path) -> set[str]:
     }
 
 
-def _format_entry(data: dict, done: bool, stale: bool, marks: dict, screening: bool = False) -> str:
+def _tier(comp_id: str, light_ids: set[str] | None) -> str:
+    """``(light)`` / ``(full)`` prefix for a component, ``''`` when unknown.
+
+    Both tiers are named so the list reads as a depth column; a lone marked
+    entry reads as an anomaly instead of a tier.
+    """
+    if light_ids is None:
+        return ""
+    return "(light) " if comp_id in light_ids else "(full) "
+
+
+def _format_entry(data: dict, done: bool, stale: bool, marks: dict, tier: str = "") -> str:
     name = data.get("component_name") or data.get("component_id") or "?"
     # The tier rides with the name so it survives into .appsec-progress.json and
-    # from there into watch_run.py — a screened component must never read as a
-    # full-depth one in any live view.
-    if screening:
-        name = f"{name} (screening)"
+    # from there into watch_run.py — a light-depth component must never read as
+    # a full-depth one in any live view.
+    name = f"{tier}{name}"
     if done:
         return f"{name} {marks['done']}"
     step = data.get("step")
@@ -195,7 +205,7 @@ def main(argv: list[str]) -> int:
 
     progress_files = sorted(progress_dir.glob("*.json")) if progress_dir.exists() else []
     now = time.time()
-    screening_ids = _screening_ids(output_dir)
+    light_ids = _light_ids(output_dir)
 
     entries: list[str] = []
     seen_ids: set[str] = set()
@@ -211,7 +221,7 @@ def main(argv: list[str]) -> int:
                 stale = (now - mtime) > STALE_SECONDS
             except OSError:
                 stale = True
-        entries.append(_format_entry(data, done=done, stale=stale, marks=marks, screening=comp_id in screening_ids))
+        entries.append(_format_entry(data, done=done, stale=stale, marks=marks, tier=_tier(comp_id, light_ids)))
 
     # Components that already produced final output but never wrote progress.
     # Flag as potentially stale if the output file is older than STALE_SECONDS
@@ -224,7 +234,7 @@ def main(argv: list[str]) -> int:
             stale = (now - mtime) > STALE_SECONDS
         except OSError:
             pass
-        name = f"{cid} (screening)" if cid in screening_ids else cid
+        name = f"{_tier(cid, light_ids)}{cid}"
         label = f"{name} {marks['done']}"
         if stale:
             label += f" {marks['stale']} (no progress file — may be stale)"

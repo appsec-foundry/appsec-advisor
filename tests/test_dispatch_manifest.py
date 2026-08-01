@@ -577,7 +577,7 @@ def test_builder_cheap_stride_discloses_screening_in_selection(tmp_path):
     assert any("--cheap-stride" in r for r in by_id["batch-worker"]["reasons"])
     assert by_id["frontend-spa"] == "frontend-spa" or "analysis_depth" not in by_id["frontend-spa"]
     # In criteria mode the console carries the disclosure as a selection reason.
-    assert "screening depth (--cheap-stride)" in bm.format_selection_console(sel)
+    assert "light depth (--cheap-stride)" in bm.format_selection_console(sel)
 
 
 def test_builder_cheap_stride_discloses_screening_in_passthrough_console(tmp_path):
@@ -606,7 +606,7 @@ def test_builder_cheap_stride_discloses_screening_in_passthrough_console(tmp_pat
     by_id = {(e["id"] if isinstance(e, dict) else e): e for e in sel["selected"]}
     assert by_id["ci-cd-pipeline"]["analysis_depth"] == "screening"
     assert by_id["core-api"] == "core-api"  # exposure-unknown → untouched, full depth
-    assert "(screening)" in bm.format_selection_console(sel)
+    assert "(light)" in bm.format_selection_console(sel)
 
 
 def test_builder_etc_label_bands_analyst_supplied_counts(tmp_path):

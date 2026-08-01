@@ -197,16 +197,17 @@ def test_agent_spawn_strips_repo_root_and_model_field():
 def test_agent_spawn_surfaces_stride_tier_from_stripped_param_block():
     """The [KEY=value] block is stripped as noise, but in the default headless
     view this line is the only per-component record — so the tier must be
-    lifted out before the strip, not discarded with it."""
+    lifted out before the strip, not discarded with it. The serialized value is
+    `screening`; every view shows the tier as `light`."""
     out = _render(
         [
             "2026-06-06T17:20:13Z  [067fff5c]  INFO   AGENT_SPAWN"
             "         appsec-advisor:appsec-stride-analyzer         model=sonnet"
-            "  STRIDE screening: CI/CD Pipeline"
+            "  STRIDE (light): CI/CD Pipeline"
             "  [REPO_ROOT=/workspace/juice-shop  COMPONENT_ID=ci-cd  ANALYSIS_DEPTH=screening]",
         ]
     )
-    assert "↳ appsec-stride-analyzer (sonnet, screening): STRIDE screening: CI/CD Pipeline" in out
+    assert "↳ appsec-stride-analyzer (sonnet, light): STRIDE (light): CI/CD Pipeline" in out
     assert "COMPONENT_ID" not in out
 
 
@@ -219,7 +220,7 @@ def test_agent_invoke_surfaces_depth_from_orchestrator_echo():
             "  STRIDE analysis for ci-cd (model: sonnet, MAX_TURNS=8, depth=screening)",
         ]
     )
-    assert "↳ stride-analyzer (sonnet, screening): STRIDE analysis for ci-cd" in out
+    assert "↳ stride-analyzer (sonnet, light): STRIDE analysis for ci-cd" in out
     # The pairs are shown in the tag, so the raw suffix must not be repeated.
     assert "MAX_TURNS=8" not in out
 

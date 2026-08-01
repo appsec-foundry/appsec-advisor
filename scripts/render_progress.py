@@ -59,6 +59,9 @@ def _parse_ts(ts: str):
         return None
 
 
+_TIER_DISPLAY = {"screening": "light"}
+
+
 def _kv(detail: str, key: str) -> str:
     # `)` terminates a value too: the orchestrator's own echoes put pairs inside
     # parentheses (`… (model: sonnet, MAX_TURNS=8, depth=screening)`), and
@@ -71,9 +74,12 @@ def _agent_tag(model: str, depth: str = "") -> str:
     """Parenthesised suffix for an agent line: model, plus the STRIDE tier.
 
     ``depth`` is empty for every agent that is not a STRIDE analyzer, so the
-    tag stays exactly as it was for them.
+    tag stays exactly as it was for them. The serialized tier value is
+    ``screening`` (manifest ``analysis_depth``, log ``ANALYSIS_DEPTH``); every
+    view shows it as ``light``, the word the dispatch labels and the pre-flight
+    use, so one tier never carries two names on screen.
     """
-    parts = [p for p in (model, depth) if p]
+    parts = [p for p in (model, _TIER_DISPLAY.get(depth, depth)) if p]
     return f" ({', '.join(parts)})" if parts else ""
 
 

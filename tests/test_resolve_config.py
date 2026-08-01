@@ -2452,7 +2452,7 @@ class TestStrideDepthDisplay:
             cheap_stride_label="on (--cheap-stride)",
         )
         s = rc._format_stride_depth(cfg)
-        assert "cheap-stride on (--cheap-stride)" in s and "screening depth" in s
+        assert "cheap-stride on (--cheap-stride)" in s and "light depth" in s
         auto = rc._format_stride_depth(
             _base_cfg(
                 stride_profile={"stride_profile_label": "full"},

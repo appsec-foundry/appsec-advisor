@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The live STRIDE views now label both analysis tiers, `STRIDE (full):` and `STRIDE (light):`, so a shorter pass reads as a depth column instead of one component being flagged as an anomaly.
 - The `Run Issues` block now appears only when something reached the delivered report; a slow phase, a budget warning, or a recovery that worked no longer makes a sound run look broken.
 - A finding with verified evidence at a confirmed internet ingress can now be raised by one severity band, up to High, while CWE caps still apply.
 - `show-threat-model` now opens with the report's verdict and the worst-case scenarios behind it, and points at the other skills before the numbers rather than after them.

@@ -37,8 +37,8 @@ surfaces:
     # concurrent + concrete anti-serial check) is load-bearing operational
     # detail, the same category the headroom guard protects -- not discretionary.
     # Raised 9200->9400 (2026-07-25): the dispatch description now names the
-    # analysis tier (`STRIDE screening: <NAME>` for a cheap_stride entry) so the
-    # agent list says which components run at screening depth. At 9200 the file
+    # analysis tier (`STRIDE (light): <NAME>` for a cheap_stride entry) so the
+    # agent list says which components run at light depth. At 9200 the file
     # sat at 89.8%, leaving 14 bytes -- less than any wording of that rule costs.
     max_bytes: 11000
   thin_stage1b_runtime:

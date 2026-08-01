@@ -1507,7 +1507,7 @@ def build_parser() -> argparse.ArgumentParser:
     # six-category screening pass. Defaulting it is only safe BECAUSE of the
     # exposure-unknown fail-safe: unreliable zone tags cost budget, never depth.
     p.add_argument("--cheap-stride", action="store_true", dest="cheap_stride",
-                   help="Force screening-depth STRIDE (~8 turns, all 6 categories "
+                   help="Force light-depth STRIDE (~8 turns, all 6 categories "
                         "kept) for the internal tail at any depth; exposed, auth, "
                         "frontend, LLM, file-upload, realtime, data-store and "
                         "core-backend (API/gateway) components keep full depth, as "
@@ -3076,7 +3076,7 @@ def _format_stride_depth(cfg: dict) -> str:
     label = cfg.get("cheap_stride_label") or ("on" if cheap else "off")
     if cheap:
         depth_part = (
-            f"cheap-stride {label} — internal tail at screening depth "
+            f"cheap-stride {label} — internal tail at light depth "
             "(~8 turns, all 6 categories)"
         )
     else:

@@ -71,7 +71,7 @@ DEPTH & MODEL
                                High/Medium/Low tail to cut tokens; full depth
                                (CVSS, evidence, greps) otherwise unchanged.
                                Off by default.
-  --cheap-stride               Cost lever: screening-depth STRIDE for the internal
+  --cheap-stride               Cost lever: light-depth STRIDE for the internal
                                tail (flat 8-turn pass, all six categories kept).
                                Auth, frontend, LLM, internet-exposed, file-upload,
                                realtime, data-store and core-backend (API/gateway)

@@ -119,7 +119,7 @@ Use this path when `PARALLEL_STRIDE=true`.
      Persisted attempts survive parent-session resume.
 
    Each component uses `appsec-advisor:appsec-stride-analyzer`, description
-   `STRIDE: <NAME>` — `STRIDE screening: <NAME>` when the entry has
+   `STRIDE (full): <NAME>` — `STRIDE (light): <NAME>` when the entry has
    `cheap_stride` — and the complete manifest mapping: `COMPONENT_ID`, `NAME`,
    `DESCRIPTION`, `PATHS`, `COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`,
    `INTERFACES`,

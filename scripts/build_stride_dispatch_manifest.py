@@ -1326,7 +1326,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             entry = {"id": entry_id, "reasons": []}
             selected_entries[i] = entry
         entry["analysis_depth"] = "screening"
-        entry["reasons"] = [*(entry.get("reasons") or []), "screening depth (--cheap-stride)"]
+        entry["reasons"] = [*(entry.get("reasons") or []), "light depth (--cheap-stride)"]
     # Persist the selection rationale so a run is auditable (which components were
     # analyzed and why) and so EXPOSURE_CAP_LIFT can be post-hoc verified.
     try:
@@ -1506,7 +1506,7 @@ def format_selection_console(sel: dict) -> str:
         ids = [
             s
             if isinstance(s, str)
-            else s.get("id", "?") + (" (screening)" if s.get("analysis_depth") == "screening" else "")
+            else s.get("id", "?") + (" (light)" if s.get("analysis_depth") == "screening" else "")
             for s in selected
         ]
         lines.append(f"  ANALYZED ({len(ids)}): " + (", ".join(ids) or "(none)"))
