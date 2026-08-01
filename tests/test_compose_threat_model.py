@@ -5598,3 +5598,38 @@ def test_weakness_remediation_rollup_is_deduped():
             if mid not in tactical:
                 tactical.append(mid)
     assert tactical == ["M-015", "M-020"]  # M-015 deduped across the two findings
+
+
+def test_boundary_crossing_normalises_the_names_ascii_arrow():
+    """`->` in the analyst-authored name must not survive into the cell.
+
+    `_safe_boundary_text` html-escapes it to `-&gt;`, and the QA pass that
+    re-emits §1 as a fixed-layout HTML table escapes the `&` again — so the
+    reader saw a literal `-&gt;` (user 2026-08-01). Only rows whose `name`
+    carries a `: mechanism` tail were affected, because the `from → to` fallback
+    never produces an escapable character; both branches now agree.
+    """
+    row = {
+        "id": "tb-1",
+        "from": "external",
+        "to": "express-backend",
+        "name": "external -> express-backend: security.isAuthorized() expressJwt middleware",
+        "enforcement_point": "security.isAuthorized() expressJwt middleware",
+    }
+    crossing, _mechanism = compose._boundary_crossing_and_mechanism(row)
+    assert crossing == "external → express-backend"
+    assert "&gt;" not in compose._safe_boundary_text(crossing, table=True)
+
+
+def test_boundary_crossing_keeps_the_names_disambiguating_qualifier():
+    """Normalising the arrow must not cost the qualifier — it is the only thing
+    telling two rows over the same component pair apart."""
+    row = {
+        "id": "tb-9",
+        "from": "external",
+        "to": "backend-api",
+        "name": "external -> backend-api B2B eval: some control",
+        "enforcement_point": "some control",
+    }
+    crossing, _mechanism = compose._boundary_crossing_and_mechanism(row)
+    assert crossing == "external → backend-api B2B eval"

@@ -15363,7 +15363,20 @@ def _boundary_crossing_and_mechanism(row: dict) -> tuple[str, str]:
     name = " ".join(str(row.get("name") or "").split())
     head, sep, _tail = name.partition(": ")
     if sep and re.match(rf"^{re.escape(source)}{_BOUNDARY_ARROW_RE}{re.escape(target)}\b", head):
-        crossing = head
+        # Adopt the name's qualifier, NOT its arrow glyph. Analysts write ASCII
+        # `->`; `_safe_boundary_text` html-escapes that to `-&gt;` and the QA
+        # pass that re-emits the catalogue as a fixed-layout HTML table escapes
+        # the `&` again, so the reader saw a literal `-&gt;` (user 2026-08-01)
+        # — but only on rows whose `name` carries a `: mechanism` tail, since
+        # the `from → to` branch above never produces a character that escapes.
+        # Normalising to that branch's glyph makes the two agree by
+        # construction and leaves nothing for either pass to escape.
+        crossing = re.sub(
+            rf"^{re.escape(source)}{_BOUNDARY_ARROW_RE}{re.escape(target)}",
+            f"{source} → {target}",
+            head,
+            count=1,
+        )
     mechanism = str(row.get("enforcement_point") or "").strip()
     return crossing, " ".join(mechanism.split())
 
