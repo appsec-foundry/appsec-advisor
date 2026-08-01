@@ -499,8 +499,13 @@ def build_banner(cwd: str) -> str:
     # Outside a project there is no threat-model state to report, and "no threat
     # model" would be a complaint about a directory nobody meant to scan.
     # Announce who we are, and coding-baseline status when it needs action.
+    # The baseline line still gets ``repo``: instruction discovery reads the
+    # working directory, not git, so a CLAUDE.md sitting in a checkout that was
+    # never initialised is loaded by Claude Code and has to count as loaded here
+    # — dropping it reports "not installed" over rules that are in context, and
+    # sends the reader to install a second copy beside them.
     if not _in_repository(repo) and not (output_dir / "threat-model.yaml").is_file():
-        return "\n".join(filter(None, [identity, _baseline_line(None)]))
+        return "\n".join(filter(None, [identity, _baseline_line(repo)]))
 
     banner = [identity, _threat_model_line(repo, output_dir)]
     baseline = _baseline_line(repo)

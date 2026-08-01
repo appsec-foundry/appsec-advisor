@@ -251,6 +251,20 @@ def test_outside_a_repository_the_baseline_is_still_reported(tmp_path, monkeypat
     assert "not installed" in lines[1]
 
 
+def test_outside_a_repository_a_project_baseline_still_counts(tmp_path, monkeypatch):
+    """A CLAUDE.md is loaded by Claude Code whether or not git was ever run here.
+
+    Reporting "not installed" over rules that are in context is the worst of the
+    two errors: it sends the reader to install a second, older copy beside them.
+    """
+    monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
+    install_baseline_for(tmp_path)
+    lines = session_banner.build_banner(str(tmp_path)).splitlines()
+    assert lines[1].startswith(BASELINE_NAME)
+    assert CONFIG["baseline"]["id"] in lines[1]
+    assert "not installed" not in lines[1]
+
+
 def test_a_model_outside_a_repository_is_still_reported(tmp_path, monkeypatch):
     """An --output directory need not be a working tree; the model still counts."""
     monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
