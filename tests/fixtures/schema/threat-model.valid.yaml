@@ -34,6 +34,8 @@ trust_boundaries:
     confidence: inferred
     resolution_status: resolved
     sources: [detected]
+    assumption_verdict: unconfirmed
+    adjacent_finding_ids: [T-001]
 
 security_controls:
   - domain: Authorization

@@ -420,6 +420,16 @@ properties:
           uniqueItems: true
           maxItems: 24
           items: {type: string, minLength: 1, maxLength: 128}
+        # Written back by triage_compute_ranking.write_outputs — derived from the
+        # findings, never authored. `adjacent_finding_ids` appears only on an
+        # `unconfirmed` row: findings sitting in the components this crossing
+        # protects, none of which reference it.
+        assumption_verdict: {type: string, enum: [refuted, unconfirmed, clean, not-examined]}
+        adjacent_finding_ids:
+          type: array
+          uniqueItems: true
+          maxItems: 50
+          items: {type: string, pattern: "^T-\\d+$"}
       allOf:
         - if:
             properties: {resolution_status: {const: resolved}}

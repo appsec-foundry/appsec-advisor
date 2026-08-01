@@ -264,6 +264,9 @@ def _boundary_record(b: dict) -> dict:
         "status": (b.get("resolution_status") or "").strip(),
         "confidence": (b.get("confidence") or "").strip(),
         "assumption": _trim(b.get("assumption") or ""),
+        # Derived by triage; absent on a model that never passed through it.
+        "assumption_verdict": (b.get("assumption_verdict") or "").strip(),
+        "adjacent_finding_ids": [str(fid) for fid in b.get("adjacent_finding_ids") or []],
         "sources": [str(source) for source in b.get("sources") or []],
         "findings": [],
     }
@@ -851,7 +854,14 @@ def render_detail(focus: dict) -> str:
         buf.append(f"  Crossing: {boundary['from'] or '?'} -> {boundary['to'] or '?'}")
         if boundary["assumption"]:
             buf.append(f"  Assumption: {boundary['assumption']}")
+        if boundary["assumption_verdict"]:
+            buf.append(f"  Verdict: {boundary['assumption_verdict']}")
         buf.append("  Linked findings: " + (", ".join(finding["id"] for finding in focus["findings"]) or "(none)"))
+        # Only ever populated on an `unconfirmed` row: findings behind this
+        # crossing that nothing connected to it. Without this line the row reads
+        # as "nothing to see here" when the opposite is true.
+        if boundary["adjacent_finding_ids"]:
+            buf.append("  Adjacent findings (unlinked): " + ", ".join(boundary["adjacent_finding_ids"]))
     return "\n".join(buf) + "\n"
 
 

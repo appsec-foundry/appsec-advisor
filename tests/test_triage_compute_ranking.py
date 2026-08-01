@@ -1323,3 +1323,255 @@ def test_confirmed_weakness_not_double_ranked(tmp_path: Path) -> None:
     ranking = tcr.compute_ranking(tmp_path, PLUGIN_ROOT)
     ranked = ranking["views"]["top_findings"]["findings_ranked"]
     assert not any(r["id"] == "W-001" for r in ranked)
+
+
+# ---------------------------------------------------------------------------
+# Boundary graph — breach_distance derived from crossings instead of guessed
+# ---------------------------------------------------------------------------
+
+
+def _graph_yaml(*, refuted: bool = True, confidence: str = "confirmed") -> dict:
+    """One ingress crossing, one finding that refutes it, one finding behind it.
+
+    The refuter carries `boundary_refs`; the passenger does not — it is the one
+    whose distance the graph is allowed to correct.
+    """
+    data = _minimal_yaml(
+        [
+            {
+                "id": "T-001",
+                "title": "Missing authentication (routes/a.ts:1)",
+                "component": "api",
+                "cwe": "CWE-306",
+                "risk": "High",
+                "impact": "High",
+                "likelihood": "High",
+                "evidence": {"file": "routes/a.ts", "line": 1},
+                **({"boundary_refs": [{"boundary_id": "tb-1", "origin_component_id": "api"}]} if refuted else {}),
+            },
+            {
+                "id": "T-002",
+                "title": "Path traversal (routes/b.ts:9)",
+                "component": "api",
+                "cwe": "CWE-22",
+                "risk": "High",
+                "impact": "High",
+                "likelihood": "Medium",
+                "evidence": {"file": "routes/b.ts", "line": 9},
+            },
+        ]
+    )
+    data["components"] = [{"id": "api"}]
+    data["trust_boundaries"] = [
+        {
+            "id": "tb-1",
+            "name": "external -> api",
+            "kind": "network",
+            "assumption": "Protected routes require a verified JWT.",
+            "evidence": [],
+            "from": "external",
+            "to": "api",
+            "resolution_status": "resolved",
+            "confidence": confidence,
+        }
+    ]
+    return data
+
+
+def _distances(tmp_path: Path) -> dict[str, tuple[int, str]]:
+    model = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    return {t["id"]: (t["breach_distance"], t.get("breach_distance_reason", "")) for t in model["threats"]}
+
+
+def test_graph_lowers_a_guessed_distance_behind_a_refuted_ingress(tmp_path: Path) -> None:
+    """CWE-22 defaults to 2 ("authenticated user"). The crossing that would have
+    required that authentication is refuted by T-001, so the assumption behind
+    the 2 does not hold and the finding is reachable unauthenticated."""
+    _write_yaml(tmp_path / "threat-model.yaml", _graph_yaml())
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    distance, reason = _distances(tmp_path)["T-002"]
+    assert distance == 1
+    assert reason == "boundary_path:external>tb-1[refuted]>api"
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert flags["ranking"]["reconciliation_summary"]["findings_redistanced_via_boundary_graph"] == 1
+    assert flags["ranking"]["reconciliation_summary"]["boundaries_with_refuted_assumption"] == 1
+
+
+def test_graph_leaves_a_holding_crossing_alone(tmp_path: Path) -> None:
+    """Nothing refutes the crossing, so it costs a hop and the guess stands."""
+    _write_yaml(tmp_path / "threat-model.yaml", _graph_yaml(refuted=False))
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    distance, reason = _distances(tmp_path)["T-002"]
+    assert distance == 2
+    assert reason.startswith("cwe_default:")
+
+
+def test_graph_needs_a_confirmed_boundary_to_open_a_crossing(tmp_path: Path) -> None:
+    """An `inferred` row has not been established well enough to re-rate anyone."""
+    _write_yaml(tmp_path / "threat-model.yaml", _graph_yaml(confidence="inferred"))
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    assert _distances(tmp_path)["T-002"][0] == 2
+
+
+def test_graph_ignores_a_refuter_whose_evidence_did_not_survive(tmp_path: Path) -> None:
+    """Same gate the elevation path applies: a finding that cannot raise a
+    severity must not open a crossing for everyone else either."""
+    data = _graph_yaml()
+    data["threats"][0]["evidence_check"] = "refuted"
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    assert _distances(tmp_path)["T-002"][0] == 2
+
+
+def test_graph_never_touches_a_distance_of_three(tmp_path: Path) -> None:
+    """A 3 encodes a non-network prerequisite the graph cannot see — juice-shop's
+    committed secrets need repository access, however open the perimeter is."""
+    data = _graph_yaml()
+    data["threats"][1].update({"cwe": "CWE-798", "title": "Hardcoded credential (lib/keys.ts:3)"})
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    distance, reason = _distances(tmp_path)["T-002"]
+    assert distance == 3
+    assert reason.startswith("cwe_default:")
+
+
+def test_graph_skips_a_finding_whose_only_refs_are_egress(tmp_path: Path) -> None:
+    """An outbound key leak needs an observer position, not an HTTP request, so
+    its component's ingress reachability must not re-rate it (juice-shop T-075)."""
+    data = _graph_yaml()
+    data["trust_boundaries"].append(
+        {
+            "id": "tb-2",
+            "name": "api -> external",
+            "kind": "third-party",
+            "assumption": "Credentials never travel in a URL.",
+            "evidence": [],
+            "from": "api",
+            "to": "external",
+            "resolution_status": "resolved",
+            "confidence": "confirmed",
+        }
+    )
+    data["threats"][1]["boundary_refs"] = [{"boundary_id": "tb-2", "origin_component_id": "api"}]
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    assert _distances(tmp_path)["T-002"][0] == 2
+
+
+def test_graph_accumulates_cost_across_holding_crossings(tmp_path: Path) -> None:
+    """Two crossings that hold put the component two hops in — far enough that a
+    guessed 2 is already the better (lower) answer and stands."""
+    data = _graph_yaml(refuted=False)
+    data["components"].append({"id": "db"})
+    data["trust_boundaries"].append(
+        {
+            "id": "tb-2",
+            "name": "api -> db",
+            "kind": "process",
+            "assumption": "Every query is parameter-bound.",
+            "evidence": [],
+            "from": "api",
+            "to": "db",
+            "resolution_status": "resolved",
+            "confidence": "confirmed",
+        }
+    )
+    data["threats"][1]["component"] = "db"
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    assert _distances(tmp_path)["T-002"][0] == 2
+
+
+def test_graph_leaves_an_unreachable_component_to_the_heuristic(tmp_path: Path) -> None:
+    data = _graph_yaml()
+    data["components"].append({"id": "batch"})
+    data["threats"][1]["component"] = "batch"
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    distance, reason = _distances(tmp_path)["T-002"]
+    assert distance == 2
+    assert reason.startswith("cwe_default:")
+
+
+def test_model_without_trust_boundaries_is_a_no_op(tmp_path: Path) -> None:
+    data = _graph_yaml()
+    data["trust_boundaries"] = []
+    data["threats"][0].pop("boundary_refs", None)
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    assert _distances(tmp_path)["T-002"][0] == 2
+    summary = json.loads((tmp_path / ".triage-flags.json").read_text())["ranking"]["reconciliation_summary"]
+    assert summary["findings_redistanced_via_boundary_graph"] == 0
+    assert summary["boundaries_with_refuted_assumption"] == 0
+
+
+def test_write_outputs_persists_the_verdict_and_the_unlinked_neighbours(tmp_path: Path) -> None:
+    """Derived adjacency cannot live in `boundary_refs` (the validator strips it),
+    so the row carries it — this is what fills the blank juice-shop's tb-2 showed
+    while eight CI/CD findings sat behind it unlinked."""
+    data = _graph_yaml(refuted=False)
+    data["components"].append({"id": "worker"})
+    data["trust_boundaries"].append(
+        {
+            "id": "tb-2",
+            "name": "external -> worker",
+            "kind": "build",
+            "assumption": "Every job runs with a minimal permissions block.",
+            "evidence": [],
+            "from": "external",
+            "to": "worker",
+            "resolution_status": "resolved",
+            "confidence": "inferred",
+        }
+    )
+    data["threats"][1]["component"] = "worker"
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    rows = {b["id"]: b for b in yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["trust_boundaries"]}
+    assert rows["tb-1"]["assumption_verdict"] == "unconfirmed"
+    assert rows["tb-1"]["adjacent_finding_ids"] == ["T-001"]
+    assert rows["tb-2"]["assumption_verdict"] == "unconfirmed"
+    assert rows["tb-2"]["adjacent_finding_ids"] == ["T-002"]
+    # The private hand-off never reaches the flags file.
+    assert "_boundary_updates" not in json.loads((tmp_path / ".triage-flags.json").read_text())["ranking"]
+
+
+def test_refuted_row_records_its_verdict_without_neighbour_ids(tmp_path: Path) -> None:
+    _write_yaml(tmp_path / "threat-model.yaml", _graph_yaml())
+
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+
+    assert res.returncode == 0, res.stderr
+    row = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["trust_boundaries"][0]
+    assert row["assumption_verdict"] == "refuted"
+    assert "adjacent_finding_ids" not in row

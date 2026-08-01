@@ -50,6 +50,7 @@ import _yaml_io
 import plugin_meta
 import yaml  # noqa: F401  (kept for downstream callers writing yaml)
 from prepare_trust_boundary_context import (
+    boundary_assumption_state,
     boundary_endpoints_valid,
     validate_finding_boundary_refs,
 )
@@ -180,7 +181,133 @@ def _finding_cvss(t: dict) -> float:
 
 # ---------------------------------------------------------------------------
 # Step 6a — breach distance
+#
+# Two sources, in this order: the heuristic patterns below, then the trust-
+# boundary graph, which may only LOWER what the heuristic guessed. See
+# `_boundary_graph_distance` for why the graph is the better evidence and
+# `_apply_boundary_graph_distance` for the three cases where it must keep out.
 # ---------------------------------------------------------------------------
+
+
+def _boundary_graph_distance(yaml_data: dict) -> tuple[dict[str, int], dict[str, str], dict[str, str]]:
+    """Distance from `external` to each component THROUGH the boundaries.
+
+    Returns (distance by component, reason by component, state by boundary id).
+
+    `_compute_breach_distance` answers "how far is this finding from an
+    unauthenticated attacker?" by guessing from the CWE and from filename hints
+    (`cwe_default:CWE-306`, `unauth_hint:server.ts`). The threat model already
+    holds the evidence-backed answer: the crossings between `external` and the
+    finding's component, each with a verdict on whether its assumption survives.
+    A crossing whose assumption is REFUTED stops nothing, so it costs 0 hops; one
+    that holds costs 1. The resulting distance is auditable — `boundary_path:
+    external>tb-1[refuted]>express-backend` names the crossings a reader can look
+    up — and self-correcting: close the gaps at tb-1 and the next run re-rates
+    everything behind it without anyone touching a severity.
+
+    Egress rows (`to == "external"`) never create an edge. They describe what
+    leaves, not a path an attacker takes inward; treating one as an edge would
+    make every component that talks to a third party internet-adjacent.
+
+    A row is traversable from any of `{from} | covers - {to}` and lands on every
+    node in `{to} | covers - {from}`, which covers both consolidation flavours
+    (folded-in sources and folded-in targets) without needing to know which one
+    produced the row. `min()` over paths makes a spurious longer path harmless.
+    """
+    threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)]
+    rows = [row for row in (yaml_data.get("trust_boundaries") or []) if isinstance(row, dict)]
+    states: dict[str, str] = {}
+    edges: list[tuple[str, set[str], set[str], int]] = []
+    for row in rows:
+        boundary_id = str(row.get("id") or "")
+        if not boundary_id:
+            continue
+        state, _ids = boundary_assumption_state(row, threats)
+        states[boundary_id] = state
+        source, target = row.get("from"), row.get("to")
+        if row.get("resolution_status") != "resolved" or not source or not target or target == "external":
+            continue
+        covers = {str(cid) for cid in (row.get("covers_components") or []) if cid}
+        starts = ({str(source)} | covers) - {str(target)}
+        lands = ({str(target)} | covers) - {str(source)}
+        # Only a CONFIRMED refutation opens a crossing. An `inferred` row has not
+        # been established well enough to lower anyone's distance on its word.
+        cost = 0 if state == "refuted" and row.get("confidence") == "confirmed" else 1
+        if starts and lands:
+            edges.append((boundary_id, starts, lands, cost))
+    if not edges:
+        return {}, {}, states
+
+    best: dict[str, tuple[int, tuple[str, ...]]] = {"external": (0, ())}
+    for _ in range(len(edges) + 1):
+        changed = False
+        for boundary_id, starts, lands, cost in edges:
+            reachable = [best[node] for node in starts if node in best]
+            if not reachable:
+                continue
+            from_cost, from_path = min(reachable, key=lambda item: (item[0], ">".join(item[1])))
+            candidate = (from_cost + cost, (*from_path, boundary_id))
+            for node in lands:
+                current = best.get(node)
+                if current is None or (candidate[0], ">".join(candidate[1])) < (current[0], ">".join(current[1])):
+                    best[node] = candidate
+                    changed = True
+        if not changed:
+            break
+
+    distance: dict[str, int] = {}
+    reason: dict[str, str] = {}
+    for component, (cost, path) in best.items():
+        if component == "external" or not path:
+            continue
+        distance[component] = min(3, 1 + cost)
+        trail = ">".join(f"{bid}[{states.get(bid, 'unknown')}]" for bid in path)
+        reason[component] = f"boundary_path:external>{trail}>{component}"
+    return distance, reason, states
+
+
+def _only_egress_boundary_refs(t: dict, boundaries: dict[str, dict]) -> bool:
+    """True when every boundary this finding names describes an OUTBOUND crossing.
+
+    Such a finding sits behind an internet-reachable component but is not reached
+    the way that component is: juice-shop's `ALCHEMY_API_KEY` travels in an
+    outbound WSS handshake URL, so exploiting it needs a network-observer or
+    proxy-log position, not an HTTP request. Lowering it to "unauthenticated
+    attacker from the internet" on its component's ingress reachability would
+    overstate it. A finding that names no boundary at all stays eligible — its
+    component's exposure is then the only evidence available.
+    """
+    refs = [ref for ref in (t.get("boundary_refs") or []) if isinstance(ref, dict)]
+    known = [boundaries[str(ref.get("boundary_id"))] for ref in refs if str(ref.get("boundary_id")) in boundaries]
+    return bool(known) and all(row.get("to") == "external" for row in known)
+
+
+def _apply_boundary_graph_distance(
+    t: dict,
+    distance: int,
+    reason: str,
+    graph_distance: dict[str, int],
+    graph_reason: dict[str, str],
+    boundaries: dict[str, dict],
+) -> tuple[int, str]:
+    """Let the graph LOWER a guessed distance. Three cases where it must not.
+
+    * `distance >= 3` — a 3 encodes a non-network prerequisite (repo read,
+      admin role, supply-chain position) that the graph cannot see. juice-shop's
+      committed-secret findings are 3 precisely because reaching them needs
+      repository access, and their component is internet-facing; the graph would
+      wrongly call them internet-reachable.
+    * the graph is not lower — the heuristic already found the shorter path
+      (e.g. an `unauth_hint` that resolved to 1); never raise it back.
+    * egress-only findings — see `_only_egress_boundary_refs`.
+    """
+    component = t.get("component") or t.get("component_id")
+    graph = graph_distance.get(str(component)) if isinstance(component, str) and component else None
+    if graph is None or distance >= 3 or graph >= distance:
+        return distance, reason
+    if _only_egress_boundary_refs(t, boundaries):
+        return distance, reason
+    return graph, graph_reason[str(component)]
 
 
 def _compute_breach_distance(t: dict, patterns: dict) -> tuple[int, str]:
@@ -658,14 +785,22 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
 
-    # 6a — breach distance per finding
+    # 6a — breach distance per finding: heuristic patterns, then the boundary
+    # graph, which may only lower what the patterns guessed.
+    graph_distance, graph_reason, boundary_states = _boundary_graph_distance(yaml_data)
+    boundary_by_id = {str(row.get("id")): row for row in boundaries if row.get("id")}
     bd_by_id: dict[str, int] = {}
     bd_reason: dict[str, str] = {}
+    redistanced = 0
     for t in findings:
         tid = _finding_id(t)
         if not tid:
             continue
         d, r = _compute_breach_distance(t, bd_patterns)
+        graphed, graphed_reason = _apply_boundary_graph_distance(t, d, r, graph_distance, graph_reason, boundary_by_id)
+        if graphed != d:
+            redistanced += 1
+            d, r = graphed, graphed_reason
         bd_by_id[tid] = d
         bd_reason[tid] = r
         # Augment yaml in-place (additive)
@@ -885,10 +1020,27 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         if role == "contributor" and _sev_rank(eff_by_id.get(tid, "")) <= _sev_rank("High")
     )
 
+    # Boundary annotations. Derived adjacency can never live in
+    # `threats[].boundary_refs` — `validate_finding_boundary_refs` requires an
+    # analyst rationale plus finding-owned evidence and strips anything else — so
+    # the row carries it instead. This is what fills the blank juice-shop's tb-2
+    # showed while eight CI/CD findings sat behind it unlinked (user 2026-08-01).
+    boundary_updates = []
+    for row in boundaries:
+        boundary_id = str(row.get("id") or "")
+        if not boundary_id:
+            continue
+        state, ids = boundary_assumption_state(row, findings)
+        update = {"id": boundary_id, "assumption_verdict": state}
+        if state == "unconfirmed" and ids:
+            update["adjacent_finding_ids"] = ids[:50]
+        boundary_updates.append(update)
+
     return {
         # Private hand-off consumed and removed by write_outputs. It is separate
         # from the display-capped top-50 view so every finding is persisted.
         "_finding_updates": finding_updates,
+        "_boundary_updates": boundary_updates,
         "method": "impact-weighted-v2",
         "ranked_at": _now_iso(),
         "computed_by": "triage_compute_ranking.py (deterministic)",
@@ -916,6 +1068,8 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         "reconciliation_summary": {
             "findings_elevated_via_chain": elevated_via_chain,
             "findings_elevated_via_external_boundary": elevated_via_external,
+            "findings_redistanced_via_boundary_graph": redistanced,
+            "boundaries_with_refuted_assumption": sum(1 for state in boundary_states.values() if state == "refuted"),
             "findings_capped_by_cwe": capped,
             "contributors_capped_at_high": contrib_capped,
             "boundary_refs_rejected_before_ranking": sum(
@@ -929,6 +1083,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
 def _empty_ranking_block() -> dict:
     return {
         "_finding_updates": [],
+        "_boundary_updates": [],
         "method": "impact-weighted-v2",
         "ranked_at": _now_iso(),
         "computed_by": "triage_compute_ranking.py (deterministic)",
@@ -953,6 +1108,8 @@ def _empty_ranking_block() -> dict:
         "reconciliation_summary": {
             "findings_elevated_via_chain": 0,
             "findings_elevated_via_external_boundary": 0,
+            "findings_redistanced_via_boundary_graph": 0,
+            "boundaries_with_refuted_assumption": 0,
             "findings_capped_by_cwe": 0,
             "contributors_capped_at_high": 0,
             "boundary_refs_rejected_before_ranking": 0,
@@ -1039,6 +1196,26 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
             t["chain_role"] = update["chain_role"]
             t["compound_chain_ids"] = update.get("compound_chain_ids", [])
             t["verified_chain_ids"] = update.get("verified_chain_ids", [])
+
+    # Boundary annotations — derived, never authored. `assumption_verdict` is what
+    # every consumer that cannot recompute the verdict (query CLI, exports, a next
+    # run's diff) reads; compose still derives it live because it also runs on a
+    # model that never passed through here.
+    boundary_updates = {
+        str(update.get("id")): update
+        for update in ranking.get("_boundary_updates", [])
+        if isinstance(update, dict) and update.get("id")
+    }
+    for row in yaml_data.get("trust_boundaries") or []:
+        update = boundary_updates.get(str(row.get("id"))) if isinstance(row, dict) else None
+        if not update:
+            continue
+        row["assumption_verdict"] = update["assumption_verdict"]
+        adjacent = update.get("adjacent_finding_ids")
+        if adjacent:
+            row["adjacent_finding_ids"] = adjacent
+        else:
+            row.pop("adjacent_finding_ids", None)
 
     # Update triage-flags.json
     if flags_path.is_file():
@@ -1145,7 +1322,7 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
             else {}
         ),
     }
-    flags["ranking"] = {key: value for key, value in ranking.items() if key != "_finding_updates"}
+    flags["ranking"] = {key: value for key, value in ranking.items() if not key.startswith("_")}
 
     yaml_path.write_text(
         yaml.safe_dump(yaml_data, sort_keys=False, allow_unicode=True, width=120),

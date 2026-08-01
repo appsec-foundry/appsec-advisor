@@ -46,6 +46,26 @@ def test_threat_model_output_example_validates() -> None:
     assert not errors, "\n".join(f"{'.'.join(str(p) for p in e.absolute_path) or 'root'}: {e.message}" for e in errors)
 
 
+def test_boundary_verdict_fields_are_constrained() -> None:
+    """`trust_boundaries` items are `additionalProperties: false`, so the two
+    fields triage writes back have to be declared — and constrained, because a
+    free-text verdict would let the scoring and the report drift apart."""
+    schema = yaml.safe_load((SCHEMAS_DIR / "threat-model.output.schema.yaml").read_text())
+    data = yaml.safe_load((ROOT / "tests" / "fixtures" / "schema" / "threat-model.valid.yaml").read_text())
+    row = data["trust_boundaries"][0]
+    validator = Draft202012Validator(schema)
+
+    assert row["assumption_verdict"] == "unconfirmed"
+    assert not list(validator.iter_errors(data))
+
+    row["assumption_verdict"] = "probably-fine"
+    assert list(validator.iter_errors(data)), "an unknown verdict must not validate"
+
+    row["assumption_verdict"] = "clean"
+    row["adjacent_finding_ids"] = ["F-001"]
+    assert list(validator.iter_errors(data)), "the yaml stores T-ids, not F-ids"
+
+
 @pytest.mark.parametrize("schema_path", ALL_JSON_SCHEMAS, ids=lambda p: p.name)
 def test_json_schema_is_valid_jsonschema(schema_path: Path) -> None:
     import json

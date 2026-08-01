@@ -621,6 +621,19 @@ SYS_SAMPLE = """\
         confidence: confirmed
         resolution_status: resolved
         sources: [detected]
+        assumption_verdict: refuted
+      - id: tb-2
+        name: Build pipeline
+        from: external
+        to: ci-cd
+        kind: build
+        assumption: Every job runs with a minimal permissions block.
+        evidence: []
+        confidence: inferred
+        resolution_status: resolved
+        sources: [detected]
+        assumption_verdict: unconfirmed
+        adjacent_finding_ids: [T-042, T-079]
     security_controls:
       - domain: Identity and Authentication
         control: Password-Based Authentication
@@ -664,7 +677,7 @@ def test_components_assets_boundaries_controls_are_indexed():
     sysv = _sys_facts()["system"]
     assert [c["id"] for c in sysv["components"]] == ["backend-api"]
     assert [a["name"] for a in sysv["assets"]] == ["User Account Database"]
-    assert [b["id"] for b in sysv["trust_boundaries"]] == ["tb-1"]
+    assert [b["id"] for b in sysv["trust_boundaries"]] == ["tb-1", "tb-2"]
     assert [c["effectiveness"] for c in sysv["controls"]] == ["Weak"]
     assert sysv["trust_boundaries"][0]["findings"] == ["F-001"]
 
@@ -679,6 +692,37 @@ def test_boundary_and_finding_detail_are_bidirectionally_linked():
 
     finding = qtm.lookup_id(facts, "F-001")
     assert "Trust boundary gap(s): tb-1 (backend-api)" in qtm.render_detail(finding)
+
+
+def test_boundary_detail_carries_the_derived_verdict_and_unlinked_neighbours():
+    """The verdict is what a boundary row is FOR — without it the reader has to
+    reconcile the assumption against the register by hand. `tb-2` is the shape
+    that used to read as silence: findings behind the crossing, none linked to it
+    (juice-shop shipped eight such on `external -> ci-cd-pipeline`)."""
+    facts = _sys_facts()
+
+    refuted = qtm.render_detail(qtm.lookup_id(facts, "tb-1"))
+    assert "Verdict: refuted" in refuted
+    assert "Adjacent findings" not in refuted
+
+    unconfirmed = qtm.render_detail(qtm.lookup_id(facts, "tb-2"))
+    assert "Verdict: unconfirmed" in unconfirmed
+    assert "Adjacent findings (unlinked): T-042, T-079" in unconfirmed
+    assert "Linked findings: (none)" in unconfirmed
+
+
+def test_boundary_detail_omits_the_verdict_on_an_untriaged_model():
+    """compose derives the verdict live, but a model that never passed through
+    triage carries none — the CLI must not print an empty label."""
+    import yaml
+
+    raw = yaml.safe_load(textwrap.dedent(SYS_SAMPLE))
+    for row in raw["trust_boundaries"]:
+        row.pop("assumption_verdict", None)
+        row.pop("adjacent_finding_ids", None)
+    detail = qtm.render_detail(qtm.lookup_id(qtm.build_facts(raw, None), "tb-1"))
+    assert "Verdict:" not in detail
+    assert "Adjacent findings" not in detail
 
 
 def test_linked_threats_are_cited_as_f_ids():
