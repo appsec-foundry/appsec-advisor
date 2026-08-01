@@ -11,7 +11,8 @@
     "name": "AI Secure Coding Baseline",
     "url": "https://raw.githubusercontent.com/matthiasrohr/ai-secure-coding-baseline/main/secure-coding-baseline.md",
     "fallback_file": "data/baselines/secure-coding-baseline.md",
-    "install_filename": "secure-coding-baseline.md"
+    "install_filename": "secure-coding-baseline.md",
+    "enforce": false
   },
   "external_context": {
     "enabled": true,

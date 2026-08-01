@@ -157,6 +157,10 @@ def load_config(plugin_root: Path | None = None) -> dict:
         "git": git if isinstance(git, dict) else None,
         "fallback_file": _clean(block.get("fallback_file")),
         "install_filename": _clean(block.get("install_filename")) or "secure-coding-baseline.md",
+        # Off unless an organization turned it on. Which rules a machine loads is
+        # the reader's own configuration, so the default is to report the state,
+        # not to fail on it.
+        "enforce": block.get("enforce") is True,
     }
     # An id is what the check compares against; without one there is nothing to
     # check for, so the feature is off regardless of ``enabled``.
@@ -336,6 +340,39 @@ def is_match(found: str, expected: str) -> bool:
     return found == expected or found.startswith(expected + "+")
 
 
+def _version_key(candidate: str) -> tuple[str, tuple[int, ...]] | None:
+    """Split ``aisec-0.3+acme`` into ``("aisec", (0, 3))``.
+
+    None when the id does not follow the ``<name>-<version>`` convention with a
+    dotted numeric version. An id nothing can order is not one this module
+    guesses at.
+    """
+    base = candidate.split("+", 1)[0]
+    name, separator, version = base.rpartition("-")
+    if not separator or not name or not version:
+        return None
+    parts = version.split(".")
+    if not all(part.isdigit() for part in parts):
+        return None
+    return name, tuple(int(part) for part in parts)
+
+
+def is_newer(found: str, expected: str) -> bool:
+    """True when ``found`` is a later version of the same baseline as ``expected``.
+
+    The baseline is published on its own schedule and a machine may well be
+    updated before the plugin that names it, so ``aisec-0.3`` where this build
+    knows ``aisec-0.1`` is ahead, not broken — and telling that reader to
+    install would overwrite the newer rules with older ones.
+
+    Only the same name and an orderable version qualify. An older version and a
+    different baseline both stay foreign, because those are the two states worth
+    reporting: rules that lag, and rules nobody here configured.
+    """
+    left, right = _version_key(found), _version_key(expected)
+    return bool(left and right and left[0] == right[0] and left[1] > right[1])
+
+
 # Reported narrowest-first: the scope a reader can act on locally is the more
 # useful one to name, and a policy deployment is the one they cannot change.
 _SCOPE_ORDER = {"project": 0, "user": 1, "policy": 2}
@@ -357,9 +394,10 @@ def check(
 
     Returns a dict that is stable enough to be the JSON contract of this
     module's CLI. ``status`` is ``installed`` (the expected id is loaded),
-    ``other`` (some baseline is loaded, but not the configured one), ``missing``
-    (no baseline is in Claude Code's context), or ``disabled`` (no baseline is
-    configured for this build).
+    ``newer`` (a later version of the same baseline is loaded), ``other`` (some
+    baseline is loaded, but not the configured one), ``missing`` (no baseline is
+    in Claude Code's context), or ``disabled`` (no baseline is configured for
+    this build).
 
     ``present_unloaded`` is separate from all of that: files that carry the
     baseline for another tool, or a copy sitting in the repository that nothing
@@ -372,6 +410,7 @@ def check(
         "expected_id": cfg["id"],
         "name": cfg["name"],
         "matches": [],
+        "newer": [],
         "other": [],
         "present_unloaded": [],
         "scopes": [],
@@ -383,7 +422,12 @@ def check(
 
     def record(found: str, scope: str, entry: Path, path: Path) -> None:
         item = {"id": found, "scope": scope, "entry": str(entry), "file": str(path)}
-        bucket = "matches" if is_match(found, cfg["id"]) else "other"
+        if is_match(found, cfg["id"]):
+            bucket = "matches"
+        elif is_newer(found, cfg["id"]):
+            bucket = "newer"
+        else:
+            bucket = "other"
         if item not in result[bucket]:
             result[bucket].append(item)
 
@@ -402,7 +446,7 @@ def check(
     # repository. Where those two spellings differ — a symlinked checkout, or
     # macOS, where /tmp is a link to /private/tmp — an already-imported
     # AGENTS.md would be listed a second time as if it were unwired.
-    loaded_files = {_resolved_str(item["file"]) for item in result["matches"] + result["other"]}
+    loaded_files = {_resolved_str(item["file"]) for item in result["matches"] + result["newer"] + result["other"]}
     for path, tool in _unloaded_carriers(repo, cfg):
         if not path.is_file() or _resolved_str(path) in loaded_files:
             continue
@@ -414,6 +458,9 @@ def check(
     if result["matches"]:
         result["status"] = "installed"
         result["scopes"] = sorted({m["scope"] for m in result["matches"]}, key=lambda s: _SCOPE_ORDER.get(s, 9))
+    elif result["newer"]:
+        result["status"] = "newer"
+        result["scopes"] = sorted({m["scope"] for m in result["newer"]}, key=lambda s: _SCOPE_ORDER.get(s, 9))
     elif result["other"]:
         result["status"] = "other"
         result["scopes"] = sorted({m["scope"] for m in result["other"]}, key=lambda s: _SCOPE_ORDER.get(s, 9))
@@ -455,10 +502,12 @@ def summary(result: dict) -> str:
     """
     name = result.get("name") or "secure-coding baseline"
     status = result.get("status")
-    if status == "installed":
-        ids = sorted({m["id"] for m in result["matches"]})
+    if status in ("installed", "newer"):
+        bucket = "matches" if status == "installed" else "newer"
+        ids = sorted({m["id"] for m in result[bucket]})
         scopes = _scope_labels(result)
-        return f"{name} {', '.join(ids)}" + (f" · {scopes}" if scopes else "")
+        line = f"{name} {', '.join(ids)}" + (f" · {scopes}" if scopes else "")
+        return line if status == "installed" else f"{line} · ahead of {result['expected_id']}"
 
     # Not loaded, but on disk for another tool or waiting to be wired up. Worth
     # the columns: it changes the next step from "install" to "connect".
@@ -473,7 +522,17 @@ def summary(result: dict) -> str:
     return f"{name} not loaded{found_note}" if carriers else f"{name} not installed"
 
 
-def _render(result: dict, config: dict) -> str:
+def is_failing(result: dict) -> bool:
+    """True for the states a gate should reject: no baseline, or a foreign one.
+
+    A newer version of the configured baseline is not one of them. It is the
+    same rules, further along, and a build that rejected it would be demanding
+    a downgrade.
+    """
+    return result.get("status") in ("missing", "other")
+
+
+def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
     """The human-readable report printed by ``/appsec-advisor:verify-baseline``."""
     status = result["status"]
     if status == "disabled":
@@ -482,14 +541,18 @@ def _render(result: dict, config: dict) -> str:
     lines: list[str] = []
     if status == "installed":
         lines.append(f"✓ {result['name']} is loaded.")
+    elif status == "newer":
+        lines.append(f"✓ {result['name']} is loaded, ahead of the {result['expected_id']} this build names.")
+        lines.append("  Nothing to install — that would replace it with the older text.")
     elif status == "other":
         lines.append(f"✗ {result['name']} ({result['expected_id']}) is NOT loaded.")
         lines.append("  A different baseline is in context — the configured rules are not.")
     else:
         lines.append(f"✗ {result['name']} ({result['expected_id']}) is NOT loaded.")
 
-    for record in result["matches"] + result["other"]:
-        mark = "✓" if is_match(record["id"], result["expected_id"]) else "!"
+    expected = result["expected_id"]
+    for record in result["matches"] + result["newer"] + result["other"]:
+        mark = "✓" if is_match(record["id"], expected) or is_newer(record["id"], expected) else "!"
         scope = SCOPE_LABELS.get(record["scope"], record["scope"])
         via = "" if record["file"] == record["entry"] else f"\n      via {record['file']}"
         lines.append(f"  {mark} {record['id']}  [{scope}]\n      {record['entry']}{via}")
@@ -500,14 +563,22 @@ def _render(result: dict, config: dict) -> str:
         lines.append("  On disk, but not in Claude Code's context:")
         for item in carriers:
             lines.append(f"  · {item['id']}  {item['file']}\n      {item['tool']}")
-        if status != "installed":
+        if status in ("missing", "other"):
             lines.append("")
             lines.append("  /appsec-advisor:install-baseline imports one of these instead of")
             lines.append("  writing a second copy, so there stays one file to keep current.")
 
-    if status != "installed" and not carriers:
+    if status in ("missing", "other") and not carriers:
         lines.append("")
         lines.append("  Install it with /appsec-advisor:install-baseline")
+
+    if is_failing(result):
+        lines.append("")
+        lines.append(
+            "  This build requires a baseline — the check exits non-zero."
+            if enforcing
+            else "  Reported for information — this build does not require a baseline."
+        )
 
     lines.append("")
     lines.append("  Checked, plus their @ imports: project CLAUDE.md, .claude/CLAUDE.md,")
@@ -529,6 +600,11 @@ def main(argv: list[str] | None = None) -> int:
         help="repository to check (default: current working directory; pass '' for user scope only)",
     )
     parser.add_argument("--json", action="store_true", help="emit the result as JSON")
+    parser.add_argument(
+        "--enforce",
+        action="store_true",
+        help="exit non-zero when no configured baseline is loaded (default: report only)",
+    )
     args = parser.parse_args(argv)
 
     if args.repo is None:
@@ -540,13 +616,19 @@ def main(argv: list[str] | None = None) -> int:
 
     config = load_config()
     result = check(repo=repo, config=config)
+    # Reporting is the default. Which rules a machine loads is the reader's own
+    # configuration, and a build that failed over it would be deciding something
+    # that is not the plugin's to decide. Two ways to ask for a verdict instead:
+    # ``--enforce`` at the call site, for a CI step that wants to gate, and
+    # ``baseline.enforce`` in the profile, for an organization that has made the
+    # baseline mandatory for every build it ships.
+    enforcing = args.enforce or bool(config.get("enforce"))
+    result["enforced"] = enforcing
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        print(_render(result, config))
-    # Exit code is the verdict, so a CI step can gate on it. ``disabled`` is not
-    # a failure: a build with no baseline configured has nothing to fail on.
-    return 0 if result["status"] in ("installed", "disabled") else 1
+        print(_render(result, config, enforcing=enforcing))
+    return 1 if enforcing and is_failing(result) else 0
 
 
 if __name__ == "__main__":

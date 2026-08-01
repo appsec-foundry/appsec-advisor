@@ -14,12 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New alpha export: `--formats threatdragon` writes OWASP Threat Dragon v2 JSON, which also imports into OWASP ThreatAtlas. See `docs/threat-dragon-export.md`.
 - `create-threat-model` accepts `--threatdragon`, so a scan can write `threat-model.threatdragon.json` directly instead of requiring a separate export run. Opt-in only — no depth or preset implies it.
 - New `install-baseline` skill: installs a secure-coding baseline into Claude Code's instruction files, for this machine or a single repository.
-- New `verify-baseline` skill: reports which baseline is loaded and through which file, and exits non-zero when none is, so CI can gate on it.
+- New `verify-baseline` skill: reports which baseline is loaded and through which file; `--enforce` turns that report into a non-zero exit for CI.
 - New `remove-baseline` skill: stops an installed baseline loading by dropping its import, and deletes the file only after confirming the path.
 - New `help` skill: a short command reference with example calls, plus the repo context files, organization profile, and coach state actually in effect.
 - A session now opens with a status banner: plugin identity and help, then the threat model, then the secure-coding baseline under its configured name, with its id and scope. `APPSEC_BANNER=0` turns it off.
 - Organizations can ship their own skills in their org profile.
-- Organizations can ship their own secure-coding baseline in their org profile, by http(s) URL or git repository.
+- Organizations can ship their own secure-coding baseline in their org profile, by http(s) URL or git repository, and require it with `baseline.enforce`.
 - Organizations can set the banner headline and help URL in their org profile, or ship a build that opens silently.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
 - A run that recorded an error now points at `/appsec-advisor:report-error`, which builds a local anonymised bundle and sends nothing.

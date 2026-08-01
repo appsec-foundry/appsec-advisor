@@ -136,7 +136,7 @@ organization extends the plugin through these, never by editing core files.
 | `policy` | `disable_opus`, `url_allowlist` for every remote fetch |
 | `branding` | Report cover title, contact, logo |
 | `banner` | Session-start line: `headline`, `url`, or `enabled: false` |
-| `baseline` | The organization's own secure-coding baseline, by http(s) `url` or `git`, under its own `id` |
+| `baseline` | The organization's own secure-coding baseline, by http(s) `url` or `git`, under its own `id`; `enforce` makes the check a gate |
 | `requirements` | Requirements catalog source, fail mode, and gate defaults |
 | `llm_context` | Org markdown documents loaded as analysis context |
 | `security_coach` | Prompt-time steering: own baseline text and topics |

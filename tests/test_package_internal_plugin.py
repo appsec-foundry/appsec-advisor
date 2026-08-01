@@ -304,6 +304,14 @@ def test_org_baseline_keeps_the_name_the_profile_sets(tmp_path):
     assert json.loads((build / "config.json").read_text())["baseline"]["name"] == "ACME Secure Baseline"
 
 
+def test_org_baseline_can_make_the_check_a_gate(tmp_path):
+    """Enforcement is the organization's call; the plugin's default is to report."""
+    build = tmp_path / "build"
+    write_profile(build, "baseline:\n  id: acme-sec-1.0\n  enforce: true\n")
+    pkg.patch_config(build)
+    assert json.loads((build / "config.json").read_text())["baseline"]["enforce"] is True
+
+
 def test_org_baseline_file_resolves_into_the_packaged_profile_directory(tmp_path):
     build = tmp_path / "build"
     write_profile(

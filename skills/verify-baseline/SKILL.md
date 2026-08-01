@@ -4,8 +4,8 @@ description: >-
   Read-only check of whether the secure-coding baseline is actually loaded into
   Claude Code's instructions — which id, from which scope, through which file.
   Walks the project CLAUDE.md, .claude/CLAUDE.md, CLAUDE.local.md, .claude/rules/
-  and ~/.claude/CLAUDE.md plus their @ imports, and exits non-zero when the
-  configured baseline is not in context, so CI can gate on it. Use on a request to
+  and ~/.claude/CLAUDE.md plus their @ imports. Reports rather than fails;
+  --enforce turns a missing baseline into a non-zero exit for CI. Use on a request to
   verify, check or confirm the secure-coding baseline / secure coding rules, or to
   answer whether the baseline is installed, loaded or up to date. Writes nothing.
 ---
@@ -26,15 +26,20 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim and 
 /appsec-advisor:verify-baseline — Read-only: is the secure-coding baseline loaded?
 
 USAGE
-  /appsec-advisor:verify-baseline [--repo <path>] [--json]
+  /appsec-advisor:verify-baseline [--repo <path>] [--json] [--enforce]
 
 FLAGS
   --repo <path>   Repository to check (default: current working dir)
   --json          Emit the result as machine-readable JSON
+  --enforce       Exit non-zero when no configured baseline is loaded
 
 EXIT CODES
-  0  The configured baseline is loaded — or this build configures none.
-  1  It is not loaded. Suitable as a CI gate.
+  0  The state was reported. This is the default: which rules a machine
+     loads is your configuration, not something this command fails on.
+  1  Only with --enforce, or in a build whose organization profile requires
+     a baseline: none is loaded, or only a foreign one. A version newer than
+     the one this build names never fails — that is the same rules, further
+     along, and installing would replace it with the older text.
 
 WHAT IS CHECKED
   Claude Code's instruction files — project CLAUDE.md, .claude/CLAUDE.md,
@@ -58,7 +63,7 @@ After printing, exit.
 
 ## Step 1 — Parse arguments
 
-Recognized flags: `--repo <path>`  `--json`  `--help` | `-h`
+Recognized flags: `--repo <path>`  `--json`  `--enforce`  `--help` | `-h`
 
 Default `REPO_ROOT` to the current working directory.
 
@@ -74,6 +79,7 @@ Error: unknown argument '<TOKEN>'
 /appsec-advisor:verify-baseline accepts only:
   --repo <path>   Repository to check (default: current working dir)
   --json          Emit the result as machine-readable JSON
+  --enforce       Exit non-zero when no configured baseline is loaded
   --help, -h      Show full help and exit
 
 Run `/appsec-advisor:verify-baseline --help` for details.
@@ -82,7 +88,7 @@ Run `/appsec-advisor:verify-baseline --help` for details.
 ## Step 2 — Run the check
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_check.py" --repo "$REPO_ROOT" $JSON_FLAG
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_check.py" --repo "$REPO_ROOT" $JSON_FLAG $ENFORCE_FLAG
 ```
 
 The helper's output is the deliverable. Print it as-is and propagate the exit
@@ -102,6 +108,9 @@ In text mode only, and only when it tells the user something the output does not
   adapted by whoever derived them and are not the published text.
 - **`other`** — some baseline is loaded but not the configured one. Name both ids
   and stop; which one should win is the user's call, not yours.
+- **`newer`** — the loaded baseline is a later version of the configured one.
+  Nothing to do, and do not suggest installing: that would write the older text
+  over the newer rules.
 - **Not loaded, but listed under "on disk"** — the rules are already in the
   repository for another tool, or in a copy nothing imports. Say that installing
   will import that file rather than add a second one.

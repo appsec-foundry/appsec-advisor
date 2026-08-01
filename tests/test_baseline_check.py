@@ -310,12 +310,43 @@ def test_derivative_id_counts_and_keeps_its_suffix(repo: Path, home: Path):
     assert result["matches"][0]["id"] == "test-1.0+acme"
 
 
-def test_different_version_is_not_a_match(repo: Path, home: Path):
-    """A different version is a different text — reported as drift, not success."""
+def test_a_newer_version_is_ahead_rather_than_wrong(repo: Path, home: Path):
+    """The baseline updates on its own schedule; a machine may lead this build.
+
+    Reporting that as drift told the reader to install — which would write the
+    older text over the newer rules.
+    """
     write(repo / "CLAUDE.md", BASELINE_TEXT.replace("test-1.0", "test-2.0"))
     result = bc.check(repo=repo, home=home, config=CONFIG)
+    assert result["status"] == "newer"
+    assert result["newer"][0]["id"] == "test-2.0"
+    assert not bc.is_failing(result)
+
+
+def test_an_older_version_stays_drift(repo: Path, home: Path):
+    """Lagging rules are the case a refresh actually fixes."""
+    config = {**CONFIG, "id": "test-2.0"}
+    write(repo / "CLAUDE.md", BASELINE_TEXT)
+    result = bc.check(repo=repo, home=home, config=config)
     assert result["status"] == "other"
-    assert result["other"][0]["id"] == "test-2.0"
+    assert bc.is_failing(result)
+
+
+def test_a_newer_derivative_is_still_ahead(repo: Path, home: Path):
+    write(repo / "CLAUDE.md", BASELINE_TEXT.replace("test-1.0", "test-2.0+acme"))
+    assert bc.check(repo=repo, home=home, config=CONFIG)["status"] == "newer"
+
+
+def test_versions_compare_numerically_not_as_text(repo: Path, home: Path):
+    """`test-1.10` is ahead of `test-1.9`; string order would say otherwise."""
+    write(repo / "CLAUDE.md", BASELINE_TEXT.replace("test-1.0", "test-1.10"))
+    assert bc.check(repo=repo, home=home, config={**CONFIG, "id": "test-1.9"})["status"] == "newer"
+
+
+def test_an_unorderable_version_is_not_guessed_at(repo: Path, home: Path):
+    """No dotted numeric version, no comparison — it stays foreign."""
+    write(repo / "CLAUDE.md", BASELINE_TEXT.replace("test-1.0", "test-rolling"))
+    assert bc.check(repo=repo, home=home, config=CONFIG)["status"] == "other"
 
 
 def test_unrelated_baseline_is_reported_as_other(repo: Path, home: Path):
@@ -436,11 +467,29 @@ def run_cli(home: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 @policy_free
-def test_cli_json_exit_code_signals_missing(tmp_path: Path, home: Path):
-    """Exit 1 on a missing baseline is what makes this usable as a CI gate."""
+def test_cli_reports_a_missing_baseline_without_failing(tmp_path: Path, home: Path):
+    """Reporting is the default: which rules a machine loads is not ours to fail on."""
     done = run_cli(home, "--repo", str(tmp_path), "--json")
-    assert done.returncode == 1
+    assert done.returncode == 0
     assert json.loads(done.stdout)["status"] == "missing"
+
+
+@policy_free
+def test_cli_enforce_flag_turns_the_report_into_a_gate(tmp_path: Path, home: Path):
+    """The call site can still ask for a verdict — that is what a CI step wants."""
+    done = run_cli(home, "--repo", str(tmp_path), "--json", "--enforce")
+    assert done.returncode == 1
+    assert json.loads(done.stdout)["enforced"] is True
+
+
+def test_enforcement_never_fails_on_a_newer_baseline(repo: Path, home: Path):
+    """Even a build that requires the baseline must not demand a downgrade."""
+    write(repo / "CLAUDE.md", BASELINE_TEXT.replace("test-1.0", "test-2.0"))
+    assert not bc.is_failing(bc.check(repo=repo, home=home, config=CONFIG))
+
+
+def test_enforce_defaults_to_off_in_a_loaded_config():
+    assert bc.load_config(REPO_ROOT)["enforce"] is False
 
 
 @policy_free

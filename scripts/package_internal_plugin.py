@@ -223,7 +223,9 @@ def _org_profile_baseline(build: Path) -> dict:
     if not isinstance(baseline, dict):
         return {}
 
-    resolved = {key: value for key, value in baseline.items() if key in ("enabled", "id", "name", "install_filename")}
+    resolved = {
+        key: value for key, value in baseline.items() if key in ("enabled", "enforce", "id", "name", "install_filename")
+    }
     if baseline.get("url"):
         resolved["url"] = baseline["url"]
     if isinstance(baseline.get("git"), dict):

@@ -394,6 +394,14 @@ def _baseline_line(repo: Path | None) -> str:
         # No command: which of two rule sets to drop is a decision, not a repair.
         return _join(label, ids, scopes, beside)
 
+    if status == "newer":
+        # The baseline moves on its own schedule, so a machine ahead of this
+        # build is the normal state, not a fault. No command either: the only
+        # one that applies would write the older text over the newer rules.
+        ids = ", ".join(sorted({m["id"] for m in result.get("newer") or []}))
+        scopes = baseline_check.scope_text(result.get("scopes"))
+        return _join(label, ids, scopes, f"ahead of {result.get('expected_id') or '?'}")
+
     carriers = sorted({Path(item["file"]).name for item in result.get("present_unloaded") or []})
     on_disk = f"on disk in {', '.join(carriers)}" if carriers else ""
 

@@ -214,6 +214,15 @@ properties:
           baseline. The banner drops its baseline line and both skills report
           that none is configured. Removing the two skills through
           `skill_toggles` also drops the commands.
+      enforce:
+        type: boolean
+        description: |
+          Set true to make a missing or foreign baseline a non-zero exit from
+          `/appsec-advisor:verify-baseline`, so a CI step gates on it. Default
+          false: the check reports what is loaded and nothing fails, because
+          which rules a machine loads is the reader's own configuration. A
+          version of the configured baseline newer than the one this build names
+          never fails either — that is the same rules, further along.
       id:
         type: string
         pattern: "^[A-Za-z0-9][A-Za-z0-9._+-]{0,79}$"
@@ -221,7 +230,8 @@ properties:
           The id the baseline file declares, e.g. `acme-sec-1.0`. Required
           whenever this block sets a source. A derivative (`<id>+suffix`) of
           the configured id counts as installed and is reported with its
-          suffix; a different version does not, so drift stays visible.
+          suffix; an older version or a different baseline does not, so drift
+          stays visible.
       name:
         type: string
         minLength: 1

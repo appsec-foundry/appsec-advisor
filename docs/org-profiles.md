@@ -333,14 +333,34 @@ time on somebody's laptop.
 The convention is `<name>-<version>[+<derivative>]`. A derivative of the
 configured id (`aisec-0.1+acme`, your adaptation of the published baseline)
 counts as installed and is reported with its suffix, so a reader can see the
-adaptation. A different version does not count, so drift stays visible instead
-of passing silently.
+adaptation. A *newer* version of the same baseline counts as loaded and is
+reported as ahead of the id you declared — a baseline is published on its own
+schedule, and a machine that updated before your profile did is not broken. An
+older version, or a different baseline, stays visible as drift.
 
 Declaring any source replaces the plugin's default baseline everywhere —
 banner, verify, and what install writes. The upstream URL and the upstream
 bundled copy both carry the upstream id, which your own id check would refuse,
 so packaging clears them rather than leaving a source that can only fail.
 Ship a `file:` if your users need to install without reaching your server.
+
+### Making it a gate
+
+By default the check reports and nothing fails: which rules a machine loads is
+the reader's own configuration. Set `enforce: true` when your organization
+requires it — `/appsec-advisor:verify-baseline` then exits non-zero where no
+configured baseline is loaded, which is what a CI step gates on. A newer version
+of your baseline never fails, because failing it would demand a downgrade.
+
+```yaml
+baseline:
+  id: acme-sec-1.0
+  url: "https://security.acme.example/secure-coding-baseline.md"
+  enforce: true
+```
+
+Without the profile flag anyone can still ask for a verdict at the call site
+with `/appsec-advisor:verify-baseline --enforce`.
 
 `enabled: false` turns the feature off: the banner drops its baseline line and
 all three baseline skills report that none is configured. Removing

@@ -484,6 +484,19 @@ def test_a_declared_derivative_beside_the_baseline_is_not_a_foreign_one(tmp_path
     assert "also" not in line
 
 
+def test_a_newer_baseline_is_reported_as_ahead_without_a_command(tmp_path):
+    """The reader updated the rules before the plugin caught up — not a fault.
+
+    The only command that applies here would write the older text over the
+    newer rules, so the line names the state and stops.
+    """
+    write_model(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("baseline-id: `aisec-9.9`\n", encoding="utf-8")
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line == f"{BASELINE_NAME} · aisec-9.9 · this repo · ahead of aisec-0.1"
+    assert "install-baseline" not in line
+
+
 def test_installed_baseline_carries_no_command(tmp_path):
     """A loaded baseline asks nothing of the reader."""
     write_model(tmp_path)

@@ -65,12 +65,13 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
         if not isinstance(baseline, dict):
             errors.append(f"{path}: 'baseline' must be an object")
         else:
-            known = {"enabled", "id", "name", "url", "git", "fallback_file", "install_filename"}
+            known = {"enabled", "id", "name", "url", "git", "fallback_file", "install_filename", "enforce"}
             unknown_baseline = set(baseline.keys()) - known
             if unknown_baseline:
                 errors.append(f"{path}: unknown keys in 'baseline': {sorted(unknown_baseline)}")
-            if baseline.get("enabled") is not None and not isinstance(baseline["enabled"], bool):
-                errors.append(f"{path}: 'baseline.enabled' must be a boolean")
+            for flag in ("enabled", "enforce"):
+                if baseline.get(flag) is not None and not isinstance(baseline[flag], bool):
+                    errors.append(f"{path}: 'baseline.{flag}' must be a boolean")
             for key in ("id", "name", "url", "fallback_file", "install_filename"):
                 if baseline.get(key) is not None and not isinstance(baseline[key], str):
                     errors.append(f"{path}: 'baseline.{key}' must be a string or null")
