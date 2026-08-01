@@ -90,6 +90,9 @@ def baseline_imports(instructions: Path, home: Path, config: dict, target: Path)
     An import counts when the file it resolves to declares the baseline, or when
     it resolves to this scope's own target — the second case catches the line
     left behind after someone deleted the file by hand.
+
+    The installer's own note above an import goes with it. Left behind it would
+    describe a baseline that no longer loads, and point at commands for it.
     """
     drop: list[int] = []
     skipped: list[str] = []
@@ -98,7 +101,8 @@ def baseline_imports(instructions: Path, home: Path, config: dict, target: Path)
         wanted = target.resolve()
     except (OSError, RuntimeError):
         wanted = target
-    for index, line in enumerate(text.splitlines()):
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
         found = bc._IMPORT_RE.findall(line)
         if not found:
             continue
@@ -114,13 +118,15 @@ def baseline_imports(instructions: Path, home: Path, config: dict, target: Path)
             skipped.append(f"line {index + 1} of {instructions} mentions {found[0]} in text — remove it by hand")
             continue
         drop.append(index)
-    return drop, skipped
+        if index and bc.IMPORT_NOTE_RE.match(lines[index - 1].strip()):
+            drop.append(index - 1)
+    return sorted(drop), skipped
 
 
 def _drop_lines(instructions: Path, indexes: list[int], *, dry_run: bool) -> list[str]:
     """Delete the given lines, keeping every other byte of the file."""
     if dry_run:
-        return [f"would remove {len(indexes)} import line(s) from {instructions}"]
+        return [f"would remove {len(indexes)} line(s) from {instructions}"]
     text = instructions.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     kept = [line for index, line in enumerate(lines) if index not in set(indexes)]
@@ -130,7 +136,7 @@ def _drop_lines(instructions: Path, indexes: list[int], *, dry_run: bool) -> lis
         instructions.write_text("".join(kept), encoding="utf-8")
     except OSError as exc:
         raise RemoveError(f"cannot write: {exc}") from exc
-    return [f"removed {len(indexes)} import line(s) from {instructions}", f"backup: {backup}"]
+    return [f"removed {len(indexes)} line(s) from {instructions}", f"backup: {backup}"]
 
 
 def delete_risks(target: Path, repo: Path) -> list[str]:

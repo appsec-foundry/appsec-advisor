@@ -44,9 +44,10 @@ FLAGS
   --delete-file    Also delete the baseline file, not just the import
 
 WHAT IS REMOVED
-  By default only the @import line, so the rules stop loading and the file
-  stays. Any instruction file that is edited is backed up to <file>.bak first,
-  and only a line that is nothing but the import is touched.
+  By default only the @import line and the note the installer wrote above it,
+  so the rules stop loading and the file stays. Any instruction file that is
+  edited is backed up to <file>.bak first, and only a line that is nothing but
+  the import — or that note — is touched.
 
   The only file --delete-file can ever delete is the one this scope installs
   to, plus its .bak. An AGENTS.md or copilot-instructions.md that the install

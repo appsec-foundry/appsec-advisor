@@ -224,9 +224,16 @@ def _existing_import(instructions: Path, target: Path, home: Path) -> bool:
     return False
 
 
-def _append_import(instructions: Path, import_path: str, *, dry_run: bool) -> str:
-    """Append the import line, preserving everything already in the file."""
+def _append_import(instructions: Path, import_path: str, note: str, *, dry_run: bool) -> str:
+    """Append the import line under its note, preserving everything already there.
+
+    The note is what a reader of this file gets a year from now — otherwise the
+    install leaves a bare ``@path`` in a file somebody else maintains, with no
+    sign of where it came from or how to take it out. ``remove-baseline`` drops
+    the two together.
+    """
     line = f"@{import_path}"
+    block = f"{note}\n{line}"
     if dry_run:
         verb = "append to" if instructions.is_file() else "create"
         return f"would {verb} {instructions}: {line}"
@@ -235,9 +242,9 @@ def _append_import(instructions: Path, import_path: str, *, dry_run: bool) -> st
         current = instructions.read_text(encoding="utf-8")
         separator = "" if current.endswith("\n\n") else ("\n" if current.endswith("\n") else "\n\n")
         with open(instructions, "a", encoding="utf-8") as fh:
-            fh.write(f"{separator}{line}\n")
+            fh.write(f"{separator}{block}\n")
         return f"appended to {instructions}: {line}"
-    instructions.write_text(f"{line}\n", encoding="utf-8")
+    instructions.write_text(f"{block}\n", encoding="utf-8")
     return f"created {instructions} with {line}"
 
 
@@ -357,7 +364,7 @@ def install(
         elif _existing_import(instructions, target, home):
             steps.append(f"already imported by {instructions}")
         else:
-            steps.append(_append_import(instructions, where["import"], dry_run=dry_run))
+            steps.append(_append_import(instructions, where["import"], bc.import_note(config), dry_run=dry_run))
     except OSError as exc:
         # A read-only checkout, a missing home directory, a permission the user
         # does not have. Report the path that failed instead of a traceback —

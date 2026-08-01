@@ -88,8 +88,27 @@ def test_project_scope_wires_claude_md(repo: Path, home: Path, config: dict):
 
 def test_project_scope_creates_a_missing_claude_md(repo: Path, home: Path, config: dict):
     ib.install("project", repo, home, config, offline=True)
-    assert (repo / "CLAUDE.md").read_text(encoding="utf-8") == "@secure-coding-baseline.md\n"
+    assert (repo / "CLAUDE.md").read_text(encoding="utf-8").splitlines()[-1] == "@secure-coding-baseline.md"
     assert loaded(repo, home, config)
+
+
+def test_the_import_is_annotated_for_whoever_reads_the_file_later(repo: Path, home: Path, config: dict):
+    """A bare `@path` says nothing about where it came from or how to undo it."""
+    ib.install("project", repo, home, config, offline=True)
+    lines = (repo / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
+    assert bc.IMPORT_NOTE_RE.match(lines[-2])
+    assert lines[-1] == "@secure-coding-baseline.md"
+
+
+def test_the_note_carries_no_baseline_id(config: dict):
+    """A stale id is worse than none — and the check would read it as loaded rules."""
+    assert bc.find_ids(bc.import_note(config)) == []
+
+
+def test_the_note_is_written_once_however_often_install_runs(repo: Path, home: Path, config: dict):
+    ib.install("project", repo, home, config, offline=True)
+    ib.install("project", repo, home, config, offline=True)
+    assert (repo / "CLAUDE.md").read_text(encoding="utf-8").count("remove-baseline") == 1
 
 
 def test_project_rules_scope_touches_no_claude_md(repo: Path, home: Path, config: dict):
@@ -103,7 +122,7 @@ def test_user_scope_imports_by_absolute_path(repo: Path, home: Path, config: dic
     """~/.claude/CLAUDE.md is read from every directory, so the import must not
     depend on which one that is."""
     ib.install("user", repo, home, config, offline=True)
-    line = (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8").strip()
+    line = (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8").splitlines()[-1]
     assert line == f"@{home / '.claude' / 'secure-coding-baseline.md'}"
     assert loaded(repo, home, config)
 
@@ -246,7 +265,7 @@ def test_the_user_scope_never_imports_a_repository_path(repo: Path, home: Path, 
     """It would resolve to nothing in every other repository on the machine."""
     (repo / "AGENTS.md").write_text(BASELINE_TEXT, encoding="utf-8")
     ib.install("user", repo, home, config, offline=True)
-    line = (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8").strip()
+    line = (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8").splitlines()[-1]
     assert str(repo) not in line
     assert line == f"@{home / '.claude' / 'secure-coding-baseline.md'}"
 

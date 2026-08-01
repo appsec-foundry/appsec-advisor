@@ -101,6 +101,33 @@ def test_user_scope_unwires(repo: Path, home: Path, config: dict):
     assert (home / ".claude" / config["install_filename"]).is_file()
 
 
+def test_the_installers_note_goes_with_the_import(repo: Path, home: Path, config: dict):
+    """Left behind it would describe a baseline that no longer loads."""
+    (repo / "CLAUDE.md").write_text("# CLAUDE.md\n\nProject rules.\n", encoding="utf-8")
+    ib.install("project", repo, home, config, offline=True)
+
+    rb.remove("project", repo, home, config)
+
+    text = (repo / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "remove-baseline" not in text
+    assert text.startswith("# CLAUDE.md\n\nProject rules.\n")
+
+
+def test_a_comment_the_user_wrote_above_the_import_is_left_alone(repo: Path, home: Path, config: dict):
+    """Only the installer's own note is ours to delete."""
+    (repo / "CLAUDE.md").write_text(
+        "# CLAUDE.md\n\n<!-- security rules, do not touch -->\n@secure-coding-baseline.md\n",
+        encoding="utf-8",
+    )
+    (repo / config["install_filename"]).write_text(BASELINE_TEXT, encoding="utf-8")
+
+    rb.remove("project", repo, home, config)
+
+    text = (repo / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "<!-- security rules, do not touch -->" in text
+    assert "@secure-coding-baseline.md" not in text
+
+
 def test_everything_else_in_the_file_survives(repo: Path, home: Path, config: dict):
     original = "# CLAUDE.md\n\n@other-rules.md\n\nKeep this sentence.\n"
     (repo / "CLAUDE.md").write_text(original, encoding="utf-8")

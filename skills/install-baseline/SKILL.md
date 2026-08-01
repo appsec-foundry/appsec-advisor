@@ -204,7 +204,7 @@ On success, close with these two facts and nothing more:
 2. **For the `project` scope, the changed files are uncommitted.** Name the
    paths the script reported so the user can review the diff and commit. Do not
    commit them yourself. When an existing file was reused, the only change is
-   the import line in `CLAUDE.md`.
+   the import in `CLAUDE.md` and the note above it.
 
 Then stop. Do not summarize the baseline's contents, do not review the
 repository against it, and do not offer to fix anything it covers — this skill

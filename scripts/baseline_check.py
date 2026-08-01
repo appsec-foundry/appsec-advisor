@@ -66,6 +66,13 @@ MAX_FILE_BYTES = 1_048_576
 # in the published baseline, which the pattern simply ignores.
 _MARKER_RE = re.compile(r"baseline-id:\s*`?([A-Za-z0-9][A-Za-z0-9._+-]*)")
 
+# The note the installer writes above its import line. An `@path` on its own
+# says nothing about where it came from, and the file it sits in is one a user
+# maintains by hand for years. Matched by its comment form and the removal
+# command rather than by the exact text, so a build under another namespace can
+# still recognise — and remove — a note this one wrote.
+IMPORT_NOTE_RE = re.compile(r"^<!--[^\n]*remove-baseline[^\n]*-->$")
+
 # A Claude Code import: ``@`` at the start of a line or after whitespace,
 # followed by a path. Requiring a preceding boundary keeps e-mail addresses and
 # ``user@host`` strings out; the trailing class stops at quotes and backticks so
@@ -174,6 +181,21 @@ def _clean(value: object) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.split())
+
+
+def import_note(config: dict) -> str:
+    """The one-line note the installer puts above its import.
+
+    Carries no baseline id on purpose: a refresh to a newer version would leave
+    it wrong, and nothing comes back to correct a stale comment. The name is the
+    configured one, so an organization's build annotates its own rules.
+    """
+    name = config.get("name") or DEFAULT_NAME
+    return (
+        f"<!-- {name}, installed by appsec-advisor. "
+        "/appsec-advisor:verify-baseline shows what is loaded, "
+        "/appsec-advisor:remove-baseline takes it back out. -->"
+    )
 
 
 def fallback_path(config: dict, plugin_root: Path | None = None) -> Path | None:
