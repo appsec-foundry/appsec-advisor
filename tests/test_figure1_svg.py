@@ -677,7 +677,9 @@ def test_every_placed_boundary_is_named_in_the_legend_panel():
 
     svg = F.build_figure1_svg(y, apd, tax)
 
-    assert "Trust Boundaries (see §1)" in svg
+    # Panel presence, not its wording — the "(see §1)" pointer was dropped once
+    # the caption below the figure carried a clickable link to the catalogue.
+    assert "Trust Boundaries" in svg
     assert "external → app0 · tb-1" in svg
     assert "external → app1 · tb-2" in svg
     assert "app0 → external · tb-7" in svg  # the band-header note is named too
@@ -911,10 +913,13 @@ def test_divider_caption_does_not_run_the_width_of_the_band():
     svg = F.build_figure1_svg(y, apd, tax)
     root = ET.fromstring(svg)
     ns = "{http://www.w3.org/2000/svg}"
+    # Select the divider by what makes it one — slate, and spanning the band —
+    # not by its stroke weight. Pinning the weight here made a legibility change
+    # to the rule look like a caption regression (2026-08-01).
     rules = [
         (float(el.get("x1")), float(el.get("x2")))
         for el in root.iter(f"{ns}line")
-        if el.get("stroke") == "#475569" and el.get("stroke-width") == "1.4"
+        if el.get("stroke") == "#475569" and float(el.get("x2")) - float(el.get("x1")) > 100
     ]
     assert rules, "no trust-boundary divider drawn"
     band_w = max(x2 - x1 for x1, x2 in rules)
@@ -1100,11 +1105,19 @@ def test_boundary_legend_swatch_is_not_the_faintest_row():
 
 
 def test_boundary_divider_in_the_figure_keeps_its_own_dash():
-    """The legibility fix is legend-only — the in-figure divider spans the band
-    width, where the wider dash is correct and must not be narrowed with it."""
+    """The in-figure divider spans the band width and carries its OWN dash —
+    never the legend swatch's short one, which dissolves over that distance.
+
+    The figure ships at 0.72× its viewBox, so both the dash and the weight are
+    chosen against the display scale (user 2026-08-01): "10 6" at sw 2.2 stays a
+    readable rule where the previous "7 5" at 1.4 rendered as a ~1px dotted
+    hairline, thinner than this boundary's own legend key.
+    """
     y, apd, tax = _boundary_model()
     svg = F.build_figure1_svg(y, apd, tax)
 
     dividers = [ln for ln in _lines_with_stroke(svg, F._TRUST) if ln["_width"] > 100]
     assert dividers, "expected a full-width divider"
-    assert all(d["stroke-dasharray"] == "7 5" for d in dividers)
+    assert all(d["stroke-dasharray"] == "10 6" for d in dividers)
+    # The rule must not render fainter than the legend key that explains it.
+    assert all(float(d["stroke-width"]) >= 1.8 for d in dividers)

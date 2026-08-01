@@ -950,7 +950,9 @@ def build_figure1_svg(
             ids = (boundary_notes.get(tier) or {}).get(kind) or []
             if not ids or ny >= ytop + h - 6:
                 continue
-            c.line(band_left + 40, ny - 3.5, band_left + 54, ny - 3.5, stroke=_TRUST, sw=1.3, dash="4 3")
+            # Same swatch, same concept, same display scale as the divider above:
+            # 1.3 rendered at ~0.94 device px, the faintest mark on the page.
+            c.line(band_left + 40, ny - 3.5, band_left + 54, ny - 3.5, stroke=_TRUST, sw=1.8, dash="4 3")
             c.text(band_left + 60, ny, _note_text(kind, ids), size=9, fill=_TRUST, anchor="start")
             ny += 12
 
@@ -1311,7 +1313,14 @@ def build_figure1_svg(
         gap_ids = gap_ids_by_index.get(i) or []
         if gap_ids:
             ymid = (yf + yt) / 2
-            c.line(band_left, ymid, band_left + band_w, ymid, stroke=_TRUST, sw=1.4, dash="7 5")
+            # Weight is set against the DISPLAY scale, not the viewBox. The
+            # figure ships at width=760 over a 1050-wide viewBox (0.72×), so the
+            # old 1.4 landed at ~1.0 device px — a dashed hairline that dissolved
+            # into dots and read thinner than its own legend key (1.8/2.0 → 1.3/
+            # 1.45 px). A boundary the reader has to hunt for is not a boundary
+            # (user 2026-08-01). 2.2 → ~1.6 px, and the longer dash survives the
+            # downscale instead of closing up.
+            c.line(band_left, ymid, band_left + band_w, ymid, stroke=_TRUST, sw=2.2, dash="10 6")
             c.text(
                 band_left + 8,
                 ymid - 5,
@@ -1585,7 +1594,14 @@ def build_figure1_svg(
     # boundary, so a model with none renders exactly as before.
     if legend_boundaries:
         ly = panel(
-            "Trust Boundaries (see §1)",
+            # No "(see §1)" here. The figure caption right below carries a real
+            # clickable link to the catalogue, which dead SVG text can never be,
+            # and this panel already names every boundary it lists — the same
+            # reason `_tb_ref` says "listed below" instead of sending the reader
+            # out (user 2026-08-01). The pointer survives where it is actually
+            # load-bearing: the "+N more — see §1" row, which fires only when
+            # the panel had to drop boundaries.
+            "Trust Boundaries",
             ly,
             tb_rows,
             len(tb_shown) + (1 if tb_hidden else 0),
