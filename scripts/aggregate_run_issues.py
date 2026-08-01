@@ -695,8 +695,18 @@ def _extract_trust_boundary_coverage(output_dir: Path) -> list[dict]:
     issues = data.get("issues") if isinstance(data, dict) else None
     if not isinstance(issues, list) or not issues:
         return []
+    # Only genuinely unresolved signals belong here. A crossing the promotion
+    # step deliberately dropped (client-tier target) also carries a signal_id,
+    # and reporting it as unresolved would turn a recorded decision into a
+    # standing warning nobody can close.
     signal_ids = sorted(
-        {row.get("signal_id") for row in issues if isinstance(row, dict) and isinstance(row.get("signal_id"), str)}
+        {
+            row.get("signal_id")
+            for row in issues
+            if isinstance(row, dict)
+            and row.get("code") == "unresolved-signal"
+            and isinstance(row.get("signal_id"), str)
+        }
     )
     if not signal_ids:
         return []

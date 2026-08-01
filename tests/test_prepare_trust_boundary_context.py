@@ -1530,3 +1530,414 @@ def test_route_scan_does_not_escape_the_repo(tmp_path: Path):
         repo_root=repo,
     )
     assert merged[0]["confidence"] == "inferred"
+
+
+def test_cross_run_identity_survives_contiguous_delivery_renumbering(tmp_path: Path) -> None:
+    """Two consecutive runs with a renumbered prior model.
+
+    `build_threat_model_yaml.renumber_trust_boundaries` ships `tb-1 … tb-N`
+    while the baseline ledger keeps counting from its high-watermark. Run 2 must
+    still re-identify the unchanged crossings (matching is by `declaration_key`
+    / authored id / `(from,to,name)` / endpoints — never by the delivered
+    number), must not mis-assign, and the newly reserved ledger id must not
+    collide with a dense prior id.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("build_threat_model_yaml", SCRIPTS / "build_threat_model_yaml.py")
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+
+    repo, out = _repo(tmp_path)
+    crossings = [
+        ("Public API", "external", "web-api"),
+        ("Worker handoff", "web-api", "worker"),
+        ("Worker ingress", "external", "worker"),
+    ]
+    # Run 1 delivered the catalogue renumbered to tb-1..tb-3; the ledger stayed
+    # at the counter those rows were actually allocated from (tb-37..tb-39).
+    _write_json(out / ".appsec-cache" / "baseline.json", {"id_counters": {"next_trust_boundary_id": 40}})
+    prior = out / "prior.yaml"
+    prior.write_text(
+        yaml.safe_dump(
+            {
+                "components": [{"id": "web-api"}, {"id": "worker"}],
+                "trust_boundaries": [
+                    {
+                        **_row(name),
+                        "id": f"tb-{index}",
+                        "from": src,
+                        "to": dst,
+                        "resolution_status": "resolved",
+                        "sources": ["detected"],
+                    }
+                    for index, (name, src, dst) in enumerate(crossings, start=1)
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    # Run 2 re-emits the same crossings (authored ids are the stale ledger ids
+    # the sidecar carried) plus one genuinely new crossing.
+    sidecar = out / ".trust-boundaries.json"
+    _write_json(
+        sidecar,
+        {
+            "schema_version": 1,
+            "trust_boundaries": [
+                {**_row(name), "id": f"tb-{37 + offset}", "from": src, "to": dst}
+                for offset, (name, src, dst) in enumerate(crossings)
+            ]
+            + [{**_row("Worker callback"), "id": "tb-99", "from": "worker", "to": "web-api"}],
+        },
+    )
+    result, _ = prep.normalize(repo_root=repo, sidecar=sidecar, prior_model=prior, output_dir=out)
+    by_name = {row["name"]: row["id"] for row in result["trust_boundaries"]}
+    assert by_name["Public API"] == "tb-1"
+    assert by_name["Worker handoff"] == "tb-2"
+    assert by_name["Worker ingress"] == "tb-3"
+    # The new row is reserved above the high-watermark, so it can never take a
+    # dense prior id away from a surviving boundary.
+    assert by_name["Worker callback"] == "tb-40"
+
+    doc, mapping = builder.renumber_trust_boundaries({"trust_boundaries": result["trust_boundaries"]})
+    assert mapping == {"tb-40": "tb-4"}
+    assert {row["name"]: row["id"] for row in doc["trust_boundaries"]} == {
+        "Public API": "tb-1",
+        "Worker handoff": "tb-2",
+        "Worker ingress": "tb-3",
+        "Worker callback": "tb-4",
+    }
+
+    # Run 3 sees the run-2 delivery: unchanged boundaries keep their delivered
+    # ids and the pass is a no-op.
+    prior.write_text(
+        yaml.safe_dump(
+            {
+                "components": [{"id": "web-api"}, {"id": "worker"}],
+                "trust_boundaries": [
+                    {**row, "resolution_status": "resolved", "sources": ["detected"]}
+                    for row in doc["trust_boundaries"]
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    result3, _ = prep.normalize(repo_root=repo, sidecar=sidecar, prior_model=prior, output_dir=out)
+    doc3, mapping3 = builder.renumber_trust_boundaries({"trust_boundaries": result3["trust_boundaries"]})
+    assert mapping3 == {}
+    assert {row["name"]: row["id"] for row in doc3["trust_boundaries"]} == {
+        "Public API": "tb-1",
+        "Worker handoff": "tb-2",
+        "Worker ingress": "tb-3",
+        "Worker callback": "tb-4",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Client-side code is not a trust zone
+# ---------------------------------------------------------------------------
+
+from _boundary_adjacency import is_adjacent  # noqa: E402
+
+_TIERED_COMPONENTS = {
+    "api": {"id": "api", "tier": "application", "paths": ["server.ts", "routes/**"]},
+    "spa": {"id": "spa", "tier": "client", "paths": ["frontend/src/**"]},
+    "mobile": {"id": "mobile", "tier": "CLIENT ", "paths": ["mobile/**"]},
+    "untagged": {"id": "untagged", "paths": ["legacy/**"]},
+    "store": {"id": "store", "tier": "data", "paths": ["models/**"]},
+}
+
+
+def test_client_tier_source_is_rewritten_to_external(tmp_path: Path):
+    """Browser-resident code sits on the untrusted side WITH the attacker: the
+    server cannot tell its requests from forged ones, so the crossing's real
+    origin is `external`."""
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="spa", to="api", point="expressJwt Bearer token")],
+        components=_TIERED_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert merged[0]["from"] == "external"
+    assert merged[0]["to"] == "api"
+    assert any("source spa -> external" in n for n in notes)
+
+
+def test_client_tier_source_keeps_its_component_as_an_anchor(tmp_path: Path):
+    """The findings that live in the client code must still resolve: rewriting
+    the endpoint without recording it would remove their adjacency channel."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="spa", to="api")],
+        components=_TIERED_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert merged[0]["covers_components"] == ["api", "spa"]
+    assert is_adjacent("spa", merged[0])
+
+
+def test_client_tier_source_name_is_retargeted(tmp_path: Path):
+    candidate = _cand("c1", frm="spa", to="api")
+    candidate["name"] = "spa → api: expressJwt Bearer token"
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [candidate], components=_TIERED_COMPONENTS, repo_root=tmp_path
+    )
+    assert merged[0]["name"] == "external → api: expressJwt Bearer token"
+
+
+def test_client_tier_target_is_removed_and_reported(tmp_path: Path):
+    """Serving static assets into a browser makes no security decision. The row
+    must go — and the removal must be auditable, never silent."""
+    dropped: dict[str, str] = {}
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="spa"), _cand("c2", frm="external", to="api")],
+        components=_TIERED_COMPONENTS,
+        repo_root=tmp_path,
+        dropped=dropped,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c2"]
+    assert "client-tier component" in dropped["c1"]
+    assert any("dropped external -> spa" in n for n in notes)
+
+
+def test_client_tier_target_with_a_named_control_is_kept(tmp_path: Path):
+    """Fail safe. A specific control on the way into the client is either a real
+    check this model would lose, or evidence that the component is server-
+    rendered or a BFF and only tagged `client`. Deleting an evidenced control is
+    the dangerous direction."""
+    dropped: dict[str, str] = {}
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="spa", point="Signed session cookie issuance")],
+        components=_TIERED_COMPONENTS,
+        repo_root=tmp_path,
+        dropped=dropped,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1"]
+    assert dropped == {}
+    assert any("kept external -> spa" in n for n in notes)
+
+
+def test_a_generic_control_does_not_rescue_a_client_tier_target(tmp_path: Path):
+    """The generic-value filter runs first, so `application code` cannot buy a
+    crossing into the browser a reprieve it did not earn."""
+    dropped: dict[str, str] = {}
+    prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="spa", point="application code")],
+        components=_TIERED_COMPONENTS,
+        repo_root=tmp_path,
+        dropped=dropped,
+    )
+    assert "c1" in dropped
+
+
+def test_absent_or_non_client_tier_is_never_treated_as_client(tmp_path: Path):
+    """An absent tier is not a client tier. Inferring one would fold or drop
+    boundaries that are real, which is the dangerous direction."""
+    dropped: dict[str, str] = {}
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="untagged", to="api"),
+            _cand("c2", frm="external", to="untagged"),
+            _cand("c3", frm="external", to="store"),
+        ],
+        components=_TIERED_COMPONENTS,
+        repo_root=tmp_path,
+        dropped=dropped,
+    )
+    assert dropped == {}
+    assert [(c["from"], c["to"]) for c in merged] == [
+        ("untagged", "api"),
+        ("external", "untagged"),
+        ("external", "store"),
+    ]
+
+
+def test_client_tier_is_read_case_and_whitespace_insensitively(tmp_path: Path):
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="mobile", to="api")],
+        components=_TIERED_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert merged[0]["from"] == "external"
+
+
+def test_client_tier_source_calling_a_third_party_is_left_alone(tmp_path: Path):
+    """`spa -> external` is already anchored outside the system; rewriting the
+    source would produce `external -> external`, which is not a crossing."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="spa", to="external", kind="third-party")],
+        components=_TIERED_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert (merged[0]["from"], merged[0]["to"]) == ("spa", "external")
+
+
+def test_rewritten_client_source_still_respects_a_distinct_enforcement_point(tmp_path: Path):
+    """The rewrite does not widen the merge: a genuinely different control at the
+    same crossing still asks its own question and keeps its own row."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="spa", to="api", kind="identity", point="OAuth authorization-code exchange"),
+            _cand("c2", frm="external", to="api", point="Express route middleware isAuthorized"),
+        ],
+        components=_TIERED_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1", "c2"]
+
+
+def test_duplicate_ingress_rows_fold_into_the_row_that_was_already_there(tmp_path: Path) -> None:
+    """Path containment is symmetric when both rows enter the same component, so
+    the fold direction must not be decided by list position — the earlier row
+    keeps the identity, and with it the stable `tb-N` every finding references."""
+    components = [
+        {"id": "web-api", "name": "Web API", "paths": ["src/**"], "handles_sensitive_data": True},
+        {"id": "spa", "name": "SPA", "tier": "client", "paths": ["frontend/**"]},
+    ]
+    rows, warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(id="tb-1", name="Internet to API"),
+            _resolved(id="tb-2", name="SPA to API", covers_components=["spa", "web-api"]),
+        ],
+        components,
+    )
+
+    assert [(row["id"], row["name"]) for row in rows] == [("tb-1", "Internet to API")]
+    # The folded row's anchor survives the fold.
+    assert "spa" in rows[0]["covers_components"]
+    assert any("folded ingress boundary" in w for w in warnings)
+
+
+def _client_tier_documents(component_fp: str, input_fp: str) -> tuple[dict, dict]:
+    def signal(sid: str, frm: str, to: str, cls: str) -> dict:
+        return {
+            "id": sid,
+            "class": cls,
+            "from": frm,
+            "to": to,
+            "mandatory": True,
+            "trigger": "runtime flow crosses components",
+            "false_positive_exclusions": [],
+            "evidence": [{"file": "src/auth.py", "line": 1}],
+            "provenance": ["architecture"],
+            "flow_ids": [],
+        }
+
+    assessment = _assessment(component_fp, input_fp)
+    assessment["components"].append(
+        {
+            "id": "spa",
+            "name": "Browser SPA",
+            "tier": "client",
+            "deployment_zones": ["client-device"],
+            "handles_sensitive_data": False,
+            "paths": ["frontend/**"],
+        }
+    )
+    assessment["signals"].extend(
+        [
+            signal("signal-external-ingress-external-to-spa", "external", "spa", "external-ingress"),
+            signal("signal-browser-to-server-spa-to-web-api", "spa", "web-api", "cross-zone-flow"),
+        ]
+    )
+
+    document = _candidate_doc(component_fp, input_fp)
+    document["candidates"][0]["enforcement_point"] = "Express route middleware isAuthorized"
+    document["candidates"].extend(
+        [
+            {
+                "candidate_key": "candidate-2",
+                "name": "external → spa: Express static file serving",
+                "from": "external",
+                "to": "spa",
+                "kind": "network",
+                "assumption": "The bundled assets are public and hold nothing confidential.",
+                "evidence": [{"file": "src/auth.py", "line": 1}],
+                "confidence": "confirmed",
+                "covered_signal_ids": ["signal-external-ingress-external-to-spa"],
+                "covered_flow_ids": [],
+            },
+            {
+                "candidate_key": "candidate-3",
+                "name": "spa → web-api: Bearer JWT validation",
+                "from": "spa",
+                "to": "web-api",
+                "kind": "network",
+                "assumption": "The SPA attaches the stored JWT to every API request.",
+                "evidence": [{"file": "src/auth.py", "line": 1}],
+                "confidence": "confirmed",
+                "covered_signal_ids": ["signal-browser-to-server-spa-to-web-api"],
+                "covered_flow_ids": [],
+                "enforcement_point": "expressJwt Bearer token validation",
+            },
+        ]
+    )
+    document["dispositions"].extend(
+        [
+            {
+                "signal_id": "signal-external-ingress-external-to-spa",
+                "disposition": "boundary",
+                "candidate_keys": ["candidate-2"],
+                "rationale": "Static assets are served to anonymous browsers over the internet.",
+            },
+            {
+                "signal_id": "signal-browser-to-server-spa-to-web-api",
+                "disposition": "boundary",
+                "candidate_keys": ["candidate-3"],
+                "rationale": "The browser application calls the API with a bearer token.",
+            },
+        ]
+    )
+    return assessment, document
+
+
+def test_promote_folds_the_client_crossing_and_reports_the_removed_one(tmp_path: Path):
+    """The juice-shop defect end to end: `external → spa` was a boundary with
+    nothing to protect and no control, and `spa → web-api` was the perimeter
+    counted a second time."""
+    repo, out = _repo(tmp_path)
+    _write_json(
+        out / ".components.json",
+        {
+            "schema_version": 1,
+            "components": [
+                {"id": "web-api", "name": "Web API", "tier": "application", "paths": ["src/**"]},
+                {"id": "spa", "name": "Browser SPA", "tier": "client", "paths": ["frontend/**"]},
+            ],
+        },
+    )
+    component_fp, input_fp = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+    assessment_path = out / ".trust-boundary-assessment-input.json"
+    candidates_path = out / ".trust-boundary-candidates.json"
+    assessment, document = _client_tier_documents(component_fp, input_fp)
+    _write_json(assessment_path, assessment)
+    _write_json(candidates_path, document)
+
+    canonical, coverage = prep.promote_candidates(
+        repo_root=repo,
+        output_dir=out,
+        candidates_path=candidates_path,
+        assessment_input_path=assessment_path,
+        prior_model=None,
+    )
+
+    rows = canonical["trust_boundaries"]
+    assert [(row["from"], row["to"]) for row in rows] == [("external", "web-api")]
+    # The folded component keeps a resolvable anchor on the surviving row.
+    assert "spa" in rows[0]["covers_components"]
+    assert is_adjacent("spa", rows[0])
+
+    by_signal = {row["signal_id"]: row for row in coverage["signals"]}
+    dropped_row = by_signal["signal-external-ingress-external-to-spa"]
+    assert dropped_row["disposition"] == "same-trust"
+    assert dropped_row["boundary_ids"] == []
+    assert "client-tier" in dropped_row["rationale"]
+    assert [issue["code"] for issue in coverage["issues"] if issue.get("signal_id") == dropped_row["signal_id"]] == [
+        "client-tier-crossing-dropped"
+    ]
+    # The re-anchored browser crossing promotes to the surviving perimeter, so no
+    # signal is left without a boundary.
+    assert by_signal["signal-browser-to-server-spa-to-web-api"]["boundary_ids"] == [rows[0]["id"]]

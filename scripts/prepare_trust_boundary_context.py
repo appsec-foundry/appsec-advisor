@@ -778,9 +778,17 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
 
     ingress = [r for r in out if r.get("from") == "external" and r.get("to") in components]
     folded: list[dict] = []
-    for row in ingress:
-        for other in ingress:
+    for index, row in enumerate(ingress):
+        for other_index, other in enumerate(ingress):
             if other is row or other in folded or row.get("kind") != other.get("kind"):
+                continue
+            # Containment is symmetric when both rows enter the SAME component,
+            # so "inner folds into outer" picks no side and the survivor would be
+            # decided by list position alone. Keep the earlier row — the
+            # first-wins rule every other merge here uses — so a later duplicate
+            # cannot take over the identity, and with it the stable `tb-N`, of
+            # the row that was already modelled.
+            if row["to"] == other["to"] and other_index > index:
                 continue
             if _contained_in(components[row["to"]], components[other["to"]]):
                 other["evidence"] = _merge_evidence(other.get("evidence") or [], row.get("evidence") or [])
@@ -1431,6 +1439,34 @@ def _evidence_line(repo_root: Path, entry: dict) -> str:
 
 _CONFIDENCE_RANK = {"unknown": 0, "inferred": 1, "confirmed": 2}
 
+# The component contract already states where a component's code runs, so this is
+# read, never inferred. Both `schemas/fragments/components.schema.json` and
+# `schemas/trust-boundary-assessment-input.schema.json` fix the vocabulary to
+# exactly `client` / `application` / `data`, and only `client` denotes code that
+# executes on the user's device — browser SPA, mobile app, desktop client.
+# A missing tier, or any value outside the enum, is treated as server-side:
+# folding or dropping a boundary that is actually real is the dangerous
+# direction, so absence must never read as "client".
+_CLIENT_TIERS = {"client"}
+
+
+def _is_client_tier(component_id: Any, components: dict[str, dict]) -> bool:
+    """True only when the component registry positively declares client tier."""
+    component = components.get(component_id) if isinstance(component_id, str) else None
+    tier = component.get("tier") if isinstance(component, dict) else None
+    return isinstance(tier, str) and tier.strip().casefold() in _CLIENT_TIERS
+
+
+def _retarget_name(name: Any, old_endpoint: str, new_endpoint: str) -> Any:
+    """Rewrite the ``<crossing>: <point>`` prefix so the name cannot lie."""
+    if not isinstance(name, str):
+        return name
+    for arrow in ("→", "->"):
+        prefix = f"{old_endpoint} {arrow}"
+        if name.casefold().startswith(prefix.casefold()):
+            return f"{new_endpoint} {arrow}" + name[len(prefix) :]
+    return name
+
 
 def _grouping_endpoint(candidate: dict, crossing_class: str, components: dict[str, dict]) -> Any:
     """The inner endpoint a crossing is grouped by (deployable for ingress)."""
@@ -1451,19 +1487,28 @@ def _consolidate_candidates(
     *,
     components: dict[str, dict],
     repo_root: Path,
+    dropped: dict[str, str] | None = None,
 ) -> tuple[list[dict], dict[str, str], list[str]]:
     """Normalize and merge candidates before they become canonical boundaries.
 
-    Three deterministic passes, all conservative:
+    Four deterministic passes, all conservative:
 
     1. **Direction** — a candidate modelled ``X → external`` whose own evidence
        lands on a route registration is an ingress crossing; flip it.
-    2. **Same deployable** — endpoints that ship in one process are an internal
+    2. **Client tier** — code the component registry declares ``tier: client``
+       executes on the user's device, next to the attacker, so it is not a trust
+       zone. A crossing OUT of it really starts at ``external`` and is rewritten
+       there (the absorbed component is recorded in ``covers_components`` so the
+       findings anchored to it keep an adjacent boundary); a crossing INTO it
+       protects nothing and is removed — reported through ``dropped``, never
+       silently. Both rules require a positive ``tier: client``; a missing or
+       unknown tier is left alone.
+    3. **Same deployable** — endpoints that ship in one process are an internal
        enforcement interface, so force ``kind: process``. They are NOT discarded:
        the injection / mass-assignment / encryption-at-rest findings anchor here,
        and dropping the row to `same-trust` would leave them nowhere to attach.
        `same-trust` stays reserved for signals with no interface behind them.
-    3. **Merge** — candidates sharing one `enforcement_point` within the same
+    4. **Merge** — candidates sharing one `enforcement_point` within the same
        crossing class are one boundary; those naming none fall back to the
        crossing itself, with ingress compared per deployable rather than per
        component label. A merge spanning components records them in
@@ -1474,8 +1519,13 @@ def _consolidate_candidates(
 
     Returns ``(surviving_candidates, alias_map, notes)``; ``alias_map`` maps every
     original ``candidate_key`` to its survivor so signal promotion still resolves.
+    ``dropped`` is filled with ``candidate_key -> reason`` for every candidate
+    pass 2 removed, following this module's out-parameter convention for
+    diagnostics (`_consolidate`, `_normalize_row`).
     """
     notes: list[str] = []
+    if dropped is None:
+        dropped = {}
     working = [deepcopy(row) for row in candidates]
 
     for candidate in working:
@@ -1498,6 +1548,59 @@ def _consolidate_candidates(
                     f"{key}: direction corrected to ingress — evidence is a route registration, "
                     f"not an outbound call"
                 )
+        # Client-side code is not a trust zone. It is delivered to the user's
+        # device and executes there, on the attacker's side of every control the
+        # server has: the server cannot tell a request from its own SPA apart
+        # from a forged one, and nothing the SPA "enforces" survives a modified
+        # client. Run after the direction correction so a mis-modelled
+        # `client → external` that is really inbound is judged in its corrected
+        # form, and before the same-deployable rule, which must not claim that a
+        # browser shares a process with the server that ships it.
+        source, target = candidate.get("from"), candidate.get("to")
+        if target in components and _is_client_tier(target, components):
+            point = candidate.get("enforcement_point")
+            if point:
+                # Fail safe. A named, specific control on the way into the client
+                # is either a real control this model would lose (a token or
+                # cookie issued at that step) or evidence that the component is
+                # not purely browser-resident after all — server-rendered, or a
+                # BFF that merely got tagged `client`. Deleting an evidenced
+                # control is the dangerous direction, so keep the row and say why.
+                notes.append(
+                    f"{key}: kept {source} -> {target} into client-tier {target} — it names the "
+                    f"enforcement point {point!r}, which the model would lose with the row; a "
+                    f"declared control means a real check, or a component that is not purely client-side"
+                )
+            else:
+                dropped[key] = (
+                    f"{target} is a client-tier component: it executes on the user's device, so it is "
+                    f"not a trust zone. The crossing {source} -> {target} names no enforcement point "
+                    f"and therefore makes no security decision."
+                )
+                notes.append(f"{key}: dropped {source} -> {target} — {dropped[key]}")
+                continue
+        elif (
+            source in components
+            and target in components
+            and source != target
+            and _is_client_tier(source, components)
+        ):
+            # The real origin is `external`; the client component is only where
+            # the request was composed. Recorded in `covers_components` so the
+            # findings that live in that code keep an adjacent boundary
+            # (`_boundary_adjacency.is_adjacent`), then handed to the ordinary
+            # merge below — an identical crossing already modelled from
+            # `external` absorbs it, a genuinely different one keeps its row.
+            candidate["from"] = "external"
+            candidate["name"] = _retarget_name(candidate.get("name"), source, "external")
+            candidate["covers_components"] = sorted(
+                {source, target, *(candidate.get("covers_components") or [])}
+            )
+            notes.append(
+                f"{key}: source {source} -> external — {source} is client-tier, so it runs on the "
+                f"user's device on the untrusted side of {target}; the crossing it describes is the "
+                f"one the outside world already makes"
+            )
         if (
             candidate.get("from") == "external"
             and candidate.get("confidence") == "inferred"
@@ -1522,6 +1625,8 @@ def _consolidate_candidates(
                     f"{source} and {target} ship in one deployable"
                 )
                 candidate["kind"] = "process"
+
+    working = [candidate for candidate in working if candidate["candidate_key"] not in dropped]
 
     # Separation must be justified, not consolidation. A declared
     # `enforcement_point` IS the justification: candidates that name one group by
@@ -1604,6 +1709,15 @@ def _consolidate_candidates(
                 for member in members
                 for endpoint in (member.get("from"), member.get("to"))
                 if endpoint in components
+            }
+            # An endpoint a member already gave up (the client-tier source
+            # rewritten to `external`) is still anchored here, so it must not
+            # drop out when the group is recomputed.
+            | {
+                covered
+                for member in members
+                for covered in (member.get("covers_components") or [])
+                if covered in components
             }
         )
         if len(absorbed) > 1:
@@ -1760,10 +1874,12 @@ def promote_candidates(
     if unreferenced:
         raise ValueError(f"candidates are not referenced by a boundary disposition: {sorted(unreferenced)}")
 
+    dropped_candidates: dict[str, str] = {}
     candidates, candidate_alias, consolidation_notes = _consolidate_candidates(
         candidates,
         components={row["id"]: row for row in assessment["components"]},
         repo_root=repo_root,
+        dropped=dropped_candidates,
     )
     candidate_by_key = {row["candidate_key"]: row for row in candidates}
     for note in consolidation_notes:
@@ -1814,10 +1930,28 @@ def promote_candidates(
             and str(row.get("name", "")).casefold() == candidate["name"].casefold()
         ]
         if not exact:
+            # `kind` joins the fallback: two crossings can share endpoints and
+            # still ask different questions (the B2B `vm.createContext` sandbox
+            # and the HTTPS perimeter are both `external -> backend-api`), so a
+            # candidate whose name changed upstream must not claim both.
             exact = [
                 row["id"]
                 for row in canonical_rows
-                if row.get("from") == candidate["from"] and row.get("to") == candidate["to"]
+                if row.get("from") == candidate["from"]
+                and row.get("to") == candidate["to"]
+                and row.get("kind") == candidate.get("kind")
+            ]
+        if not exact:
+            # normalize()'s _consolidate() may have folded the candidate's target
+            # component into a parent boundary (covers_components lists the absorbed
+            # sub-components).  Match on the folded-in component so a sub-component
+            # candidate (e.g. external → realtime-channel folded into
+            # external → backend-api) still resolves to a canonical boundary.
+            exact = [
+                row["id"]
+                for row in canonical_rows
+                if row.get("from") == candidate["from"]
+                and candidate.get("to") in (row.get("covers_components") or [])
             ]
         candidate_to_ids[key] = sorted(set(exact), key=_numeric_id)
     # Dispositions still reference the pre-merge keys; point every alias at the
@@ -1834,9 +1968,35 @@ def promote_candidates(
             {boundary_id for key in disposition["candidate_keys"] for boundary_id in candidate_to_ids.get(key, [])},
             key=_numeric_id,
         )
-        if disposition["disposition"] == "boundary" and not boundary_ids:
+        verdict = disposition["disposition"]
+        rationale = disposition["rationale"]
+        # A crossing removed as client-side is a REMOVAL, and a removal that only
+        # showed up as a missing row would be invisible. The signal keeps its
+        # place in the coverage report, its disposition is restated
+        # deterministically as `same-trust` — both ends of the crossing sit
+        # outside the trust perimeter — and the reason is written where a reader
+        # can audit it.
+        if verdict == "boundary" and not boundary_ids and disposition["candidate_keys"]:
+            reasons = [
+                dropped_candidates[key] for key in disposition["candidate_keys"] if key in dropped_candidates
+            ]
+            if len(reasons) == len(disposition["candidate_keys"]):
+                verdict = "same-trust"
+                rationale = _clean_text(reasons[0], fallback=rationale, limit=300)
+                issues.append(
+                    {
+                        "code": "client-tier-crossing-dropped",
+                        "signal_id": signal_id,
+                        "message": _clean_text(
+                            f"No trust boundary was recorded for this signal. {reasons[0]}",
+                            fallback="Crossing into client-tier code is not a trust boundary.",
+                            limit=300,
+                        ),
+                    }
+                )
+        if verdict == "boundary" and not boundary_ids:
             raise ValueError(f"{signal_id} did not promote to a canonical boundary")
-        if disposition["disposition"] == "unresolved":
+        if verdict == "unresolved":
             issues.append(
                 {
                     "code": "unresolved-signal",
@@ -1847,11 +2007,13 @@ def promote_candidates(
         coverage_rows.append(
             {
                 "signal_id": signal_id,
-                "disposition": disposition["disposition"],
-                "candidate_keys": disposition["candidate_keys"],
+                "disposition": verdict,
+                "candidate_keys": [
+                    key for key in disposition["candidate_keys"] if key not in dropped_candidates
+                ],
                 "boundary_ids": boundary_ids,
                 "evidence": signal_by_id[signal_id]["evidence"],
-                "rationale": disposition["rationale"],
+                "rationale": rationale,
             }
         )
     # Visibility instead of a required field. Making `enforcement_point`

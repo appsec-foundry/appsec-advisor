@@ -99,6 +99,25 @@ def _load_abuse_case_titles(output_dir: Path) -> dict[str, str]:
     return titles
 
 
+def _load_boundary_renumber(output_dir: Path) -> dict[str, str]:
+    """`{pre-delivery id: delivered id}` published by `build_threat_model_yaml`.
+
+    Triage ranks against the sidecar catalogue and records those boundary ids in
+    `.triage-flags.json`; the delivered yaml carries the contiguous `tb-1 … tb-N`
+    ids `renumber_trust_boundaries` assigned afterwards. Without the translation
+    the §8 severity line would name a boundary the register no longer has.
+    Missing file → identity, i.e. the pre-renumbering behaviour.
+    """
+    try:
+        doc = json.loads((output_dir / ".trust-boundary-renumber.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    mapping = doc.get("mapping") if isinstance(doc, dict) else None
+    if not isinstance(mapping, dict):
+        return {}
+    return {str(old): new for old, new in mapping.items() if isinstance(new, str)}
+
+
 def _load_external_boundary_elevations(output_dir: Path) -> dict[str, tuple[str, ...]]:
     """Map threat IDs to the confirmed ingress boundaries that raised them.
 
@@ -111,6 +130,7 @@ def _load_external_boundary_elevations(output_dir: Path) -> dict[str, tuple[str,
         doc = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
+    renumber = _load_boundary_renumber(output_dir)
     result: dict[str, tuple[str, ...]] = {}
     source_prefix = "triage_compute_ranking.py:external_boundary:"
     for flag in doc.get("flags") or []:
@@ -120,7 +140,11 @@ def _load_external_boundary_elevations(output_dir: Path) -> dict[str, tuple[str,
         if not source.startswith(source_prefix):
             continue
         boundary_ids = tuple(
-            dict.fromkeys(token.strip() for token in source.removeprefix(source_prefix).split(",") if token.strip())
+            dict.fromkeys(
+                renumber.get(token.strip(), token.strip())
+                for token in source.removeprefix(source_prefix).split(",")
+                if token.strip()
+            )
         )
         if not boundary_ids:
             continue

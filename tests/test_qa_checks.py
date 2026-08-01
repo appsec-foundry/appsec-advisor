@@ -3827,6 +3827,7 @@ def test_asset_and_attack_surface_specs_widths_sum_to_100():
         qa._AS_COL_WIDTHS,
         qa._ASSET_COL_WIDTHS,
         qa._TRUST_BOUNDARY_COL_WIDTHS,
+        qa._TRUST_BOUNDARY_COL_WIDTHS_SRC,
         qa._STRENGTH_COL_WIDTHS_3,
         qa._STRENGTH_COL_WIDTHS_4,
     ):
@@ -3835,19 +3836,122 @@ def test_asset_and_attack_surface_specs_widths_sum_to_100():
 
 def test_trust_boundary_table_converts_with_structural_breaks_and_links():
     gfm = (
-        "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |\n"
+        "| ID | Boundary / crossing | Exposure | Kind | What must hold | Linked findings |\n"
         "|---|---|---|---|---|---|\n"
-        '| <a id="tb-1"></a>tb-1 | **Internet entry**<br>external → backend-api | '
-        "network / resolved<br>🌐 **internet-facing** | Requests require authorization.<br>_confirmed_ | "
-        "detected | [F-001](#f-001) |\n"
+        '| <a id="tb-1"></a>tb-1 | **Internet entry**<br>enforced by: expressJwt | '
+        "🌐 **Public** | network | Requests require authorization. | "
+        "[F-001](#f-001) |\n"
     )
     out, count = qa._attack_surface_tables_to_html(gfm)
     assert count == 1
     assert "".join(f'<col width="{width}" style="width:{width}">' for width in qa._TRUST_BOUNDARY_COL_WIDTHS) in out
-    assert "<strong>Internet entry</strong><br/>external → backend-api" in out
-    assert "🌐 <strong>internet-facing</strong>" in out
+    assert "<strong>Internet entry</strong><br/>enforced by: expressJwt" in out
+    assert "🌐 <strong>Public</strong>" in out
     assert '<a href="#f-001">F-001</a>' in out
     assert '<a id="tb-1"></a>' in out
+
+
+def test_trust_boundary_table_with_source_column_converts_and_never_breaks_a_source_word():
+    """The Source form (rows differ in provenance) is a separate fixed-layout
+    spec, and Source — like Exposure — deliberately carries NO
+    `overflow-wrap:anywhere`: that is what split the single word "detected" into
+    "detecte/d" at 8%."""
+    gfm = (
+        "| ID | Boundary / crossing | Exposure | Kind / status | What must hold | Source | Linked findings |\n"
+        "|---|---|---|---|---|---|---|\n"
+        '| <a id="tb-1"></a>tb-1 | **Internet entry** | 🌐 **Public** | network<br>**resolved** | '
+        "Requests require authorization. | detected | [F-001](#f-001) |\n"
+        '| <a id="tb-2"></a>tb-2 | **Declared entry** | ↗ **Egress** | network<br>**unresolved** | '
+        "Egress is allow-listed. | repo-declared | — |\n"
+    )
+    out, count = qa._attack_surface_tables_to_html(gfm)
+    assert count == 1
+    assert "".join(f'<col width="{width}" style="width:{width}">' for width in qa._TRUST_BOUNDARY_COL_WIDTHS_SRC) in out
+    assert "<td>detected</td>" in out and "<td>repo-declared</td>" in out
+    assert "<td>🌐 <strong>Public</strong></td>" in out
+
+
+def test_trust_boundary_prose_columns_never_use_overflow_wrap_anywhere():
+    """`overflow-wrap:anywhere` permits a break at ANY character, so a prose cell
+    wraps mid-word.
+
+    It regressed twice in this table: it split the single word "detected" into
+    "detecte/d" in the narrow Source column, then broke ordinary sentences in the
+    wider crossing column (user 2026-07-31). `break-word` breaks a word only when
+    it cannot fit a line by itself, so sentences wrap between words while a long
+    path or code span still breaks instead of overflowing the fixed layout.
+    """
+    for headers, widths, styles, _prose in qa._FIXED_LAYOUT_SPECS:
+        if headers[:3] != ("ID", "Boundary / crossing", "Exposure"):
+            continue
+        assert "anywhere" not in " ".join(styles.values())
+        # The single-word columns take no wrapping override at all.
+        exposure_index = 2
+        assert exposure_index not in styles
+        if "Source" in headers:
+            assert headers.index("Source") not in styles
+        # Every prose column still wraps rather than overflowing its width.
+        for index in range(1, len(widths)):
+            if index in styles and index != 0:
+                assert styles[index] == "overflow-wrap:break-word"
+
+
+def test_only_single_token_columns_may_break_anywhere():
+    """The same defect existed in four other fixed-layout tables.
+
+    `overflow-wrap:anywhere` is legitimate for exactly one shape: a column whose
+    cell is ONE long space-free token (a route), where breaking mid-token is the
+    only way to wrap it evenly. Every other column holds prose or a stack of
+    short ids, where `anywhere` splits words and ids mid-character. Asset names,
+    Linked Threats and all four Operational Strengths columns carried it until
+    2026-07-31.
+    """
+    single_token_columns = {("Method", "Route", "Risk", "Notes"): {1}}
+    for headers, _widths, styles, _prose in qa._FIXED_LAYOUT_SPECS:
+        allowed = single_token_columns.get(tuple(headers), set())
+        for index, style in styles.items():
+            if "anywhere" in style:
+                assert index in allowed, f"{headers[index]!r} in {tuple(headers)} may not break mid-character"
+
+
+def test_trust_boundary_specs_cover_every_header_form_compose_can_emit():
+    """Compose drops the Source column and the "/ status" header half
+    independently, so all four forms must have a fixed-layout spec — a missing
+    one silently leaves the catalogue as an auto-sized GFM table."""
+    forms = {spec[0] for spec in qa._FIXED_LAYOUT_SPECS if spec[0][:3] == ("ID", "Boundary / crossing", "Exposure")}
+    assert len(forms) == 4
+    for headers in forms:
+        assert len(headers) == len(dict.fromkeys(headers))  # no duplicate column names
+        widths = next(spec[1] for spec in qa._FIXED_LAYOUT_SPECS if spec[0] == headers)
+        assert len(widths) == len(headers)
+
+
+def test_inline_md_emphasis_survives_an_enclosed_code_span():
+    """``**bold `code` bold**`` must still become ``<strong>`` in a converted cell.
+
+    Code spans used to be split out of the string BEFORE emphasis was matched,
+    so the opening ``**`` and the closing ``**`` landed in different fragments,
+    the emphasis matched in neither, and the raw markers reached the reader —
+    markdown is not parsed inside a raw ``<table>``. The §1 Trust Boundaries
+    table showed ``**external → backend-api: <code>…</code>**`` right next to
+    correctly converted ``<strong>`` rows (user 2026-07-31).
+    """
+    out = qa._render_inline_md_to_html("**external → auth: `jwt.sign` RS256** and _at `server.ts` only_")
+    assert out.startswith("<strong>external → auth: <code>jwt.sign</code> RS256</strong>")
+    assert "<em>at <code>server.ts</code> only</em>" in out
+    assert "**" not in out and "_at" not in out
+
+
+def test_inline_md_backslash_escapes_do_not_reach_the_cell():
+    """A composer-emitted markdown escape (``Node\\.js``, ``\\$where``) stands for
+    ONE literal character — it must not surface verbatim in an HTML cell."""
+    out = qa._render_inline_md_to_html("Node\\.js sandbox, \\$where clause, \\[link\\](javascript:alert(1))")
+    assert "Node.js sandbox" in out
+    assert "$where clause" in out
+    # The escaped brackets stay TEXT — no anchor is fabricated from them.
+    assert "[link](javascript:alert(1))" in out
+    assert "<a href=" not in out
+    assert "\\" not in out
 
 
 def test_operational_strengths_table_converts_keeping_structural_breaks():

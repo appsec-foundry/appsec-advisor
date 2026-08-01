@@ -444,9 +444,12 @@ unresolved, conflicted, dangling, wrong-origin, and evidence-free links do not
 change severity. Raw risk remains unchanged and every effective-severity change
 is recorded in the triage audit.
 Canonical YAML and the query command contain the complete catalogue; the
-Markdown catalogue is capped for readability, finding cards link only visible
-anchors, and SARIF carries linked IDs in result properties. Figure 1 remains a
-summary and is not the canonical boundary view.
+Markdown catalogue is capped for readability but always renders a crossing a
+finding references, so every finding card links to a live anchor. SARIF carries
+each linked crossing and its exposure in the result properties and the whole
+catalogue in the run properties; the Threat Dragon export folds a linked
+crossing into the threat description. Figure 1 remains a summary and is not the
+canonical boundary view.
 
 Boundary finding links are best-effort enrichment. Each component receives at
 most 2/4/6 candidate crossings for quick/standard/thorough; quick additionally
@@ -511,7 +514,7 @@ Use these commands after an assessment or to recover an interrupted run.
 | `/appsec-advisor:ask-threat-model <question>` | Answer a free-form question from the structured model without rescanning or writing files. Natural-language questions about the model route here even when the command is omitted. |
 | `/appsec-advisor:show-threat-model` | Print the fixed read-only overview with scan identity, severity mix, mitigation backlog, worst-case scenarios, control posture, and freshness. |
 | `/appsec-advisor:update-threat-model` | Incrementally update an existing threat model — alias for `create-threat-model --incremental`, re-analyzing only changed components. Aborts with guidance when no model exists yet (never bootstraps a first full scan). An explicit `--full`/`--rebuild`/`--rerender`/`--resume` is honored instead. |
-| `/appsec-advisor:review-threat-model` | Open a triage console over an existing report — a one-screen verdict (severity mix, hottest areas and components, mitigation coverage), then drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with owner and target) on a whole selection at once; writes a prioritised `remediation-plan.md`. Runs independently of the assessment and only reads the model. |
+| `/appsec-advisor:review-threat-model` | Open a triage console over an existing report — a one-screen verdict (whether the model is still current, severity mix, hottest areas and components, mitigation coverage), then drill into top findings, top mitigations, or a security domain and bulk-decide mitigate / accept-risk / defer (with owner and target) on a whole selection at once; writes a prioritised `remediation-plan.md`. Runs independently of the assessment and only reads the model. |
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |
 | `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, HTML, SARIF, or pentest tasks without model calls. |
 | `/appsec-advisor:threat-model-health` | Check whether the current threat model is fresh, stale, missing, or blocked by run debris. |

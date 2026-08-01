@@ -1230,15 +1230,20 @@ def _humanize_actor_ids(text: str) -> tuple[str, int]:
     return "".join(out_lines), count
 
 
-_TRUST_BOUNDARY_TABLE_HEADER = (
-    "ID",
-    "Boundary / crossing",
-    "Kind / status",
-    "Assumption / confidence",
-    "Source",
-    "Linked findings",
+# Compose drops a column whose every row says the same thing — Source when all
+# rows share one provenance, the "/ status" header half when every row is
+# `resolved` — so four header forms arrive. All of them keep the crossing at
+# index 1 and the assumption at index 4, so the prose-column set is shared.
+_TRUST_BOUNDARY_TABLE_HEADERS = tuple(
+    tuple(
+        ["ID", "Boundary / crossing", "Exposure", kind, "What must hold"]
+        + (["Source"] if with_source else [])
+        + ["Linked findings"]
+    )
+    for kind in ("Kind", "Kind / status")
+    for with_source in (False, True)
 )
-_TRUST_BOUNDARY_PROSE_COLUMNS = frozenset({1, 3})
+_TRUST_BOUNDARY_PROSE_COLUMNS = frozenset({1, 4})
 
 
 def _split_unescaped_table_pipes(line: str) -> list[str]:
@@ -1273,7 +1278,7 @@ def _table_header_cells(line: str) -> tuple[str, ...]:
 def _format_trust_boundary_table_row(line: str) -> tuple[str, int]:
     """Format non-prose cells while keeping boundary narrative typography."""
     parts = _split_unescaped_table_pipes(line)
-    if len(parts) < len(_TRUST_BOUNDARY_TABLE_HEADER) + 2:
+    if len(parts) < min(len(header) for header in _TRUST_BOUNDARY_TABLE_HEADERS) + 2:
         return line, 0
     total = 0
     for part_index in range(1, len(parts) - 1):
@@ -1322,7 +1327,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
         # snippets from accidental rewriting.
         is_heading = stripped.startswith("#")
         is_table_row = stripped.startswith("|")
-        if is_table_row and _table_header_cells(line) == _TRUST_BOUNDARY_TABLE_HEADER:
+        if is_table_row and _table_header_cells(line) in _TRUST_BOUNDARY_TABLE_HEADERS:
             in_trust_boundary_table = True
         elif not is_table_row:
             in_trust_boundary_table = False
@@ -1423,7 +1428,7 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
             out.append(raw)
             continue
         is_table_row = stripped.startswith("|")
-        if is_table_row and _table_header_cells(line) == _TRUST_BOUNDARY_TABLE_HEADER:
+        if is_table_row and _table_header_cells(line) in _TRUST_BOUNDARY_TABLE_HEADERS:
             in_trust_boundary_table = True
         elif not is_table_row:
             in_trust_boundary_table = False

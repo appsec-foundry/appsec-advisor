@@ -172,6 +172,114 @@ def test_completion_normalizes_drifted_cvss_v4_shape(tmp_path: Path) -> None:
     }
 
 
+def _progress(output_dir: Path, component_id: str, step: int, label: str) -> Path:
+    progress_dir = output_dir / ".progress"
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    path = progress_dir / f"{component_id}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "component_id": component_id,
+                "component_name": component_id,
+                "step": step,
+                "total": 9,
+                "label": label,
+                "updated_at": "2026-07-20T12:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_status_finalizes_the_progress_counter_of_a_completed_component(tmp_path: Path) -> None:
+    manifest = _manifest(2)
+    plan = waves.build_plan(manifest, concurrency=2)
+    _complete(tmp_path, "service-01")
+    finished = _progress(tmp_path, "service-01", step=1, label="Loading context")
+    running = _progress(tmp_path, "service-02", step=3, label="STRIDE: Spoofing")
+
+    waves.status(plan, manifest, tmp_path)
+
+    reconciled = json.loads(finished.read_text(encoding="utf-8"))
+    assert (reconciled["step"], reconciled["label"]) == (9, waves.FINAL_PROGRESS_LABEL)
+    # An incomplete component keeps its self-reported step — only a validated
+    # output makes the remaining steps a fact.
+    assert json.loads(running.read_text(encoding="utf-8"))["step"] == 3
+
+
+def test_completed_component_without_progress_file_stays_without_one(tmp_path: Path) -> None:
+    """Creating one would forge check_stride_dispatch's inline-collapse signal."""
+    manifest = _manifest(1)
+    plan = waves.build_plan(manifest, concurrency=1)
+    _complete(tmp_path, "service-01")
+
+    waves.status(plan, manifest, tmp_path)
+
+    assert not (tmp_path / ".progress" / "service-01.json").exists()
+
+
+def test_reconcile_progress_is_idempotent(tmp_path: Path) -> None:
+    _complete(tmp_path, "service-01")
+    _progress(tmp_path, "service-01", step=9, label=waves.FINAL_PROGRESS_LABEL)
+
+    assert waves.reconcile_progress(tmp_path, "service-01") is False
+
+
+def test_completion_defaults_an_absent_skipped_categories(tmp_path: Path) -> None:
+    """A complete component that simply never wrote `skipped_categories` is
+    accepted. The key is optional in the schema and the analyzer drops it when
+    it authors the final file from scratch; on a `partial: false` file its
+    absence can only mean "nothing skipped", so `None != []` blocked a wave over
+    a non-defect. The default is persisted so merge and any resume see it."""
+    data = _stride_component_with("CWE-89", "TH-09")
+    del data["skipped_categories"]
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    assert json.loads(path.read_text(encoding="utf-8"))["skipped_categories"] == []
+
+
+def test_completion_still_rejects_a_non_empty_skipped_categories(tmp_path: Path) -> None:
+    """The default must not mask real skipped coverage."""
+    data = _stride_component_with("CWE-89", "TH-09")
+    data["skipped_categories"] = ["Repudiation"]
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert "skipped_categories" in (waves.completion_error(tmp_path, "service-01") or "")
+
+
+def test_completion_drops_an_empty_attack_steps(tmp_path: Path) -> None:
+    """`attack_steps: []` is a fatal minItems violation but carries no more
+    information than an absent key — the §3 renderer ignores both. The analyzer
+    writes it on control-absence findings it cannot phrase as attacker actions,
+    so drop it deterministically instead of failing the component."""
+    data = _stride_component_with("CWE-778", "TH-09")
+    data["threats"][0]["attack_steps"] = []
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    assert "attack_steps" not in json.loads(path.read_text(encoding="utf-8"))["threats"][0]
+
+
+def test_completion_keeps_usable_attack_steps(tmp_path: Path) -> None:
+    """Two or more real steps are authored content and stay untouched."""
+    steps = [
+        "An attacker registers an account against the public signup endpoint.",
+        "The attacker replays the profile update with an added role field.",
+    ]
+    data = _stride_component_with("CWE-89", "TH-09")
+    data["threats"][0]["attack_steps"] = steps
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    assert json.loads(path.read_text(encoding="utf-8"))["threats"][0]["attack_steps"] == steps
+
+
 def test_plan_fingerprint_rejects_changed_manifest() -> None:
     original = _manifest(3)
     plan = waves.build_plan(original, concurrency=2)

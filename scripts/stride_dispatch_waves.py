@@ -6,7 +6,9 @@ helper adds only deterministic scheduling state: stable waves of component IDs
 and a strict completion check over the corresponding ``.stride-<id>.json``
 files. Completed files are the resume checkpoint, so re-running ``next`` after
 an interrupted parent session returns only unfinished components from the
-earliest incomplete wave.
+earliest incomplete wave. A component whose output validates also has its
+``.progress/<id>.json`` counter reconciled to its final step, so the live view
+never shows a finished component parked at an early substep.
 
 Exit codes:
   0  command succeeded; ``verify`` found complete coverage
@@ -22,16 +24,25 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
-from merge_threats import backfill_threat_category_id, backfill_threat_cvss_v4
+from merge_threats import (
+    backfill_threat_attack_steps,
+    backfill_threat_category_id,
+    backfill_threat_cvss_v4,
+)
 from validate_intermediate import validate_stride
 
 DEFAULT_CONCURRENCY = 8
 MAX_CONCURRENCY = 32
 PLAN_NAME = ".dispatch-waves.json"
 _COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# Label stamped on a completed component's progress file by
+# ``reconcile_progress``. Deliberately not one of the analyzer's nine substep
+# labels: the output already landed, so the state is past "Writing output".
+FINAL_PROGRESS_LABEL = "Complete"
 
 # Per-component dispatch attempts: the initial call plus retries. Two is right
 # for a transient stall -- an identical third attempt rarely behaves
@@ -193,7 +204,18 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
                 "component likely needs a larger turn budget"
             )
         return "partial is not false"
-    if data.get("skipped_categories") != []:
+    repaired = False
+    if "skipped_categories" not in data:
+        # The schema leaves the key optional and the analyzer routinely omits it
+        # on a final write authored from scratch rather than edited from the
+        # pre-seed. On a `partial: false` file "absent" can only mean "nothing
+        # was skipped", but `None != []` read it as incomplete coverage and
+        # blocked the wave over a key the agent never had to write
+        # (juice-shop 2026-07-31: data-persistence). Default it; a genuinely
+        # non-empty list stays fatal.
+        data["skipped_categories"] = []
+        repaired = True
+    if data["skipped_categories"] != []:
         return "skipped_categories is not empty"
     if not isinstance(data.get("threats"), list):
         return "threats is not an array"
@@ -206,13 +228,15 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
     #   * cvss_v4 in the analyzer's drifted {version, score} shape, coerced to
     #     the canonical {vector, base_score, severity, source}; an unsalvageable
     #     one is dropped (the field is optional).
+    #   * attack_steps too short to satisfy minItems, dropped (also optional).
     # Persist the repaired output so merge and any resume see the canonical form.
-    repaired = False
     for threat in data["threats"]:
         if isinstance(threat, dict):
             if backfill_threat_category_id(threat):
                 repaired = True
             if backfill_threat_cvss_v4(threat):
+                repaired = True
+            if backfill_threat_attack_steps(threat):
                 repaired = True
     if repaired:
         _atomic_write_json(path, data)
@@ -220,6 +244,47 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
     if not ok:
         return "schema validation failed: " + "; ".join(errors[:3])
     return None
+
+
+def reconcile_progress(output_dir: Path, component_id: str) -> bool:
+    """Advance a completed component's ``.progress/<id>.json`` to its last step.
+
+    The analyzer advances its own counter through ``agent_progress.sh``, one
+    call per substep, so the step is only as accurate as the agent's
+    compliance: a run that batches its substeps into few tool calls leaves the
+    file parked at an early step (``step=1 label="Loading context"``) even
+    though ``.stride-<id>.json`` landed complete. Once the output validates,
+    the remaining steps are a fact rather than a claim, so the deterministic
+    layer finishes the counter instead of the LLM being trusted to report it.
+
+    Only an EXISTING progress file is updated. Creating one would forge the
+    exact signal ``check_stride_dispatch.detect_inlined_components`` reads as
+    proof that the component ran as a dispatched sub-agent.
+
+    Returns True when the file was rewritten (idempotent: a file already at its
+    final step is left untouched, so mtime does not churn on every poll).
+    """
+    path = output_dir / ".progress" / f"{component_id}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    total = data.get("total")
+    if isinstance(total, bool) or not isinstance(total, int) or total < 1:
+        return False
+    if data.get("step") == total:
+        return False
+    data["step"] = total
+    data["label"] = FINAL_PROGRESS_LABEL
+    data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        _atomic_write_json(path, data)
+    except OSError:
+        # Progress is a display layer -- never let it fail a wave check.
+        return False
+    return True
 
 
 def status(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> dict[str, Any]:
@@ -236,6 +301,7 @@ def status(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> 
         for component_id in wave["component_ids"]:
             error = completion_error(output_dir, component_id)
             if error is None:
+                reconcile_progress(output_dir, component_id)
                 complete_ids.append(component_id)
                 complete_count += 1
             else:

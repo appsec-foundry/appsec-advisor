@@ -6,24 +6,42 @@ description: >-
   appsec-advisor do?", "which commands are there?", "how do I start?", "wie
   fange ich an?", "was kann das plugin?", "help"). Prints a short command
   reference with example calls: creating a first threat model, asking questions
-  about an existing one, working through the findings, and the flags that
-  matter. Read-only — it prints guidance and does not scan, analyze, or write
-  anything. For a question about the model's CONTENT ("what are the critical
+  about an existing one, working through the findings, the configuration and
+  coach state in effect, and the flags that matter. Read-only — it prints
+  guidance and does not scan, analyze, or write anything. For a question about the model's CONTENT ("what are the critical
   findings?") use ask-threat-model instead; this skill explains the tools, not
   the results.
 ---
 
-You print the command reference below. This skill is **read-only**: it does
-**not** scan, analyze, spawn agents, or write files. It works in any repository,
+You print the command reference below. This skill is **read-only**: it reads
+plugin status once and otherwise does **not** scan, analyze, spawn agents, or
+write files. It works in any repository,
 including one without a threat model — the case where it matters most.
 
 **Print it as a reference, not as prose.** Keep the command blocks and the
 one-line explanations; do not expand them into paragraphs, do not summarize the
-repository, and do not comment on findings. Two adjustments only:
+repository, and do not comment on findings.
+
+Print what is actually in effect, not what the plugin could do elsewhere. Read
+the state from one read-only call before printing:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" --repo-root <repo> --json
+```
+
+Adjust the reference with it:
 
 1. If `docs/security/threat-model.yaml` is missing, drop the *Ask about it* and
    *Work through findings* sections — there is nothing to ask about yet.
-2. In *More information*, print the URL from `banner.url` in the plugin's
+2. Drop the line of every skill named in `org_profile.disabled_skills` — the
+   package refuses it at runtime.
+3. When `org_profile.active` is true, replace the plugin-configuration line
+   under *Configuration* with one line naming the organization (`id`), the
+   active `preset`, and that scan defaults come from that profile.
+4. Under *Guidance while you code*, print the coach's real state and note from
+   `capsules.coach`. When the state is `not packaged`, drop the section — the
+   package does not ship the hook.
+5. In *More information*, print the URL from `banner.url` in the plugin's
    `config.json` when one is set, otherwise the upstream URL shown below.
 
 ---
@@ -90,6 +108,19 @@ apply on every prompt — not only the ones that mention security.
 
 It loads at the next session start, not the one it was installed in.
 
+## Guidance while you code
+
+The coach is a prompt hook. When a prompt touches auth, crypto, injection,
+secrets or IaC, it adds the matching guidance — and the team's requirements
+when a catalog is configured — before the code is written.
+
+```text
+APPSEC_COACH=1 claude ...     turn it on for one session
+APPSEC_COACH=0 claude ...     turn it off for one session
+```
+
+<coach state and note from `capsules.coach`>
+
 ## Everything else
 
 ```text
@@ -110,11 +141,24 @@ docs/security/threat-model.yaml             the structured model every skill rea
 docs/security/threat-model-changelog.md     what changed between runs
 ```
 
-## Session banner
+## Configuration
+
+Optional files in the repository you scan, read when they exist. None of them
+can suppress a finding the code supports.
 
 ```text
-APPSEC_BANNER=0     in the env block of ~/.claude/settings.json — turns it off
+docs/business-context.md          critical flows, sensitive data, regulatory scope
+docs/known-threats.yaml           prior findings, re-checked on every run
+.appsec/trust-boundaries.yaml     deployment and tenancy intent
 ```
+
+```text
+APPSEC_BANNER=0     in the env block of ~/.claude/settings.json — turns the
+                    session banner off
+```
+
+Plugin defaults — pricing, logging, external context: `config.json` in the
+plugin directory, documented in `docs/configuration.md`.
 
 ## More information
 

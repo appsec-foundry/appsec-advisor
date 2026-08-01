@@ -509,7 +509,11 @@ def test_emit_as_html_table_prose_col_strips_br():
     joined = "\n".join(html)
     # Description col (2) had its <br/> collapsed to a space.
     assert "line one line two" in joined
-    assert "overflow-wrap:anywhere" in joined  # styled narrow columns kept
+    # Styled narrow columns keep their wrapping override. Asserted on the
+    # property, not the literal value: the Asset name and Linked Threats columns
+    # moved from `anywhere` to `break-word` on 2026-07-31 so they stop splitting
+    # words and ids mid-character.
+    assert "overflow-wrap:" in joined
 
 
 # ---------------------------------------------------------------------------
@@ -745,6 +749,63 @@ def test_mermaid_end_without_opener(tmp_path):
     p = _md(tmp_path, md)
     r = qa.check_mermaid_syntax(p)
     assert any("without matching" in i for i in r.issues)
+
+
+def test_mermaid_rect_block_is_a_valid_opener(tmp_path):
+    # `rect <color>` shades a sequenceDiagram region and is closed by `end`.
+    # The balance tracker used to know only alt/opt/loop/par, so every shaded
+    # diagram was falsely reported as an unbalanced 'end' (blocking action).
+    md = (
+        "```mermaid\nsequenceDiagram\n"
+        "  rect rgb(240, 248, 255)\n  A->>B: x\n  end\n"
+        "  rect rgb(240, 248, 255)\n  A->>B: y\n  end\n```\n"
+    )
+    p = _md(tmp_path, md)
+    r = qa.check_mermaid_syntax(p)
+    assert not [i for i in r.issues if "unbalanced" in i or "unclosed" in i]
+
+
+def test_mermaid_critical_break_box_are_valid_openers(tmp_path):
+    md = (
+        "```mermaid\nsequenceDiagram\n"
+        "  box Group\n  participant A\n  end\n"
+        "  critical Establish connection\n  A->>B: x\n  option Timeout\n  A->>B: y\n  end\n"
+        "  break Insufficient funds\n  A->>B: z\n  end\n```\n"
+    )
+    p = _md(tmp_path, md)
+    r = qa.check_mermaid_syntax(p)
+    assert not [i for i in r.issues if "unbalanced" in i or "unclosed" in i]
+
+
+def test_mermaid_unclosed_rect_still_flagged(tmp_path):
+    md = "```mermaid\nsequenceDiagram\n  rect rgb(240, 248, 255)\n  A->>B: x\n```\n"
+    p = _md(tmp_path, md)
+    r = qa.check_mermaid_syntax(p)
+    assert any("unclosed 'rect'" in i for i in r.issues)
+
+
+def test_mermaid_stray_end_inside_rect_still_flagged(tmp_path):
+    md = (
+        "```mermaid\nsequenceDiagram\n"
+        "  rect rgb(240, 248, 255)\n  A->>B: x\n  end\n  end\n```\n"
+    )
+    p = _md(tmp_path, md)
+    r = qa.check_mermaid_syntax(p)
+    assert any("without matching" in i and "rect" in i for i in r.issues)
+
+
+def test_mermaid_else_inside_alt_wrapped_in_rect_not_flagged(tmp_path):
+    # The alt is open when `else` is reached, even though a rect sits on the
+    # stack around it — this must NOT be reported as a stray `else`.
+    md = (
+        "```mermaid\nsequenceDiagram\n"
+        "  rect rgb(240, 248, 255)\n"
+        "  alt Current state — T-001\n  A->>B: x\n  else After M-001 — fix\n  A->>B: y\n  end\n"
+        "  end\n```\n"
+    )
+    p = _md(tmp_path, md)
+    r = qa.check_mermaid_syntax(p)
+    assert not any("outside any 'alt'" in i for i in r.issues)
 
 
 def test_mermaid_alt_label_convention(tmp_path):

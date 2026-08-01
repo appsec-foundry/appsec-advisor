@@ -68,6 +68,7 @@ import _severity_rollup
 import jinja2
 import yaml
 from _atomic_io import atomic_write_text
+from _boundary_criticality import exposure_of, rating_of, tier_of
 from _manifest_readers import (
     derive_homepage as _derive_homepage,
 )
@@ -10918,7 +10919,20 @@ _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
     {
         ("Method", "Route", "Risk", "Notes"),
         ("Asset", "Classification", "Description", "Linked Threats"),
-        ("ID", "Boundary / crossing", "Kind / status", "Assumption / confidence", "Source", "Linked findings"),
+        # Trust Boundaries (2026-07-31): a column whose every row says the same
+        # thing is dropped — the Source column when all rows share one
+        # provenance, the "/ status" half of the Kind header when every row is
+        # `resolved` — so four header forms occur. Kept in sync with qa's
+        # `_trust_boundary_spec`.
+        *(
+            tuple(
+                ["ID", "Boundary / crossing", "Exposure", kind, "What must hold"]
+                + (["Source"] if with_source else [])
+                + ["Linked findings"]
+            )
+            for kind in ("Kind", "Kind / status")
+            for with_source in (False, True)
+        ),
         # Operational Strengths (2026-07-15): Gap merged into the Effectiveness
         # cell; Mitigates shown only when populated. Both the 3-col (no Mitigates)
         # and 4-col (with Mitigates) forms become fixed-layout HTML.
@@ -12296,15 +12310,21 @@ def _is_bare_finding_ref_line(line: str) -> bool:
     this module, plus ``linkify_anchors`` / ``_annotate_id_refs`` in qa_checks)
     skip these lines so their `[F-NNN](#f-nnn)` links stay compact.
 
-    Two contexts (user 2026-07-15):
+    Three contexts (user 2026-07-15, 2026-07-31):
       • MS "Top Weaknesses" proof run — the single weakness dot owns the bullet's
         severity signal (`… _Proven by [F-NNN], …._`).
       • Critical Attack Tree findings pointer — the tree leaves above already
         carry each finding's id + title, so the pointer is a bare jump-index.
+      • §1 Trust Boundaries catalogue row (carries its `<a id="tb-N">` declaration
+        anchor) — its Linked-findings column is the narrowest in the fixed-layout
+        table; appended titles collapsed it into a column of single
+        stacked characters. The renderer emits the severity dot itself.
     """
     if "_Proven by " in line and "](#w-" in line:
         return True
     if "full detail in" in line and "#8-findings-register" in line:
+        return True
+    if '<a id="tb-' in line:
         return True
     return False
 
@@ -13933,6 +13953,17 @@ _CODE_DOTTED_RE = re.compile(
 # (XSS, CSRF, SQL) are never wrapped. A leading `secrets.`/`process.env.`
 # member is handled by _CODE_DOTTED_RE; this catches the bare token.
 _CODE_ENV_RE = re.compile(r"(?<![`\w.])([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?![`\w])")
+# Scoped npm package names — `@ai-sdk/openai-compatible`, `@nestjs/common`.
+# The §1 trust-boundary cell rendered `@ai-sdk/openai-compatible` as plain prose
+# right next to a correctly monospaced `LLM_API_KEY` and `routes/chat.ts`
+# (user 2026-07-31): no other matcher covers a `@scope/name` with no extension
+# and no call parens. Deliberately narrow so ordinary prose cannot match:
+#   * the `@` must open the token (nothing word-like, `.`, `@` or `-` before it),
+#     so an email local part — `admin@juice-sh.op`, `a@b/c` — never matches;
+#   * a `/` separator is REQUIRED, so a bare `@mention` stays prose;
+#   * both halves are npm-legal lowercase (`a-z0-9._-`) and must start
+#     alphanumeric, so `@ Scope / Name` and `word/word` cannot match.
+_CODE_SCOPED_PKG_RE = re.compile(r"(?<![\w.@-])(@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*)(?![`\w/])")
 
 
 # --- Fail-closed guards for the two AMBIGUOUS matchers -------------------
@@ -14187,6 +14218,9 @@ def _codify_inline_identifiers(text: str) -> str:
         run = _wrap_code_string_literals(run)
         # Two matchers are ambiguous and run fail-closed (positive-evidence
         # guard); the other three shapes are unambiguously code.
+        # Scoped packages run BEFORE the file matcher: `@scope/name.js` would
+        # otherwise be half-wrapped as a `name.js` "file" inside the package name.
+        run = _sub_outside_spans(_CODE_SCOPED_PKG_RE, run)
         run = _sub_outside_spans(_CODE_FILE_RE, run, reject=_file_token_is_product_name)
         run = _sub_outside_spans(_CODE_CALL_RE, run)
         run = _sub_outside_spans(_CODE_BARE_CALL_RE, run)
@@ -14874,15 +14908,34 @@ def _build_threat_card(
             for row in ctx.yaml_data.get("trust_boundaries") or []
             if isinstance(row, dict) and row.get("id")
         }
-        visible_boundary_ids = {row.get("id") for row in _ordered_trust_boundaries(ctx)[:20]}
+        visible_boundary_ids = {row.get("id") for row in _visible_trust_boundaries(ctx)}
+        component_ids = _boundary_component_ids(ctx)
         rendered_refs: list[str] = []
         for ref in refs[:2]:
             boundary_id = str(ref.get("boundary_id") or "")
             boundary = by_id.get(boundary_id) or {}
-            name = _safe_boundary_text(boundary.get("name"))
-            rationale = _safe_boundary_text(ref.get("rationale"))
+            # Crossing first, then the point being made. The boundary `name`
+            # is deliberately NOT repeated here: it re-states the crossing and
+            # the enforcement mechanism at length, and the rationale then
+            # re-stated the crossing a third time, burying the actual statement
+            # (user 2026-07-31). The catalogue row behind the link owns the
+            # mechanism; the rationale's own opening restatement is folded to
+            # "This boundary …".
+            rationale = _safe_boundary_text(_boundary_rationale_lead(str(ref.get("rationale") or ""), boundary))
             label = f"[{boundary_id}](#{boundary_id})" if boundary_id in visible_boundary_ids else boundary_id
-            rendered_refs.append(f"{label} — {name}: {rationale}")
+            # Only the internet-facing rating travels here, and only as the
+            # catalogue's own `🌐 Public`. The card already carries a severity
+            # dot, so mirroring the whole exposure ramp would put two rating
+            # scales side by side — exactly the collision `_boundary_criticality`
+            # keeps the vocabularies apart to avoid. `🌐` is the one rating that
+            # changes how the finding reads: it is the sole exposure the
+            # effective-severity exception may act on.
+            if boundary:
+                if _boundary_exposure(boundary, component_ids) == "internet-facing":
+                    label += " {} {}".format(*rating_of("internet-facing"))
+                crossing, _mechanism = _boundary_crossing_and_mechanism(boundary)
+                label += f" — {_safe_boundary_text(crossing)}"
+            rendered_refs.append(f"{label}: {rationale}")
         if rendered_refs:
             boundary_card = "**Trust boundary gap:** " + "<br>".join(rendered_refs)
 
@@ -15168,6 +15221,14 @@ def _boundary_link_index(ctx: RenderContext) -> dict[str, list[str]]:
     return linked
 
 
+def _boundary_component_ids(ctx: RenderContext) -> set[str]:
+    return {
+        row["id"]
+        for row in ctx.yaml_data.get("components") or []
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+
+
 def _ordered_trust_boundaries(ctx: RenderContext) -> list[dict]:
     """§1 catalogue order: `tb-N`, with broken rows hoisted.
 
@@ -15175,7 +15236,7 @@ def _ordered_trust_boundaries(ctx: RenderContext) -> list[dict]:
     `#tb-N`, so a reader arrives knowing the id and scans the ID column for it.
     It used to sort risk-first (linked findings, then primary selection,
     internet-facing, confirmed), which reordered the catalogue on ordinary
-    attributes that the table's own "Linked findings" and "Kind / status" columns
+    attributes that the table's own "Linked findings" and "Exposure / kind" columns
     already show. On juice-shop that surfaced as a catalogue starting at tb-5 and
     ending at tb-2 for no reason visible in the rendered table — and the leading
     criterion was decided by whichever boundary happened to collect a
@@ -15195,6 +15256,33 @@ def _ordered_trust_boundaries(ctx: RenderContext) -> list[dict]:
         )
 
     return sorted(rows, key=key)
+
+
+_BOUNDARY_CATALOG_ROWS = 20
+
+
+def _visible_trust_boundaries(ctx: RenderContext) -> list[dict]:
+    """The catalogue rows the report renders, in catalogue order.
+
+    A boundary that a finding references is ALWAYS among them, however far down
+    the catalogue it sits — the cap bounds the unreferenced fill only, so a run
+    whose findings reference more than `_BOUNDARY_CATALOG_ROWS` boundaries
+    renders a longer table rather than a shorter one. Finding cards link to
+    `#tb-N`, and the cap used to decide by position alone, so a referenced
+    boundary past row 20 lost its anchor and the card degraded to a bare id no
+    reader could follow (user 2026-08-01). Membership bends here, order does not:
+    the kept rows stay in `tb-N` order.
+    """
+    rows = _ordered_trust_boundaries(ctx)
+    if len(rows) <= _BOUNDARY_CATALOG_ROWS:
+        return rows
+    linked = _boundary_link_index(ctx)
+    keep = {str(row.get("id")) for row in rows if linked.get(row.get("id"))}
+    for row in rows:
+        if len(keep) >= _BOUNDARY_CATALOG_ROWS:
+            break
+        keep.add(str(row.get("id")))
+    return [row for row in rows if str(row.get("id")) in keep]
 
 
 _BOUNDARY_SURFACE_LABELS = {
@@ -15235,21 +15323,151 @@ def _boundary_kind_label(row: dict) -> str:
     return label
 
 
+_BOUNDARY_ARROW_RE = r"(?:\s*(?:→|->|—>|–>)\s*|\s+to\s+|\s*-to-\s*)"
+
+
+def _boundary_crossing_and_mechanism(row: dict) -> tuple[str, str]:
+    """Split a boundary row into its two distinct facts: the crossing and the
+    mechanism that enforces it.
+
+    The catalogue cell used to stack three lines — the ``name`` (which itself
+    reads ``<from> → <to>[ qualifier]: <mechanism>``), then ``from → to`` again,
+    then ``_enforced at: <mechanism>_``. So the crossing appeared twice and the
+    enforcement twice (user 2026-07-31). Here each is derived once:
+
+      * crossing — the ``name``'s pre-colon head when it already spells the
+        crossing (it may carry a disambiguating qualifier such as
+        ``external → backend-api B2B eval``, which is the only thing telling two
+        rows over the same component pair apart), else plain ``from → to``.
+      * mechanism — ``enforcement_point``, and ONLY that. It is optional, and an
+        absent one means the analysis identified no single control at this
+        crossing; the caller says so rather than showing a mechanism.
+
+    The mechanism used to fall back to the ``name``'s post-colon tail, which
+    manufactured a control the analysis had deliberately withheld: juice-shop's
+    ``external → frontend-spa`` carries no ``enforcement_point`` and the table
+    still read "enforced by: Express static file serving" — a description of what
+    the code does there, not a control (user 2026-07-31). The rest of the
+    pipeline is deliberate about this: ``_clean_enforcement_point`` DROPS generic
+    values, and the analyst contract holds that a filler value is worse than
+    none. Reconstructing one at the last step told the reader a boundary was
+    enforced when nothing was found enforcing it. The name tail is still used for
+    the crossing HEAD, which is a naming fact, not a control claim.
+
+    Returns raw (unescaped) text; the caller escapes for its context. An empty
+    mechanism is a valid, expected result.
+    """
+    source = str(row.get("from") or "?")
+    target = str(row.get("to") or "?")
+    crossing = f"{source} → {target}"
+    name = " ".join(str(row.get("name") or "").split())
+    head, sep, _tail = name.partition(": ")
+    if sep and re.match(rf"^{re.escape(source)}{_BOUNDARY_ARROW_RE}{re.escape(target)}\b", head):
+        crossing = head
+    mechanism = str(row.get("enforcement_point") or "").strip()
+    return crossing, " ".join(mechanism.split())
+
+
+def _boundary_rationale_lead(rationale: str, row: dict) -> str:
+    """Replace a ``boundary_refs[].rationale``'s opening restatement of the
+    crossing with ``This`` / ``This boundary``.
+
+    The finding card now leads with the crossing itself, so a rationale opening
+    ``The external→auth boundary assumes …`` says it a second time. Substituting
+    (rather than deleting) keeps the sentence grammatical: ``This boundary
+    assumes …``. Only a LEADING restatement is touched — a crossing named
+    mid-sentence is part of the argument, not a header.
+    """
+    text = rationale.strip()
+    if not text:
+        return text
+    source = re.escape(str(row.get("from") or ""))
+    target = re.escape(str(row.get("to") or ""))
+    boundary_id = re.escape(str(row.get("id") or ""))
+    replacements: list[tuple[str, str]] = []
+    if source and target:
+        crossing = rf"(?:The|This)\s+{source}{_BOUNDARY_ARROW_RE}{target}"
+        # Keep any qualifier that sits between the crossing and the noun
+        # ("… JWT issuance boundary") — it identifies which crossing is meant.
+        replacements.append((rf"^{crossing}\b([^.;]{{0,40}}?)\s+boundary\b", r"This\1 boundary"))
+        replacements.append((rf"^{crossing}\b", "This boundary"))
+    if boundary_id:
+        replacements.append((rf"^{boundary_id}\b(?=\s)", "This boundary"))
+    for pattern, replacement in replacements:
+        new_text, count = re.subn(pattern, replacement, text, count=1, flags=re.IGNORECASE)
+        if count:
+            return new_text
+    return text
+
+
 def _boundary_exposure(row: dict, component_ids: set[str]) -> str:
-    if row.get("resolution_status") in {"unresolved", "conflicted"}:
-        return "review required"
-    if not boundary_endpoints_valid(row, component_ids):
-        return "review required"
-    if row.get("confidence") != "confirmed":
-        return "inferred"
-    source, target = row.get("from"), row.get("to")
-    if source == "external" and target in component_ids:
-        return "internet-facing"
-    if source in component_ids and target == "external":
-        return "outbound"
-    if source in component_ids and target in component_ids:
-        return "internal"
-    return "review required"
+    # Classification moved to `_boundary_criticality` so the yaml builder (which
+    # numbers `tb-N`) and the figures rank boundaries by the same rule the
+    # catalogue shows. This alias keeps the composer's call sites unchanged.
+    return exposure_of(row, component_ids)
+
+
+_BOUNDARY_SOURCE_GLOSS = {
+    "detected": "derived from inspected repository evidence",
+    "repo-declared": "supplied by `.appsec/trust-boundaries.yaml`",
+    "legacy": "migrated from an earlier boundary format",
+}
+# Exposures the catalogue can rate, most exposed first. Derived from the shared
+# contract's tier order — never hard-coded here, so `_boundary_criticality`
+# stays the one place that decides which boundaries lead.
+_BOUNDARY_EXPOSURES = sorted(("review required", "internet-facing", "inferred", "internal", "outbound"), key=tier_of)
+
+
+def _boundary_exposure_rating(row: dict, component_ids: set[str]) -> str:
+    """`<glyph> **<word>**` for the catalogue's Exposure column.
+
+    The catalogue used to bury the exposure as bare bold text in the middle of
+    the "Kind / status" cell, so which boundaries LEAD was invisible to a reader
+    scanning the table (user 2026-07-31). The rating is a REACHABILITY verdict
+    and comes from `_boundary_criticality.rating_of` alone — never from how many
+    findings happen to link to the row; those stay their own column. Vocabulary
+    and glyphs are exposure-native so nothing collides with finding severity.
+    """
+    glyph, word = rating_of(_boundary_exposure(row, component_ids))
+    return f"{glyph} **{word}**"
+
+
+def _boundary_exposure_legend() -> str:
+    """Legend for the Exposure column, in tier order (most exposed first)."""
+    gloss = {"review required": " (endpoints unresolved)"}
+    ramp = " · ".join(
+        f"{rating_of(exposure)[0]} {rating_of(exposure)[1]}{gloss.get(exposure, '')}"
+        for exposure in _BOUNDARY_EXPOSURES
+    )
+    return f"_Exposure rates how reachable the crossing is, most exposed first: {ramp}._"
+
+
+def _uniform_boundary_value(rows: list[dict], read: Callable[[dict], str], normal: str | None) -> str | None:
+    """The one value ``read`` yields for EVERY row, when the catalogue should
+    stop spending a column (or a stacked sub-line) on it.
+
+    A constant column carries no information — the juice-shop catalogue rendered
+    nine identical `detected` / `confirmed` / `resolved` cells (user 2026-07-31).
+    Two guards keep the collapse honest: a value that VARIES is never collapsed,
+    and — when ``normal`` is given — a uniform value that is itself an
+    exceptional state (`unresolved`, `conflicted`, `inferred`) is not collapsed
+    either, because those are exactly the rows a reader must not skim past.
+    Provenance has no exceptional value, so it passes ``normal=None``.
+    """
+    values = {read(row) for row in rows}
+    if len(values) != 1:
+        return None
+    value = next(iter(values))
+    if normal is not None and value != normal:
+        return None
+    return value or None
+
+
+def _boundary_confidence_text(row: dict) -> str:
+    confidence = str(row.get("confidence") or "")
+    if row.get("confidence_basis") == "route-evidence":
+        confidence += " (route evidence)"
+    return confidence
 
 
 def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -15257,55 +15475,92 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
     if not rows:
         return ""
     linked = _boundary_link_index(ctx)
-    component_ids = {
-        row["id"]
-        for row in ctx.yaml_data.get("components") or []
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
-    }
-    shown = rows[:20]
+    component_ids = _boundary_component_ids(ctx)
+    shown = _visible_trust_boundaries(ctx)
+    # Provenance / confidence / status are collapsed out of the table when every
+    # row agrees on them and the shared value is the unexceptional one; the
+    # footnote then states each collapsed fact once. See `_uniform_boundary_value`.
+    uniform_source = _uniform_boundary_value(
+        shown,
+        lambda row: ", ".join(str(source) for source in row.get("sources") or []),
+        None,
+    )
+    uniform_confidence = _uniform_boundary_value(shown, _boundary_confidence_text, "confirmed")
+    uniform_status = _uniform_boundary_value(shown, lambda row: str(row.get("resolution_status") or ""), "resolved")
+    # The Kind column names `status` only while a status is actually shown there.
+    headers = ["ID", "Boundary / crossing", "Exposure", "Kind / status" if uniform_status is None else "Kind"]
+    headers.append("What must hold")
+    if uniform_source is None:
+        headers.append("Source")
+    headers.append("Linked findings")
     lines = [
         "### Trust Boundaries",
         "",
-        "Canonical boundary crossings and the assumptions that must hold at each interface. "
+        "Canonical boundary crossings. **What must hold** is the assumption the crossing "
+        "depends on — if it stops being true, the boundary no longer holds. "
         "Adjacency is context only; a linked finding denotes an evidence-backed control gap. "
         "Only a validated link to confirmed internet ingress may raise effective severity; "
         "raw risk remains unchanged.",
         "",
-        "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |",
-        "|---|---|---|---|---|---|",
+        f"| {' | '.join(headers)} |",
+        f"|{'---|' * len(headers)}",
     ]
     for row in shown:
         boundary_id = row["id"]
-        crossing = f"{row.get('from') or '?'} → {row.get('to') or '?'}"
+        # The bold crossing owns its line; everything else rides on ONE further
+        # line. Three stacked <br> lines in a ~26% column each wrapped again and
+        # made the cell read as a ragged block (user 2026-07-31), so the folded-in
+        # components ride behind the mechanism instead of claiming a line, and a
+        # fact with no content emits no line at all — never a dangling label.
+        # No emphasis markers around the mechanism / covers text: a later pass
+        # backticks the identifiers in it, and markdown emphasis wrapped around a
+        # code span does not survive the fixed-layout HTML conversion.
+        crossing, mechanism = _boundary_crossing_and_mechanism(row)
+        boundary = f"**{_safe_boundary_text(crossing, table=True)}**"
+        # "Control:" — the thing that decides whether the crossing is allowed.
+        # The label used to read "enforced by:", which readers could not
+        # interpret without a legend (user 2026-07-31). An absent
+        # `enforcement_point` is a finding about the model, not a gap to paper
+        # over: say that no single control was identified rather than
+        # reconstructing one from the boundary name.
+        detail = f"Control: {_safe_boundary_text(mechanism, table=True)}" if mechanism else "Control: none identified"
         covers = [str(cid) for cid in row.get("covers_components") or [] if cid and cid != row.get("to")]
         if covers:
-            crossing += f" (covers {', '.join(covers)})"
-        boundary = (
-            f"**{_safe_boundary_text(row.get('name'), table=True)}**<br>{_safe_boundary_text(crossing, table=True)}"
-        )
-        if row.get("enforcement_point"):
-            boundary += f"<br>_enforced at: {_safe_boundary_text(row['enforcement_point'], table=True)}_"
-        kind_status = (
-            f"{_safe_boundary_text(_boundary_kind_label(row), table=True)} / "
-            f"{_safe_boundary_text(row.get('resolution_status'), table=True)}<br>"
-            f"{'🌐 ' if _boundary_exposure(row, component_ids) == 'internet-facing' else ''}"
-            f"**{_boundary_exposure(row, component_ids)}**"
-        )
-        confidence = str(row.get("confidence") or "")
-        if row.get("confidence_basis") == "route-evidence":
-            confidence += " (route evidence)"
-        assumption = (
-            f"{_safe_boundary_text(row.get('assumption'), table=True)}<br>"
-            f"_{_safe_boundary_text(confidence, table=True)}_"
-        )
+            detail += f" · Also covers: {_safe_boundary_text(', '.join(covers), table=True)}"
+        boundary += f"<br>{detail}"
+        # Exposure gets its own column; the kind cell carries the crossing
+        # mechanism and nothing else, so no row states its exposure twice. A
+        # resolution_status that is NOT the collapsed-away `resolved` is an
+        # exceptional state and stays visible — bold, on its own line — however
+        # uniform the rest of the table is.
+        exposure = _boundary_exposure_rating(row, component_ids)
+        kind = _safe_boundary_text(_boundary_kind_label(row), table=True)
+        if uniform_status is None:
+            kind += f"<br>**{_safe_boundary_text(row.get('resolution_status'), table=True)}**"
+        assumption = _safe_boundary_text(row.get("assumption"), table=True)
+        if uniform_confidence is None:
+            assumption += f"<br>_{_safe_boundary_text(_boundary_confidence_text(row), table=True)}_"
         sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
+        # Severity dot + id only, one per line. The column is the narrowest in
+        # the table and used to receive the full finding title from the global
+        # `linkify_anchors` label pass — five titles with code spans turned it
+        # into a column of single stacked characters (user 2026-07-31). The
+        # title is one click away; the dot carries the triage signal. The row is
+        # exempted from the label pass by `_is_bare_finding_ref_line`, so the
+        # dot has to be emitted here.
         finding_links = (
-            ", ".join(f"[{finding_id}](#{finding_id.lower()})" for finding_id in linked.get(boundary_id, [])) or "—"
+            "<br>".join(
+                f"{_SEV_ICON_TBL.get(ctx.severity_for_ref(finding_id).lower(), '')} "
+                f"[{finding_id}](#{finding_id.lower()})".strip()
+                for finding_id in linked.get(boundary_id, [])
+            )
+            or "—"
         )
-        lines.append(
-            f'| <a id="{boundary_id}"></a>{boundary_id} | {boundary} | {kind_status} | '
-            f"{assumption} | {sources} | {finding_links} |"
-        )
+        cells = [f'<a id="{boundary_id}"></a>{boundary_id}', boundary, exposure, kind, assumption]
+        if uniform_source is None:
+            cells.append(sources)
+        cells.append(finding_links)
+        lines.append(f"| {' | '.join(cells)} |")
     if len(rows) > len(shown):
         lines.extend(
             [
@@ -15314,14 +15569,32 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
                 "`threat-model.yaml` and `query_threat_model.py`._",
             ]
         )
-    lines.extend(
-        [
-            "",
-            "_Source: `detected` = derived from inspected repository evidence; "
-            "`repo-declared` = supplied by `.appsec/trust-boundaries.yaml`; "
-            "`legacy` = migrated from an earlier boundary format._",
-        ]
-    )
+    lines.extend(["", _boundary_exposure_legend()])
+    if uniform_source is None:
+        lines.extend(
+            [
+                "",
+                "_Source: `detected` = derived from inspected repository evidence; "
+                "`repo-declared` = supplied by `.appsec/trust-boundaries.yaml`; "
+                "`legacy` = migrated from an earlier boundary format._",
+            ]
+        )
+    collapsed: list[str] = []
+    if uniform_source is not None:
+        gloss = _BOUNDARY_SOURCE_GLOSS.get(uniform_source)
+        collapsed.append(f"source `{uniform_source}`" + (f" ({gloss})" if gloss else ""))
+    if uniform_confidence is not None:
+        collapsed.append(f"confidence `{uniform_confidence}`")
+    if uniform_status is not None:
+        collapsed.append(f"status `{uniform_status}`")
+    if collapsed:
+        lines.extend(
+            [
+                "",
+                f"_Identical on every row, so stated once here instead of in a column: {'; '.join(collapsed)}. "
+                "Any row that deviates is shown in the table._",
+            ]
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 

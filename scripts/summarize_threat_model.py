@@ -338,8 +338,10 @@ def build_summary(data: dict, output_dir: Path) -> dict:
 # Rendering
 # ---------------------------------------------------------------------------
 
-_VERDICT_ICON = {"FRESH": "✓", "STALE": "⚠", "NO_MODEL": "✗", "UNKNOWN": "?"}
-_RECOMMEND_TEXT = {
+# Public: the triage console (review_threat_model.py) folds the same freshness
+# verdict into its landing screen and must word it identically.
+VERDICT_ICON = {"FRESH": "✓", "STALE": "⚠", "NO_MODEL": "✗", "UNKNOWN": "?"}
+RECOMMEND_TEXT = {
     "noop": "no re-scan needed — model is up to date",
     "incremental": "next /appsec-advisor:create-threat-model runs incremental",
     "full": "re-scan recommended: /appsec-advisor:create-threat-model --full",
@@ -450,13 +452,13 @@ def _bar(count: int, peak: int, width: int = 24) -> str:
 
 def render_status_line(freshness: dict) -> list[str]:
     verdict = (freshness.get("verdict") or "UNKNOWN").strip()
-    icon = _VERDICT_ICON.get(verdict, "?")
+    icon = VERDICT_ICON.get(verdict, "?")
     reason = (freshness.get("reason") or "").strip()
     head = f"Status     {icon} {verdict}"
     if reason:
         head += f" — {reason}"
     out = [head]
-    rec = _RECOMMEND_TEXT.get((freshness.get("recommend") or "none").strip(), "")
+    rec = RECOMMEND_TEXT.get((freshness.get("recommend") or "none").strip(), "")
     if rec:
         out.append(f"           {rec}")
     return out
@@ -588,8 +590,12 @@ def _threat_row(t: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _load_health(arg: str | None) -> dict | None:
-    """Return the ``freshness`` sub-object from a health --json payload."""
+def load_health_freshness(arg: str | None) -> dict | None:
+    """Return the ``freshness`` sub-object from a health --json payload.
+
+    Public: ``review_threat_model.py console --health-json`` accepts the same
+    payload and must read it the same way.
+    """
     if not arg:
         return None
     try:
@@ -646,7 +652,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     summary = build_summary(data, output_dir)
-    freshness = _load_health(args.health_json)
+    freshness = load_health_freshness(args.health_json)
 
     if args.json:
         payload = dict(summary)

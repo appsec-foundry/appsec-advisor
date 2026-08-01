@@ -20,6 +20,7 @@ import html
 import math
 import re
 
+from _boundary_criticality import exposure_of, label_of, tier_of
 from prepare_trust_boundary_context import boundary_endpoints_valid
 
 # ---- palette ---------------------------------------------------------------
@@ -180,7 +181,12 @@ def _ghost_reason(tier: str, components: list, trust_boundaries: list) -> str:
 # attacker card), so the legitimate Shop User no longer sits in a red band.
 _TIER_COLOR = {
     "actors": ("#eef1f5", "#5b6b7f"),  # neutral slate — external / untrusted
-    "client": ("#eaf2fb", "#2f6fb3"),  # blue   — browser, semi-trusted
+    # Blue separates the browser band from the actors band VISUALLY; it is not a
+    # trust level. `_zone_rank` collapses both into one untrusted zone and puts
+    # the divider below this band. This comment used to say "semi-trusted",
+    # contradicting that ten lines down — the same confusion that let a browser
+    # SPA be modelled as its own trust zone (juice-shop 2026-07-31).
+    "client": ("#eaf2fb", "#2f6fb3"),  # blue — browser; untrusted, like actors
     "application": ("#e9f6ef", "#2e8b57"),  # green  — our trusted server core
     "data": ("#f2ecf9", "#6f42a1"),  # purple — most sensitive (data)
 }
@@ -436,20 +442,249 @@ def _classify_boundaries(
     return crossings, notes
 
 
-def _divider_label(boundary_ids: list[str], priority_ids: set[str] | None = None, limit: int = 3) -> str:
+def _boundary_meta(yaml_data: dict) -> dict[str, dict]:
+    """`{id: boundary}` for every resolved boundary — the lookup that lets the
+    figure NAME a boundary instead of printing its opaque id."""
+    out: dict[str, dict] = {}
+    for tb in yaml_data.get("trust_boundaries") or []:
+        if not isinstance(tb, dict) or tb.get("resolution_status") != "resolved":
+            continue
+        bid = str(tb.get("id") or "")
+        if bid:
+            out[bid] = tb
+    return out
+
+
+def _crossing_label(tb: dict) -> str:
+    """What a boundary IS, in the figure's own vocabulary: `from → to`.
+
+    A bare `tb-37` is only a lookup key — the reader has to leave the figure to
+    learn what it separates. The endpoints are the same identifiers §1 prints,
+    so the caption stays checkable against the register while being readable on
+    its own. Falls back to the head of the boundary name (the part before the
+    enforcement-point colon) when an endpoint is missing, and to "" when neither
+    is available — the caller then keeps the id alone rather than inventing a
+    description.
+    """
+    if not isinstance(tb, dict):
+        return ""
+    src = (tb.get("from") or "").strip()
+    dst = (tb.get("to") or "").strip()
+    if src and dst:
+        return f"{src} → {dst}"
+    head = (tb.get("name") or "").split(":")[0].strip()
+    return head
+
+
+def _group_crossings(boundary_ids: list[str], boundary_meta: dict[str, dict] | None) -> list[tuple[str, list[str]]]:
+    """Collapse ids that describe the SAME crossing into one entry.
+
+    Two boundaries between the same pair of components (e.g. the JWT gate and
+    the B2B eval sandbox, both `external → backend-api`) read as one crossing
+    with two enforcement points — printing the pair twice wastes the caption's
+    width budget without adding information.
+    """
+    groups: list[tuple[str, list[str]]] = []
+    index: dict[str, int] = {}
+    for bid in boundary_ids:
+        label = _crossing_label((boundary_meta or {}).get(bid) or {})
+        if label and label in index:
+            groups[index[label]][1].append(bid)
+            continue
+        if label:
+            index[label] = len(groups)
+        groups.append((label, [bid]))
+    return groups
+
+
+# Caption budget for a divider, in characters. The real budget is derived from
+# the band width at draw time (`_fit_chars`); this is the fallback for direct
+# calls and keeps the caption on ONE line inside `_BANDGAP`.
+_DIVIDER_LABEL_MAX = 120
+
+# Crossings a divider caption NAMES, at most. The width budget alone is not a
+# usable limit: a nine-boundary model filled the band edge-to-edge with a single
+# 9.5px line that collided with the boxes beneath it and was read by nobody. The
+# caption's job is to say what a reader must see AT the divider; the Trust
+# Boundaries panel is the register and lists every boundary, so anything past
+# the cap loses nothing but the second lookup.
+_DIVIDER_MAX_CROSSINGS = 2
+# …and one, when the divider carries nothing above the internal/outbound tiers:
+# a crossing that needs a foothold first does not earn two names' worth of band.
+_DIVIDER_MAX_CROSSINGS_QUIET = 1
+# Tiers worth naming on the divider itself: review required, internet-facing,
+# unconfirmed (see _boundary_criticality). Anything below leads only when
+# nothing better shares the divider.
+_DIVIDER_LEAD_TIER = tier_of("inferred")
+
+# Share of the band width a caption may use. A caption that runs the rule from
+# edge to edge stops reading as a caption and starts reading as part of the
+# divider — and at the delivered render scale (viewBox 1050 → width 760) a
+# full-width 9.5px line is a grey smear over the band beneath it. The rest of
+# the rule stays empty on purpose.
+_DIVIDER_CAPTION_BAND_SHARE = 0.70
+
+
+def _fit_chars(width: float, font_px: float) -> int:
+    """Characters that fit in `width` at `font_px` (Helvetica ≈ 0.55·px)."""
+    return max(8, int(width / (0.55 * font_px)))
+
+
+def _boundary_tier(
+    boundary_id: str,
+    boundary_meta: dict[str, dict] | None,
+    component_ids: set[str] | None,
+    priority_ids: set[str] | None = None,
+) -> int:
+    """Criticality tier of one boundary, via the shared `_boundary_criticality`
+    contract that §1 numbering and the figure both follow.
+
+    Classification needs the component set — `external → x` is only inbound if
+    `x` is a component we drew. Without it the figure does NOT guess a tier: it
+    falls back to the caller's explicit `priority_ids` hint, and treats
+    everything else as one undifferentiated rank so ordering stays stable.
+    """
+    row = (boundary_meta or {}).get(boundary_id)
+    if component_ids and isinstance(row, dict):
+        return tier_of(exposure_of(row, component_ids))
+    return tier_of("internet-facing") if boundary_id in (priority_ids or set()) else _DIVIDER_LEAD_TIER
+
+
+def _criticality_key(
+    boundary_id: str,
+    boundary_meta: dict[str, dict] | None,
+    component_ids: set[str] | None,
+    priority_ids: set[str] | None = None,
+) -> tuple[int, tuple[int, str]]:
+    """Reading order for boundaries: most exposed first, then by id.
+
+    Ids are already renumbered into criticality order upstream, so the id is a
+    stable tie-break rather than a second opinion.
+    """
+    return (
+        _boundary_tier(boundary_id, boundary_meta, component_ids, priority_ids),
+        _boundary_sort_key(boundary_id),
+    )
+
+
+def _divider_label(
+    boundary_ids: list[str],
+    boundary_meta: dict[str, dict] | None = None,
+    priority_ids: set[str] | None = None,
+    max_chars: int = _DIVIDER_LABEL_MAX,
+    component_ids: set[str] | None = None,
+) -> str:
     """Caption for a trust-boundary divider: the crossings that traverse it.
 
-    Internet-facing crossings are named first — they are the ones a reader looks
-    for — and the tail collapses into a count. A caption that grew with the
-    model would wrap into the band below and undo the layout's width budget.
+    Each crossing is NAMED (`external → backend-api`) with its ids in
+    parentheses as the secondary locator into §1, so the divider explains itself
+    without a lookup. Only the most exposed tier present on the divider is named
+    — the inbound internet edge is what a reader must see there, and an internal
+    or outbound crossing that shares the same gap recedes into the legend rather
+    than competing for the band's width. At most `_DIVIDER_MAX_CROSSINGS` names
+    are printed even within that tier.
+
+    Everything held back is declared as `+N more (see legend)`, never dropped
+    silently: the Trust Boundaries legend panel lists every boundary the figure
+    placed, so the divider is still drawn and the crossings it carries are still
+    named — one panel away instead of on the line itself.
     """
     if not boundary_ids:
         return ""
-    priority = priority_ids or set()
-    ordered = sorted(boundary_ids, key=lambda b: (b not in priority, _boundary_sort_key(b)))
-    shown = ordered[:limit]
-    rest = len(ordered) - len(shown)
-    return "trust boundary · " + " · ".join(shown) + (f" +{rest}" if rest else "")
+    graded = bool(component_ids)
+    ordered = sorted(boundary_ids, key=lambda b: _criticality_key(b, boundary_meta, component_ids, priority_ids))
+    groups = _group_crossings(ordered, boundary_meta)
+
+    def _tier(bid: str) -> int:
+        return _boundary_tier(bid, boundary_meta, component_ids, priority_ids)
+
+    lead = min(_tier(b) for b in boundary_ids)
+    cap = _DIVIDER_MAX_CROSSINGS if lead <= _DIVIDER_LEAD_TIER else _DIVIDER_MAX_CROSSINGS_QUIET
+    head = "trust boundary · "
+    shown: list[str] = []
+    used = len(head)
+    hidden = 0
+    for i, (label, ids) in enumerate(groups):
+        # Groups are in criticality order, so the first group below the lead
+        # tier ends the inline list: everything after it is at least as quiet.
+        below_lead = graded and min(_tier(b) for b in ids) > lead
+        seg = f"{label} ({', '.join(ids)})" if label else " · ".join(ids)
+        cost = len(seg) + (3 if shown else 0)
+        # The `+N more` note is part of the caption, so it is budgeted, not
+        # appended past the budget — that overflow is how a caption ended up
+        # wider than the band it annotates.
+        rest = sum(len(g[1]) for g in groups[i + 1 :])
+        reserve = len(f" · +{rest} more (see legend)") if rest else 0
+        if shown and (len(shown) >= cap or below_lead or used + cost + reserve > max_chars):
+            hidden = sum(len(g[1]) for g in groups[i:])
+            break
+        shown.append(seg)
+        used += cost
+    text = head + " · ".join(shown)
+    if hidden:
+        text += f" · +{hidden} more (see legend)"
+    return text
+
+
+# Rows the "Trust Boundaries" legend panel prints before collapsing the tail
+# into a count. Keeps the rail from outgrowing the tier stack on a
+# boundary-heavy model.
+_TB_LEGEND_MAX = 10
+
+# Exposures a legend row states in words, worst first. A confirmed crossing
+# needs none: where it sits in the stack already says what it separates. These
+# two are exactly the rows the §1 catalogue refuses to collapse away for the
+# same reason — the reader must see that the figure is not asserting them.
+_BADGED_EXPOSURES = ("review required", "inferred")
+
+
+def _legend_badge(ids: list[str], boundary_meta: dict[str, dict] | None, component_ids: set[str]) -> str:
+    """Exposure word for a legend row, or `""` for a plainly confirmed one."""
+    exposures = {exposure_of((boundary_meta or {}).get(bid) or {}, component_ids) for bid in ids}
+    for exposure in _BADGED_EXPOSURES:
+        if exposure in exposures:
+            return label_of(exposure)
+    return ""
+
+
+def _note_text(kind: str, ids: list[str]) -> str:
+    """Band-header note: `outbound: tb-3`.
+
+    Ids, not the crossing name every other placement prints. The note sits in
+    the tier gutter, left of the first component box, whose x is fixed by the
+    layout — about nineteen characters at size 9, whatever the model's width.
+    `outbound: app1 → external` is twenty-five and would run under the boxes,
+    and real component ids leave no version of a name that fits. So the note is
+    a marker, not a description: the legend rail names every boundary it
+    carries, one glance to the right.
+    """
+    return f"{kind}: " + " · ".join(ids[:2]) + (f" +{len(ids) - 2}" if len(ids) > 2 else "")
+
+
+def _legend_boundary_text(label: str, ids: list[str], max_chars: int, badge: str = "") -> str:
+    """One legend row: `external → backend-api · tb-37, tb-42`.
+
+    The ids are the locator into §1, so they are never truncated away — the
+    crossing name gives up characters first. `badge` names an exposure the rail
+    would otherwise hide: rows are ordered by exposure but nothing rendered it,
+    so a confirmed internet edge and an unconfirmed one read identically here
+    while §1 grades them apart (user 2026-08-01). It rides with the ids because
+    it is the same kind of fact — something the reader must not skim past.
+    """
+
+    def _cut(s: str, n: int) -> str:
+        return s if len(s) <= n else s[: max(1, n - 1)] + "…"
+
+    tail = ", ".join(ids)
+    if len(tail) > max_chars and len(ids) > 1:
+        # Never cut an id in half — declare the remainder instead.
+        tail = f"{ids[0]} +{len(ids) - 1}"
+    if badge:
+        tail = f"{tail} · {badge}"
+    room = max_chars - len(tail) - 3
+    if not label or room < 8:
+        return _cut(tail, max_chars)
+    return f"{_cut(label, room)} · {tail}"
 
 
 def _internet_facing_boundaries(yaml_data: dict, component_ids: set[str]) -> list[dict]:
@@ -582,6 +817,7 @@ def build_figure1_svg(
     boundary_crossings, boundary_notes = _classify_boundaries(
         yaml_data, {cid: row.get("tier") for cid, row in comp.items()}
     )
+    tb_meta = _boundary_meta(yaml_data)
     for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
         digit = idx + 1
         slug = (ap.get("class") or "").strip()
@@ -704,7 +940,7 @@ def build_figure1_svg(
         lines = _wrap(title or _TIER_TITLE[tier], _LG - 26, 12)
         for i, ln in enumerate(lines):
             c.text(band_left + 40, ytop + 52 + i * 15, ln, size=12, fill=accent, anchor="start", weight="bold")
-        # Boundaries that cannot be a band divider are named in the band header
+        # Boundaries that cannot be a band divider are noted in the band header
         # instead of being dropped: one INSIDE the tier (an untrusted component
         # among trusted ones, or a privilege split within one service), and one
         # leaving it OUTBOUND to a third party, which crosses no tier gap in the
@@ -715,14 +951,7 @@ def build_figure1_svg(
             if not ids or ny >= ytop + h - 6:
                 continue
             c.line(band_left + 40, ny - 3.5, band_left + 54, ny - 3.5, stroke=_TRUST, sw=1.3, dash="4 3")
-            c.text(
-                band_left + 60,
-                ny,
-                f"{kind}: " + " · ".join(ids[:2]) + (f" +{len(ids) - 2}" if len(ids) > 2 else ""),
-                size=9,
-                fill=_TRUST,
-                anchor="start",
-            )
+            c.text(band_left + 60, ny, _note_text(kind, ids), size=9, fill=_TRUST, anchor="start")
             ny += 12
 
     # --- actors band: N attacker cards (red) + the legitimate user (green) ---
@@ -1043,6 +1272,33 @@ def build_figure1_svg(
     flow_labels = ["uses", "API calls", "reads / writes"]
     bxc = cx0 + cw / 2
     drawn_dividers: list[str] = []
+    divider_groups: list[tuple[str, list[str]]] = []  # legend rows, in drawing order
+
+    # Assign every zone crossing to a band gap BEFORE drawing. A crossing whose
+    # zones are not adjacent in this stack (e.g. `external → database` when the
+    # app tier sits between them) matched no gap at all and vanished from the
+    # figure; it now lands on the FIRST gap its span contains — the point where
+    # it actually leaves the zone it starts in. Anything still unplaced (a stack
+    # with no gap left) is reported in the legend instead of being dropped.
+    _gaps = [(_zone_rank(bands[i][0]), _zone_rank(bands[i + 1][0])) for i in range(len(bands) - 1)]
+    gap_ids_by_index: dict[int, list[str]] = {}
+    unplaced_crossings: list[str] = []
+    for (za, zb), _ids in sorted(boundary_crossings.items()):
+        idx = next(
+            (
+                gi
+                for gi, (z0, z1) in enumerate(_gaps)
+                if z0 is not None and z1 is not None and z0 != z1 and za <= z0 and zb >= z1
+            ),
+            None,
+        )
+        if idx is None:
+            unplaced_crossings.extend(_ids)
+        else:
+            gap_ids_by_index.setdefault(idx, []).extend(_ids)
+    for _v in gap_ids_by_index.values():
+        _v.sort(key=_boundary_sort_key)
+
     for i in range(len(bands) - 1):
         t0, yt0, h0 = bands[i]
         t1, yt1, _h1 = bands[i + 1]
@@ -1052,21 +1308,33 @@ def build_figure1_svg(
         # It spans the band width because it separates two trust zones, not two
         # boxes, and it is slate rather than attack-red: the boundary is part of
         # the architecture and exists whether or not anyone attacks it.
-        z0, z1 = _zone_rank(t0), _zone_rank(t1)
-        gap_ids = boundary_crossings.get((z0, z1), []) if z0 is not None and z1 is not None else []
-        if gap_ids and z0 != z1:
+        gap_ids = gap_ids_by_index.get(i) or []
+        if gap_ids:
             ymid = (yf + yt) / 2
             c.line(band_left, ymid, band_left + band_w, ymid, stroke=_TRUST, sw=1.4, dash="7 5")
             c.text(
                 band_left + 8,
                 ymid - 5,
-                _divider_label(gap_ids, internet_facing_ids),
+                _divider_label(
+                    gap_ids,
+                    tb_meta,
+                    internet_facing_ids,
+                    _fit_chars(band_w * _DIVIDER_CAPTION_BAND_SHARE - 20, 9.5),
+                    component_ids=component_ids,
+                ),
                 size=9.5,
                 fill=_TRUST,
                 anchor="start",
                 weight="bold",
             )
             drawn_dividers.extend(gap_ids)
+            # The legend repeats the divider's own reading order, so a crossing
+            # the caption held back is the next row a reader reaches, not one
+            # buried further down the panel.
+            ordered_gap = sorted(
+                gap_ids, key=lambda b: _criticality_key(b, tb_meta, component_ids, internet_facing_ids)
+            )
+            divider_groups.extend(_group_crossings(ordered_gap, tb_meta))
         # A hop touching a ghost tier is not a real request hop — draw it dimmed
         # and dashed with no label, so the flow never implies a boundary crossing
         # that does not exist.
@@ -1157,15 +1425,27 @@ def build_figure1_svg(
         c.circle(mx, atk_bottom, 7.5, fill="#ffffff", stroke=_EXPOSED, sw=2.2)
         c.circle(mx, atk_bottom, 3.0, fill=_EXPOSED, stroke=_EXPOSED, sw=1)
 
+    # ---- trust-boundary legend rows ----
+    # Every boundary the figure PLACED, named and in reading order: the
+    # dividers top-down first, then the per-band internal/outbound notes, then
+    # anything the stack could not place. This is what makes the `+N more` on a
+    # divider caption honest — the hidden crossings are enumerated here, not
+    # discarded, and each row carries its tb-id so §1 stays one lookup away.
+    legend_boundaries: list[tuple[str, list[str]]] = list(divider_groups)
+    for _tier, _yt, _h in bands:
+        for _kind in ("internal", "outbound"):
+            legend_boundaries.extend(_group_crossings((boundary_notes.get(_tier) or {}).get(_kind) or [], tb_meta))
+    legend_boundaries.extend(_group_crossings(sorted(unplaced_crossings, key=_boundary_sort_key), tb_meta))
+
     # ---- legend rail ----
     lx = band_left + band_w + _LEGGAP
     ly = _PAD
 
     _RH = 24  # legend row pitch
 
-    def panel(title: str, ytop: float, rows_fn, n_rows: int) -> float:
+    def panel(title: str, ytop: float, rows_fn, n_rows: int, rh: float = _RH) -> float:
         head_h = 26
-        ph = head_h + 14 + n_rows * _RH + 6
+        ph = head_h + 14 + n_rows * rh + 6
         c.rect(lx, ytop, _LEGW, ph, fill="#ffffff", stroke="#cbd2da", sw=1.2, rx=8)
         c.rect(lx, ytop, _LEGW, head_h, fill="#1f3a5f", stroke="none", rx=8)
         c.rect(lx, ytop + head_h - 10, _LEGW, 10, fill="#1f3a5f", stroke="none")
@@ -1208,7 +1488,11 @@ def build_figure1_svg(
             # under one device pixel and "7 5" leaves fewer than two dashes, so
             # the row went unnoticed next to the 2.0–2.6 weights below it.
             c.line(lx + 12, y0 + r * _RH - 3.5, lx + 34, y0 + r * _RH - 3.5, stroke=_TRUST, sw=2.0, dash="4 3")
-            c.text(lx + 40, y0 + r * _RH, "trust boundary (see §1)", size=10, fill=_INK, anchor="start")
+            # Point at the panel that NAMES them when there is one; a bare
+            # "see §1" sent the reader out of the figure for something the
+            # figure now answers itself.
+            _tb_ref = "listed below" if legend_boundaries else "see §1"
+            c.text(lx + 40, y0 + r * _RH, f"trust boundary ({_tb_ref})", size=10, fill=_INK, anchor="start")
             r += 1
         if exposed:
             _globe(c, lx + 22, y0 + r * _RH - 3.5, 7, _EXPOSED)
@@ -1246,6 +1530,43 @@ def build_figure1_svg(
             c.rect(lx + 12, sy, sw_w, sw_h, fill="#ffffff", stroke="#b8bfca", sw=1.5, rx=4, dash="4 3")
             c.text(lx + 44, y0 + r * _RH, "out of scope (not analyzed)", size=10, fill=_INK, anchor="start")
 
+    # The panel that turns `tb-37` into something a reader can act on. Capped so
+    # a boundary-heavy model cannot stretch the rail past the tier stack; the
+    # overflow row says how many are missing and where the full register is.
+    tb_shown = legend_boundaries[:_TB_LEGEND_MAX]
+    tb_hidden = sum(len(ids) for _l, ids in legend_boundaries[_TB_LEGEND_MAX:])
+
+    # Single-line rows — a tighter pitch than the icon rows above, so naming
+    # every boundary costs the rail as little height as possible.
+    _TB_RH = 16
+
+    def tb_rows(y0):
+        for r, (label, ids) in enumerate(tb_shown):
+            yy = y0 + r * _TB_RH
+            c.line(lx + 12, yy - 3.5, lx + 28, yy - 3.5, stroke=_TRUST, sw=1.8, dash="4 3")
+            c.text(
+                lx + 34,
+                yy,
+                _legend_boundary_text(
+                    label,
+                    ids,
+                    _fit_chars(_LEGW - 42, 9.0),
+                    _legend_badge(ids, tb_meta, component_ids),
+                ),
+                size=9.0,
+                fill=_INK,
+                anchor="start",
+            )
+        if tb_hidden:
+            c.text(
+                lx + 34,
+                y0 + len(tb_shown) * _TB_RH,
+                f"+{tb_hidden} more — see §1",
+                size=9.5,
+                fill=_MUTED,
+                anchor="start",
+            )
+
     has_oos = any(oos_by_tier.values())
     has_direct = any(v["direct"] for v in tier_attacks.values())
     has_indirect = any(v["indirect"] for v in tier_attacks.values())
@@ -1260,6 +1581,16 @@ def build_figure1_svg(
     ly = panel("Attack Scenarios — by actor", ly, scen_rows, len(actor_order) + len(scenarios))
     ly = panel("Severity", ly, sev_rows, 2)
     ly = panel("Diagram Legend", ly, diag_rows, diag_n_rows)
+    # Honest legend: the panel exists only when the figure actually placed a
+    # boundary, so a model with none renders exactly as before.
+    if legend_boundaries:
+        ly = panel(
+            "Trust Boundaries (see §1)",
+            ly,
+            tb_rows,
+            len(tb_shown) + (1 if tb_hidden else 0),
+            rh=_TB_RH,
+        )
 
     total_w = lx + _LEGW + _PAD
     total_h = max(bands_bottom, ly) + _PAD

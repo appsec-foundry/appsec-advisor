@@ -41,6 +41,7 @@ from referencing import Registry, Resource
 # RC.C — central source-enum module. Keep this validator's existing
 # permissive union semantics; the module just removes hard-coded drift.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _boundary_adjacency import is_adjacent  # noqa: E402
 from _shared_sources import (  # noqa: E402
     ARCH_ALL_SOURCES,
     ARCH_COVERAGE_SOURCES,
@@ -563,7 +564,7 @@ def _check_final_boundary_links(data: dict) -> list[str]:
                 continue
             if boundary.get("resolution_status") != "resolved" or boundary.get("confidence") != "confirmed":
                 errors.append(f"{prefix}.boundary_id must target a resolved, confirmed trust boundary")
-            if ref.get("origin_component_id") not in {boundary.get("from"), boundary.get("to")}:
+            if not is_adjacent(ref.get("origin_component_id"), boundary):
                 errors.append(f"{prefix}.origin_component_id is not adjacent to the referenced boundary")
     return errors
 

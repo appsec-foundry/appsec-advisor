@@ -4110,15 +4110,48 @@ _AS_TABLE_HEADERS = ("Method", "Route", "Risk", "Notes")
 _AS_COL_WIDTHS = ("9%", "30%", "14%", "47%")
 _ASSET_TABLE_HEADERS = ("Asset", "Classification", "Description", "Linked Threats")
 _ASSET_COL_WIDTHS = ("22%", "13%", "32%", "33%")
-_TRUST_BOUNDARY_TABLE_HEADERS = (
-    "ID",
-    "Boundary / crossing",
-    "Kind / status",
-    "Assumption / confidence",
-    "Source",
-    "Linked findings",
-)
-_TRUST_BOUNDARY_COL_WIDTHS = ("7%", "25%", "15%", "34%", "9%", "10%")
+# Trust Boundaries (2026-07-31): compose drops a column whose every row says the
+# same thing — the Source column when all rows share one provenance (a catalogue
+# of nine identical `detected` cells spent 8% on a constant that also line-broke
+# into "detecte/d"), and the "/ status" half of the Kind header when every row is
+# `resolved`. Four header forms therefore occur, like Operational Strengths'
+# 3-col / 4-col pair; the widths depend only on whether Source is present.
+# 2026-07-31 rebalance: the old 7/25/15/34/9/10 budget handed the widest share to
+# the assumption and 10% to "Linked findings" — the column holding the longest
+# content of the row, which collapsed into single stacked characters. Compose now
+# emits severity dot + id only there (the title is one click away), so 14% fits
+# `🔴 F-005` per line, and the Exposure rating gets a column of its own.
+_TRUST_BOUNDARY_COL_WIDTHS = ("6%", "25%", "11%", "15%", "29%", "14%")
+_TRUST_BOUNDARY_COL_WIDTHS_SRC = ("6%", "21%", "11%", "14%", "25%", "9%", "14%")
+
+
+def _trust_boundary_spec(*, with_source: bool, with_status: bool):
+    """One `_FIXED_LAYOUT_SPECS` entry for a §1 Trust Boundaries header form."""
+    widths = _TRUST_BOUNDARY_COL_WIDTHS_SRC if with_source else _TRUST_BOUNDARY_COL_WIDTHS
+    headers = ["ID", "Boundary / crossing", "Exposure", "Kind / status" if with_status else "Kind", "What must hold"]
+    if with_source:
+        headers.append("Source")
+    headers.append("Linked findings")
+    # Wrapping mode per column, and `anywhere` is NOT the default. `anywhere`
+    # permits a break at ANY character, so a normal sentence wraps mid-word —
+    # that is what split "detected" into "detecte/d" in the old 8% Source column
+    # and, less obviously, the prose in the wider crossing column
+    # (user 2026-07-31). `break-word` breaks a word only when it cannot fit the
+    # line by itself, which is what these prose-plus-code cells want: sentences
+    # break between words, and a genuinely over-long token (a long code span, a
+    # deep path) still breaks instead of overflowing the fixed layout.
+    #   * Exposure / Source — single-word vocabulary that always fits: no
+    #     override at all, so nothing can break inside a word.
+    #   * everything else — prose that may carry a long path or code span.
+    single_word = {2} | ({len(widths) - 2} if with_source else set())
+    styles = {0: "white-space:nowrap"}
+    styles.update({index: "overflow-wrap:break-word" for index in range(1, len(widths)) if index not in single_word})
+    # Compose exempts the table from synthetic 44-character soft breaks. The
+    # remaining <br> elements separate crossing/mechanism/covers, kind/status and
+    # the finding links, and are therefore structural.
+    return (tuple(headers), widths, styles, frozenset())
+
+
 # Operational Strengths (2026-07-15): Gap merged into the Effectiveness cell;
 # Mitigates column shown only when at least one row carries a back-reference.
 # Two fixed-layout forms — 3-col (no Mitigates) and 4-col (with Mitigates).
@@ -4127,9 +4160,15 @@ _STRENGTH_COL_WIDTHS_3 = ("20%", "33%", "47%")
 _STRENGTH_TABLE_HEADERS_4 = ("Strength", "What's in Place", "Effectiveness", "Mitigates")
 _STRENGTH_COL_WIDTHS_4 = ("18%", "30%", "40%", "12%")
 # Each spec: (headers, widths, {col_idx: inline-style}, prose_col_indices).
-# - inline-style per column: `overflow-wrap:anywhere` lets a long route / asset
-#   name wrap inside its fixed column; `white-space:nowrap` pins short tokens so
-#   they never break at a hyphen.
+# - inline-style per column: `white-space:nowrap` pins short tokens so they never
+#   break at a hyphen. For wrapping, the two values are NOT interchangeable:
+#   `overflow-wrap:anywhere` may break at ANY character, so it belongs only to a
+#   column holding one long space-free token (a route) that must wrap evenly.
+#   `overflow-wrap:break-word` breaks a word only when it cannot fit on a line by
+#   itself, which is what every prose or link-stack column wants — `anywhere`
+#   there splits words and ids mid-character ("detecte/d", "F-0/05"). Users
+#   reported that twice on 2026-07-31, in two different columns, before this
+#   distinction was drawn.
 # - prose_col_indices: columns whose soft-wrap `<br/>` (inserted by compose's
 #   `_softwrap_prose_table_cells` for narrow GFM rendering) is stripped so the
 #   prose reflows cleanly to the fixed column width instead of breaking at the
@@ -4140,24 +4179,15 @@ _FIXED_LAYOUT_SPECS = (
     (
         _ASSET_TABLE_HEADERS,
         _ASSET_COL_WIDTHS,
-        {0: "overflow-wrap:anywhere", 3: "overflow-wrap:anywhere"},
+        # Asset names are prose and Linked Threats is a stack of short ids —
+        # neither may break mid-character.
+        {0: "overflow-wrap:break-word", 3: "overflow-wrap:break-word"},
         frozenset({2}),  # Description (col 2) reflows; Linked Threats keeps its <br/> stack
     ),
-    (
-        _TRUST_BOUNDARY_TABLE_HEADERS,
-        _TRUST_BOUNDARY_COL_WIDTHS,
-        {
-            0: "white-space:nowrap",
-            1: "overflow-wrap:anywhere",
-            2: "overflow-wrap:anywhere",
-            3: "overflow-wrap:anywhere",
-            4: "overflow-wrap:anywhere",
-            5: "overflow-wrap:anywhere",
-        },
-        # Compose exempts the table from synthetic 44-character soft breaks.
-        # The remaining <br> elements separate name/crossing, status/exposure,
-        # confidence, and finding links and are therefore structural.
-        frozenset(),
+    *(
+        _trust_boundary_spec(with_source=with_source, with_status=with_status)
+        for with_status in (False, True)
+        for with_source in (False, True)
     ),
     (
         _STRENGTH_TABLE_HEADERS_3,
@@ -4166,9 +4196,9 @@ _FIXED_LAYOUT_SPECS = (
         # Effectiveness now holds the badge + merged substantive gap + its finding
         # <br/> stack), so each wraps inside its fixed column.
         {
-            0: "overflow-wrap:anywhere",
-            1: "overflow-wrap:anywhere",
-            2: "overflow-wrap:anywhere",
+            0: "overflow-wrap:break-word",
+            1: "overflow-wrap:break-word",
+            2: "overflow-wrap:break-word",
         },
         # No prose_cols: "What's in Place" and the merged Effectiveness cell carry
         # STRUCTURAL <br/> (implementation lines; finding link stack) that must
@@ -4180,17 +4210,22 @@ _FIXED_LAYOUT_SPECS = (
         _STRENGTH_TABLE_HEADERS_4,
         _STRENGTH_COL_WIDTHS_4,
         {
-            0: "overflow-wrap:anywhere",
-            1: "overflow-wrap:anywhere",
-            2: "overflow-wrap:anywhere",
-            3: "overflow-wrap:anywhere",
+            0: "overflow-wrap:break-word",
+            1: "overflow-wrap:break-word",
+            2: "overflow-wrap:break-word",
+            3: "overflow-wrap:break-word",
         },
         frozenset(),
     ),
 )
 _AS_SEP_LINE_RE = re.compile(r"^\s*\|[\s:\-|]+\|\s*$")
 _AS_INLINE_TOKEN_RE = re.compile(
-    r'(?P<anchor><a id="tb-\d+"></a>)'
+    # Backslash escapes come FIRST: `\*` / `\[` are literal characters, not
+    # emphasis or link syntax, and the escape itself must not survive into the
+    # HTML cell — markdown is not processed inside a raw <table>, so a
+    # composer-escaped `Node\.js` was reaching the reader verbatim (2026-07-31).
+    r"(?P<esc>\\(?P<escch>[^\w\s]))"
+    r'|(?P<anchor><a id="tb-\d+"></a>)'
     r"|(?P<br><br\s*/?>)"
     r"|\[(?P<ltext>[^\]]+)\]\((?P<lhref>[^)]+)\)"
     r"|\*\*(?P<bold>[^*]+)\*\*"
@@ -4206,36 +4241,55 @@ def _as_html_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+_CODE_SPAN_RE = re.compile(r"`([^`]+)`")
+_CODE_PLACEHOLDER_RE = re.compile("\x00(\\d+)\x00")
+
+
 def _render_inline_md_to_html(text: str) -> str:
-    """Render the small inline-markdown vocabulary used in §5 entry-point cells
-    (inline `code`, `[label](target)` links, `**bold**`, `<br/>`, emoji, plain
-    text) to HTML. Code spans are split out FIRST so link/bold/escape never
-    touch their contents."""
+    """Render the small inline-markdown vocabulary used in the fixed-layout
+    cells (inline `code`, `[label](target)` links, `**bold**`, `_em_`,
+    backslash escapes, `<br/>`, emoji, plain text) to HTML.
+
+    Code spans are lifted out FIRST so link / bold / escape handling never
+    touches their contents — but they are replaced by a PLACEHOLDER, not
+    removed. The earlier form split the string on code spans and tokenised each
+    fragment on its own, so an emphasis run that ENCLOSES a code span
+    (``**external → auth: `jwt.sign` RS256**``) had its opening marker in one
+    fragment and its closing marker in the next: the emphasis matched in
+    neither, and the raw ``**`` / ``_`` markers reached the reader, because
+    markdown is not processed inside a raw ``<table>``. Same-cell rows without
+    a code span converted correctly, which is what made the §1 Trust Boundaries
+    table look half-broken (user 2026-07-31)."""
+    codes: list[str] = []
+
+    def _stash(m: re.Match[str]) -> str:
+        codes.append(f"<code>{_as_html_escape(m.group(1))}</code>")
+        return f"\x00{len(codes) - 1}\x00"
+
+    staged = _CODE_SPAN_RE.sub(_stash, text)
     out: list[str] = []
-    for i, part in enumerate(re.split(r"(`[^`]+`)", text)):
-        if i % 2 == 1:  # `code`
-            out.append(f"<code>{_as_html_escape(part[1:-1])}</code>")
-            continue
-        pos = 0
-        for m in _AS_INLINE_TOKEN_RE.finditer(part):
-            if m.start() > pos:
-                out.append(_as_html_escape(part[pos : m.start()]))
-            if m.group("anchor") is not None:
-                out.append(m.group("anchor"))
-            elif m.group("br") is not None:
-                out.append("<br/>")
-            elif m.group("ltext") is not None:
-                href = _as_html_escape(m.group("lhref")).replace('"', "&quot;")
-                out.append(f'<a href="{href}">{_as_html_escape(m.group("ltext"))}</a>')
-            elif m.group("bold") is not None:
-                out.append(f"<strong>{_as_html_escape(m.group('bold'))}</strong>")
-            else:
-                ital = m.group("ital_u") if m.group("ital_u") is not None else m.group("ital_s")
-                out.append(f"<em>{_as_html_escape(ital)}</em>")
-            pos = m.end()
-        if pos < len(part):
-            out.append(_as_html_escape(part[pos:]))
-    return "".join(out)
+    pos = 0
+    for m in _AS_INLINE_TOKEN_RE.finditer(staged):
+        if m.start() > pos:
+            out.append(_as_html_escape(staged[pos : m.start()]))
+        if m.group("esc") is not None:
+            out.append(_as_html_escape(m.group("escch")))
+        elif m.group("anchor") is not None:
+            out.append(m.group("anchor"))
+        elif m.group("br") is not None:
+            out.append("<br/>")
+        elif m.group("ltext") is not None:
+            href = _as_html_escape(m.group("lhref")).replace('"', "&quot;")
+            out.append(f'<a href="{href}">{_as_html_escape(m.group("ltext"))}</a>')
+        elif m.group("bold") is not None:
+            out.append(f"<strong>{_as_html_escape(m.group('bold'))}</strong>")
+        else:
+            ital = m.group("ital_u") if m.group("ital_u") is not None else m.group("ital_s")
+            out.append(f"<em>{_as_html_escape(ital)}</em>")
+        pos = m.end()
+    if pos < len(staged):
+        out.append(_as_html_escape(staged[pos:]))
+    return _CODE_PLACEHOLDER_RE.sub(lambda m: codes[int(m.group(1))], "".join(out))
 
 
 def _split_gfm_row(line: str) -> list[str]:
@@ -4882,6 +4936,16 @@ _MERMAID_FENCE_RE = re.compile(
 
 _MERMAID_VALIDATOR_JS = Path(__file__).resolve().parent / "mermaid_validate.mjs"
 
+# sequenceDiagram keywords that OPEN a block terminated by `end`. `else`
+# (alt), `and` (par) and `option` (critical) are continuation keywords INSIDE
+# an already-open block — they neither open nor close one, so they must stay
+# out of this set. `rect <color>` shades a region and is closed by `end` just
+# like `alt`; omitting it made every shaded diagram look like an unbalanced
+# `end` (juice-shop §7.2 TOTP flow, 2026-07-31).
+_MERMAID_SEQ_BLOCK_OPENERS = ("alt", "opt", "loop", "par", "critical", "break", "rect", "box")
+_MERMAID_SEQ_OPENER_RE = re.compile(rf"^({'|'.join(_MERMAID_SEQ_BLOCK_OPENERS)})(\s|$)")
+_MERMAID_SEQ_OPENER_LIST = "/".join(_MERMAID_SEQ_BLOCK_OPENERS)
+
 
 def _current_h2_title(md_text: str, pos: int) -> str:
     """Return the nearest preceding H2 title at byte offset ``pos``."""
@@ -4938,16 +5002,15 @@ def check_mermaid_syntax(md_path: Path) -> Report:
         if diagram_type not in {"sequenceDiagram", "flowchart", "graph"}:
             continue
 
-        # (4) Block-balance tracker. Counts open `alt`/`opt`/`loop`/`par`
-        # blocks (sequenceDiagram) and `subgraph` blocks (flowchart/graph),
-        # decrements on `end`. Detects two showstopper bugs the per-line
-        # checks above don't see:
+        # (4) Block-balance tracker. Counts open block keywords
+        # (sequenceDiagram: _MERMAID_SEQ_BLOCK_OPENERS) and `subgraph` blocks
+        # (flowchart/graph), decrements on `end`. Detects two showstopper bugs
+        # the per-line checks above don't see:
         #   • `end` followed by `else <label>` — the `end` prematurely
         #     closes the alt and `else` becomes a parse error.
         #     Observed in juice-shop §3.2/3.3/3.4 walkthroughs.
         #   • Unclosed blocks at end-of-block (depth > 0).
-        block_depth = 0
-        last_opener_kind: str = ""  # "alt" | "opt" | "loop" | "par" | "subgraph"
+        open_stack: list[str] = []  # e.g. ["alt", "rect"] / ["subgraph"]
         end_then_else_caught: bool = False
 
         for rel_no, line in enumerate(body.splitlines(), start=1):
@@ -4956,20 +5019,19 @@ def check_mermaid_syntax(md_path: Path) -> Report:
                 continue
             abs_line_bal = line_offset + rel_no
             if diagram_type == "sequenceDiagram":
-                if re.match(r"^(alt|opt|loop|par)(\s|$)", stripped):
-                    block_depth += 1
-                    last_opener_kind = stripped.split()[0]
+                if _MERMAID_SEQ_OPENER_RE.match(stripped):
+                    open_stack.append(stripped.split()[0])
                 elif stripped == "end":
-                    block_depth -= 1
-                    last_opener_kind = ""
-                    if block_depth < 0:
+                    if open_stack:
+                        open_stack.pop()
+                    else:
                         report.issues.append(
                             f"mermaid block #{block_idx} line ~{abs_line_bal}: "
-                            f"'end' without matching 'alt/opt/loop/par' opener — "
+                            f"'end' without matching "
+                            f"'{_MERMAID_SEQ_OPENER_LIST}' opener — "
                             f"unbalanced block close"
                         )
-                        block_depth = 0
-                elif re.match(r"^else(\s|$)", stripped) and block_depth == 0:
+                elif re.match(r"^else(\s|$)", stripped) and "alt" not in open_stack:
                     # `else` outside any alt block — Mermaid parse error.
                     end_then_else_caught = True
                     report.issues.append(
@@ -4981,23 +5043,21 @@ def check_mermaid_syntax(md_path: Path) -> Report:
                     )
             elif diagram_type in ("flowchart", "graph"):
                 if stripped.startswith("subgraph "):
-                    block_depth += 1
-                    last_opener_kind = "subgraph"
+                    open_stack.append("subgraph")
                 elif stripped == "end":
-                    block_depth -= 1
-                    last_opener_kind = ""
-                    if block_depth < 0:
+                    if open_stack:
+                        open_stack.pop()
+                    else:
                         report.issues.append(
                             f"mermaid block #{block_idx} line ~{abs_line_bal}: "
                             f"'end' without matching 'subgraph' — unbalanced "
                             f"block close"
                         )
-                        block_depth = 0
 
-        if block_depth > 0:
+        if open_stack:
             report.issues.append(
-                f"mermaid block #{block_idx}: {block_depth} unclosed "
-                f"'{last_opener_kind or 'block'}' block(s) at end of diagram"
+                f"mermaid block #{block_idx}: {len(open_stack)} unclosed "
+                f"'{open_stack[-1]}' block(s) at end of diagram"
             )
 
         for rel_no, line in enumerate(body.splitlines(), start=1):

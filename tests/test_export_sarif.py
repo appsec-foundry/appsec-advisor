@@ -71,6 +71,25 @@ def _make_mitigation(**overrides) -> dict:
     return base
 
 
+def _make_boundary(bid: str, source: str = "external", target: str = "C-01") -> dict:
+    return {
+        "id": bid,
+        "name": f"{source} → {target}",
+        "from": source,
+        "to": target,
+        "kind": "network",
+        "assumption": "Requests are authenticated before protected operations.",
+        "evidence": [],
+        "confidence": "confirmed",
+        "resolution_status": "resolved",
+        "sources": ["detected"],
+    }
+
+
+def sarif_boundaries(sarif: dict) -> list[dict]:
+    return sarif["runs"][0]["results"][0]["properties"]["trustBoundaries"]
+
+
 def _make_doc(threats: list[dict], mitigations: list[dict] | None = None) -> dict:
     return {
         "meta": {
@@ -213,7 +232,7 @@ class TestBuildSarif:
         sarif = export_sarif.build_sarif(_make_doc([t]))
         assert "fixes" not in sarif["runs"][0]["results"][0]
 
-    def test_boundary_ids_are_deduplicated_in_result_properties(self):
+    def test_boundary_refs_are_deduplicated_in_result_properties(self):
         t = _make_threat(
             boundary_refs=[
                 {"boundary_id": "tb-2"},
@@ -223,8 +242,45 @@ class TestBuildSarif:
         )
         sarif = export_sarif.build_sarif(_make_doc([t], [_make_mitigation()]))
         properties = sarif["runs"][0]["results"][0]["properties"]
-        assert properties["boundaryIds"] == ["tb-2", "tb-1"]
+        assert [entry["id"] for entry in properties["trustBoundaries"]] == ["tb-2", "tb-1"]
         assert properties["mitigationIds"] == ["M-001"]
+
+    def test_boundary_ref_carries_crossing_exposure_and_rationale(self):
+        # A bare `tb-N` is unresolvable outside the run — the id is renumbered
+        # per run — so each result states its own crossing and exposure.
+        doc = _make_doc([_make_threat(boundary_refs=[{"boundary_id": "tb-1", "rationale": "No authn at the edge."}])])
+        doc["components"] = [{"id": "C-01", "name": "REST API"}]
+        doc["trust_boundaries"] = [_make_boundary("tb-1")]
+        sarif = export_sarif.build_sarif(doc)
+        assert sarif["runs"][0]["results"][0]["properties"]["trustBoundaries"] == [
+            {
+                "id": "tb-1",
+                "crossing": "external → C-01",
+                "exposure": "internet-facing",
+                "rationale": "No authn at the edge.",
+            }
+        ]
+
+    def test_unresolvable_boundary_ref_still_travels(self):
+        doc = _make_doc([_make_threat(boundary_refs=[{"boundary_id": "tb-9"}])])
+        doc["components"] = [{"id": "C-01"}]
+        doc["trust_boundaries"] = [_make_boundary("tb-1")]
+        # Dropping it would hide that the finding carried a reference at all.
+        assert sarif_boundaries(export_sarif.build_sarif(doc)) == [{"id": "tb-9"}]
+
+    def test_run_carries_the_whole_boundary_catalogue(self):
+        doc = _make_doc([_make_threat()])
+        doc["components"] = [{"id": "C-01"}]
+        # Includes the row no finding references — a consumer building a
+        # boundary view needs the clean crossings too.
+        doc["trust_boundaries"] = [_make_boundary("tb-1"), _make_boundary("tb-2", source="C-01", target="external")]
+        assert export_sarif.build_sarif(doc)["runs"][0]["properties"]["trustBoundaries"] == [
+            {"id": "tb-1", "crossing": "external → C-01", "exposure": "internet-facing"},
+            {"id": "tb-2", "crossing": "C-01 → external", "exposure": "outbound"},
+        ]
+
+    def test_run_properties_absent_without_boundaries(self):
+        assert "properties" not in export_sarif.build_sarif(_make_doc([_make_threat()]))["runs"][0]
 
     def test_help_uri_direct(self):
         t = _make_threat(remediation_reference="https://internal/blueprint")

@@ -377,3 +377,24 @@ def test_main_usage_and_success_output(tmp_path: Path, capsys) -> None:
     out = _write(tmp_path, [{"id": "T-001", "risk": "Critical", "cwe": "CWE-321", "vektor": "repo-read"}])
     assert esr.main([str(out)]) == 0
     assert "total=1 annotated=1" in capsys.readouterr().out
+
+
+def test_external_boundary_ids_are_translated_through_the_delivery_renumber(tmp_path: Path) -> None:
+    """Triage records the pre-renumber catalogue ids; the delivered yaml carries
+    the contiguous ones `build_threat_model_yaml.renumber_trust_boundaries`
+    assigned. The §8 severity line must name the delivered id."""
+    out = _write(
+        tmp_path,
+        [{"id": "T-001", "risk": "Medium", "effective_severity": "High", "cwe": "CWE-400"}],
+    )
+    _write_external_reconciliation(out, boundary_ids=("tb-37", "tb-40"))
+    (out / ".trust-boundary-renumber.json").write_text(
+        json.dumps({"schema_version": 1, "mapping": {"tb-37": "tb-1", "tb-40": "tb-4"}}),
+        encoding="utf-8",
+    )
+
+    esr.emit(out)
+
+    note = _reload(out)[0]["severity_rationale"]
+    assert "confirmed internet ingress tb-1, tb-4" in note
+    assert "tb-37" not in note

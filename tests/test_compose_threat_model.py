@@ -40,6 +40,12 @@ def _load_module(name: str, path: Path):
 
 
 compose = _load_module("compose_threat_model", SCRIPT_PATH)
+# The §1 catalogue is delivered as fixed-layout HTML, so a few tests assert the
+# composer's cells survive qa's inline-markdown → HTML conversion unchanged.
+qa = _load_module("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
+# The §1 exposure rating comes from this shared contract; the tests read the
+# scale from it rather than restating it.
+criticality = _load_module("_boundary_criticality", REPO_ROOT / "scripts" / "_boundary_criticality.py")
 
 
 def _prepare_output_dir(tmp_path: Path) -> Path:
@@ -1231,7 +1237,12 @@ def _canonical_boundary(number: int, name: str | None = None) -> dict:
 
 def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tmp_path: Path) -> None:
     rows = [_canonical_boundary(i) for i in range(1, 22)]
-    rows[0]["name"] = "<a id=x>|[link](javascript:alert(1))"
+    # Model-authored strings that reach a cell: the enforcement point (the
+    # mechanism) and the assumption. The boundary `name` no longer reaches the
+    # cell as a mechanism — see
+    # `test_trust_boundary_cell_never_synthesizes_a_missing_enforcement_point`.
+    rows[0]["enforcement_point"] = "<a id=x>|[link](javascript:alert(1))"
+    rows[1]["assumption"] = "<a id=y>|[link](javascript:alert(2))"
     ctx = compose.RenderContext(
         output_dir=tmp_path,
         contract={},
@@ -1241,14 +1252,135 @@ def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tm
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     assert rendered.count('<a id="tb-') == 20
-    assert "&lt;a id=x&gt;" in rendered
+    assert "&lt;a id=x&gt;" in rendered and "&lt;a id=y&gt;" in rendered
     assert "\\|" in rendered
     assert "\\[link\\](javascript:alert(1))" in rendered
+    assert "\\[link\\](javascript:alert(2))" in rendered
     assert "\\(" not in rendered
     assert "1 additional trust boundary row(s)" in rendered
-    assert "Source: `detected`" in rendered
+    # Every row is `detected` → no Source column; the footnote states it once.
+    assert "| Source |" not in rendered
+    assert "source `detected`" in rendered
     assert "confirmed internet ingress may raise effective severity" in rendered
     assert "raw risk remains unchanged" in rendered
+
+
+def test_trust_boundary_cell_states_each_fact_once(tmp_path: Path) -> None:
+    """The crossing cell carries the crossing, the mechanism and the folded-in
+    components — each exactly once.
+
+    It used to stack the `name` (itself `<from> → <to>: <mechanism>`), then
+    `from → to` again, then `_enforced at: <the same mechanism>_`, so the
+    crossing appeared twice and the enforcement twice (user 2026-07-31).
+    """
+    rows = [
+        {
+            **_canonical_boundary(1, "external → C-01 admin API: expressJwt on /admin routes"),
+            "enforcement_point": "security.isAuthorized() expressJwt middleware in server.ts",
+            "covers_components": ["C-01", "C-02"],
+        }
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}, {"id": "C-02"}], "trust_boundaries": rows, "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    # The name's head is the crossing — kept because its qualifier is what tells
+    # two rows over the same component pair apart. Emitted once, bolded.
+    assert "**external → C-01 admin API**" in rendered
+    assert rendered.count("external → C-01") == 1
+    # The mechanism is the enforcement point, stated once, WITHOUT the italic
+    # wrapper (a later pass backticks the identifiers inside it, and markdown
+    # emphasis around a code span does not survive the HTML conversion).
+    assert "Control: security.isAuthorized() expressJwt middleware in server.ts" in rendered
+    assert "_enforced at:" not in rendered
+    # The name's mechanism tail is NOT restated next to the enforcement point.
+    assert "expressJwt on /admin routes" not in rendered
+    # Folded-in components, once, and never the `to` component itself. They ride
+    # behind the control instead of claiming a third stacked line.
+    assert "Also covers: C-02" in rendered
+    assert rendered.count("<br>") == 1
+
+
+def test_trust_boundary_cell_never_synthesizes_a_missing_enforcement_point(tmp_path: Path) -> None:
+    """An absent `enforcement_point` means the analysis identified no single
+    control — the cell says exactly that.
+
+    Regression (user 2026-07-31): the mechanism fell back to the boundary name's
+    post-colon tail, so juice-shop's `external → frontend-spa` — which carries no
+    `enforcement_point` — rendered "enforced by: Express static file serving".
+    That is a description of what the code does there, not a control, and it
+    asserts an enforcement the analysis deliberately withheld
+    (`_clean_enforcement_point` drops generic values; a filler value is worse
+    than none). The name tail still disambiguates the crossing HEAD, which is a
+    naming fact rather than a control claim.
+    """
+    rows = [
+        _canonical_boundary(1, "external → C-01: Express static file serving"),
+        _canonical_boundary(2, "Sequelize ORM query construction"),
+        {
+            **_canonical_boundary(3, "external → C-01 admin API: expressJwt on /admin routes"),
+            "enforcement_point": "security.isAuthorized() expressJwt middleware in server.ts",
+        },
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": rows, "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    assert "Express static file serving" not in rendered
+    assert "Sequelize ORM query construction" not in rendered
+    assert "expressJwt on /admin routes" not in rendered
+    assert rendered.count("Control: none identified") == 2
+    # A row that HAS one still shows it, and no row emits a dangling label.
+    assert "Control: security.isAuthorized() expressJwt middleware in server.ts" in rendered
+    for line in rendered.splitlines():
+        if '<a id="tb-' in line:
+            assert "Control: |" not in line.replace("  ", " ")
+            assert "Control: <br>" not in line
+            assert "Control: ·" not in line
+
+
+def test_trust_boundary_findings_cell_is_dot_plus_id_only(tmp_path: Path) -> None:
+    """The narrowest column keeps the triage signal (severity dot) and the id;
+    the title is one click away.
+
+    The row is exempt from the global `linkify_anchors` label pass, which used
+    to append the full title + locator to every one of up to five findings and
+    collapse the 10%-wide column into stacked single characters — so the dot
+    must be emitted right here.
+    """
+    rows = [_canonical_boundary(1)]
+    threats = [
+        {
+            "id": "T-001",
+            "risk": "critical",
+            "boundary_refs": [{"boundary_id": "tb-1", "origin_component_id": "C-01"}],
+        },
+        {
+            "id": "T-002",
+            "risk": "high",
+            "boundary_refs": [{"boundary_id": "tb-1", "origin_component_id": "C-01"}],
+        },
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": rows, "threats": threats},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    assert "🔴 [F-001](#f-001)<br>🟠 [F-002](#f-002)" in rendered
+    # The catalogue row opts out of the global title/dot retrofits.
+    row_line = next(line for line in rendered.splitlines() if '<a id="tb-1">' in line)
+    assert compose._is_bare_finding_ref_line(row_line)
 
 
 def test_trust_boundary_catalog_exposure_and_review_labels(tmp_path: Path) -> None:
@@ -1287,11 +1419,190 @@ def test_trust_boundary_catalog_exposure_and_review_labels(tmp_path: Path) -> No
         fragments_dir=tmp_path,
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
-    assert "🌐 **internet-facing**" in rendered
-    assert "**outbound**" in rendered
-    assert "**internal**" in rendered
-    assert "**review required**" in rendered
-    assert "**inferred**" in rendered
+    # Every exposure gets its rating from the shared contract, and the legend
+    # lists them in tier order. Values come from `_boundary_criticality`, never
+    # from a second copy of the scale here.
+    for exposure in ("internet-facing", "outbound", "internal", "review required", "inferred"):
+        glyph, word = criticality.rating_of(exposure)
+        assert f"{glyph} **{word}**" in rendered
+    legend = " · ".join(
+        f"{criticality.rating_of(e)[0]} {criticality.rating_of(e)[1]}"
+        + (" (endpoints unresolved)" if e == "review required" else "")
+        for e in sorted(
+            ("review required", "internet-facing", "inferred", "internal", "outbound"),
+            key=criticality.tier_of,
+        )
+    )
+    assert f"_Exposure rates how reachable the crossing is, most exposed first: {legend}._" in rendered
+    # Exposure lives in its own column — never restated in the Kind cell.
+    for line in rendered.splitlines():
+        if '<a id="tb-' not in line:
+            continue
+        for _glyph, word in (criticality.rating_of(e) for e in ("internet-facing", "internal", "outbound")):
+            assert line.count(f"**{word}**") <= 1, line
+
+
+def test_trust_boundary_exposure_ignores_linked_finding_count(tmp_path: Path) -> None:
+    """The exposure rating is a REACHABILITY verdict, never a findings tally.
+
+    Only a fraction of findings carry a `boundary_refs[]` entry, so weighting the
+    rating by them would present a boundary as safer merely because nothing
+    happened to link to it — and would rate an unexamined boundary below an
+    examined one. Two boundaries with the same exposure and wildly different
+    linked-findings counts must rate identically; "Linked findings" stays its own
+    column.
+    """
+    rows = [_canonical_boundary(1, "Busy entry"), _canonical_boundary(2, "Quiet entry")]
+    threats = [
+        {
+            "id": f"T-{n:03d}",
+            "risk": "critical",
+            "boundary_refs": [{"boundary_id": "tb-1", "origin_component_id": "C-01"}],
+        }
+        for n in range(1, 5)
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": rows, "threats": threats},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    busy = next(line for line in rendered.splitlines() if '<a id="tb-1">' in line)
+    quiet = next(line for line in rendered.splitlines() if '<a id="tb-2">' in line)
+    exposure_cell = lambda line: compose._split_table_row(line)[2]  # noqa: E731
+    assert exposure_cell(busy) == exposure_cell(quiet)
+    # …and they genuinely differ in linked findings, so the property is exercised.
+    assert busy.count("](#f-") == 4 and quiet.count("](#f-") == 0
+
+
+def test_boundary_exposure_vocabulary_never_collides_with_finding_severity() -> None:
+    """The boundary scale must share neither a word nor a glyph with the finding
+    severity scale.
+
+    Both scales sit in the same report, so a 🔴 or the word "Critical" on a
+    boundary row would read as "a critical finding lives here" when it actually
+    means "reachable from the internet". The collision was proposed once and
+    rejected; this test is what stops a future "let's unify the badges" change
+    from reintroducing it.
+    """
+    exposures = ("review required", "internet-facing", "inferred", "internal", "outbound")
+    ratings = [criticality.rating_of(exposure) for exposure in exposures]
+    severity_glyphs = set(compose._SEV_ICON_TBL.values()) | set(compose._PRIO_ICON_TBL.values())
+    severity_words = {"critical", "high", "medium", "low", "info"}
+    assert not {glyph for glyph, _ in ratings} & severity_glyphs
+    assert not {word.lower() for _, word in ratings} & severity_words
+    # Every exposure keeps a distinct glyph and word of its own.
+    assert len({glyph for glyph, _ in ratings}) == len(ratings)
+    assert len({word for _, word in ratings}) == len(ratings)
+
+
+def test_trust_boundary_constant_provenance_confidence_and_status_are_collapsed(tmp_path: Path) -> None:
+    """A column (or stacked sub-line) whose every row says the same thing carries
+    no information — juice-shop rendered nine identical `detected` / `confirmed` /
+    `resolved` cells, and 8% was too narrow for "detected" (user 2026-07-31).
+    Each collapses into the footnote instead."""
+    rows = [_canonical_boundary(i) for i in range(1, 4)]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": rows, "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
+    # No Source column, and the Kind header does not name a status it no longer shows.
+    assert header == "| ID | Boundary / crossing | Exposure | Kind | What must hold | Linked findings |"
+    assert "detected" not in header
+    body = rendered.split("| ID |", 1)[1].split("_Exposure rates", 1)[0]
+    assert "confirmed" not in body and "resolved" not in body
+    assert (
+        "_Identical on every row, so stated once here instead of in a column: "
+        "source `detected` (derived from inspected repository evidence); "
+        "confidence `confirmed`; status `resolved`." in rendered
+    )
+    # The dropped column's vocabulary legend goes with it.
+    assert "`repo-declared` = supplied by" not in rendered
+
+
+def test_trust_boundary_varying_provenance_keeps_the_source_column(tmp_path: Path) -> None:
+    rows = [
+        _canonical_boundary(1),
+        {**_canonical_boundary(2), "sources": ["repo-declared"]},
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": rows, "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
+    assert header.endswith("| What must hold | Source | Linked findings |")
+    assert "| detected |" in rendered and "| repo-declared |" in rendered
+    assert "`repo-declared` = supplied by" in rendered
+    assert "stated once here instead of in a column: source" not in rendered
+
+
+def test_trust_boundary_exceptional_status_and_confidence_are_never_collapsed(tmp_path: Path) -> None:
+    """`unresolved` / `conflicted` / `inferred` are exactly the rows a reader must
+    not skim past, so a single deviating row keeps the sub-line on EVERY row."""
+    rows = [
+        _canonical_boundary(1),
+        {**_canonical_boundary(2), "resolution_status": "unresolved", "confidence": "inferred"},
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": rows, "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    assert "**unresolved**" in rendered and "**resolved**" in rendered
+    assert "_inferred_" in rendered and "_confirmed_" in rendered
+    # Provenance is still uniform and still collapses; status/confidence do not.
+    assert "confidence `" not in rendered and "status `" not in rendered
+
+
+def test_trust_boundary_uniform_but_exceptional_status_stays_visible(tmp_path: Path) -> None:
+    """Uniformity alone is not enough: a catalogue where EVERY row is unresolved
+    must still show it per row, not bury it in a footnote."""
+    rows = [{**_canonical_boundary(i), "resolution_status": "unresolved"} for i in range(1, 3)]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": rows, "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    assert rendered.count("**unresolved**") == 2
+    assert "status `unresolved`" not in rendered
+
+
+def test_trust_boundary_cells_emit_no_raw_markdown_emphasis_markers(tmp_path: Path) -> None:
+    """The table becomes raw fixed-layout HTML, where markdown is NOT processed —
+    so `**`/`_` may only appear in shapes the qa tokenizer converts."""
+    rows = [{**_canonical_boundary(1), "confidence": "inferred"}]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": rows, "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    row_line = next(line for line in rendered.splitlines() if '<a id="tb-1">' in line)
+    header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
+    separator = "|" + "---|" * (header.count("|") - 1)
+    converted, count = qa._attack_surface_tables_to_html(f"{header}\n{separator}\n{row_line}\n")
+    assert count == 1
+    assert "**" not in converted
+    assert "<strong>" in converted and "<em>inferred</em>" in converted
 
 
 def test_trust_boundary_catalogue_is_ordered_by_id(tmp_path: Path) -> None:
@@ -1365,32 +1676,17 @@ def test_healthy_trust_boundary_catalogue_starts_at_tb_1(tmp_path: Path) -> None
     assert [row["id"] for row in compose._ordered_trust_boundaries(ctx)] == ["tb-1", "tb-2", "tb-3"]
 
 
-def test_finding_boundary_gap_links_only_to_visible_catalogue_rows(tmp_path: Path) -> None:
-    rows = [_canonical_boundary(i) for i in range(1, 22)]
-    other_threats = [
-        {
-            "id": f"T-{i:03d}",
-            "boundary_refs": [{"boundary_id": f"tb-{i}", "origin_component_id": "C-01"}],
-        }
-        for i in range(1, 22)
-    ]
-    ctx = compose.RenderContext(
-        output_dir=tmp_path,
-        contract={},
-        yaml_data={"trust_boundaries": rows, "threats": other_threats},
-        triage={},
-        fragments_dir=tmp_path,
-    )
+def _boundary_card(ctx: compose.RenderContext, boundary_id: str) -> str:
     threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="C-01")
     threat["boundary_refs"] = [
         {
-            "boundary_id": "tb-21",
+            "boundary_id": boundary_id,
             "origin_component_id": "C-01",
             "rationale": "The missing input control is evidenced at this crossing.",
             "evidence_locations": [{"file": "routes/login.ts", "line": 34}],
         }
     ]
-    cell = compose._build_threat_card(
+    return compose._build_threat_card(
         t=threat,
         sev="critical",
         taxonomy={},
@@ -1398,8 +1694,106 @@ def test_finding_boundary_gap_links_only_to_visible_catalogue_rows(tmp_path: Pat
         repo_root=None,
         ctx=ctx,
     )
-    assert "**Trust boundary gap:** tb-21 — Boundary 21:" in cell
-    assert "[tb-21](#tb-21)" not in cell
+
+
+def test_finding_boundary_gap_link_survives_the_catalogue_row_cap(tmp_path: Path) -> None:
+    # A referenced boundary past the 20-row cap kept its reference but lost its
+    # anchor, so the card degraded to an unfollowable bare id (user 2026-08-01).
+    rows = [_canonical_boundary(i) for i in range(1, 22)]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={
+            "components": [{"id": "C-01"}],
+            "trust_boundaries": rows,
+            "threats": [
+                {
+                    "id": "T-001",
+                    "boundary_refs": [{"boundary_id": "tb-21", "origin_component_id": "C-01"}],
+                }
+            ],
+        },
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    cell = _boundary_card(ctx, "tb-21")
+    # The card leads with the CROSSING, never the boundary `name` — the name
+    # re-states crossing + enforcement mechanism at length (2026-07-31).
+    assert "**Trust boundary gap:** [tb-21](#tb-21) 🌐 Public — external → C-01:" in cell
+    assert "Boundary 21" not in cell
+    # The link target exists: the referenced row displaced an unreferenced one
+    # instead of being cut, and the catalogue still holds its cap.
+    rendered = compose._render_trust_boundary_catalog(ctx, None, {})
+    assert '<a id="tb-21"></a>' in rendered
+    assert rendered.count('<a id="tb-') == 20
+
+
+def test_finding_boundary_gap_drops_the_link_for_an_unknown_boundary(tmp_path: Path) -> None:
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": [_canonical_boundary(1)], "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    cell = _boundary_card(ctx, "tb-9")
+    # No catalogue row, so no anchor to point at — a bare id beats a dead link.
+    assert "**Trust boundary gap:** tb-9:" in cell
+    assert "[tb-9](#tb-9)" not in cell
+
+
+def test_finding_boundary_gap_rates_only_internet_facing_exposure(tmp_path: Path) -> None:
+    # The rating is the catalogue's own `🌐 Public` and reaches the card for that
+    # one exposure: it is the only one the effective-severity exception acts on,
+    # and the card already carries a severity dot.
+    internal = _canonical_boundary(1)
+    internal["from"] = "C-02"
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={
+            "components": [{"id": "C-01"}, {"id": "C-02"}],
+            "trust_boundaries": [internal, _canonical_boundary(2)],
+            "threats": [],
+        },
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    assert "[tb-1](#tb-1) — C-02 → C-01:" in _boundary_card(ctx, "tb-1")
+    assert "[tb-2](#tb-2) 🌐 Public — external → C-01:" in _boundary_card(ctx, "tb-2")
+
+
+@pytest.mark.parametrize(
+    ("rationale", "expected"),
+    [
+        # Leading restatement of the crossing → folded to "This boundary …".
+        (
+            "The external → C-01 boundary assumes only the server signs tokens.",
+            "This boundary assumes only the server signs tokens.",
+        ),
+        # A qualifier between the crossing and the noun identifies WHICH
+        # crossing is meant, so it survives the fold.
+        (
+            "The external→C-01 JWT issuance boundary assumes RS256 verification.",
+            "This JWT issuance boundary assumes RS256 verification.",
+        ),
+        ("The external to C-01 boundary at the ORM is crossed.", "This boundary at the ORM is crossed."),
+        # The row's own id opening the sentence is the same restatement.
+        ("tb-21 enforces JWT at REST API routes.", "This boundary enforces JWT at REST API routes."),
+        # A crossing named MID-sentence is part of the argument, not a header.
+        (
+            "The open redirect endpoint is exposed at the external → C-01 boundary.",
+            "The open redirect endpoint is exposed at the external → C-01 boundary.",
+        ),
+        ("", ""),
+    ],
+)
+def test_boundary_rationale_lead_folds_only_the_opening_restatement(rationale: str, expected: str) -> None:
+    """The finding card leads with the crossing, so a rationale that opens by
+    re-stating it says the same thing twice. Substituting (not deleting) keeps
+    the sentence grammatical."""
+    row = {"id": "tb-21", "from": "external", "to": "C-01"}
+    assert compose._boundary_rationale_lead(rationale, row) == expected
 
 
 def test_finding_card_folds_consequence_into_issue(tmp_path: Path) -> None:
@@ -1614,6 +2008,44 @@ def test_codify_inline_identifiers_does_not_rewrap_escaped_brand_dot() -> None:
     # A genuine file path with the same extension is still wrapped normally.
     out2 = compose._codify_inline_code_in_prose("see lib/insecurity.ts for the fix")
     assert "`lib/insecurity.ts`" in out2
+
+
+def test_codify_inline_identifiers_wraps_scoped_npm_packages() -> None:
+    """A scoped package name (`@scope/name`) is code and must be monospaced.
+
+    Regression (juice-shop §1 Trust Boundaries, user 2026-07-31):
+    `@ai-sdk/openai-compatible` rendered as plain prose between a correctly
+    monospaced `LLM_API_KEY` and `routes/chat.ts` — no matcher covered a
+    `@scope/name` with no extension and no call parens.
+    """
+    out = compose._codify_inline_identifiers(
+        "LLM_API_KEY authenticating outbound calls via @ai-sdk/openai-compatible in routes/chat.ts"
+    )
+    assert "`@ai-sdk/openai-compatible`" in out
+    assert "`LLM_API_KEY`" in out and "`routes/chat.ts`" in out
+    assert out.count("`") % 2 == 0
+    # A scoped package with a file-ish tail stays ONE span (the file matcher must
+    # not half-wrap its second half).
+    assert "`@babel/plugin-transform-runtime`" in compose._codify_inline_identifiers(
+        "pinned @babel/plugin-transform-runtime here"
+    )
+    # Idempotent.
+    assert compose._codify_inline_identifiers(out) == out
+
+
+def test_codify_inline_identifiers_does_not_overmatch_at_signs_or_plain_slashes() -> None:
+    """The scoped-package matcher must not turn ordinary prose into code."""
+    for text in (
+        "the seeded account admin@juice-sh.op is documented",
+        "notify security@example.com/team about it",
+        "an input/output boundary is not a package",
+        "check the client/server split",
+        "mention @maintainer in the issue",
+    ):
+        out = compose._codify_inline_identifiers(text)
+        assert "`@" not in out, text
+    # A plain `word/word` never becomes a code span.
+    assert "`input/output`" not in compose._codify_inline_identifiers("an input/output boundary")
 
 
 def test_balance_code_spans_merges_partially_wrapped_expression() -> None:
@@ -3964,11 +4396,11 @@ def test_softwrap_never_breaks_inside_backtick_span():
 
 def test_softwrap_exempts_fixed_layout_trust_boundary_table():
     md = (
-        "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |\n"
-        "|---|---|---|---|---|---|\n"
-        "| tb-1 | **Internet entry**<br>external → backend-api | network / resolved | "
+        "| ID | Boundary / crossing | Exposure | Kind / status | What must hold | Source | Linked findings |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| tb-1 | **Internet entry**<br>enforced by: expressJwt | 🌐 **Public** | network<br>**resolved** | "
         "This deliberately long trust assumption must reflow naturally inside the fixed-width HTML column "
-        "without synthetic mid-phrase line breaks.<br>_confirmed_ | detected | — |\n"
+        "without synthetic mid-phrase line breaks. | detected | — |\n"
     )
     assert compose._softwrap_prose_table_cells(md, width=20) == md
 

@@ -255,6 +255,64 @@ class TestAiExposure:
         }
         assert pf.gen_ai_exposure(d) is None
 
+    def test_reports_an_untagged_llm_threat_instead_of_guessing_it(self, capsys):
+        """An LLM finding the analyzer left untagged, whose title matches no
+        rule, is analysed and then invisible in this section.
+
+        Widening the keyword scan into impact prose is NOT the fix — that is the
+        documented 2026-07-03 mis-categorization (body prose names the attack
+        TECHNIQUE, not the risk class), so categorization stays title-scoped and
+        the gap is reported to the operator instead.
+        """
+        d = {
+            "components": [{"id": "llm-chatbot", "name": "LLM Chatbot Service"}],
+            "threats": [
+                {
+                    "id": "T-026",
+                    "title": "Prompt Injection — routes/chat.ts:179",
+                    "component": "llm-chatbot",
+                    "risk": "High",
+                },
+                {
+                    "id": "T-050",
+                    "title": "Coupon Executor Runs Without an Approval Step — routes/chat.ts:210",
+                    "component": "llm-chatbot",
+                    "impact_description": "The LLM decides the discount and the executor applies it unreviewed.",
+                    "risk": "High",
+                },
+            ],
+        }
+        pf.gen_ai_exposure(d)
+        err = capsys.readouterr().err
+        assert "T-050" in err and "owasp_llm_ids" in err
+        assert "T-026" not in err  # categorised, so not reported as a gap
+
+    def test_does_not_report_a_non_llm_threat_sharing_the_component(self, capsys):
+        """`_llm_context` also accepts "lives on an LLM component", which in a
+        monolith is every route — keying the diagnostic on that flagged 14
+        juice-shop threats including SQL injection and IDOR. It keys on the
+        threat's own prose instead."""
+        d = {
+            "components": [{"id": "llm-chatbot", "name": "LLM Chatbot Service"}],
+            "threats": [
+                {
+                    "id": "T-026",
+                    "title": "Prompt Injection — routes/chat.ts:179",
+                    "component": "llm-chatbot",
+                    "risk": "High",
+                },
+                {
+                    "id": "T-008",
+                    "title": "SQL Injection — routes/login.ts:34",
+                    "component": "llm-chatbot",
+                    "impact_description": "Full database read via a crafted WHERE clause.",
+                    "risk": "Critical",
+                },
+            ],
+        }
+        pf.gen_ai_exposure(d)
+        assert "T-008" not in capsys.readouterr().err
+
     def test_categorises_and_excludes_noise(self):
         out = pf.gen_ai_exposure(self._LLM_YAML)
         assert out is not None
@@ -1077,6 +1135,150 @@ class TestSystemContextDiagram:
         assert "Compliance Auditor" in md
 
 
+class TestSection2TrustBoundaries:
+    """§2.1 / §2.2 must SHOW the trust boundaries the model resolved.
+
+    A §2 that draws components and arrows but no boundary tells the reader the
+    system has none. Mermaid's grouping device is a `subgraph`, so each drawn
+    boundary is a labelled zone around the side it protects — derived from
+    `trust_boundaries[]`, never invented.
+    """
+
+    def _data(self, boundaries):
+        return {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [
+                {"id": "spa", "name": "SPA", "paths": ["frontend/**"]},
+                {"id": "api", "name": "API", "paths": ["server.ts"]},
+                {"id": "db", "name": "DB", "paths": ["models/**"]},
+            ],
+            "data_flows": [],
+            "trust_boundaries": boundaries,
+            "threats": [],
+        }
+
+    @staticmethod
+    def _tb(bid, src, dst, status="resolved"):
+        return {
+            "id": bid,
+            "from": src,
+            "to": dst,
+            "name": f"{src} → {dst}",
+            "confidence": "confirmed",
+            "resolution_status": status,
+        }
+
+    def _block(self, md, heading):
+        body = md.split(f"### {heading}")[1].split("### ")[0]
+        return body.split("```mermaid")[1].split("```")[0]
+
+    def test_system_context_puts_the_system_inside_its_ingress_boundary(self):
+        md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api")]))
+        block = self._block(md, "2.1 System Context")
+
+        assert 'subgraph TBEDGE["Trust boundary · external → api (tb-1)"]' in block
+        # Actors stay OUTSIDE, so every edge into the system crosses the box.
+        assert block.index("ATTACKER[") < block.index("subgraph TBEDGE")
+        assert block.count("subgraph") == block.count("\n    end")
+
+    def test_container_diagram_groups_the_server_side_behind_the_ingress(self):
+        md = pf.gen_architecture_diagrams(
+            self._data([self._tb("tb-1", "external", "api"), self._tb("tb-2", "spa", "api")])
+        )
+        block = self._block(md, "2.2 Container Architecture")
+
+        assert "subgraph TBSERVER[" in block
+        assert "external → api (tb-1)" in block and "spa → api (tb-2)" in block
+        # Application AND Data sit inside it; the client tier does not.
+        assert block.index("subgraph TBSERVER") < block.index("subgraph Application")
+        assert block.index("subgraph Client") < block.index("subgraph TBSERVER")
+        assert block.count("subgraph ") == 4  # contract ceiling for §2.2
+
+    def test_system_context_resolves_the_title_overflow_count(self):
+        """The TBEDGE title names only the first crossings and declares the rest
+        as `+N more`. That count must resolve somewhere, or the reader is told
+        something is hidden with nowhere to look."""
+        md = pf.gen_architecture_diagrams(
+            self._data(
+                [
+                    self._tb("tb-1", "external", "api"),
+                    self._tb("tb-2", "external", "spa"),
+                    self._tb("tb-3", "external", "auth"),
+                    self._tb("tb-4", "api", "db"),
+                ]
+            )
+        )
+        section = md.split("### 2.1 System Context")[1].split("### ")[0]
+        caption = [ln for ln in section.splitlines() if ln.startswith("*Trust boundaries")]
+
+        assert "+1 more" in section.split("```")[1]  # title truncated one ingress crossing
+        assert caption, "title declared '+N more' but no caption resolves it"
+        # The unnamed ingress crossing AND the boundary this diagram cannot
+        # carry are both named, and §1 is one click away.
+        assert "external → auth (tb-3)" in caption[0]
+        assert "api → db (tb-4)" in caption[0]
+        assert "#trust-boundaries" in caption[0]
+
+    def test_system_context_has_no_caption_when_the_title_named_everything(self):
+        md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api")]))
+        section = md.split("### 2.1 System Context")[1].split("### ")[0]
+
+        assert not [ln for ln in section.splitlines() if ln.startswith("*Trust boundaries")]
+
+    def test_container_diagram_draws_the_data_boundary_when_there_is_no_ingress(self):
+        md = pf.gen_architecture_diagrams(self._data([self._tb("tb-9", "api", "db")]))
+        block = self._block(md, "2.2 Container Architecture")
+
+        assert 'subgraph TBDATA["Trust boundary · api → db (tb-9)"]' in block
+        assert "subgraph TBSERVER" not in block
+        assert block.index("subgraph TBDATA") < block.index("subgraph Data")
+
+    def test_boundaries_the_diagram_cannot_draw_are_named_not_dropped(self):
+        """Only one boundary subgraph fits the four-subgraph ceiling, so the
+        rest must be declared under the diagram with a route into §1."""
+        md = pf.gen_architecture_diagrams(
+            self._data(
+                [
+                    self._tb("tb-1", "external", "api"),
+                    self._tb("tb-2", "api", "db"),
+                    self._tb("tb-3", "api", "external"),
+                ]
+            )
+        )
+
+        assert "*Trust boundaries not drawn above: api → db (tb-2), api → external (tb-3)" in md
+        assert "[§1 Trust Boundaries](#trust-boundaries)" in md
+
+    def test_unresolved_boundaries_are_never_drawn(self):
+        md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api", status="unresolved")]))
+        assert "subgraph TBEDGE" not in md
+        assert "subgraph TBSERVER" not in md
+        assert "tb-1" not in md
+
+    def test_zero_boundaries_degrades_to_the_pre_boundary_diagrams(self):
+        with_none = pf.gen_architecture_diagrams(self._data([]))
+        assert "Trust boundary" not in with_none
+        assert "subgraph TB" not in with_none
+        assert "not drawn above" not in with_none
+
+    def test_subgraph_title_stays_within_the_label_budget(self):
+        """Every quoted label in a §2 block is checked against
+        `diagram_compactness` (≤3 lines, ≤60 chars/line) — a one-line caption
+        listing several crossings blows straight through it."""
+        title = pf._tb_subgraph_title(
+            [self._tb(f"tb-{i}", "external", f"service-with-a-long-name-{i}") for i in range(1, 6)]
+        )
+        lines = title.split("<br/>")
+        assert len(lines) <= 3
+        assert all(len(line) <= 60 for line in lines)
+        assert lines[-1] == "+3 more"
+        assert "tb-1" in title  # the id survives truncation — it is the locator
+
+    def test_two_enforcement_points_on_one_crossing_collapse(self):
+        entries = pf._tb_entries([self._tb("tb-1", "external", "api"), self._tb("tb-2", "external", "api")])
+        assert entries == ["external → api (tb-1, tb-2)"]
+
+
 class TestComponentsDiagram:
     """§2.3 Components — attack edges from external actors to internal tiers.
 
@@ -1167,6 +1369,187 @@ class TestComponentsDiagram:
 
         nodes = _re.findall(r"^\s+([A-Z][A-Z0-9_]*)\[", block, _re.MULTILINE)
         assert len(set(nodes)) <= 8, f"node count exceeds contract cap: {sorted(set(nodes))}"
+
+
+class TestComponentsDiagramTrustBoundary:
+    """§2.3 Components — the trust boundary is marked on the EDGES.
+
+    The four subgraph slots (EXT/CLIENT/APP/DATA) are all taken by the
+    contract, so the §2.1/§2.2 boundary-subgraph device cannot be reused here.
+    Two things make the boundary visible instead:
+
+      * CLIENT is titled as part of the untrusted zone — browser code runs on
+        the user's device, so a reader must not place the boundary between EXT
+        and CLIENT, where trust does not change;
+      * the edges that leave that zone (CLIENT → APP, EXT → APP) are drawn with
+        the `==>` crossing arrow and name the resolved `tb-N` they cross.
+
+    Everything is derived from resolved `trust_boundaries[]`; a model with none
+    renders exactly as it did before boundaries were drawn at all.
+    """
+
+    def _data(self, boundaries=None, **overrides):
+        base = {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [
+                {"id": "spa", "name": "Frontend", "tier": "client", "paths": ["frontend/**"]},
+                {"id": "backend", "name": "API", "tier": "application", "paths": ["server.ts"]},
+                {"id": "db", "name": "Database", "tier": "data", "paths": ["models/**"]},
+            ],
+            "trust_boundaries": boundaries or [],
+            "attack_surface": {},
+            "threats": [],
+            "security_controls": [],
+        }
+        base.update(overrides)
+        return base
+
+    @staticmethod
+    def _tb(tb_id, src, dst, status="resolved"):
+        return {
+            "id": tb_id,
+            "name": f"{src} to {dst}",
+            "from": src,
+            "to": dst,
+            "kind": "network",
+            "confidence": "observed",
+            "resolution_status": status,
+        }
+
+    def _section_2_3(self, md: str) -> str:
+        return md.split("### 2.3")[1].split("###")[0]
+
+    def _contract_rules(self):
+        return pf._load_diagram_compactness()["2.3 Components"]
+
+    # ---- subgraph titles ---------------------------------------------------
+
+    def test_client_subgraph_is_titled_untrusted(self):
+        """The complaint: four zone columns, nothing marked, and the reader
+        assumes the boundary sits between EXT and CLIENT."""
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data()))
+        client_title = re.search(r'subgraph CLIENT\["([^"]+)"\]', block).group(1)
+        assert "untrusted" in client_title.lower(), client_title
+
+    def test_subgraph_titles_come_from_the_contract(self):
+        """The contract is the SoT — a title must never be hard-coded in the
+        generator where it can drift away from `required_subgraphs`."""
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data()))
+        expected = {r["id"]: r["title"] for r in self._contract_rules()["required_subgraphs"]}
+        found = dict(re.findall(r'subgraph (\w+)\["([^"]+)"\]', block))
+        assert found == expected
+
+    def test_still_exactly_four_subgraphs(self):
+        block = self._section_2_3(
+            pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "backend")]))
+        )
+        assert len(re.findall(r"^\s*subgraph ", block, re.MULTILINE)) == 4
+
+    # ---- degradation -------------------------------------------------------
+
+    def test_no_boundaries_draws_no_crossing(self):
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data()))
+        assert "==>" not in block
+        assert "trust boundary ·" not in block
+        # Unchanged two-group linkStyle: 3 legit edges, then 3 attack edges.
+        assert "linkStyle 0,1,2 stroke:#2e7d32" in block
+        assert "linkStyle 3,4,5 stroke:#b71c1c,stroke-width:2.5px" in block
+
+    def test_unresolved_boundary_is_never_drawn(self):
+        data = self._data([self._tb("tb-1", "external", "backend", status="unresolved")])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        assert "==>" not in block
+        assert "tb-1" not in block
+
+    def test_egress_boundary_is_not_marked_as_ingress(self):
+        """application → external is a crossing this diagram cannot place; it
+        must not be attached to an unrelated edge."""
+        data = self._data([self._tb("tb-9", "backend", "external")])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        assert "==>" not in block
+        assert "tb-9" not in block
+
+    # ---- the crossing ------------------------------------------------------
+
+    def test_ingress_boundary_marks_client_to_app_edge(self):
+        data = self._data([self._tb("tb-1", "external", "backend")])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        assert 'spa ==>|"REST · JWT Bearer<br/>trust boundary · tb-1"| backend' in block
+
+    def test_ingress_boundary_marks_attack_edges_into_the_app_tier(self):
+        data = self._data([self._tb("tb-1", "external", "backend")])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        assert 'INTERNET_ANON ==>|"injection · auth bypass · RCE<br/>trust boundary · tb-1"' in block
+        assert 'REPO_READ ==>|"leaked credentials · auth bypass<br/>trust boundary · tb-1"' in block
+
+    def test_edges_inside_the_untrusted_zone_are_not_crossings(self):
+        """EXT → CLIENT stays a plain edge: browser code is on the attacker's
+        side of every server control, so no trust changes there."""
+        data = self._data([self._tb("tb-1", "external", "backend")])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        assert 'INTERNET_ANON -.->|"XSS · client tampering · token theft"| spa' in block
+        assert 'VICTIM_REQUIRED -->|"HTTPS · TLS"| spa' in block
+
+    def test_client_sourced_boundary_also_marks_the_ingress_edge(self):
+        """A boundary the model anchors at the client (`spa → backend`) is the
+        same crossing as `external → backend` — both leave the untrusted zone."""
+        data = self._data([self._tb("tb-4", "spa", "backend")])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        assert 'spa ==>|"REST · JWT Bearer<br/>trust boundary · tb-4"| backend' in block
+
+    def test_internal_application_to_data_boundary_is_not_marked(self):
+        """`==>` means "leaves the untrusted zone" (that is what the §2 legend
+        says it means). An internal app→data enforcement point is a boundary,
+        but not that one — §1 and §2.2 carry it."""
+        data = self._data([self._tb("tb-7", "backend", "db")])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        assert 'backend -->|"ORM · queries"| db' in block
+        assert "==>" not in block
+        assert "tb-7" not in block
+
+    def test_crossing_edges_get_their_own_linkstyle_group(self):
+        data = self._data([self._tb("tb-1", "external", "backend")])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        cross_style = self._contract_rules()["edge_convention"]["boundary_crossing"]["linkstyle"]
+        # legit: victim→spa (0), backend→db (2). attack: anon→spa (4).
+        # crossing: spa→backend (1), anon→backend (3), repo→backend (5).
+        assert "linkStyle 0,2 stroke:#2e7d32" in block
+        assert "linkStyle 4 stroke:#b71c1c,stroke-width:2.5px" in block
+        assert f"linkStyle 1,3,5 {cross_style}" in block
+
+    def test_caption_resolves_the_boundary_ids_into_section_1(self):
+        data = self._data([self._tb("tb-1", "external", "backend")])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        caption = [ln for ln in block.splitlines() if ln.startswith("*Trust boundaries")]
+        assert caption, "crossing ids must resolve somewhere"
+        assert "tb-1" in caption[0]
+        assert "[§1 Trust Boundaries](#trust-boundaries)" in caption[0]
+
+    def test_no_caption_without_a_crossing(self):
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data()))
+        assert not [ln for ln in block.splitlines() if ln.startswith("*Trust boundaries")]
+
+    # ---- contract budgets --------------------------------------------------
+
+    def test_crossing_labels_stay_within_the_label_budget(self):
+        """`check_diagram_compactness` applies max_label_lines /
+        max_label_chars_per_line to EVERY quoted string in the block."""
+        data = self._data([self._tb(f"tb-{n}", "external", "backend") for n in range(1, 6)])
+        block = self._section_2_3(pf.gen_architecture_diagrams(data))
+        rules = self._contract_rules()
+        mermaid = block.split("```mermaid")[1].split("```")[0]
+        for label in re.findall(r'"([^"]+)"', mermaid):
+            parts = re.split(r"<br/?>", label)
+            assert len(parts) <= rules["max_label_lines"], label
+            for part in parts:
+                plain = re.sub(r"<[^>]+>", "", part).strip()
+                assert len(plain) <= rules["max_label_chars_per_line"], plain
+
+    def test_edge_note_caps_the_named_ids(self):
+        many = [self._tb(f"tb-{n}", "external", "backend") for n in range(1, 5)]
+        assert pf._tb_edge_note(many, 60) == "trust boundary · tb-1, tb-2 +2"
+        assert pf._tb_edge_note([], 60) == ""
+        assert pf._tb_edge_note([{"name": "no id"}], 60) == ""
 
 
 class TestActorIdBySlug:
@@ -1552,6 +1935,10 @@ class TestD15Legend:
         `==>` emitter is the legacy §2.4 boundary-subgraph builder, which the
         contract-driven compact path short-circuits past, so §2 advertised a
         cross-boundary arrow style no rendered diagram drew.
+
+        §2.3 now marks INGRESS crossings with `==>`, so the fixture uses an
+        EGRESS boundary (application → external) — one no §2 diagram can place
+        — to keep reproducing the original over-advertising condition.
         """
         data = {
             "meta": {"project": {"name": "x"}},
@@ -1563,9 +1950,9 @@ class TestD15Legend:
             "trust_boundaries": [
                 {
                     "id": "tb-1",
-                    "name": "Perimeter",
-                    "from": "external",
-                    "to": "a",
+                    "name": "Egress to payment provider",
+                    "from": "a",
+                    "to": "external",
                     "kind": "network",
                     "confidence": "inferred",
                     "resolution_status": "resolved",
@@ -1585,7 +1972,7 @@ class TestD15Legend:
             if any(f"`{token}`" in ln for ln in legend):
                 assert token in drawn, f"legend advertises {token!r} but no diagram draws it"
 
-        assert "==>" not in drawn, "fixture assumption: compact §2.4 draws no `==>`"
+        assert "==>" not in drawn, "fixture assumption: an egress-only model draws no `==>`"
         assert not any("`==>`" in ln for ln in legend), "the `==>` bullet must be gone"
 
     def test_diagram_arrow_tokens_ignores_prose_outside_mermaid(self):

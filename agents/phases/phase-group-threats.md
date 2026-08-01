@@ -1855,6 +1855,8 @@ Both sidecars run AFTER the triage agent completes — they consume `.triage-fla
 
 ## Phase 10c: Abuse Case Verification — scenario-level chain checks (parallel fan-out)
 
+**⚠ OWNERSHIP — do NOT run this phase when `STAGE1_PHASE_LIMIT` is set.** In every staged run the skill owns abuse-case verification as the visible **Stage 1d** (`SKILL-thin-stage1d.md`), which dispatches the same verifier fan-out itself. An analyst that also runs Phase 10c dispatches a SECOND verifier per candidate; each one overwrites the first verifier's `.abuse-case-verdict-<AC-ID>.json` in place with its write-first pre-seed, so a re-verification that is cut off mid-chain destroys an already-complete verdict (juice-shop 2026-07-31: AC-T-002 confirmed end-to-end at 06:14, clobbered by the second fan-out, recorded `inconclusive`). `prepare-abuse` now filters candidates that already carry a finalized verdict, but that is the backstop — do not create the second dispatch. Run this phase only in an unstaged Phases 1–11 invocation (no `STAGE1_PHASE_LIMIT`).
+
 **Sequencing:** Phase 10c runs **after** Phase 10b completes and **before** Phase 11. It promotes the atomic findings into narrative, end-to-end abuse-case scenarios (AC-NNN) and verifies each candidate chain against the code. The output (`.abuse-case-verdicts.json`) is consumed deterministically by Phase 11 (`render_abuse_cases.py` → §9 Abuse Cases). Entirely non-fatal: any failure leaves §9 to render its placeholder line.
 
 **Step 1 — deterministic match (no LLM):**

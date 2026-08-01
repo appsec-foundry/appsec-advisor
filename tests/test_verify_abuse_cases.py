@@ -179,6 +179,43 @@ def test_is_unfinalized_preseed_empty_steps_is_not_preseed():
     assert mod._is_unfinalized_preseed({"step_verdicts": []}) is False
 
 
+# --- is_finalized_verdict (re-dispatch guard) ------------------------------
+
+
+def test_is_finalized_verdict_all_steps_decided():
+    v = {
+        "abuse_case_id": "AC-T-002",
+        "step_verdicts": [
+            {"step": 1, "verdict": "confirmed", "reason": "basket IDOR"},
+            {"step": 2, "verdict": "confirmed", "reason": "mass-assign role"},
+        ],
+    }
+    assert mod.is_finalized_verdict(v) is True
+
+
+def test_is_finalized_verdict_false_for_partial_finalization():
+    # step 2 is an untouched pre-seed → the chain still needs a verifier.
+    v = {
+        "step_verdicts": [
+            {"step": 1, "verdict": "confirmed", "reason": "sink reachable"},
+            {"step": 2, "verdict": "inconclusive", "evidence": {"excerpt": ""}},
+        ],
+    }
+    assert mod.is_finalized_verdict(v) is False
+
+
+def test_is_finalized_verdict_false_for_untouched_preseed_and_empty_steps():
+    assert mod.is_finalized_verdict({"step_verdicts": [{"step": 1, "verdict": "inconclusive"}]}) is False
+    assert mod.is_finalized_verdict({"step_verdicts": []}) is False
+
+
+def test_is_finalized_verdict_true_for_reasoned_inconclusive():
+    # A genuinely undecided step still carries a reason — re-running it would
+    # only risk clobbering the recorded reasoning.
+    v = {"step_verdicts": [{"step": 1, "verdict": "inconclusive", "reason": "handler precedence unresolved"}]}
+    assert mod.is_finalized_verdict(v) is True
+
+
 def test_load_verdict_files_flags_unfinalized(tmp_path):
     _write(
         tmp_path / ".abuse-case-verdict-AC-T-003.json",

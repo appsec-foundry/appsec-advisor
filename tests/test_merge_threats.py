@@ -1624,6 +1624,50 @@ class TestSmallHelpers:
         assert mt._cwe_sort_value("CWE-89") == (0, 89)
 
 
+class TestBackfillAttackSteps:
+    """`attack_steps` below the schema's 2-step floor is dropped, not fatal —
+    the §3 renderer ignores such a list anyway, so it carries no information
+    that would justify rejecting the whole component."""
+
+    _STEPS = [
+        "An attacker registers an account against the public signup endpoint.",
+        "The attacker replays the profile update with an added role field.",
+    ]
+
+    def test_empty_list_is_dropped(self, mt):
+        t = _threat(attack_steps=[])
+        assert mt.backfill_threat_attack_steps(t) is True
+        assert "attack_steps" not in t
+
+    def test_single_step_is_dropped(self, mt):
+        t = _threat(attack_steps=[self._STEPS[0]])
+        assert mt.backfill_threat_attack_steps(t) is True
+        assert "attack_steps" not in t
+
+    def test_blank_and_stub_entries_are_filtered(self, mt):
+        t = _threat(attack_steps=[*self._STEPS, "   ", "n/a"])
+        assert mt.backfill_threat_attack_steps(t) is True
+        assert t["attack_steps"] == self._STEPS
+
+    def test_over_long_list_is_capped(self, mt):
+        t = _threat(attack_steps=[f"The attacker performs step number {i}." for i in range(7)])
+        assert mt.backfill_threat_attack_steps(t) is True
+        assert len(t["attack_steps"]) == 5
+
+    def test_usable_steps_are_untouched(self, mt):
+        t = _threat(attack_steps=list(self._STEPS))
+        assert mt.backfill_threat_attack_steps(t) is False
+        assert t["attack_steps"] == self._STEPS
+
+    def test_absent_and_null_are_left_alone(self, mt):
+        t = _threat()
+        assert mt.backfill_threat_attack_steps(t) is False
+        assert "attack_steps" not in t
+        t = _threat(attack_steps=None)
+        assert mt.backfill_threat_attack_steps(t) is False
+        assert t["attack_steps"] is None
+
+
 class TestConsolidationInternals:
     def test_load_groups_oserror(self, mt, tmp_path, monkeypatch):
         # lines 828-829: missing catalog → ().

@@ -74,6 +74,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .threats-merged.json
     .triage-flags.json
     .trust-boundary-diagnostics.json
+    .trust-boundary-renumber.json   (delivery id remap — pairs with .triage-flags.json)
     .architect-review.md
     .requirements.yaml
     .stride-*.json
@@ -250,6 +251,7 @@ NEVER = {
     ".threats-merged.json",
     ".triage-flags.json",
     ".trust-boundary-diagnostics.json",
+    ".trust-boundary-renumber.json",
     ".trust-boundary-coverage.json",
     ".component-inventory-finalization.json",
     ".data-flows.json",
@@ -262,9 +264,9 @@ NEVER = {
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.sarif.json",
+    "threat-model.threatdragon.json",
     "threat-model.pdf",
     "threat-model.html",
-    "threat-model.threatdragon.json",
     "pentest-tasks.yaml",
     "analysis-model.md",
 }

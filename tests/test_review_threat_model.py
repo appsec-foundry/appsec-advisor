@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -934,7 +935,7 @@ def _write_screen_model(output_dir: Path) -> None:
     (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
 
 
-def _screens(tmp_path):
+def _screens(tmp_path, freshness: dict | None = None):
     out = tmp_path / "docs" / "security"
     _write_screen_model(out)
     tax = tmp_path / "tax.yaml"
@@ -944,7 +945,7 @@ def _screens(tmp_path):
         ),
         encoding="utf-8",
     )
-    payload = rtm.console(out, tmp_path / "triage.yaml", taxonomy_path=tax)
+    payload = rtm.console(out, tmp_path / "triage.yaml", taxonomy_path=tax, freshness=freshness)
     return payload, payload["screens"]
 
 
@@ -979,6 +980,50 @@ def test_screen_landing_has_verdict_rows_and_single_worst_case_header(tmp_path):
 def test_screen_landing_omits_requirements_row_without_custom_reqs(tmp_path):
     _, s = _screens(tmp_path)
     assert "**Requirements**" not in s["landing"]  # gated to integrated custom requirements
+
+
+def test_screen_landing_folds_in_freshness_verdict(tmp_path):
+    _, s = _screens(
+        tmp_path,
+        freshness={"verdict": "STALE", "reason": "12 security-relevant files changed", "recommend": "full"},
+    )
+    land = s["landing"]
+    assert "  **Status**     ⚠ STALE — 12 security-relevant files changed" in land
+    # worded exactly as the show-threat-model Status line (shared vocabulary)
+    assert "re-scan recommended: /appsec-advisor:create-threat-model --full" in land
+    # the freshness of the whole screen ranks above the backlog it qualifies
+    assert land.index("**Status**") < land.index("**Backlog**")
+
+
+def test_screen_landing_omits_status_row_without_health_payload(tmp_path):
+    payload, s = _screens(tmp_path)
+    assert payload["freshness"] is None
+    assert "**Status**" not in s["landing"]  # never guess freshness the console was not given
+
+
+def test_console_cli_reads_freshness_from_health_json(tmp_path, capsys):
+    out = tmp_path / "docs" / "security"
+    _write_screen_model(out)
+    health = tmp_path / "health.json"
+    health.write_text(
+        json.dumps({"freshness": {"verdict": "FRESH", "reason": "no changes", "recommend": "noop"}}),
+        encoding="utf-8",
+    )
+    rc = rtm.main(
+        [
+            "console",
+            "--output-dir",
+            str(out),
+            "--triage",
+            str(tmp_path / "triage.yaml"),
+            "--health-json",
+            str(health),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["freshness"]["verdict"] == "FRESH"
+    assert "**Status**     ✓ FRESH — no changes" in payload["screens"]["landing"]
 
 
 def test_screen_fix_start_groups_by_category_worst_first(tmp_path):

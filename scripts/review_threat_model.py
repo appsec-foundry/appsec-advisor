@@ -28,12 +28,19 @@ falling back to ``id`` when a finding has no ``local_id``. Triage entries
 whose key no longer exists in the model are surfaced as ``stale`` — never
 silently dropped, never a hard error.
 
-Output is byte-stable for a given (model, sidecar) pair: no wall-clock, no
-network, no LLM.
+Freshness is NOT computed here either: ``console --health-json`` takes a
+``threat_model_health.py --json`` payload (``-`` for stdin) — the same
+change detection that decides whether an incremental scan is needed — and
+folds its verdict into the landing screen, so triage never runs silently
+against a model the code has moved past.
+
+Output is byte-stable for a given (model, sidecar, health) input: no
+wall-clock, no network, no LLM.
 
 Usage:
     review_threat_model.py reconcile --output-dir PATH --triage PATH
     review_threat_model.py console   --output-dir PATH --triage PATH
+                                     [--health-json PATH|-]
     review_threat_model.py render    --output-dir PATH --triage PATH --plan PATH
 
 Exit codes:
@@ -54,6 +61,11 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _requirements_gate import load_requirements, violated_requirements  # noqa: E402
+from summarize_threat_model import (  # noqa: E402
+    RECOMMEND_TEXT,
+    VERDICT_ICON,
+    load_health_freshness,
+)
 
 # CSafeLoader (libyaml) parses a large threat-model.yaml (~360 KB) in ~70 ms vs
 # ~800 ms for the pure-Python SafeLoader — an ~11× win on the dominant cost of
@@ -780,14 +792,33 @@ def _screen_posture(control_posture: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _status_row(freshness: dict | None) -> list[str]:
+    """The freshness row, worded exactly as the show-threat-model Status line
+    (shared vocabulary, landing layout). Empty when no health payload was piped
+    in — the console then says nothing about freshness rather than guessing."""
+    if not freshness:
+        return []
+    verdict = (freshness.get("verdict") or "UNKNOWN").strip()
+    row = f"  **Status**     {VERDICT_ICON.get(verdict, '?')} {verdict}"
+    reason = (freshness.get("reason") or "").strip()
+    if reason:
+        row += f" — {reason}"
+    out = [row]
+    rec = RECOMMEND_TEXT.get((freshness.get("recommend") or "none").strip(), "")
+    if rec:
+        out.append(f"{' ' * 17}{rec}")
+    return out
+
+
 def _screen_landing(payload: dict) -> str:
-    """The landing screen: verdict stat rows + the worst-case block, glyphs baked
-    in. Shown on invocation before any menu (skill Step 4)."""
+    """The landing screen: freshness + verdict stat rows + the worst-case block,
+    glyphs baked in. Shown on invocation before any menu (skill Step 4)."""
     v = payload["verdict"]
     total, triaged = payload["total"], v["triaged"]
     project = payload["project"] or "(unnamed)"
     generated = payload["generated"] or "unknown"
     lines = [f"**{project}** · generated {generated} · **{total} findings** · {triaged}/{total} triaged", ""]
+    lines += _status_row(payload.get("freshness"))
 
     bp = v.get("by_priority", {})
     backlog = " · ".join(f"{bp.get(p, 0)}× {p}" for p in ("P1", "P2", "P3"))
@@ -845,11 +876,20 @@ def build_screens(payload: dict) -> dict:
     }
 
 
-def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = None) -> dict:
+def console(
+    output_dir: Path,
+    sidecar_path: Path,
+    taxonomy_path: Path | None = None,
+    freshness: dict | None = None,
+) -> dict:
     """One payload for the interactive console: the reconcile view plus ranked
     mitigations, area groupings, worst-case scenarios, the requirements lens
     (custom requirements only), the posture verdict, and pre-rendered display
-    ``screens`` the skill prints verbatim (see ``build_screens``)."""
+    ``screens`` the skill prints verbatim (see ``build_screens``).
+
+    ``freshness`` is the ``threat_model_health.py --json`` verdict, passed in
+    rather than computed (see the module docstring); ``None`` omits the Status
+    row from the landing screen."""
     cat_names = _load_category_names(taxonomy_path)
     view = reconcile(output_dir, sidecar_path, category_names=cat_names)
     model = _load_model(output_dir)
@@ -904,6 +944,7 @@ def console(output_dir: Path, sidecar_path: Path, taxonomy_path: Path | None = N
         "recommended": recommended,
         "control_posture": control_posture,
         "verdict": verdict,
+        "freshness": freshness,
     }
     payload["screens"] = build_screens(payload)
     return payload
@@ -1141,6 +1182,11 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("console", help="Emit the full console payload: verdict + findings + mitigations + areas.")
     c.add_argument("--output-dir", type=Path, required=True, help="Directory holding threat-model.yaml.")
     c.add_argument("--triage", type=Path, required=True, help="Path to the triage sidecar (may not exist yet).")
+    c.add_argument(
+        "--health-json",
+        help="Read a threat_model_health.py --json payload ('-' for stdin) and fold its freshness verdict "
+        "into the landing screen.",
+    )
 
     p = sub.add_parser("render", help="Render remediation-plan.md from the sidecar + model.")
     p.add_argument("--output-dir", type=Path, required=True, help="Directory holding threat-model.yaml.")
@@ -1163,7 +1209,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if ns.cmd == "console":
-        view = console(ns.output_dir, ns.triage)
+        view = console(ns.output_dir, ns.triage, freshness=load_health_freshness(ns.health_json))
         # Compact: the console payload is machine data the skill parses and keeps
         # in context for every view — indent-whitespace is pure token overhead.
         print(json.dumps(view, separators=(",", ":")))

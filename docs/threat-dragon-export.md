@@ -39,8 +39,7 @@ nothing else and makes no network calls.
 ThreatAtlas' importer accepts four shapes: its own diagram export, its own
 product export, draw.io XML, and Threat Dragon JSON. Only the **Threat Dragon**
 path creates threats and mitigations in the target — the other three carry
-geometry and drop every finding. So the Threat Dragon format is both the wider
-interchange format and the only one that gets our work across.
+geometry and drop every finding.
 
 ## What lands where
 
@@ -53,6 +52,7 @@ interchange format and the only one that gets our work across.
 | `threats[].stride` | threat type, in Threat Dragon's own spelling (`Information disclosure`) — becomes the category in ThreatAtlas |
 | `threats[].risk` | severity; ThreatAtlas turns Critical/High/Medium/Low into likelihood and impact 5/4/3/2, and an unrated threat exports as Threat Dragon's `TBD` |
 | `threats[].cvss_v4.base_score` | the threat's `score` field; the vector goes into the description |
+| `threats[].boundary_refs[]` | the crossing and its exposure, in the threat description; a flow across a confirmed internet crossing is also marked `isPublicNetwork` |
 | `mitigations[]` | the threat's mitigation text, linked from either side |
 | `mitigations[].kind: accept_risk` | threat status `Accepted`, when no other mitigation is linked |
 
@@ -69,22 +69,22 @@ only as a text qualifier), **requirements traceability**, **abuse cases**,
 **actors**, **attack surface**, **assets**, **walkthroughs**, and the
 **weakness register**.
 
-**Trust boundaries are dropped.** Ours are a `from`/`to` pair with a kind and an
-assumption; Threat Dragon wants a geometric box or curve, and ThreatAtlas skips
-boundary curves on import outright. The export reports how many were dropped.
+**Trust boundaries are not drawn.** Ours are a `from`/`to` pair with a kind and
+an assumption; Threat Dragon wants a geometric box or curve, and ThreatAtlas
+skips boundary curves on import outright. The export reports how many were left
+out. What survives is attached to the findings: a referenced crossing appears in
+the threat description as `tb-2 external → rest-api (internet-facing)`, and a
+flow across a confirmed internet crossing is marked `isPublicNetwork`. The full
+catalogue stays in `threat-model.yaml` and SARIF.
 
-`threat-model.md` remains the authoritative report, and SARIF remains the
-export for scanners and code-scanning dashboards. This one is for
-threat-modeling tools.
+`threat-model.md` remains the authoritative report; this export is for
+threat-modeling tools, SARIF for scanners.
 
 ## Known alpha limitations
 
-- **Flow labels are not drawn on the Threat Dragon canvas.** Threat Dragon
-  stores the label in `labels[0]` as an object; ThreatAtlas reads `labels[0]`
-  only when it is a plain string and does not fall through. Emitting the object
-  would relabel every flow "Data Flow" in ThreatAtlas, so the label lives in
-  `data.name` — shown in both tools' property panels, absent from the Threat
-  Dragon canvas until you open the flow.
+- **Flow labels are not drawn on the Threat Dragon canvas.** Open a flow to read
+  its label; both tools show it in the property panel. Drawing it on the canvas
+  would relabel every flow "Data Flow" in ThreatAtlas.
 - **One diagram.** ThreatAtlas reads `detail.diagrams[0]` and ignores the rest,
   so the whole model is flattened into a single diagram.
 - **Threats are exported as `Open`, apart from accepted risks.** Our

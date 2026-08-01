@@ -42,7 +42,7 @@
         "additionalProperties": false,
         "required": ["code", "message"],
         "properties": {
-          "code": {"type": "string", "enum": ["unresolved-signal", "missing-enforcement-point"]},
+          "code": {"type": "string", "enum": ["unresolved-signal", "missing-enforcement-point", "client-tier-crossing-dropped"]},
           "signal_id": {"type": "string", "pattern": "^signal-[a-z0-9-]+$"},
           "candidate_key": {"type": "string", "pattern": "^candidate-[a-z0-9-]+$", "maxLength": 80},
           "message": {"type": "string", "minLength": 1, "maxLength": 300}
@@ -55,6 +55,10 @@
           {
             "if": {"properties": {"code": {"const": "missing-enforcement-point"}}, "required": ["code"]},
             "then": {"required": ["candidate_key"]}
+          },
+          {
+            "if": {"properties": {"code": {"const": "client-tier-crossing-dropped"}}, "required": ["code"]},
+            "then": {"required": ["signal_id"]}
           }
         ]
       }

@@ -489,6 +489,23 @@ Typical fix areas by STRIDE:
 
 Read `shared/owasp-llm-top10.md` for the full threat table, grep patterns, and fix patterns. Apply as an additional lens on top of standard STRIDE. Same quality bar.
 
+Tag every finding this lens produces with `owasp_llm_ids`. The field is
+schema-optional, but the report's "AI / LLM Exposure" summary is built from it
+and the only fallback is a keyword match against the finding TITLE — so an
+untagged LLM finding whose title does not happen to name the surface is
+analysed and then invisible there. If this lens applied to a finding, name the
+categories it evidences.
+
+Ask one question out loud for a tool-wielding assistant: what can the model
+cause to happen? An LLM whose output drives an executor — issuing a discount,
+writing a record, calling an API — carries **LLM06 Excessive Agency**
+independently of whether the prompt can be injected, because the damage bound
+is set by what the tool is permitted to do, not by how the instruction arrived.
+That is its own finding with the executor as evidence; folding it into the
+prompt-injection finding hides the bound. juice-shop 2026-07-31 described a
+`generateCoupon` tool executor inside a prompt-injection scenario and produced
+no agency finding at all.
+
 ### OWASP Agentic Top 10 (ASI) — conditional (only for an agentic surface)
 
 When `KNOWN_LLM_PATTERNS` shows an **agentic** signal — an `agent-framework`, `agent-memory`, or `tool-use` subcategory, a multi-agent SDK (`crewai`, `autogen`), or an LLM wired to tools, persistent memory, retrieval, or other agents — also read `shared/owasp-asi-top10.md` and apply the OWASP Top 10 for Agentic Applications (2026) lens. Same quality bar. **Do not duplicate:** most agentic risk is the agentic framing of an LLM finding you already recorded — use the crosswalk in that file to tag it (e.g. an LLM06 Excessive Agency finding is also `ASI02`), and only author a *new* threat for the genuinely agent-specific classes (`ASI03` identity/privilege, `ASI07` inter-agent transport, `ASI10` autonomy bounds) when a real multi-agent / tool-wielding surface is present. A plain LLM call-and-return has no agentic surface — skip this lens.
@@ -672,6 +689,12 @@ Rules — every step:
 6. **Whole code tokens in backticks** — `` `request.data['role']` ``, not
    `` `request.data`['role'] ``; a payload literal is one span: `` `{"is_staff": true}` ``.
 7. **2–4 steps.** Needing five means it is a chain — split it.
+8. **Two real steps or none at all.** Fewer than two is a schema error, not a
+   partial answer: `"attack_steps": []` and one-step lists are both invalid.
+   When you cannot phrase two attacker actions — common for control-absence
+   findings ("no audit log", "no rate limit"), where the attack is elsewhere and
+   this finding only removes a safeguard — **omit the key entirely** and let
+   `scenario` carry it.
 
 Example — mass assignment (`views.py:229`):
 

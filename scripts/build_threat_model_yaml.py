@@ -62,6 +62,8 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
 from _atomic_io import atomic_write_text  # noqa: E402
+from _boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
+from _boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
 from merge_threats import normalize_cvss_v4 as _normalize_cvss_v4  # noqa: E402
 from stride_outputs import is_stride_output  # noqa: E402
 
@@ -202,6 +204,114 @@ def build_trust_boundaries(sidecar: dict | None, prior_yaml: dict | None) -> lis
         "'trust_boundaries'. Phase 7 must write and normalize the sidecar.\n"
     )
     sys.exit(4)
+
+
+_TB_ID_TOKEN_RE = re.compile(r"\btb-\d+\b")
+
+
+def _tb_id_number(value: Any) -> int:
+    match = re.fullmatch(r"tb-(\d+)", str(value or ""))
+    return int(match.group(1)) if match else 10**9
+
+
+def renumber_trust_boundaries(doc: dict) -> tuple[dict, dict[str, str]]:
+    """Renumber the DELIVERED boundary ids to a contiguous ``tb-1 … tb-N``.
+
+    Public ``tb-N`` ids are allocated from the persistent baseline counter
+    (`prepare_trust_boundary_context._assign_ids` → `reserve_ids.reserve`), so a
+    repo whose boundary set churned across scans ships ids that start at an
+    arbitrary offset (juice-shop 2026-07: `tb-37 … tb-45` for nine boundaries).
+    That offset carries no information for a reader.
+
+    Threats and mitigations already avoid this: ``merge_threats._assign_t_ids``
+    sorts the final set and numbers it ``T-001…`` from 1 every run, then
+    ``_remap_scenario_local_refs`` rewrites the references to the ids just
+    assigned. This is the same two-step at the boundary-delivery point — the
+    ledger stays the internal identity (it must, see below), only the delivered
+    document is renumbered.
+
+    Order is CRITICALITY, so the delivered number itself carries the ranking
+    (`_boundary_criticality`: review required → internet-facing → unconfirmed →
+    internal → outbound; linked ``boundary_refs[]`` break ties, more first; the
+    previous counter is the final, deterministic tiebreak). Nine boundaries in a
+    flat catalogue gave the reader nothing to sort on (user 2026-07-31), and
+    re-sorting the §1 table on risk was rejected for good reason
+    (`compose_threat_model._ordered_trust_boundaries`): it scrambled a lookup
+    table on attributes invisible in it. Numbering in criticality order resolves
+    both — `tb-1` IS the most relevant boundary, and the catalogue stays a plain
+    ascending lookup table whose exposure badge shows why the order is what it
+    is. Findings only break ties, never lead, because which boundary happens to
+    carry a ``boundary_refs[]`` entry is noisy.
+
+    The mapping is therefore NOT monotone: `tb-40` can deliver as `tb-1`. Nothing
+    downstream may assume it is — the remap below is a single pass over the whole
+    document and the sidecar is a plain ``{old: new}`` dict, both order-agnostic.
+
+    The remap walks the whole composed document, not just ``trust_boundaries[]``
+    and ``threats[].boundary_refs[].boundary_id``: ids also appear as
+    ``meta.boundary_selection.components[].{eligible,selected,omitted,deferred}
+    _ids``, as ``focus_reasons`` MAP KEYS, and inside free prose
+    (``boundary_refs[].rationale``, severity rationales). A stale id left in
+    prose is not cosmetic — ``qa_checks`` compares the canonical ref set against
+    every ``tb-\\d+`` token rendered in the finding cards and fails on a
+    mismatch.
+
+    Fail-closed: with a duplicate or non-``tb-N`` id anywhere in the catalogue
+    the pass is skipped entirely rather than risk minting a collision.
+
+    Returns ``(document, {old_id: new_id})``; the map is empty when the ids were
+    already contiguous (the steady state), which makes the pass idempotent.
+    """
+    rows = doc.get("trust_boundaries")
+    if not isinstance(rows, list) or not rows:
+        return doc, {}
+    ids = [str(row.get("id") or "") for row in rows if isinstance(row, dict)]
+    if len(ids) != len(rows) or len(set(ids)) != len(ids):
+        return doc, {}
+    if not all(re.fullmatch(r"tb-\d+", value) for value in ids):
+        return doc, {}
+
+    rows_by_id = {str(row.get("id") or ""): row for row in rows if isinstance(row, dict)}
+    # Same derivation the rest of the builder uses for endpoint validation
+    # (`.data-flows.json` check above): the document's own `components[]`.
+    component_ids = {row.get("id") for row in doc.get("components") or [] if isinstance(row, dict)}
+    ref_counts: Counter[str] = Counter()
+    for threat in doc.get("threats") or []:
+        if not isinstance(threat, dict):
+            continue
+        for ref in threat.get("boundary_refs") or []:
+            if isinstance(ref, dict) and ref.get("boundary_id"):
+                ref_counts[str(ref["boundary_id"])] += 1
+
+    def _criticality_key(old_id: str) -> tuple[int, int, int]:
+        row = rows_by_id.get(old_id) or {}
+        return (
+            _boundary_tier_of(_boundary_exposure_of(row, component_ids)),
+            -ref_counts[old_id],
+            _tb_id_number(old_id),
+        )
+
+    mapping = {
+        old: new
+        for old, new in zip(sorted(ids, key=_criticality_key), (f"tb-{i}" for i in range(1, len(ids) + 1)))
+        if old != new
+    }
+    if not mapping:
+        return doc, {}
+
+    def _rewrite(text: str) -> str:
+        return _TB_ID_TOKEN_RE.sub(lambda m: mapping.get(m.group(0), m.group(0)), text)
+
+    def _walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {(_rewrite(k) if isinstance(k, str) else k): _walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+        if isinstance(node, str):
+            return _rewrite(node)
+        return node
+
+    return _walk(doc), mapping
 
 
 # ─── Incremental threat reconciliation (depth-downgrade preservation) ──────
@@ -758,6 +868,22 @@ _TITLE_FORBIDDEN_REPLACEMENTS = [
 _TITLE_MAXLEN = 80
 
 
+def _drop_partial_markup(fragment: str) -> str:
+    """Cut a truncated fragment back to before an unclosed ``(`` or code span.
+
+    Truncating mid-``(...)`` or mid-`` `code` `` leaves an unbalanced heading,
+    which ``qa_checks`` heading_hygiene rejects outright — the clamp would
+    otherwise trade a length violation for a markup one. Each pass strictly
+    shortens the fragment, so the loop terminates."""
+    while True:
+        if fragment.count("`") % 2:
+            fragment = fragment[: fragment.rindex("`")]
+        elif fragment.count("(") > fragment.count(")"):
+            fragment = fragment[: fragment.rindex("(")]
+        else:
+            return fragment.rstrip(" ,;:—-")
+
+
 def _clamp_title(title: str, limit: int = _TITLE_MAXLEN) -> str:
     """Enforce the schema title maxLength, preserving a trailing
     ``file.ext:line`` (or ``— file.ext:line``) locator when present so the
@@ -771,8 +897,8 @@ def _clamp_title(title: str, limit: int = _TITLE_MAXLEN) -> str:
         head = title[: m.start()].rstrip()
         keep = limit - len(tail) - 2  # room for "… " join
         if keep >= 8:
-            return f"{head[:keep].rstrip()}… {tail}"
-    return title[: limit - 1].rstrip() + "…"
+            return f"{_drop_partial_markup(head[:keep].rstrip())}… {tail}"
+    return _drop_partial_markup(title[: limit - 1].rstrip()) + "…"
 
 
 def _clean_title(raw: str) -> str:
@@ -994,7 +1120,12 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
             if mid not in by_mid:
                 by_mid[mid] = {
                     "id": mid,
-                    "title": t.get("mitigation_title") or t.get("title", ""),
+                    # Clamped like threat titles (see _clean_title call below):
+                    # the register renders `#### M-NNN — <title>`, and
+                    # qa_checks' heading_hygiene rejects a heading over 100
+                    # chars. Unclamped mitigation titles produced headings the
+                    # composer's own gate then refused (juice-shop 2026-07-31).
+                    "title": _clamp_title(t.get("mitigation_title") or t.get("title", "")),
                     "threat_ids": [],
                     "priority": "P2",
                     "severity": t.get("risk", "Medium"),
@@ -1034,6 +1165,7 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
             continue
         if not title:
             title = f"Remediate {t.get('title', t.get('id', ''))}"
+        title = _clamp_title(title)
         key = re.sub(r"\s+", " ", title.lower()).strip()
         if key not in fallback_groups:
             fallback_groups[key] = {"title": title, "threats": [], "how": how}
@@ -2301,6 +2433,17 @@ def main() -> int:
     if prior_yaml and prior_yaml.get("threat_categories"):
         doc["threat_categories"] = prior_yaml["threat_categories"]
 
+    # Contiguous public boundary ids — last pass before the dump, so nothing
+    # assembled above can reintroduce a ledger id. Runs in EVERY mode: gating it
+    # to --full would let the next incremental run deliver `tb-1…tb-9` plus a
+    # freshly reserved `tb-46`, i.e. the sparse register this pass removes.
+    doc, tb_remap = renumber_trust_boundaries(doc)
+    if tb_remap:
+        sys.stderr.write(
+            f"  trust boundaries renumbered contiguously for delivery: {len(tb_remap)} id(s) remapped "
+            f"(e.g. {next(iter(tb_remap))} → {tb_remap[next(iter(tb_remap))]})\n"
+        )
+
     # Render
     rendered = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False, width=120)
 
@@ -2310,6 +2453,15 @@ def main() -> int:
 
     out_path = od / "threat-model.yaml"
     atomic_write_text(out_path, rendered)
+
+    # Publish the delivery remap for the post-build emitters that still hold
+    # pre-renumber ids — `emit_severity_rationale.py` reads the boundary ids out
+    # of `.triage-flags.json`, which triage wrote against the sidecar catalogue.
+    # Always rewritten (empty map included): a stale file would mistranslate.
+    atomic_write_text(
+        od / ".trust-boundary-renumber.json",
+        json.dumps({"schema_version": 1, "mapping": tb_remap}, indent=2, sort_keys=True) + "\n",
+    )
 
     # Schema validate
     plugin_root = args.plugin_root

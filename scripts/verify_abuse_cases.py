@@ -86,6 +86,26 @@ def _unverified_preseed_steps(verdict: dict) -> list:
     return [s.get("step") for s in steps if _is_untouched_preseed_step(s)]
 
 
+def is_finalized_verdict(verdict: dict) -> bool:
+    """True when every step in a verdict file carries a decided verdict.
+
+    Shared with `orchestration_controller.prepare_abuse`, which uses it to skip
+    re-dispatching a verifier whose file is already complete. A second verifier
+    for the same AC-ID writes the SAME path, and its write-first pre-seed
+    overwrites the finished file before it investigates — so a re-dispatch that
+    is cut off mid-chain downgrades an end-to-end verified chain to
+    `inconclusive` with an empty excerpt (juice-shop 2026-07-31: AC-T-002 was
+    confirmed by the first fan-out, then clobbered by a second one whose step 2
+    had not finished when `finalize-abuse` ran).
+    """
+    steps = verdict.get("step_verdicts") or []
+    if not steps:
+        return False
+    if _is_unfinalized_preseed(verdict):
+        return False
+    return not _unverified_preseed_steps(verdict)
+
+
 def _candidates(output_dir: Path) -> list[str]:
     matches = output_dir / ".abuse-case-matches.json"
     if not matches.exists():

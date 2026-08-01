@@ -401,6 +401,203 @@ def _arch_diagram_takeaways(
 _CONTAINER_TIERS = ("client", "application", "data")
 
 
+# ---------------------------------------------------------------------------
+# Trust boundaries in the §2 diagrams
+#
+# A boundary the model RESOLVED is part of the architecture, so the
+# architecture diagrams must show it — a §2 that draws components and arrows
+# but no boundary tells the reader the system has none. Mermaid's native device
+# for "everything in here is one trust zone" is a `subgraph`, so each drawn
+# boundary becomes a labelled subgraph around the side it protects.
+#
+# Only resolved boundaries are drawn (never an inferred or unresolved one), the
+# labels name the crossing as `from → to` with the tb-id as the locator into
+# §1, and every builder degrades to its pre-boundary output when the model has
+# no resolved boundary at all.
+# ---------------------------------------------------------------------------
+
+_TB_TITLE_MAX_GROUPS = 2  # crossings named in a subgraph title before "+N more"
+_TB_NOTE_MAX = 4  # crossings named in the §2.2 caption before "+N more"
+_TB_EDGE_MAX_IDS = 2  # boundary ids named on a §2.3 edge label before "+N"
+
+
+def _resolved_boundaries(yaml_data: dict) -> list[dict]:
+    """Resolved trust boundaries carrying an id, in model order."""
+    return [
+        tb
+        for tb in (yaml_data.get("trust_boundaries") or [])
+        if isinstance(tb, dict) and tb.get("resolution_status") == "resolved" and (tb.get("id") or "")
+    ]
+
+
+def _tb_crossing(tb: dict) -> str:
+    """`from → to` for a boundary, or "" when the endpoints are unknown."""
+    src = (tb.get("from") or "").strip()
+    dst = (tb.get("to") or "").strip()
+    return f"{src} → {dst}" if src and dst else ""
+
+
+def _tb_entries(boundaries: list[dict]) -> list[str]:
+    """`external → backend-api (tb-1, tb-6)` per crossing — ids of the same
+    crossing collapse into one entry (two enforcement points, one crossing)."""
+    order: list[str] = []
+    ids: dict[str, list[str]] = {}
+    for tb in boundaries:
+        key = _tb_crossing(tb) or str(tb.get("id"))
+        if key not in ids:
+            ids[key] = []
+            order.append(key)
+        ids[key].append(str(tb.get("id")))
+    return [f"{key} ({', '.join(ids[key])})" if _has_ids(key, ids[key]) else key for key in order]
+
+
+def _has_ids(key: str, ids: list[str]) -> bool:
+    """False when the "crossing" IS the id (unknown endpoints) — avoids the
+    stutter `tb-1 (tb-1)`."""
+    return not (len(ids) == 1 and ids[0] == key)
+
+
+def _container_boundaries(yaml_data: dict, components: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+    """Split resolved boundaries into what §2.2 can draw and what it cannot.
+
+    Returns ``(into_server, application_to_data, other)``:
+      * ``into_server`` — crossings from the untrusted side (the internet or a
+        client-tier component) into the application or data tier. This is the
+        perimeter of the deployable system and the one §2.2 draws.
+      * ``application_to_data`` — the application→data crossing; drawn only
+        when there is no ingress crossing to draw (four-subgraph cap).
+      * ``other`` — egress and intra-tier crossings, which a container diagram
+        of tiers cannot place without inventing a zone. Named in the caption.
+    """
+    tier_by_id = {
+        (c.get("id") or "").strip(): _classify_tier(c) for c in components if isinstance(c, dict) and c.get("id")
+    }
+    into_server: list[dict] = []
+    app_to_data: list[dict] = []
+    other: list[dict] = []
+    for tb in _resolved_boundaries(yaml_data):
+        src = (tb.get("from") or "").strip()
+        dst = (tb.get("to") or "").strip()
+        src_tier = "external" if src.lower() == "external" else tier_by_id.get(src)
+        dst_tier = "external" if dst.lower() == "external" else tier_by_id.get(dst)
+        if src_tier in ("external", "client") and dst_tier in ("application", "data"):
+            into_server.append(tb)
+        elif src_tier == "application" and dst_tier == "data":
+            app_to_data.append(tb)
+        else:
+            other.append(tb)
+    return into_server, app_to_data, other
+
+
+def _components_crossings(yaml_data: dict, by_tier: dict[str, list[dict]]) -> list[dict]:
+    """Resolved boundaries the §2.3 diagram marks as an edge crossing.
+
+    §2.3 draws four zone columns but has no subgraph slot left for a boundary
+    (all four are taken by EXT/CLIENT/APP/DATA), so the crossing is marked on
+    the EDGES instead. Which edges qualify follows from the model, not from
+    the drawing: the browser client executes on the user's device, so CLIENT
+    sits in the SAME untrusted zone as EXT — the `external → …` and
+    `client → …` crossings both land on the edges that enter the application
+    tier, and the EXT → CLIENT edge crosses nothing. That is the identical
+    partition ``_container_boundaries`` computes for §2.2, reused verbatim so
+    the two diagrams cannot disagree about where trust changes.
+
+    ONLY that untrusted-zone exit is marked. `_container_boundaries` also
+    returns the application → data crossing, but the §2 legend defines `==>`
+    as "crosses an UNTRUSTED trust boundary" and an internal app→data
+    enforcement point is not one; marking it too would spend the diagram's one
+    emphasis on every boundary alike and blur the answer to the question the
+    reader is actually asking here. §1 and §2.2 carry the internal crossings.
+
+    Empty when the model has no resolved boundary, or when the application
+    tier has no node in this diagram — an edge is only marked when it is
+    actually drawn.
+    """
+    if not (by_tier.get("application") or []):
+        return []
+    into_server, _app_to_data, _other = _container_boundaries(yaml_data, yaml_data.get("components") or [])
+    return into_server
+
+
+def _tb_edge_note(boundaries: list[dict], max_chars: int) -> str:
+    """`trust boundary · tb-1, tb-6` — the crossing marker on an edge label.
+
+    The ids are the locator into §1, so they are what survives truncation; at
+    most ``_TB_EDGE_MAX_IDS`` are named and the rest are declared as `+N`.
+    Empty string when no boundary carries an id, which makes the caller fall
+    back to the plain legit/attack edge.
+    """
+    ids: list[str] = []
+    for tb in boundaries:
+        tb_id = str(tb.get("id") or "").strip()
+        if tb_id and tb_id not in ids:
+            ids.append(tb_id)
+    if not ids:
+        return ""
+    shown = ids[:_TB_EDGE_MAX_IDS]
+    rest = len(ids) - len(shown)
+    tail = f" +{rest}" if rest else ""
+    return _truncate_label_line(f"trust boundary · {', '.join(shown)}{tail}", max_chars)
+
+
+def _tb_caption(boundaries: list[dict], max_entries: int = _TB_NOTE_MAX, lead: str = "not drawn above") -> str:
+    """Italic caption naming boundaries the diagram could not draw, with a link
+    into the §1 register. Empty when there are none."""
+    if not boundaries:
+        return ""
+    return _tb_caption_from_entries(_tb_entries(boundaries), max_entries, lead)
+
+
+def _tb_caption_from_entries(entries: list[str], max_entries: int = _TB_NOTE_MAX, lead: str = "not drawn above") -> str:
+    """Caption body for callers that already grouped their entries — §2.1 has to
+    subtract the crossings its subgraph title already named."""
+    if not entries:
+        return ""
+    shown = entries[:max_entries]
+    rest = len(entries) - len(shown)
+    tail = f", +{rest} more" if rest else ""
+    return (
+        f"*Trust boundaries {lead}: {', '.join(shown)}{tail} — "
+        f"every boundary is listed in [§1 Trust Boundaries](#trust-boundaries).*"
+    )
+
+
+def _tb_title_line(entry: str, limit: int) -> str:
+    """Fit one `crossing (ids)` entry into `limit` chars, sacrificing the
+    crossing text before the ids — the ids are the locator into §1."""
+    if len(entry) <= limit:
+        return entry
+    m = re.match(r"^(.*) \((.*)\)$", entry)
+    if not m:
+        return entry[: max(1, limit - 1)] + "…"
+    crossing, ids = m.group(1), m.group(2)
+    room = limit - len(ids) - 4
+    if room < 8:
+        return entry[: max(1, limit - 1)] + "…"
+    return f"{crossing[: room - 1]}… ({ids})"
+
+
+def _tb_subgraph_title(boundaries: list[dict], max_groups: int = _TB_TITLE_MAX_GROUPS) -> str:
+    """Subgraph caption naming the boundaries whose zone this subgraph is.
+
+    One crossing per `<br/>` line, at most three lines and 60 characters each:
+    that is the label budget `data/sections-contract.yaml →
+    diagram_compactness` enforces on every quoted label in a §2 block, and a
+    one-line caption of several crossings blows straight through it. Quotes are
+    stripped rather than escaped — a stray `"` inside a `subgraph ID["…"]`
+    header ends the label and breaks the block. Truncation is declared
+    (`+N more`); the §2.2 caption and §1 carry the rest.
+    """
+    entries = _tb_entries(boundaries)
+    shown = entries[:max_groups]
+    rest = len(entries) - len(shown)
+    lines = ["Trust boundary · " + _tb_title_line(shown[0], 43)] if shown else ["Trust boundary"]
+    lines += [_tb_title_line(e, 60) for e in shown[1:]]
+    if rest:
+        lines.append(f"+{rest} more")
+    return "<br/>".join(lines).replace('"', "'")
+
+
 def _cap_container_tiers(
     by_tier: dict[str, list[dict]],
     crit_counts: dict[str, int],
@@ -503,6 +700,25 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     lines.append("")
     lines.extend(_system_context_mermaid(yaml_data, name))
     lines.append("")
+    # The TBEDGE subgraph title names only the first `_TB_TITLE_MAX_GROUPS`
+    # crossings and declares the rest as "+N more" — without this caption that
+    # count dangles with nowhere to resolve it. Everything the title did not
+    # name is listed here: the ingress overflow (drawn, but unnamed) followed by
+    # the boundaries this diagram does not carry at all.
+    _resolved = _resolved_boundaries(yaml_data)
+    _ingress = [
+        tb
+        for tb in _resolved
+        if (tb.get("from") or "").strip().lower() == "external" and (tb.get("to") or "").strip().lower() != "external"
+    ]
+    _ingress_ids = {id(tb) for tb in _ingress}
+    _unnamed = _tb_entries(_ingress)[_TB_TITLE_MAX_GROUPS:] + _tb_entries(
+        [tb for tb in _resolved if id(tb) not in _ingress_ids]
+    )
+    _caption = _tb_caption_from_entries(_unnamed, lead="not named above")
+    if _caption:
+        lines.append(_caption)
+        lines.append("")
     lines.append(f"**Key takeaway:** {takeaways['2.1']}")
     lines.append("")
 
@@ -543,6 +759,17 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         if not by_tier_22[tier]:
             kept_node_ids.add(fallback)
 
+    # Trust-boundary grouping. The contract caps §2.2 at four subgraphs
+    # (Client / Application / Data + one), so exactly ONE boundary subgraph is
+    # drawn: the ingress into the server side when the model resolved one —
+    # that is the crossing an attacker traverses — otherwise the
+    # application→data boundary. Whatever is not drawn is named in the caption
+    # below the diagram, never dropped.
+    srv_bounds, data_bounds, other_bounds = _container_boundaries(yaml_data, components)
+    wrap_server = bool(srv_bounds)
+    wrap_data = bool(data_bounds) and not wrap_server
+    undrawn = (data_bounds if wrap_server else []) + other_bounds
+
     lines.append("```mermaid")
     lines.append("flowchart TB")
     lines.append("    subgraph Client")
@@ -553,6 +780,8 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     else:
         lines.append('        BROWSER["Browser Runtime"]')
     lines.append("    end")
+    if wrap_server:
+        lines.append(f'    subgraph TBSERVER["{_tb_subgraph_title(srv_bounds)}"]')
     lines.append("    subgraph Application")
     if by_tier_22["application"]:
         for c in by_tier_22["application"]:
@@ -560,6 +789,8 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     else:
         lines.append('        APP["Application Server"]')
     lines.append("    end")
+    if wrap_data:
+        lines.append(f'    subgraph TBDATA["{_tb_subgraph_title(data_bounds)}"]')
     lines.append("    subgraph Data")
     if by_tier_22["data"]:
         for c in by_tier_22["data"]:
@@ -567,6 +798,10 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     else:
         lines.append('        DATA[("Data Layer")]')
     lines.append("    end")
+    if wrap_data:
+        lines.append("    end")
+    if wrap_server:
+        lines.append("    end")
 
     # M3.3 / D1 — render edges from `data_flows[]` when the orchestrator
     # populated it; fall back to the legacy 1-pfeil-pro-tier-paar heuristic
@@ -644,6 +879,12 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
             f"every component is inventoried in [§2.3 Components](#23-components).*"
         )
         lines.append("")
+    # Same rule as the container cap: what the diagram cannot show is named,
+    # not dropped.
+    tb_caption = _tb_caption(undrawn)
+    if tb_caption:
+        lines.append(tb_caption)
+        lines.append("")
     lines.append(f"**Key takeaway:** {takeaways['2.2']}")
     lines.append("")
 
@@ -660,16 +901,37 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     lines.append("### 2.3 Components")
     lines.append("")
     lines.append(
-        "Who reaches each component, and through which trust zone. Four "
-        "columns map external actors to the internal tiers (Client / "
-        "Application / Data); solid green arrows show legitimate data flow, "
-        "dashed red arrows mark intrusion vectors. The component table "
-        "directly below holds source paths and linked threats per `C-NN`; "
-        "per-finding evidence is in [§8 Findings Register](#8-findings-register)."
+        "Who reaches each component, and through which trust zone. Browser "
+        "code runs on the user's device, so the client column is part of the "
+        "untrusted zone, not a zone of its own — trust changes only where "
+        "traffic enters the Application tier. Solid green arrows show "
+        "legitimate data flow, dashed red arrows mark intrusion vectors. The "
+        "component table directly below holds source paths and linked threats "
+        "per `C-NN`; per-finding evidence is in "
+        "[§8 Findings Register](#8-findings-register)."
     )
     lines.append("")
-    lines.extend(_components_diagram_compact(yaml_data, by_tier))
+    _c23_diagram = _components_diagram_compact(yaml_data, by_tier)
+    lines.extend(_c23_diagram)
     lines.append("")
+    # Resolve the `tb-N` ids the crossing edges carry into §1. Gated on a
+    # crossing arrow actually appearing in the rendered block — a boundary the
+    # diagram could not place (no node at either end) must not be announced as
+    # drawn, and a model without resolved boundaries keeps the pre-boundary
+    # output unchanged.
+    _c23_cross_arrow = (
+        ((_load_diagram_compactness().get("2.3 Components") or {}).get("edge_convention", {}) or {})
+        .get("boundary_crossing", {})
+        or {}
+    ).get("arrow", "==>")
+    if any(_c23_cross_arrow in ln for ln in _c23_diagram):
+        _c23_caption = _tb_caption_from_entries(
+            _tb_entries(_components_crossings(yaml_data, by_tier)),
+            lead=f"crossed by the `{_c23_cross_arrow}` edges above",
+        )
+        if _c23_caption:
+            lines.append(_c23_caption)
+            lines.append("")
     lines.append(f"**Key takeaway:** {takeaways['2.3']}")
     lines.append("")
 
@@ -970,8 +1232,20 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
     # Actors.
     for aid, label, _css in actors:
         out.append(f'    {aid}["{label}"]')
-    # System.
-    out.append(f'    {sys_id}["{system_name}"]')
+    # System — inside its ingress trust boundary when the model resolved one.
+    # Every actor and external service sits OUTSIDE the box, so each edge into
+    # the system visibly crosses it: that is what the context diagram is for.
+    ingress = [
+        tb
+        for tb in _resolved_boundaries(yaml_data)
+        if (tb.get("from") or "").strip().lower() == "external" and (tb.get("to") or "").strip().lower() != "external"
+    ]
+    if ingress:
+        out.append(f'    subgraph TBEDGE["{_tb_subgraph_title(ingress)}"]')
+        out.append(f'        {sys_id}["{system_name}"]')
+        out.append("    end")
+    else:
+        out.append(f'    {sys_id}["{system_name}"]')
     # Outbound externals (right).
     for eid, label, _proto in ext_out:
         out.append(f'    {eid}["{label}"]')
@@ -1186,6 +1460,10 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
 
     Layout: 4 subgraphs (EXT / CLIENT / APP / DATA), one main node per
     tier, sub-components aggregated as bullets in the main node's label.
+
+    All four subgraph slots are taken, so a resolved trust boundary cannot be
+    drawn as its own zone here (that device is §2.1/§2.2's). It is marked on
+    the edges instead — see `_components_crossings` for which edges qualify.
     """
     rules = _load_diagram_compactness().get("2.3 Components") or {}
     layout = rules.get("layout_keyword", "flowchart TD")
@@ -1194,12 +1472,26 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     classdefs = rules.get("required_classdefs") or {}
     legit_arrow = (rules.get("edge_convention", {}).get("legit", {}) or {}).get("arrow", "-->")
     attack_arrow = (rules.get("edge_convention", {}).get("attack", {}) or {}).get("arrow", "-.->")
+    cross_arrow = (rules.get("edge_convention", {}).get("boundary_crossing", {}) or {}).get("arrow", "==>")
     legit_style = (rules.get("edge_convention", {}).get("legit", {}) or {}).get(
         "linkstyle", "stroke:#2e7d32,stroke-width:1.5px"
     )
     attack_style = (rules.get("edge_convention", {}).get("attack", {}) or {}).get(
         "linkstyle", "stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4"
     )
+    cross_style = (rules.get("edge_convention", {}).get("boundary_crossing", {}) or {}).get(
+        "linkstyle", "stroke:#ef6c00,stroke-width:3px"
+    )
+    # Subgraph titles come from the contract (`required_subgraphs`) — it is the
+    # SoT for them, and the CLIENT title in particular carries trust semantics
+    # ("Untrusted Zone - …") that must not be re-stated here where it could
+    # drift out of sync.
+    sg_titles = {
+        str((r or {}).get("id") or ""): str((r or {}).get("title") or "")
+        for r in (rules.get("required_subgraphs") or [])
+        if isinstance(r, dict)
+    }
+    ingress_tbs = _components_crossings(yaml_data, by_tier)
 
     actor_labels = _load_posture_actor_labels_for_pregen()
     _public_repo = bool((yaml_data.get("meta") or {}).get("public_source_repo"))
@@ -1263,16 +1555,17 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     # ---- Subgraphs in the contract-declared order ----
     # 1) EXT — external actors projected from posture-actor-labels.yaml.
     if ext_actors:
-        lines.append('    subgraph EXT["Untrusted Zone - Internet"]')
+        lines.append(f'    subgraph EXT["{sg_titles.get("EXT") or "Untrusted Zone - Internet"}"]')
         for actor in ext_actors:
             lines.append(f'        {actor["id"]}["{actor["label"]}"]:::{actor["css_class"]}')
         lines.append("    end")
 
-    # 2) CLIENT
+    # 2) CLIENT — titled as part of the untrusted zone (browser code runs on
+    # the user's device); the contract carries the wording and the reason.
     client_node = _tier_main_node("client")
     if client_node:
         nid, lbl, css = client_node
-        lines.append(f'    subgraph CLIENT["{TIER_TITLE["client"]}"]')
+        lines.append(f'    subgraph CLIENT["{sg_titles.get("CLIENT") or TIER_TITLE["client"]}"]')
         lines.append(f'        {nid}["{lbl}"]:::{css}')
         lines.append("    end")
 
@@ -1280,7 +1573,7 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     app_node = _tier_main_node("application")
     if app_node:
         nid, lbl, css = app_node
-        lines.append(f'    subgraph APP["{TIER_TITLE["application"]}"]')
+        lines.append(f'    subgraph APP["{sg_titles.get("APP") or TIER_TITLE["application"]}"]')
         lines.append(f'        {nid}["{lbl}"]:::{css}')
         lines.append("    end")
 
@@ -1288,21 +1581,39 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     data_node = _tier_main_node("data")
     if data_node:
         nid, lbl, css = data_node
-        lines.append(f'    subgraph DATA["{TIER_TITLE["data"]}"]')
+        lines.append(f'    subgraph DATA["{sg_titles.get("DATA") or TIER_TITLE["data"]}"]')
         lines.append(f'        {nid}[("{lbl}")]:::{css}')
         lines.append("    end")
 
     # ---- Edges ----
-    legit_edges: list[str] = []
-    attack_edges: list[str] = []
-    # Legit data flow: victim → CLIENT → APP → DATA.
+    # Each edge is kept with the convention it is drawn in ("legit" / "attack"
+    # / "crossing") so the linkStyle block below can address the three groups
+    # by index. Emission order stays legit-then-attack, so a model with no
+    # resolved boundary produces byte-identical output to the pre-boundary
+    # renderer.
+    edges: list[tuple[str, str]] = []
+
+    def _add_edge(src: str, kind: str, label: str, dst: str, tbs: list[dict]) -> None:
+        """Append one edge, upgraded to a boundary crossing when `tbs` names
+        the resolved boundaries this edge crosses."""
+        arrow = attack_arrow if kind == "attack" else legit_arrow
+        note = _tb_edge_note(tbs, max_chars) if tbs else ""
+        if note:
+            arrow, kind, label = cross_arrow, "crossing", f"{label}<br/>{note}"
+        edges.append((f'    {src} {arrow}|"{label}"| {dst}', kind))
+
+    # Legit data flow: victim → CLIENT → APP → DATA. The victim → CLIENT hop
+    # stays a plain edge on purpose: both ends sit in the untrusted zone, so
+    # it crosses nothing — that is the whole point of the CLIENT title.
     victim = next((a["id"] for a in ext_actors if a["css_class"] == "legit"), None)
     if victim and client_node:
-        legit_edges.append(f'    {victim} {legit_arrow}|"HTTPS · TLS"| {client_node[0]}')
+        _add_edge(victim, "legit", "HTTPS · TLS", client_node[0], [])
     if client_node and app_node:
-        legit_edges.append(f'    {client_node[0]} {legit_arrow}|"REST · JWT Bearer"| {app_node[0]}')
+        _add_edge(client_node[0], "legit", "REST · JWT Bearer", app_node[0], ingress_tbs)
+    # APP → DATA stays a plain legit edge — an internal enforcement point is
+    # not the untrusted-zone exit this diagram marks (see _components_crossings).
     if app_node and data_node:
-        legit_edges.append(f'    {app_node[0]} {legit_arrow}|"ORM · queries"| {data_node[0]}')
+        _add_edge(app_node[0], "legit", "ORM · queries", data_node[0], [])
     # Attack edges. Selectors use the actor slug (→ deterministic node id)
     # rather than css_class because css_class was intentionally changed for
     # repo-read (see `_select_external_actors_for_diagram` line 821 comment),
@@ -1313,31 +1624,27 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     attacker = _actor_id_by_slug(ext_actors, "internet-anon")
     repo = _actor_id_by_slug(ext_actors, "repo-read")
     if attacker and app_node:
-        attack_edges.append(f'    {attacker} {attack_arrow}|"injection · auth bypass · RCE"| {app_node[0]}')
+        _add_edge(attacker, "attack", "injection · auth bypass · RCE", app_node[0], ingress_tbs)
+    # Attacker → CLIENT is intra-zone: the browser is already on the attacker's
+    # side of every server control, so this edge crosses no boundary.
     if attacker and client_node:
-        attack_edges.append(f'    {attacker} {attack_arrow}|"XSS · client tampering · token theft"| {client_node[0]}')
+        _add_edge(attacker, "attack", "XSS · client tampering · token theft", client_node[0], [])
     if repo and app_node:
-        attack_edges.append(f'    {repo} {attack_arrow}|"leaked credentials · auth bypass"| {app_node[0]}')
+        _add_edge(repo, "attack", "leaked credentials · auth bypass", app_node[0], ingress_tbs)
 
-    for e in legit_edges:
-        lines.append(e)
-    for e in attack_edges:
-        lines.append(e)
+    for edge_line, _kind in edges:
+        lines.append(edge_line)
 
     # ---- classDef block (verbatim from contract) ----
     lines.append("")
     for css_name, css_value in classdefs.items():
         lines.append(f"    classDef {css_name} {css_value}")
 
-    # ---- linkStyle block — first N legit, then M attack edges ----
-    n_legit = len(legit_edges)
-    n_attack = len(attack_edges)
-    if n_legit:
-        idx_legit = ",".join(str(i) for i in range(n_legit))
-        lines.append(f"    linkStyle {idx_legit} {legit_style}")
-    if n_attack:
-        idx_attack = ",".join(str(n_legit + i) for i in range(n_attack))
-        lines.append(f"    linkStyle {idx_attack} {attack_style}")
+    # ---- linkStyle block — one directive per convention, in edge order ----
+    for kind, style in (("legit", legit_style), ("attack", attack_style), ("crossing", cross_style)):
+        idxs = [i for i, (_line, k) in enumerate(edges) if k == kind]
+        if idxs:
+            lines.append(f"    linkStyle {','.join(str(i) for i in idxs)} {style}")
 
     lines.append("```")
     return lines
@@ -5857,6 +6164,7 @@ def gen_ai_exposure(yaml_data: dict):
     # API...") once its OWN title already matched a keyword (juice-shop
     # 2026-07-02: T-040 lived on the generic "backend-api" component).
     buckets: dict[str, dict] = {}
+    untagged_llm_threats: list[str] = []
     llm_rules_by_id = {rule[0]: rule for rule in _LLM_TOP10_RULES}
 
     def add_llm_bucket(llm_id: str, threat: dict) -> None:
@@ -5889,6 +6197,31 @@ def gen_ai_exposure(yaml_data: dict):
                 continue
             add_llm_bucket(llm_id, th)
             break
+        else:
+            # Talks about the LLM surface, carries no `owasp_llm_ids`, and its
+            # title matched no rule — so it is analysed but absent from this
+            # section. REPORT it rather than widening the keyword scan into the
+            # body: the TITLE-scoped rule above is deliberate (see the comment
+            # there), and reading impact prose re-introduces the 2026-07-03
+            # mis-categorization. The analyzer is contractually required to tag
+            # what this lens produced; a hit here means it did not.
+            #
+            # Keyed on the threat's OWN prose, NOT on `_llm_context`: that gate
+            # also accepts "lives on an LLM component", which in a monolith is
+            # every route — on juice-shop it flagged 14 threats including SQL
+            # injection and IDOR. A diagnostic with that many false positives
+            # gets ignored, which is worse than having none.
+            if any(h in context_blob_lc for h in ("llm", "chatbot", "prompt", "model api")):
+                untagged_llm_threats.append(str(th.get("id") or th.get("title") or "?"))
+
+    if untagged_llm_threats:
+        print(
+            "pre-generate: ms-ai-exposure — "
+            f"{len(untagged_llm_threats)} LLM-component threat(s) carry no owasp_llm_ids "
+            f"and matched no title rule, so they are absent from the AI/LLM Exposure "
+            f"section: {', '.join(untagged_llm_threats[:8])}",
+            file=sys.stderr,
+        )
 
     # Agentic surface? Only then does the LLM→ASI crosswalk apply, so a plain
     # LLM call-and-return is never mislabelled with an Agentic-Top-10 badge.

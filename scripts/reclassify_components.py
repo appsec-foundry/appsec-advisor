@@ -39,6 +39,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _boundary_adjacency import is_adjacent  # noqa: E402
+
 
 def _glob_to_regex(glob: str) -> re.Pattern[str]:
     """Convert a gitignore-style glob to a regex. `**` matches any depth."""
@@ -291,7 +294,7 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
                     isinstance(boundary, dict)
                     and boundary.get("resolution_status") == "resolved"
                     and boundary.get("confidence") == "confirmed"
-                    and new_cid in {boundary.get("from"), boundary.get("to")}
+                    and is_adjacent(new_cid, boundary)
                     and evidence_survives
                 ):
                     updated = dict(ref)

@@ -13,10 +13,10 @@ mitigations.
 ALPHA — the mapping may change between releases. Threat Dragon's schema is
 much narrower than ours, so this export is lossy by construction: CWE,
 structured evidence and mitigation priority/effort have no field of their own
-and are folded into text; requirements traceability, abuse cases, actors and
-trust boundaries have no counterpart at all and are dropped. Every threat
-keeps its `F-NNN` anchor in the title so a reader can walk back to
-`threat-model.md`.
+and are folded into text, as does a referenced trust-boundary crossing;
+requirements traceability, abuse cases, actors and the boundary geometry have no
+counterpart at all and are dropped. Every threat keeps its `F-NNN` anchor in the
+title so a reader can walk back to `threat-model.md`.
 
 Best-effort by design: a thin or legacy-shaped yaml still produces a usable
 diagram. Missing components, unresolved references and absent data flows
@@ -42,6 +42,9 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _boundary_criticality import facts_of as _boundary_facts  # noqa: E402
 
 TD_VERSION = "2.4.0"
 DIAGRAM_TYPE = "STRIDE"
@@ -249,7 +252,33 @@ def _linked_mitigations(threat: dict, mitigations: list[dict]) -> list[dict]:
     return out
 
 
-def _threat_description(threat: dict) -> str:
+def _boundary_lines(threat: dict, boundary_facts: dict[str, dict]) -> list[str]:
+    """`- tb-3 external → C-01 (internet-facing): <rationale>` per reference.
+
+    Threat Dragon has no field for a boundary reference, so it folds into the
+    description like CWE and evidence do. Resolved, not as a bare `tb-3`: the id
+    is renumbered per run and means nothing once the finding leaves this
+    repository.
+    """
+    lines: list[str] = []
+    seen: set[str] = set()
+    for ref in threat.get("boundary_refs") or []:
+        if not isinstance(ref, dict):
+            continue
+        boundary_id = _text(ref.get("boundary_id"))
+        if not boundary_id or boundary_id in seen:
+            continue
+        seen.add(boundary_id)
+        facts = boundary_facts.get(boundary_id) or {}
+        head = boundary_id
+        if facts.get("crossing"):
+            head += f" {facts['crossing']} ({facts['exposure']})"
+        rationale = _text(ref.get("rationale"))
+        lines.append(f"- {head}: {rationale}" if rationale else f"- {head}")
+    return lines
+
+
+def _threat_description(threat: dict, boundary_facts: dict[str, dict]) -> str:
     """Fold everything Threat Dragon has no field for into the description.
     This is the only place the dropped detail survives, so keep it structured
     and greppable rather than prose."""
@@ -306,6 +335,10 @@ def _threat_description(threat: dict) -> str:
     if evidence_lines:
         blocks.append("Evidence:\n" + "\n".join(evidence_lines))
 
+    boundary_lines = _boundary_lines(threat, boundary_facts)
+    if boundary_lines:
+        blocks.append("Trust boundary crossings:\n" + "\n".join(boundary_lines))
+
     if fid:
         blocks.append(f"Full finding: threat-model.md#{fid.lower()} ({fid})")
 
@@ -348,7 +381,7 @@ def _mitigation_text(mitigations: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
-def _build_threat_cell(threat: dict, number: int, mitigations: list[dict]) -> dict:
+def _build_threat_cell(threat: dict, number: int, mitigations: list[dict], boundary_facts: dict[str, dict]) -> dict:
     tid = _threat_id(threat)
     fid = _display_id(tid)
     title = _text(threat.get("title")) or fid or "Untitled threat"
@@ -360,7 +393,7 @@ def _build_threat_cell(threat: dict, number: int, mitigations: list[dict]) -> di
         "type": STRIDE_TO_TD.get(stride.lower(), stride or "Other"),
         "status": _status_for(mitigations),
         "severity": _severity_for(threat),
-        "description": _threat_description(threat),
+        "description": _threat_description(threat, boundary_facts),
         "mitigation": _mitigation_text(mitigations),
         "modelType": DIAGRAM_TYPE,
         "number": number,
@@ -412,6 +445,7 @@ def build_threat_dragon(
     components = [c for c in (data.get("components") or []) if isinstance(c, dict)]
     threats = [t for t in (data.get("threats") or []) if isinstance(t, dict)]
     mitigations = [m for m in (data.get("mitigations") or []) if isinstance(m, dict)]
+    boundary_facts = _boundary_facts(data)
 
     # ── Nodes ──────────────────────────────────────────────────────────────
     nodes: list[dict] = []
@@ -490,7 +524,7 @@ def build_threat_dragon(
                 f"threat {_display_id(_threat_id(threat)) or '(no id)'} references unknown component "
                 f"{ref!r} — attached to the {node['data']['name']!r} element"
             )
-        cell = _build_threat_cell(threat, number, _linked_mitigations(threat, mitigations))
+        cell = _build_threat_cell(threat, number, _linked_mitigations(threat, mitigations), boundary_facts)
         node["data"]["threats"].append(cell)
         node["data"]["hasOpenThreats"] = True
 
@@ -523,6 +557,19 @@ def build_threat_dragon(
             nodes.append(external)
             by_id[EXTERNAL_REF] = external
         return external
+
+    # Threat Dragon's own flag for a flow that leaves the machine. A confirmed
+    # `external ↔ component` crossing is exactly that, in either direction —
+    # inbound is where an unauthenticated attacker starts, outbound still
+    # traverses the public network. Only `internet-facing` / `outbound` qualify,
+    # and both already imply a resolved row with confirmed endpoints, so an
+    # inferred or unresolved boundary never sets the flag.
+    public_pairs = {
+        frozenset((row.get("from"), row.get("to")))
+        for row in (data.get("trust_boundaries") or [])
+        if isinstance(row, dict)
+        and (boundary_facts.get(row.get("id"), {}).get("exposure") in {"internet-facing", "outbound"})
+    }
 
     for index, flow in enumerate(data.get("data_flows") or [], start=1):
         if not isinstance(flow, dict):
@@ -560,7 +607,7 @@ def build_threat_dragon(
                     "isBidirectional": _text(flow.get("direction")).lower() in BIDIRECTIONAL_DIRECTIONS,
                     "protocol": protocol,
                     "isEncrypted": protocol.lower() in {"https", "tls", "wss", "mtls", "ssh", "sftp"},
-                    "isPublicNetwork": False,
+                    "isPublicNetwork": frozenset((src["id"], dst["id"])) in public_pairs,
                     "threats": [],
                 },
             }
@@ -569,8 +616,9 @@ def build_threat_dragon(
     boundaries = [b for b in (data.get("trust_boundaries") or []) if isinstance(b, dict)]
     if boundaries:
         warnings.append(
-            f"{len(boundaries)} trust boundary/boundaries dropped — our from/to model has no geometry, "
-            "and Threat Dragon needs a boundary box or curve"
+            f"{len(boundaries)} trust boundary/boundaries are not drawn — our from/to model has no "
+            "geometry, and Threat Dragon needs a boundary box or curve; a crossing a finding "
+            "references still travels in that threat's description"
         )
 
     title = diagram_title or project
@@ -581,9 +629,10 @@ def build_threat_dragon(
             "owner": owner,
             "description": (
                 f"Generated by appsec-advisor {tool_version} — ALPHA Threat Dragon export. "
-                "Lossy by design: CWE, evidence locations and mitigation detail are folded "
-                "into text; requirements traceability, abuse cases, actors and trust "
-                "boundaries have no counterpart and are dropped. "
+                "Lossy by design: CWE, evidence locations, referenced trust-boundary "
+                "crossings and mitigation detail are folded into text; requirements "
+                "traceability, abuse cases, actors and the boundary geometry have no "
+                "counterpart and are dropped. "
                 "See threat-model.md for the authoritative report."
             ),
             "id": 0,

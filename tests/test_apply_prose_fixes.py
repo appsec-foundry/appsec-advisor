@@ -657,12 +657,28 @@ def test_fenced_code_inside_blockquote_is_still_skipped():
 
 
 _TRUST_BOUNDARY_GFM = (
-    "| ID | Boundary / crossing | Kind / status | Assumption / confidence | Source | Linked findings |\n"
-    "|---|---|---|---|---|---|\n"
+    "| ID | Boundary / crossing | Exposure | Kind | What must hold | Source | Linked findings |\n"
+    "|---|---|---|---|---|---|---|\n"
     "| tb-4 | **Application to LLM**<br>Backend API Server (routes/chatbot.ts) → external | "
-    'third-party / resolved | The call uses app.options("*", cors()) and routes/chatbot.ts.<br>_confirmed_ | '
+    '↗ **Egress** | third-party | The call uses app.options("*", cors()) and routes/chatbot.ts.<br>_confirmed_ | '
     "detected | [F-001](#f-001) |\n"
 )
+# Compose drops the Source column when every row shares one provenance, so the
+# shorter form must get the same column-scoped prose exemption.
+_TRUST_BOUNDARY_GFM_NO_SOURCE = (
+    "| ID | Boundary / crossing | Exposure | Kind | What must hold | Linked findings |\n"
+    "|---|---|---|---|---|---|\n"
+    "| tb-4 | **Application to LLM**<br>Backend API Server (routes/chatbot.ts) → external | "
+    '↗ **Egress** | third-party | The call uses app.options("*", cors()) and routes/chatbot.ts. | '
+    "[F-001](#f-001) |\n"
+)
+
+
+def test_trust_boundary_source_less_form_keeps_prose_typography():
+    for formatter in (prose.apply_fixes, prose.apply_code_formatting):
+        out, _ = formatter(_TRUST_BOUNDARY_GFM_NO_SOURCE)
+        assert 'app.options("*", cors()) and routes/chatbot.ts' in out
+        assert "`routes/chatbot.ts`" not in out
 
 
 def test_trust_boundary_narrative_columns_keep_prose_typography():

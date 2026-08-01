@@ -828,6 +828,120 @@ def test_prepare_abuse_rejects_candidate_overflow_instead_of_truncating(tmp_path
         controller.prepare_abuse(output)
 
 
+def _abuse_output(tmp_path: Path) -> Path:
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["skip_abuse_case_verification"] = False
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    return output
+
+
+def _verdict(output: Path, ac_id: str, steps: list[dict]) -> None:
+    (output / f".abuse-case-verdict-{ac_id}.json").write_text(
+        json.dumps({"abuse_case_id": ac_id, "step_verdicts": steps}),
+        encoding="utf-8",
+    )
+
+
+def test_prepare_abuse_never_redispatches_a_finalized_verdict(tmp_path, monkeypatch):
+    # A second verifier for the same AC-ID overwrites the finished verdict file
+    # with its write-first pre-seed; a cut-off re-run then reports the chain as
+    # inconclusive. Finalized candidates must drop out of the fan-out.
+    output = _abuse_output(tmp_path)
+    _verdict(output, "AC-T-001", [{"step": 1, "verdict": "confirmed", "reason": "sink reachable"}])
+    _verdict(output, "AC-T-002", [{"step": 1, "verdict": "inconclusive"}])
+
+    def fake_script(name, args, **kwargs):
+        return _completed("AC-T-001\nAC-T-002\n" if "list-candidates" in args else "")
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.prepare_abuse(output)
+    assert action["action"] == "dispatch_parallel"
+    assert action["candidates"] == ["AC-T-002"]
+    assert any("already verified" in receipt for receipt in action["receipts"])
+    controller._validate_action(action)
+
+
+def test_prepare_abuse_skips_fan_out_when_every_candidate_is_verified(tmp_path, monkeypatch):
+    output = _abuse_output(tmp_path)
+    _verdict(output, "AC-T-001", [{"step": 1, "verdict": "confirmed", "reason": "sink reachable"}])
+
+    def fake_script(name, args, **kwargs):
+        return _completed("AC-T-001\n" if "list-candidates" in args else "")
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.prepare_abuse(output)
+    assert action["action"] == "run_gate"
+    assert action["candidates"] == []
+    controller._validate_action(action)
+
+
+def test_prepare_abuse_still_dispatches_a_partially_finalized_verdict(tmp_path, monkeypatch):
+    output = _abuse_output(tmp_path)
+    _verdict(
+        output,
+        "AC-T-001",
+        [
+            {"step": 1, "verdict": "confirmed", "reason": "sink reachable"},
+            {"step": 2, "verdict": "inconclusive", "evidence": {"excerpt": ""}},
+        ],
+    )
+
+    def fake_script(name, args, **kwargs):
+        return _completed("AC-T-001\n" if "list-candidates" in args else "")
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.prepare_abuse(output)
+    assert action["candidates"] == ["AC-T-001"]
+
+
+def test_finalize_abuse_aborts_when_yaml_rebuild_fails_schema_validation(tmp_path, monkeypatch):
+    # build_threat_model_yaml.py writes the yaml BEFORE validating it, so exit 5
+    # leaves an invalid model on disk — it must not degrade to a receipt.
+    output = _abuse_output(tmp_path)
+    (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
+
+    def fake_script(name, args, **kwargs):
+        if name == "build_threat_model_yaml.py":
+            raise controller.ControllerError(
+                "build_threat_model_yaml.py failed with exit 5: FATAL: schema validation failed\n"
+                "INVALID: threats[3].cvss.scope\nINVALID: mitigations[7].priority",
+                5,
+            )
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    with pytest.raises(controller.ControllerError) as excinfo:
+        controller.finalize_abuse(output)
+    assert excinfo.value.exit_code == 5
+    reason = str(excinfo.value)
+    assert "must not reach Stage 2" in reason
+    assert "INVALID: threats[3].cvss.scope" in reason
+    assert len(reason) <= 1000  # fits the action-manifest `reason` cap
+
+
+def test_finalize_abuse_tolerates_a_soft_yaml_rebuild_failure(tmp_path, monkeypatch):
+    # Exit 3 (missing intermediate) aborts before the write, so the prior yaml
+    # is intact — that failure stays best-effort.
+    output = _abuse_output(tmp_path)
+    (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
+
+    def fake_script(name, args, **kwargs):
+        if name == "build_threat_model_yaml.py":
+            raise controller.ControllerError(
+                "build_threat_model_yaml.py failed with exit 3: FATAL: required intermediate missing",
+                3,
+            )
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.finalize_abuse(output)
+    assert action["action"] == "run_gate"
+    assert "build_threat_model_yaml.py: best-effort failure" in action["receipts"]
+    controller._validate_action(action)
+
+
 def test_prepare_stage2_selects_compact_parallel_runtime(tmp_path, monkeypatch):
     output = tmp_path / "out"
     output.mkdir()

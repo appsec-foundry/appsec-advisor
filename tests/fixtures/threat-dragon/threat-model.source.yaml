@@ -58,6 +58,20 @@ trust_boundaries:
     confidence: inferred
     resolution_status: resolved
     sources: [detected]
+  # Confirmed and referenced by T-001, so the golden pins both the crossing
+  # folded into the threat description and the fail-closed `isPublicNetwork`
+  # above: tb-1 stays `inferred` and must not flag df-001 as public.
+  - id: tb-2
+    name: "external → rest-api: API perimeter"
+    from: external
+    to: rest-api
+    kind: network
+    assumption: Requests are authenticated before protected operations.
+    enforcement_point: Express session middleware
+    evidence: []
+    confidence: confirmed
+    resolution_status: resolved
+    sources: [detected]
 
 security_controls:
   - domain: Authorization
@@ -88,6 +102,10 @@ threats:
       severity: Critical
       source: stride-analyzer
     mitigation_ids: [M-001]
+    boundary_refs:
+      - boundary_id: tb-2
+        origin_component_id: rest-api
+        rationale: The perimeter assumes the query layer parameterizes untrusted input.
   - id: T-002
     component: order-db
     stride: Information Disclosure

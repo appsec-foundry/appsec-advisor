@@ -9,13 +9,13 @@ export against this file is the check that it opens cleanly there —
 `tests/test_export_threat_dragon.py` does that offline.
 
 `threat-model.threatdragon.golden.json` is the export of
-`tests/fixtures/schema/threat-model.valid.yaml` at `--tool-version 0.0.0-test`.
+`threat-model.source.yaml` at `--tool-version 0.0.0-test`.
 It pins the whole mapping byte for byte. Regenerate it deliberately, never to
 make a test pass:
 
 ```bash
 python3 scripts/export_threat_dragon.py \
-  --threat-model tests/fixtures/schema/threat-model.valid.yaml \
+  --threat-model tests/fixtures/threat-dragon/threat-model.source.yaml \
   --output       tests/fixtures/threat-dragon/threat-model.threatdragon.golden.json \
   --tool-version 0.0.0-test
 ```

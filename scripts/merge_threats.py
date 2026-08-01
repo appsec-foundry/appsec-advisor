@@ -187,6 +187,49 @@ def backfill_threat_cvss_v4(threat: dict) -> bool:
     return False
 
 
+_ATTACK_STEPS_MIN = 2
+_ATTACK_STEPS_MAX = 5
+_ATTACK_STEP_MIN_LEN = 15
+
+
+def backfill_threat_attack_steps(threat: dict) -> bool:
+    """Drop or trim ``threat['attack_steps']`` when it cannot meet the schema's
+    2..5-step floor, before the schema gate.
+
+    Mirrors backfill_threat_cvss_v4's contract: returns ``True`` iff the threat
+    was mutated. `attack_steps` is optional (required only for Critical
+    findings), and the §3 renderer already ignores any authored list with fewer
+    than two usable steps — so an empty or one-step list carries exactly as much
+    information as no list at all, while `minItems: 2` makes it a fatal schema
+    error that blocks the whole component and its dispatch wave. The analyzer is
+    an LLM and writes `[]` when it cannot phrase attacker actions, typically on
+    control-absence findings (juice-shop 2026-07-31: CWE-778, "no structured
+    audit log"). Dropping the useless value is preferable to rejecting an
+    otherwise complete component over it.
+    """
+    if not isinstance(threat, dict) or "attack_steps" not in threat:
+        return False
+    original = threat["attack_steps"]
+    if original is None:
+        # `null` is schema-valid — leave it alone.
+        return False
+    if not isinstance(original, list):
+        threat.pop("attack_steps", None)
+        return True
+    cleaned = [
+        step.strip()
+        for step in original
+        if isinstance(step, str) and len(step.strip()) >= _ATTACK_STEP_MIN_LEN
+    ][:_ATTACK_STEPS_MAX]
+    if len(cleaned) < _ATTACK_STEPS_MIN:
+        threat.pop("attack_steps", None)
+        return True
+    if cleaned != original:
+        threat["attack_steps"] = cleaned
+        return True
+    return False
+
+
 def strip_ineligible_cvss_v4(threat: dict) -> bool:
     """Drop a cvss_v4 the eligibility rules forbid on this threat — a forbidden
     source, or source=stride on a CWE that is not on the CVSS-eligible list (or
@@ -399,6 +442,10 @@ def _flatten_threats(pairs: list[tuple[str, dict]], output_dir: Path | None = No
             # so the merged artifact meets the schema rather than trusting the
             # LLM to have written {base_score, source}.
             backfill_threat_cvss_v4(t)
+            # Same rationale for attack_steps: an empty or one-step list is
+            # worth exactly as much as no list (the §3 renderer ignores both)
+            # but violates minItems, so drop it instead of failing the file.
+            backfill_threat_attack_steps(t)
             # Eligibility strip: the analyzer sometimes over-attaches CVSS to
             # design/config-class CWEs that policy does not score. Drop those
             # deterministically here (source + evidence are now final) so the

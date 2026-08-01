@@ -69,8 +69,9 @@ FLAGS
                     (default: <repo>/.appsec-triage/remediation-plan.md)
 
 WHAT IT DOES
-  * Opens a triage console: a landing screen (backlog by priority + severity mix
-    + the top "worst case if nothing changes" scenarios), then a menu.
+  * Opens a triage console: a landing screen (freshness — is the model still
+    current? — backlog by priority + severity mix + the top "worst case if
+    nothing changes" scenarios), then a menu.
   * You first choose a mode: "Just look around" (browse the findings read-only —
     by severity, security aspect, requirement, or control posture — no decisions,
     no changes), "Fix or accept findings now" (apply the code fix for findings you
@@ -150,9 +151,15 @@ fi
 
 ## Step 3 — Load the console payload
 
+Pipe the freshness probe into `console` so the landing screen can say whether the
+model still matches the code. Do not set `pipefail`: the meaningful exit code is
+`console`'s, not the health probe's CI exit code.
+
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" console \
-    --output-dir "$OUTPUT_DIR" --triage "$TRIAGE"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" \
+    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --json 2>/dev/null \
+| python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" console \
+    --output-dir "$OUTPUT_DIR" --triage "$TRIAGE" --health-json -
 ```
 
 Exit `1` means no model was found — tell the user to run
@@ -162,6 +169,12 @@ for every screen below. Do not re-run `console` on each loop; the static data
 (findings, mitigations, areas) does not change, only your decisions do.
 
 Payload shape (all read from the model — never recompute):
+- `freshness` — the piped health verdict (`verdict` `FRESH`/`STALE`/`UNKNOWN`,
+  `reason`, `recommend`), or `null` when no health payload reached the console.
+  It is the **same** change detection that decides whether an incremental scan
+  is needed; the console never recomputes it. Already folded into
+  `screens.landing` as the **Status** row — you only read it for the Mode 5B
+  guard (Step 5B).
 - `verdict` — `by_severity`, `unrated`, `components`, `top_components`,
   `top_areas`, `weaknesses`, `with_mitigation`, `by_priority` (`{P1,P2,P3}`
   mitigation counts — the backlog spine), `p1_mitigations`, `uncovered`
@@ -242,7 +255,8 @@ Tell the user the threat model has no findings yet and to (re-)run
 already handled at Step 3 by the `console` exit `1`.)
 
 Print `screens.landing` **verbatim**. The script already formatted it: a bold
-title line, the aligned stat rows (**Backlog** by priority, **Severity** mix with
+title line, the aligned stat rows (**Status** — the freshness verdict, only when
+a health payload was piped in — **Backlog** by priority, **Severity** mix with
 glyphs, **Hot areas**, and the **Requirements** row only when
 `verdict.requirements.integrated` is true), then the **⚠ Worst case if nothing
 changes** block — every glyph, count and `→ fix with <ramp> <M-NNN>` reference
@@ -330,7 +344,14 @@ Applies to the named selection — record the decision only, never touch code:
 
 ## Step 5B — Mode: Fix or accept findings now (change code, one at a time)
 
-A menu loop that changes code. On entry and after each fix, first print
+A menu loop that changes code. **On entry, if `freshness.verdict` is `STALE`,
+say so once** — this mode edits source against a model the code has already moved
+past, so its `location`s and remediation steps may no longer match the file. Name
+the reason and offer to re-scan first (`/appsec-advisor:create-threat-model`); if
+the user wants to continue anyway, continue. Do not block, do not repeat it per
+finding, and do not raise it in the read-only modes.
+
+On entry and after each fix, first print
 `screens.fix_start`, then ask — put `Fixed: X` in the prompt:
 
 1. **Fix these first** — implement the fix-first set shown (highest-value, low-risk;

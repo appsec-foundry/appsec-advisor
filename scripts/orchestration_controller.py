@@ -1131,11 +1131,23 @@ def _best_effort_script(
     name: str,
     args: list[str],
     receipts: list[str],
+    *,
+    fatal_exit_codes: tuple[int, ...] = (),
 ) -> bool:
+    """Run a script, tolerating failure — except for `fatal_exit_codes`.
+
+    Some scripts have a genuinely soft failure mode (nothing to do, an absent
+    input, a cosmetic pass) and a hard one that leaves the run in a state the
+    report must not be built from. `fatal_exit_codes` names the latter so the
+    caller can keep the tolerant default without downgrading a hard failure to
+    a receipt string.
+    """
     try:
         _run_script(name, args)
         return True
     except ControllerError as exc:
+        if exc.exit_code in fatal_exit_codes:
+            raise
         receipts.append(f"{name}: best-effort failure")
         _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
         return False
@@ -1386,6 +1398,37 @@ def post_stage1c(output_dir: Path) -> dict[str, Any]:
 _ABUSE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
 
+def _finalized_abuse_verdicts(output_dir: Path, candidates: list[str]) -> list[str]:
+    """Candidate ids whose verdict file on disk is already fully decided.
+
+    A verifier writes `.abuse-case-verdict-<AC-ID>.json` at a fixed path and
+    pre-seeds it before investigating, so dispatching a second verifier for an
+    id that is already verified DESTROYS the finished result — and when the
+    second run is cut off mid-chain the merge records the chain as
+    `inconclusive` with an empty excerpt (juice-shop 2026-07-31: AC-T-002 was
+    confirmed end-to-end, then clobbered). Two dispatchers can reach the same
+    run (the skill's Stage-1d runtime and the analyst's Phase 10c), and a
+    `--resume` re-enters this gate as well, so the fan-out is filtered here
+    rather than trusting either caller to dispatch only once. Partly-finalized
+    and untouched pre-seed files are NOT skipped — those still need a verifier.
+    """
+    try:
+        sys.path.insert(0, str(SCRIPT_DIR))
+        import verify_abuse_cases  # noqa: PLC0415
+    except Exception:
+        return []
+    done: list[str] = []
+    for candidate in candidates:
+        path = output_dir / f".abuse-case-verdict-{candidate}.json"
+        try:
+            verdict = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(verdict, dict) and verify_abuse_cases.is_finalized_verdict(verdict):
+            done.append(candidate)
+    return done
+
+
 def prepare_abuse(output_dir: Path) -> dict[str, Any]:
     """Match abuse cases and return a bounded verifier fan-out action."""
     output_dir, cfg = _load_run_config(output_dir)
@@ -1424,6 +1467,9 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
     receipts = [f"abuse candidates: {len(candidates)}"]
     if match.returncode != 0:
         receipts.append(f"matcher returned {match.returncode}; partial candidates retained")
+    if already := _finalized_abuse_verdicts(output_dir, candidates):
+        receipts.append("already verified, not re-dispatched: " + ", ".join(already))
+        candidates = [item for item in candidates if item not in already]
     if not candidates or (output_dir / ".budget-critical").exists():
         return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
     return {
@@ -1464,6 +1510,16 @@ def _abuse_candidate_titles(output_dir: Path, candidates: list[str]) -> dict[str
     return titles
 
 
+_YAML_SCHEMA_EXIT = 5
+
+
+def _schema_failure_detail(message: str, limit: int = 700) -> str:
+    """Keep the validator's `INVALID:` lines within the action `reason` cap."""
+    invalid = [line.strip() for line in message.splitlines() if line.strip().startswith("INVALID")]
+    detail = "; ".join(invalid) or " ".join(message.split())
+    return detail if len(detail) <= limit else detail[: limit - 1].rstrip() + "…"
+
+
 def finalize_abuse(output_dir: Path) -> dict[str, Any]:
     """Merge verifier sidecars and materialize the final abuse-case artifacts."""
     output_dir, cfg = _load_run_config(output_dir)
@@ -1478,18 +1534,35 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
 
     verdicts = output_dir / ".abuse-case-verdicts.json"
     if verdicts.is_file():
-        _best_effort_script(
-            output_dir,
-            "build_threat_model_yaml.py",
-            [
-                str(output_dir),
-                "--repo-root",
-                str(cfg.get("repo_root") or output_dir),
-                "--plugin-root",
-                str(PLUGIN_ROOT),
-            ],
-            receipts,
-        )
+        # The rebuild folds the verified chains into threat-model.yaml.
+        # build_threat_model_yaml.py writes the yaml BEFORE it schema-validates,
+        # so exit 5 ("FATAL: schema validation failed") leaves an INVALID model
+        # on disk — tolerating it as a receipt let a run carry that yaml into
+        # Stage 2 and into the delivered report. Its soft exits (2 missing
+        # output dir, 3 missing intermediate, 4 absent carry-forward field) all
+        # abort before the write and leave the previous yaml intact, so those
+        # stay best-effort.
+        try:
+            _best_effort_script(
+                output_dir,
+                "build_threat_model_yaml.py",
+                [
+                    str(output_dir),
+                    "--repo-root",
+                    str(cfg.get("repo_root") or output_dir),
+                    "--plugin-root",
+                    str(PLUGIN_ROOT),
+                ],
+                receipts,
+                fatal_exit_codes=(_YAML_SCHEMA_EXIT,),
+            )
+        except ControllerError as exc:
+            raise ControllerError(
+                "threat-model.yaml rebuild failed schema validation during abuse-case "
+                "finalization; the yaml on disk is invalid and must not reach Stage 2: "
+                + _schema_failure_detail(str(exc)),
+                exc.exit_code,
+            ) from exc
     _run_script("abuse_case_gate.py", ["--output-dir", str(output_dir)])
     if verdicts.is_file():
         _best_effort_script(

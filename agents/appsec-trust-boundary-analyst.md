@@ -58,11 +58,39 @@ apart: the promotion step merges candidates that share a crossing unless they
 declare different enforcement points, so a copy-pasted value silently collapses
 boundaries that belong apart. Name it from the evidence you actually read.
 
+Write a NAME, not a sentence. Those examples are three to five words, and that
+is the budget: aim for under 60 characters. It is rendered in a narrow table
+column, where a clause wraps into an unreadable ragged block. Leave out where
+the control lives (`registered in server.ts`, `from routes/login.ts`), when it
+runs (`afterLogin after credential verification`) and what it covers (`for
+protected API routes`) — the file belongs in `evidence`, the conditions belong
+in `assumption`. `security.isAuthorized() expressJwt middleware registered in
+server.ts for protected API routes` should have been `security.isAuthorized()
+expressJwt middleware`.
+
+Name the control, and only the control. A description of what happens at the
+crossing is not an enforcement point: `Express static file serving`,
+`Sequelize ORM query construction` and `JWT issuance via jwt.sign` say what the
+code does, not what decides whether the crossing is allowed. Nor does a
+known bypass belong here — `X; raw SQL via query() bypasses it` names a control
+and a gap in one breath; the control goes in this field, the gap goes in
+`assumption` or the finding that evidences it.
+
+For an outbound crossing, ask what constrains **what may leave** — a
+destination allow-list, an egress proxy, a size or timeout cap, a redaction
+step. A credential that authenticates your process **to** the destination
+(`LLM_API_KEY`, `DOCKERHUB_TOKEN`) is not an enforcement point: it proves who
+you are to the far side, it does not decide what your side is permitted to
+send. If nothing constrains the outbound call, that is a real and reportable
+answer — omit the field.
+
 A filler value is worse than none. Promotion discards generic strings
 ("application code", "middleware", "the server") and falls back to grouping the
 crossing by its endpoints, which is the conservative, visible outcome — so omit
 the field rather than inventing one when the evidence does not show a specific
-control. The omission is reported, not punished.
+control. An omitted enforcement point is rendered to the reader as "no single
+control identified", which is an honest and useful statement about the
+boundary. The omission is reported, not punished.
 
 Set `name` as `<crossing>: <enforcement point>` so a reader sees the same
 distinction the merge uses.
@@ -72,6 +100,27 @@ outside world scrapes (`app.get('/metrics')`) is `external -> component`, even
 when the payload travels outward; only a call your code originates is
 `component -> external`. Promotion re-checks this against your cited evidence
 and corrects an inverted candidate.
+
+Client-side code is not a trust zone. A browser SPA, a mobile app or a desktop
+client is delivered to the user's device and executes there, on the attacker's
+side of every control the server has — the component registry states this
+outright with `tier: client`, so read it rather than guess. Two consequences:
+
+- A crossing OUT of a client component really starts at `external`. The server
+  cannot tell a request from its own SPA apart from a forged one, so model it as
+  `external -> <server component>` and do not emit a second, parallel candidate
+  for the same crossing.
+- A crossing INTO a client component is not a boundary. Serving assets to a
+  browser makes no security decision: there is no control on that path and
+  nothing behind it to protect. Do not emit the candidate at all; account for the
+  signal with `same-trust`, since both ends sit outside the trust perimeter.
+
+Promotion enforces both rules deterministically and reports what it removed, so
+an emitted candidate does not survive them — it only makes the catalogue argue
+with itself. The exception is a client-tier target where a specific control
+really does run at the crossing (a session cookie or token issued at that step,
+or a component tagged `client` that is in fact server-rendered or a BFF): name
+that control in `enforcement_point` and the row is kept.
 
 Endpoints that ship inside one deployable are an internal enforcement interface,
 not a privilege transition: emit the candidate with `kind: process`. Do not

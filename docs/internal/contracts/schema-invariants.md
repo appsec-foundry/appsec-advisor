@@ -121,11 +121,28 @@ authoritative. Legacy fields such as `description`, `enforcement`,
 `crossing_enforcement`, `controls`, `trust_level`, and `weakness` are
 normalizer inputs only and never survive into canonical output.
 
-Public `tb-N` IDs are stable project anchors. The deterministic normalizer
-owns allocation through the locked baseline counter. It reuses prior identity
-conservatively, never trusts an unmatched current-input ID to raise the
+`tb-N` IDs are the run-internal boundary identity. The deterministic
+normalizer owns allocation through the locked baseline counter. It reuses prior
+identity conservatively, never trusts an unmatched current-input ID to raise the
 high-watermark, never reuses a retired ID during normal full or incremental
-runs, and resets continuity only for `--rebuild`.
+runs, and resets continuity only for `--rebuild`. Sidecars, dispatch context,
+diagnostics, STRIDE `boundary_refs[]`, and merge all speak these counter IDs.
+
+The DELIVERED `threat-model.yaml` does not. `build_threat_model_yaml.
+renumber_trust_boundaries` renumbers the catalogue to a contiguous `tb-1 … tb-N`
+as the last pass before the dump, in ascending counter order — so the §1
+catalogue order is unchanged and only the offset disappears (a churned repo
+otherwise ships `tb-37 … tb-45` for nine boundaries). The remap covers every
+occurrence in the document: catalogue IDs, `boundary_refs[].boundary_id`,
+`meta.boundary_selection` ID lists and `focus_reasons` keys, and IDs mentioned
+in prose. This mirrors `merge_threats._assign_t_ids` + `_remap_scenario_local_
+refs`, which have always numbered delivered `T-NNN` from 1 while the threat
+counter runs ahead. Consequence, identical to `T-NNN`: a delivered `tb-N` is
+stable only as long as the boundary set is, and a retired number can be reused
+by a different boundary in a later run. Cross-run identity therefore never runs
+through the delivered number — `_assign_ids` re-identifies by `declaration_key`,
+authored ID against the prior model's own numbering, exact `(from,to,name)`, then
+endpoints — and no artifact diffs boundaries by ID.
 
 Repository declarations in `.appsec/trust-boundaries.yaml` are untrusted,
 data-only, additive input. They cannot disable detected rows, set confidence,
@@ -148,6 +165,8 @@ not a consolidation key. Each reference must target a resolved, confirmed
 canonical row, be adjacent to its required `origin_component_id`, repeat only
 evidence locations already owned by the finding, and use a unique
 `(boundary_id, origin_component_id)` pair. At most two references survive.
+A surviving reference is rendered as a link: the §1 catalogue's row cap bounds
+unreferenced rows only, so every referenced row keeps its `#tb-N` anchor.
 Fresh analyzer references must also come from that component's prepared
 candidate file. Invalid optional references are removed at the merge, builder,
 or post-reclassification trust boundary while the finding remains intact.

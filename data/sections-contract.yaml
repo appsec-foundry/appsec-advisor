@@ -689,7 +689,9 @@ sections:
     heading_numbered: false
     fragment_type: computed
     # Canonical human catalogue folded under §1. The deterministic renderer
-    # caps it at 20 rows and points overflow to YAML/query output.
+    # caps it at 20 rows and points overflow to YAML/query output. A boundary a
+    # finding references is always rendered, so every `#tb-N` link on a finding
+    # card resolves; the cap bounds the unreferenced rows only.
 
   architecture_diagrams:
     heading: "## 2. Architecture Diagrams"
@@ -768,11 +770,23 @@ sections:
         max_nodes_total: 8
         max_label_lines: 3
         max_label_chars_per_line: 60
-        # The four canonical tier-subgraphs. The pre-generator emits them
-        # in this exact id/title pair; qa_checks rejects deviation.
+        # The four canonical tier-subgraphs. This block is the SoT for the
+        # titles — the pre-generator reads them from here; qa_checks rejects
+        # deviation on the ids.
+        #
+        # CLIENT is titled "Untrusted Zone - …" for the same reason EXT is:
+        # a browser SPA executes on the user's device, on the attacker's side
+        # of every server-side control, so it is NOT a trust zone of its own.
+        # `figure1_svg.py::_zone_rank` collapses actors + client into one
+        # untrusted zone and puts the trust divider BELOW the client tier;
+        # §2.3 must not contradict that. Four zone-looking columns that marked
+        # nothing invited the reader to place the boundary between EXT and
+        # CLIENT, where trust does not change — the parallel titles say the
+        # untrusted zone spans both, and the boundary-crossing edges below
+        # mark where it actually does change (CLIENT/EXT → APP).
         required_subgraphs:
           - { id: "EXT",    title: "Untrusted Zone - Internet" }
-          - { id: "CLIENT", title: "Client Tier" }
+          - { id: "CLIENT", title: "Untrusted Zone - Browser Client" }
           - { id: "APP",    title: "Application Tier" }
           - { id: "DATA",   title: "Data Tier" }
         # Audit actor convention — verbatim color values. The classDef block
@@ -787,9 +801,34 @@ sections:
         # talks legitimately to whom?", so legit data flow is the visual
         # default (solid green) and intrusion vectors are the deviation
         # (dashed red).
+        #
+        # `boundary_crossing` is the third convention: an edge that leaves the
+        # untrusted zone and enters the application/data tier, i.e. the place
+        # where trust actually changes. `==>` is the arrow the §2 legend
+        # already defines as "crosses an untrusted trust boundary
+        # (security-critical)" — this reuses it instead of inventing a fourth
+        # glyph, and it replaces the legit/attack arrow on that one edge so
+        # the crossing is visible AS a crossing without spending a subgraph
+        # (all four subgraph slots above are taken).
+        #
+        # Drawn ONLY from resolved `trust_boundaries[]` in threat-model.yaml
+        # (never inferred): the edge label gains a `trust boundary · tb-N`
+        # line naming the boundary ids, and a caption under the diagram
+        # resolves them into §1. A model with no resolved boundary keeps the
+        # legit/attack arrows unchanged. Note which edges qualify: EXT → CLIENT
+        # does NOT (both sides are untrusted), CLIENT → APP does. Only the exit
+        # from the untrusted zone is marked — the legend reads `==>` as
+        # "crosses an UNTRUSTED trust boundary", so an internal APP → DATA
+        # enforcement point stays a plain legit edge and is carried by §1/§2.2.
         edge_convention:
           legit:  { arrow: "-->",   linkstyle: "stroke:#2e7d32,stroke-width:1.5px" }
           attack: { arrow: "-.->",  linkstyle: "stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4" }
+          # Amber, not the attack red: a crossing edge replaces the legit OR the
+          # attack arrow, so it must not paint a legitimate request as an
+          # intrusion (nor an intrusion as legitimate). Shape carries "this is
+          # the crossing", the node class and the edge label still carry who is
+          # sending it. Amber is this document's "caution / High" hue.
+          boundary_crossing: { arrow: "==>", linkstyle: "stroke:#ef6c00,stroke-width:3px" }
         # When a tier holds ≥2 components, render the first as the main
         # node and append the rest as `<br/>+ C-NN <name>` bullets in the
         # same node label. Keeps the diagram at ≤4 subgraphs even for
@@ -820,6 +859,17 @@ sections:
         max_nodes_total: 10
         max_label_lines: 2
         max_label_chars_per_line: 60
+        # DELIBERATELY NOT re-titled "Untrusted Zone - …" like §2.3's CLIENT,
+        # and deliberately carrying no boundary-crossing edges (2026-07-31).
+        # §2.4 is a technology-stack view: the boxes are frameworks and
+        # runtimes (Angular / Express / Sequelize), there is no external-actor
+        # column, no attack edge and no zone framing, so nothing here invites
+        # the reader to read the columns as trust zones — the misleading-zone
+        # problem §2.3 had does not exist here. A trust boundary marks an
+        # enforcement point on a request path; asserting one between two
+        # technology boxes would claim an enforcement point this diagram does
+        # not depict. §2.3 stays the canonical trust surface (same rule as
+        # `require_threat_traceability` below).
         required_subgraphs:
           - { id: "CLIENT", title: "Client Tier" }
           - { id: "APP",    title: "Application Tier" }

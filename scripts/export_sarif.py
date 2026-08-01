@@ -30,6 +30,7 @@ import yaml
 
 # RC.C — single source of truth for arch-source enums.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _boundary_criticality import facts_of as _boundary_facts  # noqa: E402
 from _shared_sources import ARCH_COVERAGE_SOURCES  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -192,7 +193,31 @@ def _build_rule(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
     return rule
 
 
-def _build_result(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
+def _result_trust_boundaries(threat: dict, boundary_facts: dict[str, dict]) -> list[dict]:
+    """The finding's boundary references, resolved to crossing and exposure.
+
+    Each entry stands on its own — a consumer that shows only the result
+    property bag can read `external → C-01 (internet-facing)` without joining
+    anything. The run-level catalogue is for consumers that can. Order and
+    de-duplication follow `boundary_refs[]`; an id with no catalogue row still
+    travels, because dropping it would hide that the reference existed.
+    """
+    entries: list[dict] = []
+    for ref in threat.get("boundary_refs") or []:
+        if not isinstance(ref, dict):
+            continue
+        boundary_id = str(ref.get("boundary_id") or "")
+        if not boundary_id or any(entry["id"] == boundary_id for entry in entries):
+            continue
+        entry = dict(boundary_facts.get(boundary_id) or {"id": boundary_id})
+        rationale = ref.get("rationale")
+        if isinstance(rationale, str) and rationale.strip():
+            entry["rationale"] = rationale.strip()
+        entries.append(entry)
+    return entries
+
+
+def _build_result(threat: dict, mitigations_by_id: dict[str, dict], boundary_facts: dict[str, dict]) -> dict:
     tid = _threat_id(threat)
     risk = threat.get("risk") or threat.get("severity")
     scenario = threat.get("scenario") or threat.get("title") or tid
@@ -234,15 +259,9 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict]) -> dict:
         if fixes:
             result["fixes"] = fixes
         properties["mitigationIds"] = mids
-    boundary_ids = list(
-        dict.fromkeys(
-            str(ref.get("boundary_id"))
-            for ref in threat.get("boundary_refs") or []
-            if isinstance(ref, dict) and ref.get("boundary_id")
-        )
-    )
-    if boundary_ids:
-        properties["boundaryIds"] = boundary_ids
+    boundaries = _result_trust_boundaries(threat, boundary_facts)
+    if boundaries:
+        properties["trustBoundaries"] = boundaries
     if properties:
         result["properties"] = properties
 
@@ -294,6 +313,8 @@ def build_sarif(
         if isinstance(mid, str):
             mitigations_by_id[mid] = m
 
+    boundary_facts = _boundary_facts(data)
+
     rules: list[dict] = []
     results: list[dict] = []
     seen_rule_ids: set[str] = set()
@@ -307,25 +328,29 @@ def build_sarif(
         if tid not in seen_rule_ids:
             rules.append(_build_rule(threat, mitigations_by_id))
             seen_rule_ids.add(tid)
-        results.append(_build_result(threat, mitigations_by_id))
+        results.append(_build_result(threat, mitigations_by_id, boundary_facts))
+
+    run: dict[str, Any] = {
+        "tool": {
+            "driver": {
+                "name": TOOL_NAME,
+                "version": tool_version,
+                "semanticVersion": tool_version,
+                "rules": rules,
+            }
+        },
+        "results": results,
+        "columnKind": "utf16CodeUnits",
+    }
+    # The whole catalogue, not just the referenced rows: a consumer building a
+    # boundary view needs the crossings no finding reached as well.
+    if boundary_facts:
+        run["properties"] = {"trustBoundaries": list(boundary_facts.values())}
 
     return {
         "$schema": SARIF_SCHEMA_URL,
         "version": SARIF_VERSION,
-        "runs": [
-            {
-                "tool": {
-                    "driver": {
-                        "name": TOOL_NAME,
-                        "version": tool_version,
-                        "semanticVersion": tool_version,
-                        "rules": rules,
-                    }
-                },
-                "results": results,
-                "columnKind": "utf16CodeUnits",
-            }
-        ],
+        "runs": [run],
     }
 
 

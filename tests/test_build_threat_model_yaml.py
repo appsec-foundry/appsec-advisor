@@ -46,6 +46,45 @@ def test_clamp_title_no_locator_truncates_with_ellipsis():
     assert len(out) <= 80 and out.endswith("…")
 
 
+def test_clamp_title_never_leaves_unclosed_markup():
+    """Truncating mid-`(...)` or mid-code-span would trade a length violation
+    for the unbalanced-markup violation heading_hygiene also rejects."""
+    paren = b._clamp_title(
+        "Replace req.body.UserId/userId/ownerId with req.user.id "
+        "(or equivalent session-derived identity) in every WHERE clause"
+    )
+    assert len(paren) <= 80
+    assert paren.count("(") == paren.count(")")
+
+    code = b._clamp_title("Pass the workflow title via an `env:` block instead of `${{ github.event.issue.title }}` inline")
+    assert len(code) <= 80
+    assert code.count("`") % 2 == 0
+
+
+def test_mitigation_titles_are_clamped_like_threat_titles():
+    """The register renders `#### M-NNN — <title>`, and qa_checks'
+    heading_hygiene rejects headings over 100 chars. Threat titles were
+    clamped but mitigation titles were not, so the composer emitted headings
+    its own gate then refused (juice-shop 2026-07-31)."""
+    threats = [
+        {
+            "id": "T-001",
+            "title": "Hardcoded Private Key",
+            "risk": "Critical",
+            "mitigation_ids": ["M-001"],
+            "mitigation_title": (
+                "Remove hardcoded private key and load it from a secrets manager "
+                "or environment variable at startup before any signing occurs"
+            ),
+            "remediation": {"effort": "Medium"},
+        }
+    ]
+    mitigations = b.build_mitigations(threats)
+    assert [m["id"] for m in mitigations] == ["M-001"]
+    assert len(mitigations[0]["title"]) <= 80
+    assert mitigations[0]["title"].endswith("…")
+
+
 def test_normalize_cvss_v4_coerces_score_and_source():
     raw = {
         "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H",
@@ -2332,3 +2371,257 @@ def test_index_resolved_prior_keys_by_id_and_fingerprint():
     # comp|cwe|title fingerprint rather than the file|cwe-family match key.
     fp = b._fp_str({"component": "c2", "cwe": "CWE-79", "title": "XSS"})
     assert idx[fp] == "fix confirmed by re-scan"
+
+
+# --- renumber_trust_boundaries -----------------------------------------------
+#
+# Delivered `tb-N` must read 1..N even though the baseline ledger allocates from
+# a persistent high-watermark (juice-shop shipped `tb-37 … tb-45`). Mirrors the
+# `_assign_t_ids` + `_remap_scenario_local_refs` pair that already keeps
+# delivered T-/M-ids contiguous.
+
+
+def _tb_doc() -> dict:
+    return {
+        "meta": {
+            "boundary_selection": {
+                "components": {
+                    "backend-api": {
+                        "eligible_ids": ["tb-37", "tb-41"],
+                        "selected_ids": ["tb-37"],
+                        "omitted_ids": ["tb-41"],
+                        "deferred_ids": [],
+                        "focus_reasons": {"tb-37": ["explicit external entry"]},
+                    }
+                }
+            }
+        },
+        "trust_boundaries": [
+            {"id": "tb-41", "name": "DB crossing"},
+            {"id": "tb-37", "name": "External ingress"},
+        ],
+        "threats": [
+            {
+                "id": "T-001",
+                "boundary_refs": [
+                    {
+                        "boundary_id": "tb-37",
+                        "origin_component_id": "backend-api",
+                        "rationale": "expressJwt at tb-37 is the sole enforcement point",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_renumber_trust_boundaries_makes_delivered_ids_contiguous():
+    doc, mapping = b.renumber_trust_boundaries(_tb_doc())
+    assert mapping == {"tb-37": "tb-1", "tb-41": "tb-2"}
+    # Neither row resolves to a component endpoint, so both land in the same
+    # tier; the linked-findings tiebreak puts the referenced boundary first.
+    assert [row["id"] for row in doc["trust_boundaries"]] == ["tb-2", "tb-1"]
+
+
+def test_renumber_trust_boundaries_remaps_every_consumer_field():
+    doc, _ = b.renumber_trust_boundaries(_tb_doc())
+    ref = doc["threats"][0]["boundary_refs"][0]
+    assert ref["boundary_id"] == "tb-1"
+    # Prose too: qa_checks compares the canonical ref set against every tb-N
+    # token rendered in the finding cards.
+    assert "tb-1 is the sole enforcement point" in ref["rationale"]
+    sel = doc["meta"]["boundary_selection"]["components"]["backend-api"]
+    assert sel["eligible_ids"] == ["tb-1", "tb-2"]
+    assert sel["selected_ids"] == ["tb-1"]
+    assert sel["omitted_ids"] == ["tb-2"]
+    # focus_reasons carries ids as MAP KEYS.
+    assert list(sel["focus_reasons"]) == ["tb-1"]
+
+
+def test_renumber_trust_boundaries_is_idempotent():
+    once, first = b.renumber_trust_boundaries(_tb_doc())
+    twice, second = b.renumber_trust_boundaries(once)
+    assert first and second == {}
+    assert twice == once
+
+
+def test_renumber_trust_boundaries_does_not_collide_on_shared_prefix():
+    doc = {
+        "trust_boundaries": [{"id": "tb-4"}, {"id": "tb-41"}],
+        # One ref each, so the criticality tiebreaks cancel and the assignment
+        # falls through to the previous counter — this test is about the
+        # substitution, not the ordering.
+        "threats": [
+            {
+                "boundary_refs": [
+                    {"boundary_id": "tb-41", "rationale": "tb-4 and tb-41"},
+                    {"boundary_id": "tb-4"},
+                ]
+            }
+        ],
+    }
+    out, mapping = b.renumber_trust_boundaries(doc)
+    # Single-pass substitution: a sequential replace would rewrite the `tb-4`
+    # prefix inside `tb-41` and yield `tb-11`.
+    assert mapping == {"tb-4": "tb-1", "tb-41": "tb-2"}
+    assert [row["id"] for row in out["trust_boundaries"]] == ["tb-1", "tb-2"]
+    assert out["threats"][0]["boundary_refs"][0]["rationale"] == "tb-1 and tb-2"
+
+
+def test_renumber_trust_boundaries_fails_closed_on_unexpected_ids():
+    # Duplicate or non-tb-N ids → skip entirely rather than mint a collision.
+    dup = {"trust_boundaries": [{"id": "tb-7"}, {"id": "tb-7"}]}
+    assert b.renumber_trust_boundaries(dup) == (dup, {})
+    legacy = {"trust_boundaries": [{"id": "tb-7"}, {"id": "boundary-x"}]}
+    assert b.renumber_trust_boundaries(legacy) == (legacy, {})
+    assert b.renumber_trust_boundaries({"trust_boundaries": []}) == ({"trust_boundaries": []}, {})
+
+
+# --- criticality-ordered numbering -------------------------------------------
+#
+# `tb-N` order IS relevance order: nine boundaries in a flat catalogue gave the
+# reader nothing to sort on (user 2026-07-31). The §1 table stays a plain
+# ascending lookup table; the exposure badge shows why the order is what it is.
+
+
+def _resolved(boundary_id: str, source: str, target: str, **extra) -> dict:
+    return {
+        "id": boundary_id,
+        "from": source,
+        "to": target,
+        "confidence": "confirmed",
+        "resolution_status": "resolved",
+        **extra,
+    }
+
+
+def _crit_doc(rows: list[dict], refs: dict[str, int] | None = None) -> dict:
+    return {
+        "components": [{"id": "web-api"}, {"id": "db"}],
+        "trust_boundaries": rows,
+        "threats": [
+            {"id": "T-001", "boundary_refs": [{"boundary_id": bid} for bid, n in (refs or {}).items() for _ in range(n)]}
+        ],
+    }
+
+
+def test_renumber_trust_boundaries_numbers_by_exposure_tier():
+    """Internet-facing leads, then unconfirmed, then internal, then outbound —
+    the ledger order is irrelevant to the delivered number."""
+    doc, _ = b.renumber_trust_boundaries(
+        _crit_doc(
+            [
+                _resolved("tb-11", "web-api", "external"),  # outbound
+                _resolved("tb-12", "web-api", "db"),  # internal
+                _resolved("tb-13", "web-api", "db", confidence="inferred"),  # unconfirmed
+                _resolved("tb-14", "external", "web-api"),  # internet-facing
+                {"id": "tb-15", "from": "external", "to": "web-api", "resolution_status": "unresolved"},
+            ]
+        )
+    )
+    # Rows keep their catalogue position; only the numbers move. Read down the
+    # input order above: outbound=5, internal=4, unconfirmed=3, internet=2,
+    # review required=1.
+    assert [row["id"] for row in doc["trust_boundaries"]] == ["tb-5", "tb-4", "tb-3", "tb-2", "tb-1"]
+
+
+def test_renumber_trust_boundaries_breaks_exposure_ties_on_linked_findings():
+    """Same tier → the boundary carrying more `boundary_refs[]` leads: evidence
+    of a real gap outranks a clean boundary at the same exposure."""
+    doc, _ = b.renumber_trust_boundaries(
+        _crit_doc(
+            [
+                _resolved("tb-1", "external", "web-api"),
+                _resolved("tb-2", "external", "db"),
+            ],
+            refs={"tb-2": 3, "tb-1": 1},
+        )
+    )
+    assert {row["to"]: row["id"] for row in doc["trust_boundaries"]} == {"db": "tb-1", "web-api": "tb-2"}
+
+
+def test_renumber_trust_boundaries_is_deterministic_on_full_ties():
+    """Equal tier and equal findings → the previous counter decides, so two
+    identical inputs cannot deliver two different catalogues."""
+    rows = [_resolved("tb-9", "external", "db"), _resolved("tb-4", "external", "web-api")]
+    doc, mapping = b.renumber_trust_boundaries(_crit_doc(rows))
+    assert mapping == {"tb-4": "tb-1", "tb-9": "tb-2"}
+    again, _ = b.renumber_trust_boundaries(_crit_doc(list(reversed(rows))))
+    assert {row["to"]: row["id"] for row in again["trust_boundaries"]} == {"web-api": "tb-1", "db": "tb-2"}
+
+
+def test_renumber_trust_boundaries_numbers_a_set_with_no_internet_edge():
+    """A catalogue of only internal and outbound crossings still numbers
+    1..N — the tiers are relative, not a filter."""
+    doc, _ = b.renumber_trust_boundaries(
+        _crit_doc(
+            [
+                _resolved("tb-31", "web-api", "external"),
+                _resolved("tb-32", "web-api", "db"),
+                _resolved("tb-33", "db", "external"),
+            ],
+            refs={"tb-31": 2},
+        )
+    )
+    assert [row["id"] for row in doc["trust_boundaries"]] == ["tb-2", "tb-1", "tb-3"]
+
+
+def test_renumber_trust_boundaries_ignores_boundary_refs_of_unknown_boundaries():
+    """A ref pointing at an id the catalogue no longer carries must not perturb
+    the tiebreak of the rows that remain."""
+    doc, mapping = b.renumber_trust_boundaries(
+        _crit_doc([_resolved("tb-5", "external", "web-api"), _resolved("tb-6", "external", "db")], refs={"tb-99": 4})
+    )
+    assert mapping == {"tb-5": "tb-1", "tb-6": "tb-2"}
+
+
+def test_main_delivers_contiguous_boundary_ids_from_a_sparse_ledger(tmp_path, monkeypatch):
+    """End-to-end: a run whose ledger allocated `tb-37 …` still ships `tb-1 …`.
+
+    Shifts every id in the fixture into the sparse range the juice-shop ledger
+    was actually in, then asserts the delivered document carries no ledger id
+    anywhere — catalogue, refs, `meta.boundary_selection`, or prose — and that
+    the remap sidecar the post-build emitters read was published.
+    """
+    if not _REPAIR_RUN.is_dir():
+        pytest.skip("repair-run fixture absent")
+    run = _copy_run(_REPAIR_RUN, tmp_path)
+    shift = re.compile(r"\btb-(\d+)\b")
+    for path in list(run.rglob("*.json")) + [run / "threat-model.yaml"]:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "tb-" not in text:
+            continue
+        path.write_text(shift.sub(lambda m: f"tb-{int(m.group(1)) + 36}", text), encoding="utf-8")
+
+    class _OkProc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    real_run = b.subprocess.run
+    monkeypatch.setattr(
+        b.subprocess,
+        "run",
+        lambda cmd, *a, **k: (
+            _OkProc() if any("validate_intermediate.py" in str(c) for c in cmd) else real_run(cmd, *a, **k)
+        ),
+    )
+    assert _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT)]) == 0
+
+    text = (run / "threat-model.yaml").read_text(encoding="utf-8")
+    doc = yaml.safe_load(text)
+    ids = [row["id"] for row in doc["trust_boundaries"]]
+    assert len(ids) >= 2, "fixture must carry a boundary catalogue for this to mean anything"
+    assert sorted(ids, key=lambda v: int(v.split("-")[1])) == [f"tb-{i}" for i in range(1, len(ids) + 1)]
+    assert {int(m) for m in shift.findall(text)} <= set(range(1, len(ids) + 1))
+    for threat in doc["threats"]:
+        for ref in threat.get("boundary_refs") or []:
+            assert ref["boundary_id"] in set(ids)
+    remap = json.loads((run / ".trust-boundary-renumber.json").read_text(encoding="utf-8"))
+    # A BIJECTION off the shifted ledger onto the dense range — deliberately not
+    # `tb-{i+36} → tb-{i}`: numbering follows criticality, so the mapping is not
+    # monotone and the pairing depends on the fixture's exposure mix.
+    assert set(remap["mapping"]) == {f"tb-{i + 36}" for i in range(1, len(ids) + 1)}
+    assert sorted(remap["mapping"].values()) == sorted(f"tb-{i}" for i in range(1, len(ids) + 1))

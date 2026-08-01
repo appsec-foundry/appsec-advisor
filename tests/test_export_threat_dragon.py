@@ -638,12 +638,71 @@ def test_a_one_character_id_is_padded_to_the_schema_minimum():
     assert _flows(doc)[0]["target"] == {"cell": "td-b"}
 
 
-def test_trust_boundaries_are_reported_as_dropped():
+def test_trust_boundary_geometry_is_reported_as_not_drawn():
     doc, warnings = etd.build_threat_dragon(
         _model(trust_boundaries=[{"id": "TB-01", "name": "Edge", "from": "C-01", "to": "C-02"}])
     )
     assert all("boundary" not in c["shape"] for c in _cells(doc))
     assert any("trust boundary" in w for w in warnings)
+
+
+def _boundary(bid: str, source: str, target: str, **overrides) -> dict:
+    return {
+        "id": bid,
+        "name": f"{source} → {target}",
+        "from": source,
+        "to": target,
+        "kind": "network",
+        "assumption": "Requests are authenticated before protected operations.",
+        "evidence": [],
+        "confidence": "confirmed",
+        "resolution_status": "resolved",
+        "sources": ["detected"],
+        **overrides,
+    }
+
+
+def test_referenced_crossing_is_folded_into_the_threat_description():
+    # Threat Dragon has no boundary field on a threat, and a bare `tb-N` means
+    # nothing outside the run — so the crossing and its exposure travel as text.
+    threat = dict(_model()["threats"][0])
+    threat["boundary_refs"] = [{"boundary_id": "tb-1", "rationale": "The edge does not authenticate."}]
+    doc, _ = etd.build_threat_dragon(_model(threats=[threat], trust_boundaries=[_boundary("tb-1", "external", "C-02")]))
+    assert (
+        "Trust boundary crossings:\n- tb-1 external → C-02 (internet-facing): The edge does not authenticate."
+        in _all_threats(doc)[0]["description"]
+    )
+
+
+def test_unresolvable_boundary_ref_degrades_to_the_bare_id():
+    threat = dict(_model()["threats"][0])
+    threat["boundary_refs"] = [{"boundary_id": "tb-9"}]
+    doc, _ = etd.build_threat_dragon(_model(threats=[threat], trust_boundaries=[_boundary("tb-1", "external", "C-02")]))
+    assert "Trust boundary crossings:\n- tb-9" in _all_threats(doc)[0]["description"]
+
+
+@pytest.mark.parametrize(
+    ("boundary", "expected"),
+    [
+        # Inbound and outbound both leave the machine — Threat Dragon's flag is
+        # about the network the flow traverses, not the direction.
+        (_boundary("tb-1", "external", "C-02"), True),
+        (_boundary("tb-1", "C-02", "external"), True),
+        # An unconfirmed or unresolved row is not evidence of a public network.
+        (_boundary("tb-1", "external", "C-02", confidence="inferred"), False),
+        (_boundary("tb-1", "external", "C-02", resolution_status="unresolved"), False),
+        # A crossing between two internal components is not one either.
+        (_boundary("tb-1", "C-01", "C-02"), False),
+    ],
+)
+def test_is_public_network_follows_the_boundary_exposure(boundary, expected):
+    doc, _ = etd.build_threat_dragon(
+        _model(
+            data_flows=[{"id": "DF-01", "from": "external", "to": "C-02", "label": "browse"}],
+            trust_boundaries=[boundary],
+        )
+    )
+    assert _flows(doc)[0]["data"]["isPublicNetwork"] is expected
 
 
 def test_non_dict_entries_are_ignored():

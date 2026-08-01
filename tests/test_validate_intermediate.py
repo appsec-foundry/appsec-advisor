@@ -351,6 +351,48 @@ def test_final_boundary_ref_requires_confirmed_adjacent_boundary():
     assert any("not adjacent" in error for error in errors)
 
 
+def _folded_boundary_model(origin_component_id: str) -> dict:
+    """One consolidated ingress boundary that absorbed `realtime-channel`."""
+    return {
+        "trust_boundaries": [
+            {
+                "id": "tb-1",
+                "from": "external",
+                "to": "api",
+                "covers_components": ["api", "realtime-channel"],
+                "resolution_status": "resolved",
+                "confidence": "confirmed",
+            }
+        ],
+        "threats": [
+            {
+                "evidence": [{"file": "src/ws.ts", "line": 23}],
+                "boundary_refs": [
+                    {
+                        "boundary_id": "tb-1",
+                        "origin_component_id": origin_component_id,
+                        "evidence_locations": [{"file": "src/ws.ts", "line": 23}],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_final_boundary_ref_accepts_folded_in_component():
+    """`_consolidate` folds sub-components into a surviving boundary and records
+    them in `covers_components`; the schema calls those adjacent. A finding whose
+    origin names a folded-in component must validate (juice-shop 2026-07-31)."""
+    errors = vi._check_final_boundary_links(_folded_boundary_model("realtime-channel"))
+    assert errors == []
+
+
+def test_final_boundary_ref_still_rejects_unrelated_component():
+    """`covers_components` widens adjacency only to what was actually folded in."""
+    errors = vi._check_final_boundary_links(_folded_boundary_model("worker"))
+    assert any("not adjacent" in error for error in errors)
+
+
 def test_write_first_stub_is_schema_valid():
     """The mandatory STRIDE write-first stub (appsec-stride-analyzer.md
     "Write-first guarantee") must satisfy stride.schema.yaml — otherwise a

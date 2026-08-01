@@ -45,6 +45,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _boundary_adjacency import is_adjacent  # noqa: E402
+
 
 def _component_text_corpus(name: str, description: str, interfaces: list[str], trust_boundaries: list[str]) -> str:
     pieces = [name, description, *interfaces, *trust_boundaries]
@@ -63,7 +66,7 @@ def _boundary_corpus(path: Path | None, component_id: str) -> list[str]:
     for boundary in payload.get("trust_boundaries", []):
         if not isinstance(boundary, dict) or boundary.get("resolution_status") != "resolved":
             continue
-        if component_id not in {boundary.get("from"), boundary.get("to")}:
+        if not is_adjacent(component_id, boundary):
             continue
         rows.append(
             " | ".join(

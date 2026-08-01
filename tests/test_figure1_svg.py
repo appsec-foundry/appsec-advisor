@@ -617,13 +617,152 @@ def test_weasyprint_renders_without_error(tmp_path):
 _TRUST_STROKE = 'stroke="#475569"'
 
 
+def _divider_captions(svg: str) -> list[str]:
+    """The caption text of every trust-boundary divider drawn into the figure."""
+    import re
+
+    return [t for t in re.findall(r">([^<]*)</text>", svg) if t.startswith("trust boundary · ")]
+
+
 def test_trust_boundary_is_drawn_as_a_divider_at_the_tier_transition():
     """A trust boundary belongs to the architecture, so it is a divider between
     trust zones — not an annotation on the attack vectors, which would make it
     read as a property of the attack."""
     svg = _build(exposed=("app0", "app1"))
-    assert "trust boundary · tb-1 · tb-2" in svg
+    assert "trust boundary · external → app0 (tb-1) · external → app1 (tb-2)" in svg
     assert _TRUST_STROKE in svg
+
+
+def test_divider_names_the_crossing_not_just_the_id():
+    """A bare `tb-1` is a lookup key, not information — the reader cannot tell
+    what the divider separates without leaving the figure. The caption names the
+    crossing and keeps the id as the secondary locator into §1."""
+    assert _divider_captions(_build(exposed=("app0",))) == ["trust boundary · external → app0 (tb-1)"]
+
+
+def test_two_boundaries_on_the_same_crossing_share_one_caption_entry():
+    """Two enforcement points between the same pair of components are ONE
+    crossing; printing the pair twice spends the caption's width budget without
+    adding information."""
+    y, apd, tax = _model(exposed=("app0",))
+    y["trust_boundaries"].append(
+        {
+            "id": "tb-5",
+            "from": "external",
+            "to": "app0",
+            "name": "Second enforcement point on the same crossing",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    )
+
+    assert _divider_captions(F.build_figure1_svg(y, apd, tax)) == ["trust boundary · external → app0 (tb-1, tb-5)"]
+
+
+def test_every_placed_boundary_is_named_in_the_legend_panel():
+    """A `+N more` caption is only honest when the hidden crossings are
+    enumerated somewhere in the figure — the Trust Boundaries panel is that
+    place, so every placed boundary appears there with its id."""
+    y, apd, tax = _model(exposed=("app0", "app1"))
+    y["trust_boundaries"].append(
+        {
+            "id": "tb-7",
+            "from": "app0",
+            "to": "external",
+            "name": "Outbound to a third party",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    )
+
+    svg = F.build_figure1_svg(y, apd, tax)
+
+    assert "Trust Boundaries (see §1)" in svg
+    assert "external → app0 · tb-1" in svg
+    assert "external → app1 · tb-2" in svg
+    assert "app0 → external · tb-7" in svg  # the band-header note is named too
+
+
+def test_legend_states_an_exposure_the_figure_does_not_assert():
+    """The rail ORDERS by exposure but rendered none of it, so a confirmed
+    internet edge and an unconfirmed one read identically while §1 grades them
+    apart. Only the two exposures the reader must not skim past are named; a
+    confirmed crossing keeps its row clean, because where it sits in the stack
+    already says what it separates."""
+    y, apd, tax = _model(exposed=("app0",))
+    y["trust_boundaries"] += [
+        {
+            "id": "tb-2",
+            "from": "external",
+            "to": "app1",
+            "name": "Unconfirmed edge",
+            "confidence": "inferred",
+            "resolution_status": "resolved",
+        },
+    ]
+
+    svg = F.build_figure1_svg(y, apd, tax)
+
+    assert "external → app1 · tb-2 · Unverified" in svg
+    assert "external → app0 · tb-1" in svg
+    assert "tb-1 · internet-facing" not in svg
+
+
+def test_legend_badge_names_the_worst_exposure_on_the_row():
+    """One row can carry several boundaries over the same crossing. An
+    unresolvable one outranks an unconfirmed one — the row is a warning, and the
+    worse of the two is what it must carry."""
+    meta = {
+        "tb-1": {"from": "external", "to": "app0", "confidence": "inferred", "resolution_status": "resolved"},
+        "tb-2": {"from": "external", "to": "app0", "confidence": "confirmed", "resolution_status": "unresolved"},
+    }
+    assert F._legend_badge(["tb-1"], meta, {"app0"}) == "Unverified"
+    assert F._legend_badge(["tb-1", "tb-2"], meta, {"app0"}) == "Review"
+    assert F._legend_badge(["tb-2"], meta, set()) == "Review"
+
+
+def test_legend_row_keeps_the_badge_when_the_crossing_is_truncated():
+    # The badge shares the ids' priority: the crossing text pays for the width.
+    assert F._legend_boundary_text("external → a-very-long-name", ["tb-1"], 30, "Unverified") == (
+        "external … · tb-1 · Unverified"
+    )
+
+
+def test_band_note_stays_inside_the_tier_gutter():
+    """The note is a marker, not a description: the gutter left of the first
+    component box is ~19 characters at size 9, and `outbound: app0 → external`
+    is 25. Naming it there would run the text under the boxes."""
+    assert F._note_text("outbound", ["tb-3"]) == "outbound: tb-3"
+    assert F._note_text("internal", ["tb-1", "tb-2", "tb-3"]) == "internal: tb-1 · tb-2 +1"
+
+
+def test_no_boundary_legend_panel_without_a_boundary():
+    """Honest legend — a model with zero resolved boundaries renders exactly as
+    it did before the panel existed."""
+    svg = _build(exposed=())
+    assert "Trust Boundaries (see §1)" not in svg
+    assert "trust boundary (" not in svg
+
+
+def test_crossing_that_spans_more_than_one_tier_gap_still_draws():
+    """`external → <data store>` skips the application zone, so it matched no
+    band gap and vanished from the figure. It belongs on the first gap its span
+    contains — the point where it leaves the untrusted zone."""
+    y, apd, tax = _model(exposed=())
+    y["trust_boundaries"] = [
+        {
+            "id": "tb-3",
+            "from": "external",
+            "to": "db",
+            "name": "Internet to the data layer",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+        }
+    ]
+
+    svg = F.build_figure1_svg(y, apd, tax)
+
+    assert _divider_captions(svg) == ["trust boundary · external → db (tb-3)"]
 
 
 def test_divider_sits_below_the_client_tier_not_above_it():
@@ -654,9 +793,157 @@ def test_no_divider_without_a_boundary_crossing_a_tier_gap():
 def test_divider_label_names_internet_facing_crossings_first():
     """Internet-facing crossings are what a reader looks for, so they must
     survive the truncation that keeps the caption on one line."""
-    label = F._divider_label(["tb-1", "tb-2", "tb-3", "tb-4", "tb-9"], {"tb-9"})
-    assert label == "trust boundary · tb-9 · tb-1 · tb-2 +2"
+    meta = {f"tb-{i}": {"id": f"tb-{i}", "from": "external", "to": f"svc{i}"} for i in (1, 2, 3, 4, 9)}
+    label = F._divider_label(list(meta), meta, priority_ids={"tb-9"}, max_chars=70)
+    assert label == "trust boundary · external → svc9 (tb-9) · +4 more (see legend)"
     assert F._divider_label([]) == ""
+
+
+# ---- caption legibility: criticality decides what is named on the divider ----
+
+
+def _tb(bid: str, src: str, dst: str, **kw) -> dict:
+    row = {
+        "id": bid,
+        "from": src,
+        "to": dst,
+        "name": f"{src} to {dst}",
+        "confidence": "confirmed",
+        "resolution_status": "resolved",
+    }
+    row.update(kw)
+    return row
+
+
+def _meta(*rows: dict) -> dict[str, dict]:
+    return {r["id"]: r for r in rows}
+
+
+def test_divider_caption_names_only_the_lead_tier_crossings():
+    """A divider that carries the internet edge AND an internal hop must lead
+    with the internet edge — the internal one needs a foothold first, so it
+    recedes into the legend instead of spending the band's width."""
+    meta = _meta(
+        _tb("tb-1", "external", "api"),
+        _tb("tb-2", "spa", "api"),
+        _tb("tb-3", "api", "external"),
+    )
+    label = F._divider_label(list(meta), meta, component_ids={"api", "spa"}, max_chars=200)
+
+    assert label == "trust boundary · external → api (tb-1) · +2 more (see legend)"
+
+
+def test_divider_caption_caps_the_names_even_when_all_are_internet_facing():
+    """Nine boundaries at the same exposure are still nine — the caption names
+    the first two and lets the panel carry the rest, because a caption that
+    enumerates a register is a caption nobody reads."""
+    meta = _meta(*[_tb(f"tb-{i}", "external", f"svc{i}") for i in range(1, 6)])
+    label = F._divider_label(list(meta), meta, component_ids={f"svc{i}" for i in range(1, 6)}, max_chars=400)
+
+    assert label == "trust boundary · external → svc1 (tb-1) · external → svc2 (tb-2) · +3 more (see legend)"
+    assert label.count("→") == F._DIVIDER_MAX_CROSSINGS
+
+
+def test_divider_caption_with_only_quiet_crossings_names_just_one():
+    """Nothing internet-facing on this gap: the crossings are still named — the
+    divider would otherwise be unexplained — but one is enough."""
+    meta = _meta(_tb("tb-4", "spa", "api"), _tb("tb-5", "api", "db"))
+    label = F._divider_label(list(meta), meta, component_ids={"spa", "api", "db"}, max_chars=200)
+
+    assert label == "trust boundary · spa → api (tb-4) · +1 more (see legend)"
+
+
+def test_divider_caption_stays_inside_its_width_budget():
+    """The `+N more` note is part of the caption, so it is budgeted. Appending
+    it past the budget is how the caption grew wider than the band it annotates
+    and collided with the boxes beneath."""
+    meta = _meta(*[_tb(f"tb-{i}", "external", f"service-{i}") for i in range(1, 5)])
+    ids = {f"service-{i}" for i in range(1, 5)}
+    for budget in (70, 90, 120, 200):
+        assert len(F._divider_label(list(meta), meta, component_ids=ids, max_chars=budget)) <= budget
+    # Floor: a budget too small for even one crossing still names one. An
+    # unlabelled divider is worse than a caption that runs a little long, and
+    # the band width never gets that small in practice.
+    assert F._divider_label(list(meta), meta, component_ids=ids, max_chars=10).count("→") == 1
+
+
+def test_divider_caption_declares_exactly_what_it_holds_back():
+    """Truncation is only honest when the count is right: `+N` counts
+    BOUNDARIES, not crossings, so two enforcement points on one crossing are
+    two."""
+    meta = _meta(
+        _tb("tb-1", "external", "api"),
+        _tb("tb-2", "external", "ci"),
+        _tb("tb-3", "external", "auth"),
+        _tb("tb-4", "external", "auth"),
+    )
+    label = F._divider_label(list(meta), meta, component_ids={"api", "auth", "ci"}, max_chars=400)
+
+    # Held back: the auth crossing — ONE crossing, but TWO enforcement points.
+    assert label == "trust boundary · external → api (tb-1) · external → ci (tb-2) · +2 more (see legend)"
+
+
+def test_quiet_crossings_are_still_drawn_and_still_named_in_the_legend():
+    """Receding is not dropping: the divider a held-back crossing annotates is
+    still drawn, and the panel still names it with its id."""
+    y, apd, tax = _model(exposed=("app0", "app1"))
+    y["trust_boundaries"].append(_tb("tb-3", "spa", "app1"))
+    y["trust_boundaries"].append(_tb("tb-4", "external", "db"))
+
+    svg = F.build_figure1_svg(y, apd, tax)
+
+    caption = _divider_captions(svg)[0]
+    assert caption.startswith("trust boundary · external → app0 (tb-1)")
+    assert "spa → app1" not in caption  # the internal hop recedes…
+    assert "spa → app1 · tb-3" in svg  # …into the panel, named, with its id
+    assert _TRUST_STROKE in svg  # …and the divider it annotates is still drawn
+    for bid in ("tb-1", "tb-2", "tb-3", "tb-4"):
+        assert bid in svg
+
+
+def test_divider_caption_does_not_run_the_width_of_the_band():
+    """The reported defect, measured: with many boundaries the caption filled
+    the rule edge to edge and smeared over the band beneath it. It must stay
+    well inside the divider it annotates."""
+    y, apd, tax = _model(exposed=("app0", "app1", "db"))
+    y["trust_boundaries"].append(_tb("tb-4", "spa", "app1"))
+
+    svg = F.build_figure1_svg(y, apd, tax)
+    root = ET.fromstring(svg)
+    ns = "{http://www.w3.org/2000/svg}"
+    rules = [
+        (float(el.get("x1")), float(el.get("x2")))
+        for el in root.iter(f"{ns}line")
+        if el.get("stroke") == "#475569" and el.get("stroke-width") == "1.4"
+    ]
+    assert rules, "no trust-boundary divider drawn"
+    band_w = max(x2 - x1 for x1, x2 in rules)
+
+    for caption in _divider_captions(svg):
+        assert len(caption) * 0.55 * 9.5 <= band_w * F._DIVIDER_CAPTION_BAND_SHARE
+
+
+def test_caption_rule_is_tolerant_of_any_boundary_id():
+    """Ids are renumbered into criticality order upstream, so the caption must
+    not depend on a specific number or count — only on the tier."""
+    meta = _meta(_tb("tb-41", "external", "api"), _tb("tb-7", "spa", "api"))
+    label = F._divider_label(list(meta), meta, component_ids={"api", "spa"}, max_chars=200)
+
+    assert label == "trust boundary · external → api (tb-41) · +1 more (see legend)"
+
+
+def test_legend_row_gives_up_the_crossing_before_the_ids():
+    """The id is the locator into §1 — a row that truncates it is useless. The
+    crossing text pays for the width, and a too-long id list is DECLARED."""
+    assert F._legend_boundary_text("external → a-very-long-component-name", ["tb-1"], 24) == "external → a-ver… · tb-1"
+    assert F._legend_boundary_text("external → api", ["tb-1", "tb-2", "tb-3", "tb-4", "tb-5"], 20).endswith(
+        "tb-1 +4"
+    )  # an id is never cut in half — the remainder is declared
+
+
+def test_divider_label_falls_back_to_ids_when_the_crossing_is_unknown():
+    """No endpoints in the model → the id alone, never an invented description."""
+    assert F._divider_label(["tb-2", "tb-1"], {"tb-1": {"id": "tb-1"}}) == "trust boundary · tb-1 · tb-2"
 
 
 def test_boundary_inside_a_tier_is_named_in_the_band_instead_of_dropped():
@@ -680,8 +967,8 @@ def test_boundary_inside_a_tier_is_named_in_the_band_instead_of_dropped():
 
     assert "internal: tb-9" in svg
     # It is NOT promoted onto the tier divider, which separates zones.
-    assert "trust boundary · tb-1" in svg
-    assert "trust boundary · tb-1 · tb-9" not in svg
+    assert _divider_captions(svg) == ["trust boundary · external → app0 (tb-1)"]
+    assert "app0 → app1 · tb-9" in svg  # …but it IS named in the legend panel
 
 
 def test_classification_separates_gap_crossings_from_intra_tier_boundaries():
@@ -730,7 +1017,7 @@ def test_outbound_boundary_is_not_placed_on_the_client_server_divider():
 
     svg = F.build_figure1_svg(y, apd, tax)
     assert "outbound: tb-9" in svg
-    assert "trust boundary · tb-1 · tb-9" not in svg
+    assert _divider_captions(svg) == ["trust boundary · external → app0 (tb-1)"]
 
 
 def test_ingress_and_egress_between_the_same_pair_stay_apart():
@@ -789,7 +1076,7 @@ def test_boundary_legend_swatch_is_not_the_faintest_row():
     """
     y, apd, tax = _boundary_model()
     svg = F.build_figure1_svg(y, apd, tax)
-    assert "trust boundary (see" in svg, "fixture must draw a divider + legend row"
+    assert "trust boundary (listed below)" in svg, "fixture must draw a divider + legend row"
 
     swatches = [ln for ln in _lines_with_stroke(svg, F._TRUST) if ln["_width"] < 40]
     assert swatches, "no legend swatch found"

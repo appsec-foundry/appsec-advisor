@@ -16,21 +16,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `install-baseline` skill: installs a secure-coding baseline into Claude Code's instruction files, for this machine or a single repository.
 - New `verify-baseline` skill: reports which baseline is loaded and through which file, and exits non-zero when none is, so CI can gate on it.
 - New `remove-baseline` skill: stops an installed baseline loading by dropping its import, and deletes the file only after confirming the path.
-- New `help` skill: a short command reference with example calls.
+- New `help` skill: a short command reference with example calls, plus the repo context files, organization profile, and coach state actually in effect.
 - A session now opens with a status banner: plugin identity and help, then the threat model, then the secure-coding baseline under its configured name, with its id and scope. `APPSEC_BANNER=0` turns it off.
 - Organizations can ship their own skills in their org profile.
 - Organizations can ship their own secure-coding baseline in their org profile, by http(s) URL or git repository.
 - Organizations can set the banner headline and help URL in their org profile, or ship a build that opens silently.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
 - A run that recorded an error now points at `/appsec-advisor:report-error`, which builds a local anonymised bundle and sends nothing.
+- The triage console now opens with the same freshness verdict as `show-threat-model`, and warns before fixing code against a stale model.
 
 ### Fixed
 
+- Client-side code is no longer modelled as a trust zone. A browser SPA, mobile app or desktop client executes on the user's device, on the attacker's side of every server-side control, so a crossing out of it is now anchored at the internet and folds into the perimeter it duplicated, while a crossing into it — which enforces nothing and protects nothing — is removed, with the reason recorded in the signal coverage report. A crossing into client code that names a real control is kept. On a reference scan this took nine boundaries down to seven, one of which was the same API perimeter counted twice.
 - `Automated SCA scanning` is now rated only from scanners the pipeline actually invokes. A tool name in a comment, a step label, or string data no longer counts as evidence, and a CodeQL workflow on its own no longer counts as dependency scanning.
 - Skills an organization disabled through `skill_toggles` are now actually refused, with the configured reason — whether the command is typed or Claude invokes it. Nothing enforced the policy before. Recovery skills stay reachable, so a broken run can still be cleaned up.
 - An organization's `skill_toggles` policy now takes effect from the first command in a session. It was only read from the file a scan writes into its output directory, so before any scan every skill ran while the status output reported it as disabled.
 - Any shipped skill can now be named in `skill_toggles`. Ten of the twenty-one — including `review-threat-model`, `ask-threat-model` and `update-threat-model` — were missing from an internal list, and naming one aborted the package build instead of doing nothing.
 - Trust-boundary tables now use canonical endpoints and clearly distinguish internet-facing, outbound, internal, inferred, and unresolved crossings.
+- The Trust Boundaries table is readable again: each row states the crossing, the enforcement point and the folded-in components once instead of three overlapping times, the linked findings column keeps the severity dot and the id (the title is one click away) and no longer collapses into stacked single characters, and emphasis around an inline code span no longer leaks raw `**` and `\` markers into the rendered cell.
+- The trust-boundary note on a finding now leads with the crossing and the point being made, instead of restating the crossing three times before the statement.
+- A trust-boundary reference on a finding is now always a working link into the Trust Boundaries table; a boundary below the table's row cap rendered as a bare identifier.
 - `show-threat-model` cited findings by an identifier that appears nowhere in the report; it now uses the `F-NNN` identifiers the report shows.
 - `show-threat-model` reported severity counts that contradicted the report — 27 Critical against the report's 14 on a reference scan — and could list a Medium finding as Critical.
 
@@ -41,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `show-threat-model` now opens with the report's verdict and the worst-case scenarios behind it, and points at the other skills before the numbers rather than after them.
 - `threat-model.yaml` now carries the report's verdict, so other tools can state the assessment's conclusion without reading the Markdown.
 - Findings of the same kind at different trust boundaries now stay separate instead of consolidating into one row.
+- A trust-boundary reference on a finding now carries the catalogue's `🌐 Public` rating when the crossing is a confirmed internet ingress.
+- Figure 1's Trust Boundaries legend now marks a crossing the analysis did not confirm, instead of showing it like a confirmed one.
+- SARIF results now name the crossing and its exposure instead of a bare `tb-N`, and the run carries the whole boundary catalogue.
+- The Threat Dragon export now folds a finding's trust-boundary crossing into the threat description and marks a data flow across a confirmed internet crossing as `isPublicNetwork`.
 
 ## 0.5.1-beta (2026-07-26)
 
