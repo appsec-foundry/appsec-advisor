@@ -658,7 +658,7 @@ def test_fenced_code_inside_blockquote_is_still_skipped():
 
 
 _TRUST_BOUNDARY_GFM = (
-    "| ID | Boundary / crossing | Exposure | Kind | What must hold | Source | Linked findings |\n"
+    "| ID | Boundary / crossing | Exposure | Kind | Assumption & verdict | Source | Linked findings |\n"
     "|---|---|---|---|---|---|---|\n"
     "| tb-4 | **Application to LLM**<br>Backend API Server (routes/chatbot.ts) → external | "
     '↗ **Egress** | third-party | The call uses app.options("*", cors()) and routes/chatbot.ts.<br>_confirmed_ | '
@@ -667,7 +667,7 @@ _TRUST_BOUNDARY_GFM = (
 # Compose drops the Source column when every row shares one provenance, so the
 # shorter form must get the same column-scoped prose exemption.
 _TRUST_BOUNDARY_GFM_NO_SOURCE = (
-    "| ID | Boundary / crossing | Exposure | Kind | What must hold | Linked findings |\n"
+    "| ID | Boundary / crossing | Exposure | Kind | Assumption & verdict | Linked findings |\n"
     "|---|---|---|---|---|---|\n"
     "| tb-4 | **Application to LLM**<br>Backend API Server (routes/chatbot.ts) → external | "
     '↗ **Egress** | third-party | The call uses app.options("*", cors()) and routes/chatbot.ts. | '
@@ -712,7 +712,7 @@ def test_raw_html_cell_gets_code_tags_not_markdown_backticks():
     §1 Trust Boundaries is emitted as raw HTML by the composer BEFORE this
     formatter runs, so its rows miss the `startswith("|")` table branch and fall
     through to the prose path. juice-shop shipped a literal
-    `` `encryptionkeys/jwt.pub` `` in "What must hold" (user 2026-08-01).
+    `` `encryptionkeys/jwt.pub` `` in the assumption column (user 2026-08-01).
     """
     line = (
         '<tr><td style="overflow-wrap:break-word">JWT signature validated using RSA public '
@@ -740,7 +740,7 @@ def test_trust_boundary_exemption_survives_the_html_form_of_the_table():
     html = (
         '<table style="table-layout:fixed;width:100%">\n'
         "<thead><tr><th>ID</th><th>Boundary / crossing</th><th>Exposure</th>"
-        "<th>Kind</th><th>What must hold</th><th>Linked findings</th></tr></thead>\n"
+        "<th>Kind</th><th>Assumption &amp; verdict</th><th>Linked findings</th></tr></thead>\n"
         "<tbody>\n"
         "<tr><td>tb-1</td><td><strong>external to api</strong></td><td>Public</td>"
         "<td>network, seen in server.ts</td>"
@@ -767,3 +767,28 @@ def test_gfm_table_row_keeps_markdown_backticks():
     out, _changed = prose._wrap_line("| api | see routes/login.ts:34 for detail |")
     assert "`routes/login.ts:34`" in out
     assert "<code>" not in out
+
+
+def test_html_header_match_decodes_entities_before_comparing():
+    """The header text is the join key for the column exemption, and the HTML
+    conversion escapes what it emits — so a column named "Assumption & verdict"
+    arrives here as `Assumption &amp; verdict`. Matching it against the literal
+    would fail, the exemption would lapse, and every code-token pass would run
+    over the assumption sentence again (the 2026-08-01 defect, reintroduced by a
+    rename). Decoding first is what keeps the rename safe.
+    """
+    escaped = (
+        "<thead><tr><th>ID</th><th>Boundary / crossing</th><th>Exposure</th>"
+        "<th>Kind</th><th>Assumption &amp; verdict</th><th>Linked findings</th></tr></thead>"
+    )
+    assert prose._html_table_header_cells(escaped) in prose._TRUST_BOUNDARY_TABLE_HEADERS
+
+    table = (
+        '<table style="table-layout:fixed;width:100%">\n' + escaped + "\n<tbody>\n"
+        "<tr><td>tb-1</td><td><strong>external → api</strong></td><td>Public</td><td>network</td>"
+        "<td>JWT verified with the key at encryptionkeys/jwt.pub.</td><td>—</td></tr>\n"
+        "</tbody>\n</table>\n"
+    )
+    out, _ = prose.apply_code_formatting(table)
+    assumption_cell = re.findall(r"<td[^>]*>(.*?)</td>", out, re.S)[4]
+    assert "<code>" not in assumption_cell and "`" not in assumption_cell

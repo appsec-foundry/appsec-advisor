@@ -82,6 +82,7 @@ from __future__ import annotations
 import base64
 import binascii
 import html
+import html as _html
 import json
 import json as _json
 import os
@@ -4128,7 +4129,14 @@ _TRUST_BOUNDARY_COL_WIDTHS_SRC = ("6%", "21%", "11%", "14%", "25%", "9%", "14%")
 def _trust_boundary_spec(*, with_source: bool, with_status: bool):
     """One `_FIXED_LAYOUT_SPECS` entry for a §1 Trust Boundaries header form."""
     widths = _TRUST_BOUNDARY_COL_WIDTHS_SRC if with_source else _TRUST_BOUNDARY_COL_WIDTHS
-    headers = ["ID", "Boundary / crossing", "Exposure", "Kind / status" if with_status else "Kind", "What must hold"]
+    # Keep the assumption header in sync with `compose._BOUNDARY_ASSUMPTION_HEADER`.
+    headers = [
+        "ID",
+        "Boundary / crossing",
+        "Exposure",
+        "Kind / status" if with_status else "Kind",
+        "Assumption & verdict",
+    ]
     if with_source:
         headers.append("Source")
     headers.append("Linked findings")
@@ -4344,7 +4352,13 @@ def _emit_as_html_table(body_rows: list[str], spec) -> list[str]:
     # their identical column geometry (2026-06-13). `width` keeps the parity
     # everywhere; renderers that honour `style` ignore the redundant attribute.
     html.append("<colgroup>" + "".join(f'<col width="{w}" style="width:{w}">' for w in widths) + "</colgroup>")
-    html.append("<thead><tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr></thead>")
+    # Escaped like every cell below. Header text is authored in the composer, not
+    # by a model, but "Assumption & verdict" put a bare `&` in the markup the
+    # moment a column name carried one. `apply_prose_fixes._html_table_header_cells`
+    # decodes entities before matching, so escaping here cannot lapse the
+    # trust-boundary column exemption. `_html` because the local `html` list
+    # below shadows the module for this whole function scope.
+    html.append("<thead><tr>" + "".join(f"<th>{_html.escape(h, quote=False)}</th>" for h in headers) + "</tr></thead>")
     html.append("<tbody>")
     for row in body_rows:
         cells = (_split_gfm_row(row) + [""] * ncol)[:ncol]

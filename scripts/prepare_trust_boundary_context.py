@@ -252,6 +252,78 @@ def boundary_endpoints_valid(boundary: dict, component_ids: set[str]) -> bool:
     return boundary.get("from") in allowed and boundary.get("to") in allowed
 
 
+_UNVERIFIED_EVIDENCE_STATES = frozenset({"refuted", "ambiguous"})
+
+
+def _finding_number(value: Any) -> tuple[int, str]:
+    text = str(value or "")
+    match = re.search(r"(\d+)$", text)
+    return (int(match.group(1)), text) if match else (10**9, text)
+
+
+def boundary_protected_components(boundary: dict) -> set[str]:
+    """Components on the protected side of the crossing.
+
+    `covers_components` records what a consolidation folded into the row and
+    carries BOTH endpoints, so the source has to come back out — otherwise
+    `express-backend -> sqlite-database` counts its own origin as protected.
+    """
+    source = boundary.get("from")
+    protected = {boundary.get("to"), *(boundary.get("covers_components") or [])}
+    protected.discard(source)
+    return {str(cid) for cid in protected if cid}
+
+
+def boundary_assumption_state(boundary: dict, threats: Iterable[dict]) -> tuple[str, list[str]]:
+    """Does this row's assumption survive the findings? -> (state, finding ids).
+
+    One derivation for two consumers that must never disagree: the §1
+    "Assumption & verdict" cell a reader sees, and the boundary state the
+    deterministic scoring reads. Each state, and what it means:
+
+      * ``refuted`` — a finding whose own evidence survived verification links
+        here, which by §1's definition is an evidence-backed control gap at the
+        crossing. Returns the refuting ids.
+      * ``unconfirmed`` — no refuter, but findings sit in the components the
+        crossing protects: nothing examined this crossing. juice-shop's
+        ``external -> ci-cd-pipeline`` declared "job-level secret scoping not
+        confirmed" while eight CI/CD findings proved exactly that, none of them
+        linked (user 2026-08-01). Returns those adjacent ids — they are NOT links.
+      * ``clean`` — findings could have contradicted it and none do.
+      * ``not-examined`` — the row protects no component this model knows.
+
+    The ``evidence_check`` gate mirrors the elevation suppression in
+    ``triage_compute_ranking._compute_effective``: a finding that could not raise
+    a severity must not silently break a boundary either.
+    """
+    protected = boundary_protected_components(boundary)
+    boundary_id = str(boundary.get("id") or "")
+    refuters: list[str] = []
+    adjacent: list[str] = []
+    for threat in threats:
+        if not isinstance(threat, dict):
+            continue
+        tid = str(threat.get("id") or "")
+        if not tid:
+            continue
+        verified = threat.get("evidence_check") not in _UNVERIFIED_EVIDENCE_STATES
+        links_here = any(
+            isinstance(ref, dict) and str(ref.get("boundary_id") or "") == boundary_id
+            for ref in threat.get("boundary_refs") or []
+        )
+        if links_here and verified and boundary_id:
+            refuters.append(tid)
+        elif str(threat.get("component") or threat.get("component_id") or "") in protected:
+            adjacent.append(tid)
+    if refuters:
+        return "refuted", sorted(set(refuters), key=_finding_number)
+    if not protected:
+        return "not-examined", []
+    if adjacent:
+        return "unconfirmed", sorted(set(adjacent), key=_finding_number)
+    return "clean", []
+
+
 def _boundary_endpoint_shape_valid(boundary: dict) -> bool:
     if not isinstance(boundary, dict) or boundary.get("resolution_status") != "resolved":
         return False
@@ -297,6 +369,34 @@ def _clean_enforcement_point(value: Any) -> str | None:
     if probe in _GENERIC_ENFORCEMENT_POINTS:
         return None
     return text
+
+
+_ASSUMPTION_ABSENCE_RE = re.compile(r"^(?:no|none|there\s+is\s+no|there\s+are\s+no|nothing)\b", re.IGNORECASE)
+
+
+def _assumption_shape_warnings(assumption: str, enforcement_point: str | None, label: str) -> list[str]:
+    """Report an assumption that cannot carry a verdict — never rewrite it.
+
+    The catalogue renders this text under "Assumption & verdict" and prints a
+    derived verdict beneath it, which only works if the sentence is one testable
+    condition. A real run produced none: fact lists joined by semicolons, a
+    restatement of the control the neighbouring cell already names, and — on both
+    outbound rows — a description of what is ABSENT, i.e. the opposite of an
+    assumption (user 2026-08-01). The contract now says so in the analyst prompt;
+    this makes a violation visible in the run issues instead of shipping quietly.
+
+    Warn, do not repair. A machine rewrite of a security condition would invent
+    an assertion no analyst made, and a wrong condition is worse than an ugly one.
+    """
+    issues: list[str] = []
+    if assumption.count(";") >= 2:
+        issues.append("reads as a fact list, not one condition")
+    if _ASSUMPTION_ABSENCE_RE.match(assumption):
+        issues.append("states an absence instead of a condition")
+    control = " ".join((enforcement_point or "").split()).casefold()
+    if control and len(control) >= 8 and control in assumption.casefold():
+        issues.append("restates enforcement_point")
+    return [f"{label}: assumption {issue}" for issue in issues]
 
 
 def _covered_components(value: Any, components: Iterable[str]) -> list[str]:
@@ -392,6 +492,8 @@ def _normalize_row(
     point = _clean_enforcement_point(raw.get("enforcement_point"))
     if point:
         row["enforcement_point"] = point
+    for issue in _assumption_shape_warnings(assumption, point, label):
+        _warn(issue, warnings)
     if raw.get("confidence_basis") in {"analyst", "route-evidence"} and confidence == "confirmed":
         row["confidence_basis"] = raw["confidence_basis"]
     covers = _covered_components(raw.get("covers_components"), components)

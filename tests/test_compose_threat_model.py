@@ -1235,6 +1235,150 @@ def _canonical_boundary(number: int, name: str | None = None) -> dict:
     }
 
 
+def _catalog(tmp_path: Path, rows: list[dict], threats: list[dict], components: list[str]) -> str:
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={
+            "components": [{"id": cid} for cid in components],
+            "trust_boundaries": rows,
+            "threats": threats,
+        },
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    return compose._render_trust_boundary_catalog(ctx, None, {})
+
+
+def test_assumption_cell_states_a_verdict_derived_from_the_links(tmp_path: Path) -> None:
+    """The column asks whether the assumption holds, so every row answers.
+
+    A condition with no answer leaves the reader to reconcile it against §8 by
+    hand, which nobody does — juice-shop shipped five assumptions and no verdict
+    (user 2026-08-01). All three inputs are already in the model, so the answer
+    costs no analysis turn.
+    """
+    rows = [
+        _canonical_boundary(1),  # refuted — a finding links here
+        {**_canonical_boundary(2), "to": "C-02"},  # unconfirmed — findings in C-02, none linked
+        {**_canonical_boundary(3), "to": "C-03"},  # clean — no finding in C-03 at all
+    ]
+    threats = [
+        {"id": "T-001", "component": "C-01", "boundary_refs": [{"boundary_id": "tb-1"}]},
+        {"id": "T-002", "component": "C-02"},
+        {"id": "T-003", "component": "C-02"},
+    ]
+    rendered = _catalog(tmp_path, rows, threats, ["C-01", "C-02", "C-03"])
+    assert "**Refuted** by the linked findings." in rendered
+    assert "**Unconfirmed** — 2 finding(s) in the components it covers, none linked here." in rendered
+    assert "_No finding contradicts it._" in rendered
+    # The verdict rides in the assumption cell, not in a column of its own.
+    unconfirmed_row = next(line for line in rendered.splitlines() if "Unconfirmed" in line and line.startswith("|"))
+    assert "Unconfirmed" in unconfirmed_row.split(" | ")[4]
+
+
+def test_verdict_matches_the_shared_state_helper(tmp_path: Path) -> None:
+    """Rendering and scoring must never disagree about "refuted".
+
+    The words live here, the derivation lives in `prepare_trust_boundary_context`
+    because the deterministic breach-distance graph reads the same states. This
+    pins the mapping so a reworded cell cannot drift away from the state that
+    decides whether a crossing counts as standing open.
+    """
+    import prepare_trust_boundary_context as prep
+
+    rows = [
+        _canonical_boundary(1),
+        {**_canonical_boundary(2), "to": "C-02"},
+        {**_canonical_boundary(3), "to": "C-03"},
+        {**_canonical_boundary(4), "to": ""},
+    ]
+    threats = [
+        {"id": "T-001", "component": "C-01", "boundary_refs": [{"boundary_id": "tb-1"}]},
+        {"id": "T-002", "component": "C-02"},
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={
+            "components": [{"id": cid} for cid in ("C-01", "C-02", "C-03")],
+            "trust_boundaries": rows,
+            "threats": threats,
+        },
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    expected = {
+        "refuted": "**Refuted** by the linked findings.",
+        "unconfirmed": "**Unconfirmed** — 1 finding(s) in the components it covers, none linked here.",
+        "clean": "_No finding contradicts it._",
+        "not-examined": "_Not examined._",
+    }
+    seen = set()
+    for row in rows:
+        state, _ids = prep.boundary_assumption_state(row, threats)
+        seen.add(state)
+        assert compose._boundary_assumption_verdict(row, ctx) == expected[state]
+    assert seen == set(expected), "fixture must exercise every state"
+
+
+def test_verdict_ignores_a_linker_whose_evidence_did_not_survive(tmp_path: Path) -> None:
+    """A finding that cannot raise a severity must not break a boundary either —
+    the same `evidence_check` gate the elevation path applies."""
+    rows = [_canonical_boundary(1)]
+    threats = [
+        {
+            "id": "T-001",
+            "component": "C-01",
+            "evidence_check": "refuted",
+            "boundary_refs": [{"boundary_id": "tb-1"}],
+        }
+    ]
+    rendered = _catalog(tmp_path, rows, threats, ["C-01"])
+    assert "**Refuted**" not in rendered
+    assert "**Unconfirmed** — 1 finding(s) in the components it covers, none linked here." in rendered
+
+
+def test_unconfirmed_verdict_counts_folded_in_components(tmp_path: Path) -> None:
+    """A consolidated row answers for every component it covers.
+
+    juice-shop's `external → ci-cd-pipeline` declared "job-level secret scoping
+    not confirmed" while eight CI/CD findings proved exactly that, and the row
+    still rendered an empty cell because none of them carried a `boundary_refs`
+    entry (user 2026-08-01). The gap is now stated instead of shown as silence.
+    """
+    rows = [{**_canonical_boundary(1), "covers_components": ["C-01", "C-02"]}]
+    threats = [{"id": "T-001", "component": "C-02"}]
+    rendered = _catalog(tmp_path, rows, threats, ["C-01", "C-02"])
+    assert "**Unconfirmed** — 1 finding(s) in the components it covers, none linked here." in rendered
+
+
+def test_covered_components_never_include_the_crossings_own_source(tmp_path: Path) -> None:
+    """`covers_components` carries BOTH endpoints, so rendering it raw told the
+    reader that `express-backend → sqlite-database` "also covers: express-backend"
+    — the source of its own crossing (user 2026-08-01)."""
+    rows = [
+        {
+            **_canonical_boundary(1),
+            "from": "C-01",
+            "to": "C-02",
+            "covers_components": ["C-01", "C-02", "C-03"],
+        }
+    ]
+    rendered = _catalog(tmp_path, rows, [], ["C-01", "C-02", "C-03"])
+    assert "Also covers: C-03" in rendered
+    assert "C-01" not in rendered.split("Also covers:", 1)[1].split("|", 1)[0]
+
+
+def test_assumption_arrows_are_normalized_to_the_rendered_glyph(tmp_path: Path) -> None:
+    """An analyst-typed ASCII arrow reached the reader as a literal `-&gt;`: the
+    escape here plus the one the HTML-table pass adds (user 2026-08-01)."""
+    rows = [{**_canonical_boundary(1), "assumption": "Traffic on web3-nft->external stays signed."}]
+    rendered = _catalog(tmp_path, rows, [], ["C-01"])
+    assert "web3-nft → external" in rendered
+    assert "-&gt;" not in rendered
+
+
 def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tmp_path: Path) -> None:
     rows = [_canonical_boundary(i) for i in range(1, 22)]
     # Model-authored strings that reach a cell: the enforcement point (the
@@ -1261,7 +1405,7 @@ def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tm
     # Every row is `detected` → no Source column; the footnote states it once.
     assert "| Source |" not in rendered
     assert "source `detected`" in rendered
-    assert "confirmed internet ingress may raise effective severity" in rendered
+    assert "only where the crossing is confirmed internet ingress" in rendered
     assert "raw risk remains unchanged" in rendered
 
 
@@ -1302,7 +1446,11 @@ def test_trust_boundary_cell_states_each_fact_once(tmp_path: Path) -> None:
     # Folded-in components, once, and never the `to` component itself. They ride
     # behind the control instead of claiming a third stacked line.
     assert "Also covers: C-02" in rendered
-    assert rendered.count("<br>") == 1
+    # Counted per cell, not per row: the crossing cell owns exactly one stacked
+    # line (the control). The assumption cell legitimately carries a second, its
+    # derived verdict.
+    crossing_cell = next(line for line in rendered.splitlines() if line.startswith("| <a id=")).split(" | ")[1]
+    assert crossing_cell.count("<br>") == 1
 
 
 def test_trust_boundary_cell_never_synthesizes_a_missing_enforcement_point(tmp_path: Path) -> None:
@@ -1514,7 +1662,7 @@ def test_trust_boundary_constant_provenance_confidence_and_status_are_collapsed(
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
     # No Source column, and the Kind header does not name a status it no longer shows.
-    assert header == "| ID | Boundary / crossing | Exposure | Kind | What must hold | Linked findings |"
+    assert header == "| ID | Boundary / crossing | Exposure | Kind | Assumption & verdict | Linked findings |"
     assert "detected" not in header
     body = rendered.split("| ID |", 1)[1].split("_Exposure rates", 1)[0]
     assert "confirmed" not in body and "resolved" not in body
@@ -1541,7 +1689,7 @@ def test_trust_boundary_varying_provenance_keeps_the_source_column(tmp_path: Pat
     )
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     header = next(line for line in rendered.splitlines() if line.startswith("| ID |"))
-    assert header.endswith("| What must hold | Source | Linked findings |")
+    assert header.endswith("| Assumption & verdict | Source | Linked findings |")
     assert "| detected |" in rendered and "| repo-declared |" in rendered
     assert "`repo-declared` = supplied by" in rendered
     assert "stated once here instead of in a column: source" not in rendered
@@ -1726,6 +1874,39 @@ def test_finding_boundary_gap_link_survives_the_catalogue_row_cap(tmp_path: Path
     rendered = compose._render_trust_boundary_catalog(ctx, None, {})
     assert '<a id="tb-21"></a>' in rendered
     assert rendered.count('<a id="tb-') == 20
+
+
+def test_finding_boundary_gap_normalizes_an_arrow_inside_the_rationale(tmp_path: Path) -> None:
+    """The card's own crossing normalises at construction; the analyst's prose did
+    not, so one sentence carried both forms: "[tb-5] — web3-nft → external: At the
+    web3-nft-&gt;external tb-5 boundary …" (user 2026-08-01). The lead-fold cannot
+    reach it — that crossing sits mid-sentence, where it is part of the argument.
+    """
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [{"id": "C-01"}], "trust_boundaries": [_canonical_boundary(1)], "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell("Key travels in the handshake URL.", comp_id="C-01")
+    threat["boundary_refs"] = [
+        {
+            "boundary_id": "tb-1",
+            "origin_component_id": "C-01",
+            "rationale": "At the web3-nft->external tb-1 boundary the key is a path segment.",
+        }
+    ]
+    cell = compose._build_threat_card(
+        t=threat,
+        sev="critical",
+        taxonomy={},
+        components={"C-01": {"name": "REST API"}},
+        repo_root=None,
+        ctx=ctx,
+    )
+    assert "web3-nft → external tb-1 boundary" in cell
+    assert "-&gt;" not in cell
 
 
 def test_finding_boundary_gap_drops_the_link_for_an_unknown_boundary(tmp_path: Path) -> None:
@@ -4396,7 +4577,7 @@ def test_softwrap_never_breaks_inside_backtick_span():
 
 def test_softwrap_exempts_fixed_layout_trust_boundary_table():
     md = (
-        "| ID | Boundary / crossing | Exposure | Kind / status | What must hold | Source | Linked findings |\n"
+        "| ID | Boundary / crossing | Exposure | Kind / status | Assumption & verdict | Source | Linked findings |\n"
         "|---|---|---|---|---|---|---|\n"
         "| tb-1 | **Internet entry**<br>enforced by: expressJwt | 🌐 **Public** | network<br>**resolved** | "
         "This deliberately long trust assumption must reflow naturally inside the fixed-width HTML column "

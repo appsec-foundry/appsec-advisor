@@ -1999,3 +1999,122 @@ def test_promote_folds_the_client_crossing_and_reports_the_removed_one(tmp_path:
     # The re-anchored browser crossing promotes to the surviving perimeter, so no
     # signal is left without a boundary.
     assert by_signal["signal-browser-to-server-spa-to-web-api"]["boundary_ids"] == [rows[0]["id"]]
+
+
+def test_assumption_shape_violations_are_reported_not_repaired() -> None:
+    """The catalogue prints a derived verdict beneath the assumption, which only
+    works if the sentence is one testable condition.
+
+    A real run produced none of the three shapes the contract asks for: fact
+    lists joined by semicolons, a restatement of the control the neighbouring
+    cell already names, and — on both outbound rows — a description of what is
+    ABSENT, i.e. the opposite of an assumption (user 2026-08-01). Warning makes
+    that visible in the run issues; rewriting it would invent a security
+    assertion no analyst made.
+    """
+    fact_list = "SQLite runs in-process; no network isolation; Sequelize binds parameters by default."
+    assert prep._assumption_shape_warnings(fact_list, None, "tb-3") == [
+        "tb-3: assumption reads as a fact list, not one condition"
+    ]
+
+    absence = "No outbound content filter or egress allow-list is configured."
+    assert prep._assumption_shape_warnings(absence, None, "tb-4") == [
+        "tb-4: assumption states an absence instead of a condition"
+    ]
+
+    restated = "security.isAuthorized() expressJwt middleware guards the routes."
+    assert prep._assumption_shape_warnings(restated, "security.isAuthorized() expressJwt middleware", "tb-1") == [
+        "tb-1: assumption restates enforcement_point"
+    ]
+
+    good = "Protected routes require a verified JWT."
+    assert prep._assumption_shape_warnings(good, "security.isAuthorized() expressJwt middleware", "tb-1") == []
+    # One semicolon is a clause, not a list — the check must not police style.
+    assert prep._assumption_shape_warnings("Requests are authenticated; tokens are signed.", None, "tb-1") == []
+
+
+def test_normalize_row_surfaces_an_unusable_assumption_in_the_warnings(tmp_path: Path) -> None:
+    repo, out = _repo(tmp_path)
+    warnings: list[str] = []
+    row = prep._normalize_row(
+        {
+            "name": "external -> web-api",
+            "from": "external",
+            "to": "web-api",
+            "kind": "network",
+            "assumption": "No egress allow-list exists.",
+            "enforcement_point": "security.isAuthorized() expressJwt middleware",
+            "evidence": [],
+            "confidence": "inferred",
+        },
+        repo_root=repo,
+        components={"web-api": {}},
+        legacy_input=False,
+        warnings=warnings,
+        source="detected",
+    )
+    # Reported, and the text still ships exactly as authored.
+    assert row["assumption"] == "No egress allow-list exists."
+    assert any("states an absence instead of a condition" in warning for warning in warnings)
+
+
+def _tb(**overrides) -> dict:
+    row = {
+        "id": "tb-1",
+        "name": "external -> web-api",
+        "from": "external",
+        "to": "web-api",
+        "kind": "network",
+        "assumption": "Protected routes require a verified JWT.",
+        "evidence": [],
+        "confidence": "confirmed",
+        "resolution_status": "resolved",
+        "sources": ["detected"],
+    }
+    row.update(overrides)
+    return row
+
+
+def test_boundary_assumption_state_refuted_requires_clean_evidence_check() -> None:
+    """A finding that cannot raise a severity must not silently break a boundary.
+
+    The gate mirrors the elevation suppression in `_compute_effective`, so the §1
+    verdict a reader sees and the boundary state the scoring reads can never
+    disagree about the word "refuted".
+    """
+    row = _tb()
+    verified = {"id": "T-001", "component": "web-api", "boundary_refs": [{"boundary_id": "tb-1"}]}
+    assert prep.boundary_assumption_state(row, [verified]) == ("refuted", ["T-001"])
+
+    for state in ("refuted", "ambiguous"):
+        unverified = {**verified, "evidence_check": state}
+        # Falls through to adjacency: the finding still sits behind the crossing.
+        assert prep.boundary_assumption_state(row, [unverified]) == ("unconfirmed", ["T-001"])
+
+
+def test_boundary_assumption_state_unconfirmed_counts_covered_components() -> None:
+    """Folded-in components are protected too; the crossing's own source is not."""
+    row = _tb(covers_components=["web-api", "worker"])
+    threats = [
+        {"id": "T-002", "component": "worker"},
+        {"id": "T-010", "component": "web-api"},
+        {"id": "T-003", "component": "unrelated"},
+    ]
+    # Sorted by the numeric tail, so T-010 follows T-002 instead of preceding it.
+    assert prep.boundary_assumption_state(row, threats) == ("unconfirmed", ["T-002", "T-010"])
+
+
+def test_boundary_assumption_state_source_component_is_never_protected() -> None:
+    row = _tb(**{"from": "web-api", "to": "db", "covers_components": ["web-api", "db"]})
+    assert prep.boundary_protected_components(row) == {"db"}
+    assert prep.boundary_assumption_state(row, [{"id": "T-004", "component": "web-api"}]) == ("clean", [])
+
+
+def test_boundary_assumption_state_not_examined_when_no_protected_side() -> None:
+    row = _tb(to="")
+    assert prep.boundary_assumption_state(row, [{"id": "T-005", "component": "web-api"}]) == ("not-examined", [])
+
+
+def test_boundary_assumption_state_clean_when_nothing_contradicts() -> None:
+    row = _tb()
+    assert prep.boundary_assumption_state(row, [{"id": "T-006", "component": "elsewhere"}]) == ("clean", [])

@@ -595,7 +595,7 @@ def _html_cell_code_spans(line: str) -> tuple[str, int]:
     runs, so `stripped.startswith("|")` is false, the row falls through to the
     prose path, and a backtick added there is never converted. Markdown does not
     render inside raw HTML, so the reader saw the character itself (user
-    2026-08-01: `` `encryptionkeys/jwt.pub` `` in "What must hold").
+    2026-08-01: `` `encryptionkeys/jwt.pub` `` in the assumption column).
 
     Emitting the tag directly keeps the token formatted in the context it
     actually lands in, rather than dropping the fix on HTML rows. Spans the
@@ -1278,7 +1278,7 @@ def _humanize_actor_ids(text: str) -> tuple[str, int]:
 # index 1 and the assumption at index 4, so the prose-column set is shared.
 _TRUST_BOUNDARY_TABLE_HEADERS = tuple(
     tuple(
-        ["ID", "Boundary / crossing", "Exposure", kind, "What must hold"]
+        ["ID", "Boundary / crossing", "Exposure", kind, "Assumption & verdict"]
         + (["Source"] if with_source else [])
         + ["Linked findings"]
     )
@@ -1330,7 +1330,12 @@ def _html_table_header_cells(line: str) -> tuple[str, ...]:
     Without this the row failed `startswith("|")`, the column exemption silently
     lapsed, and every pass ran over the narrative columns (user 2026-08-01).
     """
-    return tuple(_HTML_TAG_RE.sub("", cell).strip() for cell in _HTML_TH_RE.findall(line))
+    # Entities are decoded before comparing. The header text is the join key
+    # against `_TRUST_BOUNDARY_TABLE_HEADERS`, and the HTML conversion escapes
+    # what it emits — an `&` in a column name arrives here as `&amp;` and would
+    # fail to match a header this module spells with a literal `&`, lapsing the
+    # exemption exactly as the raw-HTML form did before this function existed.
+    return tuple(html.unescape(_HTML_TAG_RE.sub("", cell)).strip() for cell in _HTML_TH_RE.findall(line))
 
 
 def _format_trust_boundary_html_row(line: str) -> tuple[str, int]:

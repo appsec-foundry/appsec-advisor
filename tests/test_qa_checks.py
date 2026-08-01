@@ -3836,7 +3836,7 @@ def test_asset_and_attack_surface_specs_widths_sum_to_100():
 
 def test_trust_boundary_table_converts_with_structural_breaks_and_links():
     gfm = (
-        "| ID | Boundary / crossing | Exposure | Kind | What must hold | Linked findings |\n"
+        "| ID | Boundary / crossing | Exposure | Kind | Assumption & verdict | Linked findings |\n"
         "|---|---|---|---|---|---|\n"
         '| <a id="tb-1"></a>tb-1 | **Internet entry**<br>enforced by: expressJwt | '
         "🌐 **Public** | network | Requests require authorization. | "
@@ -3857,7 +3857,7 @@ def test_trust_boundary_table_with_source_column_converts_and_never_breaks_a_sou
     `overflow-wrap:anywhere`: that is what split the single word "detected" into
     "detecte/d" at 8%."""
     gfm = (
-        "| ID | Boundary / crossing | Exposure | Kind / status | What must hold | Source | Linked findings |\n"
+        "| ID | Boundary / crossing | Exposure | Kind / status | Assumption & verdict | Source | Linked findings |\n"
         "|---|---|---|---|---|---|---|\n"
         '| <a id="tb-1"></a>tb-1 | **Internet entry** | 🌐 **Public** | network<br>**resolved** | '
         "Requests require authorization. | detected | [F-001](#f-001) |\n"
@@ -3912,6 +3912,39 @@ def test_only_single_token_columns_may_break_anywhere():
         for index, style in styles.items():
             if "anywhere" in style:
                 assert index in allowed, f"{headers[index]!r} in {tuple(headers)} may not break mid-character"
+
+
+def test_trust_boundary_header_is_identical_in_all_three_modules():
+    """Compose emits the header, qa sizes the columns by it, and the prose
+    formatter uses it to decide which columns hold narrative text. The string is
+    duplicated in all three, so a rename in one silently lapses the prose
+    exemption in another and every code-token pass runs over the assumption
+    sentence — which is how a bare path ended up in that column (user 2026-08-01).
+    """
+    import importlib.util as _ilu
+
+    def _load(name: str):
+        if name in sys.modules:
+            return sys.modules[name]
+        spec = _ilu.spec_from_file_location(name, Path(__file__).parent.parent / "scripts" / f"{name}.py")
+        module = _ilu.module_from_spec(spec)
+        sys.modules[name] = module
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+
+    compose = _load("compose_threat_model")
+    prose = _load("apply_prose_fixes")
+    header = compose._BOUNDARY_ASSUMPTION_HEADER
+    assert all(header in form for form in prose._TRUST_BOUNDARY_TABLE_HEADERS)
+    assert all(header in form for form in compose._FIXED_LAYOUT_TABLE_HEADERS if form[0] == "ID")
+    qa_forms = [spec[0] for spec in qa._FIXED_LAYOUT_SPECS if spec[0][:3] == ("ID", "Boundary / crossing", "Exposure")]
+    assert qa_forms and all(header in form for form in qa_forms)
+    # The prose exemption indexes the column by position, so the header's slot
+    # must be one of the columns that set is built around.
+    assert all(
+        form.index(header) in prose._TRUST_BOUNDARY_PROSE_COLUMNS for form in prose._TRUST_BOUNDARY_TABLE_HEADERS
+    )
 
 
 def test_trust_boundary_specs_cover_every_header_form_compose_can_emit():

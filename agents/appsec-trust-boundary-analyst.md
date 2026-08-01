@@ -132,6 +132,36 @@ Use `confirmed` only after inspecting relevant source/config evidence.
 Otherwise use `inferred` or `unknown`. The assumption states what must remain
 true; it does not claim that the control is effective.
 
+## `assumption` — ONE condition, testable, in one sentence
+
+Write the single condition the crossing depends on, phrased so a reviewer can go
+and check it: *"Protected routes require a verified JWT."*, *"Every workflow job
+runs with an explicit least-privilege permissions block."*, *"Every query reaches
+the database through parameter binding."* Under 180 characters.
+
+The report renders this under **Assumption & verdict** and prints a verdict
+directly beneath it, so the sentence must be the kind of statement a verdict can
+address. Four failure modes, all observed in one run (user 2026-08-01):
+
+- **A list of facts instead of a condition.** `SQLite runs embedded in the same
+  Node.js process; no network isolation; Sequelize model methods use parameterized
+  queries by default.` — three statements, none of which can be refuted as
+  written. Pick the one that matters: *"Every query reaches SQLite through
+  Sequelize parameter binding."* Never join clauses with semicolons.
+- **Restating `enforcement_point`.** The catalogue already prints the control in
+  the adjacent cell. Say what must be TRUE of it, not what it is.
+- **Describing an absence.** `No outbound content filter or egress allow-list` is
+  the opposite of an assumption — under a heading that announces one, it reads as
+  a contradiction. Turn it into the condition the crossing relies on:
+  *"Nothing attacker-controlled reaches the provider unfiltered."*
+- **Sanctioning the gap.** `routes not wrapped in isAuthorized() are
+  unauthenticated by design` excuses in advance what two findings in the same
+  report then report as a defect. State the condition; the findings decide the
+  verdict.
+
+Do not write the verdict yourself and do not cite findings here — the composer
+derives that from the links. Your job is the condition alone.
+
 `confirmed` carries weight beyond this artifact: it is the gate that lets a
 STRIDE analyzer reference the boundary from a finding at all, and the only
 confidence the deterministic severity elevation accepts. An `external ->` crossing

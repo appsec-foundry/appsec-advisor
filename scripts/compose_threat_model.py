@@ -99,7 +99,7 @@ from _manifest_readers import (
 # mutating the shared warned-CWE set.
 from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
 from pregenerate_fragments import gen_architecture_diagrams
-from prepare_trust_boundary_context import boundary_endpoints_valid
+from prepare_trust_boundary_context import boundary_assumption_state, boundary_endpoints_valid
 from reclassify_components import (  # phantom-component backstop (see _resolve_phantom_component)
     _build_matcher as _rc_build_matcher,
 )
@@ -10926,7 +10926,7 @@ _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
         # `_trust_boundary_spec`.
         *(
             tuple(
-                ["ID", "Boundary / crossing", "Exposure", kind, "What must hold"]
+                ["ID", "Boundary / crossing", "Exposure", kind, "Assumption & verdict"]
                 + (["Source"] if with_source else [])
                 + ["Linked findings"]
             )
@@ -14921,7 +14921,9 @@ def _build_threat_card(
             # (user 2026-07-31). The catalogue row behind the link owns the
             # mechanism; the rationale's own opening restatement is folded to
             # "This boundary …".
-            rationale = _safe_boundary_text(_boundary_rationale_lead(str(ref.get("rationale") or ""), boundary))
+            rationale = _safe_boundary_text(
+                _boundary_rationale_lead(_normalize_boundary_arrows(ref.get("rationale")), boundary)
+            )
             label = f"[{boundary_id}](#{boundary_id})" if boundary_id in visible_boundary_ids else boundary_id
             # Only the internet-facing rating travels here, and only as the
             # catalogue's own `🌐 Public`. The card already carries a severity
@@ -15324,6 +15326,21 @@ def _boundary_kind_label(row: dict) -> str:
 
 
 _BOUNDARY_ARROW_RE = r"(?:\s*(?:→|->|—>|–>)\s*|\s+to\s+|\s*-to-\s*)"
+_ASCII_ARROW_BETWEEN_WORDS_RE = re.compile(r"(?<=\w)\s*(?:->|—>|–>)\s*(?=\w)")
+
+
+def _normalize_boundary_arrows(value: Any) -> str:
+    """Analyst-authored boundary prose: ASCII crossing arrows to the glyph.
+
+    `_safe_boundary_text` escapes `>` to `&gt;`, and the QA pass that re-emits
+    the catalogue as an HTML table escapes the `&` again, so an ASCII arrow the
+    analyst typed reached the reader as a literal `-&gt;`. The renderer's own
+    crossings normalise at construction, which left the two disagreeing inside a
+    single sentence: "[tb-5] — web3-nft → external: At the web3-nft-&gt;external
+    tb-5 boundary …" (user 2026-08-01). Only an arrow BETWEEN word characters is
+    touched, so a comparison operator or a lone `>` in prose is left alone.
+    """
+    return _ASCII_ARROW_BETWEEN_WORDS_RE.sub(" → ", str(value or ""))
 
 
 def _boundary_crossing_and_mechanism(row: dict) -> tuple[str, str]:
@@ -15483,6 +15500,70 @@ def _boundary_confidence_text(row: dict) -> str:
     return confidence
 
 
+# The §1 assumption column's name. It used to read "What must hold", which
+# named a rule the reader had to decode and which the cell below then did not
+# keep: the text under it listed facts about the crossing instead of a condition
+# (user 2026-08-01). The name now states both halves the cell actually holds —
+# the assumption, and the derived verdict on whether it survives this report —
+# so nothing has to be inferred from the title.
+#
+# Three modules build this header tuple — compose's `_FIXED_LAYOUT_TABLE_HEADERS`,
+# `qa_checks._trust_boundary_spec` and `apply_prose_fixes._TRUST_BOUNDARY_TABLE_HEADERS`
+# — and the last of them uses the tuple to decide which columns hold prose.
+# Renaming it in one module silently lapses the prose exemption in another, so a
+# test asserts all three agree. Keep the other two literals in sync with this.
+_BOUNDARY_ASSUMPTION_HEADER = "Assumption & verdict"
+
+
+def _boundary_covered_components(row: dict) -> list[str]:
+    """Components on the protected side of the crossing, `to` first.
+
+    `covers_components` is the consolidation record: the components folded into
+    this row when several crossings share one enforcement point. It carries both
+    endpoints, so rendering it raw told the reader that `express-backend → sqlite-
+    database` "also covers: express-backend" — the source of its own crossing
+    (user 2026-08-01). Only `from` is dropped; `to` stays because it IS the
+    protected side, and the caller drops it separately where it is already named.
+    """
+    source = row.get("from")
+    target = row.get("to")
+    covered = [str(target)] if target else []
+    for cid in row.get("covers_components") or []:
+        if cid and cid != source and str(cid) not in covered:
+            covered.append(str(cid))
+    return covered
+
+
+_BOUNDARY_VERDICT_TEXT = {
+    "refuted": "**Refuted** by the linked findings.",
+    "clean": "_No finding contradicts it._",
+    "not-examined": "_Not examined._",
+}
+
+
+def _boundary_assumption_verdict(row: dict, ctx: RenderContext) -> str:
+    """Whether this report still supports the row's condition — derived, never authored.
+
+    The column states a condition; without an answer the reader is left to
+    reconcile it against §8 by hand, and nobody does. Every input is already in
+    the model, so the verdict costs no analysis turn.
+
+    The derivation itself lives in `prepare_trust_boundary_context`, because the
+    deterministic scoring reads the SAME states to decide whether a crossing
+    stands open. Two copies of "is this assumption refuted?" would eventually
+    disagree, and the report would argue with its own severities. Rendering stays
+    here: this module owns the words, that one owns the verdict.
+
+    Derived live rather than read from the row, because compose also runs on a
+    model that triage never touched (unit tests, `--no-triage` paths); the
+    persisted `assumption_verdict` is for consumers that cannot recompute it.
+    """
+    state, ids = boundary_assumption_state(row, ctx.yaml_data.get("threats") or [])
+    if state == "unconfirmed":
+        return f"**Unconfirmed** — {len(ids)} finding(s) in the components it covers, none linked here."
+    return _BOUNDARY_VERDICT_TEXT[state]
+
+
 def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     rows = _ordered_trust_boundaries(ctx)
     if not rows:
@@ -15502,18 +15583,21 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
     uniform_status = _uniform_boundary_value(shown, lambda row: str(row.get("resolution_status") or ""), "resolved")
     # The Kind column names `status` only while a status is actually shown there.
     headers = ["ID", "Boundary / crossing", "Exposure", "Kind / status" if uniform_status is None else "Kind"]
-    headers.append("What must hold")
+    headers.append(_BOUNDARY_ASSUMPTION_HEADER)
     if uniform_source is None:
         headers.append("Source")
     headers.append("Linked findings")
     lines = [
         "### Trust Boundaries",
         "",
-        "Canonical boundary crossings. **What must hold** is the assumption the crossing "
-        "depends on — if it stops being true, the boundary no longer holds. "
-        "Adjacency is context only; a linked finding denotes an evidence-backed control gap. "
-        "Only a validated link to confirmed internet ingress may raise effective severity; "
-        "raw risk remains unchanged.",
+        # The verdict vocabulary is defined once here, so every cell can stay a
+        # single short line instead of re-explaining itself on every row.
+        "Canonical boundary crossings. **Assumption & verdict** states the security condition "
+        "each crossing depends on, then whether this report still supports it: _refuted_ — a "
+        "linked finding proves a gap at the crossing; _unconfirmed_ — findings exist in the "
+        "components it covers, but none examined this crossing; _no finding contradicts it_. "
+        "A link may raise a finding's effective severity only where the crossing is confirmed "
+        "internet ingress; raw risk remains unchanged.",
         "",
         f"| {' | '.join(headers)} |",
         f"|{'---|' * len(headers)}",
@@ -15537,7 +15621,7 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         # over: say that no single control was identified rather than
         # reconstructing one from the boundary name.
         detail = f"Control: {_safe_boundary_text(mechanism, table=True)}" if mechanism else "Control: none identified"
-        covers = [str(cid) for cid in row.get("covers_components") or [] if cid and cid != row.get("to")]
+        covers = [cid for cid in _boundary_covered_components(row) if cid != str(row.get("to") or "")]
         if covers:
             detail += f" · Also covers: {_safe_boundary_text(', '.join(covers), table=True)}"
         boundary += f"<br>{detail}"
@@ -15550,9 +15634,10 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         kind = _safe_boundary_text(_boundary_kind_label(row), table=True)
         if uniform_status is None:
             kind += f"<br>**{_safe_boundary_text(row.get('resolution_status'), table=True)}**"
-        assumption = _safe_boundary_text(row.get("assumption"), table=True)
+        assumption = _safe_boundary_text(_normalize_boundary_arrows(row.get("assumption")), table=True)
         if uniform_confidence is None:
             assumption += f"<br>_{_safe_boundary_text(_boundary_confidence_text(row), table=True)}_"
+        assumption += f"<br>{_boundary_assumption_verdict(row, ctx)}"
         sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
         # Severity dot + id only, one per line. The column is the narrowest in
         # the table and used to receive the full finding title from the global
