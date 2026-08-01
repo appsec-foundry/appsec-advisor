@@ -10,6 +10,7 @@
 - [Threat model lifecycle](#threat-model-lifecycle)
 - [Example report: OWASP Juice Shop](#example-report-owasp-juice-shop)
 - [What it checks](#what-it-checks)
+- [Trust boundaries](#trust-boundaries)
 - [Usage examples](#usage-examples)
 - [Assessment depth & cost control](#assessment-depth--cost-control)
 - [Repo-local context](#repo-local-context)
@@ -144,6 +145,71 @@ Before running STRIDE, `appsec-advisor` performs a reconnaissance pass that coll
 
 > [!NOTE]
 > These checks provide context for STRIDE. They do not replace dedicated SAST, SCA, secrets, or IaC scanners.
+
+## Trust boundaries
+
+A trust boundary is a concrete crossing between two components — one enforcement
+point, not a zone. Crossings that share an enforcement point are consolidated
+into a single row, so the catalogue in §1 of the report lists controls rather
+than connections.
+
+### Assumption & verdict
+
+Each row states the security condition the crossing depends on, and whether the
+report still supports that condition. The verdict is derived from the findings,
+never authored:
+
+| Verdict | Meaning |
+|---|---|
+| **Refuted** | A linked finding proves a control gap at this crossing. |
+| **Unconfirmed** | Findings sit in the components the crossing covers, but none examined this crossing. |
+| *No finding contradicts it* | Nothing in the report speaks against the condition. |
+| *Not examined* | The row protects no component in this model. |
+
+A finding is linked only when it carries its own verified evidence for a gap at
+that crossing. Adjacency never creates a link, and an `Unconfirmed` verdict is
+therefore a statement about coverage, not a clean bill of health.
+
+### Why boundaries change the rating
+
+A crossing whose assumption is refuted stops nothing. Each finding's *breach
+distance* — how far it sits from an unauthenticated attacker — is therefore
+measured along the boundaries: a refuted crossing costs no hop, one that holds
+costs one, and the distance is the openness of the cheapest path from `external`
+to the finding's component. The rating carries that path with it:
+
+```text
+before   breach_distance: 2   reason: cwe_default:CWE-639
+after    breach_distance: 1   reason: boundary_path:external>tb-1[refuted]>tb-3[refuted]>sqlite-database
+```
+
+Two things follow, and they are the reason boundaries are worth their own stage:
+
+- **The rating is auditable.** A reader can check why a finding counts as
+  internet-reachable, and every crossing named is a row in the same table.
+- **It self-corrects.** Close a gap and that crossing's verdict flips on the next
+  run, re-rating everything behind it without anyone editing a severity.
+
+Breach distance feeds finding ranking and the Critical criteria, so this affects
+which findings surface first. The measurement can only shorten a distance, never
+extend one, and it leaves findings alone whose exploitation needs something the
+network cannot supply — repository access, or an observer position on an
+outbound call.
+
+Independently of the distance, a finding linked to a confirmed
+`external → component` ingress can have its effective severity raised by one
+band, up to `High`, and only when the finding cites that evidence itself.
+Per-CWE severity caps still apply, raw risk is unchanged, and every raise is
+recorded in the triage audit. No other kind of link — internal, outbound,
+inferred, or unresolved — affects severity.
+
+### Where the catalogue lives
+
+`threat-model.yaml` and `ask-threat-model` hold the complete catalogue, including
+each row's verdict and, on `Unconfirmed` rows, the findings that sit behind the
+crossing unlinked. The Markdown catalogue is capped for readability but always
+renders a crossing that a finding references. SARIF carries the linked crossing
+per result. Figure 1 is a summary, not the canonical boundary view.
 
 ## Usage examples
 
@@ -418,33 +484,16 @@ ignored when it does not satisfy the strict schema. A declaration-only change
 refreshes the canonical catalogue and report without dispatching STRIDE
 analyzers for otherwise unchanged components.
 
-Detected boundaries use evidence confidence `confirmed`, `inferred`, or
-`unknown`. Any resolved crossing may become an analyzer candidate; confidence
-only orders them. Figure 1 exposure and finding links additionally require
-`confirmed`, so an `inferred` crossing is analyzed but never linked. An
-unresolved or conflicted row remains visible for review but is never treated as
-an observed path or an ineffective control.
+Detected and declared boundaries carry evidence confidence `confirmed`,
+`inferred`, or `unknown`. Any resolved crossing may become an analyzer
+candidate; confidence only orders them. Finding links, Figure 1 exposure, and
+the severity rule additionally require `confirmed`, so an `inferred` crossing is
+analyzed but never linked. An unresolved or conflicted row stays visible for
+review and is reported as a coverage gap rather than silently dropped — it is
+never treated as an observed path or as an ineffective control.
 
-The report's **Trust Boundaries** catalogue distinguishes confirmed
-`internet-facing`, `outbound`, and `internal` crossings from `inferred` rows and
-rows that require review. It links a boundary to findings only when the finding
-has its own verified evidence for a gap at that crossing. Adjacency alone does
-not create a finding and does not affect severity.
-
-A finding linked to a confirmed `external → component` ingress can have its
-effective severity raised by one band, up to `High`, and only when the finding
-cites that evidence itself. The per-CWE severity caps still apply, raw risk is
-unchanged, and every raise is recorded in the triage audit. No other kind of
-link — internal, outbound, inferred, or unresolved — affects severity.
-
-`threat-model.yaml` and `ask-threat-model` hold the complete catalogue; the
-Markdown catalogue is capped for readability but always renders a crossing that
-a finding references. SARIF carries the linked crossing per result and the whole
-catalogue in the run properties. Figure 1 is a summary, not the canonical
-boundary view.
-
-Boundary finding links are best-effort enrichment, so a resolved crossing that
-reaches no component is reported as a coverage gap rather than silently dropped.
+See [Trust boundaries](#trust-boundaries) for what the catalogue states and how
+crossings affect finding ratings.
 
 ## Cross-repo context
 

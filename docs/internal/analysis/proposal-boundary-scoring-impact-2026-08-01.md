@@ -1,6 +1,8 @@
 # Proposal: give trust boundaries real impact on findings and severity
 
-**Status:** proposed — no decision taken; mechanisms 1–2 recommended as the starting pair.
+**Status:** mechanisms 1+2 SHIPPED (`be46c92d`, `7bd53752`). Mechanisms 3 and 4
+DEFERRED after measurement — see "Decisions after measurement" at the end, which
+records the numbers and the trigger that would reverse each call. Mechanism 5 untouched.
 **Date:** 2026-08-01
 **Basis:** juice-shop thorough run (79 threats, 5 boundaries) read against
 `triage_compute_ranking.py`, `merge_threats.py`, `prepare_trust_boundary_context.py`,
@@ -33,7 +35,13 @@ reasons, all observed on the juice-shop run:
 
 ## Mechanisms, in ROI order
 
-### 1. Deterministic link backfill (foundation, no LLM)
+### 1. Deterministic link backfill (foundation, no LLM) — SHIPPED, adapted
+
+> Implemented differently than sketched below: `validate_finding_boundary_refs`
+> requires an analyst rationale plus finding-owned evidence and strips anything
+> else, so derived adjacency can never live in `boundary_refs`. It persists on
+> the boundary row instead — `assumption_verdict` + `adjacent_finding_ids`.
+> The `link_basis` two-class idea below was therefore not built.
 
 Every finding has `component`; every boundary has `covers_components` + `kind`.
 Derive, in a `merge_threats` pass, which crossing every finding sits behind —
@@ -51,7 +59,12 @@ boundary_refs:
 Doctrine intact (adjacency never elevates), display and verdicts become complete.
 Zero scoring risk. Prerequisite for everything below.
 
-### 2. `breach_distance` from the boundary graph instead of CWE defaults ⭐
+### 2. `breach_distance` from the boundary graph instead of CWE defaults ⭐ — SHIPPED
+
+> Built as sketched, plus three exclusions found during verification: a heuristic
+> distance of 3 is never touched (it encodes a non-network prerequisite), the graph
+> may only lower, and findings whose only refs are egress rows are skipped.
+> Reason format shipped ASCII: `boundary_path:external>tb-1[refuted]>component`.
 
 The graph already exists (`external →(tb-1)→ express-backend →(tb-3)→ sqlite-database`).
 Each crossing gets a state from the assumption verdict:
@@ -75,7 +88,7 @@ would rest on architecture evidence, and the loop is self-correcting — fix the
 gaps, the verdict flips to holds, distance rises, the elevation falls away on the next
 scan. Keep the CWE default as fallback for components with no boundary path.
 
-### 3. Verdict-driven elevation — deliberately sequenced AFTER 1+2
+### 3. Verdict-driven elevation — DEFERRED after measurement (see end of document)
 
 Rule sketch: a *refuted* **ingress** boundary elevates findings in its
 `covers_components` whose attack presupposes passing that control; evidence is the
@@ -112,7 +125,7 @@ Two forms, decided after a measurement run of 2:
   the measurement shows 2 leaves cases behind (Medium/High behind refuted ingress
   where distance alone trips no critical criterion).
 
-### 4. New findings, deterministic: `boundary-gap` check
+### 4. New findings, deterministic: `boundary-gap` check — DEFERRED after measurement (see end of document)
 
 F-065 ("all five web3 routes omit `isAuthorized()`") exists only because STRIDE
 happened to look. The same result is mechanical — per `kind`, a check pattern
@@ -169,3 +182,92 @@ scoring code.
 3. Measurement run → decide mechanism 3 minimal vs full (decision point).
 4. Mechanism 4 (deterministic boundary-gap findings).
 5. Mechanism 5 (LLM falsification + chain candidates).
+
+---
+
+# Decisions after measurement (2026-08-01)
+
+Mechanisms 1+2 shipped. Both remaining candidates were then measured against the
+juice-shop run instead of estimated. Both are deferred, for different reasons and
+with different reversal triggers.
+
+## What 1+2 actually delivered
+
+Measured as an A/B on the real model (identical run, graph switched off vs on;
+the control pass reproduced the shipped report exactly, so the deltas are
+attributable):
+
+- 20 findings moved from a guessed `cwe_default:*` distance to an evidenced
+  `boundary_path:external>tb-1[refuted]>…` — auditable and self-correcting.
+- **36 of 50 findings changed rank**, and the visible top-5 changed:
+  `T-008, T-016, T-001, T-005, T-007` → `T-008, T-012, T-016, T-030, T-001`.
+  T-012 (IDOR on sequential integer PKs) rose 7→2 because tb-1 is refuted: with
+  auth bypassable via SQLi and JWT forgery, an IDOR behind it *is* reachable
+  unauthenticated. The old rating assumed an authentication the same report
+  dismantles elsewhere.
+- Zero effective-severity changes. The value is ordering and justification, not
+  severity — and nobody has validated the new order yet. First thing to inspect
+  on the next real run.
+- tb-2 now names the eight CI/CD findings behind it instead of rendering a blank.
+
+## Mechanism 3 — verdict-driven elevation: DEFERRED (evidence not met)
+
+Candidate set on juice-shop is **three** findings: the Mediums that fell to
+distance 1 behind refuted ingress (T-066 MD5 hashing, T-076 WebSocket DoS,
+T-077 web3 rate limiting). T-075 is excluded by the egress rule.
+
+**At least one of the three would be wrong.** T-066 is Medium because exploiting
+it needs the hashes, i.e. database access — a prerequisite unrelated to how
+reachable the component is. A refuted tb-1 does not make MD5 worse. That is
+exactly the fuzzy predicate ("attack presupposes the control") flagged when the
+mechanism was written, and the first real dataset produces a false positive in it.
+
+Building a doctrine exception ("component adjacency alone is never enough",
+`triage_compute_ranking.py`) on three candidates with ≥1 false positive is not
+justified. The minimal form is effectively already shipped: the reason string
+documents the causal crossing, and where distance should flip severity the
+`always_critical_cwes` gates already do it per CWE with explicit context.
+
+**Reversal trigger:** a real run shows a finding below High behind a refuted
+ingress that a human calls mis-rated *because* the boundary is open, and that
+has no prerequisite problem of the T-066 kind. The candidate set is a one-liner
+on any future model: findings with `effective_severity <= Medium` and a
+`boundary_path:…[refuted]` reason.
+
+## Mechanism 4 — deterministic `boundary-gap` findings: DEFERRED (work already done elsewhere)
+
+Stronger claim than for 3: two of the three legs are already covered, by other
+parts of the pipeline.
+
+| Leg | Measured yield on juice-shop |
+|---|---|
+| **Build** | `F-042` (config-scan) covers **14 of 16** workflow files, and the two it omits *do* carry a `permissions` block. Complete and precise already. Job-level granularity (29 jobs) would be *worse* — the file is the repair unit. |
+| **Process / DB** | 2 raw `sequelize.query` sites, both already covered by F-005 / F-013. Nothing to find. |
+| **Network ingress** | 19 unauthenticated mutating routes, 4 without any finding — and **0 of the 4 are real**: `POST /` (dataErasure) enforces auth *inside the handler*; `POST /api/Feedbacks` is anonymous by design with captcha, its forging path already covered by T-016; `POST /snippets/verdict` and `/snippets/fixes` are tutorial endpoints. |
+
+The check itself is trivial (set difference over two lists already in the model).
+All the work sits in the exclusion logic: detecting in-handler auth (9 route files
+in juice-shop do it), separating "deliberately open" from "forgotten", and
+deduplicating against config-scan. That is heuristic stacked on heuristic — the
+kind of code mechanism 2 was built to replace. A detector reporting 19 routes so
+that 4 get reviewed, none of which hold, spends trust instead of building it.
+
+**Caveat, stated plainly:** juice-shop is a poor test bed for this question. It is
+deliberately vulnerable, carries unusual challenge infrastructure (the snippet
+endpoints exist in no real application), and its finding density is high enough
+that nearly every route is already touched by a finding. A normal application —
+60 routes, 12 findings — could show a much wider gap between "checked" and
+"found". One repository is a sample of one.
+
+**Reversal trigger:** run the same two counts on the next repository —
+unauthenticated mutating routes with no finding reference, against total finding
+count. A normal-density repo showing a real gap there flips this decision;
+juice-shop alone does not.
+
+## Sequencing from here
+
+1. ~~Mechanism 1~~ — shipped.
+2. ~~Mechanism 2~~ — shipped.
+3. Watch the top-5 ordering on the next real run (the one unvalidated output of 2).
+4. Re-measure 3 and 4 on the next repository using the triggers above.
+5. Mechanism 5 unchanged: still the most expensive tier, still unevaluated.
