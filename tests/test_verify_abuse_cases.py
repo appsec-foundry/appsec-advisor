@@ -174,6 +174,75 @@ def test_is_unfinalized_preseed_any_decided_step_is_finalized():
     assert mod._is_unfinalized_preseed(v) is False
 
 
+# --- RC-5: announcement reason is not a conclusion (juice-shop 2026-08-01) ---
+#
+# The verifier contract requires the reason to be written BEFORE a step is
+# investigated, so "carries a reason" never proved the step was decided. The
+# real AC-T-002 file below passed every check, `is_finalized_verdict` returned
+# True, and a wholly-unverified Critical chain shipped as `? Inconclusive`.
+
+
+def _ac_t_002_2026_08_01() -> dict:
+    """Verbatim shape of the file that shipped unverified."""
+    return {
+        "abuse_case_id": "AC-T-002",
+        "step_verdicts": [
+            {
+                "step": 1,
+                "verdict": "inconclusive",
+                "matched_finding_id": "T-008",
+                "evidence": {"file": "routes/address.ts", "line": 11, "excerpt": ""},
+                "controls_found": [],
+                "reason": "pre-seed: investigating IDOR at routes/address.ts:11",
+            },
+            {
+                "step": 2,
+                "verdict": "inconclusive",
+                "matched_finding_id": "T-013",
+                "evidence": {"file": "routes/verify.ts", "line": 53, "excerpt": ""},
+                "controls_found": [],
+                "reason": "pre-seed: investigating mass assignment at routes/verify.ts:53",
+            },
+        ],
+    }
+
+
+def test_announcement_reason_is_an_untouched_preseed():
+    for step in _ac_t_002_2026_08_01()["step_verdicts"]:
+        assert mod._is_untouched_preseed_step(step) is True
+
+
+def test_announcement_reason_whole_file_is_not_finalized():
+    v = _ac_t_002_2026_08_01()
+    assert mod._is_unfinalized_preseed(v) is True
+    assert mod.is_finalized_verdict(v) is False
+
+
+def test_explicit_pending_state_beats_any_reason():
+    # The primary signal: a step that declares itself pending is untouched even
+    # when its reason reads like a conclusion.
+    step = {"step": 1, "verdict": "inconclusive", "state": "pending", "reason": "no ownership check found"}
+    assert mod._is_untouched_preseed_step(step) is True
+
+
+def test_decided_state_with_reason_stays_finalized():
+    v = {"step_verdicts": [{"step": 1, "verdict": "inconclusive", "state": "decided", "reason": "unresolvable in budget"}]}
+    assert mod._is_unfinalized_preseed(v) is False
+    assert mod.is_finalized_verdict(v) is True
+
+
+def test_announcement_reason_in_a_mixed_file_is_a_partial():
+    # One decided step + one announcement step → partially finalized, not done.
+    v = {
+        "step_verdicts": [
+            {"step": 1, "verdict": "confirmed", "state": "decided", "reason": "sink reached"},
+            {"step": 2, "verdict": "inconclusive", "state": "pending", "reason": "pre-seed: checking guard"},
+        ],
+    }
+    assert mod._unverified_preseed_steps(v) == [2]
+    assert mod.is_finalized_verdict(v) is False
+
+
 def test_is_unfinalized_preseed_empty_steps_is_not_preseed():
     # No steps at all → handled by the missing-candidate stub path, not here.
     assert mod._is_unfinalized_preseed({"step_verdicts": []}) is False

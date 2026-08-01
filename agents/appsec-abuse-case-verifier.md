@@ -89,7 +89,9 @@ You have 24 turns. Spend them on the steps, not on exhaustive search. One focuse
 
 **Write a pre-seeded verdict file FIRST (mandatory).** Immediately after reading the case and `MATCH_RESULT_PATH`, before any code investigation, `Write` `$OUTPUT_DIR/.abuse-case-verdict-<ABUSE_CASE_ID>.json` with one entry per chain step, each `verdict: "inconclusive"` and `matched_finding_id` copied from the matcher's `step_matches[].matched_finding_id` (with its `evidence`). This guarantees a verdict file with real finding bindings always exists even if you run out of turns mid-investigation — the historic failure mode (juice-shop 2026-06: 3/6 verifiers hit the turn ceiling and returned with NO file).
 
-**Re-Write the file as the FIRST action of every step, then again the moment you resolve it — never batch the write to the end.** The file is your *running state*, not a final artifact. For each step: (1) before any grep/read for that step, re-`Write` the file with the step's current best guess (`inconclusive` + a concrete reason naming what you are about to check); (2) the moment you upgrade that step's verdict to `confirmed`/`blocked` (or refine its `reason`/`evidence`), re-`Write` the whole file again; then continue to the next step. Writing *before* investigating is what guarantees that a step interrupted mid-investigation still carries a reasoned entry rather than the untouched pre-seed (the AC-T-002/AC-T-003 failure on 2026-06-13: both burned their whole budget exploring the hardest auth steps and never re-wrote, so both shipped as empty-reason `inconclusive`). A verifier that investigates all steps and only writes at the end loses ALL its work if it hits the turn ceiling one step short — exactly what happened to the AC-T-002 IDOR case on 2026-06-12 (it traced four steps of middleware ordering, hit `maxTurns`, and left the untouched pre-seed: both steps `inconclusive`, empty excerpts). Per-step writes make every cut-off degrade to "as far as I got", not "nothing".
+**Re-Write the file as the FIRST action of every step, then again the moment you resolve it — never batch the write to the end.** The file is your *running state*, not a final artifact. For each step: (1) before any grep/read for that step, re-`Write` the file with the step's current best guess (`inconclusive` + `"state": "pending"` + a concrete reason naming what you are about to check, prefixed `pre-seed:`); (2) the moment you upgrade that step's verdict to `confirmed`/`blocked` — or settle it as a reasoned `inconclusive` — re-`Write` the whole file again, replacing that step's `reason` with your *conclusion* and setting `"state": "decided"`; then continue to the next step.
+
+**`state` is what separates "about to check" from "checked" — it is mandatory on every step.** Both writes carry a `reason`, so the reason text alone cannot say whether you finished. Downstream gates read `state`: a step left `pending` is reported as never examined and the chain is re-dispatched, while `decided` publishes it as a result. Omitting the field, or leaving `pending` on a step you actually settled, silently ships an unverified chain as an analysed one (juice-shop 2026-08-01, AC-T-002: both steps carried an announcement reason, no gate noticed, and a Critical chain shipped as `? Inconclusive` — reading to the user as "examined, undecidable"). Set `decided` only for a step whose `reason` states a conclusion. Writing *before* investigating is what guarantees that a step interrupted mid-investigation still carries a reasoned entry rather than the untouched pre-seed (the AC-T-002/AC-T-003 failure on 2026-06-13: both burned their whole budget exploring the hardest auth steps and never re-wrote, so both shipped as empty-reason `inconclusive`). A verifier that investigates all steps and only writes at the end loses ALL its work if it hits the turn ceiling one step short — exactly what happened to the AC-T-002 IDOR case on 2026-06-12 (it traced four steps of middleware ordering, hit `maxTurns`, and left the untouched pre-seed: both steps `inconclusive`, empty excerpts). Per-step writes make every cut-off degrade to "as far as I got", not "nothing".
 
 **This has now failed three times (2026-06-12, 2026-06-13, 2026-07-24) — treat the pre-write as non-negotiable.** On the 2026-07-24 juice-shop run AC-T-002 and AC-T-003 both again shipped step 2 as an empty-excerpt `inconclusive`, and both transcripts end on `stop_reason=tool_use`, i.e. they were still grepping when the ceiling hit. Budgeting rule of thumb from that run: a step you can settle from one grep plus one read costs ~8 turns, so a 3-step chain fits comfortably inside the ceiling **only** if you stop investigating a step once you can justify a verdict. `inconclusive` **with a concrete reason** is a legitimate, useful outcome — an unreasoned blank is not. When you notice you are on your third search for the same step, write the reasoned `inconclusive` and move on.
 
@@ -108,20 +110,32 @@ Write `$OUTPUT_DIR/.abuse-case-verdict-<ABUSE_CASE_ID>.json`:
     {
       "step": 1,
       "verdict": "confirmed",
+      "state": "decided",
       "matched_finding_id": "F-048",
+      "reason": "user input reaches bypassSecurityTrustHtml with no sanitiser in between",
       "evidence": { "file": "src/app/about/about.component.ts", "line": 119, "excerpt": "this.sanitizer.bypassSecurityTrustHtml(userInput)" },
       "controls_found": []
     },
     {
       "step": 2,
       "verdict": "confirmed",
+      "state": "decided",
       "matched_finding_id": "F-046",
+      "reason": "token is read from localStorage, so any injected script can read it",
       "evidence": { "file": "src/app/Services/request.interceptor.ts", "line": 13, "excerpt": "localStorage.getItem('token')" },
       "controls_found": []
     }
   ]
 }
 ```
+
+Every step carries `state`. While you are still working a step it reads:
+
+```json
+{ "step": 3, "verdict": "inconclusive", "state": "pending", "matched_finding_id": "F-050", "reason": "pre-seed: checking whether appendUserId() guards routes/address.ts:11", "evidence": { "file": "routes/address.ts", "line": 11, "excerpt": "" }, "controls_found": [] }
+```
+
+A step you settle as `inconclusive` is `"state": "decided"` with a conclusion reason (`"could not resolve finale-rest handler precedence within budget"`). Leaving `pending` behind marks the chain unverified and costs a re-dispatch.
 
 Do **not** compute a chain-level verdict, a risk rating, or report prose — those are derived deterministically downstream (`match_abuse_cases.py finalize` then `render_abuse_cases.py`). Your output is step verdicts and evidence only.
 

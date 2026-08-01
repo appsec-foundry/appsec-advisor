@@ -27,22 +27,58 @@ from pathlib import Path
 _VALID_STEP_VERDICTS = {"confirmed", "blocked", "inconclusive"}
 
 
+# Reason prefixes the verifier contract reserves for an announcement write —
+# the "about to check X" reason written BEFORE investigating a step.
+_PRESEED_REASON_PREFIXES = ("pre-seed", "preseed")
+
+
+def _is_pending_step(step: dict) -> bool:
+    """True when a step declares itself not-yet-investigated.
+
+    Two independent signals, because one of them is LLM-compliance-dependent:
+
+    * ``state: "pending"`` — the explicit machine-readable marker the verifier
+      contract requires on an announcement write. Primary signal.
+    * a ``reason`` starting with ``pre-seed`` — the prose convention, kept as a
+      backstop for a verifier that follows the wording but omits the field.
+
+    A state field is what actually fixes this: the announcement reason is free
+    text, so no prefix list can be exhaustive. The prefix check only catches the
+    verifier that half-complied.
+    """
+    if (step.get("state") or "").strip().lower() == "pending":
+        return True
+    return (step.get("reason") or "").strip().lower().startswith(_PRESEED_REASON_PREFIXES)
+
+
 def _is_untouched_preseed_step(step: dict) -> bool:
     """True when a single step is an untouched write-first pre-seed.
 
-    The verifier pre-seeds every step ``inconclusive`` with an empty evidence
-    ``excerpt``, then MUST re-write the step with a concrete ``reason`` (and, for
-    a confirmed/blocked step, a real excerpt) as it investigates. A step that is
-    STILL ``inconclusive`` AND carries no non-empty ``reason`` AND no non-empty
-    ``excerpt`` is therefore one the agent never re-wrote — the turn ceiling hit
-    before it recorded its finding (AC-T-002 step 1 on the 2026-07-15 juice-shop
-    run: the verifier had determined ``address.ts:11`` was protected by
-    ``appendUserId()`` but never wrote the verdict). All three conditions must
-    hold so a legitimately-undecided step (which carries a reason) is never
-    mistaken for an untouched pre-seed.
+    The verifier pre-seeds every step ``inconclusive``, then MUST re-write the
+    step with a concrete ``reason`` (and, for a confirmed/blocked step, a real
+    excerpt) as it investigates.
+
+    Detecting that by "the reason is still empty" was wrong, and shipped an
+    unverified Critical chain as a reasoned result (juice-shop 2026-08-01,
+    AC-T-002: both steps carried ``reason: "pre-seed: investigating …"`` and an
+    empty excerpt, so every check here returned False, ``is_finalized_verdict``
+    returned True, and the chain rendered as ``? Inconclusive`` — indistinguishable
+    from "examined, could not decide"). The cause is a contract/detector
+    contradiction: ``agents/appsec-abuse-case-verifier.md`` deliberately requires a
+    reason to be written BEFORE the step is investigated ("a concrete reason naming
+    what you are about to check"), so a non-empty reason never proved the step was
+    decided. An announcement reason and a conclusion reason are not distinguishable
+    as free text — hence the explicit ``state`` marker checked by
+    :func:`_is_pending_step`.
+
+    A step is therefore untouched when it is still ``inconclusive`` AND either
+    declares itself pending, or carries neither a ``reason`` nor an ``excerpt``
+    (the legacy shape, kept so pre-``state`` verdict files still resolve).
     """
     if (step.get("verdict") or "") != "inconclusive":
         return False
+    if _is_pending_step(step):
+        return True
     if (step.get("reason") or "").strip():
         return False
     excerpt = ((step.get("evidence") or {}).get("excerpt") or "").strip()
@@ -59,15 +95,18 @@ def _is_unfinalized_preseed(verdict: dict) -> bool:
     AND carry no non-empty `reason` is one the agent never finalized (it came to
     rest / hit the turn ceiling before re-writing — AC-T-003 on the 2026-06-21
     juice-shop run). This is deterministically distinguishable from a genuine
-    inconclusive (which carries reasons) and must be surfaced as such rather than
-    silently folded into the same bucket.
+    inconclusive (which carries a *conclusion* reason) and must be surfaced as
+    such rather than silently folded into the same bucket.
+
+    Delegates per step to :func:`_is_untouched_preseed_step` so the announcement
+    marker introduced for the 2026-08-01 AC-T-002 case is honoured here too — the
+    previous "no step carries any reason" test read an announcement reason as
+    proof of a decision and reported a wholly-unverified file as finalized.
     """
     steps = verdict.get("step_verdicts") or []
     if not steps:
         return False
-    if any((s.get("verdict") or "") != "inconclusive" for s in steps):
-        return False
-    return not any((s.get("reason") or "").strip() for s in steps)
+    return all(_is_untouched_preseed_step(s) for s in steps)
 
 
 def _unverified_preseed_steps(verdict: dict) -> list:
@@ -180,8 +219,8 @@ def cmd_merge(args: argparse.Namespace) -> int:
         sys.stderr.write(
             "VERIFY: "
             + str(len(not_finalized))
-            + " verifier(s) did not finalize (untouched pre-seed, all steps "
-            + "inconclusive with no reason): "
+            + " verifier(s) did not finalize (untouched pre-seed — every step "
+            + "still pending, i.e. never examined): "
             + ", ".join(not_finalized)
             + " — re-run or raise the verifier turn budget to verify these chains end-to-end\n"
         )

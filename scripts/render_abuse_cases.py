@@ -182,21 +182,34 @@ def _step_status_icon(verdict: str, controls_found: list) -> str:
     return "?"  # inconclusive / unknown
 
 
+_PRESEED_REASON_PREFIXES = ("pre-seed", "preseed")
+
+
 def _step_unverified(sv: dict) -> bool:
     """True when a step verdict is an untouched write-first pre-seed.
 
     Canonical definition lives in ``verify_abuse_cases._is_untouched_preseed_step``
-    (kept in sync deliberately — both scripts are standalone): a step still
-    ``inconclusive`` with no ``reason`` AND no evidence ``excerpt`` is one the
-    verifier never re-wrote (it hit its turn ceiling before investigating this
-    step). Such a step is NOT a reasoned "couldn't decide" — it was never
-    examined — so a chain that carries one is only provisionally verified and the
-    render must say so rather than presenting the chain as fully checked
-    (2026-07-15 juice-shop AC-T-001: step 1 confirmed, steps 2-3 untouched).
+    (kept in sync deliberately — both scripts are standalone). A step is untouched
+    when it is still ``inconclusive`` AND either declares itself pending, or
+    carries neither a ``reason`` nor an evidence ``excerpt``. Such a step is NOT a
+    reasoned "couldn't decide" — it was never examined — so a chain that carries
+    one is only provisionally verified and the render must say so rather than
+    presenting the chain as fully checked (2026-07-15 juice-shop AC-T-001: step 1
+    confirmed, steps 2-3 untouched).
+
+    The pending marker matters because the verifier contract requires a reason to
+    be written BEFORE the step is investigated, so "carries a reason" never implied
+    "was decided" (2026-08-01 juice-shop AC-T-002 rendered a wholly-unverified
+    Critical chain as a plain ``? Inconclusive``).
     """
     if (sv.get("verdict") or "") != "inconclusive":
         return False
-    if (sv.get("reason") or "").strip():
+    if (sv.get("state") or "").strip().lower() == "pending":
+        return True
+    reason = (sv.get("reason") or "").strip().lower()
+    if reason.startswith(_PRESEED_REASON_PREFIXES):
+        return True
+    if reason:
         return False
     excerpt = ((sv.get("evidence") or {}).get("excerpt") or "").strip()
     return not excerpt
