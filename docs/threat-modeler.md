@@ -27,12 +27,10 @@ The Markdown and YAML outputs are generated from the same validated data.
 
 This skill generates a *technical* threat model. It starts from repository evidence — source files, manifests, and configuration — to identify components, trust boundaries, data flows, and STRIDE findings. It is intentionally distinct from *functional* or DFD-based threat modeling, which maps business processes, user workflows, and domain assets. Use the output to review whether the implemented technical architecture enforces the intended security design.
 
-Trust-boundary assessment has its own stage. Discovery first finalizes the
-component registry and persists data flows; a fresh focused analyst then
-classifies every deterministic crossing signal. A coverage gate blocks STRIDE
-when signals are missing, stale, or malformed, while explicitly unresolved
-crossings remain visible for review. This separation also gives boundary work
-its own retry, resume checkpoint, timing, and audit artifacts.
+Trust-boundary assessment runs as its own stage, after the component registry
+is final. A coverage gate blocks STRIDE when boundary signals are missing,
+stale, or malformed; crossings that stay unresolved are reported for review
+rather than dropped.
 
 **Default outputs**
 
@@ -253,7 +251,7 @@ These OWASP Juice Shop runs are all on plugin **v0.5.1-dev** (quick/thorough on 
 > [!NOTE]
 > Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
 
-**Cross-repo check (standard).** Cost tracks codebase size. [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app), an intentionally-vulnerable Spring Boot fixture, was assessed at `standard` on the same setup (table below). Its **$31.32** breaks down as $30.73 Sonnet 4.6 + $0.59 Haiku helpers, across 8 analyzed components in ~96 min wall-clock (pipeline only; full session was ~4h 46m including this doc update). The higher component count versus the prior v0.5.0-beta run ($24.65, 5 components) reflects the v0.5.1 criteria expansion that adds crown-jewel stores and additional internet-exposed surfaces to the standard selection set; the session cost also includes the v0.5.1-dev triage/merger upgrade to Sonnet 5. The bill is close to Juice Shop here despite the smaller repository because the component count converged — fewer source files but a similarly broad attack surface.
+**Cost tracks analyzed components, not repository size.** [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app), a much smaller intentionally-vulnerable Spring Boot fixture, came out close to Juice Shop at `standard` on the same setup — fewer source files, but a similarly broad attack surface and therefore a similar component count.
 
 | Repo | Stack | Mode | Plugin | Session | Threats | API cost |
 |---|---|---|---|---|---|---|
@@ -426,8 +424,6 @@ only orders them. Figure 1 exposure and finding links additionally require
 `confirmed`, so an `inferred` crossing is analyzed but never linked. An
 unresolved or conflicted row remains visible for review but is never treated as
 an observed path or an ineffective control.
-Legacy sidecars remain displayable during rerender, but they do not receive new
-IDs or feed semantic consumers; a fresh scan is required to normalize them.
 
 The report's **Trust Boundaries** catalogue distinguishes confirmed
 `internet-facing`, `outbound`, and `internal` crossings from `inferred` rows and
@@ -435,29 +431,20 @@ rows that require review. It links a boundary to findings only when the finding
 has its own verified evidence for a gap at that crossing. Adjacency alone does
 not create a finding and does not affect severity.
 
-A validated finding-level link to a resolved, confirmed `external → component`
-ingress can raise effective severity by one band, up to `High`. The link must
-cite evidence already owned by that finding. Multiple ingress links still
-produce only one step, evidence marked `refuted` or `ambiguous` never qualifies,
-and the normal per-CWE severity caps still apply. Internal, outbound, inferred,
-unresolved, conflicted, dangling, wrong-origin, and evidence-free links do not
-change severity. Raw risk remains unchanged and every effective-severity change
-is recorded in the triage audit.
-Canonical YAML and the query command contain the complete catalogue; the
-Markdown catalogue is capped for readability but always renders a crossing a
-finding references, so every finding card links to a live anchor. SARIF carries
-each linked crossing and its exposure in the result properties and the whole
-catalogue in the run properties; the Threat Dragon export folds a linked
-crossing into the threat description. Figure 1 remains a summary and is not the
-canonical boundary view.
+A finding linked to a confirmed `external → component` ingress can have its
+effective severity raised by one band, up to `High`, and only when the finding
+cites that evidence itself. The per-CWE severity caps still apply, raw risk is
+unchanged, and every raise is recorded in the triage audit. No other kind of
+link — internal, outbound, inferred, or unresolved — affects severity.
 
-Boundary finding links are best-effort enrichment. Each component receives at
-most 2/4/6 candidate crossings for quick/standard/thorough; quick additionally
-keeps only a component's primary crossings. A resolved crossing that reaches no
-component is reported as a coverage gap. Candidates are read with the existing
-parallel context batch and never add an analyzer turn or expand the incremental
-dispatch set. A source-clean component may therefore retain its prior links
-until a later source-triggered, full, or rebuild run.
+`threat-model.yaml` and `ask-threat-model` hold the complete catalogue; the
+Markdown catalogue is capped for readability but always renders a crossing that
+a finding references. SARIF carries the linked crossing per result and the whole
+catalogue in the run properties. Figure 1 is a summary, not the canonical
+boundary view.
+
+Boundary finding links are best-effort enrichment, so a resolved crossing that
+reaches no component is reported as a coverage gap rather than silently dropped.
 
 ## Cross-repo context
 
