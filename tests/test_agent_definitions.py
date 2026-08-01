@@ -713,3 +713,34 @@ class TestUntrustedContentGuard:
             f"untrusted-content guard. Add the boundary block (see "
             f"appsec-recon-scanner.md or appsec-threat-analyst.md). PI-1/PI-2."
         )
+
+
+def test_stride_template_never_offers_null_for_a_string_only_field():
+    """The analyzer copies its JSON template verbatim, so the template may not
+    offer a value the schema rejects.
+
+    `evidence.file` is typed as a bare `string` in stride.schema.yaml — no
+    `"null"` member, unlike its `evidence` parent and its `line` sibling. The
+    template nonetheless read `"<path relative to REPO_ROOT or null>"`, and two
+    of eight component analysts did exactly that. A single such threat hard-fails
+    the WHOLE component fragment, so each cost a full re-dispatch (juice-shop
+    2026-08-01). Prose drifts; this pins the two sides together.
+    """
+    schema = yaml.safe_load((AGENTS_DIR.parent / "schemas" / "stride.schema.yaml").read_text(encoding="utf-8"))
+    evidence = schema["$defs"]["normal"]["properties"]["threats"]["items"]["properties"]["evidence"]
+    file_type = evidence["properties"]["file"]["type"]
+
+    # Read the schema rather than hard-coding "string": should `file` ever gain a
+    # "null" member deliberately, this test relaxes with it instead of failing.
+    if "null" in file_type:
+        pytest.skip("evidence.file now accepts null — the template may offer it again")
+
+    text = (AGENTS_DIR / "appsec-stride-analyzer.md").read_text(encoding="utf-8")
+    line = next((ln for ln in text.splitlines() if '"file":' in ln and "REPO_ROOT" in ln), None)
+    assert line is not None, "evidence.file template line not found in appsec-stride-analyzer.md"
+    assert "or null" not in line, (
+        "the evidence.file template offers `null`, which stride.schema.yaml rejects "
+        "(type: string). Say `never null` and point the author at `\"evidence\": null` "
+        "for the whole object."
+    )
+    assert "never null" in line.lower(), "the template must state that evidence.file is never null"

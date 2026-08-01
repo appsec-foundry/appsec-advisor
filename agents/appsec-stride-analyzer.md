@@ -612,7 +612,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
       "title": "<see shared/finding-title-contract.md — canonical form: <Weakness class> (<relative_file_path[:line]>), MAX 80 chars>",
       "affected_parameter": "<optional — when meaningful: 'email', 'q', 'id', 'X-Forwarded-For'. Do NOT cram into title.>",
       "scenario": "<longer prose description of the attack — used in §8 detail body, not in table rows>",
-      "attack_steps": ["<REQUIRED for Critical, optional otherwise — see 'Authoring attack_steps' below. 2-4 attacker-voice steps that §3 renders as the numbered walkthrough. NOT a summary of `scenario`.>"],
+      "attack_steps": ["<REQUIRED for Critical, optional otherwise — see 'Authoring attack_steps' below. 2-4 attacker-voice steps, EACH ONE SENTENCE OF ≤200 CHARS, that §3 renders as the numbered walkthrough. NOT a summary of `scenario`. The schema hard-fails the whole component fragment past 240 chars or 5 steps; author to 200/4 so a long step costs a rewrite, not a re-dispatch.>"],
       "evidence_summary": "<RECOMMENDED — one-sentence structural assertion about the code that the snippet below visually proves. Distinct from scenario (attack narrative) and impact_description (consequence). Reference code with SHORT inline identifiers only (a file:line, function or variable name); do NOT paste a multi-statement expression or arrow function inline — that code belongs in the fenced snippet below, and embedding it half-quoted renders as broken partial formatting.>",
       "impact_description": "<RECOMMENDED — one-sentence concrete consequence. Distinct from scenario and evidence_summary.>",
       "likelihood": "<High | Medium | Low>",
@@ -634,7 +634,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
         "blueprint": "<optional — [BP-ID](section-url) — Section Title, from blueprints[] lookup>"
       },
       "evidence": {
-        "file": "<path relative to REPO_ROOT or null>",
+        "file": "<path relative to REPO_ROOT — a STRING, never null. No citable file? Emit `\"evidence\": null` for the whole object instead; `{\"file\": null}` is schema-invalid and hard-fails this component's entire fragment.>",
         "line": <number or null>
       },
       "boundary_refs": [
