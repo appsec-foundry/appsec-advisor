@@ -248,8 +248,8 @@ def _append_import(instructions: Path, import_path: str, note: str, *, dry_run: 
     return f"created {instructions} with {line}"
 
 
-def find_existing_carrier(repo: Path, home: Path, config: dict, scope: str) -> Path | None:
-    """An on-disk file already carrying this baseline, which the wiring can import.
+def find_existing_carrier(repo: Path, home: Path, config: dict, scope: str) -> tuple[Path, str] | None:
+    """An on-disk file already carrying this baseline, and the id it carries.
 
     A repository frequently already has the rules — in ``AGENTS.md`` for Codex and
     Cursor, in ``.github/copilot-instructions.md`` for Copilot, or as a baseline
@@ -257,6 +257,16 @@ def find_existing_carrier(repo: Path, home: Path, config: dict, scope: str) -> P
     of those creates exactly the drift the whole design avoids: two files with
     the same rules, diverging from the day one of them is edited. So the import
     points at what is already there.
+
+    A *newer* version of the same baseline qualifies as much as the configured
+    one. The baseline is published on its own schedule, so a repository ahead of
+    this build is the normal state — and it is the case reuse matters most in:
+    passing it over would install the older bundled text beside newer rules and
+    leave two files to keep current. Only an older version or a foreign baseline
+    stays out, because neither is the text this build is wiring up.
+
+    The carried id is returned with the path: naming the configured id for a file
+    that carries a later one would hide the very drift this module reports on.
 
     Only files inside the repository qualify, and only for the ``project`` scope,
     which is the one that wires an import. ``user`` would import a repository
@@ -268,7 +278,8 @@ def find_existing_carrier(repo: Path, home: Path, config: dict, scope: str) -> P
         return None
     result = bc.check(repo=repo, home=home, config=config)
     for item in result.get("present_unloaded") or []:
-        if not bc.is_match(item["id"], config["id"]):
+        found = item["id"]
+        if not (bc.is_match(found, config["id"]) or bc.is_newer(found, config["id"])):
             continue
         path = Path(item["file"])
         # Both sides resolved, or the comparison is between a symlinked spelling
@@ -277,7 +288,7 @@ def find_existing_carrier(repo: Path, home: Path, config: dict, scope: str) -> P
         # and lose the reuse.
         if _relative_to_repo(path, repo) is None:
             continue
-        return path
+        return path, found
     return None
 
 
@@ -310,17 +321,18 @@ def install(
     target: Path = where["target"]
     steps: list[str] = []
 
-    carrier = find_existing_carrier(repo, home, config, scope) if reuse and not force else None
-    if carrier is not None:
+    found = find_existing_carrier(repo, home, config, scope) if reuse and not force else None
+    if found is not None:
         # Nothing is fetched or written: the text is already here, it just was
         # not reachable from an instruction file Claude Code reads. Replacing it
         # would overwrite whatever the team has — possibly a newer text than the
         # bundled fallback — to fix a problem that is only about the wiring.
+        carrier, carrier_id = found
         if carrier == target:
-            steps.append(f"already present: {target} carries {config['id']}, left untouched")
+            steps.append(f"already present: {target} carries {carrier_id}, left untouched")
             steps.append("only the import was missing; --refresh replaces the text with the configured source")
         else:
-            steps.append(f"reusing {carrier} — it already carries {config['id']}")
+            steps.append(f"reusing {carrier} — it already carries {carrier_id}")
             steps.append("nothing written; only the import is added, so there stays one file to keep current")
             target = carrier
             if where["instructions"] is not None:

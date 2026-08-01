@@ -232,6 +232,37 @@ def test_a_carrier_with_a_different_baseline_is_not_reused(repo: Path, home: Pat
     assert "@secure-coding-baseline.md" in (repo / "CLAUDE.md").read_text(encoding="utf-8")
 
 
+def test_a_newer_carrier_is_wired_up_rather_than_undercut(repo: Path, home: Path, config: dict):
+    """Rules ahead of this build are the case reuse matters most in.
+
+    Installing beside them would put the older bundled text in context next to
+    newer rules and leave two files to keep current — a downgrade dressed up as
+    an install.
+    """
+    theirs = BASELINE_TEXT.replace("test-1.0", "test-2.0")
+    (repo / "AGENTS.md").write_text(theirs, encoding="utf-8")
+
+    steps = ib.install("project", repo, home, config, offline=True)
+
+    assert not (repo / "secure-coding-baseline.md").exists(), "no second copy"
+    assert (repo / "AGENTS.md").read_text(encoding="utf-8") == theirs
+    assert "@AGENTS.md" in (repo / "CLAUDE.md").read_text(encoding="utf-8")
+    assert bc.check(repo=repo, home=home, config=config)["status"] == "newer"
+    # The step names what the file carries, not what this build configures:
+    # claiming test-1.0 here would hide the drift the check exists to report.
+    assert any("test-2.0" in step for step in steps)
+    assert not any("test-1.0" in step for step in steps)
+
+
+def test_an_older_carrier_is_not_reused(repo: Path, home: Path, config: dict):
+    """Lagging rules are what an install replaces, not what it adopts."""
+    (repo / "AGENTS.md").write_text(BASELINE_TEXT.replace("test-1.0", "test-0.9"), encoding="utf-8")
+    ib.install("project", repo, home, config, offline=True)
+    assert (repo / "secure-coding-baseline.md").is_file()
+    assert "@secure-coding-baseline.md" in (repo / "CLAUDE.md").read_text(encoding="utf-8")
+    assert loaded(repo, home, config)
+
+
 def test_reuse_works_through_a_symlinked_repository_path(tmp_path: Path, home: Path, config: dict):
     """On macOS /tmp is a link to /private/tmp; a repo reached through any
     symlink must not silently lose the reuse."""
