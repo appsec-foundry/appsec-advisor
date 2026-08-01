@@ -112,6 +112,21 @@ fix:  ## Auto-repair the mechanical gate failures (ruff lint + format), then lis
 	@echo "Re-run 'make check' (or 'make release-check') to see what remains."
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Vendored content
+#
+# `baseline-sync` re-vendors data/baselines/ from the published baseline. It
+# fetches over the network, so it is a maintainer command and never part of a
+# gate: `check` and `release-check` stay deterministic and offline, and a
+# release must not fail because a host is down.
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: baseline-sync
+baseline-sync:  ## Re-vendor data/baselines/ from the published baseline: make baseline-sync [DRY=1] [ACCEPT_ID=aisec-0.2]
+	@$(PYTHON) scripts/sync_baseline.py \
+		$(if $(DRY),--dry-run,) \
+		$(if $(ACCEPT_ID),--accept-id "$(ACCEPT_ID)",)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Release gates
 #
 # `check`         — the continuous gate. Runs on every dev/main push & PR in CI.

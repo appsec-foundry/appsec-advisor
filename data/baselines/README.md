@@ -17,6 +17,11 @@ Because the fallback is pinned at whatever the plugin release shipped, it can
 be older than the URL. `--refresh` re-fetches an installed copy once the network
 is back.
 
+Re-vendor the file here with `make baseline-sync`. It stops instead of writing
+when the published baseline id has changed, because that id also stands in
+`config.json` and in the table below; `make baseline-sync ACCEPT_ID=<new id>`
+moves all three together.
+
 | File | Baseline id | Source |
 |---|---|---|
 | `secure-coding-baseline.md` | `aisec-0.1` | <https://github.com/matthiasrohr/ai-secure-coding-baseline> |
