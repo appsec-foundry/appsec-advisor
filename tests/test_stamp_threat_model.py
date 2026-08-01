@@ -23,6 +23,7 @@ def _seed_model(d: Path, *, figure2: bool = True, optional_outputs: bool = False
         (d / "threat-model.pdf").write_bytes(b"%PDF\n")
         (d / "threat-model.html").write_text("<html></html>\n", encoding="utf-8")
         (d / "threat-model.sarif.json").write_text('{"version":"2.1.0"}\n', encoding="utf-8")
+        (d / "threat-model.threatdragon.json").write_text('{"version":"2.0"}\n', encoding="utf-8")
         (d / "pentest-tasks.yaml").write_text("meta: {}\ntasks: []\n", encoding="utf-8")
 
 
@@ -83,6 +84,7 @@ def test_optional_deliverables_are_stamped(tmp_path):
     assert (tmp_path / "threat-model-bundle.pdf").is_file()
     assert (tmp_path / "threat-model-bundle.html").is_file()
     assert (tmp_path / "threat-model-bundle.sarif.json").is_file()
+    assert (tmp_path / "threat-model-bundle.threatdragon.json").is_file()
 
 
 def test_pentest_tasks_is_stamped_with_own_prefix(tmp_path):

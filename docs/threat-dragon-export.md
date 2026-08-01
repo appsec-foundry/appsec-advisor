@@ -10,6 +10,14 @@ via **Diagram → Import**.
 
 ## Running it
 
+During a scan, so the file is written alongside the report:
+
+```
+/appsec-advisor:create-threat-model --threatdragon
+```
+
+Or from an existing assessment, without re-scanning:
+
 ```
 /appsec-advisor:export-threat-model --formats threatdragon
 ```

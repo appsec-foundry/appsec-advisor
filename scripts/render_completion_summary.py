@@ -34,6 +34,7 @@ Flags:
     --write-yaml / --no-write-yaml
     --write-sarif / --no-write-sarif
     --write-pentest-tasks / --no-write-pentest-tasks
+    --write-threatdragon / --no-write-threatdragon
     --check-requirements / --no-check-requirements
     --architect-review / --no-architect-review
     --reasoning-model {opus-cheap,sonnet,opus,sonnet-economy,haiku-economy}
@@ -1165,6 +1166,9 @@ def render_files(output_dir: Path, cfg: dict) -> list[str]:
     sarif = output_dir / "threat-model.sarif.json"
     if cfg.get("write_sarif") and sarif.is_file():
         lines.append(f"  SARIF      : {sarif}")
+    td = output_dir / "threat-model.threatdragon.json"
+    if cfg.get("write_threatdragon") and td.is_file():
+        lines.append(f"  Threat Dragon: {td} (alpha)")
     arch_md = output_dir / ".architect-review.md"
     if cfg.get("architect_review") and arch_md.is_file():
         lines.append(f"  Architect  : {arch_md} (advisory)")
@@ -1926,6 +1930,7 @@ def main(argv: list[str] | None = None) -> int:
     _bool_pair(p, "write-yaml", "write_yaml", True)
     _bool_pair(p, "write-sarif", "write_sarif", False)
     _bool_pair(p, "write-pentest-tasks", "write_pentest_tasks", False)
+    _bool_pair(p, "write-threatdragon", "write_threatdragon", False)
     _bool_pair(p, "check-requirements", "check_requirements", False)
     _bool_pair(p, "architect-review", "architect_review", False)
     p.add_argument(
@@ -1993,6 +1998,7 @@ def main(argv: list[str] | None = None) -> int:
         "write_yaml": args.write_yaml,
         "write_sarif": args.write_sarif,
         "write_pentest_tasks": args.write_pentest_tasks,
+        "write_threatdragon": args.write_threatdragon,
         "check_requirements": args.check_requirements,
         "architect_review": args.architect_review,
         "plugin_dev": args.plugin_dev,

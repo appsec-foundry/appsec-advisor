@@ -34,6 +34,7 @@ _STATIC_BASENAMES = [
     "threat-model.pdf",
     "threat-model.html",
     "threat-model.sarif.json",
+    "threat-model.threatdragon.json",
     "pentest-tasks.yaml",
 ]
 

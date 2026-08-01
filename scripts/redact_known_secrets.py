@@ -41,6 +41,7 @@ _ARTIFACT_GLOBS = (
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.sarif.json",
+    "threat-model.threatdragon.json",
     "threat-model.html",
     "pentest-tasks.yaml",
     ".threats-merged.json",
@@ -129,7 +130,8 @@ def _residual_scan(output_dir: Path) -> list[str]:
     """Final pattern scan over the published artifacts — confirms the redaction
     left nothing the unmasked-secrets gate would still catch."""
     issues: list[str] = []
-    for rel in ("threat-model.md", "threat-model.yaml", "threat-model.sarif.json", "threat-model.html"):
+    for rel in ("threat-model.md", "threat-model.yaml", "threat-model.sarif.json",
+                "threat-model.threatdragon.json", "threat-model.html"):
         p = output_dir / rel
         if not p.is_file():
             continue

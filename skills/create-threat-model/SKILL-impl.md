@@ -729,6 +729,7 @@ Parse the user's arguments for the following flags:
 | `--pentest-tasks` | `WRITE_PENTEST_TASKS=true` | `false` |
 | `--pentest-format <generic\|strix>` | `PENTEST_FORMAT=<value>` | `generic` |
 | `--pentest-target <url>` | `PENTEST_TARGET_URL=<url>` (base URL injected into meta.target) | (none) |
+| `--threatdragon` | `WRITE_THREATDRAGON=true` (calls `scripts/export_threat_dragon.py` in Phase 11 — see Threat Dragon Export in `agents/phases/phase-group-finalization.md`). **ALPHA, opt-in only** — never implied by a depth or preset. | `false` |
 | `--pdf` | `WRITE_PDF=true` (calls `scripts/export_pdf.py` after all stages — see PDF Export below) | `false` |
 | `--html` | `WRITE_HTML=true` (calls `scripts/export_html.py` after all stages — see HTML Export below) | `false` |
 | `--embed-figures` | `embed_figures=true` persisted to `.skill-config.json` by `resolve_config.py`; `compose_threat_model.py` reads it and inlines Figure 1 as a base64 `data:` URI in `threat-model.md` (figure1.svg still written). No flag threading needed — every compose call honours the config file. | `false` |
@@ -868,7 +869,7 @@ The JSON contains, among others:
 | ``reasoning_model`` / ``reasoning_label`` | str | ``"opus-cheap"`` |
 | ``stride_model`` / ``triage_model`` / ``merger_model`` | str | all Opus at the thorough default (``opus`` tier); all ``"claude-sonnet-4-6"`` at ``quick``/``standard`` (``sonnet-economy``) and any per-stage `--*-model` override |
 | ``architect_review`` / ``architect_model`` / ``architect_label`` | bool / str | |
-| ``write_yaml`` / ``write_sarif`` / ``write_pentest_tasks`` | bool | |
+| ``write_yaml`` / ``write_sarif`` / ``write_pentest_tasks`` / ``write_threatdragon`` | bool | |
 | ``check_requirements`` / ``requirements_url_override`` / ``requirements_label`` | bool / str | |
 | ``repo_root`` / ``output_dir`` / ``output_outside_repo`` | str / bool | |
 | ``baseline_state`` | str | ``"empty"`` \| ``"legacy"`` \| ``"structured"`` |
@@ -962,6 +963,7 @@ STRIDE_PROFILE_LABEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys; prin
 WRITE_SARIF=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_sarif',False)).lower())")
 WRITE_PDF=$(echo "$RESOLVED_JSON"   | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_pdf',False)).lower())")
 WRITE_HTML=$(echo "$RESOLVED_JSON"  | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_html',False)).lower())")
+WRITE_THREATDRAGON=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_threatdragon',False)).lower())")
 # Depth-aware Re-Render Loop budget (Stage 3 QA + Stage 4 architect). quick/standard
 # = 1 (single quick-fix pass, then fail-closed exit 2); thorough = 3. Default 3 if
 # the key is absent (older .skill-config.json). Source of truth: resolve_config.DEPTH_PARAMS.
@@ -1445,6 +1447,13 @@ case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
       printf '\n  No source changes — reusing existing threat model; requested HTML is missing, generating it now.\n' >&2
       python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" \
         --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.html" \
+        2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+    fi
+    if [ "${WRITE_THREATDRAGON:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.threatdragon.json" ]; then
+      printf '\n  No source changes — reusing existing threat model; requested Threat Dragon export is missing, generating it now.\n' >&2
+      python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_threat_dragon.py" \
+        --threat-model "$OUTPUT_DIR/threat-model.yaml" \
+        --output "$OUTPUT_DIR/threat-model.threatdragon.json" \
         2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
     fi
     if [ "${WRITE_SARIF:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.sarif.json" ]; then
@@ -3331,6 +3340,7 @@ Pass the following variables to the agent prompt:
 - `WRITE_PENTEST_TASKS=<true|false>`
 - `PENTEST_FORMAT=<generic|strix>` (only if `WRITE_PENTEST_TASKS=true`)
 - `PENTEST_TARGET_URL=<url>` (only if `--pentest-target` was provided)
+- `WRITE_THREATDRAGON=<true|false>`
 - `CHECK_REQUIREMENTS=<true|false>`
 - `REQUIREMENTS_URL_OVERRIDE=<url>` (only if `--requirements <url>` was provided)
 - `INCREMENTAL=<true|false>`
@@ -4346,6 +4356,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
     $( [ "$WRITE_YAML"         = "true"  ] && echo "--write-yaml"         || echo "--no-write-yaml" ) \
     $( [ "$WRITE_SARIF"        = "true"  ] && echo "--write-sarif"        || echo "--no-write-sarif" ) \
     $( [ "$WRITE_PENTEST_TASKS" = "true"  ] && echo "--write-pentest-tasks" || echo "--no-write-pentest-tasks" ) \
+    $( [ "$WRITE_THREATDRAGON" = "true"  ] && echo "--write-threatdragon" || echo "--no-write-threatdragon" ) \
     $( [ "$CHECK_REQUIREMENTS" = "true"  ] && echo "--check-requirements" || echo "--no-check-requirements" ) \
     $( [ "$ARCHITECT_REVIEW"   = "true"  ] && echo "--architect-review"   || echo "--no-architect-review" ) \
     $( [ "${APPSEC_PLUGIN_DEV:-}" = "1"  ] && echo "--plugin-dev" ) \
@@ -4400,6 +4411,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
     $( [ "$WRITE_YAML"          = "true" ] && echo "--write-yaml"          || echo "--no-write-yaml" ) \
     $( [ "$WRITE_SARIF"         = "true" ] && echo "--write-sarif"         || echo "--no-write-sarif" ) \
     $( [ "$WRITE_PENTEST_TASKS" = "true" ] && echo "--write-pentest-tasks" || echo "--no-write-pentest-tasks" ) \
+    $( [ "$WRITE_THREATDRAGON"  = "true" ] && echo "--write-threatdragon"  || echo "--no-write-threatdragon" ) \
     $( [ "$CHECK_REQUIREMENTS"  = "true" ] && echo "--check-requirements"  || echo "--no-check-requirements" ) \
     $( [ "$ARCHITECT_REVIEW"    = "true" ] && echo "--architect-review"    || echo "--no-architect-review" ) \
     $( [ "${APPSEC_PLUGIN_DEV:-}" = "1"  ] && echo "--plugin-dev" ) \

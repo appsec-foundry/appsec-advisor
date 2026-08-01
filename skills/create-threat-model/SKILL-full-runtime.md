@@ -84,6 +84,7 @@ WRITE_HTML = write_html
 WRITE_PENTEST_TASKS = write_pentest_tasks
 PENTEST_FORMAT = pentest_format
 PENTEST_TARGET_URL = pentest_target
+WRITE_THREATDRAGON = write_threatdragon
 CHECK_REQUIREMENTS = check_requirements
 REQUIREMENTS_URL_OVERRIDE = requirements_url_override
 INCREMENTAL = incremental

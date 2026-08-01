@@ -264,6 +264,7 @@ NEVER = {
     "threat-model.sarif.json",
     "threat-model.pdf",
     "threat-model.html",
+    "threat-model.threatdragon.json",
     "pentest-tasks.yaml",
     "analysis-model.md",
 }

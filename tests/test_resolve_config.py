@@ -1462,6 +1462,38 @@ class TestEmbedFiguresFlag:
         assert ns.embed_figures is False
 
 
+class TestThreatDragonFlag:
+    """`--threatdragon` must be accepted by the validator parser, default to
+    False, and reach cfg as `write_threatdragon`. It is ALPHA and opt-in — no
+    depth may turn it on implicitly."""
+
+    def test_flag_is_accepted(self):
+        ns = rc.build_parser().parse_args(["--threatdragon"])
+        assert ns.threatdragon is True
+
+    def test_flag_defaults_false(self):
+        ns = rc.build_parser().parse_args([])
+        assert ns.threatdragon is False
+
+    def test_not_enabled_by_any_depth(self, tmp_path):
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        for depth in ("quick", "standard", "thorough"):
+            cfg = rc.resolve([*base, "--assessment-depth", depth], REPO_ROOT)
+            assert cfg["write_threatdragon"] is False, depth
+
+    def test_flag_reaches_cfg(self, tmp_path):
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out")]
+        cfg = rc.resolve([*base, "--threatdragon"], REPO_ROOT)
+        assert cfg["write_threatdragon"] is True
+
+    def test_shown_in_outputs_summary(self):
+        out = rc._format_outputs_summary({"write_yaml": True, "write_threatdragon": True})
+        assert "threat-dragon (alpha)" in out
+        assert "+ threat-dragon (alpha)" in rc._format_outputs(
+            {"write_yaml": True, "write_threatdragon": True}
+        )
+
+
 class TestBrandingFlags:
     """Cover-branding flags (--report-title / --contact-name / --contact-email
     / --logo) flow to cfg, absolutise a relative local logo, and compose with

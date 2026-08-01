@@ -18,6 +18,15 @@ OUTPUT
   --pentest-tasks              Also write pentest-tasks.yaml endpoint catalog + test plan
   --pentest-format <fmt>       Format for pentest-tasks: generic (default) | strix
   --pentest-target <url>       Base URL injected into pentest-tasks meta.target and Strix tasks
+  --threatdragon               ALPHA. Also write threat-model.threatdragon.json
+                               (OWASP Threat Dragon v2; opens in Threat Dragon
+                               and imports into OWASP ThreatAtlas). Opt-in only —
+                               never implied by a depth or preset. Lossy: CVSS,
+                               CWE, evidence locations and mitigation priority
+                               are folded into each threat's description.
+                               See docs/threat-dragon-export.md and
+                               /appsec-advisor:export-threat-model --formats threatdragon
+                               for the standalone form
   --pdf                        Also export threat-model.pdf
                                (requires pandoc + weasyprint; mmdc optional)
                                See /appsec-advisor:export-threat-model --formats pdf
@@ -44,7 +53,8 @@ OUTPUT
   --scan-manifest              Write a list of every file scanned to .scan-manifest.txt
   --slug [<value>]             Also emit a copy-ready, postfix-stamped set
                                (threat-model-<slug>.md / .yaml / .figure*.svg /
-                               .sarif.json / .pdf / .html / pentest-tasks-<slug>.yaml)
+                               .sarif.json / .threatdragon.json / .pdf / .html /
+                               pentest-tasks-<slug>.yaml)
                                so several models share one directory without
                                overwriting. Bare --slug picks a random postfix;
                                --slug <value> uses it (e.g. payments-api-quick →

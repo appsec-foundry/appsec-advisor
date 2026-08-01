@@ -572,6 +572,7 @@ All files are written to `$OUTPUT_DIR` (default: `<repo>/docs/security/`):
 | `threat-model.md` | Always | Human-readable threat model report |
 | `threat-model.yaml` | Always (unless `--no-yaml`) | Machine-readable export; baseline for incremental runs |
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1.0 for code scanning upload |
+| `threat-model.threatdragon.json` | `--threatdragon` | **Alpha.** OWASP Threat Dragon v2 JSON — see [Threat Dragon export](threat-dragon-export.md) |
 | `appsec-requirements-report.md` / `.pdf` / `.json` | `--audit-requirements --save-report` | Requirements compliance report |
 | `.agent-run.log` | Always | Progress and errors |
 | `.hook-events.log` | Always | Token and cost events |
@@ -607,6 +608,7 @@ This table lists the flags `run-headless.sh` accepts.
 | `--yaml` | (no-op — YAML is written by default) |
 | `--no-yaml` | Suppress `threat-model.yaml` — **breaks incremental mode** |
 | `--sarif` | Also write `threat-model.sarif.json` (SARIF v2.1.0) |
+| `--threatdragon` | Also write `threat-model.threatdragon.json` (OWASP Threat Dragon v2 — **alpha**, opt-in only) |
 | `--json` | Echo the raw `claude -p` result object on stdout (useful for piping into CI steps). The token and cost breakdown is printed either way — see [B2](#b2-cost--duration-planning) |
 | `--verbose` | Stream real-time hook event log on stderr |
 

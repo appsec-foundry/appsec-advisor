@@ -37,6 +37,7 @@ WHAT IS PRESERVED
   threat-model.md           (your completed threat model)
   threat-model.yaml         (canonical data)
   threat-model.sarif.json   (if present)
+  threat-model.threatdragon.json  (if present)
   .fragments/               (composer input set)
   .appsec-cache/            (incremental baseline cache)
   .agent-run.log            (audit trail)

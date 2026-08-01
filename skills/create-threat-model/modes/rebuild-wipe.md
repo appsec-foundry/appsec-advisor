@@ -43,6 +43,7 @@ else
   # count reported is what happened, not what was promised.
   REMOVED_FILES=$(find . -maxdepth 1 \
     \( -name "threat-model.md" -o -name "threat-model.yaml" -o -name "threat-model.sarif.json" \
+       -o -name "threat-model.threatdragon.json" -o -name "threat-model-*.threatdragon.json" \
        -o -name "threat-model.pdf" -o -name "threat-model.html" -o -name "threat-model.figure*.svg" \
        -o -name "threat-model-*.md" -o -name "threat-model-*.yaml" -o -name "threat-model-*.sarif.json" \
        -o -name "threat-model-*.pdf" -o -name "threat-model-*.html" -o -name "threat-model-*.figure*.svg" \

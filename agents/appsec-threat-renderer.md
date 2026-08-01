@@ -66,6 +66,7 @@ The skill passes the same run variables as Stage 1, including:
 - `PR_MODE`
 - `WRITE_SARIF`
 - `WRITE_PENTEST_TASKS`
+- `WRITE_THREATDRAGON`
 - `SKIP_ATTACK_PATHS_AUTHORING`
 - `SKIP_ATTACK_WALKTHROUGHS`
 - `ENRICH_ARCH_FRAGMENTS`
@@ -763,7 +764,7 @@ else
 fi
 ```
 
-If `WRITE_SARIF=true`, use the existing deterministic SARIF export path from `agents/phases/phase-group-finalization.md`. If `WRITE_PENTEST_TASKS=true`, use the existing deterministic pentest-task renderer. Do not invent alternate output formats.
+If `WRITE_SARIF=true`, use the existing deterministic SARIF export path from `agents/phases/phase-group-finalization.md`. If `WRITE_PENTEST_TASKS=true`, use the existing deterministic pentest-task renderer. If `WRITE_THREATDRAGON=true`, use the existing deterministic Threat Dragon export path ("Threat Dragon Export" in the same file) — it reads `threat-model.yaml` only, so it is valid on the `--rerender` path too. Do not invent alternate output formats.
 
 ## Budget-critical wrap-up
 

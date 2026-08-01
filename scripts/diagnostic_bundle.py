@@ -57,6 +57,7 @@ SENSITIVE_CONTENT = (
     "threat-model.yaml",
     "threat-model.md",
     "threat-model.sarif.json",
+    "threat-model.threatdragon.json",
     "threat-model.pdf",
     "analysis-model.md",
     "pentest-tasks.yaml",

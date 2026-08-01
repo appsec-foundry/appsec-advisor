@@ -817,6 +817,23 @@ def test_renderer_ms_role_includes_ms_ai_exposure_in_author_list():
     )
 
 
+def test_renderer_export_instruction_covers_every_bound_write_flag():
+    """Every WRITE_* export flag the renderer receives must have a matching
+    export instruction, otherwise the flag is bound and silently ignored.
+
+    Regression guard: WRITE_THREATDRAGON was threaded to the renderer (and to
+    the --rerender path, which runs Stage 2 only) but the export paragraph named
+    only WRITE_SARIF and WRITE_PENTEST_TASKS, so `--rerender --threatdragon`
+    produced no file.
+    """
+    renderer_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
+    for flag in ("WRITE_SARIF", "WRITE_PENTEST_TASKS", "WRITE_THREATDRAGON"):
+        assert f"If `{flag}=true`" in renderer_md, (
+            f"{flag} is listed as a renderer input but has no export instruction — "
+            f"the flag would be silently ignored on the Stage-2-only (--rerender) path."
+        )
+
+
 def test_owasp_llm07_grep_covers_cookie_tool_call_leakage():
     """LLM07 grep in owasp-llm-top10.md must cover cookie/flag-gated tool call disclosure.
 

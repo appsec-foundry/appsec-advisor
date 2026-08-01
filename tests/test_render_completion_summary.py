@@ -1193,6 +1193,32 @@ class TestRenderFiles:
         out = "\n".join(rcs.render_files(tmp_path, {"write_yaml": False}))
         assert "YAML" not in out
 
+    def test_threatdragon_listed_when_written(self, tmp_path: Path):
+        (tmp_path / "threat-model.threatdragon.json").write_text("{}")
+        out = "\n".join(rcs.render_files(tmp_path, {"write_yaml": True, "write_threatdragon": True}))
+        assert "Threat Dragon" in out
+
+    def test_threatdragon_absent_when_not_requested(self, tmp_path: Path):
+        (tmp_path / "threat-model.threatdragon.json").write_text("{}")
+        out = "\n".join(rcs.render_files(tmp_path, {"write_yaml": True}))
+        assert "Threat Dragon" not in out
+
+    def test_skill_passes_threatdragon_flag_at_every_call_site(self):
+        """The renderer only prints the line when the CALLER passes the flag.
+        Regression guard: `--write-threatdragon` was defined but no SKILL-impl
+        call site used it, so the artifact was written and never reported.
+        Every site that passes `--write-sarif` must also pass this pair."""
+        impl = (
+            Path(__file__).resolve().parents[1]
+            / "skills" / "create-threat-model" / "SKILL-impl.md"
+        ).read_text(encoding="utf-8")
+        sarif_sites = impl.count("--no-write-sarif")
+        td_sites = impl.count("--no-write-threatdragon")
+        assert td_sites == sarif_sites, (
+            f"{sarif_sites} completion-summary call site(s) pass --write-sarif but only "
+            f"{td_sites} pass --write-threatdragon; the Threat Dragon line would stay dead."
+        )
+
 
 class TestRunIssues:
     def test_extract_missing(self, tmp_path: Path):

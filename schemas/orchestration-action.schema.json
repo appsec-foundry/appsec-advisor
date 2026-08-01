@@ -152,6 +152,7 @@
           "write_pdf",
           "write_pentest_tasks",
           "write_sarif",
+          "write_threatdragon",
           "write_yaml",
           "abuse_verifier_model"
         ]

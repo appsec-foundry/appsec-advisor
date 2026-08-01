@@ -122,11 +122,11 @@ The trap is **best-effort** — when Claude Code itself terminates the session, 
 
 **Compute `N` (total substep count) at phase start** based on `WRITE_MODE` and active flags. Keep `N` stable for the whole phase — advance `k` even if a step is skipped so the final print shows `[N/N]`:
 
-| `WRITE_MODE` | Base substeps | +SARIF | +Pentest | `N` |
-|---|---|---|---|---|
-| `full` | lock+precompute, write yaml, write cache, write fragments, render md (compose), qa contract gate, clear-checkpoint = **7** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | **7–9** |
-| `incremental` | lock+precompute, update yaml, update cache, refresh fragments, render md (compose), qa contract gate, clear-checkpoint = **7** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | **7–9** |
-| `repair` | write/update targeted fragments from `.qa-repair-plan.json`, render md (compose), qa contract gate, clear-checkpoint = **4** | +0 | +0 | **4** |
+| `WRITE_MODE` | Base substeps | +SARIF | +Pentest | +Threat Dragon | `N` |
+|---|---|---|---|---|---|
+| `full` | lock+precompute, write yaml, write cache, write fragments, render md (compose), qa contract gate, clear-checkpoint = **7** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | +1 if `WRITE_THREATDRAGON=true` | **7–10** |
+| `incremental` | lock+precompute, update yaml, update cache, refresh fragments, render md (compose), qa contract gate, clear-checkpoint = **7** | +1 if `WRITE_SARIF=true` | +1 if `WRITE_PENTEST_TASKS=true` | +1 if `WRITE_THREATDRAGON=true` | **7–10** |
+| `repair` | write/update targeted fragments from `.qa-repair-plan.json`, render md (compose), qa contract gate, clear-checkpoint = **4** | +0 | +0 | +0 | **4** |
 
 Note: the old `WRITE_YAML=false` path no longer exists — yaml is now always-on. The `--no-yaml` escape hatch (if set) simply omits the yaml write substep and subtracts 1 from `N`. `repair` mode is entered by the skill's Re-Render Loop (see `skills/create-threat-model/SKILL.md`) when the QA reviewer emits a non-empty `.qa-repair-plan.json`; it skips every upstream phase and only reopens the fragment+compose pipeline.
 
@@ -273,6 +273,7 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 | 6 | `Running QA structural checks…` | always | **Single Bash call.** When Stage 3 will run, call only `python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract "$OUTPUT_DIR/threat-model.md"`; the skill-level canonical post-autofix gate owns the complete release check and repair plan. Run `qa_checks.py all "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"` only when Stage 3 is intentionally skipped, because this is then the final QA path. Advance checkpoint to `step=6 status=qa_clean`. Do **NOT** read detector JSON, spawn fragment Writes, or invoke `compose_threat_model.py` again. Any repair is owned by the skill-layer Re-Render Loop. **RC.B — do NOT invoke `render_completion_summary.py --patch-placeholders` here.** The agent cannot observe its own duration/tokens; the skill-level final call is authoritative. |
 | 7 *or* 8 | `Generating SARIF export (<n> results) and writing threat-model.sarif.json…` (substitute `<n>`) | only if `WRITE_SARIF=true` | the Bash call that invokes `scripts/export_sarif.py` — see "SARIF Export" below. The LLM does NOT author SARIF; the exporter derives it deterministically from `threat-model.yaml`. |
 | 8 *or* 9 | `Generating pentest tasks (<n> eligible threats) and writing pentest-tasks.yaml…` (substitute `<n>`) | only if `WRITE_PENTEST_TASKS=true` | the Bash call that invokes `render_pentest_tasks.py` — see "Pentest-Task Export" below. The `<n>` counter reports only the threats that passed the eligibility filter, not the full threat-register size. |
+| 7 *or* 8 *or* 9 | `Generating Threat Dragon export and writing threat-model.threatdragon.json…` | only if `WRITE_THREATDRAGON=true` | the Bash call that invokes `export_threat_dragon.py` — see "Threat Dragon Export" below. Like SARIF, it is derived deterministically from `threat-model.yaml`; the LLM never authors it. |
 | N | `Releasing lock + clearing checkpoint + printing summary…` | always, LAST | the final cleanup Bash block — `rm -f "$OUTPUT_DIR/.appsec-lock"`, `rm -f "$OUTPUT_DIR/.appsec-checkpoint"`, and the assessment summary print. This is the ONLY lock-release site in the happy path; a mid-Phase-11 crash leaves the lock in place with a stale heartbeat so the next run's `acquire_lock.py` classifies it as `hung` and reaps it. |
 
 ### SARIF Export
@@ -313,6 +314,20 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WR
 **Safety defaults.** The renderer marks every task with `safety.read_only=true` and `safety.destructive_actions=forbidden`. A consumer tool (Strix etc.) MUST respect those fields or it risks running destructive probes against production. If the team explicitly wants state-changing tests, they can post-process the generated file — the orchestrator never emits a task with destructive actions enabled by default.
 
 **Completion summary footer.** When `WRITE_PENTEST_TASKS=true` and `pentest-tasks.yaml` exists, append a `<OUTPUT_DIR>/pentest-tasks.yaml  (<n> bytes, <t> tasks)` line to the file-list block, next to the SARIF line.
+
+### Threat Dragon Export
+
+When `WRITE_THREATDRAGON=true`, emit `$OUTPUT_DIR/threat-model.threatdragon.json` *after* the pentest export (or after SARIF / the md write if those are off). Like SARIF, the export is deterministic Python reading `threat-model.yaml` as the single source of truth — the LLM never authors it. The exporter is **ALPHA and opt-in only**; it is never implied by a depth, preset, or `--full`.
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 11] [<k>/<N>] Generating Threat Dragon export and writing threat-model.threatdragon.json…" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_threat_dragon.py" \
+  --threat-model "$OUTPUT_DIR/threat-model.yaml" \
+  --output       "$OUTPUT_DIR/threat-model.threatdragon.json"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WRITE   $OUTPUT_DIR/threat-model.threatdragon.json" >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+**Lossy by construction.** Threat Dragon v2 has no field for CVSS, CWE, evidence locations, mitigation priority or requirements traceability; the exporter folds those into each threat's description and keeps the `F-NNN` anchor so the JSON can be traced back to the report. Field mapping, known limitations and exit codes live in `docs/threat-dragon-export.md`. The exporter never fails the run on thin input — it warns on stderr and still writes a valid document.
 
 **Substep 1 — pre-compute counts + first heartbeat (mandatory Bash template, batched with the `[1/N]` STEP_START):**
 

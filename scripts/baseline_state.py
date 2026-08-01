@@ -1469,6 +1469,7 @@ _PRODUCT_FILES: tuple[str, ...] = (
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.sarif.json",
+    "threat-model.threatdragon.json",
     "pentest-tasks.yaml",
     "appsec-requirements-report.md",
     "appsec-requirements-report.json",

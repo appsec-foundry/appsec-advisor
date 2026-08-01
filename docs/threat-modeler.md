@@ -47,6 +47,7 @@ its own retry, resume checkpoint, timing, and audit artifacts.
 | `threat-model.html` | `--html` | Self-contained HTML for browsers and wiki attachments. Requires `pandoc`. |
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
 | `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for supported pentest tooling. |
+| `threat-model.threatdragon.json` | `--threatdragon` | **Alpha.** OWASP Threat Dragon v2 JSON, which also imports into OWASP ThreatAtlas. Opt-in only and lossy — see [Threat Dragon export](threat-dragon-export.md). |
 
 Optional formats can also be generated from an existing assessment:
 

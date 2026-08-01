@@ -1397,6 +1397,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pentest-tasks", action="store_true")
     p.add_argument("--pentest-format", choices=("generic", "strix"), default="generic")
     p.add_argument("--pentest-target", default=None)
+    # OWASP Threat Dragon v2 JSON. ALPHA and opt-in only — never implied by a
+    # depth or preset, mirroring the export skill where `threatdragon` is
+    # deliberately excluded from `--formats all`.
+    p.add_argument("--threatdragon", action="store_true")
     # --requirements optionally takes a URL; use nargs='?' so both
     # "--requirements" and "--requirements https://…" work.
     p.add_argument("--requirements", nargs="?", const="", default=None)
@@ -1731,6 +1735,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         "write_pentest_tasks": ns.pentest_tasks,
         "pentest_format":  ns.pentest_format,
         "pentest_target":  ns.pentest_target,
+        "write_threatdragon": bool(ns.threatdragon),
         "keep_runtime_files": ns.keep_runtime_files,
         "slug":            (secrets.token_hex(2) if ns.slug == "__auto__" else ns.slug),
         "verbose":         ns.verbose,
@@ -3226,6 +3231,8 @@ def _format_outputs_summary(cfg: dict) -> str:
             outputs.append(f"pentest-tasks ({fmt}, target: {target})")
         else:
             outputs.append(f"pentest-tasks ({fmt})")
+    if cfg.get("write_threatdragon"):
+        outputs.append("threat-dragon (alpha)")
     if outputs == ["markdown", "yaml"]:
         return ""
     return " + ".join(outputs)
@@ -3295,8 +3302,8 @@ def _format_outputs(cfg: dict) -> str:
 
     Renders only the deltas: ``-yaml`` when the user passed ``--no-yaml``,
     ``+ sarif`` for ``--sarif``, ``+ pentest-tasks (<format>[, target: <url>])``
-    for ``--pentest-tasks``. ``--pdf`` is a skill-layer flag and not part
-    of the resolved cfg.
+    for ``--pentest-tasks``, ``+ threat-dragon (alpha)`` for ``--threatdragon``.
+    ``--pdf`` is a skill-layer flag and not part of the resolved cfg.
     """
     parts = []
     if not cfg.get("write_yaml"):
@@ -3310,6 +3317,8 @@ def _format_outputs(cfg: dict) -> str:
             parts.append(f"+ pentest-tasks ({fmt}, target: {target})")
         else:
             parts.append(f"+ pentest-tasks ({fmt})")
+    if cfg.get("write_threatdragon"):
+        parts.append("+ threat-dragon (alpha)")
     return ", ".join(parts)
 
 

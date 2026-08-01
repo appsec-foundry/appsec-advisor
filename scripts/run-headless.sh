@@ -12,6 +12,7 @@
 #   --yaml                  (no-op) yaml is always written by default
 #   --no-yaml               Suppress threat-model.yaml (BREAKS incremental mode!)
 #   --sarif                 Also write threat-model.sarif.json (SARIF v2.1.0)
+#   --threatdragon          Also write threat-model.threatdragon.json (ALPHA)
 #   --requirements [<src>]   Enable requirements check (optionally from an
 #                            http(s):// URL or a local file path)
 #   --no-requirements        Skip requirements even when enabled in config
@@ -89,6 +90,8 @@ Options:
                              incremental mode on future runs against this output
                              directory (yaml is the canonical baseline)
   --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
+  --threatdragon             Also write threat-model.threatdragon.json
+                             (OWASP Threat Dragon v2 — ALPHA, opt-in only)
   --requirements [<src>]     Enable requirements check, optionally from an
                              http(s):// URL or a local file path
   --no-requirements          Skip requirements even when enabled in config
@@ -242,7 +245,7 @@ while [ $# -gt 0 ]; do
         --full)
             FULL_REQUESTED=1
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
-        --yaml|--no-yaml|--sarif|--no-requirements|--dry-run|--rerender|--enrich-arch|--no-enrich-arch)
+        --yaml|--no-yaml|--sarif|--threatdragon|--no-requirements|--dry-run|--rerender|--enrich-arch|--no-enrich-arch)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --keep-runtime-files)
             # Preserve all transient runtime artifacts. runtime_cleanup.py reads
@@ -1078,6 +1081,21 @@ if [ "$SKILL" = "create-threat-model" ] && [ "$EXIT_CODE" -eq 0 ] \
     fi
 fi
 
+# ── Threat Dragon canonical-name backstop ──────────────────────────
+# Same reasoning as the SARIF backstop above: the export is deterministic from
+# threat-model.yaml (scripts/export_threat_dragon.py), so the artefact must not
+# depend on whether the LLM finalization actually ran the substep.
+if [ "$SKILL" = "create-threat-model" ] && [ "$EXIT_CODE" -eq 0 ] \
+   && printf '%s' "$SKILL_FLAGS" | grep -q -- '--threatdragon' \
+   && [ -s "$RESULT_DIR/threat-model.yaml" ] \
+   && [ ! -f "$RESULT_DIR/threat-model.threatdragon.json" ]; then
+    if python3 "$SCRIPT_DIR/export_threat_dragon.py" \
+            --threat-model "$RESULT_DIR/threat-model.yaml" \
+            --output "$RESULT_DIR/threat-model.threatdragon.json" >/dev/null 2>&1; then
+        info "Threat Dragon backstop wrote $RESULT_DIR/threat-model.threatdragon.json from yaml"
+    fi
+fi
+
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     ok "Assessment completed successfully."
@@ -1093,6 +1111,7 @@ if [ $EXIT_CODE -eq 0 ]; then
         [ -f "$RESULT_DIR/threat-model.md" ]          && ok "  $RESULT_DIR/threat-model.md"
         [ -f "$RESULT_DIR/threat-model.yaml" ]        && ok "  $RESULT_DIR/threat-model.yaml"
         [ -f "$RESULT_DIR/threat-model.sarif.json" ]  && ok "  $RESULT_DIR/threat-model.sarif.json"
+        [ -f "$RESULT_DIR/threat-model.threatdragon.json" ] && ok "  $RESULT_DIR/threat-model.threatdragon.json"
 
         echo "  Intermediate files:"
         [ -f "$RESULT_DIR/.threat-modeling-context.md" ] && echo "    $RESULT_DIR/.threat-modeling-context.md"

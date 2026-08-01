@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - New alpha export: `--formats threatdragon` writes OWASP Threat Dragon v2 JSON, which also imports into OWASP ThreatAtlas. See `docs/threat-dragon-export.md`.
+- `create-threat-model` accepts `--threatdragon`, so a scan can write `threat-model.threatdragon.json` directly instead of requiring a separate export run. Opt-in only — no depth or preset implies it.
 - New `install-baseline` skill: installs a secure-coding baseline into Claude Code's instruction files, for this machine or a single repository.
 - New `verify-baseline` skill: reports which baseline is loaded and through which file, and exits non-zero when none is, so CI can gate on it.
 - New `remove-baseline` skill: stops an installed baseline loading by dropping its import, and deletes the file only after confirming the path.
