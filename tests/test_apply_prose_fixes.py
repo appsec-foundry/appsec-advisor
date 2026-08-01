@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -702,3 +703,67 @@ def test_trust_boundary_table_exemption_is_column_scoped_and_idempotent():
     assert "routes/chatbot.ts" in once and "`routes/chatbot.ts`" not in once
     assert twice == once
     assert n2 == 0
+
+
+def test_raw_html_cell_gets_code_tags_not_markdown_backticks():
+    """Markdown does not render inside a raw `<table>`, so a backtick added
+    there reaches the reader as the character itself.
+
+    §1 Trust Boundaries is emitted as raw HTML by the composer BEFORE this
+    formatter runs, so its rows miss the `startswith("|")` table branch and fall
+    through to the prose path. juice-shop shipped a literal
+    `` `encryptionkeys/jwt.pub` `` in "What must hold" (user 2026-08-01).
+    """
+    line = (
+        '<tr><td style="overflow-wrap:break-word">JWT signature validated using RSA public '
+        "key from encryptionkeys/jwt.pub; routes not wrapped in <code>isAuthorized()</code> "
+        "are unauthenticated.</td></tr>"
+    )
+    out, changed = prose._wrap_line(line)
+    assert "<code>encryptionkeys/jwt.pub</code>" in out
+    assert "`" not in out, "no Markdown backtick may survive in a raw HTML cell"
+    # The span the renderer already wrote stays exactly one <code> element.
+    assert out.count("<code>isAuthorized()</code>") == 1
+    assert changed >= 1
+
+
+def test_trust_boundary_exemption_survives_the_html_form_of_the_table():
+    """The column exemption must hold whether the catalogue is GFM or raw HTML.
+
+    §1 arrives here as a pipe table on a clean run, but as raw `<table>` on any
+    pass that runs after the QA autofix converted it. `startswith("|")` is false
+    there, so the row fell into the generic prose path, every pass ran over the
+    narrative columns, and the resulting Markdown backticks rendered as literal
+    characters inside the HTML cell (user 2026-08-01). Same input, same rule,
+    both forms.
+    """
+    html = (
+        '<table style="table-layout:fixed;width:100%">\n'
+        "<thead><tr><th>ID</th><th>Boundary / crossing</th><th>Exposure</th>"
+        "<th>Kind</th><th>What must hold</th><th>Linked findings</th></tr></thead>\n"
+        "<tbody>\n"
+        "<tr><td>tb-1</td><td><strong>external to api</strong></td><td>Public</td>"
+        "<td>network, seen in server.ts</td>"
+        "<td>JWT verified with the key at encryptionkeys/jwt.pub; routes not "
+        "wrapped in isAuthorized() are open.</td><td>-</td></tr>\n"
+        "</tbody>\n</table>\n"
+    )
+    out, _ = prose.apply_code_formatting(html)
+    row = next(line for line in out.splitlines() if "tb-1" in line)
+    cells = re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)
+
+    assert "`" not in row, "a Markdown backtick in a raw HTML cell renders literally"
+    # Narrative columns keep their typography, exactly as in the GFM form.
+    assert "<code>" not in cells[1]
+    assert "encryptionkeys/jwt.pub" in cells[4] and "<code>" not in cells[4]
+    # Positive control: a non-prose column is still formatted, as <code> — the
+    # tag, not a backtick, because this cell is already HTML.
+    assert "<code>server.ts</code>" in cells[3]
+
+
+def test_gfm_table_row_keeps_markdown_backticks():
+    """Counterpart to the raw-HTML case: a pipe table is still Markdown, and a
+    later QA pass turns its backticks into `<code>` on the way to HTML."""
+    out, _changed = prose._wrap_line("| api | see routes/login.ts:34 for detail |")
+    assert "`routes/login.ts:34`" in out
+    assert "<code>" not in out

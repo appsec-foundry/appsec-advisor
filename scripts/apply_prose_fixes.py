@@ -72,6 +72,7 @@ Usage:
 from __future__ import annotations
 
 import functools
+import html
 import re
 import sys
 from pathlib import Path
@@ -581,6 +582,46 @@ def _html_block_body_wrappable(stripped: str) -> bool:
     return "<" not in stripped
 
 
+_HTML_CELL_RE = re.compile(r"<t[dh][\s>]")
+
+
+def _html_cell_code_spans(line: str) -> tuple[str, int]:
+    """Re-emit backtick code spans as `<code>` inside a raw-HTML table cell.
+
+    Every pass above speaks Markdown, which is correct for the GFM pipe tables
+    they were written for: a later QA pass converts those to HTML and turns the
+    backticks into `<code>` on the way. The §1 Trust Boundaries catalogue is
+    different — the composer emits it as a raw `<table>` BEFORE this formatter
+    runs, so `stripped.startswith("|")` is false, the row falls through to the
+    prose path, and a backtick added there is never converted. Markdown does not
+    render inside raw HTML, so the reader saw the character itself (user
+    2026-08-01: `` `encryptionkeys/jwt.pub` `` in "What must hold").
+
+    Emitting the tag directly keeps the token formatted in the context it
+    actually lands in, rather than dropping the fix on HTML rows. Spans the
+    renderer already wrote as `<code>` sit in `_wrap_line`'s forbidden mask and
+    never reach this point, so this only ever sees Markdown that would other-
+    wise render literally.
+    """
+    if not _HTML_CELL_RE.search(line):
+        return line, 0
+    return _backticks_to_code(line)
+
+
+def _backticks_to_code(text: str) -> tuple[str, int]:
+    """`` `x` `` → ``<code>x</code>``. Uses the module's existing span regex
+    (no capture group) rather than a second one under the same name — the
+    duplicate silently won for `_wrap_line`'s forbidden mask."""
+    n = 0
+
+    def _sub(match: re.Match[str]) -> str:
+        nonlocal n
+        n += 1
+        return f"<code>{html.escape(match.group(0)[1:-1], quote=False)}</code>"
+
+    return _BACKTICK_SPAN_RE.sub(_sub, text), n
+
+
 def _wrap_line(line: str) -> tuple[str, int]:
     """Return (rewritten_line, n_changes).
 
@@ -813,7 +854,8 @@ def _wrap_line(line: str) -> tuple[str, int]:
     # the NEXT invocation, so the formatter was not idempotent over a document
     # (found 2026-07-19 by re-running it over a whole real report).
     line, n_merge = _merge_split_code_spans(line)
-    return line, n_total + n_merge
+    line, n_html = _html_cell_code_spans(line)
+    return line, n_total + n_merge + n_html
 
 
 _AI_PADDING_SENTENCE_RE = re.compile(
@@ -1275,6 +1317,43 @@ def _table_header_cells(line: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in parts)
 
 
+_HTML_TH_RE = re.compile(r"<th[^>]*>(.*?)</th>", re.S)
+_HTML_TD_RE = re.compile(r"(<td[^>]*>)(.*?)(</td>)", re.S)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _html_table_header_cells(line: str) -> tuple[str, ...]:
+    """Header texts of a raw-HTML `<thead>` row, shaped like `_table_header_cells`.
+
+    The catalogue reaches this formatter as a GFM pipe table on a clean run, but
+    as raw `<table>` on any pass that runs after the QA autofix converted it.
+    Without this the row failed `startswith("|")`, the column exemption silently
+    lapsed, and every pass ran over the narrative columns (user 2026-08-01).
+    """
+    return tuple(_HTML_TAG_RE.sub("", cell).strip() for cell in _HTML_TH_RE.findall(line))
+
+
+def _format_trust_boundary_html_row(line: str) -> tuple[str, int]:
+    """`_format_trust_boundary_table_row` for the raw-HTML form of the table."""
+    total = 0
+    index = -1
+
+    def _cell(match: re.Match[str]) -> str:
+        nonlocal total, index
+        index += 1
+        if index in _TRUST_BOUNDARY_PROSE_COLUMNS:
+            return match.group(0)
+        formatted, n = _wrap_line(match.group(2))
+        formatted, n_unwrap = _apply_label_as_code_unwrap(formatted)
+        # `_wrap_line` sees only the cell's inner text, so its own HTML-cell
+        # guard cannot fire — convert here, where the context IS known.
+        formatted, _ = _backticks_to_code(formatted)
+        total += n + n_unwrap
+        return match.group(1) + formatted + match.group(3)
+
+    return _HTML_TD_RE.sub(_cell, line), total
+
+
 def _format_trust_boundary_table_row(line: str) -> tuple[str, int]:
     """Format non-prose cells while keeping boundary narrative typography."""
     parts = _split_unescaped_table_pipes(line)
@@ -1327,9 +1406,17 @@ def apply_fixes(text: str) -> tuple[str, int]:
         # snippets from accidental rewriting.
         is_heading = stripped.startswith("#")
         is_table_row = stripped.startswith("|")
+        is_html_cell_row = "<td" in stripped or "<th" in stripped
         if is_table_row and _table_header_cells(line) in _TRUST_BOUNDARY_TABLE_HEADERS:
             in_trust_boundary_table = True
-        elif not is_table_row:
+        elif "<th" in stripped and _html_table_header_cells(line) in _TRUST_BOUNDARY_TABLE_HEADERS:
+            in_trust_boundary_table = True
+        elif "</table>" in stripped:
+            in_trust_boundary_table = False
+        elif not is_table_row and not is_html_cell_row and not stripped.startswith("<"):
+            # `</table>` ends the raw-HTML form; structural lines between the
+            # header and the rows (`<tbody>`, a bare `<tr>`) must NOT, or the
+            # column exemption lapses again one line after it was established.
             in_trust_boundary_table = False
         if "<blockquote" in stripped:
             in_html_block = True
@@ -1348,6 +1435,11 @@ def apply_fixes(text: str) -> tuple[str, int]:
             continue
         if in_trust_boundary_table and is_table_row:
             new_line, n_table = _format_trust_boundary_table_row(line)
+            inline_fixes += n_table
+            out.append(new_line + nl)
+            continue
+        if in_trust_boundary_table and "<td" in stripped:
+            new_line, n_table = _format_trust_boundary_html_row(line)
             inline_fixes += n_table
             out.append(new_line + nl)
             continue
@@ -1428,9 +1520,17 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
             out.append(raw)
             continue
         is_table_row = stripped.startswith("|")
+        is_html_cell_row = "<td" in stripped or "<th" in stripped
         if is_table_row and _table_header_cells(line) in _TRUST_BOUNDARY_TABLE_HEADERS:
             in_trust_boundary_table = True
-        elif not is_table_row:
+        elif "<th" in stripped and _html_table_header_cells(line) in _TRUST_BOUNDARY_TABLE_HEADERS:
+            in_trust_boundary_table = True
+        elif "</table>" in stripped:
+            in_trust_boundary_table = False
+        elif not is_table_row and not is_html_cell_row and not stripped.startswith("<"):
+            # `</table>` ends the raw-HTML form; structural lines between the
+            # header and the rows (`<tbody>`, a bare `<tr>`) must NOT, or the
+            # column exemption lapses again one line after it was established.
             in_trust_boundary_table = False
         if "<blockquote" in stripped:
             in_html_block = True
@@ -1451,6 +1551,11 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
             continue
         if in_trust_boundary_table and is_table_row:
             new_line, n_table = _format_trust_boundary_table_row(line)
+            total += n_table
+            out.append(new_line + nl)
+            continue
+        if in_trust_boundary_table and "<td" in stripped:
+            new_line, n_table = _format_trust_boundary_html_row(line)
             total += n_table
             out.append(new_line + nl)
             continue
