@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from jsonschema import Draft202012Validator
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -481,6 +482,63 @@ def test_contexts_defer_and_surface_persisted_invalid_resolved_row(tmp_path: Pat
     assert component["invalid_ids"] == ["tb-9"]
     diagnostics = json.loads((out / ".trust-boundary-diagnostics.json").read_text(encoding="utf-8"))
     assert diagnostics["issues"][0]["code"] == "invalid_resolved_endpoint"
+
+
+def test_component_audit_satisfies_delivered_output_schema(tmp_path: Path) -> None:
+    """The per-component audit must satisfy the schema that gates the delivered yaml.
+
+    `build_threat_model_yaml` copies this mapping verbatim into
+    `meta.boundary_selection.components`, where the output schema pins
+    `additionalProperties: false`. A key added here but not there therefore
+    aborts every full run at the post-Stage-1c gate — which is what `invalid_ids`
+    did from 2026-07-27 until 2026-08-01.
+
+    The drift shipped because nothing coupled the two: the e2e fixture predates
+    the feature and is git-ignored (so its round-trip test skips), and the
+    validator subprocess is mocked wherever the builder is exercised, to protect
+    the parallel coverage DB. Checking real producer output against the real
+    schema in-process depends on none of that, so it also catches the *next* key.
+    """
+    repo, out = _repo(tmp_path)
+    # A row that resolves to an invalid endpoint populates `invalid_ids` — the
+    # key whose absence from the schema caused the outage. The remaining lists
+    # are exercised by their own tests above.
+    _write_json(
+        out / ".trust-boundaries.json",
+        {
+            "schema_version": 2,
+            "trust_boundaries": [
+                {
+                    **_row(id="tb-9"),
+                    "from": "Public Internet",
+                    "resolution_status": "resolved",
+                    "sources": ["detected"],
+                }
+            ],
+        },
+    )
+
+    audit = prep.prepare_contexts(
+        repo_root=repo,
+        output_dir=out,
+        component_ids=["web-api"],
+        depth="standard",
+    )
+
+    schema = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "schemas" / "threat-model.output.schema.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    per_component = schema["properties"]["meta"]["properties"]["boundary_selection"]["properties"][
+        "components"
+    ]["additionalProperties"]
+    validator = Draft202012Validator(per_component)
+
+    assert audit["components"], "audit must carry a component for this to mean anything"
+    for cid, entry in audit["components"].items():
+        errors = list(validator.iter_errors(entry))
+        assert not errors, f"{cid}: " + "; ".join(f"{e.json_path}: {e.message}" for e in errors)
 
 
 def test_reorder_and_unambiguous_rename_preserve_ids(tmp_path: Path) -> None:

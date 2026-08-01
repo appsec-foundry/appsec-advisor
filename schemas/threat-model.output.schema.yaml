@@ -92,6 +92,11 @@ properties:
                 selected_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
                 omitted_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
                 deferred_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
+                # Subset of `deferred_ids`: boundaries deferred *because*
+                # `boundary_endpoints_valid` rejected their resolved endpoints
+                # (prepare_trust_boundary_context.py appends the same id to both).
+                # Same value space as its superset, hence the same pattern.
+                invalid_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
                 focus_reasons:
                   type: object
                   additionalProperties:
