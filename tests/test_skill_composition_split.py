@@ -61,7 +61,7 @@ def test_stage_1_split_into_lettered_subrows(skill_impl_text):
     # and the conditional abuse verifier fan-out.
     assert "`Stage 1a - Discovery & Architecture Modeling`" in skill_impl_text
     assert "`Stage 1b - Trust Boundary Analysis`" in skill_impl_text
-    assert "`Stage 1c - Control & Threat Analysis, Triage`" in skill_impl_text
+    assert "`Stage 1c - Control & Threat Analysis`" in skill_impl_text
     assert "`Stage 1d - Abuse Case Verification`" in skill_impl_text
 
 

@@ -197,7 +197,7 @@ Create Task rows in this exact order and with these exact subjects:
 1. `Preparing workspace`; immediately mark completed.
 2. `Stage 1a - Discovery & Architecture Modeling`
 3. `Stage 1b - Trust Boundary Analysis`
-4. `Stage 1c - Control & Threat Analysis, Triage`
+4. `Stage 1c - Control & Threat Analysis`
 5. `Stage 1d - Abuse Case Verification` only when
    `SKIP_ABUSE_CASE_VERIFICATION=false`
 6. `Stage 2 - Report Rendering`
