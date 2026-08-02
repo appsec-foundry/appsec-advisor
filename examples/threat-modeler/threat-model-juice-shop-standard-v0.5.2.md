@@ -120,13 +120,13 @@ The systemic root-cause problems behind the findings - the classes to fix, not j
 
 Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the top threats per component. The in-figure legend on the right explains the attack scenarios, severity dots and symbols. Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids catalogued in [§1 Trust Boundaries](#trust-boundaries).
 
-![Figure 1 - Architecture & Top Threats](threat-model-juice-shop-thorough-v0.5.2.figure1.svg)
+![Figure 1 - Architecture & Top Threats](threat-model-juice-shop-standard-v0.5.2.figure1.svg)
 
 **Figure 2 - Risk Flow: Actor → Tier → Impact**
 
 Heatmap: **actors** (left) → **architecture tiers** (middle, Client → Application → Data) → **impact** (right). Numbered red arrows ①–⑦ are the threats enumerated in the Top Threats table below.
 
-![Figure 2 - Risk Flow: Actor to Tier to Impact](threat-model-juice-shop-thorough-v0.5.2.figure2.svg)
+![Figure 2 - Risk Flow: Actor to Tier to Impact](threat-model-juice-shop-standard-v0.5.2.figure2.svg)
 
 **Threat actors.** The actors below drive the numbered attack paths in the figures above. The **Shop User** is the *victim* of client-side attacks (XSS / CSRF), not an attacker - in Figure 2 the compromise surfaces as the resulting business-impact node rather than as a separate actor box.
 
@@ -5806,7 +5806,7 @@ The following items are **explicitly excluded** from this threat model. Findings
 
 | Field | Value |
 |----------------------|----------------------|
-| Invocation | `/appsec-advisor:create-threat-model --threatdragon --slug juice-shop-thorough-v0.5.2 --keep-runtime-files` |
+| Invocation | `/appsec-advisor:create-threat-model --threatdragon --slug juice-shop-standard-v0.5.2 --keep-runtime-files` |
 | Generated | 2026-08-02 07:41 UTC |
 | Mode | full |
 | Assessment depth | standard |

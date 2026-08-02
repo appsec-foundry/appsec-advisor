@@ -8,7 +8,7 @@ meta:
   plugin_version: 0.5.2-dev
   analysis_version: 5
   assessment_depth: standard
-  invocation: --threatdragon --slug juice-shop-thorough-v0.5.2 --keep-runtime-files
+  invocation: --threatdragon --slug juice-shop-standard-v0.5.2 --keep-runtime-files
   reasoning_model: sonnet-economy
   stride_model: claude-sonnet-4-6
   triage_model: claude-sonnet-5
