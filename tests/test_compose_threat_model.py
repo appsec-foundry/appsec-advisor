@@ -6029,3 +6029,47 @@ def test_boundary_vocabulary_is_explained_after_the_table_not_before_it(tmp_path
         assert word not in lead
     legend_at = rendered.index("_Verdict per condition:")
     assert legend_at > rendered.rindex('| <a id="tb-1"')
+
+
+def test_every_condition_the_table_can_render_is_explained(tmp_path: Path) -> None:
+    """A leg the model can render must be a leg the legend describes.
+
+    The lead used to name the inbound and outbound triads by hand and omitted
+    the in-process one, so a row reading "Data interpretation: broken" was
+    explained nowhere in the report (user 2026-08-02). Deriving the legend from
+    `CROSSING_TYPE_LEGS` closes that by construction; this pins it so a new leg
+    cannot reach a cell without reaching the legend.
+    """
+    import prepare_trust_boundary_context as prep
+
+    legend = compose._boundary_condition_legend()
+    for legs in prep.CROSSING_TYPE_LEGS.values():
+        for leg in legs:
+            label = compose._BOUNDARY_LEG_LABELS[leg]
+            assert label.lower() in legend, f"{leg} rendered as {label!r} but not explained"
+
+
+def test_in_process_crossing_renders_the_data_interpretation_condition(tmp_path: Path) -> None:
+    """An internal crossing is judged on whether data ever becomes program text.
+
+    Unlike a directional crossing it gets no synthesized triad — `boundary_legs`
+    returns only what such a row declares — so the leg is authored here.
+    """
+    row = {
+        **_canonical_boundary(1),
+        "from": "C-01",
+        "to": "C-02",
+        "assumption_legs": [{"leg": "data-interpretation"}],
+    }
+    threats = [
+        {
+            "id": "T-004",
+            "component": "C-01",
+            "risk": "Critical",
+            "cwe": "CWE-89",
+            "boundary_refs": [{"boundary_id": "tb-1", "leg": "data-interpretation"}],
+        }
+    ]
+    rendered = _catalog(tmp_path, [row], threats, ["C-01", "C-02"])
+    assert "Query construction: **broken**" in rendered
+    assert "_Query construction_<br>🔴 [F-004](#f-004)" in rendered

@@ -100,6 +100,7 @@ from _manifest_readers import (
 from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
 from pregenerate_fragments import gen_architecture_diagrams
 from prepare_trust_boundary_context import (
+    CROSSING_TYPE_LEGS,
     boundary_assumption_state,
     boundary_endpoints_valid,
     boundary_leg_states,
@@ -15617,6 +15618,36 @@ def _boundary_exposure_legend() -> str:
     return f"_Exposure rates how reachable the crossing is, most exposed first: {ramp}._"
 
 
+_CROSSING_TYPE_LABELS = {"ingress": "inbound", "egress": "outbound", "internal": "in-process"}
+# One gloss per condition that a reader cannot infer from its name alone: the
+# in-process one states the invariant behind the label, and the egress one the
+# reason a response is judged at all.
+_BOUNDARY_LEG_GLOSS = {
+    "data-interpretation": "data stays data, never program text",
+    "response-trust": "what comes back is untrusted input too",
+}
+
+
+def _boundary_condition_legend() -> str:
+    """Which conditions apply to which crossing direction.
+
+    Derived from `CROSSING_TYPE_LEGS`, never from a prose copy of it. The lead
+    used to name the inbound and outbound triads by hand and silently omitted
+    the in-process one, so a row reading "Data interpretation: broken" was
+    explained nowhere in the report (user 2026-08-02). Deriving it means a leg
+    the model can render is a leg this legend already describes.
+    """
+    parts = []
+    for crossing, legs in CROSSING_TYPE_LEGS.items():
+        conditions = []
+        for leg in legs:
+            label = _BOUNDARY_LEG_LABELS.get(leg, leg).lower()
+            gloss = _BOUNDARY_LEG_GLOSS.get(leg)
+            conditions.append(f"{label} ({gloss})" if gloss else label)
+        parts.append(f"**{_CROSSING_TYPE_LABELS.get(crossing, crossing)}** — {', '.join(conditions)}")
+    return f"_Conditions per crossing direction: {' · '.join(parts)}._"
+
+
 def _boundary_verdict_legend() -> str:
     """Legend for the per-condition verdict, beside the Exposure one.
 
@@ -15709,11 +15740,17 @@ _BOUNDARY_VERDICT_TEXT = {
 }
 
 
+# Displayed labels. The keys are the model's vocabulary (schemas, the analyst
+# prompt, the CWE map) and never change here. `data-interpretation` is the one
+# key whose invented name reached the reader: it is not industry vocabulary, and
+# it was also the only leg not named after the §6 domain it links to, which is
+# how a reader was left with no way to look it up (user 2026-08-02). Every leg
+# now carries the name of its own domain — see `_LEG_SECTION7_DOMAIN`.
 _BOUNDARY_LEG_LABELS = {
     "validation": "Validation",
     "authentication": "Authentication",
     "authorization": "Authorization",
-    "data-interpretation": "Data interpretation",
+    "data-interpretation": "Query construction",
     "egress-content": "Egress content",
     "egress-destination": "Egress destination",
     "response-trust": "Response trust",
@@ -15926,10 +15963,8 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         # As one block up front it ran to a screen of definitions the reader had
         # to hold in memory before seeing a single row (user 2026-08-02).
         "Canonical boundary crossings. **Assumption & verdict** names the condition that makes "
-        "each crossing safe and whether this report still supports it, judged per condition: an "
-        "inbound crossing on _validation_, _authentication_ and _authorization_, an outbound one "
-        "on _egress content_, _egress destination_ and _response trust_ — what comes back is "
-        "untrusted input too.",
+        "each crossing safe and whether this report still supports it, judged one condition at a "
+        "time — which conditions apply follows from the direction of the crossing.",
         "",
         f"| {' | '.join(headers)} |",
         f"|{'---|' * len(headers)}",
@@ -16006,6 +16041,7 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
             ]
         )
     lines.extend(["", _boundary_exposure_legend()])
+    lines.extend(["", _boundary_condition_legend()])
     lines.extend(["", _boundary_verdict_legend()])
     if uniform_source is None:
         lines.extend(
