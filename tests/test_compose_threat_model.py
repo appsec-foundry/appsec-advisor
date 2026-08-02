@@ -5904,7 +5904,7 @@ def test_control_domain_names_the_crossings_that_depend_on_it(tmp_path: Path) ->
 
 def test_leg_line_links_back_to_its_control_domain(tmp_path: Path) -> None:
     ctx = _crossref_ctx(tmp_path)
-    cell = "".join(compose._boundary_leg_lines(compose.boundary_leg_states(ctx.yaml_data["trust_boundaries"][0], ctx.yaml_data["threats"])))
+    cell = "".join(compose._boundary_leg_lines(compose.boundary_leg_states(ctx.yaml_data["trust_boundaries"][0], ctx.yaml_data["threats"]), ctx))
     # Number only: the full title would add ~40 chars to the narrowest column.
     assert "[§6.4](#ctrl-authorization-controls)" in cell
     assert "[§6.2](#ctrl-identity-and-authentication-controls)" in cell

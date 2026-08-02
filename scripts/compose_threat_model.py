@@ -3515,9 +3515,22 @@ def _build_finding_to_chain_map(ctx: RenderContext) -> dict[str, tuple[str, str]
     auto-generate — no explicit ``<a id="…">`` markers required in the
     fragment.
 
-    Returns ``{}`` when the fragment is missing — caller treats as no-op
-    (no walkthrough link rendered in the §8 Story Card).
+    Returns ``{}`` when §3 carries no authored walkthroughs, or when the
+    fragment is missing — caller treats as no-op (no walkthrough link
+    rendered in the §8 Story Card).
+
+    Fragment presence is NOT a proxy for "§3 was rendered": the Stage-2
+    pregeneration writes ``attack-walkthroughs.md`` unconditionally, so at
+    ``--quick`` (where §3 is omitted) the file exists while the section does
+    not. Keying off the file alone emitted ``[Walkthrough §3.N](#3n-…)``
+    back-links into §8 whose targets were never rendered, and the hard
+    ``qa_checks.py toc_closure`` release gate failed on every such run
+    (2026-08-02). Gate on the same predicate the §3 section-presence check
+    uses — ``has_authored_walkthroughs`` = not skipped AND ≥1 Critical — so
+    the link and its target are decided by one condition.
     """
+    if not ctx.eval_context.get("has_authored_walkthroughs", True):
+        return {}
     frag = ctx.fragments_dir / "attack-walkthroughs.md"
     if not frag.is_file():
         return {}
@@ -15859,7 +15872,7 @@ def _visible_finding_id(threat_id: str) -> str:
     return f"F-{match.group(1)}" if match else str(threat_id or "")
 
 
-def _boundary_leg_lines(leg_states: list[dict]) -> list[str]:
+def _boundary_leg_lines(leg_states: list[dict], ctx: RenderContext) -> list[str]:
     """One line per assumption leg, or [] for a row that declares none.
 
     No leg names finding ids. Every id this table shows is a clickable link in
@@ -15875,7 +15888,17 @@ def _boundary_leg_lines(leg_states: list[dict]) -> list[str]:
     includes findings linked to a DIFFERENT crossing, and rightly so — SQL
     injection reaching the data tier still crossed the perimeter unvalidated on
     the way in.
+
+    ``ctx`` is needed for the §6 back-link only: the ``#ctrl-…`` anchor those
+    links target is injected by ``_inject_boundary_leg_crossrefs`` next to the
+    §6 domain heading, so it exists only when §6 is rendered. Emitting the link
+    regardless left 10 dangling anchors at ``--quick`` (§6 omitted) and failed
+    the hard ``toc_closure`` release gate (2026-08-02).
     """
+    # One condition for link and target. §6 schema v2 always carries all six
+    # mapped domain headings, so the section-level flag is exact here — no
+    # per-domain check needed.
+    section6_present = bool(ctx.eval_context.get("render_security_architecture", True))
     lines: list[str] = []
     for leg in leg_states:
         label = _BOUNDARY_LEG_LABELS.get(leg["leg"], leg["leg"])
@@ -15890,7 +15913,7 @@ def _boundary_leg_lines(leg_states: list[dict]) -> list[str]:
         # Back-link to the §6 domain that grades this control class across the
         # codebase. Appended AFTER the escaping pass: `_safe_boundary_text`
         # would escape the brackets and leave a literal `[§6.4 …]` in the cell.
-        control_link = _leg_control_link(leg["leg"])
+        control_link = _leg_control_link(leg["leg"]) if section6_present else ""
         if control_link:
             lines[-1] += f" · {control_link}"
     return lines
@@ -16068,7 +16091,7 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         if not informative or (row_state in ("refuted", "unconfirmed") and row_state not in {leg["state"] for leg in leg_states}):
             assumption += f"<br>{_boundary_assumption_verdict(row, ctx)}"
         if informative:
-            for line in _boundary_leg_lines(leg_states):
+            for line in _boundary_leg_lines(leg_states, ctx):
                 assumption += f"<br>{line}"
         sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
         finding_links = _boundary_finding_links(linked.get(boundary_id, []), leg_states, ctx)
