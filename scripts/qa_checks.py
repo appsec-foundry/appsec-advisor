@@ -4122,8 +4122,11 @@ _ASSET_COL_WIDTHS = ("22%", "13%", "32%", "33%")
 # content of the row, which collapsed into single stacked characters. Compose now
 # emits severity dot + id only there (the title is one click away), so 14% fits
 # `🔴 F-005` per line, and the Exposure rating gets a column of its own.
-_TRUST_BOUNDARY_COL_WIDTHS = ("6%", "25%", "11%", "15%", "29%", "14%")
-_TRUST_BOUNDARY_COL_WIDTHS_SRC = ("6%", "21%", "11%", "14%", "25%", "9%", "14%")
+# 2026-08-02: Assumption gave up the bare finding-id lists it used to enumerate,
+# and Linked findings gained a one-word group label per condition, so four points
+# move from the former to the latter.
+_TRUST_BOUNDARY_COL_WIDTHS = ("6%", "25%", "11%", "15%", "25%", "18%")
+_TRUST_BOUNDARY_COL_WIDTHS_SRC = ("6%", "21%", "11%", "14%", "21%", "9%", "18%")
 
 
 def _trust_boundary_spec(*, with_source: bool, with_status: bool):

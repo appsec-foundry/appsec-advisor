@@ -1269,12 +1269,12 @@ def test_assumption_cell_states_a_verdict_derived_from_the_links(tmp_path: Path)
         {"id": "T-003", "component": "C-02"},
     ]
     rendered = _catalog(tmp_path, rows, threats, ["C-01", "C-02", "C-03"])
-    assert "**Refuted** by the linked findings." in rendered
-    assert "**Unconfirmed** — 2 finding(s) in the components it covers, none linked here." in rendered
+    assert "**Broken** — see the linked findings." in rendered
+    assert "**In doubt** — 2 finding(s) in the components it covers, none linked here." in rendered
     assert "_No finding contradicts it._" in rendered
     # The verdict rides in the assumption cell, not in a column of its own.
-    unconfirmed_row = next(line for line in rendered.splitlines() if "Unconfirmed" in line and line.startswith("|"))
-    assert "Unconfirmed" in unconfirmed_row.split(" | ")[4]
+    unconfirmed_row = next(line for line in rendered.splitlines() if "In doubt" in line and line.startswith("|"))
+    assert "In doubt" in unconfirmed_row.split(" | ")[4]
 
 
 def test_verdict_matches_the_shared_state_helper(tmp_path: Path) -> None:
@@ -1309,8 +1309,8 @@ def test_verdict_matches_the_shared_state_helper(tmp_path: Path) -> None:
         fragments_dir=tmp_path,
     )
     expected = {
-        "refuted": "**Refuted** by the linked findings.",
-        "unconfirmed": "**Unconfirmed** — 1 finding(s) in the components it covers, none linked here.",
+        "refuted": "**Broken** — see the linked findings.",
+        "unconfirmed": "**In doubt** — 1 finding(s) in the components it covers, none linked here.",
         "clean": "_No finding contradicts it._",
         "not-examined": "_Not examined._",
     }
@@ -1335,8 +1335,8 @@ def test_verdict_ignores_a_linker_whose_evidence_did_not_survive(tmp_path: Path)
         }
     ]
     rendered = _catalog(tmp_path, rows, threats, ["C-01"])
-    assert "**Refuted**" not in rendered
-    assert "**Unconfirmed** — 1 finding(s) in the components it covers, none linked here." in rendered
+    assert "**Broken**" not in rendered
+    assert "**In doubt** — 1 finding(s) in the components it covers, none linked here." in rendered
 
 
 def test_unconfirmed_verdict_counts_folded_in_components(tmp_path: Path) -> None:
@@ -1350,7 +1350,7 @@ def test_unconfirmed_verdict_counts_folded_in_components(tmp_path: Path) -> None
     rows = [{**_canonical_boundary(1), "covers_components": ["C-01", "C-02"]}]
     threats = [{"id": "T-001", "component": "C-02"}]
     rendered = _catalog(tmp_path, rows, threats, ["C-01", "C-02"])
-    assert "**Unconfirmed** — 1 finding(s) in the components it covers, none linked here." in rendered
+    assert "**In doubt** — 1 finding(s) in the components it covers, none linked here." in rendered
 
 
 def test_covered_components_never_include_the_crossings_own_source(tmp_path: Path) -> None:
@@ -1406,7 +1406,7 @@ def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tm
     assert "| Source |" not in rendered
     assert "source `detected`" in rendered
     assert "only where the crossing is confirmed internet ingress" in rendered
-    assert "raw risk remains unchanged" in rendered
+    assert "raw risk is never changed" in rendered
 
 
 def test_trust_boundary_cell_states_each_fact_once(tmp_path: Path) -> None:
@@ -5945,3 +5945,87 @@ def test_control_domain_leg_map_matches_the_contract_headings() -> None:
     assert set(compose._LEG_SECTION7_DOMAIN.values()) <= set(compose._SECTION7_DOMAIN_LEG)
     for leg, domain in compose._LEG_SECTION7_DOMAIN.items():
         assert compose._SECTION7_DOMAIN_LEG[domain] == leg
+
+
+# ---------------------------------------------------------------------------
+# §1 Trust Boundaries — where finding ids may appear (user 2026-08-02)
+# ---------------------------------------------------------------------------
+
+
+def _leg_catalog(tmp_path: Path) -> str:
+    """One crossing whose legs are broken by links and shadowed by related work."""
+    rows = [_canonical_boundary(1)]
+    threats = [
+        # Two links, each naming the leg it breaks.
+        {
+            "id": "T-001",
+            "component": "C-01",
+            "risk": "Critical",
+            "boundary_refs": [{"boundary_id": "tb-1", "leg": "authentication"}],
+        },
+        {
+            "id": "T-002",
+            "component": "C-01",
+            "risk": "High",
+            "boundary_refs": [{"boundary_id": "tb-1", "leg": "authorization"}],
+        },
+        # Unlinked findings behind the same crossing: related, never enumerated.
+        {"id": "T-003", "component": "C-01", "risk": "High", "cwe": "CWE-89"},
+        {"id": "T-004", "component": "C-01", "risk": "Medium", "cwe": "CWE-89"},
+    ]
+    return _catalog(tmp_path, rows, threats, ["C-01"])
+
+
+def test_verdict_column_names_no_finding_ids(tmp_path: Path) -> None:
+    """Every id the table prints must be a link the reader can follow.
+
+    The verdict column used to enumerate bare, unlinked ids for an in-doubt leg.
+    They were not links and appeared in no other column, so the table looked
+    like it contradicted itself (user 2026-08-02). The count survives; the ids
+    do not.
+    """
+    rendered = _leg_catalog(tmp_path)
+    verdict_cell = next(line for line in rendered.splitlines() if line.startswith("| <a id=\"tb-1\"")).split(" | ")[4]
+    assert "F-00" not in verdict_cell
+    assert "T-00" not in verdict_cell
+    # What the ids carried — that the condition fails more than once — stays.
+    assert "related" in verdict_cell
+
+
+def test_linked_findings_are_grouped_under_the_condition_they_break(tmp_path: Path) -> None:
+    """The evidence column carries the leg label, so it meets the verdict column.
+
+    Without it the two columns describe the same crossing twice and never meet:
+    the reader cannot tell which finding broke which condition.
+    """
+    rendered = _leg_catalog(tmp_path)
+    links_cell = next(line for line in rendered.splitlines() if line.startswith("| <a id=\"tb-1\"")).split(" | ")[5]
+    assert "_Authentication_<br>🔴 [F-001](#f-001)" in links_cell
+    assert "_Authorization_<br>🟠 [F-002](#f-002)" in links_cell
+    # Group order follows the canonical leg order, as the verdict lines do.
+    assert links_cell.index("_Authentication_") < links_cell.index("_Authorization_")
+
+
+def test_unattributable_link_keeps_its_place_without_a_group(tmp_path: Path) -> None:
+    """A link the legs cannot attribute still refutes the row, so it is listed."""
+    rows = [_canonical_boundary(1)]
+    threats = [{"id": "T-009", "component": "C-01", "risk": "High", "boundary_refs": [{"boundary_id": "tb-1"}]}]
+    links_cell = next(
+        line for line in _catalog(tmp_path, rows, threats, ["C-01"]).splitlines() if line.startswith('| <a id="tb-1"')
+    ).split(" | ")[5]
+    assert "[F-009](#f-009)" in links_cell
+
+
+def test_boundary_vocabulary_is_explained_after_the_table_not_before_it(tmp_path: Path) -> None:
+    """The lead says what the table is; the verdict words are reference material.
+
+    As one block up front the definitions ran to a screen the reader had to hold
+    in memory before seeing a row (user 2026-08-02).
+    """
+    rendered = _leg_catalog(tmp_path)
+    lead = rendered.split("\n\n")[1]
+    assert len(lead.split()) < 70, lead
+    for word in ("broken", "in doubt", "not examined", "related"):
+        assert word not in lead
+    legend_at = rendered.index("_Verdict per condition:")
+    assert legend_at > rendered.rindex('| <a id="tb-1"')

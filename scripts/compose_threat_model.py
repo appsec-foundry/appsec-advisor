@@ -15617,6 +15617,24 @@ def _boundary_exposure_legend() -> str:
     return f"_Exposure rates how reachable the crossing is, most exposed first: {ramp}._"
 
 
+def _boundary_verdict_legend() -> str:
+    """Legend for the per-condition verdict, beside the Exposure one.
+
+    It sits AFTER the table for the same reason the Exposure legend does: it is
+    reference the reader consults once a row raises a question, not a preamble
+    to be memorised before the first row (user 2026-08-02).
+    """
+    return (
+        "_Verdict per condition: **broken** — a linked finding proves the gap · in doubt — "
+        "findings in the components covered bear on the condition, none linked to this crossing · "
+        "not examined — nothing in this report bears on it. `N related` counts further findings "
+        "behind the crossing bearing on the same condition, so one that fails systematically is "
+        "not read as a single lapse. Linked findings are grouped under the condition they break. "
+        "A link may raise a finding's effective severity only where the crossing is confirmed "
+        "internet ingress; raw risk is never changed._"
+    )
+
+
 def _uniform_boundary_value(rows: list[dict], read: Callable[[dict], str], normal: str | None) -> str | None:
     """The one value ``read`` yields for EVERY row, when the catalogue should
     stop spending a column (or a stacked sub-line) on it.
@@ -15679,8 +15697,13 @@ def _boundary_covered_components(row: dict) -> list[str]:
     return covered
 
 
+# Displayed vocabulary only. `refuted` / `unconfirmed` stay the internal state
+# keys — the deterministic scoring reads them and consumers read the persisted
+# `assumption_verdict` — but "refuted" is formal-logic vocabulary the reader has
+# to translate. The question the column answers is "does this condition still
+# hold?", so the answer says whether it is broken (user 2026-08-02).
 _BOUNDARY_VERDICT_TEXT = {
-    "refuted": "**Refuted** by the linked findings.",
+    "refuted": "**Broken** — see the linked findings.",
     "clean": "_No finding contradicts it._",
     "not-examined": "_Not examined._",
 }
@@ -15696,8 +15719,8 @@ _BOUNDARY_LEG_LABELS = {
     "response-trust": "Response trust",
 }
 _BOUNDARY_LEG_STATE_TEXT = {
-    "refuted": "**refuted**",
-    "unconfirmed": "unconfirmed",
+    "refuted": "**broken**",
+    "unconfirmed": "in doubt",
     "unexamined": "_not examined_",
 }
 
@@ -15769,36 +15792,30 @@ def _visible_finding_id(threat_id: str) -> str:
 def _boundary_leg_lines(leg_states: list[dict]) -> list[str]:
     """One line per assumption leg, or [] for a row that declares none.
 
-    A refuted leg names no ids: those findings are already listed, with their
-    severity dots, in the row's own "Linked findings" column. An unconfirmed leg
-    DOES name them — they appear nowhere else in the table, and they are the
-    whole point of the state: findings that examined this crossing without ever
-    linking to it (tb-2 reported "none examined this crossing" while three CI/CD
-    findings did exactly that, user 2026-08-01).
+    No leg names finding ids. Every id this table shows is a clickable link in
+    the row's own "Linked findings" column, grouped under the leg it breaks; a
+    leg that also enumerated bare ids put identifiers in front of the reader
+    that were not links and appeared nowhere else in the table, which reads as
+    an inconsistency rather than as the two different sets they are
+    (user 2026-08-02).
 
-    The ids are emitted as PLAIN TEXT, not links. `linkify_anchors` expands a
-    `[F-008](#f-008)` into id + full finding title, and this column has already
-    been broken twice by titles wrapping into a column of stacked single
-    characters (user 2026-07-31). The catalogue's Linked-findings column carries
-    the clickable copies.
+    What those ids carried is a count, and the count is what the line keeps: one
+    link says the condition fails somewhere, several further findings bearing on
+    the same leg say it fails systematically. "related", not "unlinked": the set
+    includes findings linked to a DIFFERENT crossing, and rightly so — SQL
+    injection reaching the data tier still crossed the perimeter unvalidated on
+    the way in.
     """
     lines: list[str] = []
     for leg in leg_states:
         label = _BOUNDARY_LEG_LABELS.get(leg["leg"], leg["leg"])
         text = f"{label}: {_BOUNDARY_LEG_STATE_TEXT[leg['state']]}"
-        if leg["state"] == "unconfirmed" and leg["finding_ids"]:
-            shown = [_visible_finding_id(fid) for fid in leg["finding_ids"][:4]]
-            extra = len(leg["finding_ids"]) - len(shown)
-            text += " — " + ", ".join(shown) + (f", +{extra}" if extra > 0 else "")
-        # One link says the condition fails somewhere; further findings bearing
-        # on the same leg say it fails systematically. The count alone carries
-        # that — listing them would double the cell for a weaker signal.
-        # "adjacent", not "unlinked": the set includes findings linked to a
-        # DIFFERENT crossing, and rightly so — SQL injection reaching the data
-        # tier still crossed the perimeter unvalidated on the way in.
-        adjacent = leg.get("adjacent_finding_ids") or []
-        if leg["state"] == "refuted" and adjacent:
-            text += f" · +{len(adjacent)} adjacent"
+        # A broken leg's own `finding_ids` ARE the links shown beside it, so its
+        # further evidence is `adjacent_finding_ids`. An in-doubt leg carries no
+        # link at all — there its `finding_ids` are the related set.
+        related = leg["adjacent_finding_ids"] if leg["state"] == "refuted" else leg["finding_ids"]
+        if related:
+            text += f" · {len(related)} related"
         lines.append(_safe_boundary_text(text, table=True))
         # Back-link to the §6 domain that grades this control class across the
         # codebase. Appended AFTER the escaping pass: `_safe_boundary_text`
@@ -15807,6 +15824,52 @@ def _boundary_leg_lines(leg_states: list[dict]) -> list[str]:
         if control_link:
             lines[-1] += f" · {control_link}"
     return lines
+
+
+def _boundary_finding_links(finding_ids: list[str], leg_states: list[dict], ctx: RenderContext) -> str:
+    """Linked findings as `<br>`-stacked links, grouped by the leg each breaks.
+
+    The verdict column states a condition per leg and this column states the
+    evidence; without the leg label the two columns describe the same crossing
+    twice and never meet, so the reader cannot tell which finding broke which
+    condition (user 2026-08-02). Group order follows `boundary_leg_states`,
+    i.e. the canonical inbound/outbound order, so the groups read in the same
+    sequence as the verdict lines beside them.
+
+    A finding attributed to two legs is listed under the first — the verdict
+    column already reports both as broken, and repeating the id in a column this
+    narrow costs more than it explains. A link the legs could not attribute (no
+    `leg` field, no unambiguous CWE match) keeps its place in a trailing
+    unlabelled group rather than being dropped: it still refutes the row. With
+    no attributable leg at all this degrades to the flat list it replaced.
+
+    Severity dot + id only, never the finding title: this is the narrowest
+    column in the table and the global `linkify_anchors` label pass would append
+    titles, which once collapsed it into a column of single stacked characters
+    (user 2026-07-31). The row is exempt from that pass via
+    `_is_bare_finding_ref_line`, so the dot is emitted here.
+    """
+    if not finding_ids:
+        return "—"
+
+    def _chip(finding_id: str) -> str:
+        icon = _SEV_ICON_TBL.get(ctx.severity_for_ref(finding_id).lower(), "")
+        return f"{icon} [{finding_id}](#{finding_id.lower()})".strip()
+
+    remaining = list(finding_ids)
+    parts: list[str] = []
+    for leg in leg_states:
+        if leg["state"] != "refuted":
+            continue
+        attributed = {_visible_finding_id(tid) for tid in leg["finding_ids"]}
+        group = [finding_id for finding_id in remaining if finding_id in attributed]
+        if not group:
+            continue
+        remaining = [finding_id for finding_id in remaining if finding_id not in attributed]
+        parts.append(f"_{_BOUNDARY_LEG_LABELS.get(leg['leg'], leg['leg'])}_")
+        parts.extend(_chip(finding_id) for finding_id in group)
+    parts.extend(_chip(finding_id) for finding_id in remaining)
+    return "<br>".join(parts)
 
 
 def _boundary_assumption_verdict(row: dict, ctx: RenderContext) -> str:
@@ -15828,7 +15891,7 @@ def _boundary_assumption_verdict(row: dict, ctx: RenderContext) -> str:
     """
     state, ids = boundary_assumption_state(row, ctx.yaml_data.get("threats") or [])
     if state == "unconfirmed":
-        return f"**Unconfirmed** — {len(ids)} finding(s) in the components it covers, none linked here."
+        return f"**In doubt** — {len(ids)} finding(s) in the components it covers, none linked here."
     return _BOUNDARY_VERDICT_TEXT[state]
 
 
@@ -15858,20 +15921,15 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
     lines = [
         "### Trust Boundaries",
         "",
-        # The verdict vocabulary is defined once here, so every cell can stay a
-        # single short line instead of re-explaining itself on every row.
-        "Canonical boundary crossings. A boundary exists because what crosses it cannot be "
-        "trusted, so **Assumption & verdict** states the conditions that resolve that distrust "
-        "and whether this report still supports each one. An inbound crossing is judged on "
-        "_validation_, _authentication_ and _authorization_; an outbound one on _egress content_, "
-        "_egress destination_ and _response trust_ — what comes back is untrusted input too. "
-        "Per condition: _refuted_ — a linked finding proves the gap; _unconfirmed_ — findings in "
-        "the components it covers bear on this condition, but none is linked to the crossing; "
-        "_not examined_ — nothing in this report bears on it. _+N adjacent_ counts further "
-        "findings behind this crossing that bear on the same condition without being linked to "
-        "it, so a condition that fails systematically is not read as a single lapse. "
-        "A link may raise a finding's effective severity only where the crossing is confirmed "
-        "internet ingress; raw risk remains unchanged.",
+        # Lead states what the table is and what its hardest column answers;
+        # the vocabulary follows the table as a legend, beside the Exposure one.
+        # As one block up front it ran to a screen of definitions the reader had
+        # to hold in memory before seeing a single row (user 2026-08-02).
+        "Canonical boundary crossings. **Assumption & verdict** names the condition that makes "
+        "each crossing safe and whether this report still supports it, judged per condition: an "
+        "inbound crossing on _validation_, _authentication_ and _authorization_, an outbound one "
+        "on _egress content_, _egress destination_ and _response trust_ — what comes back is "
+        "untrusted input too.",
         "",
         f"| {' | '.join(headers)} |",
         f"|{'---|' * len(headers)}",
@@ -15933,21 +15991,7 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
             for line in _boundary_leg_lines(leg_states):
                 assumption += f"<br>{line}"
         sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
-        # Severity dot + id only, one per line. The column is the narrowest in
-        # the table and used to receive the full finding title from the global
-        # `linkify_anchors` label pass — five titles with code spans turned it
-        # into a column of single stacked characters (user 2026-07-31). The
-        # title is one click away; the dot carries the triage signal. The row is
-        # exempted from the label pass by `_is_bare_finding_ref_line`, so the
-        # dot has to be emitted here.
-        finding_links = (
-            "<br>".join(
-                f"{_SEV_ICON_TBL.get(ctx.severity_for_ref(finding_id).lower(), '')} "
-                f"[{finding_id}](#{finding_id.lower()})".strip()
-                for finding_id in linked.get(boundary_id, [])
-            )
-            or "—"
-        )
+        finding_links = _boundary_finding_links(linked.get(boundary_id, []), leg_states, ctx)
         cells = [f'<a id="{boundary_id}"></a>{boundary_id}', boundary, exposure, kind, assumption]
         if uniform_source is None:
             cells.append(sources)
@@ -15962,6 +16006,7 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
             ]
         )
     lines.extend(["", _boundary_exposure_legend()])
+    lines.extend(["", _boundary_verdict_legend()])
     if uniform_source is None:
         lines.extend(
             [
