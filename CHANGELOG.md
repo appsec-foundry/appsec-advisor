@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A component's STRIDE analyzer now receives the boundary assumption legs it is asked to cite, so the per-leg label on a finding names a real condition instead of one composed from the boundary name.
 - Client-side code is no longer modelled as a trust zone. A browser SPA, mobile app or desktop client executes on the user's device, on the attacker's side of every server-side control, so a crossing out of it is now anchored at the internet and folds into the perimeter it duplicated, while a crossing into it — which enforces nothing and protects nothing — is removed, with the reason recorded in the signal coverage report. A crossing into client code that names a real control is kept. On a reference scan this took nine boundaries down to seven, one of which was the same API perimeter counted twice.
 - `Automated SCA scanning` is now rated only from scanners the pipeline actually invokes. A tool name in a comment, a step label, or string data no longer counts as evidence, and a CodeQL workflow on its own no longer counts as dependency scanning.
 - Skills an organization disabled through `skill_toggles` are now actually refused, with the configured reason — whether the command is typed or Claude invokes it. Nothing enforced the policy before. Recovery skills stay reachable, so a broken run can still be cleaned up.

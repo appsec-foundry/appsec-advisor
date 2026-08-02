@@ -1554,15 +1554,28 @@ def prepare_contexts(
         redistributed[bid] = cid
         covered.add(bid)
 
+    def _context_row(boundary: dict, focus: str, reasons: list[str]) -> dict:
+        # The legs decide the analyzer's `boundary_refs[].leg`, whose schema enum
+        # is closed. Left out of the dispatch context the analyzer has only the
+        # boundary NAME to work from and composes a label the gate rejects, which
+        # re-dispatches the whole component (juice-shop 2026-08-02: "Sequelize
+        # model parameter binding" became "parameterized binding" while tb-3
+        # declared `data-interpretation`). Project the synthesized list rather
+        # than the raw field so a row no analyst annotated still carries the
+        # vocabulary its direction implies.
+        row = {
+            key: deepcopy(boundary[key])
+            for key in ("id", "name", "from", "to", "kind", "assumption", "evidence", "confidence")
+            if key in boundary
+        }
+        legs = boundary_legs(boundary)
+        if legs:
+            row["assumption_legs"] = deepcopy(legs)
+        return row | {"focus": focus, "focus_reasons": reasons}
+
     for cid, entry in state.items():
         context_rows = [
-            {
-                key: deepcopy(boundary[key])
-                for key in ("id", "name", "from", "to", "kind", "assumption", "evidence", "confidence")
-                if key in boundary
-            }
-            | {"focus": focus, "focus_reasons": reasons}
-            for _rank, boundary, focus, reasons in entry["chosen"]
+            _context_row(boundary, focus, reasons) for _rank, boundary, focus, reasons in entry["chosen"]
         ]
         if context_rows:
             component_dir = context_root / cid

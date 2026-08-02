@@ -735,6 +735,53 @@ def test_context_selection_is_bounded_and_stable(tmp_path: Path, depth: str, exp
     assert len(context["adjacent_trust_boundaries"]) == expected
 
 
+def test_context_carries_the_assumption_legs_to_the_analyzer(tmp_path: Path) -> None:
+    """`boundary_refs[].leg` is a closed enum and the analyzer is told to copy a
+    value from the candidate. Dropped from this projection the candidate offers
+    only its NAME, and the composed label fails the schema gate and re-dispatches
+    the component (juice-shop 2026-08-02: "Sequelize model parameter binding" →
+    "parameterized binding", where the boundary declared `data-interpretation`).
+    A declared leg keeps its condition; an unannotated directional row still
+    ships the vocabulary its direction implies."""
+    repo, out = _repo(tmp_path)
+    rows = [
+        {
+            **_row("Sequelize model parameter binding"),
+            "id": "tb-1",
+            "from": "web-api",
+            "to": "worker",
+            "kind": "process",
+            "assumption_legs": [
+                {"leg": "data-interpretation", "condition": "Queries reach the driver through bound parameters."}
+            ],
+            "resolution_status": "resolved",
+            "sources": ["detected"],
+        },
+        {**_row("Public API"), "id": "tb-2", "resolution_status": "resolved", "sources": ["detected"]},
+    ]
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": rows})
+    prep.prepare_contexts(repo_root=repo, output_dir=out, component_ids=["web-api"], depth="standard")
+
+    context = json.loads((out / ".dispatch-context" / "web-api" / "trust-boundaries.json").read_text())
+    by_id = {row["id"]: row for row in context["adjacent_trust_boundaries"]}
+    assert by_id["tb-1"]["assumption_legs"] == [
+        {"leg": "data-interpretation", "condition": "Queries reach the driver through bound parameters."}
+    ]
+    assert [leg["leg"] for leg in by_id["tb-2"]["assumption_legs"]] == list(prep.INGRESS_LEGS)
+
+
+def test_context_legs_are_a_copy_not_a_reference(tmp_path: Path) -> None:
+    """The projection must not alias the canonical row — a later mutation of the
+    dispatch context would otherwise rewrite `.trust-boundaries.json`."""
+    repo, out = _repo(tmp_path)
+    rows = [{**_row("Public API"), "id": "tb-1", "resolution_status": "resolved", "sources": ["detected"]}]
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 2, "trust_boundaries": rows})
+    prep.prepare_contexts(repo_root=repo, output_dir=out, component_ids=["web-api"], depth="standard")
+
+    canonical = json.loads((out / ".trust-boundaries.json").read_text())["trust_boundaries"][0]
+    assert "assumption_legs" not in canonical
+
+
 def test_thorough_excludes_ordinary_process_and_unknown_legacy_boundaries(tmp_path: Path) -> None:
     repo, out = _repo(tmp_path)
     rows = [

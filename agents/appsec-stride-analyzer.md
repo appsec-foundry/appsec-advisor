@@ -156,9 +156,10 @@ reference. A boundary object alone is never threat evidence and never requires
 one finding per boundary. A reference must not change likelihood, impact,
 risk, CVSS, mitigation priority, or `architectural_violation`.
 
-Set `leg` to the condition your finding breaks, from the candidate's own
-`assumption_legs`; omit it rather than guess when it straddles two, because the
-report then falls back to the CWE instead of printing a wrong label.
+Set `leg` to the condition your finding breaks by copying a `leg` value verbatim
+from the candidate's own `assumption_legs`; never derive one from the boundary
+name. Omit it rather than guess when it straddles two — the report then falls
+back to the CWE instead of printing a wrong label.
 
 For each entry in the known-threats index:
 - `status: open` → mandatory verification target — read cited evidence at the exact line, confirm issue still exists, include with `prior_finding_ref`
@@ -646,7 +647,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
           "boundary_id": "<confirmed candidate tb-N from TRUST_BOUNDARIES_INDEX_PATH>",
           "origin_component_id": "<COMPONENT_ID>",
           "rationale": "<20-240 chars describing the evidenced control-gap mechanism, not the boundary name>",
-          "leg": "<optional — the assumption_leg this breaks; omit if ambiguous>",
+          "leg": "<optional — one `leg` value copied verbatim from this candidate's `assumption_legs`; omit if ambiguous>",
           "evidence_locations": [
             {"file": "<same file already present in finding evidence>", "line": <same line>}
           ]
@@ -725,7 +726,7 @@ Assignment procedure (stop at first match):
 
 Do **not** invent new TH-IDs. The taxonomy is the single authoritative source.
 
-**Validate the written file immediately.** Follow `shared/validation-routine.md` with `schema_type=stride` and `output_file=$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`.
+**Validate the written file immediately.** Follow `shared/validation-routine.md` with `schema_type=stride` and `output_file` set to the absolute path you just wrote — resolve `OUTPUT_DIR` yourself, it is not set in the shell.
 
 ## Budget-critical wrap-up
 
