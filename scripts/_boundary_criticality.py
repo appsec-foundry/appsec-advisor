@@ -58,7 +58,7 @@ def exposure_of(row: dict, component_ids: set[str]) -> str:
 
 # Reader-facing rating, keyed by exposure.
 #
-# Two deliberate choices, both easy to erode later:
+# Three deliberate choices, all easy to erode later:
 #
 # 1. It rates REACHABILITY, not linked findings. Only a fraction of findings
 #    carry a `boundary_refs[]` entry, so a findings-weighted rating would mark a
@@ -70,9 +70,19 @@ def exposure_of(row: dict, component_ids: set[str]) -> str:
 #    report, and reusing either the words or the glyphs for a different concept
 #    invites a reader to see "🔴" on a boundary row and conclude a critical
 #    finding lives there. No glyph carries two meanings.
+# 3. Each word claims only what `exposure_of` above establishes, which is one
+#    thing: whether the far end is a modelled component. The top tier read
+#    "Public", asserting an audience the rule never checks — internet, partner
+#    network and corporate LAN are indistinguishable to it (user 2026-08-02).
+#    "Exposed" was the first replacement considered and is the same error one
+#    step milder: it fits the column's NAME but states a risk posture the rule
+#    did not establish. "External" states the rule itself, and pairs with
+#    Internal — both say where the other end sits, and the tier ORDER carries
+#    the risk judgment. Where the report needs proven internet reach, the
+#    severity-elevation rule tests for it separately.
 _RATINGS: dict[str, tuple[str, str]] = {
     "review required": ("⚠", "Review"),
-    "internet-facing": ("🌐", "Public"),
+    "internet-facing": ("🌐", "External"),
     "inferred": ("◐", "Unverified"),
     "internal": ("🔒", "Internal"),
     "outbound": ("↗", "Egress"),

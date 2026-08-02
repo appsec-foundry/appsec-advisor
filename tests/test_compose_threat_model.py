@@ -1868,7 +1868,7 @@ def test_finding_boundary_gap_link_survives_the_catalogue_row_cap(tmp_path: Path
     # re-states crossing + enforcement mechanism at length (2026-07-31).
     # `· Validation` — the leg of the crossing this CWE-89 finding breaks, so the
     # reader can tell an input-validation gap from an authentication one.
-    assert "**Trust boundary gap:** [tb-21](#tb-21) 🌐 Public — external → C-01 · Validation:" in cell
+    assert "**Trust boundary gap:** [tb-21](#tb-21) 🌐 External — external → C-01 · Validation:" in cell
     assert "Boundary 21" not in cell
     # The link target exists: the referenced row displaced an unreferenced one
     # instead of being cut, and the catalogue still holds its cap.
@@ -1961,7 +1961,7 @@ def test_finding_boundary_gap_drops_the_link_for_an_unknown_boundary(tmp_path: P
 
 
 def test_finding_boundary_gap_rates_only_internet_facing_exposure(tmp_path: Path) -> None:
-    # The rating is the catalogue's own `🌐 Public` and reaches the card for that
+    # The rating is the catalogue's own `🌐 External` and reaches the card for that
     # one exposure: it is the only one the effective-severity exception acts on,
     # and the card already carries a severity dot.
     internal = _canonical_boundary(1)
@@ -1980,7 +1980,7 @@ def test_finding_boundary_gap_rates_only_internet_facing_exposure(tmp_path: Path
     # tb-1 is internal and declares no legs, so no leg is named; tb-2 is ingress,
     # where CWE-89 resolves unambiguously to the validation leg.
     assert "[tb-1](#tb-1) — C-02 → C-01:" in _boundary_card(ctx, "tb-1")
-    assert "[tb-2](#tb-2) 🌐 Public — external → C-01 · Validation:" in _boundary_card(ctx, "tb-2")
+    assert "[tb-2](#tb-2) 🌐 External — external → C-01 · Validation:" in _boundary_card(ctx, "tb-2")
 
 
 @pytest.mark.parametrize(
@@ -6085,7 +6085,7 @@ def test_exposure_and_kind_legends_define_their_vocabulary(tmp_path: Path) -> No
     """Naming a tier is not explaining it.
 
     The legend listed `Public` / `Internal` / `Unverified` as bare words, which
-    invites the reader to over-read them — "Public" as proven internet reach,
+    invites the reader to over-read them — "Public" once claimed proven internet reach,
     "Internal" as same-host (user 2026-08-02). Each tier now carries the rule
     `exposure_of` actually applies, and every tier the module can rate has one.
     """

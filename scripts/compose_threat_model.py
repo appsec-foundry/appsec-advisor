@@ -15650,7 +15650,11 @@ def _boundary_kind_legend() -> str:
     )
 
 
-_CROSSING_TYPE_LABELS = {"ingress": "inbound", "egress": "outbound", "internal": "in-process"}
+# Crossing type, NOT surface. `internal` means both ends are modelled
+# components, which a network hop between two services satisfies just as well as
+# an in-process call — labelling it "in-process" borrowed the Kind column's
+# surface vocabulary, which the legend right below defines as something else.
+_CROSSING_TYPE_LABELS = {"ingress": "inbound", "egress": "outbound", "internal": "internal"}
 # One gloss per condition that a reader cannot infer from its name alone: the
 # in-process one states the invariant behind the label, and the egress one the
 # reason a response is judged at all.
