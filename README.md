@@ -8,7 +8,7 @@
 
 > ⚠️ **Beta — not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin for repository-based *technical threat modeling*. It derives a security architecture model from code, identifies trust boundaries and data flows, applies STRIDE, and produces reviewable findings and a mitigation plan.
+`appsec-advisor` is a Claude Code plugin for technical threat modeling from repository evidence. It maps the implemented architecture, applies STRIDE, and produces findings with a mitigation plan. It complements workshops: automate a first pass, re-run it as code changes, and involve experts where judgment is needed.
 
 Beyond threat modeling, it supports requirements audits, change reviews, and CI gates. AppSec teams can tailor it for internal use; see [Enterprise rollout](#enterprise-rollout).
 
@@ -24,15 +24,23 @@ Workshop and design-review threat models become stale as the implementation chan
 
 `appsec-advisor` covers the gap to manual architecture review by identifying risks such as missing trust-boundary controls, implicit service trust, and unauthenticated internal paths. Because the model is derived from the repository, re-running a scan keeps it current instead of letting it drift from the code.
 
-### What kind of threat model this is
+### How this relates to classic threat modeling
 
-`appsec-advisor` produces a *technical* threat model grounded in the repository: components, trust boundaries, data flows, and STRIDE findings derived from code and configuration. It is not a *functional* threat model that starts from business processes or user stories. Use it to find weaknesses in the architecture as actually implemented, not to map business-level assets and workflows.
+Classic threat modeling (workshops, design reviews) owns intent, business impact, and residual-risk decisions. It needs skilled people and does not scale to every service. This tool automates the *technical* picture from the repository, so teams start with coverage and specialists focus on difficult cases.
+
+| | Classic | `appsec-advisor` |
+|---|---|---|
+| Starts from | Design sessions and domain knowledge | Repository evidence: code and config |
+| Good at | Context, priorities, accept-risk | Automation, breadth, staying current |
+| Scales by | Booking more workshops | Re-running the scan on more repos |
+
+Use both: automate and scale the technical model; use expert time where the report is thin or you need more depth.
+
+**What it does not cover.** The analysis is limited to repository evidence and configured related repositories; it cannot verify runtime behaviour, production-only setup, or external controls. It does not model business processes or user journeys. Treat it as review input, not sign-off.
 
 ### Why this isn't a SAST tool
 
-SAST finds implementation flaws in specific code paths. `appsec-advisor` models the system around them — attacker goals, missing controls, and the trust relationships between components — and its primary output is an architecture-level threat model grounded in repository evidence.
-
-It complements rather than replaces code scanners. Threat modeling can surface risks with no vulnerable line to point at, such as missing authorization, an undefined trust boundary, or a service with excessive trust.
+SAST finds bugs on concrete code paths. This tool looks at the architecture around them — missing controls, trust between components, risks with no single bad line. It sits next to scanners, not instead of them.
 
 ## Security notes
 
