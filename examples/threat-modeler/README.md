@@ -1,8 +1,8 @@
 # Threat-Modeler — Example Reports
 
-Sample outputs from the **threat-modeler** plugin, run against public target
-applications. Use them to see the report structure, depth levels and artifact
-formats before running a scan of your own.
+Sample outputs from the **threat-modeler** plugin, run against public and
+internal test applications. Use them to see the report structure, depth levels
+and artifact formats before running a scan of your own.
 
 > For more examples (additional targets, depths and historical runs), see the
 > companion repo: **<https://github.com/matthiasrohr/appsec-advisor-examples>**
@@ -34,14 +34,23 @@ insecure web shop:
 - `threat-model-juice-shop-standard-v0.5.*` — standard depth (broader STRIDE
   coverage, abuse cases).
 
-**[OWASP VulnerableApp](https://github.com/SasanLabs/VulnerableApp)** — vulnerable
-Java application:
+**[Damn Vulnerable Web Application (DVWA)](https://github.com/digininja/DVWA)** —
+deliberately insecure PHP/MySQL web application:
 
-- `threat-model-owasp-vulnarableapp-v0.4.*` — standard depth.
+- `threat-model-dvwa-v0.5.2.*` — standard depth.
 
-## Scan depths
+**Insecure WebApp** — internal test project:
 
-- **quick** — fast pass; top components and highest-severity threats.
-- **standard** — full STRIDE fan-out, abuse-case chains, richer mitigations.
-- **thorough** — deepest analysis (`threat-model-juice-shop-thorough-v0.5.*`, a
-  fresh run to be added here).
+- `threat-model-insecure-webapp-standard-v0.5.2.*` — standard depth.
+
+## Assessment depths
+
+For component coverage criteria, cost, and runtime guidance, see
+[Assessment depth & cost control](../../docs/threat-modeler.md#assessment-depth--cost-control).
+
+- **quick** — early feedback and low-risk changes; reduced analysis that skips
+  abuse-case validation and final model-based QA.
+- **standard** *(default)* — normal threat models and security reviews; full
+  analysis, abuse-case validation, and QA.
+- **thorough** — high-risk services and major releases; deeper component
+  analysis and architecture review.
