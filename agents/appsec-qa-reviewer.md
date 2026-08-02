@@ -3,7 +3,7 @@ name: appsec-qa-reviewer
 description: "INTERNAL — exceptional Stage-3 semantic triage after the deterministic QA gate. Consumes a compact repair plan; never repeats the full mechanical detector battery."
 tools: Read, Edit, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 120
+maxTurns: 200
 ---
 
 INTERNAL AGENT — do not invoke directly. The `create-threat-model` skill calls
@@ -164,6 +164,22 @@ These checks are deliberately absent from the agent:
 
 The Markdown report is never the source of truth for YAML. Wrong output must be
 fixed in the producer and recomposed.
+
+## Turn-budget wrap-up (mandatory)
+
+At the start of each repair action and after every Edit/Write tool call, check
+whether you are within 20 turns of `maxTurns` (200). When that threshold is
+reached, stop expanding scope:
+
+1. Finish the current Edit/Write if already in progress.
+2. Write `RUN_COMPLETE` to the agent log:
+   ```bash
+   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  RUN_COMPLETE   reason=budget_wrap_up  repairs_applied=<N>  remaining_actions=<M>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+   ```
+3. Proceed directly to writing `.qa-status.json` and exit.
+
+Without this signal, `stop_reason=tool_use` is indistinguishable from a crash
+and the skill re-dispatches, wasting a full new session.
 
 ## Output
 
