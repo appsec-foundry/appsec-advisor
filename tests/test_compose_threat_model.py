@@ -1867,7 +1867,9 @@ def test_finding_boundary_gap_link_survives_the_catalogue_row_cap(tmp_path: Path
     cell = _boundary_card(ctx, "tb-21")
     # The card leads with the CROSSING, never the boundary `name` — the name
     # re-states crossing + enforcement mechanism at length (2026-07-31).
-    assert "**Trust boundary gap:** [tb-21](#tb-21) 🌐 Public — external → C-01:" in cell
+    # `· Validation` — the leg of the crossing this CWE-89 finding breaks, so the
+    # reader can tell an input-validation gap from an authentication one.
+    assert "**Trust boundary gap:** [tb-21](#tb-21) 🌐 Public — external → C-01 · Validation:" in cell
     assert "Boundary 21" not in cell
     # The link target exists: the referenced row displaced an unreferenced one
     # instead of being cut, and the catalogue still holds its cap.
@@ -1976,8 +1978,10 @@ def test_finding_boundary_gap_rates_only_internet_facing_exposure(tmp_path: Path
         triage={},
         fragments_dir=tmp_path,
     )
+    # tb-1 is internal and declares no legs, so no leg is named; tb-2 is ingress,
+    # where CWE-89 resolves unambiguously to the validation leg.
     assert "[tb-1](#tb-1) — C-02 → C-01:" in _boundary_card(ctx, "tb-1")
-    assert "[tb-2](#tb-2) 🌐 Public — external → C-01:" in _boundary_card(ctx, "tb-2")
+    assert "[tb-2](#tb-2) 🌐 Public — external → C-01 · Validation:" in _boundary_card(ctx, "tb-2")
 
 
 @pytest.mark.parametrize(
@@ -5850,3 +5854,94 @@ def test_boundary_crossing_keeps_the_names_disambiguating_qualifier():
     }
     crossing, _mechanism = compose._boundary_crossing_and_mechanism(row)
     assert crossing == "external → backend-api B2B eval"
+
+
+# --------------------------------------------------------------------------- #
+# §6 control domain <-> boundary leg cross-reference (user 2026-08-01)
+# --------------------------------------------------------------------------- #
+
+
+def _crossref_ctx(tmp_path: Path) -> compose.RenderContext:
+    ingress = _canonical_boundary(1)  # external -> C-01
+    return compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={
+            "components": [{"id": "C-01"}],
+            "trust_boundaries": [ingress],
+            "threats": [
+                {
+                    "id": "T-040",
+                    "component": "C-01",
+                    "cwe": "CWE-306",
+                    "boundary_refs": [{"boundary_id": "tb-1", "origin_component_id": "C-01"}],
+                },
+                {"id": "T-008", "component": "C-01", "cwe": "CWE-639"},
+            ],
+        },
+        triage={},
+        fragments_dir=tmp_path,
+    )
+
+
+def test_control_domain_names_the_crossings_that_depend_on_it(tmp_path: Path) -> None:
+    """§6 grades a control class across the codebase, a leg grades one crossing.
+    Both were derivable and neither referenced the other, so the report stated
+    the same gap twice with no path between it."""
+    ctx = _crossref_ctx(tmp_path)
+    frag = (
+        "### 6.4 Authorization Controls\n\nControl prose.\n\n"
+        "### 6.9 Cryptography Secrets and Data Protection\n\nOther prose.\n"
+    )
+    out = compose._inject_boundary_leg_crossrefs(ctx, frag)
+    assert '<a id="ctrl-authorization-controls"></a>' in out
+    assert "**Dependent crossings:** [tb-1](#tb-1) unconfirmed — F-008" in out
+    # The injected block must not swallow the blank line before the prose, or
+    # markdown folds them into one paragraph.
+    assert "F-008\n\nControl prose." in out
+    # Crypto is not a condition of a crossing — no leg, and so no claim.
+    assert "ctrl-cryptography" not in out
+
+
+def test_leg_line_links_back_to_its_control_domain(tmp_path: Path) -> None:
+    ctx = _crossref_ctx(tmp_path)
+    cell = "".join(compose._boundary_leg_lines(compose.boundary_leg_states(ctx.yaml_data["trust_boundaries"][0], ctx.yaml_data["threats"])))
+    # Number only: the full title would add ~40 chars to the narrowest column.
+    assert "[§6.4](#ctrl-authorization-controls)" in cell
+    assert "[§6.2](#ctrl-identity-and-authentication-controls)" in cell
+
+
+def test_control_domain_without_a_dependent_crossing_says_so(tmp_path: Path) -> None:
+    """Silence would read as "not checked". The anchor is emitted either way so
+    the §1 back-link never dangles."""
+    ctx = _crossref_ctx(tmp_path)
+    out = compose._inject_boundary_leg_crossrefs(ctx, "### 6.10 File Parser and Outbound Request Controls\n\nProse.\n")
+    assert '<a id="ctrl-file-parser-and-outbound-request-controls"></a>' in out
+    assert "No trust boundary in this model depends on this control class." in out
+
+
+def test_control_domain_crossref_is_idempotent(tmp_path: Path) -> None:
+    """The QA re-render loop can compose the same content twice; a second pass
+    must not emit a duplicate HTML id, or the §1 back-link points at two
+    elements."""
+    ctx = _crossref_ctx(tmp_path)
+    once = compose._inject_boundary_leg_crossrefs(ctx, "### 6.4 Authorization Controls\n\nProse.\n")
+    assert compose._inject_boundary_leg_crossrefs(ctx, once) == once
+
+
+def test_control_domain_leg_map_matches_the_contract_headings() -> None:
+    """`_SECTION7_DOMAIN_LEG` keys are the §6 subsection headings verbatim. A
+    rename in the contract would otherwise make the injection silently no-op —
+    it matches on the heading text and fails open by design, so nothing would
+    report the loss. Fail here instead."""
+    import yaml as _yaml
+
+    contract = _yaml.safe_load((Path(compose.__file__).parent.parent / "data" / "sections-contract.yaml").read_text())
+    routing = contract["sections"]["security_architecture"]["schema_v2"]["finding_routing"]
+    unknown = sorted(set(compose._SECTION7_DOMAIN_LEG) - set(routing))
+    assert not unknown, f"domain headings no longer in the contract: {unknown}"
+    # Every leg that has a back-link target must have a forward mapping too, or
+    # the §1 link points at an anchor the injection never emits.
+    assert set(compose._LEG_SECTION7_DOMAIN.values()) <= set(compose._SECTION7_DOMAIN_LEG)
+    for leg, domain in compose._LEG_SECTION7_DOMAIN.items():
+        assert compose._SECTION7_DOMAIN_LEG[domain] == leg

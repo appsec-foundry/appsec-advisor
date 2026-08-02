@@ -99,7 +99,13 @@ from _manifest_readers import (
 # mutating the shared warned-CWE set.
 from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
 from pregenerate_fragments import gen_architecture_diagrams
-from prepare_trust_boundary_context import boundary_assumption_state, boundary_endpoints_valid
+from prepare_trust_boundary_context import (
+    boundary_assumption_state,
+    boundary_endpoints_valid,
+    boundary_leg_states,
+    boundary_legs,
+    finding_leg_candidates,
+)
 from reclassify_components import (  # phantom-component backstop (see _resolve_phantom_component)
     _build_matcher as _rc_build_matcher,
 )
@@ -10404,6 +10410,114 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
             links = ", ".join(f"[{w['id']}](#{str(w['id']).lower()})" for w in relevant)
             pattern = r"(^###\s+" + re.escape(heading) + r"\s*$)"
             md = re.sub(pattern, r"\1\n\n**Systemic weaknesses:** " + links, md, count=1, flags=re.MULTILINE)
+    return _inject_boundary_leg_crossrefs(ctx, md)
+
+
+# §6 control domain <-> trust-boundary assumption leg.
+#
+# The two taxonomies are the same distinctions from two angles: §6 grades a
+# control CLASS across the codebase ("is object-level authorization built
+# anywhere?"), a boundary leg grades one CROSSING ("does this crossing get
+# it?"). Both were derivable and neither referenced the other, so the report
+# stated the same gap twice with no path between: §6 carried "Object-Level
+# Authorization (IDOR Prevention): Missing" while F-008, a Critical IDOR, hung
+# off no crossing at all (user 2026-08-01).
+#
+# Only unambiguous domains are mapped. 6.7 output encoding, 6.8 browser/CORS,
+# 6.9 crypto, 6.11 operations and 6.12 real-time do not correspond to a
+# condition of a crossing, and forcing them onto one would be the "widen until
+# vacuous" failure the legs exist to avoid. `egress-content` and
+# `response-trust` have no §6 subsection at all — the AI/LLM controls live in
+# the model's `security_controls[].domain` but the chapter has no heading for
+# them — so those legs get no counterpart until one exists.
+_SECTION7_DOMAIN_LEG = {
+    "6.2 Identity and Authentication Controls": "authentication",
+    "6.3 Session and Token Controls": "authentication",
+    "6.4 Authorization Controls": "authorization",
+    "6.5 Query Construction and Data Access Controls": "data-interpretation",
+    "6.6 Input Boundary Validation Controls": "validation",
+    "6.10 File Parser and Outbound Request Controls": "egress-destination",
+}
+# Where a leg points BACK. Two domains map to `authentication`, so the reverse
+# direction needs one canonical target per leg rather than the inverted dict.
+_LEG_SECTION7_DOMAIN = {
+    "authentication": "6.2 Identity and Authentication Controls",
+    "authorization": "6.4 Authorization Controls",
+    "data-interpretation": "6.5 Query Construction and Data Access Controls",
+    "validation": "6.6 Input Boundary Validation Controls",
+    "egress-destination": "6.10 File Parser and Outbound Request Controls",
+}
+
+
+def _control_domain_anchor(domain_heading: str) -> str:
+    """Numbering-independent anchor injected next to a §6 domain heading.
+
+    The rendered heading anchor (`#64-authorization-controls`) folds in the
+    section number, and §6 has been renumbered before. An explicit id keeps the
+    §1 back-link stable across that.
+    """
+    slug = re.sub(r"^[\d.]+\s*", "", domain_heading).strip().casefold()
+    return "ctrl-" + re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
+
+
+def _leg_control_link(leg: str) -> str:
+    """`[§6.4](#ctrl-authorization-controls)`, or "" when the leg has no domain.
+
+    Number only. The full domain title would add ~40 characters to the
+    narrowest column in the table — the one already broken twice by long
+    labels (user 2026-07-31) — and the leg name immediately before it already
+    says which control class this is.
+    """
+    domain = _LEG_SECTION7_DOMAIN.get(leg)
+    if not domain:
+        return ""
+    number = domain.split(" ", 1)[0]
+    return f"[§{number}](#{_control_domain_anchor(domain)})"
+
+
+def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
+    """Name, under each §6 control domain, the crossings that depend on it.
+
+    Deliberately NOT a second assessment: the line carries the crossing, the
+    leg's derived state and the finding ids, and nothing that grades the
+    control. §6 keeps that authority — the two answer different questions and
+    neither may overrule the other.
+    """
+    rows = _visible_trust_boundaries(ctx)
+    if not rows:
+        return md
+    threats = ctx.yaml_data.get("threats") or []
+    per_leg: dict[str, list[str]] = {}
+    for row in rows:
+        for leg in boundary_leg_states(row, threats):
+            if leg["state"] == "unexamined":
+                continue
+            ids = [_visible_finding_id(fid) for fid in leg["finding_ids"][:3]]
+            detail = f"{leg['state']}"
+            if ids:
+                extra = len(leg["finding_ids"]) - len(ids)
+                detail += " — " + ", ".join(ids) + (f", +{extra}" if extra > 0 else "")
+            per_leg.setdefault(leg["leg"], []).append(f"[{row['id']}](#{row['id']}) {detail}")
+    for domain, leg in _SECTION7_DOMAIN_LEG.items():
+        # `[ \t]*$`, not `\s*$`: the latter backtracks into the heading's own
+        # newline, so the injected block would absorb the blank line and the
+        # following prose would join it into one paragraph.
+        pattern = r"(^###[ \t]+" + re.escape(domain) + r"[ \t]*$)"
+        if not re.search(pattern, md, flags=re.MULTILINE):
+            continue
+        anchor = f'<a id="{_control_domain_anchor(domain)}"></a>'
+        # Idempotent: the QA re-render loop can compose the same content twice,
+        # and a second pass would emit a duplicate HTML id — leaving the §1
+        # back-link pointing at two elements.
+        if anchor in md:
+            continue
+        entries = per_leg.get(leg) or []
+        line = (
+            f"{anchor}\n\n**Dependent crossings:** " + " · ".join(entries)
+            if entries
+            else f"{anchor}\n\n_No trust boundary in this model depends on this control class._"
+        )
+        md = re.sub(pattern, r"\1\n\n" + line.replace("\\", "\\\\"), md, count=1, flags=re.MULTILINE)
     return md
 
 
@@ -14947,9 +15061,30 @@ def _build_threat_card(
                     label += " {} {}".format(*rating_of("internet-facing"))
                 crossing, _mechanism = _boundary_crossing_and_mechanism(boundary)
                 label += f" — {_safe_boundary_text(crossing)}"
+                # WHICH condition of the crossing this finding breaks. The
+                # catalogue states the legs; without naming one here the reader
+                # cannot tell whether a tb-1 link is about authentication or
+                # about the input that crossed it (user 2026-08-01).
+                leg = _finding_boundary_leg(t, ref, boundary)
+                if leg:
+                    label += f" · {_BOUNDARY_LEG_LABELS.get(leg, leg)}"
             rendered_refs.append(f"{label}: {rationale}")
         if rendered_refs:
             boundary_card = "**Trust boundary gap:** " + "<br>".join(rendered_refs)
+            # Whether crossing this boundary CHANGED the finding's rating. The
+            # note used to live only on the Severity meta line, which separated
+            # the effect from the cause the reader is looking at (user
+            # 2026-08-01). Read from the persisted triage record, so a rerun
+            # that no longer elevates clears the claim instead of stranding it.
+            elevated_by = _external_boundary_elevations(ctx).get(str(t.get("id") or ""), ())
+            shown_here = [bid for bid in elevated_by if bid in seen_boundary_ids]
+            if shown_here:
+                effective = (t.get("effective_severity") or "").strip()
+                raw = (t.get("risk") or t.get("severity") or "").strip()
+                arrow = f"{raw} → {effective}" if raw and effective else effective or "a higher rating"
+                boundary_card += (
+                    f"<br>_⬆ Confirmed internet ingress at {', '.join(shown_here)} raised this finding: {arrow}._"
+                )
 
     # Instances — for a systemic finding consolidated from N per-file / per-stage
     # hits of one config check (see merge_threats._consolidate_config_checks),
@@ -15551,6 +15686,129 @@ _BOUNDARY_VERDICT_TEXT = {
 }
 
 
+_BOUNDARY_LEG_LABELS = {
+    "validation": "Validation",
+    "authentication": "Authentication",
+    "authorization": "Authorization",
+    "data-interpretation": "Data interpretation",
+    "egress-content": "Egress content",
+    "egress-destination": "Egress destination",
+    "response-trust": "Response trust",
+}
+_BOUNDARY_LEG_STATE_TEXT = {
+    "refuted": "**refuted**",
+    "unconfirmed": "unconfirmed",
+    "unexamined": "_not examined_",
+}
+
+
+def _finding_boundary_leg(threat: dict, ref: dict, boundary: dict) -> str:
+    """Which leg of the crossing this reference breaks — authored, else by CWE.
+
+    Same attribution `boundary_leg_states` applies, so the card and the
+    catalogue can never name different legs for one link.
+    """
+    authored = str(ref.get("leg") or "").strip().casefold()
+    if authored in {leg["leg"] for leg in boundary_legs(boundary)}:
+        return authored
+    derived = finding_leg_candidates(threat, boundary)
+    # Only an unambiguous CWE match speaks for the analyst. Two candidate legs
+    # mean the CWE does not identify the condition, and guessing one would
+    # attach a confident label nobody verified.
+    return derived[0] if len(derived) == 1 else ""
+
+
+@functools.lru_cache(maxsize=None)
+def _external_boundary_elevations_cached(output_dir: str) -> dict[str, tuple[str, ...]]:
+    """`{threat id: (boundary ids,)}` for findings the ingress rule actually raised.
+
+    Same record and same renumbering translation `emit_severity_rationale` uses
+    — the triage flag is the audit trail, and the delivered yaml carries the
+    contiguous `tb-N` ids assigned after triage ran.
+    """
+    base = Path(output_dir)
+    try:
+        doc = json.loads((base / ".triage-flags.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    try:
+        renumber = json.loads((base / ".trust-boundary-renumber.json").read_text(encoding="utf-8")).get("mapping") or {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError, AttributeError):
+        renumber = {}
+    prefix = "triage_compute_ranking.py:external_boundary:"
+    result: dict[str, tuple[str, ...]] = {}
+    for flag in doc.get("flags") or []:
+        if not isinstance(flag, dict) or flag.get("type") != "severity_reconciliation":
+            continue
+        source = str(flag.get("source") or "")
+        if not source.startswith(prefix):
+            continue
+        ids = tuple(
+            dict.fromkeys(
+                str(renumber.get(token.strip(), token.strip()))
+                for token in source.removeprefix(prefix).split(",")
+                if token.strip()
+            )
+        )
+        for threat_id in flag.get("threat_ids") or []:
+            if threat_id and ids:
+                result[str(threat_id)] = ids
+    return result
+
+
+def _external_boundary_elevations(ctx: RenderContext) -> dict[str, tuple[str, ...]]:
+    return _external_boundary_elevations_cached(str(ctx.output_dir))
+
+
+def _visible_finding_id(threat_id: str) -> str:
+    """`T-040` -> `F-040`; anything else unchanged. Mirrors `_boundary_link_index`."""
+    match = re.fullmatch(r"T-(\d+)", str(threat_id or ""), re.IGNORECASE)
+    return f"F-{match.group(1)}" if match else str(threat_id or "")
+
+
+def _boundary_leg_lines(leg_states: list[dict]) -> list[str]:
+    """One line per assumption leg, or [] for a row that declares none.
+
+    A refuted leg names no ids: those findings are already listed, with their
+    severity dots, in the row's own "Linked findings" column. An unconfirmed leg
+    DOES name them — they appear nowhere else in the table, and they are the
+    whole point of the state: findings that examined this crossing without ever
+    linking to it (tb-2 reported "none examined this crossing" while three CI/CD
+    findings did exactly that, user 2026-08-01).
+
+    The ids are emitted as PLAIN TEXT, not links. `linkify_anchors` expands a
+    `[F-008](#f-008)` into id + full finding title, and this column has already
+    been broken twice by titles wrapping into a column of stacked single
+    characters (user 2026-07-31). The catalogue's Linked-findings column carries
+    the clickable copies.
+    """
+    lines: list[str] = []
+    for leg in leg_states:
+        label = _BOUNDARY_LEG_LABELS.get(leg["leg"], leg["leg"])
+        text = f"{label}: {_BOUNDARY_LEG_STATE_TEXT[leg['state']]}"
+        if leg["state"] == "unconfirmed" and leg["finding_ids"]:
+            shown = [_visible_finding_id(fid) for fid in leg["finding_ids"][:4]]
+            extra = len(leg["finding_ids"]) - len(shown)
+            text += " — " + ", ".join(shown) + (f", +{extra}" if extra > 0 else "")
+        # One link says the condition fails somewhere; further findings bearing
+        # on the same leg say it fails systematically. The count alone carries
+        # that — listing them would double the cell for a weaker signal.
+        # "adjacent", not "unlinked": the set includes findings linked to a
+        # DIFFERENT crossing, and rightly so — SQL injection reaching the data
+        # tier still crossed the perimeter unvalidated on the way in.
+        adjacent = leg.get("adjacent_finding_ids") or []
+        if leg["state"] == "refuted" and adjacent:
+            text += f" · +{len(adjacent)} adjacent"
+        lines.append(_safe_boundary_text(text, table=True))
+        # Back-link to the §6 domain that grades this control class across the
+        # codebase. Appended AFTER the escaping pass: `_safe_boundary_text`
+        # would escape the brackets and leave a literal `[§6.4 …]` in the cell.
+        control_link = _leg_control_link(leg["leg"])
+        if control_link:
+            lines[-1] += f" · {control_link}"
+    return lines
+
+
 def _boundary_assumption_verdict(row: dict, ctx: RenderContext) -> str:
     """Whether this report still supports the row's condition — derived, never authored.
 
@@ -15602,10 +15860,16 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         "",
         # The verdict vocabulary is defined once here, so every cell can stay a
         # single short line instead of re-explaining itself on every row.
-        "Canonical boundary crossings. **Assumption & verdict** states the security condition "
-        "each crossing depends on, then whether this report still supports it: _refuted_ — a "
-        "linked finding proves a gap at the crossing; _unconfirmed_ — findings exist in the "
-        "components it covers, but none examined this crossing; _no finding contradicts it_. "
+        "Canonical boundary crossings. A boundary exists because what crosses it cannot be "
+        "trusted, so **Assumption & verdict** states the conditions that resolve that distrust "
+        "and whether this report still supports each one. An inbound crossing is judged on "
+        "_validation_, _authentication_ and _authorization_; an outbound one on _egress content_, "
+        "_egress destination_ and _response trust_ — what comes back is untrusted input too. "
+        "Per condition: _refuted_ — a linked finding proves the gap; _unconfirmed_ — findings in "
+        "the components it covers bear on this condition, but none is linked to the crossing; "
+        "_not examined_ — nothing in this report bears on it. _+N adjacent_ counts further "
+        "findings behind this crossing that bear on the same condition without being linked to "
+        "it, so a condition that fails systematically is not read as a single lapse. "
         "A link may raise a finding's effective severity only where the crossing is confirmed "
         "internet ingress; raw risk remains unchanged.",
         "",
@@ -15647,7 +15911,27 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         assumption = _safe_boundary_text(_normalize_boundary_arrows(row.get("assumption")), table=True)
         if uniform_confidence is None:
             assumption += f"<br>_{_safe_boundary_text(_boundary_confidence_text(row), table=True)}_"
-        assumption += f"<br>{_boundary_assumption_verdict(row, ctx)}"
+        # Legs REPLACE the one-line row verdict rather than stacking beneath it:
+        # they answer the same question per condition, and a six-line cell in a
+        # ~26% column reads as a ragged block. The row verdict comes back only
+        # when it would otherwise be lost — a link the leg view could not
+        # attribute (no `leg`, no CWE match) still refutes the row, and a cell
+        # showing three "not examined" legs under a refuted row would be a lie.
+        threats_for_legs = ctx.yaml_data.get("threats") or []
+        leg_states = boundary_leg_states(row, threats_for_legs)
+        # Legs are shown only once at least one of them carries a state — a row
+        # nothing bears on would otherwise trade its one-line verdict for three
+        # lines of "not examined", which is longer and says less.
+        informative = [leg for leg in leg_states if leg["state"] != "unexamined"]
+        row_state, _row_ids = boundary_assumption_state(row, threats_for_legs)
+        # The row verdict comes back when the leg view would lose it: a link the
+        # legs could not attribute (no `leg` field, no CWE match) still refutes
+        # the row, and legs reading "not examined" beneath it would be a lie.
+        if not informative or (row_state in ("refuted", "unconfirmed") and row_state not in {leg["state"] for leg in leg_states}):
+            assumption += f"<br>{_boundary_assumption_verdict(row, ctx)}"
+        if informative:
+            for line in _boundary_leg_lines(leg_states):
+                assumption += f"<br>{line}"
         sources = ", ".join(_safe_boundary_text(source, table=True) for source in row.get("sources") or []) or "—"
         # Severity dot + id only, one per line. The column is the narrowest in
         # the table and used to receive the full finding title from the global

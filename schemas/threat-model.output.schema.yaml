@@ -384,6 +384,22 @@ properties:
           type: string
           enum: [network, process, identity, privilege, tenant, data-origin, third-party, build]
         assumption: {type: string, minLength: 1, maxLength: 240}
+        assumption_legs:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          description: >-
+            Conditions the crossing must deliver, decomposing `assumption`. Vocabulary is fixed by the
+            crossing direction: ingress -> validation/authentication/authorization; egress ->
+            egress-content/egress-destination/response-trust; internal ->
+            data-interpretation/authentication/authorization.
+          items:
+            type: object
+            additionalProperties: false
+            required: [leg]
+            properties:
+              leg: {type: string, enum: [validation, authentication, authorization, data-interpretation, egress-content, egress-destination, response-trust]}
+              condition: {type: string, minLength: 1, maxLength: 180}
         evidence:
           type: array
           maxItems: 5
@@ -797,6 +813,7 @@ properties:
               boundary_id: {type: string, pattern: "^tb-\\d+$"}
               origin_component_id: {type: string, minLength: 1, maxLength: 128}
               rationale: {type: string, minLength: 20, maxLength: 240}
+              leg: {type: string, enum: [validation, authentication, authorization, data-interpretation, egress-content, egress-destination, response-trust]}
               evidence_locations:
                 type: array
                 minItems: 1

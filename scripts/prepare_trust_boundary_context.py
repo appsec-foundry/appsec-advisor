@@ -16,6 +16,7 @@ import re
 import sys
 from collections import Counter, defaultdict
 from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -274,6 +275,237 @@ def boundary_protected_components(boundary: dict) -> set[str]:
     return {str(cid) for cid in protected if cid}
 
 
+# --------------------------------------------------------------------------- #
+# Assumption legs
+#
+# A trust boundary exists because what crosses it cannot be trusted, so its
+# assumption has to state the conditions that resolve that distrust — for an
+# inbound crossing: validation, authentication, authorization (user 2026-08-01).
+# A one-sentence assumption naming a single mechanism ("expressJwt is
+# registered") is a different claim category: the middleware can run while the
+# crossing is wide open, and — worse — findings on the legs it does not mention
+# have nothing to attach to. juice-shop's tb-1 stated authentication only; its
+# authorization findings (F-008 IDOR Critical, F-038, F-039) carried no
+# boundary_refs at all.
+#
+# The vocabulary is derived from the crossing DIRECTION, never from `kind`:
+# tb-1 (`network`) and tb-7 (`third-party`) both have `surface: network` and are
+# opposite directions, so `kind` cannot discriminate. `from`/`to == external`
+# can, and always.
+# --------------------------------------------------------------------------- #
+INGRESS_LEGS = ("validation", "authentication", "authorization")
+EGRESS_LEGS = ("egress-content", "egress-destination", "response-trust")
+# An in-process crossing is an enforcement interface. `data-interpretation` is
+# the leg tb-4/5/6 already state today ("every query reaches the database
+# through parameter binding"); authentication/authorization stay available for
+# an internal row that really is a decision point — tb-3, the token
+# verification step, is authentication and nothing else. The analyst declares
+# the applicable subset; unlike ingress/egress these are NOT auto-synthesized,
+# because "every in-process interface has an authorization leg" is false and a
+# synthesized one would assert a condition nobody holds.
+INTERNAL_LEGS = ("data-interpretation", "authentication", "authorization")
+CROSSING_TYPE_LEGS = {"ingress": INGRESS_LEGS, "egress": EGRESS_LEGS, "internal": INTERNAL_LEGS}
+# Same budget as the assumption sentence it decomposes.
+MAX_LEG_CONDITION = 180
+_CWE_LEGS_PATH = PLUGIN_ROOT / "data" / "cwe-boundary-legs.yaml"
+_CWE_RE = re.compile(r"CWE-\d+", re.IGNORECASE)
+
+
+def boundary_crossing_type(boundary: dict) -> str:
+    """`ingress` | `egress` | `internal`, from the crossing direction alone.
+
+    A row with `external` on both ends cannot exist (promotion resolves both
+    endpoints against the component registry), but if one ever did, treating it
+    as ingress is the conservative read: it gets the widest leg vocabulary.
+    """
+    if not isinstance(boundary, dict):
+        return "internal"
+    origin = str(boundary.get("from") or "").strip().casefold()
+    target = str(boundary.get("to") or "").strip().casefold()
+    if origin == "external":
+        return "ingress"
+    if target == "external":
+        return "egress"
+    return "internal"
+
+
+def boundary_leg_vocabulary(boundary: dict) -> tuple[str, ...]:
+    """The legs this crossing MAY declare. Anything else is a modelling error."""
+    return CROSSING_TYPE_LEGS[boundary_crossing_type(boundary)]
+
+
+def normalize_assumption_legs(raw: Any, boundary: dict, label: str, warnings: list[str]) -> list[dict]:
+    """Validate authored `assumption_legs`; drop what the crossing cannot have.
+
+    Fail-open on the individual leg, like every other optional traceability
+    field here: a bad leg is removed and the row survives, because a boundary
+    with a wrong leg is still a boundary worth reporting.
+    """
+    if not isinstance(raw, list):
+        return []
+    allowed = boundary_leg_vocabulary(boundary)
+    legs: list[dict] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            _warn(f"{label}: ignored malformed assumption leg", warnings)
+            continue
+        name = str(entry.get("leg") or "").strip().casefold()
+        if name not in allowed:
+            _warn(f"{label}: dropped leg {name or '<empty>'!r} — not valid for a {boundary_crossing_type(boundary)} crossing", warnings)
+            continue
+        if name in seen:
+            _warn(f"{label}: dropped duplicate leg {name!r}", warnings)
+            continue
+        seen.add(name)
+        condition = _clean_text(entry.get("condition"), fallback="", limit=MAX_LEG_CONDITION)
+        legs.append({"leg": name, "condition": condition} if condition else {"leg": name})
+    return [leg for name in allowed for leg in legs if leg["leg"] == name]
+
+
+def boundary_legs(boundary: dict) -> list[dict]:
+    """Declared legs, or the synthesized default for a directional crossing.
+
+    Ingress and egress crossings get their full triad synthesized when the row
+    declares none: those legs follow from the direction itself — an inbound
+    crossing always has to decide what the payload may contain, who is calling
+    and what they may do — so naming them asserts nothing the crossing does not
+    already imply, and it lets a model authored before legs existed still report
+    per-leg verdicts. An internal row gets only what it declares (see
+    INTERNAL_LEGS).
+    """
+    declared = [
+        leg for leg in (boundary.get("assumption_legs") or []) if isinstance(leg, dict) and leg.get("leg")
+    ]
+    if boundary_crossing_type(boundary) == "internal":
+        return declared
+    # Directional crossings keep the FULL triad even when the analyst declared
+    # only part of it: declaring a leg may add a condition, never remove one.
+    # The alternative — declared list wins outright — means an analyst who names
+    # `authorization` alone silently deletes validation and authentication from
+    # an inbound crossing, which is a worse table than the one before legs
+    # existed. Partial authorship must degrade toward more information, not less.
+    by_name = {leg["leg"]: leg for leg in declared}
+    return [by_name.get(name, {"leg": name}) for name in boundary_leg_vocabulary(boundary)]
+
+
+@lru_cache(maxsize=1)
+def _cwe_leg_map() -> dict[str, frozenset[str]]:
+    """`{CWE-89: {validation, data-interpretation}}` — adjacency attribution only.
+
+    Deliberately many-to-many: the crossing type restricts which legs a row has,
+    so one CWE can mean "validation" at an ingress row and "data-interpretation"
+    at an in-process one without a global tie-break.
+    """
+    doc = _read_yaml(_CWE_LEGS_PATH, {}) or {}
+    mapping: dict[str, set[str]] = {}
+    for leg, cwes in (doc.get("legs") or {}).items():
+        if not isinstance(cwes, list):
+            continue
+        for cwe in cwes:
+            match = _CWE_RE.search(str(cwe or ""))
+            if match:
+                mapping.setdefault(match.group(0).upper(), set()).add(str(leg))
+    return {cwe: frozenset(legs) for cwe, legs in mapping.items()}
+
+
+def _legs_for_finding(threat: dict, allowed: Iterable[str]) -> set[str]:
+    match = _CWE_RE.search(str(threat.get("cwe") or ""))
+    if not match:
+        return set()
+    return set(_cwe_leg_map().get(match.group(0).upper(), frozenset())) & set(allowed)
+
+
+def finding_leg_candidates(threat: dict, boundary: dict) -> list[str]:
+    """Legs of `boundary` this finding's CWE could bear on, sorted.
+
+    Public because the §8 card names the leg for a single reference while the
+    §1 catalogue derives states for the whole row: two callers that must agree,
+    so they share one attribution.
+    """
+    return sorted(_legs_for_finding(threat, {leg["leg"] for leg in boundary_legs(boundary)}))
+
+
+def boundary_leg_states(boundary: dict, threats: Iterable[dict]) -> list[dict]:
+    """Per-leg verdicts -> `[{leg, condition, state, finding_ids}]`.
+
+    An ADDITIONAL view over the same inputs `boundary_assumption_state` reads;
+    it deliberately does not feed that function. The row verdict stays the
+    authority so a leg-less link — which refutes the row but names no leg —
+    can never make the row read "clean" while a link sits on it.
+
+    States, narrower than the row's on purpose:
+
+      * ``refuted``     — a verified linked finding is attributed to this leg.
+      * ``unconfirmed`` — no link, but an adjacent finding's CWE maps here. This
+        is the tb-2 fix: three CI/CD findings tested that crossing while the row
+        reported "none examined this crossing".
+      * ``unexamined``  — nothing in this model bears on the leg.
+
+    Attribution of a LINK prefers the analyst's `leg` field and falls back to
+    the CWE map. The fallback only chooses WHICH leg an already-evidenced,
+    already-rationalized link lands on; it can never manufacture a link, so it
+    carries none of the risk that keeps derived adjacency out of `boundary_refs`.
+    """
+    legs = boundary_legs(boundary)
+    if not legs:
+        return []
+    allowed = [leg["leg"] for leg in legs]
+    boundary_id = str(boundary.get("id") or "")
+    protected = boundary_protected_components(boundary)
+    refuted: dict[str, list[str]] = {name: [] for name in allowed}
+    adjacent: dict[str, list[str]] = {name: [] for name in allowed}
+    for threat in threats:
+        if not isinstance(threat, dict):
+            continue
+        tid = str(threat.get("id") or "")
+        if not tid:
+            continue
+        verified = threat.get("evidence_check") not in _UNVERIFIED_EVIDENCE_STATES
+        links = [
+            ref
+            for ref in threat.get("boundary_refs") or []
+            if isinstance(ref, dict) and str(ref.get("boundary_id") or "") == boundary_id
+        ]
+        if links and verified and boundary_id:
+            authored = {
+                str(ref.get("leg") or "").strip().casefold()
+                for ref in links
+                if str(ref.get("leg") or "").strip().casefold() in refuted
+            }
+            for name in sorted(authored or _legs_for_finding(threat, allowed)):
+                refuted[name].append(tid)
+        elif not links and str(threat.get("component") or threat.get("component_id") or "") in protected:
+            for name in sorted(_legs_for_finding(threat, allowed)):
+                adjacent[name].append(tid)
+    result: list[dict] = []
+    for leg in legs:
+        name = leg["leg"]
+        if refuted[name]:
+            state, ids = "refuted", refuted[name]
+        elif adjacent[name]:
+            state, ids = "unconfirmed", adjacent[name]
+        else:
+            state, ids = "unexamined", []
+        entry = {
+            "leg": name,
+            "state": state,
+            "finding_ids": sorted(set(ids), key=_finding_number),
+            # Adjacency is reported even when the leg is already refuted. One
+            # linked finding says the condition fails somewhere; five unlinked
+            # ones bearing on the same leg say it fails systematically, and
+            # suppressing them behind the verdict hid exactly that — tb-1's
+            # validation leg reported a single `eval` link while path traversal,
+            # XXE, SSRF and mass assignment sat behind the same crossing
+            # (user 2026-08-01).
+            "adjacent_finding_ids": sorted(set(adjacent[name]) - set(ids), key=_finding_number),
+        }
+        if leg.get("condition"):
+            entry["condition"] = leg["condition"]
+        result.append(entry)
+    return result
+
+
 def boundary_assumption_state(boundary: dict, threats: Iterable[dict]) -> tuple[str, list[str]]:
     """Does this row's assumption survive the findings? -> (state, finding ids).
 
@@ -372,6 +604,25 @@ def _clean_enforcement_point(value: Any) -> str | None:
 
 
 _ASSUMPTION_ABSENCE_RE = re.compile(r"^(?:no|none|there\s+is\s+no|there\s+are\s+no|nothing)\b", re.IGNORECASE)
+# A leading "no"/"nothing" does NOT make a sentence an absence — the analyst
+# spec's own model answer for an outbound crossing is "Nothing attacker-
+# controlled reaches the provider unfiltered", and juice-shop's tb-7 uses it
+# verbatim. What separates the two is whether the sentence predicates BEHAVIOUR
+# ("nothing … reaches", "no request … passes without") or merely asserts that a
+# control does not exist ("No outbound content filter or egress allow-list").
+# Only the latter is the failure mode. A closed verb set is enough here and is
+# far safer than a general parse: an unknown verb costs one warning, never a
+# wrongly-suppressed one.
+_ASSUMPTION_CONDITION_VERB_RE = re.compile(
+    r"\b(?:reach(?:es)?|cross(?:es)?|leav(?:es)?|pass(?:es)?|requir(?:es)?|run(?:s)?|us(?:es)?"
+    r"|call(?:s)?|validat(?:es)?|verif(?:ies|y)?|enforc(?:es)?|accept(?:s)?|receiv(?:es)?"
+    r"|send(?:s)?|travel(?:s)?|flow(?:s)?|construct(?:s)?|must|only|without|before|unless)\b",
+    re.IGNORECASE,
+)
+_ASSUMPTION_SANCTION_RE = re.compile(
+    r"\b(?:intentionally|by\s+design|deliberately|acceptable|accepted\s+risk|expected\s+to\s+be)\b",
+    re.IGNORECASE,
+)
 
 
 def _assumption_shape_warnings(assumption: str, enforcement_point: str | None, label: str) -> list[str]:
@@ -389,10 +640,21 @@ def _assumption_shape_warnings(assumption: str, enforcement_point: str | None, l
     an assertion no analyst made, and a wrong condition is worse than an ugly one.
     """
     issues: list[str] = []
-    if assumption.count(";") >= 2:
+    # One semicolon already joins two conditions into something no single
+    # verdict can address: juice-shop tb-1 read "Protected API routes require a
+    # verified JWT via expressJwt; unauthenticated routes are intentionally
+    # public." — the threshold of two let it through (user 2026-08-01).
+    if ";" in assumption:
         issues.append("reads as a fact list, not one condition")
-    if _ASSUMPTION_ABSENCE_RE.match(assumption):
+    if _ASSUMPTION_ABSENCE_RE.match(assumption) and not _ASSUMPTION_CONDITION_VERB_RE.search(assumption):
         issues.append("states an absence instead of a condition")
+    # Sanctioning the gap: a clause that excuses in advance what the findings
+    # then report as a defect. tb-1's "unauthenticated routes are intentionally
+    # public" pre-approved exactly what F-040 and F-042 report, which also makes
+    # the sentence unfalsifiable — protected routes are protected, and
+    # unprotected ones are meant to be.
+    if _ASSUMPTION_SANCTION_RE.search(assumption):
+        issues.append("sanctions the gap instead of stating a condition")
     control = " ".join((enforcement_point or "").split()).casefold()
     if control and len(control) >= 8 and control in assumption.casefold():
         issues.append("restates enforcement_point")
@@ -494,6 +756,12 @@ def _normalize_row(
         row["enforcement_point"] = point
     for issue in _assumption_shape_warnings(assumption, point, label):
         _warn(issue, warnings)
+    # Legs decompose the assumption into the conditions the crossing actually
+    # has to deliver. Validated against the direction-derived vocabulary, so a
+    # `response-trust` leg cannot appear on an inbound row.
+    legs = normalize_assumption_legs(raw.get("assumption_legs"), row, label, warnings)
+    if legs:
+        row["assumption_legs"] = legs
     if raw.get("confidence_basis") in {"analyst", "route-evidence"} and confidence == "confirmed":
         row["confidence_basis"] = raw["confidence_basis"]
     covers = _covered_components(raw.get("covers_components"), components)
@@ -1418,7 +1686,22 @@ def validate_finding_boundary_refs(
             diagnostics.append(reason)
             continue
         seen.add(key)
-        cleaned.append(deepcopy(ref))
+        kept = deepcopy(ref)
+        # `leg` says WHICH condition of the crossing this finding breaks. It is
+        # optional and fail-open on its own: the ref already carries a rationale
+        # and finding-owned evidence, so an unusable leg name costs the leg, not
+        # the link — dropping a validated link over a label would lose the very
+        # traceability this function exists to keep. Without it the leg view
+        # falls back to the CWE map.
+        leg = str(kept.get("leg") or "").strip().casefold()
+        if leg and leg not in {entry["leg"] for entry in boundary_legs(boundary)}:
+            diagnostics.append(f"removed invalid leg {leg!r} from boundary reference {boundary_id!r}")
+            leg = ""
+        if leg:
+            kept["leg"] = leg
+        else:
+            kept.pop("leg", None)
+        cleaned.append(kept)
         if len(cleaned) == 2:
             break
     return cleaned, diagnostics
@@ -1996,7 +2279,7 @@ def promote_candidates(
         # Carried, not dropped: without these the finished model cannot show why
         # two crossings became one row, and the next run cannot reproduce the
         # decision from `threat-model.yaml`.
-        for optional in ("enforcement_point", "confidence_basis", "covers_components"):
+        for optional in ("enforcement_point", "confidence_basis", "covers_components", "assumption_legs"):
             if candidate.get(optional):
                 row[optional] = deepcopy(candidate[optional])
         row["evidence"] = _canonical_evidence(

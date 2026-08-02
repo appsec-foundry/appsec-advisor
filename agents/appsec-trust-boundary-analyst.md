@@ -132,16 +132,64 @@ Use `confirmed` only after inspecting relevant source/config evidence.
 Otherwise use `inferred` or `unknown`. The assumption states what must remain
 true; it does not claim that the control is effective.
 
-## `assumption` — ONE condition, testable, in one sentence
+## `assumption_legs` — the conditions the crossing must deliver
 
-Write the single condition the crossing depends on, phrased so a reviewer can go
-and check it: *"Protected routes require a verified JWT."*, *"Every workflow job
-runs with an explicit least-privilege permissions block."*, *"Every query reaches
-the database through parameter binding."* Under 180 characters.
+A boundary exists because what crosses it cannot be trusted. Its assumption is
+therefore not "the control is wired up" — the middleware can run while the
+crossing is wide open — but the set of conditions that resolve that distrust.
+Name them as **legs**, and the vocabulary follows from the crossing DIRECTION:
 
-The report renders this under **Assumption & verdict** and prints a verdict
-directly beneath it, so the sentence must be the kind of statement a verdict can
-address. Four failure modes, all observed in one run (user 2026-08-01):
+| Crossing | Legs |
+| --- | --- |
+| `external -> <component>` (inbound) | `validation`, `authentication`, `authorization` |
+| `<component> -> external` (outbound) | `egress-content` (what may leave), `egress-destination` (where to), `response-trust` (what comes back is untrusted input too) |
+| both endpoints internal | `data-interpretation` (data never becomes program text), and `authentication` / `authorization` where the interface really does decide |
+
+Emit `assumption_legs: [{leg, condition}]`, one entry per leg that applies, each
+`condition` a single testable sentence under 180 characters. Promotion drops a
+leg the direction does not allow, so do not put `response-trust` on an inbound
+row.
+
+Two rules that decide whether this is worth anything:
+
+- **Declare every leg the crossing genuinely has, not only the one you found
+  evidence for.** A leg you omit is a leg no finding can attach to. juice-shop's
+  `external -> backend-api` named authentication only; its three authorization
+  findings — one of them a Critical IDOR — ended up linked to nothing at all
+  (user 2026-08-01). An inbound crossing always has all three legs.
+- **Never widen a leg into a slogan.** "All access must be validated and
+  authorized" is true of every boundary ever written, cannot be checked, and
+  makes every verdict a foregone conclusion. Each condition must name something
+  in *this* repository a reviewer can go and confirm.
+
+For an inbound crossing the three conditions typically read like:
+
+```yaml
+assumption_legs:
+  - leg: validation
+    condition: Every request body and path parameter is schema-checked before it reaches business logic.
+  - leg: authentication
+    condition: Every state-changing route is registered behind security.isAuthorized().
+  - leg: authorization
+    condition: Every object reference is checked against the authenticated subject before access.
+```
+
+An in-process row usually has exactly one leg, and the existing good examples
+already read that way: *"Every query reaches SQLite through Sequelize parameter
+binding."* (`data-interpretation`). A token-verification interface has exactly
+one too, phrased as the property rather than the call: *"A token is accepted
+only if it is signed with a key that only the server holds."* (`authentication`).
+
+Also set `assumption` to the single most load-bearing of these conditions. It
+stays the one-line rollup for consumers that do not read legs; it is not a
+summary of all of them, and it must not join them with semicolons.
+
+The report renders this under **Assumption & verdict** and prints a verdict per
+leg directly beneath it, so every sentence must be the kind of statement a
+verdict can address. Four failure modes, all observed in one run (user
+2026-08-01). Promotion warns deterministically on the fact-list, absence and
+sanctioning shapes; a restatement is only caught when it reuses the
+`enforcement_point` string verbatim, so that one is on you:
 
 - **A list of facts instead of a condition.** `SQLite runs embedded in the same
   Node.js process; no network isolation; Sequelize model methods use parameterized

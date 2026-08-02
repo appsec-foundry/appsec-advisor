@@ -132,6 +132,39 @@
               "type": "string",
               "pattern": "^df-[0-9]{3,}$"
             }
+          },
+          "assumption_legs": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "description": "Conditions the crossing must deliver. Vocabulary is fixed by direction: ingress -> validation/authentication/authorization; egress -> egress-content/egress-destination/response-trust; internal -> data-interpretation/authentication/authorization. Promotion drops a leg the direction does not allow.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "leg",
+                "condition"
+              ],
+              "properties": {
+                "leg": {
+                  "type": "string",
+                  "enum": [
+                    "validation",
+                    "authentication",
+                    "authorization",
+                    "data-interpretation",
+                    "egress-content",
+                    "egress-destination",
+                    "response-trust"
+                  ]
+                },
+                "condition": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 180
+                }
+              }
+            }
           }
         }
       }

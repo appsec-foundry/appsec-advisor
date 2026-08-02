@@ -156,6 +156,10 @@ reference. A boundary object alone is never threat evidence and never requires
 one finding per boundary. A reference must not change likelihood, impact,
 risk, CVSS, mitigation priority, or `architectural_violation`.
 
+Set `leg` to the condition your finding breaks, from the candidate's own
+`assumption_legs`; omit it rather than guess when it straddles two, because the
+report then falls back to the CWE instead of printing a wrong label.
+
 For each entry in the known-threats index:
 - `status: open` → mandatory verification target — read cited evidence at the exact line, confirm issue still exists, include with `prior_finding_ref`
 - `status: accepted` → skip (orchestrator emits these into `meta.accepted_risks[]`)
@@ -642,6 +646,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
           "boundary_id": "<confirmed candidate tb-N from TRUST_BOUNDARIES_INDEX_PATH>",
           "origin_component_id": "<COMPONENT_ID>",
           "rationale": "<20-240 chars describing the evidenced control-gap mechanism, not the boundary name>",
+          "leg": "<optional — the assumption_leg this breaks; omit if ambiguous>",
           "evidence_locations": [
             {"file": "<same file already present in finding evidence>", "line": <same line>}
           ]

@@ -2029,8 +2029,16 @@ def test_assumption_shape_violations_are_reported_not_repaired() -> None:
 
     good = "Protected routes require a verified JWT."
     assert prep._assumption_shape_warnings(good, "security.isAuthorized() expressJwt middleware", "tb-1") == []
-    # One semicolon is a clause, not a list — the check must not police style.
-    assert prep._assumption_shape_warnings("Requests are authenticated; tokens are signed.", None, "tb-1") == []
+    # The threshold used to be TWO semicolons, on the theory that one joins a
+    # clause rather than a list. juice-shop then shipped a one-semicolon row
+    # that was plainly two conditions — "Protected API routes require a verified
+    # JWT via expressJwt; unauthenticated routes are intentionally public." — and
+    # no single verdict can address it (user 2026-08-01). A semicolon joins
+    # INDEPENDENT clauses by definition, so one is already two conditions; this
+    # example says as much and is now flagged.
+    assert prep._assumption_shape_warnings("Requests are authenticated; tokens are signed.", None, "tb-1") == [
+        "tb-1: assumption reads as a fact list, not one condition"
+    ]
 
 
 def test_normalize_row_surfaces_an_unusable_assumption_in_the_warnings(tmp_path: Path) -> None:
@@ -2118,3 +2126,160 @@ def test_boundary_assumption_state_not_examined_when_no_protected_side() -> None
 def test_boundary_assumption_state_clean_when_nothing_contradicts() -> None:
     row = _tb()
     assert prep.boundary_assumption_state(row, [{"id": "T-006", "component": "elsewhere"}]) == ("clean", [])
+
+
+# --------------------------------------------------------------------------- #
+# Assumption legs (user 2026-08-01)
+# --------------------------------------------------------------------------- #
+
+
+def test_crossing_type_comes_from_direction_not_kind() -> None:
+    """`kind` cannot discriminate: juice-shop's tb-1 (`network`) and tb-7
+    (`third-party`) both carry `surface: network` and are opposite directions.
+    Only `from`/`to == external` does, and it always does."""
+    assert prep.boundary_crossing_type(_tb(kind="network")) == "ingress"
+    assert prep.boundary_crossing_type(_tb(**{"from": "chatbot", "to": "external", "kind": "third-party"})) == "egress"
+    assert prep.boundary_crossing_type(_tb(**{"from": "web-api", "to": "db", "kind": "process"})) == "internal"
+
+
+def test_assumption_legs_are_synthesized_for_directional_crossings_only() -> None:
+    """An inbound crossing always has to decide what the payload may contain,
+    who is calling and what they may do, so naming those legs asserts nothing
+    the direction does not already imply — and it lets a model authored before
+    legs existed still report per-leg verdicts. "Every in-process interface has
+    an authorization leg" is false, so an internal row gets only what it
+    declares."""
+    assert [leg["leg"] for leg in prep.boundary_legs(_tb())] == list(prep.INGRESS_LEGS)
+    egress = _tb(**{"from": "chatbot", "to": "external"})
+    assert [leg["leg"] for leg in prep.boundary_legs(egress)] == list(prep.EGRESS_LEGS)
+    assert prep.boundary_legs(_tb(**{"from": "web-api", "to": "db"})) == []
+
+
+def test_normalize_assumption_legs_drops_a_leg_the_direction_cannot_have() -> None:
+    warnings: list[str] = []
+    row = _tb()
+    legs = prep.normalize_assumption_legs(
+        [
+            {"leg": "response-trust", "condition": "Only valid on an outbound crossing."},
+            {"leg": "authorization", "condition": "Every object reference is checked against the subject."},
+            {"leg": "authorization", "condition": "Duplicate."},
+            "not-an-object",
+        ],
+        row,
+        "tb-1",
+        warnings,
+    )
+    assert legs == [{"leg": "authorization", "condition": "Every object reference is checked against the subject."}]
+    assert any("response-trust" in w for w in warnings)
+    assert any("duplicate" in w for w in warnings)
+
+
+def test_boundary_leg_states_reports_the_leg_no_finding_could_attach_to() -> None:
+    """The tb-1 shape: an authentication-only assumption left three authorization
+    findings — one a Critical IDOR — linked to nothing. The authorization leg has
+    to surface them as `unconfirmed`, not read as unexamined."""
+    row = _tb(covers_components=["web-api", "chatbot"])
+    threats = [
+        {
+            "id": "T-040",
+            "component": "web-api",
+            "cwe": "CWE-306",
+            "boundary_refs": [{"boundary_id": "tb-1"}],
+        },
+        {"id": "T-008", "component": "web-api", "cwe": "CWE-639"},
+        {"id": "T-038", "component": "web-api", "cwe": "CWE-862"},
+        {"id": "T-003", "component": "web-api", "cwe": "CWE-400"},  # not a boundary condition
+    ]
+    states = {leg["leg"]: leg for leg in prep.boundary_leg_states(row, threats)}
+    assert states["authentication"]["state"] == "refuted"
+    assert states["authentication"]["finding_ids"] == ["T-040"]
+    assert states["authorization"]["state"] == "unconfirmed"
+    assert states["authorization"]["finding_ids"] == ["T-008", "T-038"]
+    # CWE-400 maps to no leg: resource exhaustion is not a trust condition.
+    assert states["validation"]["state"] == "unexamined"
+
+
+def test_boundary_leg_states_prefers_the_authored_leg_over_the_cwe() -> None:
+    row = _tb()
+    threat = {
+        "id": "T-012",
+        "component": "web-api",
+        "cwe": "CWE-306",
+        "boundary_refs": [{"boundary_id": "tb-1", "leg": "authorization"}],
+    }
+    states = {leg["leg"]: leg["state"] for leg in prep.boundary_leg_states(row, [threat])}
+    assert states["authorization"] == "refuted"
+    assert states["authentication"] == "unexamined"
+
+
+def test_boundary_leg_states_ignores_a_finding_whose_evidence_was_refuted() -> None:
+    row = _tb()
+    threat = {
+        "id": "T-012",
+        "component": "web-api",
+        "cwe": "CWE-94",
+        "evidence_check": "refuted",
+        "boundary_refs": [{"boundary_id": "tb-1"}],
+    }
+    assert all(leg["state"] == "unexamined" for leg in prep.boundary_leg_states(row, [threat]))
+
+
+def test_validate_boundary_refs_drops_a_bad_leg_but_keeps_the_link() -> None:
+    """Fail-open on the label: the ref already carries a rationale and
+    finding-owned evidence, so an unusable leg costs the leg, not the link."""
+    boundary = _tb()
+    finding = {
+        "evidence": [{"file": "server.ts", "line": 638}],
+        "boundary_refs": [
+            {
+                "boundary_id": "tb-1",
+                "origin_component_id": "web-api",
+                "rationale": "The route is registered without the authentication middleware.",
+                "leg": "response-trust",
+                "evidence_locations": [{"file": "server.ts", "line": 638}],
+            }
+        ],
+    }
+    cleaned, diagnostics = prep.validate_finding_boundary_refs(
+        finding,
+        boundaries=[boundary],
+        origin_component_id="web-api",
+        candidate_ids=None,
+        require_candidate=False,
+    )
+    assert len(cleaned) == 1
+    assert "leg" not in cleaned[0]
+    assert any("invalid leg" in d for d in diagnostics)
+
+
+def test_assumption_lint_flags_the_two_shapes_one_juice_shop_row_carried() -> None:
+    issues = prep._assumption_shape_warnings(
+        "Protected API routes require a verified JWT via expressJwt; unauthenticated routes are intentionally public.",
+        "security.isAuthorized() expressJwt",
+        "tb-1",
+    )
+    assert any("fact list" in i for i in issues)
+    assert any("sanctions the gap" in i for i in issues)
+
+
+def test_assumption_lint_does_not_flag_its_own_model_answer() -> None:
+    """The spec's model answer for an outbound crossing starts with "Nothing".
+    A leading no/nothing marks an absence only when the sentence predicates no
+    behaviour — otherwise the lint punishes the phrasing it recommends."""
+    assert prep._assumption_shape_warnings("Nothing attacker-controlled reaches the provider unfiltered.", None, "tb") == []
+    assert prep._assumption_shape_warnings("No request reaches the handler without a verified JWT.", None, "tb") == []
+    assert prep._assumption_shape_warnings("No outbound content filter or egress allow-list.", None, "tb") == [
+        "tb: assumption states an absence instead of a condition"
+    ]
+
+
+def test_partial_leg_declaration_adds_a_condition_but_never_removes_a_leg() -> None:
+    """An analyst who names `authorization` alone on an inbound crossing must not
+    silently delete validation and authentication — that would be a worse table
+    than the one before legs existed. Partial authorship degrades toward MORE
+    information, not less."""
+    row = _tb(assumption_legs=[{"leg": "authorization", "condition": "Objects are checked against the subject."}])
+    legs = prep.boundary_legs(row)
+    assert [leg["leg"] for leg in legs] == list(prep.INGRESS_LEGS)
+    assert legs[2]["condition"] == "Objects are checked against the subject."
+    assert "condition" not in legs[0]

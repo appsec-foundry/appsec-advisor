@@ -63,7 +63,11 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # (anti-serial dispatch rules) and 230e4fa (cheap-stride pacing signal).
     # Measured 15_574, i.e. 26 tokens below the old ceiling, so the next
     # single added line would have failed the gate. high = ~5% buffer.
-    "agents/appsec-stride-analyzer.md": (6_500, 16_400),
+    # 2026-08-01: +77 measured (16_477) for the optional `leg` on boundary_refs —
+    # one schema line plus the rule for when to omit it. Ceiling raised to 16_550
+    # to restore a small buffer. See docs/internal/analysis/
+    # fixplan-trust-boundary-assumption-legs-2026-08-01.md.
+    "agents/appsec-stride-analyzer.md": (6_500, 16_550),
     # Parallel Stage-2 specialists intentionally keep only role-local
     # instructions. They load their relevant legacy contract slice on demand.
     "agents/appsec-secarch-renderer.md": (500, 1_200),

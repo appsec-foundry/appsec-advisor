@@ -1,0 +1,105 @@
+# CWE -> trust-boundary assumption leg.
+#
+# ADJACENCY ONLY. This map decides which leg an UNLINKED finding is counted
+# against so a leg can report "unconfirmed" instead of silently reading as
+# unexamined — the tb-2 false negative, where three CI/CD findings tested the
+# crossing and the row still said "none examined this crossing"
+# (user 2026-08-01). It never creates a `boundary_refs` link, never drives a
+# `refuted` verdict on its own, and never touches severity. Those remain
+# analyst-authored with rationale + finding-owned evidence
+# (`validate_finding_boundary_refs`), per the shipped mechanism-1 doctrine in
+# docs/internal/analysis/proposal-boundary-scoring-impact-2026-08-01.md.
+#
+# A CWE may appear under several legs: the crossing type restricts which legs
+# exist on a row (an in-process row has no `validation` leg, an ingress row no
+# `data-interpretation` leg), so the overlap resolves per row instead of
+# forcing one global winner. A CWE that maps to no leg contributes to the row's
+# adjacency exactly as before and to no leg — that is the correct outcome for
+# findings which are not boundary conditions at all (CWE-400 resource
+# exhaustion, CWE-327 weak crypto, CWE-778 insufficient logging).
+#
+# Keep the families NARROW. A broad family produces confident-looking leg
+# attributions nobody verified — the same failure the changelog `file|cwe-family`
+# work had to undo.
+version: 1
+
+legs:
+  # Who may act on what. "The caller is permitted to perform this action on
+  # this object."
+  authorization:
+    - CWE-284 # Improper Access Control
+    - CWE-285 # Improper Authorization
+    - CWE-425 # Direct Request / Forced Browsing
+    - CWE-566 # Authorization Bypass Through User-Controlled SQL Primary Key
+    - CWE-639 # Authorization Bypass Through User-Controlled Key (IDOR)
+    - CWE-732 # Incorrect Permission Assignment for Critical Resource
+    - CWE-862 # Missing Authorization
+    - CWE-863 # Incorrect Authorization
+
+  # Who is calling. Includes mechanisms that nominally authenticate but do not
+  # establish identity reliably — an auth step that can be brute-forced or
+  # recovered around proves no identity (F-036/F-015, user 2026-08-01).
+  authentication:
+    - CWE-287 # Improper Authentication
+    - CWE-290 # Authentication Bypass by Spoofing
+    - CWE-306 # Missing Authentication for Critical Function
+    - CWE-307 # Improper Restriction of Excessive Authentication Attempts
+    - CWE-321 # Use of Hard-coded Cryptographic Key
+    - CWE-347 # Improper Verification of Cryptographic Signature
+    - CWE-384 # Session Fixation
+    - CWE-613 # Insufficient Session Expiration
+    - CWE-640 # Weak Password Recovery Mechanism
+    - CWE-798 # Use of Hard-coded Credentials
+
+  # Untrusted input reaching logic that trusts it. Ingress rows only.
+  validation:
+    - CWE-20 # Improper Input Validation
+    - CWE-22 # Path Traversal
+    - CWE-74 # Injection (generic)
+    - CWE-77 # Command Injection
+    - CWE-78 # OS Command Injection
+    - CWE-79 # Cross-site Scripting
+    - CWE-89 # SQL Injection
+    - CWE-90 # LDAP Injection
+    - CWE-94 # Code Injection
+    - CWE-95 # Eval Injection
+    - CWE-434 # Unrestricted Upload of File with Dangerous Type
+    - CWE-494 # Download of Code Without Integrity Check
+    - CWE-502 # Deserialization of Untrusted Data
+    - CWE-601 # Open Redirect
+    - CWE-611 # XML External Entity
+    - CWE-829 # Inclusion of Functionality from Untrusted Control Sphere
+    - CWE-915 # Mass Assignment
+    - CWE-918 # Server-Side Request Forgery
+    - CWE-1321 # Prototype Pollution
+
+  # In-process crossings: data stays data and never becomes program text.
+  data-interpretation:
+    - CWE-89 # SQL Injection
+    - CWE-90 # LDAP Injection
+    - CWE-94 # Code Injection
+    - CWE-95 # Eval Injection
+    - CWE-564 # SQL Injection via Hibernate/ORM
+    - CWE-943 # Improper Neutralization in a Data Query
+    - CWE-1321 # Prototype Pollution
+
+  # What may leave, on an outbound crossing.
+  egress-content:
+    - CWE-200 # Exposure of Sensitive Information
+    - CWE-201 # Insertion of Sensitive Information Into Sent Data
+    - CWE-359 # Exposure of Private Personal Information
+    - CWE-532 # Insertion of Sensitive Information into Log File
+
+  # Where it may go.
+  egress-destination:
+    - CWE-918 # Server-Side Request Forgery
+    - CWE-939 # Improper Authorization in Handler for Custom URL Scheme
+
+  # What comes BACK is untrusted input. The leg tb-7 was missing: F-009's own
+  # rationale describes the provider RETURNING a tool call the local executor
+  # accepts without validation (user 2026-08-01).
+  response-trust:
+    - CWE-20 # Improper Input Validation
+    - CWE-74 # Injection (generic)
+    - CWE-284 # Improper Access Control (excessive agency on the return path)
+    - CWE-1427 # Improper Neutralization of Input Used for LLM Prompting

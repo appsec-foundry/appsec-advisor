@@ -120,6 +120,7 @@ properties:
               boundary_id: {type: string, pattern: "^tb-\\d+$"}
               origin_component_id: {type: string, minLength: 1, maxLength: 128}
               rationale: {type: string, minLength: 20, maxLength: 240}
+              leg: {type: string, enum: [validation, authentication, authorization, data-interpretation, egress-content, egress-destination, response-trust]}
               evidence_locations:
                 type: array
                 minItems: 1
