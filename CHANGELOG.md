@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A finished component analysis is no longer discarded over a repairable defect such as a schema violation or an over-long walkthrough step.
 - `show-threat-model` now cites the `F-NNN` identifiers the report shows and severity counts that match it.
 - A requested `--threatdragon` or `--sarif` export is now always written, instead of being missing from the deliverables — and unmentioned in the completion summary — whenever the finalization step that used to produce it was never reached.
+- A hardcoded cryptographic key now keeps its CVSS vector, like the hardcoded credential it is otherwise rated as.
 
 ### Changed
 

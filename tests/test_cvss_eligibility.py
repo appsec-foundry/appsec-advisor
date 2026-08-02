@@ -278,3 +278,24 @@ class TestCvssPermittedPredicate:
                 ("not permitted" in e) or ("requires a valid CWE" in e) or ("requires evidence.line" in e) for e in errs
             )
             assert permitted != permit_err, (t.get("cwe"), t.get("source"), errs)
+
+
+class TestHardcodedSecretFamily:
+    """The hardcoded-secret CWEs must be treated alike.
+
+    CWE-321 was missing from the positive list while CWE-798/CWE-259 were on
+    it, so `enforce_yaml_invariants.py` stripped the vector off a Critical
+    hardcoded-signing-key finding while its CWE-798 sibling in the same report
+    kept one (juice-shop 2026-08-02). The list has no exclusion mechanism, so
+    absence was indistinguishable from an oversight — this pins the decision.
+    """
+
+    @pytest.mark.parametrize("cwe", ["CWE-798", "CWE-259", "CWE-321"])
+    def test_hardcoded_secret_cwes_are_eligible(self, vi, cwe):
+        assert cwe in vi._eligible_cwes()
+
+    @pytest.mark.parametrize("cwe", ["CWE-798", "CWE-321"])
+    def test_hardcoded_secret_finding_keeps_its_vector(self, vi, cwe):
+        threat = _stride_threat(cwe=cwe, cvss_v4=dict(_CANON_CVSS))
+        assert vi.cvss_v4_permitted(threat)
+        assert vi._check_cvss_eligibility({"threats": [threat]}) == []

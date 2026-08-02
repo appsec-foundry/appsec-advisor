@@ -110,6 +110,9 @@ eligible_cwes:
   - cwe: CWE-259
     name: Use of Hard-coded Password
     rationale: As CWE-798, narrower variant.
+  - cwe: CWE-321
+    name: Use of Hard-coded Cryptographic Key
+    rationale: As CWE-798, key-material variant — key literal located in source.
   - cwe: CWE-384
     name: Session Fixation
     rationale: Session API usage visible in auth flow code.
