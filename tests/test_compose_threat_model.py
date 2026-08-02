@@ -1909,6 +1909,42 @@ def test_finding_boundary_gap_normalizes_an_arrow_inside_the_rationale(tmp_path:
     assert "-&gt;" not in cell
 
 
+def test_finding_boundary_gap_dedups_refs_to_the_same_boundary(tmp_path: Path) -> None:
+    """A consolidated finding carries one ref per origin component, which can
+    target the SAME crossing — F-005 held two tb-3 refs and the card rendered
+    the tb-3 link twice (user 2026-08-01). One link per boundary; the freed
+    slot goes to the next DISTINCT boundary."""
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={
+            "components": [{"id": "C-01"}],
+            "trust_boundaries": [_canonical_boundary(1), _canonical_boundary(2)],
+            "threats": [],
+        },
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell("The private signing key is public.", comp_id="C-01")
+    threat["boundary_refs"] = [
+        {"boundary_id": "tb-1", "origin_component_id": "C-01", "rationale": "First rationale wins."},
+        {"boundary_id": "tb-1", "origin_component_id": "C-02", "rationale": "Second rationale is dropped."},
+        {"boundary_id": "tb-2", "origin_component_id": "C-01", "rationale": "Distinct boundary fills the slot."},
+    ]
+    cell = compose._build_threat_card(
+        t=threat,
+        sev="critical",
+        taxonomy={},
+        components={"C-01": {"name": "REST API"}},
+        repo_root=None,
+        ctx=ctx,
+    )
+    assert cell.count("[tb-1](#tb-1)") == 1
+    assert "First rationale wins." in cell
+    assert "Second rationale is dropped." not in cell
+    assert cell.count("[tb-2](#tb-2)") == 1
+
+
 def test_finding_boundary_gap_drops_the_link_for_an_unknown_boundary(tmp_path: Path) -> None:
     ctx = compose.RenderContext(
         output_dir=tmp_path,

@@ -14911,8 +14911,18 @@ def _build_threat_card(
         visible_boundary_ids = {row.get("id") for row in _visible_trust_boundaries(ctx)}
         component_ids = _boundary_component_ids(ctx)
         rendered_refs: list[str] = []
-        for ref in refs[:2]:
+        # One ref per origin component can target the SAME crossing (F-005
+        # carried two tb-3 refs, user 2026-08-01) — a second link to the same
+        # boundary only repeats the first, so the 2-slot budget is spent on
+        # DISTINCT boundaries and the first rationale per boundary wins.
+        seen_boundary_ids: set[str] = set()
+        for ref in refs:
+            if len(rendered_refs) >= 2:
+                break
             boundary_id = str(ref.get("boundary_id") or "")
+            if boundary_id and boundary_id in seen_boundary_ids:
+                continue
+            seen_boundary_ids.add(boundary_id)
             boundary = by_id.get(boundary_id) or {}
             # Crossing first, then the point being made. The boundary `name`
             # is deliberately NOT repeated here: it re-states the crossing and
