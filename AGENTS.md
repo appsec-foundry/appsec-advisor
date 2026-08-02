@@ -40,6 +40,8 @@ Agents handle discovery and prose. Deterministic Python owns validation, renderi
 ### Keep the repository maintainable
 
 - Write code comments, docstrings, commits, and every repository document in English — `CHANGELOG.md`, the user-facing docs, and everything under `docs/internal/`, including a scratch note only one person will read. Discuss a change in whatever language the task uses; write the file itself in English.
+- `CHANGELOG.md` records every change a user could notice in a run or its output, and beyond that only a change that stands on its own: a larger bug, or internal work that measurably improves performance, fault tolerance, or cost. Leave out small fixes nobody would look up, ordinary refactors, test-only work, doc edits, and routine maintenance; when in doubt, leave it out.
+- One bullet per user-visible change, not per commit: fold the parts of one feature and the follow-up fixes to it into the bullet it already has.
 - A `CHANGELOG.md` bullet is one short sentence the length of a released entry: name the thing and what it now does, then stop. Scope, mechanism, edge cases, and configuration belong in the docs it points to or in the commit message.
 - Documentation answers what a thing does, when it applies, and what breaks if you get it wrong. Step order, tie-breaking, internal limits, and fallbacks stay in the code unless a reader has to decide something from them.
 - A user document names only what a reader can set, see, or act on; a contract states the rule a consumer must satisfy, not the algorithm that enforces it.
@@ -55,7 +57,6 @@ Agents handle discovery and prose. Deterministic Python owns validation, renderi
 ## Preferred defaults
 
 - Prefer a deterministic emitter when it can own a threat category.
-- Record in `CHANGELOG.md` what a user could notice in a run or its output — new capabilities, changed behavior, fixes — one bullet each, and an internal rework only when it is large enough to be felt in quality, cost, or run time. Leave out ordinary refactors, test-only work, doc edits, and routine maintenance; when in doubt, leave it out.
 - When uncertain, preserve the deterministic pipeline and make the LLM do less.
 
 ## Where to make changes
