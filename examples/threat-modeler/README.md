@@ -28,6 +28,7 @@ different releases stay side by side and comparable.
 **[OWASP Juice Shop](https://owasp.org/www-project-juice-shop/)** — deliberately
 insecure web shop:
 
+- **Tech stack:** Angular, Node.js, Express, Socket.IO, Sequelize, SQLite, Docker.
 - `threat-model-juice-shop-quick-v0.4.*` — quick depth.
 - `threat-model-juice-shop-requirements-quick-v0.4.md` — quick depth with a
   requirements-compliance section (findings mapped to security requirements).
@@ -37,10 +38,13 @@ insecure web shop:
 **[Damn Vulnerable Web Application (DVWA)](https://github.com/digininja/DVWA)** —
 deliberately insecure PHP/MySQL web application:
 
+- **Tech stack:** PHP, MariaDB/MySQL, Apache, Docker.
 - `threat-model-dvwa-v0.5.2.*` — standard depth.
 
 **Insecure WebApp** — internal test project:
 
+- **Tech stack:** Java 17, Spring Boot, Spring Security, Spring Data JPA,
+  Thymeleaf, H2, Docker.
 - `threat-model-insecure-webapp-standard-v0.5.2.*` — standard depth.
 
 ## Assessment depths
