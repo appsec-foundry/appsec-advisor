@@ -265,6 +265,49 @@ def test_completion_drops_an_empty_attack_steps(tmp_path: Path) -> None:
     assert "attack_steps" not in json.loads(path.read_text(encoding="utf-8"))["threats"][0]
 
 
+def test_completion_drops_an_over_long_attack_step(tmp_path: Path) -> None:
+    """juice-shop 2026-08-02: one 272-char step on ci-cd-pipeline failed the
+    whole component and cost it a full re-dispatch. The step is dropped before
+    the gate; the remaining two carry the walkthrough."""
+    steps = [
+        "An attacker opens a pull request that edits the workflow file.",
+        "The workflow runs on the fork and reads the repository secrets.",
+        "The attacker then " + "escalates further, " * 20,
+    ]
+    data = _stride_component_with("CWE-829", "TH-09")
+    data["threats"][0]["attack_steps"] = steps
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    assert json.loads(path.read_text(encoding="utf-8"))["threats"][0]["attack_steps"] == steps[:2]
+
+
+def test_completion_drops_an_off_enum_boundary_leg(tmp_path: Path) -> None:
+    """juice-shop 2026-08-02: data-store-sqlite composed `leg` from the boundary
+    name ("parameterized binding"). The label is optional, so it is dropped and
+    the reference survives — the merge step applies the same rule, but only
+    after this gate would already have re-dispatched the component."""
+    data = _stride_component_with("CWE-89", "TH-09")
+    threat = data["threats"][0]
+    threat["boundary_refs"] = [
+        {
+            "boundary_id": "tb-3",
+            "origin_component_id": "service-01",
+            "rationale": "Raw string concatenation reaches the driver on this path.",
+            "leg": "parameterized binding",
+            "evidence_locations": [{"file": threat["evidence"]["file"], "line": threat["evidence"]["line"]}],
+        }
+    ]
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    ref = json.loads(path.read_text(encoding="utf-8"))["threats"][0]["boundary_refs"][0]
+    assert "leg" not in ref
+    assert ref["boundary_id"] == "tb-3"
+
+
 def test_completion_keeps_usable_attack_steps(tmp_path: Path) -> None:
     """Two or more real steps are authored content and stay untouched."""
     steps = [

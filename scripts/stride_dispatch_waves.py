@@ -30,6 +30,7 @@ from typing import Any
 
 from merge_threats import (
     backfill_threat_attack_steps,
+    backfill_threat_boundary_leg,
     backfill_threat_category_id,
     backfill_threat_cvss_v4,
 )
@@ -228,7 +229,11 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
     #   * cvss_v4 in the analyzer's drifted {version, score} shape, coerced to
     #     the canonical {vector, base_score, severity, source}; an unsalvageable
     #     one is dropped (the field is optional).
-    #   * attack_steps too short to satisfy minItems, dropped (also optional).
+    #   * attack_steps too short, too long or too few to satisfy the schema's
+    #     per-step and minItems bounds, dropped (also optional).
+    #   * a boundary_refs[].leg outside the closed enum, dropped (also optional);
+    #     the merge step applies the same rule but only after this gate has
+    #     already rejected the component.
     # Persist the repaired output so merge and any resume see the canonical form.
     for threat in data["threats"]:
         if isinstance(threat, dict):
@@ -237,6 +242,8 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
             if backfill_threat_cvss_v4(threat):
                 repaired = True
             if backfill_threat_attack_steps(threat):
+                repaired = True
+            if backfill_threat_boundary_leg(threat):
                 repaired = True
     if repaired:
         _atomic_write_json(path, data)

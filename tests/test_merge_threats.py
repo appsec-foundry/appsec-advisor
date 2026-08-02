@@ -48,6 +48,15 @@ def _write_stride(output_dir: Path, component_id: str, threats: list[dict]) -> N
         json.dump(payload, fh)
 
 
+def _stride_threat_schema() -> dict:
+    """`threats[]` item properties from the stride schema — the contract the
+    pre-gate repairs in merge_threats have to agree with exactly."""
+    import yaml
+
+    schema = yaml.safe_load((SCRIPT_PATH.parent.parent / "schemas" / "stride.schema.yaml").read_text(encoding="utf-8"))
+    return schema["$defs"]["normal"]["properties"]["threats"]["items"]["properties"]
+
+
 def _threat(**overrides):
     base = {
         "title": "SQL Injection in login handler",
@@ -1666,6 +1675,75 @@ class TestBackfillAttackSteps:
         t = _threat(attack_steps=None)
         assert mt.backfill_threat_attack_steps(t) is False
         assert t["attack_steps"] is None
+
+    def test_over_long_step_is_dropped_and_the_rest_kept(self, mt):
+        """A step past the schema's 240-char cap fails the whole component. It is
+        dropped, never truncated — a sentence cut mid-clause renders as a
+        walkthrough step that stops making sense."""
+        t = _threat(attack_steps=[*self._STEPS, "The attacker then " + "escalates further, " * 20])
+        assert mt.backfill_threat_attack_steps(t) is True
+        assert t["attack_steps"] == self._STEPS
+
+    def test_over_long_step_below_the_floor_drops_the_field(self, mt):
+        t = _threat(attack_steps=[self._STEPS[0], "The attacker then " + "escalates further, " * 20])
+        assert mt.backfill_threat_attack_steps(t) is True
+        assert "attack_steps" not in t
+
+    def test_bounds_match_the_schema(self, mt):
+        """The repair runs immediately before the schema gate; a bound looser
+        than the schema's lets the defect through, a tighter one silently drops
+        authored steps the schema accepts."""
+        items = _stride_threat_schema()["attack_steps"]
+        assert (mt._ATTACK_STEPS_MIN, mt._ATTACK_STEPS_MAX) == (items["minItems"], items["maxItems"])
+        assert (mt._ATTACK_STEP_MIN_LEN, mt._ATTACK_STEP_MAX_LEN) == (
+            items["items"]["minLength"],
+            items["items"]["maxLength"],
+        )
+
+
+class TestBackfillBoundaryLeg:
+    """`boundary_refs[].leg` is a closed enum and optional. An analyzer that
+    composes a label from the boundary name loses the label, not the link."""
+
+    def _ref(self, **overrides):
+        ref = {
+            "boundary_id": "tb-3",
+            "origin_component_id": "data-store",
+            "rationale": "Raw string concatenation reaches the driver on this path.",
+            "evidence_locations": [{"file": "src/auth/login.py", "line": 42}],
+        }
+        ref.update(overrides)
+        return ref
+
+    def test_off_enum_leg_is_dropped_and_the_reference_kept(self, mt):
+        t = _threat(boundary_refs=[self._ref(leg="parameterized binding")])
+        assert mt.backfill_threat_boundary_leg(t) is True
+        assert "leg" not in t["boundary_refs"][0]
+        assert t["boundary_refs"][0]["boundary_id"] == "tb-3"
+
+    def test_cased_or_padded_leg_is_normalized_not_dropped(self, mt):
+        t = _threat(boundary_refs=[self._ref(leg="  Data-Interpretation ")])
+        assert mt.backfill_threat_boundary_leg(t) is True
+        assert t["boundary_refs"][0]["leg"] == "data-interpretation"
+
+    def test_valid_leg_is_untouched(self, mt):
+        t = _threat(boundary_refs=[self._ref(leg="authorization")])
+        assert mt.backfill_threat_boundary_leg(t) is False
+        assert t["boundary_refs"][0]["leg"] == "authorization"
+
+    def test_absent_leg_and_absent_refs_are_left_alone(self, mt):
+        t = _threat(boundary_refs=[self._ref()])
+        assert mt.backfill_threat_boundary_leg(t) is False
+        t = _threat()
+        assert mt.backfill_threat_boundary_leg(t) is False
+
+    def test_vocabulary_matches_the_schema_enum(self, mt):
+        """The drop rule reads the crossing vocabulary; a leg the schema accepts
+        but the vocabulary omits would be silently deleted from every finding."""
+        from prepare_trust_boundary_context import CROSSING_TYPE_LEGS
+
+        enum = _stride_threat_schema()["boundary_refs"]["items"]["properties"]["leg"]["enum"]
+        assert {leg for legs in CROSSING_TYPE_LEGS.values() for leg in legs} == set(enum)
 
 
 class TestConsolidationInternals:

@@ -190,11 +190,12 @@ def backfill_threat_cvss_v4(threat: dict) -> bool:
 _ATTACK_STEPS_MIN = 2
 _ATTACK_STEPS_MAX = 5
 _ATTACK_STEP_MIN_LEN = 15
+_ATTACK_STEP_MAX_LEN = 240
 
 
 def backfill_threat_attack_steps(threat: dict) -> bool:
     """Drop or trim ``threat['attack_steps']`` when it cannot meet the schema's
-    2..5-step floor, before the schema gate.
+    2..5-step floor or its 15..240-char-per-step bounds, before the schema gate.
 
     Mirrors backfill_threat_cvss_v4's contract: returns ``True`` iff the threat
     was mutated. `attack_steps` is optional (required only for Critical
@@ -206,6 +207,13 @@ def backfill_threat_attack_steps(threat: dict) -> bool:
     control-absence findings (juice-shop 2026-07-31: CWE-778, "no structured
     audit log"). Dropping the useless value is preferable to rejecting an
     otherwise complete component over it.
+
+    The upper char bound is here for the same reason: the prompt asks for one
+    sentence of <=200 chars and an analyzer that writes a 272-char step instead
+    (juice-shop 2026-08-02: ci-cd-pipeline) fails `maxLength` and costs its
+    component a full re-dispatch. An over-long step is dropped rather than
+    truncated -- cutting a sentence mid-clause would render a walkthrough step
+    that stops making sense, and the renderer needs two usable steps or none.
     """
     if not isinstance(threat, dict) or "attack_steps" not in threat:
         return False
@@ -219,7 +227,7 @@ def backfill_threat_attack_steps(threat: dict) -> bool:
     cleaned = [
         step.strip()
         for step in original
-        if isinstance(step, str) and len(step.strip()) >= _ATTACK_STEP_MIN_LEN
+        if isinstance(step, str) and _ATTACK_STEP_MIN_LEN <= len(step.strip()) <= _ATTACK_STEP_MAX_LEN
     ][:_ATTACK_STEPS_MAX]
     if len(cleaned) < _ATTACK_STEPS_MIN:
         threat.pop("attack_steps", None)
@@ -228,6 +236,43 @@ def backfill_threat_attack_steps(threat: dict) -> bool:
         threat["attack_steps"] = cleaned
         return True
     return False
+
+
+def backfill_threat_boundary_leg(threat: dict) -> bool:
+    """Normalize or drop a ``boundary_refs[].leg`` outside the schema enum.
+
+    Returns ``True`` iff the threat was mutated. `leg` names WHICH condition of
+    a crossing the finding breaks and is optional: the reference already carries
+    a rationale and finding-owned evidence, so an unusable label costs the leg,
+    not the link, and the leg view falls back to the CWE map.
+
+    ``prepare_trust_boundary_context.validate_finding_boundary_refs`` already
+    applies that rule -- but at merge time, which is after the per-component
+    schema gate has rejected the file and re-dispatched the whole component
+    (juice-shop 2026-08-02: data-store-sqlite, "parameterized binding" derived
+    from the boundary name). This is the same fail-open decision moved ahead of
+    the gate, and deliberately checks only the closed enum: the narrower
+    per-crossing vocabulary needs the boundary row, which the gate does not
+    load, and stays with the merge-time validator.
+    """
+    if not isinstance(threat, dict):
+        return False
+    from prepare_trust_boundary_context import CROSSING_TYPE_LEGS
+
+    vocabulary = {leg for legs in CROSSING_TYPE_LEGS.values() for leg in legs}
+    mutated = False
+    for ref in threat.get("boundary_refs") or []:
+        if not isinstance(ref, dict) or "leg" not in ref:
+            continue
+        leg = str(ref.get("leg") or "").strip().casefold()
+        if leg in vocabulary:
+            if ref["leg"] != leg:
+                ref["leg"] = leg
+                mutated = True
+            continue
+        ref.pop("leg", None)
+        mutated = True
+    return mutated
 
 
 def strip_ineligible_cvss_v4(threat: dict) -> bool:
