@@ -393,7 +393,7 @@ discovery.
 ### Step 1 — Resolve static actor layers (deterministic)
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    PHASE_START   [Phase 2.7/N] Actor Layer Resolution" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    PHASE_START   [Phase 2.7/11] Actor Layer Resolution" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_actors.py" \
     --plugin-root "$CLAUDE_PLUGIN_ROOT" \
@@ -496,7 +496,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_actors.py" \
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
     actors_resolved "$OUTPUT_DIR/.actors-resolved.json"
 
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    PHASE_END   [Phase 2.7/N] Actor Layer complete → .actors-resolved.json" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    PHASE_END   [Phase 2.7/11] Actor Layer complete → .actors-resolved.json" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 Outputs: `$OUTPUT_DIR/.actors-resolved.json` (consumed by per-component slicing).
