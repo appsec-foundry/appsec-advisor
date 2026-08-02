@@ -163,6 +163,14 @@ from the candidate's own `assumption_legs`; never derive one from the boundary
 name. Omit it rather than guess when it straddles two — the report then falls
 back to the CWE instead of printing a wrong label.
 
+Write `rationale` as the mechanism your evidence proves, and nothing else — one
+clause, ~120 characters typical, 200 the ceiling to author to. Do not append the
+boundary's name or a restatement of its assumption: `boundary_id` already
+carries both, so the reader gains nothing while the string doubles in length.
+That restatement — not verbosity in the mechanism itself — is what pushes an
+otherwise well-formed rationale past the 240-char schema limit, and the schema
+rejects the entire component fragment when it does.
+
 For each entry in the known-threats index:
 - `status: open` → mandatory verification target — read cited evidence at the exact line, confirm issue still exists, include with `prior_finding_ref`
 - `status: accepted` → skip (orchestrator emits these into `meta.accepted_risks[]`)
@@ -670,7 +678,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
         {
           "boundary_id": "<confirmed candidate tb-N from TRUST_BOUNDARIES_INDEX_PATH>",
           "origin_component_id": "<COMPONENT_ID>",
-          "rationale": "<20-240 chars describing the evidenced control-gap mechanism, not the boundary name>",
+          "rationale": "<the evidenced control-gap mechanism in one clause — author to ~120 chars, 200 max; the schema hard-fails this component's whole fragment past 240. Never append the boundary's name or restate its assumption: `boundary_id` already carries both.>",
           "leg": "<optional — one `leg` value copied verbatim from this candidate's `assumption_legs`; omit if ambiguous>",
           "evidence_locations": [
             {"file": "<same file already present in finding evidence>", "line": <same line>}
