@@ -3,10 +3,10 @@ name: appsec-stride-analyzer
 description: "INTERNAL — invoked by appsec-threat-analyst after Phase 7, one instance per major component. Performs focused STRIDE threat analysis for a single component and writes findings to $OUTPUT_DIR/.stride-<component-id>.json."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 56
+maxTurns: 96
 ---
 
-<!-- maxTurns=56 is the hard harness ceiling; soft target is `MAX_TURNS` passed in the prompt (see scripts/resolve_config.py → DEPTH_PARAMS). The harness cap MUST stay ≥ the highest skill-level value plus a retry buffer. Raised 40→56 (2026-07-20): the highest skill-level value is now the file-footprint floor in classify_component._footprint_turn_floor (cap 48), not the thorough/complex tier (35). 48 + 8 buffer = 56. -->
+<!-- maxTurns=96 is the hard harness ceiling; soft target is `MAX_TURNS` passed in the prompt (see scripts/resolve_config.py → DEPTH_PARAMS). The harness cap MUST stay ≥ the highest skill-level value plus a wrap-up buffer. Raised 40→56 (2026-07-20): the highest skill-level value is the file-footprint floor in classify_component._footprint_turn_floor, not the thorough/complex tier (35). Raised 56→96 (2026-08-02): the footprint cap moved 48→80 after the identical failure recurred one cap higher (insecure-spring-app spring-web-app: 47 files → needed 65 turns, granted 48, killed at exactly 56 on BOTH attempts with zero categories written). The buffer also grew 8→16 because wrap-up now flushes after every category, not once at the end. 80 + 16 = 96. Invariant enforced by tests/test_stage1_coverage_recovery_2026_07_20.py::test_harness_ceiling_exceeds_the_highest_derivable_budget. -->
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after trust boundary analysis, once per major component.
 
@@ -118,6 +118,8 @@ Compliance + asset:
 
 Run config:
 - `MAX_TURNS` — soft target. The frontmatter `maxTurns` is the hard ceiling.
+- `SAMPLING_REQUIRED` — `true` means an exhaustive read of `COMPONENT_PATHS` does not fit `MAX_TURNS`; apply the sampling regime in *Step-2 read budget*. Absent/`false` does not license exhaustive reading — your own count still governs.
+- `FILE_COUNT` — files matched by `COMPONENT_PATHS` at manifest build time; use it to plan read batches.
 - `ESTIMATED_THREAT_COUNT` — `low` (≤3) / `moderate` (4–7) / `high` (≥8). Drives pacing (see *Turn budget self-regulation*).
 - `STRIDE_PROFILE_JSON` — JSON object from `resolve_stride_profile()`. When `stride_profile_label = "quick (depth-reduced via sonnet-economy)"`, apply the full *Quick-mode adjustments* in Step 3. The flag values mirror `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py` — keep that file and the Step-3 table in sync. **Key-gated cap (independent of the label):** if the profile contains a `max_threats_per_category` key — which can appear at *any* depth via the opt-in `--stride-cap N` flag, not only under the quick label — apply the `max_threats_per_category` row of the Step-3 table regardless of the rest of the profile. All other Step-3 reductions stay gated on the quick label; a `full (per-category cap N)` profile trims only the per-category tail and keeps full CVSS/evidence/grep depth.
 - `ASSESSMENT_DEPTH` — `quick` / `standard` / `thorough`. Drives turn ceilings and diagram depth; the Step-2 raw-SQL IDOR trace now runs at every depth (access-control recall must not depend on depth).
@@ -206,6 +208,28 @@ Band a numeric `ESTIMATED_THREAT_COUNT` yourself: `≤3` low, `4–7` moderate, 
 
 **Print:** `[stride | <COMPONENT_NAME>] ▶ Step 2/4 — Reading source files…`
 **Progress:** substep `2`, label `Reading source files`.
+
+### Step-2 read budget (check BEFORE reading)
+
+A dispatch that never reaches Step 3 produces **nothing**. Two rules keep Step 3
+reachable at any component size:
+
+**Batch every read** — parallel `Read` calls, 8–12 files per turn, never one file
+per turn. One-per-turn is the main cause of budget death (`N` turns, not `N/10`).
+
+**Stop at `read_allowance = MAX_TURNS − 16`** (16 = six category flushes + final
+write + logging). Hard stop: when spent, go to Step 3 with what you have.
+
+**Sample when EITHER holds** — they only add caution, neither licenses more
+reading:
+- `SAMPLING_REQUIRED=true` — **binding**; never read exhaustively when set.
+- your file count would not finish inside `read_allowance` (apply even if the
+  flag is absent or `false`).
+
+Sampling priority: entry points → auth/authz → data access → security config →
+templates → tests (skip). Then set `"partial": true` plus a `"sampling_note"`
+naming files read vs. total. Declared under-coverage is usable; silent
+under-coverage is a false all-clear.
 
 **FOCUS_PATHS shortcut.** When `FOCUS_PATHS` is non-empty, read those files **first** in priority order, batched in a single turn via parallel Read tool calls. These paths are pre-curated by the orchestrator from recon-summary citations. After reading them, proceed to discovery-via-Grep ONLY if (a) you have remaining turn budget AND (b) FOCUS_PATHS reads did not surface enough STRIDE evidence. For thin components (`ESTIMATED_THREAT_COUNT=low`), FOCUS_PATHS alone are typically sufficient.
 

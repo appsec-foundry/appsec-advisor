@@ -696,27 +696,38 @@ def _etc_label(count: object) -> str:
     return "high"
 
 
-def _component_max_turns(repo_root: Path, patterns, tier_turns: int, cheap: bool = False) -> int:
+def _component_turn_budget(
+    repo_root: Path, patterns, tier_turns: int, cheap: bool = False
+) -> tuple[int, bool, int]:
     """Turn budget for one component: complexity tier raised by file footprint.
+
+    Returns ``(max_turns, sampling_required, file_count)``. ``sampling_required``
+    is True when an exhaustive pass over the component does not fit the granted
+    budget; the dispatch prompt must forward it so the analyzer samples
+    deliberately instead of reading until the harness kills it (2026-08-02
+    insecure-spring-app: `spring-web-app`, 47 files, needed 65 turns, granted 48,
+    killed at 56 twice with zero categories written).
 
     Under ``cheap`` (--cheap-stride, see _cheap_stride_target) the component gets a
     flat CHEAP_STRIDE_TURNS screening budget that intentionally skips the
     footprint floor — cheapening is the whole point, so a wide footprint must not
-    re-inflate the budget.
+    re-inflate the budget. Cheap screening is sampling by definition, so the flag
+    is set whenever the footprint exceeds that flat budget.
 
     Globbing is best-effort -- an unreadable or pathological pattern falls back
     to the tier budget rather than failing manifest construction.
     """
-    if cheap:
-        return CHEAP_STRIDE_TURNS
     try:
         import classify_component  # noqa: PLC0415
 
         file_count = len(_glob_files(repo_root, _expand_recursive(patterns or [])))
-        floored, _ = classify_component._footprint_turn_floor(file_count, tier_turns)
-        return int(floored)
+        if cheap:
+            needed = classify_component.footprint_turns_needed(file_count)
+            return CHEAP_STRIDE_TURNS, needed > CHEAP_STRIDE_TURNS, file_count
+        floored, _, clamped = classify_component._footprint_turn_floor(file_count, tier_turns)
+        return int(floored), bool(clamped), file_count
     except Exception:
-        return int(tier_turns)
+        return (CHEAP_STRIDE_TURNS if cheap else int(tier_turns)), False, 0
 
 
 def _expand_recursive(patterns) -> list[str]:
@@ -1374,6 +1385,17 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
         # attack surface — see _cheap_stride_target. Keyed on exposure/role, NOT
         # on the over-tagged handles_sensitive_data flag.
         cheap_this = cid in cheap_ids
+        budget_turns, needs_sampling, comp_file_count = _component_turn_budget(
+            repo_root,
+            raw_paths,
+            int(turns.get(complexity, turns.get("moderate", 22))),
+            cheap=cheap_this,
+        )
+        if needs_sampling:
+            sys.stderr.write(
+                f"SAMPLING: {cid} → {comp_file_count} files do not fit {budget_turns} turns; "
+                "analyzer will be told to sample instead of reading exhaustively\n"
+            )
         comp = {
             "component_id": cid,
             "component_name": c.get("name", cid),
@@ -1385,12 +1407,12 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             # files the analyzer has to read; a mid-size component whose paths
             # span more files than its tier allows turns for cannot finish. See
             # classify_component._footprint_turn_floor.
-            "max_turns": _component_max_turns(
-                repo_root,
-                raw_paths,
-                int(turns.get(complexity, turns.get("moderate", 22))),
-                cheap=cheap_this,
-            ),
+            "max_turns": budget_turns,
+            # True when an exhaustive read of component_paths does not fit
+            # max_turns. Forwarded to the analyzer as SAMPLING_REQUIRED so it
+            # samples on purpose instead of being killed mid-read.
+            "sampling_required": needs_sampling,
+            "file_count": comp_file_count,
             "taxonomy_slice_dir": str(tax) if tax.is_dir() else str(plugin_root / "data"),
             # Carry the selection-criteria inputs through to the manifest so the
             # selection is auditable downstream (and not silently dropped here).

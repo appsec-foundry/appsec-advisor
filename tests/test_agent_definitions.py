@@ -36,7 +36,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst": 300,
     "appsec-context-resolver": 25,
     "appsec-recon-scanner": 25,
-    "appsec-stride-analyzer": 56,  # 2026-07-20: covers the file-footprint turn floor (cap 48 + 8 buffer); was 40 for thorough/complex (35 + 5)
+    "appsec-stride-analyzer": 96,  # 2026-08-02: covers the file-footprint turn floor (cap 80 + 16 wrap-up buffer); was 56 (cap 48 + 8), which killed a 47-file component on both attempts
     "appsec-triage-validator": 20,
     "appsec-threat-merger": 12,
     "appsec-threat-renderer": 80,

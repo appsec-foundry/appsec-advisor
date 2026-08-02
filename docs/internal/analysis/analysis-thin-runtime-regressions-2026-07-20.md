@@ -266,7 +266,17 @@ Full suite after all changes: **10031 passed, 93 skipped, 0 failed.**
 | D5 hard ceiling below new floor | analyzer frontmatter `maxTurns: 40 → 56` (48 + 8 buffer); `EXPECTED_MAX_TURNS` updated |
 | D2 pre-seed ≡ partial | `seed_only` sentinel in `schemas/stride.schema.yaml`, written/cleared per the analyzer contract, consumed by `stride_dispatch_waves.completion_error` |
 
-Verified against the real repo (`_component_max_turns`, production call path):
+> **Superseded 2026-08-02.** The D5 fix raised the cap once but left the clamp
+> *silent*, so the identical failure recurred at the next boundary
+> (insecure-spring-app `spring-web-app`: 47 files → needed 65 turns, granted 48,
+> killed at exactly 56 on both attempts with zero categories written). Now: cap
+> 48 → 80, ceiling 56 → 96, a clamp is announced as `sampling_required` and
+> forwarded to the analyzer, and retries escalate the budget instead of
+> repeating it. `_component_max_turns` was renamed `_component_turn_budget`
+> (it also returns the sampling flag and file count). See
+> `tests/test_stage1_coverage_recovery_2026_08_02.py`.
+
+Verified against the real repo (`_component_turn_budget`, production call path):
 
 | Component | Files | Was | Now |
 |---|---|---|---|

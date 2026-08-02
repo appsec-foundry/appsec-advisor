@@ -247,7 +247,8 @@ def test_recursive_pattern_component_gets_a_raised_budget(tmp_path: Path) -> Non
     for i in range(24):
         (models / f"m{i}.ts").write_text("x", encoding="utf-8")
 
-    turns = bm._component_max_turns(tmp_path, ["models/**"], 22)
+    turns, _sampling, file_count = bm._component_turn_budget(tmp_path, ["models/**"], 22)
+    assert file_count == 24, "recursive pattern must still count the files"
     assert turns > 32, (
         f"a 24-file component declared with a recursive pattern got {turns} turns; "
         "24 source + 8 mandatory context reads leave nothing for the category writes"

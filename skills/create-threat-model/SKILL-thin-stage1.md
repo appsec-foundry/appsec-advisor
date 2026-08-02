@@ -121,7 +121,8 @@ Use this path when `PARALLEL_STRIDE=true`.
    Each component uses `appsec-advisor:appsec-stride-analyzer`, description
    `STRIDE (full): <NAME>` — `STRIDE (light): <NAME>` when the entry has
    `cheap_stride` — and the complete manifest mapping: `COMPONENT_ID`, `NAME`,
-   `DESCRIPTION`, `PATHS`, `COMPLEXITY`, `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`,
+   `DESCRIPTION`, `PATHS`, `COMPLEXITY`, `MAX_TURNS`, `SAMPLING_REQUIRED`,
+   `FILE_COUNT`, `ESTIMATED_THREAT_COUNT`,
    `INTERFACES`,
    `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and every
    `index_paths.*` entry, including

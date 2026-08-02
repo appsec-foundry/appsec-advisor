@@ -342,6 +342,40 @@ def status(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> 
     }
 
 
+def _escalated_component(component: dict[str, Any]) -> dict[str, Any]:
+    """Return a COPY of ``component`` with a raised retry budget.
+
+    Never mutates the input. The wave's component entries are the manifest's own
+    dicts, and ``_fingerprint(manifest)`` is what ``validate_plan`` matches the
+    persisted plan against -- mutating them in place changes the fingerprint and
+    makes every subsequent resume fail with "wave plan does not match the current
+    dispatch manifest".
+
+    Best-effort: an entry without a usable ``max_turns`` is returned unchanged
+    rather than failing the claim -- a dispatch with the original budget still
+    beats no dispatch.
+    """
+    try:
+        import classify_component  # noqa: PLC0415
+
+        current = int(component.get("max_turns", 0))
+        if current <= 0:
+            return component
+        raised = classify_component.escalated_retry_turns(current)
+        if raised <= current:
+            return component
+        escalated = dict(component)
+        escalated["max_turns"] = raised
+        escalated["retry_budget_escalated"] = True
+        # The first attempt already failed to finish inside a smaller budget, so
+        # tell the analyzer to sample rather than gamble on the larger one being
+        # enough.
+        escalated["sampling_required"] = True
+        return escalated
+    except Exception:
+        return component
+
+
 def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> tuple[dict[str, Any], bool]:
     """Reserve the next incomplete wave and persist per-component attempts.
 
@@ -369,11 +403,23 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
             "blocked_components": blocked,
             "incomplete": current["incomplete"],
         }, False
+    claimed_components: list[dict[str, Any]] = []
     for component in next_wave["components"]:
         component_id = component["component_id"]
         plan["attempts"][component_id] += 1
+        # Escalate the budget for every attempt after the first. A component
+        # only lands here because the previous attempt did not complete, and the
+        # dominant cause is a turn budget too small for its file footprint --
+        # repeating the identical dispatch just burns the retry (2026-08-02
+        # insecure-spring-app: spring-web-app died at exactly 56 tool calls
+        # twice, having written zero categories, because attempt 2 was byte-for-
+        # byte attempt 1). The escalation returns a copy; see _escalated_component.
+        if plan["attempts"][component_id] > 1:
+            component = _escalated_component(component)
+        claimed_components.append(component)
+    next_wave["components"] = claimed_components
     next_wave["attempts"] = {
-        component["component_id"]: plan["attempts"][component["component_id"]] for component in next_wave["components"]
+        component["component_id"]: plan["attempts"][component["component_id"]] for component in claimed_components
     }
     return {
         "status": "claimed",
@@ -455,10 +501,12 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps(payload, indent=2))
                     print(
                         "stride_dispatch_waves: retry budget exhausted; selected-component "
-                        f"coverage is incomplete (budget={max_attempts()}). Fix the cause "
-                        "first -- a turn budget too small for the component's file "
-                        "footprint is the common one -- then set "
-                        "APPSEC_STRIDE_MAX_ATTEMPTS=3 to grant one more attempt.",
+                        f"coverage is incomplete (budget={max_attempts()}). Retries already "
+                        "escalate the turn budget, so a component that still fails is "
+                        "genuinely too wide for one dispatch -- narrow its paths in the "
+                        "component inventory (split it) rather than only granting more "
+                        "attempts. APPSEC_STRIDE_MAX_ATTEMPTS=3 buys one more attempt but "
+                        "does not make an oversized component fit.",
                         file=sys.stderr,
                     )
                     return 1

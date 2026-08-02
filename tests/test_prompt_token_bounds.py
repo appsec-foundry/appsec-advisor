@@ -67,7 +67,15 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # one schema line plus the rule for when to omit it. Ceiling raised to 16_550
     # to restore a small buffer. See docs/internal/analysis/
     # fixplan-trust-boundary-assumption-legs-2026-08-01.md.
-    "agents/appsec-stride-analyzer.md": (6_500, 16_550),
+    # 2026-08-02: +457 measured (16_976) for the Step-2 read budget — the batch
+    # rule, the read_allowance hard stop and the sampling regime. Without it the
+    # analyzer read one file per turn until the harness killed it having written
+    # nothing (insecure-spring-app spring-web-app: 47 files, dead at exactly 56
+    # turns on both attempts). This guard is what keeps Step 3 reachable at any
+    # repo size, so it earns the prompt budget. Ceiling 16_550 → 17_400 (~2.5%
+    # buffer); HEAD had sat 31 tokens under the old bound, leaving no room for
+    # any addition at all. See tests/test_stage1_coverage_recovery_2026_08_02.py.
+    "agents/appsec-stride-analyzer.md": (6_500, 17_400),
     # Parallel Stage-2 specialists intentionally keep only role-local
     # instructions. They load their relevant legacy contract slice on demand.
     "agents/appsec-secarch-renderer.md": (500, 1_200),

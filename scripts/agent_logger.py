@@ -543,20 +543,67 @@ def _save_session_agent(sid: str, agent: str) -> None:
         pass  # never crash a hook
 
 
-def _lookup_session_agent(sid: str) -> str:
-    """Look up the agent name for a session_id. Returns '' if not found."""
+def _lookup_session_agents(sid: str) -> list[str]:
+    """Every agent registered for ``sid``, oldest first, duplicates removed.
+
+    Sub-agents inherit the parent's ``session_id``, so this map is one-to-many
+    per run: an assessment registers ``threat-analyst``, ``recon-scanner``,
+    ``stride-analyzer`` (once per dispatch) and so on under a single key. The
+    hook payload carries no sub-agent identifier, so the individual entries
+    cannot be told apart from a tool call alone.
+    """
+    seen: list[str] = []
     try:
         map_file = _session_map_path()
         if not os.path.exists(map_file):
-            return ""
+            return seen
         with open(map_file) as fh:
             for line in fh:
                 parts = line.strip().split("=", 1)
-                if len(parts) == 2 and parts[0] == sid:
-                    return parts[1]
+                if len(parts) == 2 and parts[0] == sid and parts[1] not in seen:
+                    seen.append(parts[1])
     except Exception:
         pass
-    return ""
+    return seen
+
+
+def _lookup_session_agent(sid: str) -> str:
+    """Most recently registered agent for a session_id. '' if not found.
+
+    2026-08-02: this returned the FIRST match, so once ``threat-analyst`` was
+    registered for a run every later lookup answered ``threat-analyst`` forever
+    -- every STRIDE dispatch was mis-attributed, and the assessment trace
+    repeated one stale record for all 20 agent completions. Most-recent is the
+    best available answer; during a parallel wave several same-type dispatches
+    are genuinely indistinguishable, which is why budget decisions must NOT rely
+    on this (see ``_budget_scope_agent``).
+    """
+    agents = _lookup_session_agents(sid)
+    return agents[-1] if agents else ""
+
+
+def _budget_scope_agent(sid: str) -> str:
+    """Agent whose maxTurns bounds the SHARED per-session turn counter.
+
+    The counter aggregates the orchestrator's calls and every concurrent
+    sub-agent's calls, because they all arrive under one ``session_id``. Scoping
+    it to the *largest* registered budget is the only safe reading: a smaller
+    one would trip ``.budget-critical`` from other agents' traffic and force
+    every in-flight analyzer into an immediate wrap-up (juice-shop 2026-07-20).
+
+    Per-sub-agent budgeting is therefore NOT enforced here -- it cannot be, with
+    the fields hooks receive. It is enforced by the analyzer's harness
+    ``maxTurns`` ceiling and its Step-2 read budget instead.
+    """
+    agents = _lookup_session_agents(sid)
+    if not agents:
+        return ""
+    try:
+        from budget_watchdog import get_max_turns
+
+        return max(agents, key=get_max_turns)
+    except Exception:
+        return agents[0]
 
 
 # ---------------------------------------------------------------------------
@@ -2428,7 +2475,11 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         from budget_watchdog import format_detail, tally_and_check
 
         agent = _lookup_session_agent((sid or "")[:8]) or "unknown"
-        crossing = tally_and_check(sid, agent, _output_dir())
+        # Report the current agent, but bound the SHARED counter by the widest
+        # registered budget — see _budget_scope_agent for why a tighter bound
+        # would produce false criticals during a parallel STRIDE wave.
+        budget_agent = _budget_scope_agent((sid or "")[:8]) or agent
+        crossing = tally_and_check(sid, agent, _output_dir(), budget_agent=budget_agent)
         if crossing is not None:
             _write("WARN ", crossing["event"], format_detail(crossing), sid)
     except Exception:

@@ -213,8 +213,20 @@ def _write_flag(output_dir: str, filename: str, payload: dict) -> None:
         pass
 
 
-def tally_and_check(sid: str, agent: str, output_dir: str) -> Optional[dict]:
+def tally_and_check(
+    sid: str, agent: str, output_dir: str, budget_agent: Optional[str] = None
+) -> Optional[dict]:
     """Increment turn counter for (sid, agent) and check thresholds.
+
+    ``agent`` names the agent for reporting. ``budget_agent`` — when given —
+    supplies the ``maxTurns`` the counter is measured against. It exists because
+    the counter is SHARED across the orchestrator and every concurrent
+    sub-agent (all of them report one ``session_id``), so it must be bounded by
+    the widest registered budget rather than by whichever agent happened to make
+    the call; a tighter bound would fire ``.budget-critical`` from other agents'
+    traffic and force every in-flight analyzer to wrap up. See
+    ``agent_logger._budget_scope_agent``. Defaults to ``agent``, which is the
+    correct bound for a single-agent session.
 
     Returns a dict describing the threshold crossing when one occurs:
       {
@@ -237,7 +249,7 @@ def tally_and_check(sid: str, agent: str, output_dir: str) -> Optional[dict]:
 
     sid = sid[:8]
     agent = agent or "unknown"
-    max_turns = get_max_turns(agent)
+    max_turns = get_max_turns(budget_agent or agent)
     if max_turns <= 0:
         return None
 

@@ -180,11 +180,59 @@ _WRITE_AND_LOGGING_RESERVE = 10
 # Ceiling on the footprint-derived floor. Analyzers are expected to sample wide
 # components rather than read exhaustively; this keeps a 400-file component from
 # demanding an absurd budget while still covering the mid-size case that broke.
-_FOOTPRINT_TURN_CAP = 48
+#
+# 2026-08-02 (48 → 80): 48 admitted only (48 - 8 - 10) = 30 files before the
+# requirement was silently discarded. Anything wider was dispatched as if the
+# clamped budget were sufficient, with no sampling instruction, so the analyzer
+# read exhaustively and died. 80 admits 62 files exhaustively; beyond that the
+# clamp is now explicit (see ``budget_clamped``) instead of silent.
+_FOOTPRINT_TURN_CAP = 80
 
 
-def _footprint_turn_floor(file_count: int | None, current: int) -> tuple[int, str]:
+# A retry after a budget-caused death must not repeat the identical dispatch.
+# 2026-08-02: attempt 2 reused attempt 1's budget verbatim, so a component that
+# died at the ceiling was guaranteed to die there again -- the gate's own abort
+# text said "an unchanged retry will repeat this" while the dispatcher had no
+# way to change it. The escalated value stays below the harness ceiling so the
+# retry can actually spend what it is granted.
+_RETRY_TURN_MULTIPLIER = 1.5
+_RETRY_TURN_CAP = 88
+
+
+def escalated_retry_turns(max_turns: int) -> int:
+    """Turn budget for a retry of a component that died without completing work.
+
+    Bounded by ``_RETRY_TURN_CAP`` so it stays under the analyzer's harness
+    ceiling (see agents/appsec-stride-analyzer.md frontmatter ``maxTurns``); the
+    invariant is enforced by
+    tests/test_stage1_coverage_recovery_2026_07_20.py::test_harness_ceiling_exceeds_the_highest_derivable_budget.
+    """
+    try:
+        base = int(max_turns)
+    except (TypeError, ValueError):
+        return _RETRY_TURN_CAP
+    if base <= 0:
+        return base
+    return min(int(base * _RETRY_TURN_MULTIPLIER), _RETRY_TURN_CAP)
+
+
+def footprint_turns_needed(file_count: int) -> int:
+    """Turns an exhaustive pass over ``file_count`` files would cost.
+
+    Kept separate from the clamp so callers can see the *requirement* rather
+    than only the granted budget -- the 2026-08-02 defect was that the two were
+    indistinguishable downstream.
+    """
+    return int(file_count) + _MANDATORY_CONTEXT_READS + _WRITE_AND_LOGGING_RESERVE
+
+
+def _footprint_turn_floor(file_count: int | None, current: int) -> tuple[int, str, bool]:
     """Raise the turn budget when a component's file footprint outgrows it.
+
+    Returns ``(turns, reason_suffix, budget_clamped)``. ``budget_clamped`` is
+    True when an exhaustive pass does not fit in ``_FOOTPRINT_TURN_CAP`` -- the
+    component is then in the *sampling* regime and the dispatch MUST tell the
+    analyzer so (see ``build_stride_dispatch_manifest`` → ``sampling_required``).
 
     2026-07-20 juice-shop: `data-persistence` classified as `moderate` (22 soft
     turns, 40 hard harness ceiling) purely from role heuristics, while its
@@ -194,13 +242,27 @@ def _footprint_turn_floor(file_count: int | None, current: int) -> tuple[int, st
     completed zero STRIDE categories. Complexity is a risk signal; it says
     nothing about how much reading the component requires, so the budget needs
     this second, orthogonal input.
+
+    2026-08-02 insecure-spring-app: the same failure recurred one cap higher.
+    `spring-web-app` spanned 47 files → needed 65 turns; the cap silently
+    granted 48 against a 56-turn harness ceiling, and both attempts died at
+    exactly 56 tool calls with zero categories completed. Clamping is a
+    legitimate strategy for very wide components, but only if the analyzer is
+    *told* to sample. Silently handing it an under-sized budget is not.
     """
     if not file_count or file_count <= 0:
-        return current, ""
-    needed = min(file_count + _MANDATORY_CONTEXT_READS + _WRITE_AND_LOGGING_RESERVE, _FOOTPRINT_TURN_CAP)
-    if needed <= current:
-        return current, ""
-    return needed, f" + footprint floor ({file_count} files → {needed} turns)"
+        return current, "", False
+    needed = footprint_turns_needed(file_count)
+    granted = min(needed, _FOOTPRINT_TURN_CAP)
+    clamped = needed > _FOOTPRINT_TURN_CAP
+    if granted <= current:
+        # The tier already covers the footprint. A clamp is still reported so a
+        # very wide component in a high tier is not mistaken for a narrow one.
+        return current, "", clamped
+    suffix = f" + footprint floor ({file_count} files → {granted} turns)"
+    if clamped:
+        suffix += f", sampling (exhaustive would need {needed})"
+    return granted, suffix, clamped
 
 
 def classify(
@@ -220,13 +282,14 @@ def classify(
         # The complexity verdict ignores file footprint by design (M19/M8), but
         # the turn budget must not: reading N files costs N turns whatever the
         # risk rating says.
-        auth_turns, auth_floor = _footprint_turn_floor(file_count, budgets["complex"])
+        auth_turns, auth_floor, auth_clamped = _footprint_turn_floor(file_count, budgets["complex"])
         return {
             "component_id": component_id,
             "canonical_id": canonical,
             "complexity": "complex",
             "max_turns": auth_turns,
             "estimated_threat_count": "high",
+            "budget_clamped": auth_clamped,
             "reason": "auth/identity: always high-risk regardless of file footprint (M19/M8)" + auth_floor,
         }
 
@@ -247,6 +310,7 @@ def classify(
             "complexity": "trivial",
             "max_turns": 0,
             "estimated_threat_count": "low",
+            "budget_clamped": False,
             "reason": "M24 trivial-skip: no dangerous-sinks/secrets/input-handling, ≤2 interfaces, not auth, not frontend",
         }
 
@@ -274,7 +338,7 @@ def classify(
     # ESTIMATED_THREAT_COUNT mapping
     etc_map = {"simple": "low", "moderate": "moderate", "complex": "high"}
     max_turns = budgets[complexity] if complexity != "simple" else 8
-    floor_turns, floor_reason = _footprint_turn_floor(file_count, max_turns)
+    floor_turns, floor_reason, budget_clamped = _footprint_turn_floor(file_count, max_turns)
     if floor_turns > max_turns:
         max_turns = floor_turns
         reason += floor_reason
@@ -284,6 +348,7 @@ def classify(
         "complexity": complexity,
         "max_turns": max_turns,
         "estimated_threat_count": etc_map[complexity],
+        "budget_clamped": budget_clamped,
         "reason": reason,
     }
 
