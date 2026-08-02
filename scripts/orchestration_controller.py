@@ -1875,6 +1875,64 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     return md.is_file()
 
 
+# Which deterministic yaml-derived exports a run can request, and the script
+# that produces each. Both take the same `--threat-model` / `--output` pair.
+# `pentest-tasks.yaml` is deliberately NOT here: it needs repo-root/format/
+# target arguments and a follow-up validate_intermediate pass, so it keeps the
+# analyst as its only producer until that flow gets the same treatment.
+_YAML_DERIVED_EXPORTS: tuple[tuple[str, str, str], ...] = (
+    ("write_sarif", "export_sarif.py", "threat-model.sarif.json"),
+    ("write_threatdragon", "export_threat_dragon.py", "threat-model.threatdragon.json"),
+)
+
+
+def _export_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
+    """Produce the deterministic yaml-derived exports the run asked for.
+
+    ``--sarif`` and ``--threatdragon`` are pure functions of
+    ``threat-model.yaml``, but their only trigger was Phase-11 substeps 7-9 of
+    the threat-analyst (``agents/phases/phase-group-finalization.md``). The thin
+    runtime caps Analyst-B at ``STAGE1_PHASE_LIMIT=10b`` and hands substeps 4+
+    to Stage 2, where nothing owns them — so a ``--threatdragon`` run promised
+    the artefact in its pre-flight, produced nothing, and the completion summary
+    dropped the line without a warning (juice-shop 2026-08-02). ``run-headless.sh``
+    already carried exactly this backstop, but only for the headless path.
+
+    Anchoring it here, in the mandatory re-entrant ``next`` gate that reads the
+    durable on-disk config, makes the artefact independent of whether an LLM
+    step ran — the same reasoning as ``_stamp_if_configured`` below, which it
+    runs before so the stamped copy set includes the exports. Idempotent (an
+    existing artefact is left alone) and fail-safe (never raises into ``next``).
+    """
+    if not (output_dir / "threat-model.yaml").is_file():
+        return
+    for key, script, basename in _YAML_DERIVED_EXPORTS:
+        if not cfg.get(key):
+            continue
+        target = output_dir / basename
+        if target.is_file():
+            continue
+        try:
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / script),
+                    "--threat-model",
+                    str(output_dir / "threat-model.yaml"),
+                    "--output",
+                    str(target),
+                ],
+                cwd=str(SCRIPT_DIR),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode == 0 and target.is_file():
+            _append_event(output_dir, "EXPORT_BACKSTOP", f"{script} wrote {basename} from threat-model.yaml")
+
+
 def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
     """Deterministically produce the slug-stamped deliverable copy set.
 
@@ -2015,6 +2073,10 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             "stage": "stage4",
             "instruction_file": str(LEGACY_RUNTIME),
         }
+    # Deterministic export backstop: the requested yaml-derived artefacts must
+    # not depend on whether the LLM finalization ran its substep. Before the
+    # stamp, so the stamped copy set includes them.
+    _export_if_configured(output_dir, cfg)
     # Deterministic slug-stamp backstop: the run is complete, so emit the
     # postfix-stamped deliverable copy set here rather than relying on the
     # trailing LLM-driven skill block (which a compaction-resumed orchestrator

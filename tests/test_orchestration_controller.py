@@ -1780,3 +1780,89 @@ def test_bootstrap_upgrade_survives_a_failing_rebuild(tmp_path, monkeypatch):
         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "boom"),
     )
     assert controller._upgrade_bootstrap_yaml(tmp_path, {}) is False
+
+
+# ---------------------------------------------------------------------------
+# Deterministic yaml-derived export backstop (_export_if_configured)
+# ---------------------------------------------------------------------------
+
+_DRAGON_SOURCE = ROOT / "tests" / "fixtures" / "threat-dragon" / "threat-model.source.yaml"
+
+
+def _export_run_dir(tmp_path: Path, **cfg_overrides) -> tuple[Path, dict]:
+    """A run that has reached completion: yaml + report + QA status on disk."""
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "threat-model.yaml").write_text(_DRAGON_SOURCE.read_text(encoding="utf-8"), encoding="utf-8")
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    (output / ".qa-status.json").write_text("{}", encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    cfg.update(cfg_overrides)
+    return output, cfg
+
+
+def test_threatdragon_export_is_produced_without_an_llm_step(tmp_path):
+    """The regression: --threatdragon was only ever triggered by Phase-11
+    substeps of the analyst, which the thin runtime never reaches — so the run
+    promised the artefact and shipped nothing."""
+    output, cfg = _export_run_dir(tmp_path, write_threatdragon=True)
+
+    controller._export_if_configured(output, cfg)
+
+    exported = output / "threat-model.threatdragon.json"
+    assert exported.is_file()
+    assert json.loads(exported.read_text(encoding="utf-8"))["version"]
+
+
+def test_export_backstop_is_skipped_when_not_requested(tmp_path):
+    output, cfg = _export_run_dir(tmp_path, write_threatdragon=False, write_sarif=False)
+
+    controller._export_if_configured(output, cfg)
+
+    assert not (output / "threat-model.threatdragon.json").exists()
+    assert not (output / "threat-model.sarif.json").exists()
+
+
+def test_export_backstop_leaves_an_existing_artefact_alone(tmp_path, monkeypatch):
+    """Idempotent: an export the analyst already wrote is never regenerated."""
+    output, cfg = _export_run_dir(tmp_path, write_threatdragon=True)
+    (output / "threat-model.threatdragon.json").write_text('{"mine": true}', encoding="utf-8")
+
+    calls = []
+    monkeypatch.setattr(controller.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    controller._export_if_configured(output, cfg)
+
+    assert calls == []
+    assert json.loads((output / "threat-model.threatdragon.json").read_text(encoding="utf-8")) == {"mine": True}
+
+
+def test_export_backstop_never_raises_into_next(tmp_path, monkeypatch):
+    output, cfg = _export_run_dir(tmp_path, write_threatdragon=True)
+    monkeypatch.setattr(
+        controller.subprocess,
+        "run",
+        lambda cmd, **kw: (_ for _ in ()).throw(OSError("boom")),
+    )
+    controller._export_if_configured(output, cfg)  # must not propagate
+
+
+def test_export_backstop_needs_a_model_to_derive_from(tmp_path):
+    output, cfg = _export_run_dir(tmp_path, write_threatdragon=True)
+    (output / "threat-model.yaml").unlink()
+
+    controller._export_if_configured(output, cfg)
+
+    assert not (output / "threat-model.threatdragon.json").exists()
+
+
+def test_next_action_exports_before_stamping(tmp_path):
+    """Ordering matters: stamp_threat_model.py copies the export, so the export
+    must exist by the time the stamp runs."""
+    output, cfg = _export_run_dir(tmp_path, write_threatdragon=True, slug="s1")
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+    action = controller.next_action(output)
+
+    assert action["action"] == "complete"
+    assert (output / "threat-model.threatdragon.json").is_file()
+    assert (output / "threat-model-s1.threatdragon.json").is_file()

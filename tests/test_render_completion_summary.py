@@ -1628,3 +1628,65 @@ class TestStampSlugBackstop:
         monkeypatch.setattr(rcs.subprocess, "run", _boom)
         # must swallow — the completion summary must never fail on the stamp
         rcs._stamp_slug_if_configured(tmp_path)
+
+
+class TestExportDeliverablesBackstop:
+    """Second anchor for the yaml-derived exports.
+
+    The controller anchor only fires when the mandatory `next` gate returns
+    complete; an orchestrator that runs Stage 3 itself and goes straight to the
+    summary skips it. This script runs on every completion path, so a requested
+    export can no longer be missing at the moment the summary reports outputs.
+    """
+
+    _SOURCE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "threat-dragon" / "threat-model.source.yaml"
+
+    def _seed(self, tmp_path: Path, **cfg):
+        import json as _json
+
+        (tmp_path / "threat-model.yaml").write_text(self._SOURCE.read_text(encoding="utf-8"), encoding="utf-8")
+        (tmp_path / ".skill-config.json").write_text(_json.dumps(cfg), encoding="utf-8")
+
+    def test_exports_threatdragon_when_requested(self, tmp_path: Path):
+        self._seed(tmp_path, write_threatdragon=True)
+        rcs._export_deliverables_if_configured(tmp_path)
+        assert (tmp_path / "threat-model.threatdragon.json").is_file()
+
+    def test_noop_when_not_requested(self, tmp_path: Path):
+        self._seed(tmp_path, write_threatdragon=False)
+        rcs._export_deliverables_if_configured(tmp_path)
+        assert not (tmp_path / "threat-model.threatdragon.json").exists()
+
+    def test_noop_when_no_config(self, tmp_path: Path, monkeypatch):
+        calls = []
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
+        rcs._export_deliverables_if_configured(tmp_path)
+        assert calls == []
+
+    def test_leaves_an_existing_export_alone(self, tmp_path: Path, monkeypatch):
+        self._seed(tmp_path, write_threatdragon=True)
+        (tmp_path / "threat-model.threatdragon.json").write_text('{"mine": true}', encoding="utf-8")
+        calls = []
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
+        rcs._export_deliverables_if_configured(tmp_path)
+        assert calls == []
+
+    def test_never_raises_into_the_summary(self, tmp_path: Path, monkeypatch):
+        self._seed(tmp_path, write_threatdragon=True)
+        monkeypatch.setattr(
+            rcs.subprocess,
+            "run",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("boom")),
+        )
+        rcs._export_deliverables_if_configured(tmp_path)
+
+    def test_export_table_matches_the_controller(self):
+        """Both anchors must cover the same artefact set — a flag wired into one
+        and not the other reintroduces the silent-drop for that flag."""
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "orchestration_controller.py"
+        spec = importlib.util.spec_from_file_location("_oc_for_export_parity", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert rcs._YAML_DERIVED_EXPORTS == module._YAML_DERIVED_EXPORTS

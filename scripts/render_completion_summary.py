@@ -1849,8 +1849,61 @@ def patch_placeholders(output_dir: Path, stats: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Slug-stamp backstop (compaction-proof second anchor)
+# Deliverable backstops (compaction-proof second anchor)
 # ---------------------------------------------------------------------------
+
+# Mirrors orchestration_controller._YAML_DERIVED_EXPORTS. Keep the two in sync.
+_YAML_DERIVED_EXPORTS: tuple[tuple[str, str, str], ...] = (
+    ("write_sarif", "export_sarif.py", "threat-model.sarif.json"),
+    ("write_threatdragon", "export_threat_dragon.py", "threat-model.threatdragon.json"),
+)
+
+
+def _export_deliverables_if_configured(output_dir: Path) -> None:
+    """Produce the requested yaml-derived exports before the summary reports them.
+
+    ``orchestration_controller._export_if_configured`` is the primary anchor,
+    but it fires only when the mandatory ``next`` gate returns
+    ``action=complete``. An orchestrator that runs Stage 3 itself and goes
+    straight to the summary never re-enters that gate, so the artefact is still
+    missing at report time — and ``render_summary`` lists the export only
+    ``if cfg.get("write_threatdragon") and td.is_file()``, i.e. it dropped the
+    line silently after the pre-flight had promised it (juice-shop 2026-08-02).
+    This script is the ONE step that runs on every completion path, so it is the
+    reliable second anchor — the same two-anchor shape as the slug stamp below,
+    which it runs before so the stamped set includes the exports. Idempotent (an
+    existing artefact is left alone) and fail-safe (never raises into the
+    summary output).
+    """
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        return
+    for key, script, basename in _YAML_DERIVED_EXPORTS:
+        if not cfg.get(key):
+            continue
+        target = output_dir / basename
+        if target.is_file():
+            continue
+        try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve().parent / script),
+                    "--threat-model",
+                    str(yaml_path),
+                    "--output",
+                    str(target),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
 
 
 def _stamp_slug_if_configured(output_dir: Path) -> None:
@@ -2022,6 +2075,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.patch_placeholders:
         patch_placeholders(args.output_dir, stats)
 
+    # Second export anchor — before the stamp, so the stamped copy set includes
+    # the exports, and before render_summary, so it can actually list them.
+    _export_deliverables_if_configured(args.output_dir)
     # Second slug-stamp anchor (after any placeholder patch so the stamped copy
     # carries the filled run-statistics). Idempotent; primary anchor lives in
     # orchestration_controller._stamp_if_configured. See _stamp_slug_if_configured.
