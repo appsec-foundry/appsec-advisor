@@ -14,30 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New alpha export: `--formats threatdragon` writes OWASP Threat Dragon v2 JSON, which also imports into OWASP ThreatAtlas; `create-threat-model --threatdragon` writes it during a scan. See `docs/threat-dragon-export.md`.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
 - New `install-baseline`, `verify-baseline` and `remove-baseline` skills manage a secure-coding baseline in Claude Code's instruction files, with `verify-baseline --enforce` as a CI gate.
-- New `help` skill: a short command reference plus the repo context files, organization profile, and coach state actually in effect.
-- A session now opens with a status banner naming the plugin, the threat model, and the loaded secure-coding baseline. `APPSEC_BANNER=0` turns it off.
-- An organization can ship its own skills, secure-coding baseline, and banner in its org profile.
+- New `help` skill lists available commands and the context, profile, and coach configuration in effect.
+- Sessions now open with a status banner naming the plugin, threat model, and loaded baseline; `APPSEC_BANNER=0` disables it.
+- Organization profiles can ship custom skills, a secure-coding baseline, and a banner, and disable shipped skills.
 - A run that recorded an error now points at `/appsec-advisor:report-error`, which builds a local anonymised bundle and sends nothing.
 
 ### Fixed
 
-- Skills an organization disabled through `skill_toggles` are now actually refused, from the first command in a session and for every shipped skill.
-- Client-side code is no longer modelled as a trust zone, so a crossing out of it anchors at the internet perimeter and one into it is dropped as enforcing nothing.
-- The Trust Boundaries table and the boundary note on a finding are readable again: canonical endpoints, each crossing stated once, every reference a working link, linked findings grouped under the condition they break, and the verdict stated plainly — `broken` rather than `refuted` — with its vocabulary in a legend instead of a screen-long introduction. Each condition is named after the §6 control domain it links to, a link whose condition could not be identified is labelled rather than left bare, and the legends now define every value the table can print — exposure tiers, crossing kinds and conditions alike — so no cell states something the report never explains. The most exposed tier reads `External` rather than `Public`, which claimed an audience the classification never establishes.
+- Client-side code is no longer modelled as a trust zone, preventing invalid browser-boundary crossings.
 - `Automated SCA scanning` is now rated only from scanners the pipeline actually invokes, not from a tool name in a comment, a step label, or string data.
-- A finished component analysis is no longer discarded over a repairable defect such as a schema violation or an over-long walkthrough step.
-- `show-threat-model` now cites the `F-NNN` identifiers the report shows and severity counts that match it.
-- A requested `--threatdragon` or `--sarif` export is now always written, instead of being missing from the deliverables — and unmentioned in the completion summary — whenever the finalization step that used to produce it was never reached.
-- A hardcoded cryptographic key now keeps its CVSS vector, like the hardcoded credential it is otherwise rated as.
+- Completed component analyses now survive repairable schema and walkthrough defects.
+- Requested Threat Dragon and SARIF exports are now always written and listed in the completion summary.
 
 ### Changed
 
-- A finding with verified evidence at a confirmed internet ingress can now be raised by one severity band, up to High, while CWE caps still apply.
+- Verified findings at a confirmed internet ingress can now be raised by one severity band, up to High, within CWE caps.
 - Findings of the same kind at different trust boundaries now stay separate instead of consolidating into one row.
-- `threat-model.yaml` now carries the report's verdict, so other tools can state the assessment's conclusion without reading the Markdown.
-- SARIF results now name the crossing and its exposure instead of a bare `tb-N`, and the run carries the whole boundary catalogue.
-- `show-threat-model` now opens with the report's verdict and the worst-case scenarios behind it, and the triage console warns before fixing code against a stale model.
-- The `Run Issues` block now appears only when something reached the delivered report; a slow phase or a recovery that worked no longer makes a sound run look broken.
+- `threat-model.yaml` now includes the report verdict.
+- SARIF results now include trust-boundary crossing and exposure details.
+- `show-threat-model` now reports matching finding IDs and severity counts, opens with the report verdict and worst-case scenarios, and triage warns when the model is stale.
 
 ## 0.5.1-beta (2026-07-26)
 
