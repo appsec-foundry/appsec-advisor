@@ -15608,14 +15608,46 @@ def _boundary_exposure_rating(row: dict, component_ids: set[str]) -> str:
     return f"{glyph} **{word}**"
 
 
+# What each exposure tier actually asserts, stated as the rule `exposure_of`
+# applies. The words alone invite a reader to over-read them: "Public" says the
+# far end is not a modelled component, NOT that internet reachability was
+# proven, and "Internal" says both ends are modelled, not that they share a host
+# (user 2026-08-02). Wherever the report needs proven internet reach — the
+# severity-elevation rule — it tests for it separately.
+_BOUNDARY_EXPOSURE_GLOSS = {
+    "review required": "endpoints unresolved",
+    "internet-facing": "something outside the model reaches a component",
+    "inferred": "direction modelled, crossing not confirmed",
+    "internal": "both ends are modelled components",
+    "outbound": "a component reaches outside the model",
+}
+
+
 def _boundary_exposure_legend() -> str:
     """Legend for the Exposure column, in tier order (most exposed first)."""
-    gloss = {"review required": " (endpoints unresolved)"}
     ramp = " · ".join(
-        f"{rating_of(exposure)[0]} {rating_of(exposure)[1]}{gloss.get(exposure, '')}"
+        f"{rating_of(exposure)[0]} {rating_of(exposure)[1]} ({_BOUNDARY_EXPOSURE_GLOSS[exposure]})"
         for exposure in _BOUNDARY_EXPOSURES
     )
     return f"_Exposure rates how reachable the crossing is, most exposed first: {ramp}._"
+
+
+def _boundary_kind_legend() -> str:
+    """Legend for the Kind column: the mechanism, and what changes across it.
+
+    Two orthogonal axes rendered into one cell, which is why the same row can
+    read `network` and the next `network · identity` — the second records a
+    change of acting identity, the first records none (user 2026-08-02). Both
+    axes are derived from the schema-validated `kind` enum, so this legend is
+    built from the same table rather than a prose copy of it.
+    """
+    surfaces = ", ".join(sorted({label for label in _BOUNDARY_SURFACE_LABELS.values()}))
+    transitions = sorted({change for _surface, changes in _BOUNDARY_KIND_AXES.values() for change in changes})
+    return (
+        f"_Kind names the crossing mechanism — {surfaces} — and, after `·`, what changes across it: "
+        f"{', '.join(transitions)}. A mechanism shown alone records no such change; an in-process row "
+        "says so explicitly, because it is an enforcement interface rather than a trust transition._"
+    )
 
 
 _CROSSING_TYPE_LABELS = {"ingress": "inbound", "egress": "outbound", "internal": "in-process"}
@@ -15660,9 +15692,10 @@ def _boundary_verdict_legend() -> str:
         "findings in the components covered bear on the condition, none linked to this crossing · "
         "not examined — nothing in this report bears on it. `N related` counts further findings "
         "behind the crossing bearing on the same condition, so one that fails systematically is "
-        "not read as a single lapse. Linked findings are grouped under the condition they break. "
-        "A link may raise a finding's effective severity only where the crossing is confirmed "
-        "internet ingress; raw risk is never changed._"
+        "not read as a single lapse. Linked findings are grouped under the condition they break; "
+        "one whose condition the report could not identify is grouped as _Unattributed_ rather "
+        "than guessed at. A link may raise a finding's effective severity only where the crossing "
+        "is confirmed internet ingress; raw risk is never changed._"
     )
 
 
@@ -15875,10 +15908,15 @@ def _boundary_finding_links(finding_ids: list[str], leg_states: list[dict], ctx:
 
     A finding attributed to two legs is listed under the first — the verdict
     column already reports both as broken, and repeating the id in a column this
-    narrow costs more than it explains. A link the legs could not attribute (no
-    `leg` field, no unambiguous CWE match) keeps its place in a trailing
-    unlabelled group rather than being dropped: it still refutes the row. With
-    no attributable leg at all this degrades to the flat list it replaced.
+    narrow costs more than it explains.
+
+    A link the legs could not attribute keeps its place under an explicit
+    _Unattributed_ heading: it still refutes the row, and it happens for a
+    reason worth stating — the analyst named no `leg` and the finding's CWE maps
+    to no condition this crossing has (tb-6 linked a hardcoded-credential
+    finding to an egress crossing, whose conditions are about what leaves and
+    what comes back, user 2026-08-02). Leaving that group bare made a deliberate
+    refusal to guess look like a rendering fault.
 
     Severity dot + id only, never the finding title: this is the narrowest
     column in the table and the global `linkify_anchors` label pass would append
@@ -15905,7 +15943,14 @@ def _boundary_finding_links(finding_ids: list[str], leg_states: list[dict], ctx:
         remaining = [finding_id for finding_id in remaining if finding_id not in attributed]
         parts.append(f"_{_BOUNDARY_LEG_LABELS.get(leg['leg'], leg['leg'])}_")
         parts.extend(_chip(finding_id) for finding_id in group)
-    parts.extend(_chip(finding_id) for finding_id in remaining)
+    if remaining:
+        # Labelled even when it is the row's ONLY group. Suppressing it there
+        # would recreate the reported symptom exactly: tb-6 showed a bare
+        # finding while its neighbours showed headings, and the reader had no
+        # way to tell a refusal to guess from a rendering fault. Every group
+        # carries a label, so a missing one never has to be interpreted.
+        parts.append("_Unattributed_")
+        parts.extend(_chip(finding_id) for finding_id in remaining)
     return "<br>".join(parts)
 
 
@@ -16041,6 +16086,7 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
             ]
         )
     lines.extend(["", _boundary_exposure_legend()])
+    lines.extend(["", _boundary_kind_legend()])
     lines.extend(["", _boundary_condition_legend()])
     lines.extend(["", _boundary_verdict_legend()])
     if uniform_source is None:

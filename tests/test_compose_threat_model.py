@@ -1574,8 +1574,7 @@ def test_trust_boundary_catalog_exposure_and_review_labels(tmp_path: Path) -> No
         glyph, word = criticality.rating_of(exposure)
         assert f"{glyph} **{word}**" in rendered
     legend = " · ".join(
-        f"{criticality.rating_of(e)[0]} {criticality.rating_of(e)[1]}"
-        + (" (endpoints unresolved)" if e == "review required" else "")
+        f"{criticality.rating_of(e)[0]} {criticality.rating_of(e)[1]} ({compose._BOUNDARY_EXPOSURE_GLOSS[e]})"
         for e in sorted(
             ("review required", "internet-facing", "inferred", "internal", "outbound"),
             key=criticality.tier_of,
@@ -6006,13 +6005,20 @@ def test_linked_findings_are_grouped_under_the_condition_they_break(tmp_path: Pa
     assert links_cell.index("_Authentication_") < links_cell.index("_Authorization_")
 
 
-def test_unattributable_link_keeps_its_place_without_a_group(tmp_path: Path) -> None:
-    """A link the legs cannot attribute still refutes the row, so it is listed."""
+def test_unattributable_link_is_labelled_not_left_bare(tmp_path: Path) -> None:
+    """A link the legs cannot attribute is listed AND labelled.
+
+    Left bare it was indistinguishable from a rendering fault: tb-6 showed a
+    finding under no heading while its neighbours showed headings, and nothing
+    told the reader the report had declined to guess (user 2026-08-02). The
+    label appears even when the group is the row's only one.
+    """
     rows = [_canonical_boundary(1)]
     threats = [{"id": "T-009", "component": "C-01", "risk": "High", "boundary_refs": [{"boundary_id": "tb-1"}]}]
     links_cell = next(
         line for line in _catalog(tmp_path, rows, threats, ["C-01"]).splitlines() if line.startswith('| <a id="tb-1"')
     ).split(" | ")[5]
+    assert links_cell.startswith("_Unattributed_<br>")
     assert "[F-009](#f-009)" in links_cell
 
 
@@ -6073,3 +6079,28 @@ def test_in_process_crossing_renders_the_data_interpretation_condition(tmp_path:
     rendered = _catalog(tmp_path, [row], threats, ["C-01", "C-02"])
     assert "Query construction: **broken**" in rendered
     assert "_Query construction_<br>🔴 [F-004](#f-004)" in rendered
+
+
+def test_exposure_and_kind_legends_define_their_vocabulary(tmp_path: Path) -> None:
+    """Naming a tier is not explaining it.
+
+    The legend listed `Public` / `Internal` / `Unverified` as bare words, which
+    invites the reader to over-read them — "Public" as proven internet reach,
+    "Internal" as same-host (user 2026-08-02). Each tier now carries the rule
+    `exposure_of` actually applies, and every tier the module can rate has one.
+    """
+    import _boundary_criticality as crit
+
+    legend = compose._boundary_exposure_legend()
+    for exposure in compose._BOUNDARY_EXPOSURES:
+        assert crit.rating_of(exposure)[1] in legend
+        assert compose._BOUNDARY_EXPOSURE_GLOSS[exposure] in legend
+    # The overclaim the words invite must not be reintroduced as prose.
+    assert "internet" not in legend.lower()
+
+    kind_legend = compose._boundary_kind_legend()
+    for label in compose._BOUNDARY_SURFACE_LABELS.values():
+        assert label in kind_legend
+    for _surface, changes in compose._BOUNDARY_KIND_AXES.values():
+        for change in changes:
+            assert change in kind_legend, f"{change} can render in Kind but is not explained"
