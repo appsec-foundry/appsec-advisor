@@ -1405,8 +1405,8 @@ def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tm
     # Every row is `detected` → no Source column; the footnote states it once.
     assert "| Source |" not in rendered
     assert "source `detected`" in rendered
-    assert "only where the crossing is confirmed internet ingress" in rendered
-    assert "raw risk is never changed" in rendered
+    assert "only at a confirmed internet ingress" in rendered
+    assert "raw risk never changes" in rendered
 
 
 def test_trust_boundary_cell_states_each_fact_once(tmp_path: Path) -> None:
@@ -1580,7 +1580,7 @@ def test_trust_boundary_catalog_exposure_and_review_labels(tmp_path: Path) -> No
             key=criticality.tier_of,
         )
     )
-    assert f"_Exposure rates how reachable the crossing is, most exposed first: {legend}._" in rendered
+    assert f"_Exposure, most exposed first: {legend}._" in rendered
     # Exposure lives in its own column — never restated in the Kind cell.
     for line in rendered.splitlines():
         if '<a id="tb-' not in line:
@@ -1663,7 +1663,7 @@ def test_trust_boundary_constant_provenance_confidence_and_status_are_collapsed(
     # No Source column, and the Kind header does not name a status it no longer shows.
     assert header == "| ID | Boundary / crossing | Exposure | Kind | Assumption & verdict | Linked findings |"
     assert "detected" not in header
-    body = rendered.split("| ID |", 1)[1].split("_Exposure rates", 1)[0]
+    body = rendered.split("| ID |", 1)[1].split("\n_Exposure", 1)[0]
     assert "confirmed" not in body and "resolved" not in body
     assert (
         "_Identical on every row, so stated once here instead of in a column: "
@@ -6033,7 +6033,7 @@ def test_boundary_vocabulary_is_explained_after_the_table_not_before_it(tmp_path
     assert len(lead.split()) < 70, lead
     for word in ("broken", "in doubt", "not examined", "related"):
         assert word not in lead
-    legend_at = rendered.index("_Verdict per condition:")
+    legend_at = rendered.index("_Verdict per condition —")
     assert legend_at > rendered.rindex('| <a id="tb-1"')
 
 

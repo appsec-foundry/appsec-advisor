@@ -15616,10 +15616,10 @@ def _boundary_exposure_rating(row: dict, component_ids: set[str]) -> str:
 # severity-elevation rule — it tests for it separately.
 _BOUNDARY_EXPOSURE_GLOSS = {
     "review required": "endpoints unresolved",
-    "internet-facing": "something outside the model reaches a component",
-    "inferred": "direction modelled, crossing not confirmed",
-    "internal": "both ends are modelled components",
-    "outbound": "a component reaches outside the model",
+    "internet-facing": "reached from outside the model",
+    "inferred": "crossing not confirmed",
+    "internal": "both ends modelled",
+    "outbound": "reaches outside the model",
 }
 
 
@@ -15629,7 +15629,7 @@ def _boundary_exposure_legend() -> str:
         f"{rating_of(exposure)[0]} {rating_of(exposure)[1]} ({_BOUNDARY_EXPOSURE_GLOSS[exposure]})"
         for exposure in _BOUNDARY_EXPOSURES
     )
-    return f"_Exposure rates how reachable the crossing is, most exposed first: {ramp}._"
+    return f"_Exposure, most exposed first: {ramp}._"
 
 
 def _boundary_kind_legend() -> str:
@@ -15644,9 +15644,8 @@ def _boundary_kind_legend() -> str:
     surfaces = ", ".join(sorted({label for label in _BOUNDARY_SURFACE_LABELS.values()}))
     transitions = sorted({change for _surface, changes in _BOUNDARY_KIND_AXES.values() for change in changes})
     return (
-        f"_Kind names the crossing mechanism — {surfaces} — and, after `·`, what changes across it: "
-        f"{', '.join(transitions)}. A mechanism shown alone records no such change; an in-process row "
-        "says so explicitly, because it is an enforcement interface rather than a trust transition._"
+        f"_Kind — the crossing mechanism ({surfaces}), then after `·` what changes across it: "
+        f"{', '.join(transitions)}. Shown alone, nothing changes._"
     )
 
 
@@ -15659,8 +15658,8 @@ _CROSSING_TYPE_LABELS = {"ingress": "inbound", "egress": "outbound", "internal":
 # in-process one states the invariant behind the label, and the egress one the
 # reason a response is judged at all.
 _BOUNDARY_LEG_GLOSS = {
-    "data-interpretation": "data stays data, never program text",
-    "response-trust": "what comes back is untrusted input too",
+    "data-interpretation": "data never becomes program text",
+    "response-trust": "replies are untrusted input",
 }
 
 
@@ -15680,8 +15679,8 @@ def _boundary_condition_legend() -> str:
             label = _BOUNDARY_LEG_LABELS.get(leg, leg).lower()
             gloss = _BOUNDARY_LEG_GLOSS.get(leg)
             conditions.append(f"{label} ({gloss})" if gloss else label)
-        parts.append(f"**{_CROSSING_TYPE_LABELS.get(crossing, crossing)}** — {', '.join(conditions)}")
-    return f"_Conditions per crossing direction: {' · '.join(parts)}._"
+        parts.append(f"**{_CROSSING_TYPE_LABELS.get(crossing, crossing)}**: {', '.join(conditions)}")
+    return f"_Conditions — {' · '.join(parts)}._"
 
 
 def _boundary_verdict_legend() -> str:
@@ -15692,14 +15691,11 @@ def _boundary_verdict_legend() -> str:
     to be memorised before the first row (user 2026-08-02).
     """
     return (
-        "_Verdict per condition: **broken** — a linked finding proves the gap · in doubt — "
-        "findings in the components covered bear on the condition, none linked to this crossing · "
-        "not examined — nothing in this report bears on it. `N related` counts further findings "
-        "behind the crossing bearing on the same condition, so one that fails systematically is "
-        "not read as a single lapse. Linked findings are grouped under the condition they break; "
-        "one whose condition the report could not identify is grouped as _Unattributed_ rather "
-        "than guessed at. A link may raise a finding's effective severity only where the crossing "
-        "is confirmed internet ingress; raw risk is never changed._"
+        "_Verdict per condition — **broken**: a linked finding proves the gap · in doubt: related "
+        "findings, none linked here · not examined: nothing bears on it. `N related` counts further "
+        "findings on the same condition. Linked findings sit under the condition they break, or "
+        "under _Unattributed_. A link raises effective severity only at a confirmed internet "
+        "ingress; raw risk never changes._"
     )
 
 
