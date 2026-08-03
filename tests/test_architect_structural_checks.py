@@ -324,6 +324,79 @@ class TestMsVerdict:
         r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
         assert r["findings"] == []
 
+    def test_severity_emoji_before_each_label_parses(self, out_dir):
+        """Regression (juice-shop 2026-08-02): the renderer puts a severity
+        emoji before every label. _RISK_DIST_RE pinned the separator, so the
+        line stopped parsing — and the mismatch check was skipped in silence."""
+        _write_text(
+            out_dir / "threat-model.md",
+            """
+            ## Management Summary
+            > **Verdict**: fine.
+            **Risk distribution:** 🔴 Critical: 14 · 🟠 High: 54 · 🟡 Medium: 26 · 🟢 Low: 0 · **Total: 94**
+        """,
+        )
+        _write_json(out_dir / ".threats-merged.json", {"threats": [{"risk": "Critical"}]})
+        r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
+        assert r["reported_counts"] == {"Critical": 14, "High": 54, "Medium": 26, "Low": 0}
+
+    def test_unparseable_distribution_reports_instead_of_skipping(self, out_dir):
+        """A check that cannot run must say so — silence reads as 'passed'."""
+        _write_text(
+            out_dir / "threat-model.md",
+            """
+            ## Management Summary
+            > **Verdict**: Several Critical findings require remediation.
+        """,
+        )
+        _write_json(out_dir / ".threats-merged.json", {"threats": [{"risk": "Critical"}]})
+        r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
+        assert r["reported_counts"] is None
+        assert [f["kind"] for f in r["findings"]] == ["risk_distribution_unparseable"]
+
+    def test_expected_counts_come_from_yaml_rollup_not_pre_filter_merged(self, out_dir, tmp_path):
+        """The expectation must be the composer's own rollup, not the raw
+        candidate set. .threats-merged.json still holds refuted and
+        below-floor candidates, so measuring against it mismatches every run
+        (juice-shop 2026-08-02: baseline 15/56/26/4 vs rendered 14/54/26/0)."""
+        _write_text(
+            out_dir / "threat-model.md",
+            """
+            ## Management Summary
+            > **Verdict**: Several Critical findings require remediation.
+            **Risk distribution:** 🔴 Critical: 1 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: 0
+        """,
+        )
+        # Pre-filter set: one extra refuted Critical + one below-floor Low.
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {
+                "threats": [
+                    {"risk": "Critical"},
+                    {"risk": "Critical", "evidence_check": "refuted"},
+                    {"risk": "High"},
+                    {"risk": "Low"},
+                ]
+            },
+        )
+        # Post-filter yaml — what the composer actually rendered from.
+        (out_dir / "threat-model.yaml").write_text(
+            "meta: {schema_version: 1}\n"
+            "threats:\n"
+            "  - {id: T-001, risk: Critical}\n"
+            "  - {id: T-003, risk: High}\n"
+            "mitigations: []\n",
+            encoding="utf-8",
+        )
+        r = asc.check_ms_verdict(
+            out_dir / "threat-model.md", out_dir / ".threats-merged.json", out_dir / "threat-model.yaml"
+        )
+        assert r["actual_counts"] == {"Critical": 1, "High": 1, "Medium": 0, "Low": 0}
+        assert r["findings"] == []
+        # Without the yaml the stale baseline is used and fires a false positive.
+        r_old = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
+        assert "risk_distribution_mismatch" in [f["kind"] for f in r_old["findings"]]
+
 
 # ---------------------------------------------------------------------------
 # Check 6 — cvss_risk

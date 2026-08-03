@@ -341,11 +341,18 @@ _RISK_DIST_RE = re.compile(
     # "**Risk Distribution:**" — colon position inside/outside the bold
     # markers varies across renderers. [^*\n]* is forgiving of extra
     # punctuation ("**Risk Distribution (20 threats):**").
-    r"Risk\s*Distribution[^*\n]*?\s*[:\*]+\s*"
-    r"(?:\*\*)?\s*Critical\s*[:\*]*\s*(?P<critical>\d+)\s*(?:·|\|)\s*"
-    r"(?:\*\*)?\s*High\s*[:\*]*\s*(?P<high>\d+)\s*(?:·|\|)\s*"
-    r"(?:\*\*)?\s*Medium\s*[:\*]*\s*(?P<medium>\d+)\s*(?:·|\|)\s*"
-    r"(?:\*\*)?\s*Low\s*[:\*]*\s*(?P<low>\d+)",
+    #
+    # Between the label and each count, skip any run of non-alphanumerics:
+    # separators (· |), bold markers, and the severity emoji the renderer puts
+    # before every label ("🔴 Critical: 14 · 🟠 High: 54"). Pinning the exact
+    # separator here is what broke the check — the emoji were added to the
+    # rendered line and this regex was not, so _parse_risk_distribution returned
+    # None and the mismatch check below was skipped in SILENCE for every run.
+    r"Risk\s*Distribution[^*\n]*?\s*[:\*]+[^A-Za-z0-9\n]*"
+    r"Critical\s*[:\*]*\s*(?P<critical>\d+)[^A-Za-z0-9\n]*"
+    r"High\s*[:\*]*\s*(?P<high>\d+)[^A-Za-z0-9\n]*"
+    r"Medium\s*[:\*]*\s*(?P<medium>\d+)[^A-Za-z0-9\n]*"
+    r"Low\s*[:\*]*\s*(?P<low>\d+)",
     re.IGNORECASE,
 )
 
@@ -395,11 +402,42 @@ def _count_threats_by_severity(threats: list[dict[str, Any]]) -> dict[str, int]:
     return buckets
 
 
-def check_ms_verdict(tm_md_path: Path, threats_merged_path: Path) -> dict[str, Any]:
+def _expected_risk_distribution(yaml_path: Path | None, merged_threats: list[dict[str, Any]]) -> dict[str, int]:
+    """The counts the Risk-distribution line is SUPPOSED to carry.
+
+    Delegates to ``_severity_rollup.risk_distribution_counts`` — the same
+    function the composer renders from. Re-deriving the expectation here is what
+    made this check wrong: ``.threats-merged.json`` is the PRE-filter candidate
+    set, so it still holds refuted and below-severity-floor candidates that
+    ``build_threats`` removed, and it knows nothing about the insecure-practice
+    fold. On juice-shop 2026-08-02 that baseline read 15/56/26/4 against a
+    correctly rendered 14/54/26/0 — a mismatch on every run, reported as a
+    document defect. Falls back to the raw tally only when no yaml is available.
+    """
+    if yaml_path is not None and yaml_path.is_file():
+        try:
+            import yaml as _yaml
+
+            import _severity_rollup
+
+            data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                counts = _severity_rollup.risk_distribution_counts(data)
+                return {k.capitalize(): int(counts.get(k.lower(), 0)) for k in ("Critical", "High", "Medium", "Low")}
+        except Exception:
+            pass
+    return _count_threats_by_severity(merged_threats)
+
+
+def check_ms_verdict(
+    tm_md_path: Path,
+    threats_merged_path: Path,
+    yaml_path: Path | None = None,
+) -> dict[str, Any]:
     tm_md = _read_text(tm_md_path)
     merged = _load_json(threats_merged_path) or {}
     threats = merged.get("threats", []) if isinstance(merged, dict) else []
-    actual = _count_threats_by_severity(threats)
+    actual = _expected_risk_distribution(yaml_path, threats)
 
     findings: list[dict[str, Any]] = []
 
@@ -447,10 +485,27 @@ def check_ms_verdict(tm_md_path: Path, threats_merged_path: Path) -> dict[str, A
             }
         )
 
-    # Numerical mismatch between the MS Risk Distribution line and the
-    # actual .threats-merged.json counts.
+    # Numerical mismatch between the MS Risk Distribution line and the counts
+    # the composer derives from the same yaml.
     reported = _parse_risk_distribution(tm_md)
-    if reported is not None:
+    if reported is None:
+        # Do NOT fall through quietly. A verdict exists, so the line should be
+        # parseable; if it is not, the check did not pass — it did not run. That
+        # distinction was invisible for the whole 2026-08-02 juice-shop run.
+        findings.append(
+            {
+                "check": "ms-verdict",
+                "severity": "warning",
+                "kind": "risk_distribution_unparseable",
+                "message": (
+                    "Management Summary carries a Verdict but no parseable "
+                    "'Risk distribution' line — the risk_distribution_mismatch "
+                    "check could not run. Either the line is missing or the "
+                    "renderer changed its format and _RISK_DIST_RE is stale."
+                ),
+            }
+        )
+    else:
         mismatches = {k: (reported[k], actual[k]) for k in actual if reported[k] != actual[k]}
         if mismatches:
             findings.append(
@@ -1211,7 +1266,7 @@ def run_all(output_dir: Path) -> dict[str, Any]:
     threats_merged = output_dir / ".threats-merged.json"
 
     a = check_arch_recon(tm_yaml, recon)
-    b = check_ms_verdict(tm_md, threats_merged)
+    b = check_ms_verdict(tm_md, threats_merged, tm_yaml)
     c = check_cvss_risk(threats_merged)
     d = _build_architecture_input_pack(tm_yaml)
     e = check_mitigation_realism(tm_yaml)
@@ -1279,7 +1334,11 @@ def _main(argv: list[str]) -> int:
     if args.command == "arch-recon":
         out: dict[str, Any] = check_arch_recon(output_dir / "threat-model.yaml", output_dir / ".recon-summary.md")
     elif args.command == "ms-verdict":
-        out = check_ms_verdict(output_dir / "threat-model.md", output_dir / ".threats-merged.json")
+        out = check_ms_verdict(
+            output_dir / "threat-model.md",
+            output_dir / ".threats-merged.json",
+            output_dir / "threat-model.yaml",
+        )
     elif args.command == "cvss-risk":
         out = check_cvss_risk(output_dir / ".threats-merged.json")
     elif args.command == "mitigation-realism":
