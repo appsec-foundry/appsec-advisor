@@ -4184,3 +4184,77 @@ def test_enrichment_skips_attack_tree_findings_pointer(tmp_path: Path):
     assert ptr.count("[F-013](#f-013)") == 1
     # A normal ref elsewhere still gets its dot + title.
     assert "🔴 [F-013](#f-013) — Anonymous Attacker" in normal
+
+
+# ---------------------------------------------------------------------------
+# mermaid repair actions — resolve the owning fragment
+# ---------------------------------------------------------------------------
+
+
+def _mermaid_workspace(tmp_path: Path) -> Path:
+    """Report with two mermaid blocks plus the fragments they came from."""
+    flow = "flowchart TB\n" '    backend_api["Express REST API"]\n' '    sqlite_db[("SQLite Database")]\n'
+    seq = "sequenceDiagram\n" "    participant Attacker\n" "    Attacker->>LoginRoute: crafted payload\n"
+    (tmp_path / "threat-model.md").write_text(
+        "# Threat Model\n\n"
+        "## 2. Architecture Diagrams\n\n"
+        f"```mermaid\n{flow}```\n\n"
+        "## 3. Attack Walkthroughs\n\n"
+        f"```mermaid\n{seq}```\n",
+        encoding="utf-8",
+    )
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    (frag / "architecture-diagrams.md").write_text(f"## 2\n\n```mermaid\n{flow}```\n", encoding="utf-8")
+    (frag / "attack-walkthroughs.md").write_text(f"## 3\n\n```mermaid\n{seq}```\n", encoding="utf-8")
+    return tmp_path / "threat-model.md"
+
+
+def test_mermaid_owner_resolves_flowchart_to_architecture_fragment(tmp_path: Path):
+    md = _mermaid_workspace(tmp_path)
+    raw = "mermaid block #1 (starts at line ~5): authoritative parse failed — boom"
+    assert qa._fragment_owning_mermaid_block(md, raw) == ".fragments/architecture-diagrams.md"
+
+
+def test_mermaid_owner_resolves_sequence_to_walkthroughs_fragment(tmp_path: Path):
+    md = _mermaid_workspace(tmp_path)
+    raw = "mermaid block #2 (starts at line ~11): authoritative parse failed — boom"
+    assert qa._fragment_owning_mermaid_block(md, raw) == ".fragments/attack-walkthroughs.md"
+
+
+def test_mermaid_owner_survives_composer_edge_label_quoting(tmp_path: Path):
+    """The composer rewrites unsafe edge labels on the way into the md, so the
+    rendered block is not byte-identical to its fragment. Identifier overlap is
+    what makes the match survive that."""
+    md = _mermaid_workspace(tmp_path)
+    text = md.read_text(encoding="utf-8").replace(
+        '    sqlite_db[("SQLite Database")]',
+        '    backend_api -->|"SQL (in-process)"| sqlite_db',
+    )
+    md.write_text(text, encoding="utf-8")
+    raw = "mermaid block #1 (starts at line ~5): authoritative parse failed"
+    assert qa._fragment_owning_mermaid_block(md, raw) == ".fragments/architecture-diagrams.md"
+
+
+def test_mermaid_owner_ignores_non_contract_scratch_fragments(tmp_path: Path):
+    """`_chain-skeleton.md` mirrors the walkthrough diagrams and would tie with
+    the real owner, pushing every sequence-diagram issue into the fallback."""
+    md = _mermaid_workspace(tmp_path)
+    seq = (tmp_path / ".fragments" / "attack-walkthroughs.md").read_text(encoding="utf-8")
+    (tmp_path / ".fragments" / "_chain-skeleton.md").write_text(seq, encoding="utf-8")
+    raw = "mermaid block #2 (starts at line ~11): authoritative parse failed"
+    assert qa._fragment_owning_mermaid_block(md, raw) == ".fragments/attack-walkthroughs.md"
+
+
+def test_mermaid_owner_returns_none_for_unresolvable_issue(tmp_path: Path):
+    md = _mermaid_workspace(tmp_path)
+    assert qa._fragment_owning_mermaid_block(md, "no block index here") is None
+    assert qa._fragment_owning_mermaid_block(md, "mermaid block #99: out of range") is None
+
+
+def test_mermaid_owner_returns_none_without_fragments_dir(tmp_path: Path):
+    (tmp_path / "threat-model.md").write_text(
+        "```mermaid\nflowchart TB\n    aaa[A]\n    bbb[B]\n    aaa --> bbb\n```\n", encoding="utf-8"
+    )
+    raw = "mermaid block #1 (starts at line ~1): authoritative parse failed"
+    assert qa._fragment_owning_mermaid_block(tmp_path / "threat-model.md", raw) is None

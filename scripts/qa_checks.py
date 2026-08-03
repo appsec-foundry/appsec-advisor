@@ -1938,6 +1938,83 @@ def _action_severity(action_type: str) -> str:
     return "manual_review"
 
 
+_MERMAID_ISSUE_BLOCK_IDX_RE = re.compile(r"mermaid block #(\d+)", re.IGNORECASE)
+
+
+def _fragment_owning_mermaid_block(md_path: Path, raw_issue: str) -> Optional[str]:
+    """Which `.fragments/*.md` contains the mermaid block this issue names.
+
+    The issue text carries a 1-based block index into ``threat-model.md``. Take
+    that block's identifier tokens and score them against the mermaid blocks in
+    each fragment; the best match above a clear threshold wins.
+
+    Token overlap rather than an exact body match is deliberate: the composer
+    rewrites blocks on the way into the md (``_quote_mermaid_edge_labels``
+    wraps unsafe edge labels), so the rendered block is routinely not
+    byte-identical to its source. Node ids and diagram keywords survive that
+    rewrite; quoting and punctuation do not.
+
+    Returns the repo-relative fragment path, or ``None`` when the block cannot
+    be located or two fragments score alike — the caller then falls back to
+    naming every candidate, which is the pre-existing behaviour.
+    """
+    m = _MERMAID_ISSUE_BLOCK_IDX_RE.search(raw_issue or "")
+    if not m:
+        return None
+    try:
+        md_text = md_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    blocks = list(_MERMAID_FENCE_RE.finditer(md_text))
+    idx = int(m.group(1))
+    if not (1 <= idx <= len(blocks)):
+        return None
+
+    def _tokens(body: str) -> set[str]:
+        # Identifier-ish tokens only: node ids, classDef names, diagram type.
+        return {t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", body or "")}
+
+    want = _tokens(blocks[idx - 1].group("body"))
+    if len(want) < 3:
+        return None
+
+    frag_dir = md_path.parent / ".fragments"
+    if not frag_dir.is_dir():
+        return None
+    # Only fragments the contract actually owns are repair targets. Scratch
+    # artefacts live in the same directory (`_chain-skeleton.md` mirrors the
+    # walkthrough diagrams almost verbatim) and would tie with the real owner
+    # on token overlap, pushing every sequenceDiagram issue into the fallback.
+    known = {p for paths in CONTRACT_SECTION_FRAGMENTS.values() for p in (paths or []) if str(p).endswith(".md")}
+    scores: list[tuple[float, str]] = []
+    for frag in sorted(frag_dir.glob("*.md")):
+        rel = f".fragments/{frag.name}"
+        if rel not in known:
+            continue
+        try:
+            frag_text = frag.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        best = 0.0
+        for fm in _MERMAID_FENCE_RE.finditer(frag_text):
+            have = _tokens(fm.group("body"))
+            if not have:
+                continue
+            best = max(best, len(want & have) / len(want))
+        if best > 0:
+            scores.append((best, f".fragments/{frag.name}"))
+    if not scores:
+        return None
+    scores.sort(reverse=True)
+    top_score, top_path = scores[0]
+    runner_up = scores[1][0] if len(scores) > 1 else 0.0
+    # Require a strong match AND a clear margin, so an ambiguous result falls
+    # back to the old "name them all" behaviour rather than misdirecting.
+    if top_score < 0.6 or (top_score - runner_up) < 0.2:
+        return None
+    return top_path
+
+
 def _render_integrity_actions(output_dir: Path) -> tuple[list[str], list[dict]]:
     """Translate a broken report-integrity manifest into blocking repair actions.
 
@@ -2141,20 +2218,32 @@ def build_repair_plan(
                 ),
             }
         )
-    # One action per mermaid-syntax finding. The offending fragment is almost
-    # always `.fragments/attack-walkthroughs.md` (sequence diagrams) or
-    # `.fragments/architecture-diagrams.md` (flowchart/graph). Pointing at
-    # both lets the orchestrator choose based on the block index / line.
+    # One action per mermaid-syntax finding. Resolve WHICH fragment owns the
+    # offending block instead of naming both and leaving the choice to the
+    # repair agent: the issue text carries the block index, so the block body is
+    # recoverable from the md and matchable against the fragments on disk.
+    #
+    # Naming both was not a neutral default. On juice-shop 2026-08-02 the
+    # fragment-fixer picked the wrong one, concluded "the mermaid block is
+    # generated from YAML, not the fragment", and burned a full repair
+    # iteration on a non-fix — the plan gave it no way to tell them apart.
     for raw in mermaid_issues:
+        owner = _fragment_owning_mermaid_block(md_path, raw)
         actions.append(
             {
                 "raw_issue": raw,
                 "type": "mermaid_syntax",
-                "section_id": "attack_walkthroughs",
-                "fragments_to_rewrite": [
-                    ".fragments/attack-walkthroughs.md",
-                    ".fragments/architecture-diagrams.md",
-                ],
+                "section_id": (
+                    "architecture_diagrams" if owner and "architecture-diagrams" in owner else "attack_walkthroughs"
+                ),
+                "fragments_to_rewrite": (
+                    [owner]
+                    if owner
+                    else [
+                        ".fragments/attack-walkthroughs.md",
+                        ".fragments/architecture-diagrams.md",
+                    ]
+                ),
                 "remediation": (
                     "Edit the mermaid block and remove the flagged pattern. "
                     "Rules: (1) escape all inner double quotes to &quot; inside "
