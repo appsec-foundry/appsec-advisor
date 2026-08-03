@@ -983,7 +983,11 @@ def _endpoint_candidate_key(t: dict) -> tuple[str, str] | None:
 
 def _dedupe_exact(threats: list[dict]) -> list[dict]:
     """Collapse threats that are trivially identical. Preserves first-seen
-    order while retaining every folded member as an auditable instance."""
+    order while retaining every folded member as an auditable instance.
+
+    Exact identity takes precedence over optional boundary traceability. When
+    the union exceeds the output cap, metadata merging retains a deterministic
+    subset instead of preserving a duplicate finding."""
     out: list[dict] = []
     by_key: dict[tuple, dict] = {}
     for t in threats:
@@ -1001,9 +1005,6 @@ def _dedupe_exact(threats: list[dict]) -> list[dict]:
             # Keep the findings separate rather than silently discarding a
             # category; this matches the guard enforced for LLM decisions.
             if not _same_primary_threat_category([primary, t]):
-                out.append(t)
-                continue
-            if not _can_merge_boundary_refs([primary, t]):
                 out.append(t)
                 continue
             _merge_member_metadata(primary, [primary, t], systemic=False)
@@ -1420,7 +1421,9 @@ def _dedupe_evidence(threats: list[dict]) -> list[dict]:
     record. Members with different or missing primary ``threat_category_id``
     values are deliberately kept apart: a CWE family is not an architectural
     category, and this deterministic path must enforce the same category guard
-    as LLM merge decisions. Component re-attribution is left to the downstream
+    as LLM merge decisions. Exact evidence identity takes precedence over the
+    optional boundary-reference cap; metadata merging retains a deterministic
+    subset when necessary. Component re-attribution is left to the downstream
     ``reclassify_components`` pass, which keys on ``evidence.file``."""
     out: list[dict] = []
     by_key: dict[tuple, dict] = {}
@@ -1439,9 +1442,6 @@ def _dedupe_evidence(threats: list[dict]) -> list[dict]:
             out.append(t)
             continue
         if not _same_primary_threat_category([prev, t]):
-            out.append(t)
-            continue
-        if not _can_merge_boundary_refs([prev, t]):
             out.append(t)
             continue
         if _risk_rank(t.get("risk")) < _risk_rank(prev.get("risk")):
@@ -1793,12 +1793,48 @@ def _boundary_ref_union(members: list[dict]) -> list[dict]:
 
 
 def _can_merge_boundary_refs(members: list[dict]) -> bool:
-    """A valid optional relation must never be discarded to force a merge."""
+    """Keep semantic consolidation within the boundary-reference output cap."""
     return len(_boundary_ref_union(members)) <= 2
 
 
+def _select_boundary_refs(members: list[dict], *, preferred_component_id: str | None, limit: int = 2) -> list[dict]:
+    """Select a stable, origin-diverse subset of boundary references."""
+    refs = _boundary_ref_union(members)
+    if len(refs) <= limit:
+        return refs
+
+    origins: list[str] = []
+    for ref in refs:
+        origin = str(ref.get("origin_component_id") or "")
+        if origin not in origins:
+            origins.append(origin)
+
+    preferred = str(preferred_component_id or "")
+    if preferred in origins:
+        origins = [preferred, *(origin for origin in origins if origin != preferred)]
+
+    selected: list[dict] = []
+    selected_keys: set[tuple[str, str]] = set()
+    for origin in origins:
+        ref = next(ref for ref in refs if str(ref.get("origin_component_id") or "") == origin)
+        key = (str(ref.get("boundary_id") or ""), origin)
+        selected.append(ref)
+        selected_keys.add(key)
+        if len(selected) == limit:
+            return selected
+
+    for ref in refs:
+        key = (str(ref.get("boundary_id") or ""), str(ref.get("origin_component_id") or ""))
+        if key in selected_keys:
+            continue
+        selected.append(ref)
+        if len(selected) == limit:
+            break
+    return selected
+
+
 def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: bool) -> None:
-    """Preserve every merged location, scenario and mitigation on survivor."""
+    """Preserve merged metadata and bounded boundary traceability on survivor."""
     instances: list[dict] = []
     files: list[str] = []
     mitigation_ids: list[str] = []
@@ -1862,7 +1898,10 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
         survivor["merged_cwes"] = cwes
     if additional_categories:
         survivor["additional_categories"] = additional_categories
-    boundary_refs = _boundary_ref_union(members)
+    boundary_refs = _select_boundary_refs(
+        members,
+        preferred_component_id=survivor.get("component_id"),
+    )
     if boundary_refs:
         survivor["boundary_refs"] = boundary_refs
 

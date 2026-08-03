@@ -37,8 +37,8 @@ import yaml
 # Constants — bound the output and pin contract-required strings.
 # ---------------------------------------------------------------------------
 
-# 2026-05 iteration 3: walkthroughs are now short and concise. Only
-# Criticals get a walkthrough; Highs are covered by their §8 Threat
+# 2026-05 iteration 3: walkthroughs are now short and concise. Only Effective
+# Criticals get a walkthrough; lower severities are covered by their §8 Threat
 # Register row.
 MAX_HIGH_WALKTHROUGHS = 0
 
@@ -48,11 +48,12 @@ MAX_HIGH_WALKTHROUGHS = 0
 # §3 is the editorial "here are the attacks that matter most" section; the
 # EXHAUSTIVE per-finding record (evidence, fix, classification) lives in §8,
 # which carries every finding regardless of this cap. So capping §3 loses no
-# information — only the narrative walkthrough for lower-priority Criticals,
-# which are selected out by _walkthrough_priority (chain anchors + smallest
-# breach-distance win). Kept intentionally small (reader feedback: 5–8 is
-# digestible, >10 is a wall). Override via .skill-config.json `max_walkthroughs`
-# (clamped to [1, MAX_WALKTHROUGHS_CEILING]).
+# information — only the narrative walkthrough for lower-priority Criticals.
+# Selection is severity-first, reserves representative Access Control and LLM
+# Abuse findings, then maximises primary threat-category diversity before
+# repeating a category. Kept intentionally small (reader feedback: 5–8 is
+# digestible, >10 is a wall). Override via .skill-config.json
+# `max_walkthroughs` (clamped to [1, MAX_WALKTHROUGHS_CEILING]).
 DEFAULT_MAX_WALKTHROUGHS = 8
 MAX_WALKTHROUGHS_CEILING = 10
 
@@ -719,28 +720,85 @@ def _peers_by_cwe(critical_threats: list[dict]) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 
-_RISK_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+_RISK_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
+_ACCESS_CONTROL_CATEGORIES = frozenset({"TH-06", "TH-20"})
+_ACCESS_CONTROL_CWES = frozenset({"CWE-284", "CWE-285", "CWE-639", "CWE-862", "CWE-863", "CWE-915"})
 
 
 def _risk_of(t: dict) -> str:
+    """Return the displayed, post-triage severity used throughout the report."""
+    return (t.get("effective_severity") or t.get("risk") or t.get("impact") or "").strip().lower()
+
+
+def _raw_risk_of(t: dict) -> str:
     return (t.get("risk") or t.get("impact") or "").strip().lower()
 
 
-def _sort_key(t: dict) -> tuple[int, str]:
-    return _RISK_RANK.get(_risk_of(t), 9), str(t.get("id") or "")
+def _threat_categories(t: dict) -> set[str]:
+    categories = {str(t.get("threat_category_id") or "").strip().upper()}
+    categories.update(
+        str(category).strip().upper()
+        for category in (t.get("additional_categories") or [])
+        if isinstance(category, str)
+    )
+    categories.discard("")
+    return categories
+
+
+def _is_access_control(t: dict) -> bool:
+    cwe = str(t.get("cwe") or "").strip().upper()
+    return bool(_threat_categories(t) & _ACCESS_CONTROL_CATEGORIES) or cwe in _ACCESS_CONTROL_CWES
+
+
+def _is_llm_abuse(t: dict) -> bool:
+    """Use evidence-backed OWASP LLM classifications, not title heuristics."""
+    return any(
+        isinstance(category, str) and re.fullmatch(r"LLM(?:0[1-9]|10)", category.strip().upper())
+        for category in (t.get("owasp_llm_ids") or [])
+    )
+
+
+def _walkthrough_type(t: dict) -> str:
+    """Stable diversity bucket: primary architectural category, then CWE."""
+    category = str(t.get("threat_category_id") or "").strip().upper()
+    if category:
+        return f"category:{category}"
+    cwe = str(t.get("cwe") or "").strip().upper()
+    if cwe:
+        return f"cwe:{cwe}"
+    return f"finding:{t.get('id') or ''}"
 
 
 def _walkthrough_priority(t: dict) -> tuple:
-    """Most-important-first ordering for the capped §3 selection. Lower sorts
-    earlier. Compound-chain anchors come first (they are the entry point of a
-    code-verified abuse chain), then findings closest to a breach
-    (smaller ``breach_distance``), then stable ``id`` order for determinism."""
-    is_anchor = bool(t.get("compound_chain_ids")) or (
-        (t.get("chain_role") or "").strip().lower() in {"anchor", "entry_point", "initial_access", "entry"}
-    )
+    """Most-important-first ordering for the capped §3 selection.
+
+    Effective severity and raw risk lead. Chain relevance and breach distance
+    then capture exploit-path importance, followed by likelihood, impact and a
+    stable ID tie-breaker.
+    """
+    chain_role = str(t.get("chain_role") or "").strip().lower()
+    if chain_role in {"anchor", "entry_point", "initial_access", "entry"}:
+        chain_rank = 0
+    elif chain_role == "keystone":
+        chain_rank = 1
+    elif chain_role == "contributor":
+        chain_rank = 2
+    elif t.get("compound_chain_ids"):
+        # Backward compatibility for older models that predate chain_role.
+        chain_rank = 0
+    else:
+        chain_rank = 3
     bd = t.get("breach_distance")
     bd = bd if isinstance(bd, (int, float)) else 999
-    return (0 if is_anchor else 1, bd, str(t.get("id") or ""))
+    return (
+        _RISK_RANK.get(_risk_of(t), 9),
+        _RISK_RANK.get(_raw_risk_of(t), 9),
+        chain_rank,
+        bd,
+        _RISK_RANK.get(str(t.get("likelihood") or "").strip().lower(), 9),
+        _RISK_RANK.get(str(t.get("impact") or "").strip().lower(), 9),
+        str(t.get("id") or ""),
+    )
 
 
 def resolve_walkthrough_cap(yaml_data: dict | None = None, config: dict | None = None) -> int:
@@ -755,18 +813,60 @@ def resolve_walkthrough_cap(yaml_data: dict | None = None, config: dict | None =
 
 
 def select_walkthrough_picks(yaml_data: dict, cap: int | None = None) -> list[dict]:
-    """The ``cap`` highest-priority Criticals (chain anchors + smallest
-    breach-distance first) + a small budget of Highs. Capping keeps §3 from
-    exploding when a report has many Criticals; every finding — walked through
-    or not — still has its full §8 Findings Register row."""
+    """Select a risk-ranked, threat-category-diverse set of Criticals.
+
+    One Access Control and one evidence-classified LLM Abuse finding receive a
+    reserved slot when present. The remaining slots take one finding per
+    primary threat category before any category repeats. This keeps §3 broad
+    without allowing diversity to override the Critical severity floor.
+    """
 
     if cap is None:
         cap = DEFAULT_MAX_WALKTHROUGHS
     cap = max(1, min(int(cap), MAX_WALKTHROUGHS_CEILING))
     threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)]
     crit = sorted([t for t in threats if _risk_of(t) == "critical"], key=_walkthrough_priority)
-    high = sorted([t for t in threats if _risk_of(t) == "high"], key=_sort_key)
-    return (crit + high[:MAX_HIGH_WALKTHROUGHS])[:cap]
+
+    selected: list[dict] = []
+    selected_ids: set[str] = set()
+
+    def add(threat: dict) -> None:
+        threat_id = str(threat.get("id") or "")
+        if threat_id in selected_ids or len(selected) >= cap:
+            return
+        selected.append(threat)
+        selected_ids.add(threat_id)
+
+    # Access Control is foundational; LLM Abuse is a cross-cutting emerging
+    # risk that would otherwise lose to older, repeated web weakness classes.
+    for focus in (_is_access_control, _is_llm_abuse):
+        if len(selected) >= cap:
+            break
+        if any(focus(threat) for threat in selected):
+            continue
+        candidate = next(
+            (threat for threat in crit if focus(threat) and str(threat.get("id") or "") not in selected_ids), None
+        )
+        if candidate is not None:
+            add(candidate)
+
+    represented_types = {_walkthrough_type(threat) for threat in selected}
+    for threat in crit:
+        if len(selected) >= cap:
+            break
+        threat_type = _walkthrough_type(threat)
+        if threat_type in represented_types:
+            continue
+        add(threat)
+        represented_types.add(threat_type)
+
+    # More Criticals than distinct categories: use the remaining risk order.
+    for threat in crit:
+        if len(selected) >= cap:
+            break
+        add(threat)
+
+    return sorted(selected, key=_walkthrough_priority)
 
 
 # ---------------------------------------------------------------------------
@@ -1545,15 +1645,13 @@ def render_attack_walkthroughs_md(
         "attack_surface": _attack_surface_by_path(yaml_data),
     }
 
-    crit_picks = [t for t in picks if _risk_of(t) == "critical"]
-    peers_by_cwe = _peers_by_cwe(crit_picks + [t for t in picks if _risk_of(t) == "high"])
+    peers_by_cwe = _peers_by_cwe(picks)
 
     out: list[str] = []
     out.append("## 3. Attack Walkthroughs")
     out.append("")
 
-    # No walkthrough picks (zero Criticals, since Highs are not walked through
-    # — MAX_HIGH_WALKTHROUGHS=0). Render an honest stub instead of the generic
+    # No walkthrough picks (zero effective Criticals). Render an honest stub instead of the generic
     # "one walkthrough per Critical" intro, which would promise sub-sections
     # that never follow. The contract's `sequenceDiagram` requirement is gated
     # on `has_authored_walkthroughs`, so this stub passes validation.
@@ -1571,8 +1669,9 @@ def render_attack_walkthroughs_md(
     if _capped:
         out.append(
             f"This section walks through how the **{_n_walked} highest-priority "
-            f"of {_n_critical_total} Critical findings** are exploited — the "
-            f"chain entry points and those closest to a breach. Each walkthrough "
+            f"of {_n_critical_total} Critical findings** are exploited — selected "
+            f"by severity, chain relevance, and threat-category diversity, with "
+            f"Access Control and LLM Abuse represented when present. Each walkthrough "
             f"has attack steps, a focused sequence diagram, and the primary "
             f"mitigation. How weaknesses combine toward the worst-case goal is "
             f"in the [Critical Attack Tree](#critical-attack-tree); every other "

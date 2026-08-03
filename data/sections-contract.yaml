@@ -918,7 +918,7 @@ sections:
     required_subsections: []
     # required_patterns applies only when §3 actually carries per-Critical
     # walkthroughs. walkthrough_renderer.py emits one `sequenceDiagram` block
-    # per Critical finding (none for Highs — MAX_HIGH_WALKTHROUGHS=0), so the
+    # per effective Critical finding (none for effective Highs), so the
     # diagram is present iff walkthroughs are NOT skipped AND ≥1 Critical exists.
     # A `--quick` run (skip notice, no diagrams) OR a clean report with zero
     # Criticals (intro-only stub) must NOT trip the missing-pattern check. The
@@ -930,14 +930,14 @@ sections:
     required_patterns:
       - "sequenceDiagram"                           # per-Critical walkthrough
     required_patterns_condition: "has_authored_walkthroughs"
-    # §3 is CAPPED at the top-N highest-priority Criticals (chain anchors +
-    # smallest breach-distance) — see walkthrough_renderer.DEFAULT_MAX_WALKTHROUGHS
-    # (currently 8, ceiling 10). This stops §3 from exploding into dozens of
-    # near-identical walkthroughs on Critical-heavy reports; overflow Criticals
-    # keep their full §8 row. check_walkthrough_coverage enforces coverage of
-    # the CAPPED selection (reusing walkthrough_renderer.select_walkthrough_picks
-    # so the contract and fragment can never disagree) and flags any §3 that
-    # exceeds the cap.
+    # §3 is CAPPED at the top-N highest-priority effective Criticals — see
+    # walkthrough_renderer.DEFAULT_MAX_WALKTHROUGHS (currently 8, ceiling 10).
+    # Selection is risk- and chain-ranked, reserves Access Control and
+    # evidence-classified LLM Abuse when present, then takes one finding per
+    # primary threat category before repeating a category. This stops §3 from
+    # exploding into near-identical walkthroughs while overflow Criticals keep
+    # their full §8 row. check_walkthrough_coverage enforces the same CAPPED
+    # selection by reusing walkthrough_renderer.select_walkthrough_picks.
     per_critical_subsection: true                   # §3.2+ = one per walked-through Critical
     per_critical_subsection_condition: "has_authored_walkthroughs"
 

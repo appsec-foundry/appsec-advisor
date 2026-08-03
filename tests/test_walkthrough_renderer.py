@@ -251,9 +251,100 @@ class TestWalkthroughCap:
         assert "T-012" in ids
         assert picks[0]["id"] == "T-012"  # anchor sorts first
 
+    def test_explicit_keystone_beats_chain_contributor(self):
+        threats = self._crits(2)["threats"]
+        threats[0]["chain_role"] = "contributor"
+        threats[0]["compound_chain_ids"] = ["CC-01"]
+        threats[1]["chain_role"] = "keystone"
+        threats[1]["compound_chain_ids"] = ["CC-01"]
+
+        picks = renderer.select_walkthrough_picks({"threats": threats}, cap=1)
+
+        assert [pick["id"] for pick in picks] == ["T-002"]
+
     def test_cap_never_exceeds_ceiling(self):
         picks = renderer.select_walkthrough_picks(self._crits(30), cap=99)
         assert len(picks) == renderer.MAX_WALKTHROUGHS_CEILING  # clamped to 10
+
+    def test_juice_shop_selection_is_diverse_and_keeps_access_control_and_llm_abuse(self):
+        def critical(
+            tid,
+            category,
+            cwe,
+            *,
+            likelihood="High",
+            risk="Critical",
+            chain=True,
+            llm_ids=None,
+        ):
+            return {
+                "id": tid,
+                "title": f"Finding {tid}",
+                "component": "backend",
+                "threat_category_id": category,
+                "cwe": cwe,
+                "risk": risk,
+                "effective_severity": "Critical",
+                "likelihood": likelihood,
+                "impact": "Critical" if risk == "Critical" else "High",
+                "breach_distance": 1,
+                "chain_role": "keystone" if chain else "none",
+                "compound_chain_ids": ["CC-01"] if chain else [],
+                "owasp_llm_ids": llm_ids or [],
+                "evidence": [{"file": f"routes/{tid}.ts", "line": 1}],
+            }
+
+        threats = [
+            critical("T-006", "TH-03", "CWE-321"),
+            critical("T-007", "TH-02", "CWE-347"),
+            critical("T-008", "TH-02", "CWE-347", likelihood="Critical"),
+            critical("T-009", "TH-11", "CWE-79"),
+            critical("T-010", "TH-01", "CWE-89"),
+            critical("T-011", "TH-01", "CWE-89"),
+            critical("T-013", "TH-07", "CWE-22", chain=False),
+            critical("T-015", "TH-05", "CWE-94", chain=False),
+            critical("T-016", "TH-06", "CWE-915"),
+            critical("T-017", "TH-06", "CWE-915", likelihood="Critical"),
+            critical(
+                "T-071",
+                "TH-06",
+                "CWE-862",
+                risk="High",
+                llm_ids=["LLM01", "LLM06"],
+            ),
+        ]
+
+        picks = renderer.select_walkthrough_picks({"threats": threats}, cap=8)
+        ids = {pick["id"] for pick in picks}
+
+        assert ids == {"T-006", "T-008", "T-009", "T-010", "T-013", "T-015", "T-017", "T-071"}
+        assert sum(pick["cwe"] == "CWE-347" for pick in picks) == 1
+        assert sum(pick["cwe"] == "CWE-89" for pick in picks) == 1
+        assert sum(pick["cwe"] == "CWE-915" for pick in picks) == 1
+        assert any(renderer._is_access_control(pick) for pick in picks)
+        assert any(renderer._is_llm_abuse(pick) for pick in picks)
+
+    def test_raw_risk_breaks_ties_within_effective_critical_category(self):
+        threats = [
+            {
+                "id": "T-001",
+                "risk": "High",
+                "effective_severity": "Critical",
+                "threat_category_id": "TH-02",
+                "cwe": "CWE-347",
+            },
+            {
+                "id": "T-002",
+                "risk": "Critical",
+                "effective_severity": "Critical",
+                "threat_category_id": "TH-02",
+                "cwe": "CWE-347",
+            },
+        ]
+
+        picks = renderer.select_walkthrough_picks({"threats": threats}, cap=1)
+
+        assert [pick["id"] for pick in picks] == ["T-002"]
 
 
 class TestAttackStepsFallbackWhenNoScenario:
@@ -865,8 +956,8 @@ def test_zero_criticals_renders_honest_stub_without_diagram():
     gate (`has_authored_walkthroughs`) is not tripped.
 
     walkthrough_renderer only emits per-Critical blocks (each carrying a
-    `sequenceDiagram`); Highs are never walked through (MAX_HIGH_WALKTHROUGHS=0),
-    so a High-only report also produces the stub. Before this fix the renderer
+    `sequenceDiagram`); an effective-High-only report therefore produces the
+    stub. Before this fix the renderer
     emitted the generic "one short walkthrough per Critical" intro with no
     blocks, and compose then hard-failed on the missing `sequenceDiagram`.
     """

@@ -114,7 +114,7 @@ class TestExactDedup:
         )
         assert len(result) == 2
 
-    def test_boundary_provenance_over_cap_blocks_exact_merge(self, mt):
+    def test_exact_identity_merges_and_bounds_boundary_provenance(self, mt):
         def refs(*ids):
             return [
                 {
@@ -129,7 +129,8 @@ class TestExactDedup:
         first = {"component_id": "auth", **_threat(boundary_refs=refs("tb-1", "tb-2"))}
         second = {"component_id": "auth", **_threat(boundary_refs=refs("tb-3"))}
         result = mt._dedupe_exact([first, second])
-        assert len(result) == 2
+        assert len(result) == 1
+        assert [ref["boundary_id"] for ref in result[0]["boundary_refs"]] == ["tb-1", "tb-2"]
 
     def test_candidate_member_carries_boundary_provenance(self, mt):
         threat = _threat(
@@ -209,6 +210,56 @@ class TestEvidenceDedup:
         result = mt._dedupe_evidence([low, crit])
         assert len(result) == 1
         assert result[0]["risk"] == "Critical"
+
+    def test_same_sink_merges_despite_three_boundary_references(self, mt):
+        """Regression for Juice Shop F-010/F-011 and walkthroughs 3.3/3.4."""
+
+        def boundary_ref(boundary_id, origin, file, line):
+            return {
+                "boundary_id": boundary_id,
+                "origin_component_id": origin,
+                "rationale": "The verified defect occurs at this crossing.",
+                "evidence_locations": [{"file": file, "line": line}],
+            }
+
+        login = {"file": "routes/login.ts", "line": 34}
+        auth_login = _threat(
+            component_id="auth",
+            title="SQL injection in login authentication",
+            cwe="CWE-89",
+            stride="Spoofing",
+            risk="Critical",
+            evidence=dict(login),
+            boundary_refs=[boundary_ref("tb-1", "auth", **login)],
+        )
+        backend_login = _threat(
+            component_id="backend-api",
+            title="SQL injection in backend query construction",
+            cwe="CWE-89",
+            stride="Tampering",
+            risk="Critical",
+            evidence=dict(login),
+            boundary_refs=[
+                boundary_ref("tb-4", "backend-api", **login),
+                boundary_ref("tb-2", "backend-api", **login),
+            ],
+        )
+        backend_search = _threat(
+            component_id="backend-api",
+            title="SQL injection in backend query construction",
+            cwe="CWE-89",
+            stride="Tampering",
+            risk="Critical",
+            evidence={"file": "routes/search.ts", "line": 23},
+        )
+
+        result = mt._dedupe_evidence([auth_login, backend_login, backend_search])
+
+        assert len(result) == 2
+        merged_login = next(threat for threat in result if threat["evidence"] == login)
+        assert merged_login["merged_from"] == ["auth", "backend-api"]
+        assert [ref["boundary_id"] for ref in merged_login["boundary_refs"]] == ["tb-1", "tb-4"]
+        assert [ref["origin_component_id"] for ref in merged_login["boundary_refs"]] == ["auth", "backend-api"]
 
     def test_same_line_different_cwe_stays_distinct(self, mt):
         # CWE-89 (injection family) vs CWE-862 (authz family) — DIFFERENT
@@ -616,6 +667,43 @@ class TestDecisionApplication:
         assert "b" in result[0]["merged_from"]
         assert result[0]["instance_count"] == 2
         assert {instance["file"] for instance in result[0]["instances"]} == {"a.py", "b.py"}
+
+    def test_semantic_merge_over_boundary_cap_stays_blocked(self, mt):
+        def boundary_ref(boundary_id, origin, file, line):
+            return {
+                "boundary_id": boundary_id,
+                "origin_component_id": origin,
+                "rationale": "The verified defect occurs at this crossing.",
+                "evidence_locations": [{"file": file, "line": line}],
+            }
+
+        threats = [
+            {
+                "component_id": "a",
+                **_threat(
+                    evidence={"file": "a.py", "line": 1},
+                    boundary_refs=[
+                        boundary_ref("tb-1", "a", "a.py", 1),
+                        boundary_ref("tb-2", "a", "a.py", 1),
+                    ],
+                ),
+            },
+            {
+                "component_id": "b",
+                **_threat(
+                    evidence={"file": "b.py", "line": 2},
+                    boundary_refs=[boundary_ref("tb-3", "b", "b.py", 2)],
+                ),
+            },
+        ]
+        group_id = mt._group_candidates(threats)[0]["group_id"]
+
+        result = mt._apply_decisions(
+            threats,
+            [{"group_id": group_id, "action": "merge", "merge_target_index": 0, "rationale": "same class"}],
+        )
+
+        assert len(result) == 2
 
     def test_consolidate_promotes_arch_violation(self, mt):
         threats = [

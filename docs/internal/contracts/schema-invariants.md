@@ -165,6 +165,9 @@ not a consolidation key. Each reference must target a resolved, confirmed
 canonical row, be adjacent to its required `origin_component_id`, repeat only
 evidence locations already owned by the finding, and use a unique
 `(boundary_id, origin_component_id)` pair. At most two references survive.
+Exact-identity deduplication retains a deterministic subset, preferring the
+survivor's origin and distinct origins; semantic consolidation stays separate
+when its union would exceed the cap.
 A surviving reference is rendered as a link: the §1 catalogue's row cap bounds
 unreferenced rows only, so every referenced row keeps its `#tb-N` anchor.
 Fresh analyzer references must also come from that component's prepared
