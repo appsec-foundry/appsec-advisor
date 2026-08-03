@@ -1239,7 +1239,30 @@ def prune_dangling_mitigation_threat_ids(threats: list[dict], mitigations: list[
     return mitigations, warnings
 
 
-def prune_dangling_weakness_instances(threats: list[dict], weaknesses: list[dict]) -> tuple[list[dict], list[str]]:
+def refuted_threat_ids(merged: dict) -> set[str]:
+    """Ids of merged candidates the evidence verifier refuted.
+
+    ``build_threats`` drops these from ``threats[]``, but the weakness register
+    is a SECOND path into the report that never passes that filter — so the
+    caller needs the set explicitly to enforce the same rule there.
+    """
+    out: set[str] = set()
+    for t in merged.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        if (t.get("evidence_check") or "").strip().lower() != "refuted":
+            continue
+        tid = t.get("t_id") or t.get("id")
+        if tid:
+            out.add(str(tid))
+    return out
+
+
+def prune_dangling_weakness_instances(
+    threats: list[dict],
+    weaknesses: list[dict],
+    refuted_ids: set[str] | frozenset[str] = frozenset(),
+) -> tuple[list[dict], list[str]]:
     """Drop ``weakness.instances[]`` entries that reference no surviving threat.
 
     ``merge_threats.build_weakness_register`` builds the register from the FULL
@@ -1253,13 +1276,41 @@ def prune_dangling_weakness_instances(threats: list[dict], weaknesses: list[dict
     juice-shop: W-006 kept T-068 after it was floored out).
 
     This is the deterministic reconciliation point — the caller invokes it once
-    the final surviving ``threats`` set is known. Only ``instances[]`` (the
-    confirmed-exploitable legs) are pruned; ``observable_backing`` is left intact
-    because its practice / absent-control evidence intentionally references sites
-    that are not standalone threats. Returns ``(weaknesses, warnings)``; mutates
-    in place.
+    the final surviving ``threats`` set is known.
+
+    The weakness register is built by ``merge_threats.build_weakness_register``
+    from the FULL pre-filter candidate set and then flows into the yaml as its
+    own top-level key. It therefore never passes ``build_threats``, which is
+    where a candidate is dropped for being below the severity floor or for
+    having been refuted. Without this pass the register re-admits exactly what
+    that filter excluded — a second, unguarded path into the report.
+
+    The two drop reasons are NOT interchangeable, so the register honours both
+    separately:
+
+    * **Refuted** — the evidence verifier read the cited line and contradicted
+      the claim. ``build_threats`` states the rule: such a candidate "must never
+      reach the report, exports, or mitigation register". The whole entry goes,
+      site included; a refuted location is not a practice site (2026-08-02
+      juice-shop: W-007 kept T-035 — ``denyAll()`` uses ``Math.random()``
+      deliberately to reject every token — and the register showed it as one of
+      "4 findings" of weak crypto).
+    * **Below the severity floor** — the floor is a reporting threshold, not a
+      truth claim. The observation still stands, so the ENTRY stays and only its
+      now-unresolvable ``id`` is stripped; the composer then renders the bare
+      location instead of a link.
+
+    ``instances[]`` (confirmed-exploitable legs) are dropped whole under either
+    reason — an instance IS a finding reference, and neither a refuted nor a
+    floored finding has one. Leaving them in produces the titleless
+    ``[F-NNN]`` phantom that also inflates the md finding count against the yaml
+    (``yaml_md_consistency`` trip: 2026-07-16 W-006→T-068, 2026-08-02 yaml=96 vs
+    md=97).
+
+    Returns ``(weaknesses, warnings)``; mutates in place.
     """
     valid_tids = {t.get("id") for t in threats if isinstance(t, dict) and t.get("id")}
+    refuted = {str(r) for r in (refuted_ids or ())}
 
     def _inst_id(i: object) -> object:
         return i.get("id") if isinstance(i, dict) else i
@@ -1272,11 +1323,43 @@ def prune_dangling_weakness_instances(threats: list[dict], weaknesses: list[dict
             dropped = [_inst_id(i) for i in insts if _inst_id(i) not in valid_tids]
             warnings.append(
                 f"weakness {w.get('id')}: dropped {len(dropped)} dangling instance(s) "
-                f"{dropped} (threat below severity floor / not in register)"
+                f"{dropped} (threat below severity floor / refuted / not in register)"
             )
             w["instances"] = kept
             if "instance_count" in w:
                 w["instance_count"] = len(kept)
+
+        backing = w.get("observable_backing")
+        if not isinstance(backing, dict):
+            continue
+        practice = backing.get("practice_evidence") or []
+        kept_practice: list[object] = []
+        removed: list[str] = []
+        stripped: list[str] = []
+        for item in practice:
+            if not isinstance(item, dict):
+                kept_practice.append(item)
+                continue
+            pid = item.get("id")
+            if pid and str(pid) in refuted:
+                removed.append(str(pid))
+                continue
+            if pid and pid not in valid_tids:
+                del item["id"]
+                stripped.append(str(pid))
+            kept_practice.append(item)
+        if removed:
+            backing["practice_evidence"] = kept_practice
+            warnings.append(
+                f"weakness {w.get('id')}: removed {len(removed)} refuted practice site(s) "
+                f"{removed} (evidence verifier contradicted the claim)"
+            )
+        if stripped:
+            backing["practice_evidence"] = kept_practice
+            warnings.append(
+                f"weakness {w.get('id')}: stripped {len(stripped)} dangling practice-evidence "
+                f"id(s) {stripped} (site kept, link dropped — threat below severity floor)"
+            )
     return weaknesses, warnings
 
 
@@ -2400,11 +2483,15 @@ def main() -> int:
     # runs → key omitted.
     weaknesses = merged.get("weaknesses") or []
     if weaknesses:
-        # Prune instances that reference threats dropped below the severity floor.
-        # build_threats drops without renumbering, so a stale instance would render
-        # as a titleless [F-NNN] phantom link + inflate the md finding count
-        # (yaml_md_consistency trip — 2026-07-16 juice-shop W-006→T-068).
-        weaknesses, weakness_prune_warnings = prune_dangling_weakness_instances(threats, weaknesses)
+        # Re-apply build_threats' exclusions to the register. It is built from the
+        # full pre-filter candidate set and lands in the yaml as its own key, so
+        # without this it re-admits refuted and below-floor candidates that
+        # build_threats just removed — a second, unguarded path into the report
+        # (2026-08-02 juice-shop: W-007 listed refuted T-035 as a practice site;
+        # 2026-07-16: W-006 kept floored T-068 as a titleless [F-068] phantom).
+        weaknesses, weakness_prune_warnings = prune_dangling_weakness_instances(
+            threats, weaknesses, refuted_ids=refuted_threat_ids(merged)
+        )
         for w in weakness_prune_warnings:
             sys.stderr.write(f"  {w}\n")
         doc["weaknesses"] = weaknesses

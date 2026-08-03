@@ -2192,21 +2192,97 @@ def test_prune_dangling_weakness_instances_noop_when_all_resolve():
     assert warnings == []
 
 
-def test_prune_dangling_weakness_instances_leaves_observable_backing_untouched():
-    # Only instances[] (confirmed-exploitable legs) are pruned; observable_backing
-    # intentionally references practice/absent-control sites that are not threats.
+def test_prune_practice_evidence_removes_refuted_site_entirely():
+    # Reproduces juice-shop 2026-08-02 W-007→T-035. The evidence verifier read
+    # lib/insecurity.ts:53 and contradicted the claim (denyAll() uses
+    # Math.random() deliberately to reject every token). build_threats excludes
+    # such a candidate from threats[] — "must never reach the report, exports,
+    # or mitigation register" — but the register is a second path into the yaml.
+    # A refuted location is NOT a practice site: the whole entry must go, or the
+    # report keeps asserting a weak-crypto site that was proven wrong.
+    threats = [{"id": "T-001"}]
+    weaknesses = [
+        {
+            "id": "W-007",
+            "observable_backing": {
+                "practice_evidence": [
+                    {"id": "T-001", "file": "models/user.ts", "line": 76},
+                    {"id": "T-035", "file": "lib/insecurity.ts", "line": 53},
+                ]
+            },
+        }
+    ]
+    out, warnings = b.prune_dangling_weakness_instances(threats, weaknesses, refuted_ids={"T-035"})
+    practice = out[0]["observable_backing"]["practice_evidence"]
+    assert [p.get("file") for p in practice] == ["models/user.ts"]
+    assert "lib/insecurity.ts" not in str(practice)  # site gone, not just the link
+    assert any("W-007" in w and "T-035" in w and "refuted" in w for w in warnings)
+
+
+def test_prune_practice_evidence_below_floor_keeps_site_drops_only_the_id():
+    # The severity floor is a reporting threshold, not a truth claim — the
+    # observation still stands. Keep the site, strip the unresolvable id so the
+    # composer renders a bare location instead of a titleless [F-NNN] phantom.
     threats = [{"id": "T-001"}]
     weaknesses = [
         {
             "id": "W-002",
-            "instances": [{"id": "T-001"}, {"id": "T-999"}],
-            "observable_backing": {"practice_evidence": [{"id": "T-999"}]},
+            "instances": [{"id": "T-001"}, {"id": "T-101"}],
+            "observable_backing": {
+                "practice_evidence": [
+                    {"id": "T-001", "file": "a.ts", "line": 1},
+                    {"id": "T-101", "file": "b.ts", "line": 2},
+                ]
+            },
         }
     ]
-    out, _ = b.prune_dangling_weakness_instances(threats, weaknesses)
-    assert [i["id"] for i in out[0]["instances"]] == ["T-001"]
-    # observable_backing.practice_evidence must NOT be pruned
-    assert out[0]["observable_backing"]["practice_evidence"] == [{"id": "T-999"}]
+    out, warnings = b.prune_dangling_weakness_instances(threats, weaknesses)
+    assert [i["id"] for i in out[0]["instances"]] == ["T-001"]  # instance dropped whole
+    practice = out[0]["observable_backing"]["practice_evidence"]
+    assert [p.get("file") for p in practice] == ["a.ts", "b.ts"]  # both sites survive
+    assert practice[0]["id"] == "T-001"  # resolvable id untouched
+    assert "id" not in practice[1]  # dangling id stripped
+    assert any("W-002" in w and "T-101" in w and "practice-evidence" in w for w in warnings)
+
+
+def test_prune_practice_evidence_noop_when_all_resolve():
+    threats = [{"id": "T-001"}]
+    weaknesses = [
+        {
+            "id": "W-003",
+            "observable_backing": {"practice_evidence": [{"id": "T-001", "file": "a.ts"}]},
+        }
+    ]
+    out, warnings = b.prune_dangling_weakness_instances(threats, weaknesses)
+    assert out[0]["observable_backing"]["practice_evidence"] == [{"id": "T-001", "file": "a.ts"}]
+    assert warnings == []
+
+
+def test_prune_practice_evidence_tolerates_id_less_and_non_dict_sites():
+    threats = [{"id": "T-001"}]
+    weaknesses = [
+        {
+            "id": "W-004",
+            "observable_backing": {"practice_evidence": [{"file": "a.ts", "line": 3}, "bare-string"]},
+        }
+    ]
+    out, warnings = b.prune_dangling_weakness_instances(threats, weaknesses, refuted_ids={"T-035"})
+    assert out[0]["observable_backing"]["practice_evidence"] == [{"file": "a.ts", "line": 3}, "bare-string"]
+    assert warnings == []
+
+
+def test_refuted_threat_ids_reads_t_id_and_ignores_verified():
+    merged = {
+        "threats": [
+            {"t_id": "T-001", "evidence_check": "verified"},
+            {"t_id": "T-035", "evidence_check": "refuted"},
+            {"t_id": "T-098", "evidence_check": "unchecked"},
+            {"id": "T-050", "evidence_check": "REFUTED"},  # legacy key + case
+            {"evidence_check": "refuted"},  # id-less → skipped, must not raise
+        ]
+    }
+    assert b.refuted_threat_ids(merged) == {"T-035", "T-050"}
+    assert b.refuted_threat_ids({}) == set()
 
 
 # --- build_meta_findings branches --------------------------------------------
