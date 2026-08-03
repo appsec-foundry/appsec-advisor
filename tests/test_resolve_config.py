@@ -73,6 +73,28 @@ class TestConflicts:
         msg = rc.detect_conflicts(self._parse("--full", "--verbose"))
         assert msg is None
 
+    def test_bare_slug_swallowing_its_value_is_refused(self):
+        """juice-shop 2026-08-02: `--slug --keep-runtime-files my-label` left
+        the label in `scope` and stamped a random slug — discovered ~3h later,
+        from the filenames. The ambiguity must fail fast, not be guessed."""
+        ns = self._parse("--slug", "--keep-runtime-files", "juice-shop-thorough-v0.5.2")
+        assert ns.slug == "__auto__" and ns.scope == ["juice-shop-thorough-v0.5.2"]
+        msg = rc.detect_conflicts(ns)
+        assert msg and "--slug" in msg and "juice-shop-thorough-v0.5.2" in msg
+
+    def test_explicit_slug_value_with_flags_is_fine(self):
+        ns = self._parse("--slug", "my-label", "--keep-runtime-files")
+        assert ns.slug == "my-label"
+        assert rc.detect_conflicts(ns) is None
+
+    def test_bare_slug_with_prose_scope_is_fine(self):
+        """A real scope phrase reads as several words — not a swallowed value."""
+        ns = self._parse("--slug", "--keep-runtime-files", "focus", "on", "auth")
+        assert rc.detect_conflicts(ns) is None
+
+    def test_bare_slug_without_scope_is_fine(self):
+        assert rc.detect_conflicts(self._parse("--slug", "--keep-runtime-files")) is None
+
 
 class TestRerenderMode:
     def _parse(self, *argv):

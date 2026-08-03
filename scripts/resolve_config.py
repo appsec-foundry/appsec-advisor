@@ -313,6 +313,23 @@ def detect_conflicts(ns: argparse.Namespace) -> Optional[str]:
     if slug is not None and slug != "__auto__" and not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", slug):
         return ("--slug must be 1-64 filename-safe characters "
                 "([A-Za-z0-9._-]); got: " + repr(slug))
+    # `--slug` takes an OPTIONAL value, so argparse refuses to consume a token
+    # that starts with '-'. In `--slug --keep-runtime-files my-label` the label
+    # therefore lands in the positional `scope` and the run silently stamps a
+    # random slug instead — the user only finds out ~3 hours later, from the
+    # filenames (juice-shop 2026-08-02: shipped as `threat-model-3225.*`).
+    # Refuse the ambiguity instead of guessing: a lone filename-safe token next
+    # to a bare `--slug` is a swallowed value, not a scope phrase (those are
+    # prose, and read as several words).
+    if slug == "__auto__":
+        scope_words = [str(s) for s in (getattr(ns, "scope", None) or [])]
+        if len(scope_words) == 1 and re.fullmatch(r"[A-Za-z0-9._-]{1,64}", scope_words[0]):
+            return (
+                f"--slug was given no value, so {scope_words[0]!r} was read as scope and the "
+                f"deliverables would be stamped with a random slug. Write the value directly "
+                f"after the flag (--slug {scope_words[0]}), or drop the trailing argument to "
+                f"keep the generated slug."
+            )
     return None
 
 
