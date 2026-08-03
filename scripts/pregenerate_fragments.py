@@ -289,7 +289,7 @@ def gen_system_overview(yaml_data: dict) -> str:
             )
         lines.append("")
 
-    out_of_scope = (meta.get("scope") or {}).get("out_of_scope") or []
+    out_of_scope = (meta.get("scope") if isinstance(meta.get("scope"), dict) else {}).get("out_of_scope") or []
     if out_of_scope:
         lines.append("**Out of scope:** " + "; ".join(out_of_scope) + ".")
     else:
@@ -3388,7 +3388,7 @@ def gen_out_of_scope(yaml_data: dict) -> str:
     plus team-provided accepted risks from meta.accepted_risks (sourced from
     docs/known-threats.yaml entries with status: accepted)."""
     meta = yaml_data.get("meta") or {}
-    out_of_scope = (meta.get("scope") or {}).get("out_of_scope") or [
+    out_of_scope = (meta.get("scope") if isinstance(meta.get("scope"), dict) else {}).get("out_of_scope") or [
         "Third-party hosted dependencies and SaaS endpoints",
         "Browser runtime vulnerabilities and end-user device security",
         "Operating system kernel and container runtime",
