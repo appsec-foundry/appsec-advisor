@@ -1775,6 +1775,29 @@ def _extract_verdict(md_text: str) -> str:
     return _html_to_plain(m.group(1))
 
 
+# Trailing finding-reference clause on a worst-case-outcome bullet, e.g.
+# ` *(🔴 [F-006](#f-006) — Hardcoded Cryptographic Key (\`lib/insecurity.ts:21\`),
+# … → [W-004](#w-004))*`. The lookahead requires at least one F-/T-/W-NNN link
+# inside, so an ordinary italic parenthetical is never touched. Non-greedy `)\*`
+# is deliberate: the clause itself contains `(…)` file locations, and the first
+# `)` followed by `*` is the real terminator.
+_VERDICT_REF_CLAUSE_RE = re.compile(
+    r"\s*\*\((?=[^\n]*\[[FTW]-\d{3}\])[^\n]*?\)\*"
+)
+
+
+def _strip_verdict_refs(text: str) -> str:
+    """Drop the per-bullet finding-reference clauses from the console verdict.
+
+    The report keeps them — a reader in `threat-model.md` follows the links.
+    On the console they are pure noise: the anchors are not clickable and each
+    bullet carries three-plus of them, burying the one sentence that matters.
+    Only the clause is removed; any trailing marker after it (e.g.
+    `— ✓ verified attack path`) stays.
+    """
+    return "\n".join(_VERDICT_REF_CLAUSE_RE.sub("", ln) for ln in text.splitlines())
+
+
 def render_verdict(md_text: str, cfg: dict) -> list[str]:
     """Console `-- Verdict --` block: the report's headline verdict.
 
@@ -1784,7 +1807,7 @@ def render_verdict(md_text: str, cfg: dict) -> list[str]:
     """
     if cfg.get("quiet"):
         return []
-    verdict = _extract_verdict(md_text)
+    verdict = _strip_verdict_refs(_extract_verdict(md_text))
     if not verdict:
         return []
     lines = ["", f"  -- Verdict {SECTION_RULE[:48]}", ""]

@@ -1492,6 +1492,32 @@ class TestVerdictEcho:
     def test_render_verdict_absent_section_omits_block(self):
         assert rcs.render_verdict("# Threat Model\n\n## 1. Scope\nbody\n", {}) == []
 
+    def test_render_verdict_drops_per_bullet_finding_refs(self):
+        md = _VERDICT_MD.replace(
+            "- **Admin takeover via forged JWT** — key committed at lib/insecurity.ts:23.\n",
+            "- **Admin takeover via forged JWT** — key committed. "
+            "*(🔴 [F-006](#f-006) — Hardcoded Key (`lib/insecurity.ts:23`), "
+            "🔴 [F-008](#f-008) — Insecure JWT → [W-004](#w-004))* — ✓ verified attack path\n",
+        )
+        joined = "\n".join(rcs.render_verdict(md, {}))
+        # The bullet's own sentence and any trailing marker survive …
+        assert "Admin takeover via forged JWT" in joined
+        assert "✓ verified attack path" in joined
+        # … but the reference clause goes in full — ids, titles, locations.
+        assert "F-006" not in joined
+        assert "W-004" not in joined
+        assert "lib/insecurity.ts:23" not in joined
+
+    def test_strip_verdict_refs_leaves_plain_italic_parenthetical(self):
+        line = "Total findings *(including design risks)* remain unchanged."
+        assert rcs._strip_verdict_refs(line) == line
+
+    def test_strip_verdict_refs_is_idempotent(self):
+        line = "- **X** — Y. *([T-015](#t-015) — RCE)*"
+        once = rcs._strip_verdict_refs(line)
+        assert once == "- **X** — Y."
+        assert rcs._strip_verdict_refs(once) == once
+
     def _output_dir_with_verdict(self, tmp_path: Path) -> Path:
         (tmp_path / "threat-model.md").write_text(_VERDICT_MD)
         (tmp_path / "threat-model.yaml").write_text(
