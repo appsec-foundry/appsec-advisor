@@ -12631,7 +12631,7 @@ _UNSAFE_EDGE_LABEL_RE = re.compile(
     # require non-empty content and forbid newlines inside the label.
     r"\|([^|\n\"][^|\n]*?)\|"
 )
-_UNSAFE_LABEL_CHARS_RE = re.compile(r"[:'\"\(\)]|--")
+_UNSAFE_LABEL_CHARS_RE = re.compile(r"[:'\"\(\)\[\]]|--")
 
 
 def _quote_mermaid_edge_labels(md: str) -> tuple[str, int]:
