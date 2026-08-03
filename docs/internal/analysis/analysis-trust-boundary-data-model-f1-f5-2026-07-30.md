@@ -11,7 +11,7 @@ Abweichungen bzw. Präzisierungen:
 1. **F5-Prämisse nicht belegt (Gegenteil belegt).** Die Begründung
    „`enforcement_point` ist optional, damit `--resume`-Läufe mit
    Bestandsartefakten nicht brechen" existiert nirgends im Repo. Das Feld wurde
-   in `2f6f3305` („Consolidate trust boundaries at the enforcement point")
+   in `f5cd00a5` („Consolidate trust boundaries at the enforcement point")
    von Anfang an als optional eingeführt; `grep -rn resume` über
    `prepare_trust_boundary_context.py`, `build_trust_boundary_assessment_input.py`
    und das Analyst-Agentfile liefert null Treffer. Die tatsächlich dokumentierte

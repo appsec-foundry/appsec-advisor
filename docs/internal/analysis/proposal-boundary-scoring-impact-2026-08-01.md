@@ -1,6 +1,6 @@
 # Proposal: give trust boundaries real impact on findings and severity
 
-**Status:** mechanisms 1+2 SHIPPED (`be46c92d`, `7bd53752`). Mechanisms 3 and 4
+**Status:** mechanisms 1+2 SHIPPED (`daa5092f`, `a158d44f`). Mechanisms 3 and 4
 DEFERRED after measurement — see "Decisions after measurement" at the end, which
 records the numbers and the trigger that would reverse each call. Mechanism 5 untouched.
 **Date:** 2026-08-01
