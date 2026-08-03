@@ -340,6 +340,8 @@ Nothing here carries a date, and the order is rough intent rather than a commitm
 
 ## Contributing
 
+Development happens on [`dev`](../../tree/dev) — branch from it and target it with your pull request. `main` only carries releases, which are merged over from `dev` and tagged.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, repository conventions, repository layout, and required tests.
 
 Read [AGENTS.md](AGENTS.md) before changing runtime behavior, schemas, prompts, permissions, cleanup behavior, or report output. Security vulnerabilities follow the private reporting process in [SECURITY.md](SECURITY.md).
