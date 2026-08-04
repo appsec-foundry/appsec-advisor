@@ -4193,8 +4193,8 @@ def test_enrichment_skips_attack_tree_findings_pointer(tmp_path: Path):
 
 def _mermaid_workspace(tmp_path: Path) -> Path:
     """Report with two mermaid blocks plus the fragments they came from."""
-    flow = "flowchart TB\n" '    backend_api["Express REST API"]\n' '    sqlite_db[("SQLite Database")]\n'
-    seq = "sequenceDiagram\n" "    participant Attacker\n" "    Attacker->>LoginRoute: crafted payload\n"
+    flow = 'flowchart TB\n    backend_api["Express REST API"]\n    sqlite_db[("SQLite Database")]\n'
+    seq = "sequenceDiagram\n    participant Attacker\n    Attacker->>LoginRoute: crafted payload\n"
     (tmp_path / "threat-model.md").write_text(
         "# Threat Model\n\n"
         "## 2. Architecture Diagrams\n\n"

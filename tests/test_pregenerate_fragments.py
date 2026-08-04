@@ -1440,9 +1440,7 @@ class TestComponentsDiagramTrustBoundary:
         assert found == expected
 
     def test_still_exactly_four_subgraphs(self):
-        block = self._section_2_3(
-            pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "backend")]))
-        )
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "backend")])))
         assert len(re.findall(r"^\s*subgraph ", block, re.MULTILINE)) == 4
 
     # ---- degradation -------------------------------------------------------

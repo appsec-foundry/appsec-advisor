@@ -449,9 +449,7 @@ def test_controls_covered_drop_handles_separator_variants(tmp_path, sep, tail):
 
 def test_controls_covered_drop_is_idempotent():
     """Design contract: re-running on normalized text is a no-op."""
-    md = _covered_fixture(
-        ["Password-Based Login", "User Registration", "Authentication Rate Limiting"]
-    )
+    md = _covered_fixture(["Password-Based Login", "User Registration", "Authentication Rate Limiting"])
     once, _ = nrm.normalize_text(md)
     twice, changes = nrm.normalize_text(once)
     assert twice == once
@@ -476,8 +474,7 @@ def test_fold_without_controls_covered_line_does_not_crash():
     md = (
         "## 6. Security Architecture\n\n"
         "### 6.2 Identity and Authentication Controls\n\n**Assessment:** text.\n\n"
-        "#### Password-Based Login\n\n" + _COVERED_BLOCK +
-        "#### Authentication Rate Limiting\n\n" + _COVERED_BLOCK
+        "#### Password-Based Login\n\n" + _COVERED_BLOCK + "#### Authentication Rate Limiting\n\n" + _COVERED_BLOCK
     )
     out, changes = nrm.normalize_text(md)
     assert "**Authentication Rate Limiting.**" in out

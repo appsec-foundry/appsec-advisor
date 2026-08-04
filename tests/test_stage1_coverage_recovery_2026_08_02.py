@@ -214,20 +214,19 @@ def test_budget_scope_uses_the_widest_registered_budget(tmp_path, monkeypatch) -
     import agent_logger
 
     map_file = tmp_path / ".session-agent-map"
-    map_file.write_text(
-        "abcd1234=threat-analyst\nabcd1234=stride-analyzer\n", encoding="utf-8"
-    )
+    map_file.write_text("abcd1234=threat-analyst\nabcd1234=stride-analyzer\n", encoding="utf-8")
     monkeypatch.setattr(agent_logger, "_session_map_path", lambda: str(map_file))
 
     scope = agent_logger._budget_scope_agent("abcd1234")
-    assert scope == "threat-analyst", (
-        "budget scope must be the widest registered agent, not the most recent"
-    )
+    assert scope == "threat-analyst", "budget scope must be the widest registered agent, not the most recent"
 
 
-def test_tally_uses_budget_agent_when_supplied(tmp_path) -> None:
+def test_tally_uses_budget_agent_when_supplied(tmp_path, monkeypatch) -> None:
     """budget_agent overrides which maxTurns the shared counter is measured on."""
     import budget_watchdog
+
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(REPO_ROOT))
+    monkeypatch.setattr(budget_watchdog, "_MAX_TURNS_CACHE", {})
 
     out = str(tmp_path)
     narrow = budget_watchdog.get_max_turns("appsec-stride-analyzer")

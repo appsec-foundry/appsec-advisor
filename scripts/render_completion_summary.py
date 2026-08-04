@@ -1781,9 +1781,7 @@ def _extract_verdict(md_text: str) -> str:
 # inside, so an ordinary italic parenthetical is never touched. Non-greedy `)\*`
 # is deliberate: the clause itself contains `(…)` file locations, and the first
 # `)` followed by `*` is the real terminator.
-_VERDICT_REF_CLAUSE_RE = re.compile(
-    r"\s*\*\((?=[^\n]*\[[FTW]-\d{3}\])[^\n]*?\)\*"
-)
+_VERDICT_REF_CLAUSE_RE = re.compile(r"\s*\*\((?=[^\n]*\[[FTW]-\d{3}\])[^\n]*?\)\*")
 
 
 def _strip_verdict_refs(text: str) -> str:

@@ -213,9 +213,7 @@ def _write_flag(output_dir: str, filename: str, payload: dict) -> None:
         pass
 
 
-def tally_and_check(
-    sid: str, agent: str, output_dir: str, budget_agent: Optional[str] = None
-) -> Optional[dict]:
+def tally_and_check(sid: str, agent: str, output_dir: str, budget_agent: Optional[str] = None) -> Optional[dict]:
     """Increment turn counter for (sid, agent) and check thresholds.
 
     ``agent`` names the agent for reporting. ``budget_agent`` — when given —

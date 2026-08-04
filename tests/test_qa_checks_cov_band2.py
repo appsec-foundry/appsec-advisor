@@ -785,10 +785,7 @@ def test_mermaid_unclosed_rect_still_flagged(tmp_path):
 
 
 def test_mermaid_stray_end_inside_rect_still_flagged(tmp_path):
-    md = (
-        "```mermaid\nsequenceDiagram\n"
-        "  rect rgb(240, 248, 255)\n  A->>B: x\n  end\n  end\n```\n"
-    )
+    md = "```mermaid\nsequenceDiagram\n  rect rgb(240, 248, 255)\n  A->>B: x\n  end\n  end\n```\n"
     p = _md(tmp_path, md)
     r = qa.check_mermaid_syntax(p)
     assert any("without matching" in i and "rect" in i for i in r.issues)

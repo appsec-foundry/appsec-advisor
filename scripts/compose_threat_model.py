@@ -15824,7 +15824,7 @@ def _finding_boundary_leg(threat: dict, ref: dict, boundary: dict) -> str:
     return derived[0] if len(derived) == 1 else ""
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _external_boundary_elevations_cached(output_dir: str) -> dict[str, tuple[str, ...]]:
     """`{threat id: (boundary ids,)}` for findings the ingress rule actually raised.
 
@@ -16088,7 +16088,9 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         # The row verdict comes back when the leg view would lose it: a link the
         # legs could not attribute (no `leg` field, no CWE match) still refutes
         # the row, and legs reading "not examined" beneath it would be a lie.
-        if not informative or (row_state in ("refuted", "unconfirmed") and row_state not in {leg["state"] for leg in leg_states}):
+        if not informative or (
+            row_state in ("refuted", "unconfirmed") and row_state not in {leg["state"] for leg in leg_states}
+        ):
             assumption += f"<br>{_boundary_assumption_verdict(row, ctx)}"
         if informative:
             for line in _boundary_leg_lines(leg_states, ctx):

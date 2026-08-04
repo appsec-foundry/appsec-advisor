@@ -1511,9 +1511,7 @@ class TestThreatDragonFlag:
     def test_shown_in_outputs_summary(self):
         out = rc._format_outputs_summary({"write_yaml": True, "write_threatdragon": True})
         assert "threat-dragon (alpha)" in out
-        assert "+ threat-dragon (alpha)" in rc._format_outputs(
-            {"write_yaml": True, "write_threatdragon": True}
-        )
+        assert "+ threat-dragon (alpha)" in rc._format_outputs({"write_yaml": True, "write_threatdragon": True})
 
 
 class TestBrandingFlags:

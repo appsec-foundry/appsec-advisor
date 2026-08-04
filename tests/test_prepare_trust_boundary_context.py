@@ -530,9 +530,9 @@ def test_component_audit_satisfies_delivered_output_schema(tmp_path: Path) -> No
             encoding="utf-8"
         )
     )
-    per_component = schema["properties"]["meta"]["properties"]["boundary_selection"]["properties"][
-        "components"
-    ]["additionalProperties"]
+    per_component = schema["properties"]["meta"]["properties"]["boundary_selection"]["properties"]["components"][
+        "additionalProperties"
+    ]
     validator = Draft202012Validator(per_component)
 
     assert audit["components"], "audit must carry a component for this to mean anything"
@@ -1524,12 +1524,9 @@ def test_pull_endpoint_modelled_as_egress_is_corrected_to_ingress(tmp_path: Path
     from outside, so the crossing is inbound however the payload travels."""
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
-    (repo / "src" / "server.ts").write_text(
-        "const x = 1\napp.get('/metrics', serveMetrics())\n", encoding="utf-8"
-    )
+    (repo / "src" / "server.ts").write_text("const x = 1\napp.get('/metrics', serveMetrics())\n", encoding="utf-8")
     merged, _alias, notes = prep._consolidate_candidates(
-        [_cand("c1", frm="api", to="external", kind="third-party",
-               evidence=[{"file": "src/server.ts", "line": 2}])],
+        [_cand("c1", frm="api", to="external", kind="third-party", evidence=[{"file": "src/server.ts", "line": 2}])],
         components=_COMPONENTS,
         repo_root=repo,
     )
@@ -1540,12 +1537,9 @@ def test_pull_endpoint_modelled_as_egress_is_corrected_to_ingress(tmp_path: Path
 def test_genuine_outbound_call_keeps_its_direction(tmp_path: Path):
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
-    (repo / "src" / "llm.ts").write_text(
-        "const res = await fetch(provider, { method: 'POST' })\n", encoding="utf-8"
-    )
+    (repo / "src" / "llm.ts").write_text("const res = await fetch(provider, { method: 'POST' })\n", encoding="utf-8")
     merged, _alias, notes = prep._consolidate_candidates(
-        [_cand("c1", frm="api", to="external", kind="third-party",
-               evidence=[{"file": "src/llm.ts", "line": 1}])],
+        [_cand("c1", frm="api", to="external", kind="third-party", evidence=[{"file": "src/llm.ts", "line": 1}])],
         components=_COMPONENTS,
         repo_root=repo,
     )
@@ -1577,8 +1571,7 @@ def test_ingress_confidence_is_upgraded_when_evidence_registers_routes(tmp_path:
     checkable fact — verify it rather than trusting the analyst's caution."""
     repo = _repo_with(tmp_path, "server.ts", "/*\n */\napp.get('/metrics', serve())\n")
     merged, _alias, notes = prep._consolidate_candidates(
-        [_cand("c1", frm="external", to="api", conf="inferred",
-               evidence=[{"file": "server.ts", "line": 1}])],
+        [_cand("c1", frm="external", to="api", conf="inferred", evidence=[{"file": "server.ts", "line": 1}])],
         components=_COMPONENTS,
         repo_root=repo,
     )
@@ -1591,8 +1584,16 @@ def test_ingress_without_route_evidence_stays_inferred(tmp_path: Path):
     upgraded just for being an `external ->` crossing."""
     repo = _repo_with(tmp_path, ".github/workflows/ci.yml", "on: [push]\njobs: {}\n")
     merged, _alias, notes = prep._consolidate_candidates(
-        [_cand("c1", frm="external", to="api", kind="build", conf="inferred",
-               evidence=[{"file": ".github/workflows/ci.yml", "line": 1}])],
+        [
+            _cand(
+                "c1",
+                frm="external",
+                to="api",
+                kind="build",
+                conf="inferred",
+                evidence=[{"file": ".github/workflows/ci.yml", "line": 1}],
+            )
+        ],
         components=_COMPONENTS,
         repo_root=repo,
     )
@@ -1603,8 +1604,16 @@ def test_ingress_without_route_evidence_stays_inferred(tmp_path: Path):
 def test_egress_is_never_upgraded_by_the_ingress_rule(tmp_path: Path):
     repo = _repo_with(tmp_path, "src/llm.ts", "await fetch(provider)\n")
     merged, _alias, _notes = prep._consolidate_candidates(
-        [_cand("c1", frm="api", to="external", kind="third-party", conf="inferred",
-               evidence=[{"file": "src/llm.ts", "line": 1}])],
+        [
+            _cand(
+                "c1",
+                frm="api",
+                to="external",
+                kind="third-party",
+                conf="inferred",
+                evidence=[{"file": "src/llm.ts", "line": 1}],
+            )
+        ],
         components=_COMPONENTS,
         repo_root=repo,
     )
@@ -1616,8 +1625,7 @@ def test_unknown_confidence_is_not_promoted(tmp_path: Path):
     what the crossing is, which route evidence alone does not resolve."""
     repo = _repo_with(tmp_path, "server.ts", "app.post('/x', h())\n")
     merged, _alias, _notes = prep._consolidate_candidates(
-        [_cand("c1", frm="external", to="api", conf="unknown",
-               evidence=[{"file": "server.ts", "line": 1}])],
+        [_cand("c1", frm="external", to="api", conf="unknown", evidence=[{"file": "server.ts", "line": 1}])],
         components=_COMPONENTS,
         repo_root=repo,
     )
@@ -1723,8 +1731,7 @@ def test_cross_run_identity_survives_contiguous_delivery_renumbering(tmp_path: P
             {
                 "components": [{"id": "web-api"}, {"id": "worker"}],
                 "trust_boundaries": [
-                    {**row, "resolution_status": "resolved", "sources": ["detected"]}
-                    for row in doc["trust_boundaries"]
+                    {**row, "resolution_status": "resolved", "sources": ["detected"]} for row in doc["trust_boundaries"]
                 ],
             },
             sort_keys=False,
@@ -2313,7 +2320,10 @@ def test_assumption_lint_does_not_flag_its_own_model_answer() -> None:
     """The spec's model answer for an outbound crossing starts with "Nothing".
     A leading no/nothing marks an absence only when the sentence predicates no
     behaviour — otherwise the lint punishes the phrasing it recommends."""
-    assert prep._assumption_shape_warnings("Nothing attacker-controlled reaches the provider unfiltered.", None, "tb") == []
+    assert (
+        prep._assumption_shape_warnings("Nothing attacker-controlled reaches the provider unfiltered.", None, "tb")
+        == []
+    )
     assert prep._assumption_shape_warnings("No request reaches the handler without a verified JWT.", None, "tb") == []
     assert prep._assumption_shape_warnings("No outbound content filter or egress allow-list.", None, "tb") == [
         "tb: assumption states an absence instead of a condition"

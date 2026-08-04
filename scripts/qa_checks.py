@@ -1016,8 +1016,12 @@ def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Rep
     report = Report(check="unmasked_secrets")
     targets: list[Path] = [md_path]
     if output_dir is not None:
-        for rel in ("threat-model.yaml", "threat-model.sarif.json",
-                    "threat-model.threatdragon.json", "threat-model.html"):
+        for rel in (
+            "threat-model.yaml",
+            "threat-model.sarif.json",
+            "threat-model.threatdragon.json",
+            "threat-model.html",
+        ):
             p = output_dir / rel
             if p.exists():
                 targets.append(p)
@@ -5162,8 +5166,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
 
         if open_stack:
             report.issues.append(
-                f"mermaid block #{block_idx}: {len(open_stack)} unclosed "
-                f"'{open_stack[-1]}' block(s) at end of diagram"
+                f"mermaid block #{block_idx}: {len(open_stack)} unclosed '{open_stack[-1]}' block(s) at end of diagram"
             )
 
         for rel_no, line in enumerate(body.splitlines(), start=1):

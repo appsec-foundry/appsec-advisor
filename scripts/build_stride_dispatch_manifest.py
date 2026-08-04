@@ -696,9 +696,7 @@ def _etc_label(count: object) -> str:
     return "high"
 
 
-def _component_turn_budget(
-    repo_root: Path, patterns, tier_turns: int, cheap: bool = False
-) -> tuple[int, bool, int]:
+def _component_turn_budget(repo_root: Path, patterns, tier_turns: int, cheap: bool = False) -> tuple[int, bool, int]:
     """Turn budget for one component: complexity tier raised by file footprint.
 
     Returns ``(max_turns, sampling_required, file_count)``. ``sampling_required``

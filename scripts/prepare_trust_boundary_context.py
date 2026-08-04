@@ -352,7 +352,10 @@ def normalize_assumption_legs(raw: Any, boundary: dict, label: str, warnings: li
             continue
         name = str(entry.get("leg") or "").strip().casefold()
         if name not in allowed:
-            _warn(f"{label}: dropped leg {name or '<empty>'!r} — not valid for a {boundary_crossing_type(boundary)} crossing", warnings)
+            _warn(
+                f"{label}: dropped leg {name or '<empty>'!r} — not valid for a {boundary_crossing_type(boundary)} crossing",
+                warnings,
+            )
             continue
         if name in seen:
             _warn(f"{label}: dropped duplicate leg {name!r}", warnings)
@@ -374,9 +377,7 @@ def boundary_legs(boundary: dict) -> list[dict]:
     per-leg verdicts. An internal row gets only what it declares (see
     INTERNAL_LEGS).
     """
-    declared = [
-        leg for leg in (boundary.get("assumption_legs") or []) if isinstance(leg, dict) and leg.get("leg")
-    ]
+    declared = [leg for leg in (boundary.get("assumption_legs") or []) if isinstance(leg, dict) and leg.get("leg")]
     if boundary_crossing_type(boundary) == "internal":
         return declared
     # Directional crossings keep the FULL triad even when the analyst declared
@@ -663,7 +664,9 @@ def _assumption_shape_warnings(assumption: str, enforcement_point: str | None, l
 
 def _covered_components(value: Any, components: Iterable[str]) -> list[str]:
     known = set(components)
-    return sorted({item for item in value if isinstance(item, str) and item in known}) if isinstance(value, list) else []
+    return (
+        sorted({item for item in value if isinstance(item, str) and item in known}) if isinstance(value, list) else []
+    )
 
 
 def _normalize_row(
@@ -1165,7 +1168,12 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
                 # The folded-in component keeps a claim on the surviving row, so a
                 # finding it owns can still reference the perimeter it sits behind.
                 other["covers_components"] = sorted(
-                    {*(other.get("covers_components") or []), *(row.get("covers_components") or []), other["to"], row["to"]}
+                    {
+                        *(other.get("covers_components") or []),
+                        *(row.get("covers_components") or []),
+                        other["to"],
+                        row["to"],
+                    }
                 )
                 warnings.append(
                     f"folded ingress boundary {row.get('name')!r} into {other.get('name')!r} — "
@@ -1574,9 +1582,7 @@ def prepare_contexts(
         return row | {"focus": focus, "focus_reasons": reasons}
 
     for cid, entry in state.items():
-        context_rows = [
-            _context_row(boundary, focus, reasons) for _rank, boundary, focus, reasons in entry["chosen"]
-        ]
+        context_rows = [_context_row(boundary, focus, reasons) for _rank, boundary, focus, reasons in entry["chosen"]]
         if context_rows:
             component_dir = context_root / cid
             component_dir.mkdir(parents=True, exist_ok=True)
@@ -1769,8 +1775,7 @@ def _paths_contained(inner: list[str], outer: list[str]) -> bool:
     if not matchers:
         return False
     return all(
-        isinstance(candidate, str) and candidate and any(m.match(candidate) for m in matchers)
-        for candidate in inner
+        isinstance(candidate, str) and candidate and any(m.match(candidate) for m in matchers) for candidate in inner
     )
 
 
@@ -1943,8 +1948,7 @@ def _consolidate_candidates(
             if _looks_inbound(repo_root, candidate):
                 candidate["from"], candidate["to"] = "external", candidate["from"]
                 notes.append(
-                    f"{key}: direction corrected to ingress — evidence is a route registration, "
-                    f"not an outbound call"
+                    f"{key}: direction corrected to ingress — evidence is a route registration, not an outbound call"
                 )
         # Client-side code is not a trust zone. It is delivered to the user's
         # device and executes there, on the attacker's side of every control the
@@ -1977,12 +1981,7 @@ def _consolidate_candidates(
                 )
                 notes.append(f"{key}: dropped {source} -> {target} — {dropped[key]}")
                 continue
-        elif (
-            source in components
-            and target in components
-            and source != target
-            and _is_client_tier(source, components)
-        ):
+        elif source in components and target in components and source != target and _is_client_tier(source, components):
             # The real origin is `external`; the client component is only where
             # the request was composed. Recorded in `covers_components` so the
             # findings that live in that code keep an adjacent boundary
@@ -1991,9 +1990,7 @@ def _consolidate_candidates(
             # `external` absorbs it, a genuinely different one keeps its row.
             candidate["from"] = "external"
             candidate["name"] = _retarget_name(candidate.get("name"), source, "external")
-            candidate["covers_components"] = sorted(
-                {source, target, *(candidate.get("covers_components") or [])}
-            )
+            candidate["covers_components"] = sorted({source, target, *(candidate.get("covers_components") or [])})
             notes.append(
                 f"{key}: source {source} -> external — {source} is client-tier, so it runs on the "
                 f"user's device on the untrusted side of {target}; the crossing it describes is the "
@@ -2009,15 +2006,16 @@ def _consolidate_candidates(
             # upgrade from an analyst's own source inspection — the catalogue
             # shows the same word for both.
             candidate["confidence_basis"] = "route-evidence"
-            notes.append(
-                f"{key}: confidence inferred -> confirmed — cited evidence line registers an inbound route"
-            )
+            notes.append(f"{key}: confidence inferred -> confirmed — cited evidence line registers an inbound route")
         source, target = candidate.get("from"), candidate.get("to")
         if source in components and target in components:
-            if _same_deployable(
-                components[source].get("paths") or [],
-                components[target].get("paths") or [],
-            ) and candidate.get("kind") != "process":
+            if (
+                _same_deployable(
+                    components[source].get("paths") or [],
+                    components[target].get("paths") or [],
+                )
+                and candidate.get("kind") != "process"
+            ):
                 notes.append(
                     f"{key}: reclassified {candidate.get('kind')!r} -> 'process' — "
                     f"{source} and {target} ship in one deployable"
@@ -2083,9 +2081,7 @@ def _consolidate_candidates(
                 if marker and marker not in seen_evidence:
                     seen_evidence.add(marker)
                     survivor.setdefault("evidence", []).append(deepcopy(entry))
-            if _CONFIDENCE_RANK.get(other.get("confidence"), 0) > _CONFIDENCE_RANK.get(
-                survivor.get("confidence"), 0
-            ):
+            if _CONFIDENCE_RANK.get(other.get("confidence"), 0) > _CONFIDENCE_RANK.get(survivor.get("confidence"), 0):
                 survivor["confidence"] = other["confidence"]
             point = survivor.get("enforcement_point")
             reason = (
@@ -2348,8 +2344,7 @@ def promote_candidates(
             exact = [
                 row["id"]
                 for row in canonical_rows
-                if row.get("from") == candidate["from"]
-                and candidate.get("to") in (row.get("covers_components") or [])
+                if row.get("from") == candidate["from"] and candidate.get("to") in (row.get("covers_components") or [])
             ]
         candidate_to_ids[key] = sorted(set(exact), key=_numeric_id)
     # Dispositions still reference the pre-merge keys; point every alias at the
@@ -2375,9 +2370,7 @@ def promote_candidates(
         # outside the trust perimeter — and the reason is written where a reader
         # can audit it.
         if verdict == "boundary" and not boundary_ids and disposition["candidate_keys"]:
-            reasons = [
-                dropped_candidates[key] for key in disposition["candidate_keys"] if key in dropped_candidates
-            ]
+            reasons = [dropped_candidates[key] for key in disposition["candidate_keys"] if key in dropped_candidates]
             if len(reasons) == len(disposition["candidate_keys"]):
                 verdict = "same-trust"
                 rationale = _clean_text(reasons[0], fallback=rationale, limit=300)
@@ -2406,9 +2399,7 @@ def promote_candidates(
             {
                 "signal_id": signal_id,
                 "disposition": verdict,
-                "candidate_keys": [
-                    key for key in disposition["candidate_keys"] if key not in dropped_candidates
-                ],
+                "candidate_keys": [key for key in disposition["candidate_keys"] if key not in dropped_candidates],
                 "boundary_ids": boundary_ids,
                 "evidence": signal_by_id[signal_id]["evidence"],
                 "rationale": rationale,

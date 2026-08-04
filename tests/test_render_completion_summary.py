@@ -1208,10 +1208,9 @@ class TestRenderFiles:
         Regression guard: `--write-threatdragon` was defined but no SKILL-impl
         call site used it, so the artifact was written and never reported.
         Every site that passes `--write-sarif` must also pass this pair."""
-        impl = (
-            Path(__file__).resolve().parents[1]
-            / "skills" / "create-threat-model" / "SKILL-impl.md"
-        ).read_text(encoding="utf-8")
+        impl = (Path(__file__).resolve().parents[1] / "skills" / "create-threat-model" / "SKILL-impl.md").read_text(
+            encoding="utf-8"
+        )
         sarif_sites = impl.count("--no-write-sarif")
         td_sites = impl.count("--no-write-threatdragon")
         assert td_sites == sarif_sites, (

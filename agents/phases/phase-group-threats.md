@@ -1565,18 +1565,15 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_E
 
 The pass exists because the STRIDE-analyzer is the only agent that reads source code in the pipeline; the merger explicitly does not (`appsec-threat-merger.md:143`), the triage validator works on metadata, and the QA reviewer only verifies that paths exist. Phase 10a closes the "is the claim true" gap without re-running expensive analysis.
 
-**Precondition check — verify `.threats-merged.json` exists AND Phase 10 Step C has logged PHASE_END:**
+**Precondition — require merged threats and completed Scan Synthesis:**
 ```bash
 if [ ! -f "$OUTPUT_DIR/.threats-merged.json" ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  Phase 10a cannot start — .threats-merged.json missing" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-  # Do not proceed — Phase 10 must complete first.
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  Phase 10a blocked — .threats-merged.json missing" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+  # Do not proceed.
 fi
-# Guard: the file check above is necessary but not sufficient. `.threats-merged.json`
-# is written during Phase 9-merge, which completes before Phase 10 starts, so its
-# presence does not confirm that Phase 10 Step C has run. Check the log explicitly.
 if ! grep -q "PHASE_END.*Phase 10/11.*Scan Synthesis" "$OUTPUT_DIR/.agent-run.log" 2>/dev/null; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  Phase 10a blocked — Phase 10 Step C PHASE_END not yet in log; complete Scan Synthesis before dispatching evidence-verifier" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-  # Do not proceed — Phase 10 Step C must be logged before Phase 10a may start.
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  Phase 10a blocked — Scan Synthesis PHASE_END missing" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+  # Do not proceed.
 fi
 ```
 

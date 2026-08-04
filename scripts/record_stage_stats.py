@@ -276,9 +276,7 @@ def main(argv: list[str]) -> int:
         "of just stage — letting a single stage emit multiple records "
         "(e.g. Stage 3 — QA fast-path + Stage 3 — Re-Render-Loop Repair).",
     )
-    parser.add_argument(
-        "--name", required=True, help='Human-readable description, e.g. "Control & Threat Analysis"'
-    )
+    parser.add_argument("--name", required=True, help='Human-readable description, e.g. "Control & Threat Analysis"')
     parser.add_argument("--agent", required=True, help="Agent identifier, e.g. appsec-advisor:appsec-threat-analyst")
     parser.add_argument("--model", default="—", help="Model id, e.g. sonnet")
     parser.add_argument(

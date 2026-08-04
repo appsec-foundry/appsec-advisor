@@ -56,7 +56,9 @@ def test_clamp_title_never_leaves_unclosed_markup():
     assert len(paren) <= 80
     assert paren.count("(") == paren.count(")")
 
-    code = b._clamp_title("Pass the workflow title via an `env:` block instead of `${{ github.event.issue.title }}` inline")
+    code = b._clamp_title(
+        "Pass the workflow title via an `env:` block instead of `${{ github.event.issue.title }}` inline"
+    )
     assert len(code) <= 80
     assert code.count("`") % 2 == 0
 
@@ -2576,7 +2578,10 @@ def _crit_doc(rows: list[dict], refs: dict[str, int] | None = None) -> dict:
         "components": [{"id": "web-api"}, {"id": "db"}],
         "trust_boundaries": rows,
         "threats": [
-            {"id": "T-001", "boundary_refs": [{"boundary_id": bid} for bid, n in (refs or {}).items() for _ in range(n)]}
+            {
+                "id": "T-001",
+                "boundary_refs": [{"boundary_id": bid} for bid, n in (refs or {}).items() for _ in range(n)],
+            }
         ],
     }
 

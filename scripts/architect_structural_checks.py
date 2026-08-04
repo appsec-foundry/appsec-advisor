@@ -416,9 +416,8 @@ def _expected_risk_distribution(yaml_path: Path | None, merged_threats: list[dic
     """
     if yaml_path is not None and yaml_path.is_file():
         try:
-            import yaml as _yaml
-
             import _severity_rollup
+            import yaml as _yaml
 
             data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):

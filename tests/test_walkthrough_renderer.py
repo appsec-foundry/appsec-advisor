@@ -1,4 +1,4 @@
-"""Regression tests for scripts/walkthrough_renderer.py.
+r"""Regression tests for scripts/walkthrough_renderer.py.
 
 These guard the per-finding §3 Attack Walkthroughs render pipeline against
 regressions that previously shipped to production:

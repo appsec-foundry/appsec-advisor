@@ -226,7 +226,11 @@ def test_explicit_pending_state_beats_any_reason():
 
 
 def test_decided_state_with_reason_stays_finalized():
-    v = {"step_verdicts": [{"step": 1, "verdict": "inconclusive", "state": "decided", "reason": "unresolvable in budget"}]}
+    v = {
+        "step_verdicts": [
+            {"step": 1, "verdict": "inconclusive", "state": "decided", "reason": "unresolvable in budget"}
+        ]
+    }
     assert mod._is_unfinalized_preseed(v) is False
     assert mod.is_finalized_verdict(v) is True
 

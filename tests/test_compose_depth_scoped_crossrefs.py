@@ -63,16 +63,12 @@ class TestSection6BackLink:
     """`[§6.N](#ctrl-…)` may only appear when §6 is rendered."""
 
     def test_omitted_when_section6_absent(self, tmp_path):
-        lines = compose._boundary_leg_lines(
-            LEGS, _ctx(tmp_path, render_security_architecture=False)
-        )
+        lines = compose._boundary_leg_lines(LEGS, _ctx(tmp_path, render_security_architecture=False))
         assert lines, "leg lines themselves must still render"
         assert not any("#ctrl-" in line for line in lines)
 
     def test_present_when_section6_rendered(self, tmp_path):
-        lines = compose._boundary_leg_lines(
-            LEGS, _ctx(tmp_path, render_security_architecture=True)
-        )
+        lines = compose._boundary_leg_lines(LEGS, _ctx(tmp_path, render_security_architecture=True))
         joined = "\n".join(lines)
         assert "#ctrl-input-boundary-validation-controls" in joined
         assert "#ctrl-identity-and-authentication-controls" in joined
@@ -91,9 +87,7 @@ class TestSection6BackLink:
         Guards the two halves against silent drift: the link side resolves via
         `_LEG_SECTION7_DOMAIN`, the anchor side injects via `_SECTION7_DOMAIN_LEG`.
         """
-        injectable = {
-            compose._control_domain_anchor(domain) for domain in compose._SECTION7_DOMAIN_LEG
-        }
+        injectable = {compose._control_domain_anchor(domain) for domain in compose._SECTION7_DOMAIN_LEG}
         for leg in compose._LEG_SECTION7_DOMAIN:
             link = compose._leg_control_link(leg)
             anchor = link.split("(#", 1)[1].rstrip(")")
@@ -108,10 +102,7 @@ class TestWalkthroughBackLink:
         frag_dir = tmp_path / ".fragments"
         frag_dir.mkdir(parents=True, exist_ok=True)
         (frag_dir / "attack-walkthroughs.md").write_text(
-            "## 3. Attack Walkthroughs\n\n"
-            "### 3.1 JWT algorithm none accepted\n\n"
-            "**Source:** 🔴 [F-003]\n\n"
-            "Steps.\n",
+            "## 3. Attack Walkthroughs\n\n### 3.1 JWT algorithm none accepted\n\n**Source:** 🔴 [F-003]\n\nSteps.\n",
             encoding="utf-8",
         )
 

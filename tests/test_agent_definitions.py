@@ -32,6 +32,8 @@ REQUIRED_MODEL = "sonnet"
 #     fragments and the orchestrator absorbs additional sub-agent dispatches.
 #   - Orchestrator 250→300: extra headroom for the added sub-agent dispatches
 #     (Phase 2.7 actor discovery + Stage-1d abuse-case fan-out coordination).
+#   - QA reviewer 120→200 (2026-08-02): large semantic repair plans repeatedly
+#     exhausted 120 turns before emitting the mandatory completion status.
 EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst": 300,
     "appsec-context-resolver": 25,
@@ -42,7 +44,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-threat-renderer": 80,
     "appsec-secarch-renderer": 60,
     "appsec-ms-renderer": 32,
-    "appsec-qa-reviewer": 120,
+    "appsec-qa-reviewer": 200,
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
@@ -740,7 +742,7 @@ def test_stride_template_never_offers_null_for_a_string_only_field():
     assert line is not None, "evidence.file template line not found in appsec-stride-analyzer.md"
     assert "or null" not in line, (
         "the evidence.file template offers `null`, which stride.schema.yaml rejects "
-        "(type: string). Say `never null` and point the author at `\"evidence\": null` "
+        '(type: string). Say `never null` and point the author at `"evidence": null` '
         "for the whole object."
     )
     assert "never null" in line.lower(), "the template must state that evidence.file is never null"

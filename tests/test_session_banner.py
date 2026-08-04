@@ -179,9 +179,7 @@ def test_reports_missing_model(tmp_path):
     message = run_hook(str(tmp_path))
     assert identity_line(message).startswith(f"appsec-advisor {MANIFEST['version']}")
     assert "/appsec-advisor:help" in identity_line(message)
-    assert tm_line(message) == (
-        "threat model · none in docs/security/ · /appsec-advisor:create-threat-model"
-    )
+    assert tm_line(message) == ("threat model · none in docs/security/ · /appsec-advisor:create-threat-model")
 
 
 def test_reports_existing_model(tmp_path):

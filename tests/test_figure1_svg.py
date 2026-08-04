@@ -1093,9 +1093,7 @@ def test_boundary_legend_swatch_is_not_the_faintest_row():
     lx = boundary_swatch["x1"]
     others = [
         float(a["stroke-width"])
-        for a in (
-            _lines_with_stroke(svg, F._EXPOSED) + _lines_with_stroke(svg, F._BACKBONE)
-        )
+        for a in (_lines_with_stroke(svg, F._EXPOSED) + _lines_with_stroke(svg, F._BACKBONE))
         if a["x1"] == lx and a["_width"] < 40
     ]
     assert others, "expected sibling legend swatches to compare against"

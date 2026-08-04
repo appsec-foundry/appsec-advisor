@@ -920,8 +920,9 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     # drawn, and a model without resolved boundaries keeps the pre-boundary
     # output unchanged.
     _c23_cross_arrow = (
-        ((_load_diagram_compactness().get("2.3 Components") or {}).get("edge_convention", {}) or {})
-        .get("boundary_crossing", {})
+        ((_load_diagram_compactness().get("2.3 Components") or {}).get("edge_convention", {}) or {}).get(
+            "boundary_crossing", {}
+        )
         or {}
     ).get("arrow", "==>")
     if any(_c23_cross_arrow in ln for ln in _c23_diagram):
