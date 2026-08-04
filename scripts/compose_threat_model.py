@@ -19670,7 +19670,22 @@ def main(argv: list[str] | None = None) -> int:
             real_id = (t.get("t_id") or t.get("id") or "").strip()
             if not real_id:
                 continue
-            f_alias[f"{i:03d}"] = (real_id, real_id.lower())
+            # T/F numeric IDs are public, stable anchors and can contain gaps
+            # after evidence filtering. Never close such a gap by list
+            # position: that attached a stale F-035 reference to T-036 in the
+            # 2026-08-02 juice-shop report. Legacy component-prefixed schemas
+            # have no numeric suffix contract, so they retain the positional
+            # compatibility fallback unless an explicit f_id is present.
+            explicit_f = str(t.get("f_id") or "").strip()
+            numeric_id = re.fullmatch(r"[TF]-(\d+)", real_id, re.IGNORECASE)
+            numeric_f = re.fullmatch(r"F-(\d+)", explicit_f, re.IGNORECASE)
+            if numeric_f:
+                key = numeric_f.group(1).zfill(3)
+            elif numeric_id:
+                key = numeric_id.group(1).zfill(3)
+            else:
+                key = f"{i:03d}"
+            f_alias[key] = (real_id, real_id.lower())
 
         # For each referenced F-NNN, ensure the matching `<a id="f-NNN"></a>`
         # exists somewhere in the document. If `_render_threat_register`

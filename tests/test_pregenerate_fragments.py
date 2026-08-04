@@ -124,6 +124,13 @@ class TestSystemOverview:
         assert "DNS infra" in md
         assert "End-user devices" in md
 
+    @pytest.mark.parametrize("scope", [None, [], "all endpoints"])
+    def test_non_mapping_scope_uses_empty_scope(self, scope):
+        md = pf.gen_system_overview({"meta": {"scope": scope}, "components": []})
+        assert md.startswith("## 1. System Overview\n")
+        assert "**Out of scope:** third-party hosted dependencies" in md
+        assert "all endpoints" not in md
+
 
 class TestArchitectureDiagrams:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
@@ -2193,6 +2200,11 @@ class TestOutOfScope:
         md = pf.gen_out_of_scope({"meta": {}})
         assert md.startswith("## 11. Out of Scope\n")
         assert "Third-party hosted dependencies" in md  # default
+
+    @pytest.mark.parametrize("scope", [None, [], "all endpoints"])
+    def test_non_mapping_scope_falls_back_to_default(self, scope):
+        md = pf.gen_out_of_scope({"meta": {"scope": scope}})
+        assert "Third-party hosted dependencies" in md
 
     def test_no_accepted_risks_subsection_when_list_absent(self, minimal_yaml_data):
         md = pf.gen_out_of_scope(minimal_yaml_data)

@@ -2052,7 +2052,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
                 "instruction_file": str(THIN_STAGE2_RUNTIME),
                 "receipts": [receipt],
             }
-    for name in (".inline-shortcut-retry-count", ".inline-shortcut-repair-plan.json"):
+    for name in (".inline-shortcut-retry-count", ".inline-shortcut-repair-plan.json", ".compose-blocked.json"):
         try:
             (output_dir / name).unlink()
         except FileNotFoundError:
@@ -2082,6 +2082,10 @@ def next_action(output_dir: Path) -> dict[str, Any]:
     # trailing LLM-driven skill block (which a compaction-resumed orchestrator
     # can skip, and whose $SLUG guard does not survive compaction anyway).
     _stamp_if_configured(output_dir, cfg)
+    try:
+        (output_dir / ".appsec-checkpoint").unlink()
+    except (FileNotFoundError, OSError):
+        pass
     return {
         **common,
         "action": "complete",

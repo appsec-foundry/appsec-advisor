@@ -284,8 +284,8 @@ SUBAGENT_OUTPUT_TOKEN_WARN = 50_000
 # Log parsers — tolerant of incomplete/malformed lines
 # ---------------------------------------------------------------------------
 
-_LOG_LINE_RE = re.compile(
-    r"^(?P<ts>\S+)\s+\[(?P<sid>[^\]]*)\]\s+(?P<level>\S+)\s+(?P<source>\S+)\s+(?P<event>\S+)\s+(?P<detail>.*)$"
+_LOG_LINE_PREFIX_RE = re.compile(
+    r"^(?P<ts>\S+)\s+\[(?P<sid>[^\]]*)\]\s+(?P<level>\S+)\s+(?P<first>\S+)\s*(?P<rest>.*)$"
 )
 
 _PHASE_RE = re.compile(r"\[Phase\s+(?P<phase>[0-9b]+)/(?P<total>[0-9]+)\]\s*(?P<label>.*)")
@@ -406,11 +406,26 @@ def _scope_to_current_run(
 
 
 def _parse_event_line(line: str) -> dict[str, str] | None:
-    """Parse a canonical agent_logger.py line into structured fields."""
-    m = _LOG_LINE_RE.match(line.strip())
+    """Parse canonical five-field hook and six-field agent log lines.
+
+    ``event_log.format_line`` omits the component column for hook events. The
+    old parser always consumed six fields, so a real hook line placed
+    ``BASH_WARN`` in ``source`` and the first detail token in ``event``. Every
+    hook warning and error was consequently invisible to the run aggregator.
+    Event names are uppercase identifiers; component names are not.
+    """
+    m = _LOG_LINE_PREFIX_RE.match(line.strip())
     if not m:
         return None
-    return m.groupdict()
+    fields = m.groupdict()
+    first = fields.pop("first")
+    rest = fields.pop("rest").strip()
+    if re.fullmatch(r"[A-Z][A-Z0-9_]*", first):
+        return {**fields, "source": "", "event": first, "detail": rest}
+    event_match = re.match(r"(?P<event>\S+)\s*(?P<detail>.*)$", rest)
+    if not event_match:
+        return None
+    return {**fields, "source": first, **event_match.groupdict()}
 
 
 # ---------------------------------------------------------------------------
@@ -1225,11 +1240,13 @@ def _extract_gate_events(output_dir: Path) -> list[dict]:
             status = str(plan.get("status") or "").strip().lower()
             if status in ("fail", "manual_review"):
                 actions = plan.get("actions") or []
-                headings = [
-                    str(a.get("heading") or a.get("section_id") or a.get("check") or "?")
-                    for a in actions
-                    if isinstance(a, dict)
-                ]
+                headings = list(
+                    dict.fromkeys(
+                        str(a.get("heading") or a.get("section_id") or a.get("type") or a.get("check") or "?")
+                        for a in actions
+                        if isinstance(a, dict)
+                    )
+                )
                 n = plan.get("issue_count") if isinstance(plan.get("issue_count"), int) else len(actions)
                 issues.append(
                     {
@@ -1290,6 +1307,34 @@ def _extract_gate_events(output_dir: Path) -> list[dict]:
                         "log_line": 1,
                         "raw_event": _clip(json.dumps(st), 200),
                         "status": status,
+                        "outcome": "not_pass",
+                    },
+                }
+            )
+
+    # 4. Stage-4 architect status is a release gate just like Stage 3. A
+    #    technical defect used to disappear from .run-issues.json because only
+    #    QA state was inspected, even when .architect-status.json explicitly
+    #    said repair_required and named a repair plan.
+    architect_status = output_dir / ".architect-status.json"
+    if architect_status.is_file():
+        try:
+            st = json.loads(architect_status.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            st = {}
+        status = str((st or {}).get("status") or "").strip().lower()
+        if status and status not in ("pass", "ok", "clean", "ok_clean"):
+            issues.append(
+                {
+                    "category": "architect_status_not_pass",
+                    "severity": "warning",
+                    "title": f"Architect status did not reach pass (status={status})",
+                    "evidence": {
+                        "log_file": ".architect-status.json",
+                        "log_line": 1,
+                        "raw_event": _clip(json.dumps(st), 200),
+                        "status": status,
+                        "technical_defects": (st or {}).get("technical_defects"),
                         "outcome": "not_pass",
                     },
                 }

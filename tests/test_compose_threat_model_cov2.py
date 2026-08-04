@@ -558,6 +558,23 @@ class TestMain:
         # global rewrite to the visible F-form.
         assert "[F-999](#f-999)" in rendered
 
+    def test_fnnn_bridge_does_not_fill_a_canonical_id_gap_by_position(self, tmp_path):
+        out = _prepare_output_dir(tmp_path)
+        yaml_path = out / "threat-model.yaml"
+        model = compose._fast_yaml_load(yaml_path.read_text(encoding="utf-8"))
+        model["threats"] = [t for t in model["threats"] if (t.get("t_id") or t.get("id")) != "T-002"]
+        yaml_path.write_text(compose.yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+        (out / ".fragments" / "abuse-cases.md").write_text(
+            "## 9. Abuse Cases\n\nStale reference [F-002](#f-002).\n", encoding="utf-8"
+        )
+
+        rc = compose.main(["--contract", str(CONTRACT), "--output-dir", str(out)])
+
+        assert rc == 0
+        rendered = (out / "threat-model.md").read_text(encoding="utf-8")
+        assert '<a id="f-002"></a>' not in rendered
+        assert '<a id="t-003"></a><a id="f-003"></a>' in rendered
+
 
 # ---------------------------------------------------------------------------
 # compose-stats round-trip + signals

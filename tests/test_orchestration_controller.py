@@ -525,9 +525,13 @@ def test_next_action_rehydrates_from_filesystem(tmp_path):
     assert stage2["stage"] == "stage2"
     assert stage2["instruction_file"] == str(controller.THIN_STAGE2_RUNTIME)
     (output / "threat-model.md").write_text("# report\n")
+    (output / ".compose-blocked.json").write_text('{"step":"compose"}')
     assert controller.next_action(output)["stage"] == "stage3"
+    assert not (output / ".compose-blocked.json").exists()
     (output / ".qa-status.json").write_text("{}")
+    (output / ".appsec-checkpoint").write_text("phase=11 status=writing_output\n")
     assert controller.next_action(output)["action"] == "complete"
+    assert not (output / ".appsec-checkpoint").exists()
 
 
 def test_post_stage1_runs_compact_deterministic_gate_sequence(tmp_path, monkeypatch):

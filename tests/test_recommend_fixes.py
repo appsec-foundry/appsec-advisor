@@ -208,6 +208,15 @@ def test_qa_status_not_pass(tmp_path):
     assert "'fail'" in rec["summary"]
 
 
+def test_architect_status_not_pass(tmp_path):
+    rec = rf._recommend_architect_status_not_pass(
+        {"evidence": {"status": "repair_required", "technical_defects": 1}}, tmp_path
+    )
+    assert rec["confidence"] == "high"
+    assert "1 technical defect" in rec["summary"]
+    assert rec["actions"][0]["target"] == ".architect-repair-plan.json"
+
+
 def test_default(tmp_path):
     rec = rf._recommend_default({"category": "weird", "evidence": {"log_file": "x.log"}}, tmp_path)
     assert rec["category"] == "investigate"

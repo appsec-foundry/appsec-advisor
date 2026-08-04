@@ -423,22 +423,20 @@ def _recommend_contract_gate_drift(issue: dict, output_dir: Path) -> dict:
         "confidence": "high",
         "risk_level": "medium",
         "summary": (
-            "The Stage-3 contract gate flagged section drift that was not cleared. "
-            "Re-render from fragments, or — if the flagged section is depth-conditional "
-            "(§3 walkthroughs / §7 security-architecture at --quick) — this is a checker bug."
+            "The Stage-3 QA gate left one or more repair actions unresolved. "
+            "Classify each action before choosing re-render, producer repair, or checker repair."
         ),
         "rationale": (
-            "A lingering .qa-repair-plan.json means check_contract found an expected "
-            "section missing (or out of order). Genuine drift is fixed by recomposing "
-            "from the fragments. But the contract gate evaluates depth/skip conditions: "
-            "§3 and §7 are intentionally suppressed at --quick, so a plan naming ONLY "
-            f"those is a false positive. Flagged items: {', '.join(str(i) for i in items[:6]) or '(see plan)'}."
+            "A lingering .qa-repair-plan.json can describe section structure, cross-references, "
+            "walkthrough coverage, placeholders, or YAML/Markdown consistency. Only fragment-owned "
+            "actions are re-render-fixable; an empty fragments_to_rewrite list requires producer or "
+            f"checker review. Flagged items: {', '.join(str(i) for i in items[:6]) or '(see plan)'}."
         ),
         "actions": [
             {
                 "type": "manual_review",
                 "target": ".qa-repair-plan.json",
-                "details": "Inspect the `actions[].heading` list — are the named sections genuinely expected at this depth?",
+                "details": "Inspect action type, raw issue, severity, and fragments_to_rewrite before selecting a repair path.",
             },
             {
                 "type": "rerun",
@@ -504,6 +502,33 @@ def _recommend_qa_status_not_pass(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_architect_status_not_pass(issue: dict, output_dir: Path) -> dict:
+    """`.architect-status.json` shows a non-pass status at completion."""
+    ev = issue.get("evidence", {})
+    defects = ev.get("technical_defects")
+    defect_note = f" with {defects} technical defect(s)" if isinstance(defects, int) else ""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": f"Architect status is {ev.get('status', '?')!r}{defect_note} — the review did not pass.",
+        "rationale": (
+            "The Stage-4 reviewer persisted a non-pass status after report rendering. "
+            "Its repair plan distinguishes fragment repairs from plugin defects that "
+            "cannot converge through re-rendering alone."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".architect-repair-plan.json",
+                "details": "Inspect the action type and non_actionable_reason before rerendering.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_default(issue: dict, output_dir: Path) -> dict:
     """Fallback for unknown categories."""
     return {
@@ -542,6 +567,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "contract_gate_drift": _recommend_contract_gate_drift,
     "inline_shortcut_unresolved": _recommend_inline_shortcut_unresolved,
     "qa_status_not_pass": _recommend_qa_status_not_pass,
+    "architect_status_not_pass": _recommend_architect_status_not_pass,
 }
 
 

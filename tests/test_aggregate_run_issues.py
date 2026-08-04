@@ -22,6 +22,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from event_log import format_line
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "aggregate_run_issues.py"
 
@@ -460,10 +462,33 @@ class TestExtractGateEvents:
         assert i["severity"] == "warning"
         assert "## 4. Assets" in i["evidence"]["items"]
 
+    def test_contract_action_labels_use_type_and_are_deduplicated(self, tmp_path):
+        (tmp_path / ".qa-repair-plan.json").write_text(
+            '{"status":"manual_review","issue_count":1,"actions":['
+            '{"type":"yaml_md_consistency","raw_issue":"drift"},'
+            '{"type":"yaml_md_consistency","raw_issue":"drift"}]}',
+            encoding="utf-8",
+        )
+        issue = next(i for i in agg._extract_gate_events(tmp_path) if i["category"] == "contract_gate_drift")
+        assert issue["evidence"]["items"] == ["yaml_md_consistency"]
+        assert "?" not in issue["title"]
+
     def test_non_pass_qa_status_flagged(self, tmp_path):
         (tmp_path / ".qa-status.json").write_text('{"status":"fail"}', encoding="utf-8")
         issues = agg._extract_gate_events(tmp_path)
         assert any(i["category"] == "qa_status_not_pass" for i in issues)
+
+    def test_non_pass_architect_status_flagged(self, tmp_path):
+        (tmp_path / ".architect-status.json").write_text(
+            '{"status":"repair_required","technical_defects":1}', encoding="utf-8"
+        )
+        issues = agg._extract_gate_events(tmp_path)
+        issue = next(i for i in issues if i["category"] == "architect_status_not_pass")
+        assert issue["evidence"]["technical_defects"] == 1
+
+    def test_passing_architect_status_is_clean(self, tmp_path):
+        (tmp_path / ".architect-status.json").write_text('{"status":"pass"}', encoding="utf-8")
+        assert agg._extract_gate_events(tmp_path) == []
 
     def test_inline_shortcut_plan_flagged_as_error(self, tmp_path):
         (tmp_path / ".inline-shortcut-repair-plan.json").write_text("{}", encoding="utf-8")
@@ -568,9 +593,10 @@ class TestAbortedMidrunPerfSkip:
 import json as _json  # noqa: E402
 
 
-def _hline(ts: str, event: str, detail: str, source: str = "post-tool") -> str:
-    """Canonical hook-events.log line (5-field-ish, same regex)."""
-    return f"{ts}  [--------]  WARN   {source}  {event}   {detail}"
+def _hline(ts: str, event: str, detail: str) -> str:
+    """Canonical component-less hook-events.log line."""
+    line = format_line(event, detail, level="WARN", sid="--------").strip()
+    return line.replace(line.split()[0], ts, 1)
 
 
 class TestParseHelpers:
@@ -582,6 +608,17 @@ class TestParseHelpers:
 
     def test_parse_event_line_non_matching(self):
         assert agg._parse_event_line("garbage line no fields") is None
+
+    def test_parse_real_five_field_hook_line(self):
+        event = agg._parse_event_line(_hline("2026-04-26T18:00:00Z", "BASH_WARN", "cmd=x  resp=error"))
+        assert event == {
+            "ts": "2026-04-26T18:00:00Z",
+            "sid": "--------",
+            "level": "WARN",
+            "source": "",
+            "event": "BASH_WARN",
+            "detail": "cmd=x  resp=error",
+        }
 
     def test_read_log_missing_file(self, tmp_path):
         assert agg._read_log(tmp_path / "nope.log") == []

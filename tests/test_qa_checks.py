@@ -8,6 +8,7 @@ fixtures — they do not run the full pipeline.
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 import textwrap
@@ -1232,6 +1233,33 @@ class TestYamlMdConsistencyCheck:
         )
         r = qa.check_yaml_md_consistency(md, yml)
         assert any("threat count drift" in i for i in r.issues)
+
+    def test_stray_alias_outside_finding_cards_does_not_change_count(self, tmp_path):
+        md, yml = self._write_pair(
+            tmp_path,
+            textwrap.dedent("""
+                ## 7. Weakness Register
+
+                A stale link points at [F-002](#f-002).
+
+                ## 8. Findings Register
+
+                <a id="f-002"></a><a id="t-003"></a><a id="f-003"></a>
+                #### F-003 · Surviving finding
+            """).strip(),
+            "meta: {schema_version: 1}\nthreats: [{id: T-003}]\nmitigations: []\n",
+        )
+        r = qa.check_yaml_md_consistency(md, yml)
+        assert not any("threat count drift" in issue for issue in r.issues)
+
+    def test_equal_counts_with_different_ids_are_rejected(self, tmp_path):
+        md, yml = self._write_pair(
+            tmp_path,
+            "#### F-001 · One\n\n#### F-002 · Two\n",
+            "meta: {schema_version: 1}\nthreats: [{id: T-001}, {id: T-003}]\nmitigations: []\n",
+        )
+        r = qa.check_yaml_md_consistency(md, yml)
+        assert r.issues == ["threat id drift: yaml-only=T-003; md-only=F-002"]
 
     def test_mitigation_drift(self, tmp_path):
         md, yml = self._write_pair(
@@ -3068,6 +3096,26 @@ class TestEvidenceIntegrity:
         rep = qa.check_evidence_integrity(out, tmp_path)
         assert rep.issues == []
         assert rep.ok == 1
+
+    def test_final_qa_ignores_merge_candidates_absent_from_canonical_yaml(self, tmp_path: Path):
+        _, out = self._fixture(tmp_path)
+        (out / ".threats-merged.json").write_text(
+            json.dumps(
+                {
+                    "threats": [
+                        {"t_id": "T-001", "evidence": {"file": "src.py", "line": 3}},
+                        {"t_id": "T-099", "evidence": {"file": "src.py", "line": 999}},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        (out / "threat-model.yaml").write_text(
+            "meta: {schema_version: 1}\nthreats: [{id: T-001}]\nmitigations: []\n",
+            encoding="utf-8",
+        )
+        rep = qa.check_evidence_integrity(out, tmp_path)
+        assert rep.issues == []
 
     def test_comment_line_flagged_as_suspicious(self, tmp_path: Path):
         src, out = self._fixture(tmp_path)

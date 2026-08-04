@@ -3289,10 +3289,12 @@ def _replay_absence_grep(
 def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
     """Check that each threat's evidence.file:line points at real code.
 
-    Reads `.threats-merged.json` (preferred — pre-render artifact, the
-    canonical source for downstream rendering and ranking). When the file
-    is absent, falls back to `threat-model.yaml` which carries the same
-    data after Phase 11. Per-threat checks:
+    Reads `.threats-merged.json` for its richer evidence fields and, once the
+    canonical `threat-model.yaml` exists, limits it to the active threat IDs in
+    that model. When the merge artifact is absent, the YAML is used directly.
+    This prevents refuted or below-floor merge candidates from failing final
+    report QA even though they were intentionally excluded from the report.
+    Per-threat checks:
 
     1. `evidence.file` resolves on the filesystem (after the repo-root
        relative recovery used by ``check_links``).
@@ -3322,6 +3324,21 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
         except (json.JSONDecodeError, OSError) as exc:
             report.warnings.append(f"could not parse .threats-merged.json — {exc.__class__.__name__}")
             return report
+        if yaml_path.is_file():
+            try:
+                canonical = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
+                canonical_raw = canonical.get("threats", []) if isinstance(canonical, dict) else None
+                if isinstance(canonical_raw, list):
+                    active_ids = {
+                        str(t.get("t_id") or t.get("id") or "").strip().upper()
+                        for t in canonical_raw
+                        if isinstance(t, dict) and (t.get("t_id") or t.get("id"))
+                    }
+                    threats = [
+                        t for t in threats if str(t.get("t_id") or t.get("id") or "").strip().upper() in active_ids
+                    ]
+            except Exception as exc:  # noqa: BLE001
+                report.warnings.append(f"could not parse threat-model.yaml — {exc.__class__.__name__}")
     elif yaml_path.is_file():
         try:
             data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
@@ -9811,6 +9828,10 @@ _MD_THREAT_ROW_RE = re.compile(
     r")",  #         card heading (2026-05); no `|` prefix
     re.IGNORECASE,
 )
+_MD_THREAT_HEADING_RE = re.compile(
+    r"^####\s+(?:<a\s+id=\"[ft]-\d{3,4}\"></a>\s*)*(?:F|T)-(\d{3,4})\b",
+    re.IGNORECASE | re.MULTILINE,
+)
 _MD_MITIGATION_HEADING_RE = re.compile(
     r"^####\s+(?:<a\s+id=\"m-\d{3,4}\"></a>\s*)?M-\d+",
     re.IGNORECASE | re.MULTILINE,
@@ -9855,19 +9876,42 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
     _COVERAGE_GAP_SOURCES = {"coverage-gap", "architectural-anti-pattern"}
     yaml_threats_all = [t for t in yaml_threats_all if t.get("source") not in _COVERAGE_GAP_SOURCES]
     yaml_threat_count = len(yaml_threats_all)
+    yaml_threat_ids: set[str] = set()
+    all_yaml_ids_numeric = True
+    for threat in yaml_threats_all:
+        raw_id = str(threat.get("t_id") or threat.get("id") or "").strip()
+        match = re.fullmatch(r"[TF]-(\d{3,4})", raw_id, re.IGNORECASE)
+        if match:
+            yaml_threat_ids.add(str(int(match.group(1))))
+        else:
+            all_yaml_ids_numeric = False
     yaml_mitigation_count = len(yaml_data.get("mitigations") or [])
 
     md_text = md_path.read_text(encoding="utf-8")
-    # Count distinct F-/T-NNN ids in threat register rows. The regex has two
-    # alternation groups (markdown-link form + anchor-tag form); whichever
-    # matched contributes its numeric id, the other is None.
-    md_threat_ids = {m.group(1) or m.group(2) for m in _MD_THREAT_ROW_RE.finditer(md_text)}
-    md_threat_ids.discard(None)
+    # Finding-card headings are the authoritative rendered register. Global
+    # anchors are not: a stale cross-reference bridge can inject an alias next
+    # to a different card (juice-shop 2026-08-02 injected f-035 at T-036), and
+    # counting that alias turns a link bug into a false 97-vs-96 count drift.
+    # Older table-only reports have no card headings, so retain their row parser
+    # as a compatibility fallback.
+    heading_ids = {str(int(m.group(1))) for m in _MD_THREAT_HEADING_RE.finditer(md_text)}
+    if heading_ids:
+        md_threat_ids = heading_ids
+    else:
+        md_threat_ids = {
+            str(int(raw_id))
+            for m in _MD_THREAT_ROW_RE.finditer(md_text)
+            if (raw_id := (m.group(1) or m.group(2))) is not None
+        }
     md_threat_count = len(md_threat_ids)
     md_mitigation_count = len(_MD_MITIGATION_HEADING_RE.findall(md_text))
 
     if yaml_threat_count != md_threat_count:
         report.issues.append(f"threat count drift: yaml={yaml_threat_count}, md (distinct F/T-NNN)={md_threat_count}")
+    elif all_yaml_ids_numeric and yaml_threat_ids != md_threat_ids:
+        yaml_only = ", ".join(f"T-{int(tid):03d}" for tid in sorted(yaml_threat_ids - md_threat_ids, key=int)) or "none"
+        md_only = ", ".join(f"F-{int(tid):03d}" for tid in sorted(md_threat_ids - yaml_threat_ids, key=int)) or "none"
+        report.issues.append(f"threat id drift: yaml-only={yaml_only}; md-only={md_only}")
     if yaml_mitigation_count != md_mitigation_count:
         report.issues.append(
             f"mitigation count drift: yaml={yaml_mitigation_count}, md (M-NNN headings)={md_mitigation_count}"
