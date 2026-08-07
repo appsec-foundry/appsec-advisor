@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "merge_threats.py"
 
@@ -789,6 +790,10 @@ class TestEndToEnd:
         rc = mt.main(["collect", "--output-dir", str(tmp_path)])
         assert rc == 0
         cand = json.loads((tmp_path / ".merge-candidates.json").read_text())
+        schema = json.loads(
+            (Path(__file__).parent.parent / "schemas" / "merge-candidates.schema.json").read_text(encoding="utf-8")
+        )
+        assert not list(Draft202012Validator(schema).iter_errors(cand))
         assert cand["threat_count_raw"] == 2
         assert cand["candidate_group_count"] == 1
         assert cand["auto_decision_count"] == 0
@@ -1834,6 +1839,59 @@ class TestBackfillBoundaryLeg:
         assert {leg for legs in CROSSING_TYPE_LEGS.values() for leg in legs} == set(enum)
 
 
+class TestDropInvalidBoundaryRefs:
+    def _ref(self, **overrides):
+        ref = {
+            "boundary_id": "tb-3",
+            "origin_component_id": "data-store",
+            "rationale": "Raw string concatenation reaches the driver on this path.",
+            "evidence_locations": [{"file": "src/auth/login.py", "line": 42}],
+        }
+        ref.update(overrides)
+        return ref
+
+    def test_exact_ref_is_untouched(self, mt):
+        ref = self._ref(leg="data-interpretation")
+        threat = _threat(boundary_refs=[ref])
+        assert mt.drop_invalid_threat_boundary_refs(threat) is False
+        assert threat["boundary_refs"] == [ref]
+
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            {"id": "tb-3"},
+            {
+                "boundary_id": "tb-3",
+                "rationale": "The crossing lacks its expected authorization control.",
+                "evidence_locations": [{"file": "src/auth/login.py", "line": 42}],
+            },
+            {
+                "boundary_id": "tb-3",
+                "origin_component_id": "data-store",
+                "rationale": "The crossing lacks its expected authorization control.",
+                "evidence_locations": [{"file": "src/other.py", "line": 9}],
+            },
+        ],
+    )
+    def test_malformed_optional_ref_is_dropped(self, mt, ref):
+        threat = _threat(boundary_refs=[ref])
+        assert mt.drop_invalid_threat_boundary_refs(threat) is True
+        assert threat["boundary_refs"] == []
+
+    def test_duplicate_pair_is_dropped_after_first(self, mt):
+        ref = self._ref()
+        threat = _threat(boundary_refs=[ref, dict(ref)])
+        assert mt.drop_invalid_threat_boundary_refs(threat) is True
+        assert threat["boundary_refs"] == [ref]
+
+    def test_rationale_is_trimmed_without_changing_link(self, mt):
+        threat = _threat(
+            boundary_refs=[self._ref(rationale="  The crossing lacks its expected authorization control.  ")]
+        )
+        assert mt.drop_invalid_threat_boundary_refs(threat) is True
+        assert threat["boundary_refs"][0]["rationale"] == "The crossing lacks its expected authorization control."
+
+
 class TestConsolidationInternals:
     def test_load_groups_oserror(self, mt, tmp_path, monkeypatch):
         # lines 828-829: missing catalog → ().
@@ -2531,3 +2589,95 @@ def test_strip_ineligible_cvss_keeps_eligible_stride(mt):
 
 def test_strip_ineligible_cvss_noop_without_cvss(mt):
     assert mt.strip_ineligible_cvss_v4({"source": "stride", "cwe": "CWE-284"}) is False
+
+
+def _v2_decision_doc(decisions):
+    return {
+        "version": 2,
+        "generated_at": "2026-08-07T00:00:00Z",
+        "model": "sonnet",
+        "decisions": decisions,
+    }
+
+
+def _decision(group_id, indices, *, action="keep", target=None):
+    row = {
+        "group_id": group_id,
+        "action": action,
+        "member_indices": indices,
+        "rationale": "Evidence paths were compared.",
+    }
+    if target is not None:
+        row["merge_target_index"] = target
+    return row
+
+
+def test_validate_agent_decision_document_accepts_disjoint_partial_group_decisions(mt):
+    candidates = {
+        "candidate_groups": [
+            {"group_id": "G-aaaaaaaa", "members": [{}, {}, {}]},
+        ]
+    }
+    decisions = _v2_decision_doc(
+        [
+            _decision("G-aaaaaaaa", [0, 1], action="merge", target=0),
+            _decision("G-aaaaaaaa", [2]),
+        ]
+    )
+
+    assert mt.validate_agent_decision_document(decisions, candidates) == []
+
+
+def test_validate_agent_decision_document_rejects_overlap_before_controller_handoff(mt):
+    candidates = {
+        "candidate_groups": [
+            {"group_id": "G-aaaaaaaa", "members": [{}, {}, {}]},
+        ]
+    }
+    decisions = _v2_decision_doc(
+        [
+            _decision("G-aaaaaaaa", [0, 1], action="merge", target=0),
+            _decision("G-aaaaaaaa", [1, 2]),
+        ]
+    )
+
+    errors = mt.validate_agent_decision_document(decisions, candidates)
+    assert errors == ["merge-decisions-v2 has overlapping member subsets for G-aaaaaaaa: 1"]
+
+
+def test_validate_agent_decision_document_rejects_missing_candidate_group(mt):
+    candidates = {
+        "candidate_groups": [
+            {"group_id": "G-aaaaaaaa", "members": [{}, {}]},
+            {"group_id": "G-bbbbbbbb", "members": [{}, {}]},
+        ]
+    }
+    decisions = _v2_decision_doc([_decision("G-aaaaaaaa", [0, 1])])
+
+    errors = mt.validate_agent_decision_document(decisions, candidates)
+    assert errors == ["merge-decisions-v2 omits candidate groups: G-bbbbbbbb"]
+
+
+def test_validate_decisions_cli_uses_the_shared_contract(mt, tmp_path):
+    candidates_path = tmp_path / "candidates.json"
+    candidates_path.write_text(
+        json.dumps({"candidate_groups": [{"group_id": "G-aaaaaaaa", "members": [{}, {}]}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / ".merge-decisions.json").write_text(
+        json.dumps(_v2_decision_doc([_decision("G-aaaaaaaa", [0, 1])])),
+        encoding="utf-8",
+    )
+
+    assert (
+        mt.main(
+            [
+                "validate-decisions",
+                "--output-dir",
+                str(tmp_path),
+                "--candidates",
+                str(candidates_path),
+            ]
+        )
+        == 0
+    )

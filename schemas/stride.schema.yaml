@@ -127,6 +127,33 @@ $defs:
             title:    { type: [string, "null"] }
             reason:   { type: string, maxLength: 200 }
 
+      discovery_escapes:
+        type: array
+        maxItems: 8
+        items:
+          type: object
+          additionalProperties: false
+          required: [reason, decision_key, search_paths]
+          properties:
+            reason:
+              type: string
+              enum: [missing-control-proof, ambiguous-data-flow, stale-location-recovery, component-path-sampling]
+            decision_key: { type: string, minLength: 1, maxLength: 128 }
+            search_paths:
+              type: array
+              minItems: 1
+              maxItems: 16
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 500
+                not:
+                  pattern: "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+            lens:
+              type: [string, "null"]
+              enum: [agentic, llm, mobile, spa, supply-chain, null]
+
       threats:
         type: array
         items:

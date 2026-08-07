@@ -118,7 +118,8 @@ Write `$OUTPUT_DIR/.config-scan-findings.json`:
 
 - `check_id` MUST be the canonical `IAC-NNN` / `CFG-NNN` from `data/config-iac-checks.yaml` when the violation maps to an entry there. When the agent synthesises a finding for a runtime-config issue NOT covered by the yaml (e.g. CORS wildcard, missing CSP, missing HSTS, public directory listing, hardcoded secrets in Express runtime code), set `check_id: null` AND populate `check_slug` with a stable kebab-case identifier (`cors-wildcard`, `csp-missing`, `hsts-missing`, `ftp-directory-listing`, `secrets-in-source`, …) so the downstream auto-emitter (`scripts/emit_config_scan_mitigations.py`) can resolve a remediation from its built-in slug map.
 - `recommended_mitigation_title` MUST be populated on every finding. Use the canonical `remediation` text from the matched IAC entry when available; otherwise author a short imperative title yourself (`"Restrict CORS to an explicit origin allow-list"`, `"Configure a strict Content-Security-Policy header"`). Never emit `null` or an empty string — the downstream Mitigation Register `**Fix:**` column reads from this field.
-- `cwe` MUST be a list (even when it contains a single CWE) — the downstream merger normalises `cwe[0]` into the threat dict.
+- `cwe` MUST be a list of canonical `CWE-NNN` strings (even when it contains a single CWE). Copy `check.cwe` verbatim; never strip the `CWE-` prefix.
+- `generated_at` MUST use whole-second UTC as `%Y-%m-%dT%H:%M:%SZ`; never emit fractional seconds.
 - `breach_vector` MUST be one of the enum values defined in the "Breach-vector mapping" section below.
 
 Findings missing `recommended_mitigation_title` are caught by the auto-emitter's fallback path (generic remediation prose), but the user-visible §8 Fix column reads markedly weaker text in that case. Emit the field at authoring time; do not rely on the fallback.
@@ -147,6 +148,20 @@ The `breach_vector` field on each finding uses the nuanced vocabulary (see `phas
 - Rate severity by judgement — use `check.severity_if_violated` verbatim (this is the plugin's authority, not the agent's)
 - Skip checks based on file size or complexity — scan every listed IaC file
 - Modify `threat-model.yaml` directly — only write `.config-scan-findings.json`
+
+## Producer contract gate
+
+Immediately after writing `.config-scan-findings.json`, run:
+
+```bash
+set -e
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/normalize_config_scan.py" "$OUTPUT_DIR/.config-scan-findings.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+  config_scan_findings "$OUTPUT_DIR/.config-scan-findings.json"
+```
+
+Do not print completion before this exits 0. Correct the artifact and repeat
+the gate if it fails.
 
 ## Completion log
 

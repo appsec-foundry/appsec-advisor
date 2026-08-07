@@ -99,7 +99,7 @@ Your verdicts are only valuable if they reach disk. A turn-budget cut-off must d
 
 1. **Pre-seed first (before any Read).** Immediately after building the sample set, `Write` `$OUTPUT_DIR/.evidence-verification.json` with `summary.total_threats`, `summary.sampled=<N>`, all counts 0, `summary.unchecked=<N>`, and `flags: []`. This guarantees a side-channel file with real coverage numbers exists even if you are cut off on the next turn.
 2. **Flush every 5 resolved findings (and on the LAST finding).** Keep the loaded `.threats-merged.json` in memory; after every 5th verdict, re-`Write` `.threats-merged.json` (annotations so far) AND re-`Write` `.evidence-verification.json` (running counts + flags so far). A cut-off then loses at most the last <5 verdicts, not all of them. This costs ~`ceil(N/5)` extra Bash calls — budgeted for.
-3. **Turn-budget guard at ~⅔ of maxTurns (≈ turn 40 of 60).** If you reach two-thirds of your budget and the sample is not finished, STOP sampling, do one final flush of both files with `summary.sampled` set to the count actually resolved (remaining stay `unchecked`), emit the `BASH_WARN` from the failure-modes section, and exit. Never spend the last turns reading more findings at the cost of flushing what you have.
+3. **Turn-budget guard at ~⅔ of maxTurns (≈ turn 40 of 60).** If you reach two-thirds of your budget and the sample is not finished, STOP sampling and do one final flush of both files. Keep `summary.sampled=<N>` as the selected sample size and set `summary.unchecked` to the unresolved remainder, so `verified + refuted + ambiguous + unchecked == sampled`; then emit the `BASH_WARN` from the failure-modes section and exit. Never spend the last turns reading more findings at the cost of flushing what you have.
 
 ## Verification procedure (per sampled finding)
 
@@ -139,7 +139,8 @@ Re-write `.threats-merged.json` preserving all existing fields. Add `evidence_ch
 
 ### `.evidence-verification.json`
 
-A side-channel summary the QA reviewer can consume cheaply:
+A side-channel summary against
+`schemas/evidence-verification.schema.json` that QA can consume cheaply:
 
 ```json
 {
@@ -162,6 +163,23 @@ A side-channel summary the QA reviewer can consume cheaply:
 ```
 
 This file is the canonical record of the verifier run. Phase 10b's triage validator reads `summary.refuted` to decide whether to suppress chain-elevation on refuted findings (see triage step 6c).
+`summary.total_threats` is the input threat count, `summary.sampled` is the
+selected sample size, and the four outcome counters partition that sample.
+Write exactly one `flags[]` entry per resolved finding; its `t_id` and verdict
+match the annotation written to `.threats-merged.json`.
+
+## Producer contract gate
+
+After the final flush and before the console summary, use one Bash tool call:
+
+```bash
+set -e
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" threats_merged "$OUTPUT_DIR/.threats-merged.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" evidence_verification "$OUTPUT_DIR/.evidence-verification.json"
+```
+
+Do not print completion before both commands exit 0. Correct only the fields
+owned by this verifier and repeat the complete gate if either command fails.
 
 ### Console summary
 
@@ -175,9 +193,9 @@ This file is the canonical record of the verifier run. Phase 10b's triage valida
 
 ## Failure modes — what to do when things go wrong
 
-- **`.threats-merged.json` missing or malformed.** Log `AGENT_ERROR`, write an empty `.evidence-verification.json` with `summary.total_threats: 0`, exit. The orchestrator's Phase 10b can still run — it just won't have refutation signal to consume.
+- **`.threats-merged.json` missing or malformed.** Log `AGENT_ERROR`, write a schema-valid `.evidence-verification.json` with the normal metadata, every summary counter set to 0, and `flags: []`; then exit. The orchestrator's Phase 10b can still run — it just won't have refutation signal to consume.
 - **`Read` fails on a cited file** (deleted between Phase 10 and now, perms issue, binary blob). Treat the finding as `ambiguous` with reason `"could not read cited file"`. Continue.
-- **Turn budget exhausted before the sample is complete.** Because of the incremental-flush contract the verdicts resolved so far are ALREADY on disk; do one final flush of both files, set `summary.sampled` to the actual resolved count, and emit a `BASH_WARN` log line `evidence-verifier: turn budget exhausted at <n>/<N> findings`. Findings beyond the cutoff retain `evidence_check: unchecked`. (Pre-2026-06-13 the write was a single terminal batch, so a cut-off lost every verdict — the incremental flush is what makes "write what you have" actually reachable.)
+- **Turn budget exhausted before the sample is complete.** Because of the incremental-flush contract the verdicts resolved so far are ALREADY on disk; do one final flush of both files, keep `summary.sampled` at the selected sample size, set `summary.unchecked` to the unresolved remainder, and emit a `BASH_WARN` log line `evidence-verifier: turn budget exhausted at <n>/<N> findings`. Findings beyond the cutoff retain `evidence_check: unchecked`. (Pre-2026-06-13 the write was a single terminal batch, so a cut-off lost every verdict — the incremental flush is what makes "write what you have" actually reachable.)
 - **Sample selection produces zero findings** (e.g. `quick` on a clean repo with no Critical/High findings). Print `[evidence-verifier]   ↳ Sample empty — nothing to verify` and exit normally with the side-channel file written.
 
 ## Depth-dependent behavior

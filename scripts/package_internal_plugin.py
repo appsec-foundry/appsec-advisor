@@ -100,6 +100,7 @@ HOOK_SCRIPT_IDS = {
     "agent_logger.py": "agent-logger",
     "security_steering.py": "security-coach",
 }
+INTERNAL_REQUIRED_SKILLS = {"internal-threat-analysis-kernel"}
 
 
 def _die(message: str, code: int = 2) -> None:
@@ -432,6 +433,24 @@ def _available_skills(build: Path) -> set[str]:
     return {path.parent.name for path in skills_dir.glob("*/SKILL.md") if path.is_file()}
 
 
+def _required_internal_skills(build: Path) -> set[str]:
+    """Internal skills referenced by agent frontmatter in this packaged source."""
+    agents_dir = build / "agents"
+    if not agents_dir.is_dir():
+        return set()
+    required: set[str] = set()
+    for path in agents_dir.glob("*.md"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        frontmatter = text.split("---", 2)[1] if text.startswith("---") and text.count("---") >= 2 else ""
+        for skill in INTERNAL_REQUIRED_SKILLS:
+            if re.search(rf"(?m)^\s*-\s+{re.escape(skill)}\s*$", frontmatter):
+                required.add(skill)
+    return required
+
+
 def _hook_id(command: str) -> str | None:
     if "/scripts/" not in command and "\\scripts\\" not in command:
         return None
@@ -475,12 +494,17 @@ def _available_hook_ids(build: Path) -> set[str]:
 
 def apply_skill_policy(build: Path, surface: dict) -> dict:
     available = _available_skills(build)
+    required_internal = _required_internal_skills(build)
+    missing_internal = required_internal - available
+    if missing_internal:
+        _die(f"packaged source is missing internal required skills: {sorted(missing_internal)}")
     keep = _resolve_keep_set(
         surface.get("skills"),
         available,
         "skills",
         required={"create-threat-model"},
     )
+    keep.update(required_internal)
     removed = sorted(available - keep)
     for skill in removed:
         shutil.rmtree(build / "skills" / skill)
@@ -841,6 +865,7 @@ HOOK_DESCRIPTIONS = {
 
 # Skills with their own detailed section in the README
 MAIN_SKILLS = ["create-threat-model", "audit-security-requirements", "verify-requirements"]
+INTERNAL_SKILLS = INTERNAL_REQUIRED_SKILLS
 # Skills grouped into a single utility section
 UTILITY_SKILLS = [
     "help",
@@ -991,7 +1016,7 @@ def _build_readme(build: Path, name: str, surface_manifest: dict, upstream_url: 
             desc = _skill_description(build, skill)
             utility_rows += f"| `/{name}:{skill}` | {desc} |\n"
     # Any skills not in either category
-    known = set(MAIN_SKILLS + UTILITY_SKILLS)
+    known = set(MAIN_SKILLS + UTILITY_SKILLS) | INTERNAL_SKILLS
     for skill in sorted(skills):
         if skill not in known:
             desc = _skill_description(build, skill)

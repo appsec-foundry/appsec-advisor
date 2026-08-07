@@ -54,6 +54,15 @@ def test_require_plugin_root_missing(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def _write_internal_kernel(root: Path) -> None:
+    kernel = root / "skills" / "internal-threat-analysis-kernel"
+    kernel.mkdir(parents=True, exist_ok=True)
+    (kernel / "SKILL.md").write_text(
+        "---\nname: internal-threat-analysis-kernel\ndescription: Internal kernel.\n---\n",
+        encoding="utf-8",
+    )
+
+
 def _make_source(root):
     (root / ".claude-plugin").mkdir(parents=True)
     (root / ".claude-plugin" / "plugin.json").write_text(
@@ -62,10 +71,15 @@ def _make_source(root):
     (root / "config.json").write_text(json.dumps({}), encoding="utf-8")
     for d in ("agents", "skills", "scripts", "schemas"):
         (root / d).mkdir()
+    (root / "agents" / "appsec-stride-analyzer-v2.md").write_text(
+        "---\nname: appsec-stride-analyzer-v2\nskills:\n  - internal-threat-analysis-kernel\n---\n",
+        encoding="utf-8",
+    )
     # a skill with the entry command and an upstream namespace leak
     smk = root / "skills" / "create-threat-model"
     smk.mkdir()
     (smk / "SKILL.md").write_text("Run appsec-advisor:create-threat-model now.\n", encoding="utf-8")
+    _write_internal_kernel(root)
     other = root / "skills" / "publish-threat-model"
     other.mkdir()
     (other / "SKILL.md").write_text("appsec-advisor:publish stuff\n", encoding="utf-8")
@@ -534,6 +548,7 @@ def test_added_skills_are_recorded_as_org_owned(tmp_path):
     write_org_skill(build, "acme-release-check")
     (build / "skills" / "create-threat-model").mkdir(parents=True)
     (build / "skills" / "create-threat-model" / "SKILL.md").write_text("x", encoding="utf-8")
+    _write_internal_kernel(build)
     pkg.apply_package_surface_policy(build, {}, None)
     skills = json.loads((build / pkg.SURFACE_MANIFEST).read_text())["skills"]
     assert skills["org_added"] == ["acme-release-check"]
@@ -547,6 +562,7 @@ def test_the_package_policy_can_exclude_an_added_skill(tmp_path):
     write_org_skill(build, "acme-release-check")
     (build / "skills" / "create-threat-model").mkdir(parents=True)
     (build / "skills" / "create-threat-model" / "SKILL.md").write_text("x", encoding="utf-8")
+    _write_internal_kernel(build)
     policy = {"plugin_surface": {"skills": {"exclude": ["acme-release-check"]}}}
     pkg.apply_package_surface_policy(build, policy, None)
     assert not (build / "skills" / "acme-release-check").exists()
@@ -802,7 +818,11 @@ def test_available_skills_no_dir(tmp_path):
 
 def test_available_skills_found(tmp_path):
     src = _make_source(tmp_path / "src")
-    assert pkg._available_skills(src) == {"create-threat-model", "publish-threat-model"}
+    assert pkg._available_skills(src) == {
+        "create-threat-model",
+        "internal-threat-analysis-kernel",
+        "publish-threat-model",
+    }
 
 
 def test_hook_id_branches():
@@ -865,9 +885,57 @@ def test_available_hook_ids_skips_malformed(tmp_path):
 def test_apply_skill_policy_removes(tmp_path):
     src = _make_source(tmp_path / "src")
     result = pkg.apply_skill_policy(src, {"skills": {"include": ["create-threat-model"]}})
-    assert result["included"] == ["create-threat-model"]
+    assert result["included"] == ["create-threat-model", "internal-threat-analysis-kernel"]
     assert result["removed"] == ["publish-threat-model"]
     assert not (src / "skills" / "publish-threat-model").exists()
+
+
+def test_apply_skill_policy_cannot_remove_internal_kernel(tmp_path):
+    src = _make_source(tmp_path / "src")
+    result = pkg.apply_skill_policy(
+        src,
+        {
+            "skills": {
+                "exclude": ["internal-threat-analysis-kernel"],
+            }
+        },
+    )
+    assert "internal-threat-analysis-kernel" in result["included"]
+    assert (src / "skills" / "internal-threat-analysis-kernel" / "SKILL.md").is_file()
+
+
+def test_apply_skill_policy_does_not_require_kernel_without_dependent_agent(tmp_path):
+    src = _make_source(tmp_path / "src")
+    (src / "agents" / "appsec-stride-analyzer-v2.md").unlink()
+    (src / "skills" / "internal-threat-analysis-kernel" / "SKILL.md").unlink()
+    (src / "skills" / "internal-threat-analysis-kernel").rmdir()
+    result = pkg.apply_skill_policy(src, {"skills": {"include": ["create-threat-model"]}})
+    assert result["included"] == ["create-threat-model"]
+
+
+def test_apply_skill_policy_fails_when_dependent_agent_has_no_kernel(tmp_path, capsys):
+    src = _make_source(tmp_path / "src")
+    (src / "skills" / "internal-threat-analysis-kernel" / "SKILL.md").unlink()
+    (src / "skills" / "internal-threat-analysis-kernel").rmdir()
+    with pytest.raises(SystemExit):
+        pkg.apply_skill_policy(src, {})
+    assert "missing internal required skills" in capsys.readouterr().err
+
+
+def test_packaged_readme_does_not_advertise_internal_kernel(tmp_path):
+    src = _make_source(tmp_path / "src")
+    readme = pkg._build_readme(
+        src,
+        "acme",
+        {
+            "skills": {
+                "included": ["create-threat-model", "internal-threat-analysis-kernel"],
+            },
+            "hooks": {"included": []},
+        },
+        None,
+    )
+    assert "internal-threat-analysis-kernel" not in readme
 
 
 def test_apply_hook_policy_filters_and_removes_keywords(tmp_path):
@@ -946,6 +1014,7 @@ def _make_build_with_org_hook(root):
         "    command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py\n",
         encoding="utf-8",
     )
+    _write_internal_kernel(root)
     return root
 
 

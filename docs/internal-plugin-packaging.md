@@ -277,7 +277,7 @@ Supported hook IDs today:
 | `security-coach` | `scripts/security_steering.py` | Removes prompt-time security coaching; `hooks/steering_keywords.json` is also omitted. |
 | `agent-logger` | `scripts/agent_logger.py` | Removes Claude hook event logging for tool/use/stop events. Run summaries may have less timing and token context. |
 
-`create-threat-model` is required and cannot be removed by package policy. Unknown names fail the build so typos do not silently produce the wrong internal artifact.
+`create-threat-model` and its internal `internal-threat-analysis-kernel` dependency are required and cannot be removed by package policy. The kernel is preloaded only by focused core agents and is not advertised as a user command. Unknown names fail the build so typos do not silently produce the wrong internal artifact.
 
 If the org profile declares an [`mcp` block](org-profiles.md#mcp-servers), a third surface, `mcp_servers`, narrows which of those servers are emitted into the packaged `.mcp.json`. Every declared server is included by default; use an allowlist to restrict them:
 

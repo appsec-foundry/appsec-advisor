@@ -1,7 +1,7 @@
 """Guards for the per-component STRIDE output glob (scripts/stride_outputs.py).
 
-`.stride-dispatch-manifest.json`, `.stride-selection.json` and
-`.stride-analyst-context.json` share the `.stride-` prefix with the
+`.stride-dispatch-manifest.json`, `.stride-selection.json`,
+`.stride-analyst-context.json`, and `.stride-repository-registry.json` share the `.stride-` prefix with the
 per-component results but are written BEFORE the Phase-9 fan-out. A bare
 `glob(".stride-*.json")` counts them as finished components: the watchdog's
 `stride_count == 0` canary can then never fire, the progress widget reports
@@ -109,6 +109,10 @@ def test_reanalyzed_ids_ignore_legacy_sidecar_keys(tmp_path):
                     "auth": {"path": ".stride-auth.json", "sha256": "sha256:stale"},
                     "dispatch-manifest": {"path": ".stride-dispatch-manifest.json", "sha256": "sha256:stale"},
                     "analyst-context": {"path": ".stride-analyst-context.json", "sha256": "sha256:stale"},
+                    "repository-registry": {
+                        "path": ".stride-repository-registry.json",
+                        "sha256": "sha256:stale",
+                    },
                 }
             }
         ),
@@ -154,7 +158,7 @@ def test_no_new_inline_stride_glob():
     assert not offenders, (
         f"{offenders} glob '.stride-*.json' directly — use "
         "stride_outputs.stride_output_files() so the `.stride-` sidecars "
-        "(dispatch manifest, selection, analyst context) are not counted as "
+        "(dispatch manifest, selection, analyst context, repository registry) are not counted as "
         "finished components."
     )
 

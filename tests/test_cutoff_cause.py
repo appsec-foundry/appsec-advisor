@@ -102,3 +102,4 @@ def test_cause_for_default_when_no_stall(tmp_path):
     _write_run(tmp_path, start=1_000_000_000, log="")
     assert mod.cause_for(tmp_path, "session_death")[0] == "session_death"
     assert mod.cause_for(tmp_path, "budget")[0] == "budget"
+    assert mod.cause_for(tmp_path, "interrupted")[0] == "interrupted"

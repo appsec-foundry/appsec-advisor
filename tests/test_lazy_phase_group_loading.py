@@ -267,12 +267,19 @@ def test_skill_impl_stage2_tail_lazy_loaded():
 
 def test_thin_runtime_loads_stage1d_only_when_enabled():
     runtime = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
-    assert "Read `SKILL-thin-stage1.md` in full" in runtime
-    assert "Only when `SKIP_ABUSE_CASE_VERIFICATION=false`" in runtime
-    assert "read\n`SKILL-thin-stage1d.md` in full" in runtime
-    assert "Otherwise do not load any Stage-1d instructions" in runtime
-    assert "SKILL-thin-stage2.md" in runtime
-    assert "Do not load the Stage-2 slice" in runtime
+    flat = " ".join(runtime.split())
+    # The parent follows the controller-returned Stage-1 runtime and may not
+    # pick one itself; both generations' files are named as the only permitted
+    # values so a substitution is visibly out of contract.
+    assert "Read `ACTION.instruction_file` in full and follow it" in flat
+    assert "SKILL-thin-stage1.md" in flat
+    assert "SKILL-thin-stage1-v2.md" in flat
+    assert "Do not substitute either" in flat
+    assert "Only when `SKIP_ABUSE_CASE_VERIFICATION=false`" in flat
+    assert "read `SKILL-thin-stage1d.md` in full" in flat
+    assert "Otherwise do not load any Stage-1d instructions" in flat
+    assert "SKILL-thin-stage2.md" in flat
+    assert "Do not load the Stage-2 slice" in flat
 
 
 def test_non_dry_stage3_safety_slice_cannot_be_bypassed_by_controller_action():

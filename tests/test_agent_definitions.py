@@ -34,11 +34,19 @@ REQUIRED_MODEL = "sonnet"
 #     (Phase 2.7 actor discovery + Stage-1d abuse-case fan-out coordination).
 #   - QA reviewer 120→200 (2026-08-02): large semantic repair plans repeatedly
 #     exhausted 120 turns before emitting the mandatory completion status.
+#   - Recon scanner 25→36 (2026-08-07): reserve ten publication calls after a
+#     fixed 22-call discovery ceiling; a live run consumed all 25 turns and
+#     skipped its required Markdown validator after writing an incomplete
+#     heading sequence.
 EXPECTED_MAX_TURNS = {
     "appsec-threat-analyst": 300,
+    "appsec-architecture-analyst": 60,
+    "appsec-control-analyst": 40,
+    "appsec-post-stride-synthesizer": 20,
     "appsec-context-resolver": 25,
-    "appsec-recon-scanner": 25,
+    "appsec-recon-scanner": 36,
     "appsec-stride-analyzer": 96,  # 2026-08-02: covers the file-footprint turn floor (cap 80 + 16 wrap-up buffer); was 56 (cap 48 + 8), which killed a 47-file component on both attempts
+    "appsec-stride-analyzer-v2": 96,
     "appsec-triage-validator": 20,
     "appsec-threat-merger": 12,
     "appsec-threat-renderer": 80,
@@ -59,9 +67,13 @@ EXPECTED_MAX_TURNS = {
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
 INTERNAL_AGENTS = {
+    "appsec-architecture-analyst",
+    "appsec-control-analyst",
+    "appsec-post-stride-synthesizer",
     "appsec-context-resolver",
     "appsec-recon-scanner",
     "appsec-stride-analyzer",
+    "appsec-stride-analyzer-v2",
     "appsec-triage-validator",
     "appsec-threat-merger",
     "appsec-threat-renderer",
@@ -80,6 +92,13 @@ INTERNAL_AGENTS = {
 
 # The orchestrator is the only user-facing agent
 ORCHESTRATOR = "appsec-threat-analyst"
+
+KERNEL_PRELOAD_ROLES = {
+    "appsec-architecture-analyst",
+    "appsec-control-analyst",
+    "appsec-post-stride-synthesizer",
+    "appsec-stride-analyzer-v2",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +254,20 @@ class TestInternalMarkers:
         )
 
 
+def test_internal_kernel_is_preloaded_only_by_focused_context_v2_roles():
+    preloaded = set()
+    for path in agent_files():
+        meta, _ = parse_frontmatter(path)
+        skills = meta.get("skills", [])
+        assert isinstance(skills, list), f"{path.name}: skills frontmatter must be a list"
+        if "internal-threat-analysis-kernel" in skills:
+            preloaded.add(path.stem)
+        assert all(skill == "internal-threat-analysis-kernel" for skill in skills), (
+            f"{path.name}: repository-selected or unexpected preloaded skill: {skills}"
+        )
+    assert preloaded == KERNEL_PRELOAD_ROLES
+
+
 # ---------------------------------------------------------------------------
 # All expected agents are present
 # ---------------------------------------------------------------------------
@@ -373,6 +406,135 @@ class TestBodyContentConsistency:
             "stride-analyzer must carry the local log_event.py mandate + format_line prohibition"
         )
 
+    def test_context_v2_logging_ownership_is_explicit(self):
+        shared = (AGENTS_DIR / "shared" / "logging-standard.md").read_text(encoding="utf-8")
+        assert "controller and skill emit" in shared
+        assert "controller proxy event must never claim" in shared
+        for name in KERNEL_PRELOAD_ROLES:
+            _, body = parse_frontmatter(AGENTS_DIR / f"{name}.md")
+            assert "AGENT_START" in body and "AGENT_END" in body
+            assert "AGENT_INVOKE" in body and "AGENT_DONE" in body
+
+    def test_context_v2_control_analyst_does_not_author_stride_profile(self):
+        _, body = parse_frontmatter(AGENTS_DIR / "appsec-control-analyst.md")
+        assert "top-level keys" in body
+        assert "must be final component\nIDs" in body
+        assert "Omit a component when it has no semantic value" in body
+        assert "Never write `_stride_profile`" in body
+        flat = " ".join(body.split())
+        assert "controller derives that reserved routing value from `.skill-config.json`" in flat
+
+    def test_recon_scanner_self_check_uses_canonical_oauth_heading(self):
+        meta, body = parse_frontmatter(AGENTS_DIR / "appsec-recon-scanner.md")
+        template = (AGENTS_DIR / "shared" / "recon-output-template.md").read_text(encoding="utf-8")
+        assert "$CLAUDE_PLUGIN_ROOT/agents/shared/recon-output-template.md` once in full" in body
+        assert "sub-sections 7.1–7.32" in body
+        assert "6.1–6.32" not in body
+        assert "### 6." not in template
+        assert "7.1–7.32" in template
+        assert "hard cap of **200 lines**" not in template
+        assert "The 200-line cap is blocking" not in body
+        assert "never omit required headings to meet the target" in body
+        assert "scripts/validate_recon_summary.py" in body
+        assert "the **next tool call**" in body
+        assert "Do not write `.recon-signals.json`" in body
+        assert "Section 7.28 is Container Runtime Hardening" in body
+
+        discovery_limit = int(re.search(r"`DISCOVERY_TOOL_CALL_LIMIT=(\d+)`", body).group(1))
+        publication_reserve = int(re.search(r"`PUBLICATION_TOOL_CALL_RESERVE=(\d+)`", body).group(1))
+        assert discovery_limit == 22
+        assert publication_reserve >= 10
+        assert meta["maxTurns"] - discovery_limit >= publication_reserve
+        assert "Read` call without `offset` or `limit`" in " ".join(body.split())
+        assert "Do not read the template during Steps 1–3" in body
+        assert "`MANIFEST_READ_CAP=8`" in body
+        assert "`DEPLOYMENT_READ_CAP=5`" in body
+        assert "`CONFIG_READ_CAP=5`" in body
+        assert "`GREP_RESULT_CAP_PER_CATEGORY=40`" in body
+        assert "disclose the omitted count" in body
+
+    def test_context_resolver_self_validates_before_completion(self):
+        meta, body = parse_frontmatter(AGENTS_DIR / "appsec-context-resolver.md")
+        assert "scripts/validate_threat_modeling_context.py" in body
+        assert "--repair-missing-headings" in body
+        assert "the **next tool call**" in body
+        assert "Do not log completion or print the final summary before this exits 0" in " ".join(body.split())
+        discovery_limit = int(re.search(r"`DISCOVERY_TOOL_CALL_LIMIT=(\d+)`", body).group(1))
+        publication_reserve = int(re.search(r"`PUBLICATION_TOOL_CALL_RESERVE=(\d+)`", body).group(1))
+        assert discovery_limit == 18
+        assert publication_reserve >= 7
+        assert meta["maxTurns"] - discovery_limit >= publication_reserve
+        assert "Never spend the publication reserve on additional discovery" in body
+
+    def test_context_resolver_never_sources_repository_values_as_shell(self):
+        _meta, body = parse_frontmatter(AGENTS_DIR / "appsec-context-resolver.md")
+        flat = " ".join(body.split())
+        assert "Never write or source a shell environment file" in flat
+        assert "never place discovered values into shell assignments" in flat
+        assert "multiple paths in JSON" in flat
+
+    def test_context_v2_producers_gate_outputs_before_controller_handoff(self):
+        expected_tokens = {
+            "appsec-actor-discoverer.md": ("validate_intermediate.py", "actors_discovered"),
+            "appsec-architecture-analyst.md": (
+                "validate_fragment.py",
+                "components",
+                "data-flows",
+                "assets",
+                "attack-surface-overrides",
+            ),
+            "appsec-config-scanner.md": (
+                "normalize_config_scan.py",
+                "validate_intermediate.py",
+                "config_scan_findings",
+            ),
+            "appsec-context-resolver.md": ("validate_threat_modeling_context.py",),
+            "appsec-control-analyst.md": (
+                "validate_fragment.py",
+                "security-controls",
+                "validate_intermediate.py",
+                "stride_analyst_context",
+            ),
+            "appsec-evidence-verifier.md": (
+                "validate_intermediate.py",
+                "threats_merged",
+                "evidence_verification",
+            ),
+            "appsec-post-stride-synthesizer.md": (
+                "validate_fragment.py",
+                "mitigation-overrides",
+                "tier-root-causes",
+            ),
+            "appsec-recon-scanner.md": (
+                "validate_recon_summary.py",
+                "validate_intermediate.py",
+                "recon_signals",
+            ),
+            "appsec-threat-merger.md": ("merge_threats.py", "validate-decisions", "$CANDIDATES_FILE"),
+            "appsec-triage-validator.md": (
+                "validate_intermediate.py",
+                "triage_flags",
+                "threats_merged",
+            ),
+            "appsec-trust-boundary-analyst.md": ("validate_fragment.py", "trust-boundary-candidates"),
+        }
+        for filename, tokens in expected_tokens.items():
+            _, body = parse_frontmatter(AGENTS_DIR / filename)
+            for token in tokens:
+                assert token in body, f"{filename} does not producer-validate with {token}"
+
+        _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer-v2.md")
+        assert "post-agent gate validates and may dispatch a semantic repair" in " ".join(stride.split())
+
+    def test_threat_merger_partial_decisions_are_disjoint(self):
+        _, body = parse_frontmatter(AGENTS_DIR / "appsec-threat-merger.md")
+        assert "Never overlap\nthe `member_indices` of two decisions for the same group" in body
+        assert "Each decision subset is disjoint from every other decision subset" in body
+
+    def test_trust_boundary_analyst_uses_absolute_plugin_logging_contract_path(self):
+        _, body = parse_frontmatter(AGENTS_DIR / "appsec-trust-boundary-analyst.md")
+        assert "$CLAUDE_PLUGIN_ROOT/agents/shared/logging-standard.md" in body
+
     def test_stride_analyzer_mandates_output_dir_export(self):
         """Regression guard (2026-06-21 juice-shop run): 5/8 parallel stride
         analyzers never wrote .progress/<id>.json because they did not export
@@ -384,6 +546,35 @@ class TestBodyContentConsistency:
             "stride-analyzer must mandate `export OUTPUT_DIR=` as its first Bash call "
             "so agent_progress.sh / log_event.py see the path (RC-3)"
         )
+
+    def test_context_v2_stride_producer_carries_exact_boundary_and_progress_contracts(self):
+        _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer-v2.md")
+        flat = " ".join(stride.split())
+        for field in ("boundary_id", "origin_component_id", "rationale", "evidence_locations"):
+            assert f'"{field}"' in stride
+        assert "Never emit `id`" in stride
+        assert "exactly repeats its evidence" in flat
+        assert "Never emit `TH-UNCLASSIFIED`" in stride
+        assert 'bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh"' in stride
+        assert "never invoke that shell script with Python" in stride
+        assert "`MODEL_ID` and `ANALYSIS_DEPTH`" in stride
+        assert "controller-resolved `STRIDE_PROFILE` JSON" in stride
+        assert "`THREAT_TAXONOMY_PATH` plus `THREAT_TAXONOMY_SHA256`" in stride
+        assert "read the plugin-owned full\n`data/threat-category-taxonomy.yaml` once" in stride
+        thin_runtime = (AGENTS_DIR.parent / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text(
+            encoding="utf-8"
+        )
+        assert "STRIDE (<dispatch_jobs[].analysis_depth>): <dispatch_jobs[].component_id>" in thin_runtime
+        assert "`ANALYSIS_DEPTH`" in thin_runtime
+        flat_runtime = " ".join(thin_runtime.split())
+        assert "Never recommend `--resume`" in flat_runtime
+        assert "a later `--full` restarts Stage 1" in flat_runtime
+
+    def test_context_v2_root_cause_producer_maps_component_tiers_to_schema_keys(self):
+        _, body = parse_frontmatter(AGENTS_DIR / "appsec-post-stride-synthesizer.md")
+        assert "`client` → `edge`" in body
+        assert "`application` → `server`" in body
+        assert "Never emit `client` or\n`application` as keys" in body
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +674,7 @@ INLINE_LOG_TEMPLATE_BUDGET = {
 AGENT_FILES_WITH_ZERO_BUDGET = [
     AGENTS_DIR / "appsec-qa-reviewer.md",
     AGENTS_DIR / "appsec-stride-analyzer.md",
+    AGENTS_DIR / "appsec-stride-analyzer-v2.md",
     AGENTS_DIR / "appsec-context-resolver.md",
     AGENTS_DIR / "appsec-recon-scanner.md",
     AGENTS_DIR / "appsec-triage-validator.md",
@@ -547,6 +739,7 @@ _LEGACY_HARDCODED_GLOB_FRAGMENT = (
 AGENT_FILES_USING_EXCLUDE_GLOB = [
     AGENTS_DIR / "appsec-recon-scanner.md",
     AGENTS_DIR / "appsec-stride-analyzer.md",
+    AGENTS_DIR / "appsec-stride-analyzer-v2.md",
 ]
 
 
@@ -605,6 +798,7 @@ AGENT_FILES_AUTHORING_PROSE = [
     AGENTS_DIR / "appsec-secarch-renderer.md",
     AGENTS_DIR / "appsec-ms-renderer.md",
     AGENTS_DIR / "appsec-stride-analyzer.md",
+    AGENTS_DIR / "appsec-stride-analyzer-v2.md",
     AGENTS_DIR / "phases" / "phase-group-finalization.md",
     AGENTS_DIR / "shared" / "ms-template.md",
 ]
@@ -691,6 +885,7 @@ REPO_READING_AGENTS = [
     "appsec-evidence-verifier",
     "appsec-abuse-case-verifier",
     "appsec-stride-analyzer",
+    "appsec-stride-analyzer-v2",
     "appsec-threat-renderer",
     "appsec-secarch-renderer",
     "appsec-ms-renderer",
@@ -746,3 +941,11 @@ def test_stride_template_never_offers_null_for_a_string_only_field():
         "for the whole object."
     )
     assert "never null" in line.lower(), "the template must state that evidence.file is never null"
+
+
+def test_context_v2_architecture_agent_uses_bounded_data_classification_vocabulary():
+    text = (AGENTS_DIR / "appsec-architecture-analyst.md").read_text(encoding="utf-8")
+    assert "Use only `Public`, `Internal`, `Confidential`, or" in text
+    assert "`Restricted` as the data classification" in text
+    assert re.search(r"replaces the\s+provisional fingerprint", text)
+    assert "reserve_ids.py asset --count <N> --output-dir" in text

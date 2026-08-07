@@ -5,7 +5,7 @@ Covers:
   - merge precedence (declared > submodule > sibling > recon)
   - sibling discovery: TM found vs missing, cap at max_siblings
   - submodule discovery via .gitmodules
-  - recon Section 6.25 parser (table + bullet style)
+  - recon Section 7.25 parser (table + bullet style; legacy 6.25 accepted)
   - schema validation of the produced register
   - declared deduplication (a recon-discovered name that is already declared
     must not appear twice)
@@ -541,6 +541,16 @@ class TestReconParser:
         assert names["auth-svc"]["interface"] == "REST"
         assert names["Stripe"]["type"] == "saas"
         assert names["Stripe"]["threat_model"]["status"] == "n/a"
+
+    def test_legacy_section_6_25_is_still_accepted(self) -> None:
+        md = textwrap.dedent("""
+            ### 6.25 Cross-repo dependencies
+            | Name | Type | Source | Interface |
+            |------|------|--------|-----------|
+            | legacy-svc | scm-sibling | compose.yml:4 | REST |
+        """).strip()
+        out = bcrr._parse_recon_25(md)
+        assert [entry["name"] for entry in out] == ["legacy-svc"]
 
     def test_table_row_type_not_matched_skipped(self) -> None:
         md = textwrap.dedent("""

@@ -67,6 +67,7 @@ EXPECTED_WHITELIST_FILES = {
     ".recon-scanner.stdout",
     ".coverage-gaps.json",
     ".dispatch-waves.json",
+    ".stride-repository-registry.json",
     ".scan-manifest.txt",
     ".triage-ranking.json",
     ".trust-boundary-assessment-input.json",
@@ -140,6 +141,7 @@ EXPECTED_POST_ARCH_FILES_IF_PASS = {
 NEVER_CLEANUP = {
     ".threat-modeling-context.md",
     ".recon-summary.md",
+    ".recon-signals.json",
     ".sca-practice-findings.json",
     ".known-bad-libs-findings.json",
     ".dep-update-activity.json",

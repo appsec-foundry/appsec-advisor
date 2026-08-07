@@ -1,6 +1,6 @@
 # Recon Scanner Output Template
 
-Used by `appsec-recon-scanner` Step 4. Defines the exact Markdown structure that gets written to `$OUTPUT_DIR/.recon-summary.md`. The orchestrator's Phase 5 reads this file every turn, so the template targets a hard cap of **200 lines** total output.
+Used by `appsec-recon-scanner` Step 4. Defines the exact Markdown structure that gets written to `$OUTPUT_DIR/.recon-summary.md`. The orchestrator's Phase 5 reads this file every turn, so the template targets **200 lines** total output without dropping required headings.
 
 ## Template
 
@@ -61,50 +61,50 @@ The agent fills in every `<placeholder>` and writes the resulting Markdown verba
 
 ## 7. Security-Relevant Code
 
-### 6.1 Auth & Session
+### 7.1 Auth & Session
 **Mechanism:** <e.g., "JWT via jsonwebtoken library", "Session cookies via express-session">
 **Key files:** <file:line references>
 **Observations:**
 - <1-3 bullet points about what was found — auth flow, token handling, session config>
 
-### 6.2 Authorization
+### 7.2 Authorization
 **Mechanism:** <e.g., "RBAC via custom middleware", "Spring Security @PreAuthorize">
 **Key files:** <file:line references>
 **Observations:**
 - <1-3 bullets>
 
-### 6.3 Data Access
+### 7.3 Data Access
 **Pattern:** <e.g., "TypeORM with repository pattern", "Raw SQL queries">
 **Key files:** <file:line references>
 **Observations:**
 - <1-3 bullets — parameterized queries? ORM? raw SQL?>
 
-### 6.4 Input Handling
+### 7.4 Input Handling
 **Key files:** <file:line references>
 **Observations:**
 - <validation present? sanitization? mass assignment risk?>
 
-### 6.5 Serialization
+### 7.5 Serialization
 **Key files:** <file:line references>
 **Observations:**
 - <safe deserialization? untrusted input parsed?>
 
-### 6.6 Crypto & Secrets
+### 7.6 Crypto & Secrets
 **Key files:** <file:line references>
 **Observations:**
 - <algorithms used? key management? hardcoded secrets noted by file:line only>
 
-### 6.7 Error Handling
+### 7.7 Error Handling
 **Key files:** <file:line references>
 **Observations:**
 - <stack traces exposed? generic error pages? logging of sensitive data?>
 
-### 6.8 Dangerous Sinks
+### 7.8 Dangerous Sinks
 **Key files:** <file:line references>
 **Observations:**
 - <eval/exec usage? DOM manipulation? command injection risk?>
 
-### 6.9 OAuth / OIDC
+### 7.9 OAuth / OIDC
 **Key files:** <file:line references>
 **Deterministic findings (Cat 9):**
 
@@ -118,7 +118,7 @@ If none: `No OAuth / OIDC patterns detected.`
 - <flows used? PKCE? state parameter validation?>
 - **Frontend integrations (Sprint 2C — list separately even when there is no backend OAuth):** when the codebase contains an SPA with a Google / Auth0 / Azure / NextAuth / generic-OIDC client-side login button, enumerate it here even when the *server* has no OAuth code. List each provider once with: provider name, integration mechanism (redirect / popup / implicit / PKCE), scope of token use (frontend-only social login vs. backend session exchange), and the file:line where the `clientId`, redirect URL, or SDK call is declared. Without this, downstream Phase 8 catalogues `Google OAuth` only when the *server* sees the callback — frontend-only Google sign-ins (e.g. `userService.oauthLogin(accessToken)` calling `googleapis.com/oauth2/v1/userinfo`) are silently dropped from `security_controls[]` and the §6.3 IAM section ends up missing the OAuth flow entirely (observed in the 2026-04-27 juice-shop run).
 
-### 6.10 SPA / BFF
+### 7.10 SPA / BFF
 **Key files:** <file:line references>
 **Deterministic findings (Cat 10):**
 
@@ -129,12 +129,12 @@ If none: `No OAuth / OIDC patterns detected.`
 **Observations:**
 - <token storage? cookie config? BFF pattern?>
 
-### 6.11 Exposed Routes
+### 7.11 Exposed Routes
 **Key files:** <file:line references>
 **Observations:**
 - <debug endpoints? admin panels? health checks public?>
 
-### 6.12 Hardcoded Secrets
+### 7.12 Hardcoded Secrets
 **Matches:** <n> (<n> Critical, <n> High)
 **Findings:**
 
@@ -142,7 +142,7 @@ If none: `No OAuth / OIDC patterns detected.`
 |----------|------|------|------|---------|
 | <Critical/High> | <file> | <line> | <Password/API key/Token/Private key/Cloud credential/DB credential> | <4 chars>**** |
 
-### 6.13 AI / LLM Integration
+### 7.13 AI / LLM Integration
 **LLM detected:** <yes/no>
 **Key files:** <file:line references>
 **Observations:**
@@ -163,7 +163,7 @@ If none: `No OAuth / OIDC patterns detected.`
 | Agent / tool-use | <file:line> | <tools available, permission model> |
 | Model config | <file:line> | <temperature, max_tokens, model selection> |
 
-### 6.14 CI/CD Supply Chain
+### 7.14 CI/CD Supply Chain
 **CI/CD pipelines found:** <yes/no>
 **Key files:** <file:line references>
 **Observations:**
@@ -176,7 +176,7 @@ If none: `No OAuth / OIDC patterns detected.`
 |------|------|-----------|------|
 | <file> | <line> | <action/image ref> | <not SHA-pinned / tag-only / latest> |
 
-### 6.15 Container Base Images
+### 7.15 Container Base Images
 **Dockerfiles found:** <yes/no>
 **Key files:** <file:line references>
 **Observations:**
@@ -188,19 +188,19 @@ If none: `No OAuth / OIDC patterns detected.`
 |------|------|-------|-------|
 | <file> | <line> | <image:tag> | <unpinned / latest / no digest / non-official> |
 
-### 6.16 Dependency Confusion
+### 7.16 Dependency Confusion
 **Private registry configured:** <yes / no / partial>
 **Key files:** <file:line references>
 **Observations:**
 - <Scoped packages used? Private registry in .npmrc/.pypirc? Dual-source risk?>
 
-### 6.17 Postinstall Scripts
+### 7.17 Postinstall Scripts
 **Install hooks found:** <yes/no>
 **Key files:** <file:line references>
 **Observations:**
 - <What do the hooks do? Network requests? File system access? Compilation only?>
 
-### 6.18 Security Headers & CORS
+### 7.18 Security Headers & CORS
 **Key files:** <file:line references>
 **Observations:**
 - <CSP header present? Restrictive or permissive (unsafe-inline, unsafe-eval)?>
@@ -208,7 +208,7 @@ If none: `No OAuth / OIDC patterns detected.`
 - <X-Frame-Options, X-Content-Type-Options, Referrer-Policy present?>
 - <Using helmet or equivalent security header middleware?>
 
-### 6.19 Frontend Framework & XSS Patterns
+### 7.19 Frontend Framework & XSS Patterns
 **Framework detected:** <React <version> / Angular <version> / Vue <version> / Svelte / Next.js / Nuxt / none>
 **Key files:** <file:line references>
 **Deterministic findings (Cat 19):**
@@ -222,7 +222,7 @@ If none: `No OAuth / OIDC patterns detected.`
 - <Sanitizer configuration — default or customized?>
 - <Template injection risk from user data in framework templates?>
 
-### 6.20 DOM-Based XSS Sources
+### 7.20 DOM-Based XSS Sources
 **Key files:** <file:line references>
 **Deterministic findings (Cat 20):**
 
@@ -234,35 +234,35 @@ If none: `No OAuth / OIDC patterns detected.`
 - <User-controlled DOM sources found? (location.hash, URLSearchParams, useParams, etc.)>
 - <Do any sources flow to known sinks from 7.8? List file:line pairs for source→sink paths>
 
-### 6.21 Client-Side Secrets
+### 7.21 Client-Side Secrets
 **Key files:** <file:line references>
 **Observations:**
 - <Frontend env var prefixes exposing values to browser? (REACT_APP_, NEXT_PUBLIC_, VITE_, etc.)>
 - <Third-party API keys in frontend code? (Firebase, Google Maps, Stripe, etc.)>
 - <Sensitive vs public-safe keys — which are genuinely risky?>
 
-### 6.22 WebSocket & Real-Time
+### 7.22 WebSocket & Real-Time
 **Key files:** <file:line references>
 **Observations:**
 - <WebSocket/Socket.IO endpoints found? Using ws:// or wss://?>
 - <Authentication on WebSocket connections? Origin validation?>
 - <Deterministic Cat 22 subcategories: websocket-cleartext, websocket-missing-auth-candidate, websocket-origin-validation-gap?>
 
-### 6.23 postMessage & iframe
+### 7.23 postMessage & iframe
 **Key files:** <file:line references>
 **Observations:**
 - <postMessage listeners found? Origin validated in handler?>
 - <iframes present? Sandbox attribute set? Allow attribute restrictive?>
 - <Deterministic Cat 23 subcategories: postmessage-wildcard-target, message-listener-no-origin-check, iframe-missing-sandbox, iframe-permissive-sandbox, window-opener-noopener-missing?>
 
-### 6.24 Client-Side Routing & Auth Guards
+### 7.24 Client-Side Routing & Auth Guards
 **Key files:** <file:line references>
 **Observations:**
 - <Client-side route guards found? (canActivate, beforeEach, PrivateRoute, etc.)>
 - <Are guards backed by server-side authorization, or client-only?>
-- <Mobile Cat 29 architecture signals routed here when present: exported Android components, custom schemes/app links, WebView bridges/debug/file access, ATS/cleartext, token storage, accept-all TLS. Mirror Cat 29 transport/storage details in 7.18/7.21 as applicable; do not create §6.33.>
+- <Mobile Cat 29 architecture signals routed here when present: exported Android components, custom schemes/app links, WebView bridges/debug/file access, ATS/cleartext, token storage, accept-all TLS. Mirror Cat 29 transport/storage details in 7.18/7.21 as applicable; do not create §7.33.>
 
-### 6.25 Cross-Repository & SaaS Dependencies
+### 7.25 Cross-Repository & SaaS Dependencies
 **SCM sibling projects:** <n found>
 
 | Name | Source | Interface | Repo hint | Confidence |
@@ -280,7 +280,7 @@ If none: `No OAuth / OIDC patterns detected.`
 
 If no SCM siblings or SaaS integrations are found, write: `No cross-repository or SaaS dependencies detected.`
 
-### 6.26 Ecosystem Supply Chain Hygiene
+### 7.26 Ecosystem Supply Chain Hygiene
 **Ecosystems detected:** <comma-separated list, e.g., npm, Python (pip), Go>
 
 **CI install integrity:**
@@ -319,9 +319,11 @@ If no SCA tooling detected: `No SCA tooling found in CI workflows.`
 - <e.g., npm: `npm install` used in `Dockerfile:12` instead of `npm ci`>
 - <e.g., Rust: `Cargo.lock` not committed but project has binary targets>
 
-### 6.27 GitHub Actions Workflow Security
+### 7.27 GitHub Actions Workflow Security
 
-Only when `.github/workflows/*.yml` files exist. **Workflows scanned:** <N files under `.github/workflows/`>.
+When `.github/workflows/*.yml` files exist, populate the checks below and record
+`**Workflows scanned:** <N files under .github/workflows/>`. Otherwise keep this
+heading and write `No GitHub Actions workflows found.`
 
 **Workflow inventory:**
 
@@ -357,9 +359,12 @@ Summarize: `<N> workflows with no explicit permissions block (inherit repo defau
 
 If no `self-hosted` entries found: `None — all workflows use GitHub-hosted runners.`
 
-### 6.27a Public-Repo Contribution Exposure
+### 7.27a Public-Repo Contribution Exposure
 
-Only when repository visibility is **public** or **unknown** (independent of whether any workflow file exists — Cat 27d). For a **private/internal** repo, render: `Repo is private/internal — external-contribution threat does not apply.`
+When repository visibility is **public** or **unknown**, populate the table below
+independently of whether any workflow file exists (Cat 27d). For a
+**private/internal** repo, keep this heading and render: `Repo is
+private/internal — external-contribution threat does not apply.`
 
 | Signal | Observed |
 |--------|----------|
@@ -372,9 +377,10 @@ Only when repository visibility is **public** or **unknown** (independent of whe
 
 This block is the evidence source for the untrusted-external-contribution Tampering/EoP threat (see STRIDE analyzer supply-chain patterns).
 
-### 6.28 Container Runtime Hardening
+### 7.28 Container Runtime Hardening
 
-Only when `Dockerfile` exists.
+When a `Dockerfile` exists, populate the checks below. Otherwise keep this
+heading and write `No Dockerfile found.`
 
 - **Base image pinning:** `FROM <image>:<tag>@sha256:<digest>?` — record whether a digest is present for every `FROM` line.
 - **USER directive:** record the final `USER <name/uid>` value. Flag when empty or root/0.
@@ -382,9 +388,10 @@ Only when `Dockerfile` exists.
 - **Install privilege flags:** `--unsafe-perm` / `--ignore-scripts` / neither in any `RUN npm install` / `RUN pip install` / similar.
 - **Capability drops:** any `--cap-drop=ALL` / `--security-opt=no-new-privileges`? (usually surfaced at `docker run` time, but flag if the Dockerfile has `ENTRYPOINT ["sh", "-c", …]` that could bypass).
 
-### 6.29 docker-compose Security
+### 7.29 docker-compose Security
 
-Only when `docker-compose*.yml` exists.
+When `docker-compose*.yml` exists, populate the checks below. Otherwise keep
+this heading and write `No docker-compose file found.`
 
 For each service, flag:
 - `privileged: true` — container escape equivalent
@@ -394,9 +401,11 @@ For each service, flag:
 - `user: root` or no user directive
 - Hardcoded credentials in `environment:` blocks (not pulled from secrets)
 
-### 6.30 Artifact Signing & Provenance
+### 7.30 Artifact Signing & Provenance
 
-Only when `.github/workflows/*.yml` or `Dockerfile` exist.
+When `.github/workflows/*.yml` or a `Dockerfile` exists, populate the checks
+below. Otherwise keep this heading and write
+`No workflow or Dockerfile provenance surface found.`
 
 - **Container image signing:** search for `cosign`, `sigstore/cosign-installer`, `actions/attest-build-provenance`, `notation sign`. Record tool + target workflow + whether signing runs on every release.
 - **SBOM generation:** search for `cyclonedx`, `syft`, `anchore/sbom-action`, `spdx-sbom-generator`. Record tool + whether SBOM is published as an artifact + whether consumers can verify against it.
@@ -412,7 +421,7 @@ If none found for any of the three: `No container signing / SBOM / SLSA provenan
 
 If a long-lived publish token is used: `Long-lived publish token in CI — stealable credential enables registry publish-hijack; no package provenance. Adopt Trusted Publishing (OIDC) to fix both.` If no publish step exists: `Repo does not publish a package — publish-auth check N/A.`
 
-### 6.31 Service-to-Service & Cloud-IAM Authentication
+### 7.31 Service-to-Service & Cloud-IAM Authentication
 
 Complements §6.1 (which is biased toward user-facing web auth) by enumerating authentication mechanisms used between services or between an application and a cloud platform. Without this section, Phase 8 has no evidence to emit `kind: mechanism` rows for serverless apps, mesh-internal services, webhook receivers, or anything else where the auth principal is a machine identity.
 
@@ -443,7 +452,7 @@ If no mechanisms are detected, write a single line: `No service-to-service or cl
 
 **Why this matters:** Phase 8's `security_controls[]` schema uses a `kind: mechanism` discriminator (see `phase-group-architecture.md` → "Phase 8 output schema") so v2 §6 can distinguish end-to-end identity mechanisms from primitives. For non-web architectures (serverless, mesh services, batch workers, webhook receivers), this recon evidence drives the relevant H4 subcontrols under §6.2 Identity and Authentication Controls and §6.3 Session and Token Controls.
 
-### 6.32 AI Coding Assistant & IDE Agent Configurations
+### 7.32 AI Coding Assistant & IDE Agent Configurations
 
 **Assistants detected (files committed into the repo):**
 
@@ -557,7 +566,7 @@ A first-pass asset inventory derived from manifests, schemas, config files, and 
 - For categories with matches: write **only the key files table and 1-2 bullet observations**. Omit lengthy code excerpts — file:line references are sufficient for the orchestrator to read source when needed.
 - Section 8 (Dangerous Sinks & Secrets) is a **deduplicated** extract of the most critical findings from 7.8 and 7.12. All Critical-severity secrets from 7.12 **must** appear here. Cap at 10 rows.
 - Section 9 is a best-effort component list. The orchestrator will refine it.
-- **Keep the entire file under 200 lines.** This file is loaded into the orchestrator's context for all remaining turns — every extra line costs tokens across 50+ turns. Be maximally concise.
+- **Target 200 lines.** This file is loaded into the orchestrator's context for all remaining turns — every extra line costs tokens across 50+ turns. Be maximally concise, but never omit required headings to hit the target.
 
 ## Numbering history (for cross-references in existing reports)
 
@@ -568,4 +577,4 @@ Older recon-summaries used a different sub-section ordering. The current canonic
 - **7.31** — Service-to-Service & Cloud-IAM Authentication (merged: detection-pattern catalogue + output-table example were two separately-numbered "7.31" blocks).
 - **7.32** — AI Coding Assistant & IDE Agent Configurations (was misnumbered as "7.28" alongside Container Runtime).
 
-Old reports may reference `§6.27 Workflow Hardening` or `§6.28 AI Coding Assistant`. Map them to the new numbers when reading historical artefacts.
+Old reports may reference `§6.27 Workflow Hardening` or `§6.28 AI Coding Assistant`. Map them to the canonical 7.x numbers when reading historical artefacts.

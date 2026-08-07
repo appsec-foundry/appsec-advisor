@@ -107,11 +107,33 @@ retained in the conversation is served again on later turns.
 The principal reproducibility command for the three threat sessions is:
 
 ```bash
-python3 scripts/context_window_report.py --json \
+python3 scripts/context_window_report.py --json --turn-diagnostics \
   /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1/subagents/agent-a249115917e51d8cb.jsonl \
   /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1/subagents/agent-a4bcfda6be804dfd3.jsonl \
   /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1/subagents/agent-a9172099c47d5a875.jsonl
 ```
+
+Turn diagnostics aggregate all assistant content blocks by `message.id` before
+classification. The primary-category precedence is agent dispatch, repair,
+artifact write, validation, status or logging, workflow routing, evidence
+request, then semantic decision. Mixed, low-confidence, and unclassified turns
+require manual adjudication before a zero-turn claim. Transcript usage measures
+assembled resident context and does not attribute runtime, agent, task, tool
+schema, or preloaded-skill startup layers.
+
+The fixed 30-session benchmark, including the bounded main-session transcript,
+is reproduced with:
+
+```bash
+python3 scripts/context_window_report.py --json --turn-diagnostics \
+  --before 2026-08-02T23:02:00Z \
+  /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1.jsonl \
+  /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1
+```
+
+This reconstructs 928 usage turns, 2,897,245 cache-write tokens,
+67,264,203 cache-read tokens, 230,524 output tokens, and USD 40.69 with the
+versioned 2026-08-05 pricing table.
 
 Token costs use the model-specific first-party list prices current on the
 analysis date: Sonnet 4.6 USD 3/15 per million input/output tokens, Opus 5 USD
@@ -130,12 +152,10 @@ Anthropic documents that prompt-cache hits cost 0.1 times base input and
 definitions, tool calls, and tool results count as input. See [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 and [tool-context management](https://platform.claude.com/docs/en/agents-and-tools/tool-use/manage-tool-context).
 
-`scripts/verify_run_costs.py` currently prices Haiku 4.5 at USD 0.80/4.00 and
-USD 1.00/0.08 for 5-minute writes/hits. Current official Haiku 4.5 rates are USD
-1.00/5.00 and USD 1.25/0.10. Using the repository table gives USD 40.64; using
-the current official rate gives **USD 40.69**. The USD 0.06 difference does not
-change any conclusion but should be corrected separately before treating the
-script as an invoice-equivalent calculator.
+`scripts/verify_run_costs.py` previously priced Haiku 4.5 at USD 0.80/4.00 and
+USD 1.00/0.08 for 5-minute writes/hits. The versioned 2026-08-05 table uses USD
+1.00/5.00 and USD 1.25/0.10. The corrected rate produces **USD 40.69** for this
+benchmark; the prior table produced USD 40.64.
 
 ## Reconstructed run cost
 

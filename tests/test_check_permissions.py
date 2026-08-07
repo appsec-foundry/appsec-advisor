@@ -84,6 +84,21 @@ def test_controller_command_and_paths_are_covered_by_existing_rules():
     assert "Write(${OUTPUT_DIR}/**)" in rules
 
 
+def test_evidence_bundle_command_and_artifact_are_covered_by_existing_rules():
+    entries = cp.load_required(cp.DATA_FILE)
+    rules = [entry["entry"] for entry in entries]
+    assert any(cp._rule_covers(rule, "Bash(python3 build_stride_evidence_bundles.py)") for rule in rules)
+    assert any(
+        cp._rule_covers(
+            rule,
+            "Write(${OUTPUT_DIR}/.dispatch-context/backend-api/evidence-bundle.json)",
+        )
+        for rule in rules
+    )
+    reasons = " ".join(entry["reason"] for entry in entries)
+    assert "build_stride_evidence_bundles.py" in reasons
+
+
 # ---------- template expansion ----------------------------------------
 
 

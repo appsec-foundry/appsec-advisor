@@ -41,6 +41,13 @@ surfaces:
     # agent list says which components run at light depth. At 9200 the file
     # sat at 89.8%, leaving 14 bytes -- less than any wording of that rule costs.
     max_bytes: 11000
+  thin_stage1_v2_runtime:
+    # The context-v2 Stage-1 runtime. It replaces the legacy Stage-1 file for a
+    # run prepared as runtime_generation=context-v2 and must stay materially
+    # smaller: it carries the boundary loop and dispatch rules only, never a
+    # phase algorithm.
+    path: skills/create-threat-model/SKILL-thin-stage1-v2.md
+    max_bytes: 6000
   thin_stage1b_runtime:
     path: skills/create-threat-model/SKILL-thin-stage1b.md
     max_bytes: 4300
@@ -79,6 +86,38 @@ surfaces:
   threat_analyst:
     path: agents/appsec-threat-analyst.md
     max_bytes: 155000
+  shared_threat_analysis_kernel:
+    path: skills/internal-threat-analysis-kernel/SKILL.md
+    # The release budget is 4k measured tokens. This byte ceiling is the fast
+    # drift guard; reviewed provider/A-B measurements own release acceptance.
+    max_bytes: 16000
+  architecture_analyst_role:
+    path: agents/appsec-architecture-analyst.md
+    max_bytes: 12000
+  control_analyst_role:
+    path: agents/appsec-control-analyst.md
+    max_bytes: 12000
+  post_stride_synthesizer_role:
+    path: agents/appsec-post-stride-synthesizer.md
+    max_bytes: 12000
+  stride_analyzer_role:
+    path: agents/appsec-stride-analyzer-v2.md
+    max_bytes: 12000
+  stride_lens_llm:
+    path: agents/shared/owasp-llm-top10.md
+    max_bytes: 7000
+  stride_lens_agentic:
+    path: agents/shared/owasp-asi-top10.md
+    max_bytes: 8000
+  stride_lens_spa:
+    path: agents/shared/spa-threats.md
+    max_bytes: 3500
+  stride_lens_mobile:
+    path: agents/stride-lenses/mobile.md
+    max_bytes: 2500
+  stride_lens_supply_chain:
+    path: agents/shared/supply-chain-patterns.md
+    max_bytes: 14000
   phase_group_recon:
     path: agents/phases/phase-group-recon.md
     max_bytes: 40000
@@ -110,3 +149,14 @@ aggregate:
   thin_rerender_pre_stage2_max_bytes: 18000
   # The compact path must remain materially smaller than the legacy prefix.
   thin_to_legacy_max_ratio: 0.50
+
+admission:
+  shared_kernel_max_tokens: 4000
+  role_contract_max_tokens: 3000
+  dispatch_task_max_tokens: 1500
+  state_manifest_max_tokens: 500
+  plugin_selected_startup_max_tokens: 10000
+  initial_resident_max_tokens: 30000
+  # WP0 has a measurement format, but no reviewed provider/A-B tool-surface
+  # record yet. Keep the aggregate release gate disabled until that exists.
+  enforce_startup_totals: false

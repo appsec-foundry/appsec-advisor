@@ -3784,6 +3784,26 @@ def test_linkify_anchors_still_labels_bare_finding_link(tmp_path: Path):
     assert "[F-006](#f-006) — SQL Injection via Raw Query String Interpolation" in out, out
 
 
+def test_linkify_anchors_normalizes_yaml_em_dash_locator(tmp_path: Path):
+    """The title emitter's storage form must not leak into rendered links."""
+    _write_yaml(
+        tmp_path,
+        "threats:\n  - id: T-006\n    title: SQL Injection — routes/login.ts:34\n",
+    )
+    md = _write_minimal_model(tmp_path, "## 5 Attack Surface\n\nSee [F-006](#f-006) for the login sink.\n")
+
+    first_report, first = qa.linkify_anchors(md)
+    assert first_report.fixes
+    assert "[F-006](#f-006) — SQL Injection (`routes/login.ts:34`)" in first
+    assert "— routes/login.ts:34" not in first
+
+    md.write_text(first, encoding="utf-8")
+    second_report, second = qa.linkify_anchors(md)
+    assert second == first
+    assert not second_report.fixes
+    assert not qa.check_reference_format(md).issues
+
+
 # ---------------------------------------------------------------------------
 # §5 Attack-Surface entry-point tables → fixed-layout HTML (2026-06-11)
 # ---------------------------------------------------------------------------

@@ -186,6 +186,33 @@
       },
       "maxItems": 50
     },
+    "semantic_role": {
+      "$ref": "#/$defs/semantic_role"
+    },
+    "dispatch_jobs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/dispatch_job"
+      }
+    },
+    "artifact_receipts": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/artifact_receipt"
+      }
+    },
+    "unresolved_decision_keys": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+      }
+    },
     "candidates": {
       "type": "array",
       "maxItems": 64,
@@ -287,6 +314,205 @@
     }
   ],
   "$defs": {
+    "relative_artifact_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "semantic_role": {
+      "enum": [
+        "actor_discoverer",
+        "architecture_analyst",
+        "config_scanner",
+        "context_resolver",
+        "control_analyst",
+        "evidence_verifier",
+        "post_stride_synthesizer",
+        "recon_scanner",
+        "stride_analyzer",
+        "threat_merger",
+        "triage_validator",
+        "trust_boundary_analyst"
+      ]
+    },
+    "dispatch_job": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "job_id",
+        "semantic_role",
+        "agent_type",
+        "model",
+        "input_artifacts",
+        "output_artifacts",
+        "unresolved_decision_keys"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "job_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "component_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+        },
+        "semantic_role": {
+          "$ref": "#/$defs/semantic_role"
+        },
+        "agent_type": {
+          "enum": [
+            "appsec-advisor:appsec-actor-discoverer",
+            "appsec-advisor:appsec-architecture-analyst",
+            "appsec-advisor:appsec-config-scanner",
+            "appsec-advisor:appsec-context-resolver",
+            "appsec-advisor:appsec-control-analyst",
+            "appsec-advisor:appsec-evidence-verifier",
+            "appsec-advisor:appsec-post-stride-synthesizer",
+            "appsec-advisor:appsec-recon-scanner",
+            "appsec-advisor:appsec-stride-analyzer-v2",
+            "appsec-advisor:appsec-threat-merger",
+            "appsec-advisor:appsec-triage-validator",
+            "appsec-advisor:appsec-trust-boundary-analyst"
+          ]
+        },
+        "model": {
+          "enum": ["sonnet", "opus", "haiku"]
+        },
+        "analysis_depth": {
+          "enum": ["full", "light"],
+          "description": "Resolved per-component STRIDE depth shown in dispatch and progress labels."
+        },
+        "max_turns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "sampling_required": {
+          "type": "boolean"
+        },
+        "file_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        },
+        "estimated_threat_count": {
+          "enum": ["low", "moderate", "high"]
+        },
+        "lens_ids": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["agentic", "llm", "mobile", "spa", "supply-chain"]
+          }
+        },
+        "evidence_bundle_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "taxonomy_slice_path": {
+          "$ref": "#/$defs/relative_artifact_path",
+          "pattern": "^\\.taxonomy-slices/[a-z0-9][a-z0-9-]{0,99}/threat-category-taxonomy\\.yaml$"
+        },
+        "taxonomy_slice_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "input_artifacts": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/relative_artifact_path"
+          }
+        },
+        "output_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/relative_artifact_path"
+          }
+        },
+        "unresolved_decision_keys": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "semantic_role": {"const": "stride_analyzer"}
+            },
+            "required": ["semantic_role"]
+          },
+          "then": {
+            "required": [
+              "component_id",
+              "analysis_depth",
+              "max_turns",
+              "sampling_required",
+              "file_count",
+              "estimated_threat_count",
+              "lens_ids",
+              "evidence_bundle_sha256",
+              "taxonomy_slice_path",
+              "taxonomy_slice_sha256"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "artifact_receipt": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "artifact_path",
+        "schema_id",
+        "sha256",
+        "record_count",
+        "validation_status"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "artifact_path": {
+          "$ref": "#/$defs/relative_artifact_path"
+        },
+        "schema_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/#-]{0,255}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "validation_status": {
+          "const": "valid"
+        }
+      },
+      "additionalProperties": false
+    },
     "scalar": {
       "oneOf": [
         {

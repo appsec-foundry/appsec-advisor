@@ -1569,11 +1569,11 @@ When a category mixes the two, the §6.1 verdict shows **Unsafe** (a relied-upon
 
 **Password lifecycle — ONE grouped mechanism row, not five.** Emit the password family as a SINGLE `Password-Based Authentication` row with `group_subcontrols: true` and a `subcontrols[]` list of lifecycle stages (`Login`, `Registration / Initial Password Set`, `Password Reset`, `Password Change`, `Password Storage`) — each stage carries its own `effectiveness`, `status_note`, and `relevant_findings`. Password Storage is a one-line cross-reference here; its deep dive stays in the §6.9 Cryptography row. `OAuth / Federated Login` and `Multi-Factor (TOTP)` remain their own rows (TOTP with `Enrollment` / `Verification` subcontrols). This renders as the grouped, bulleted §6.2 the renderer prompt describes — it does NOT contradict "one row per mechanism": the password lifecycle is ONE mechanism whose stages are subcontrols, not five peer mechanisms.
 
-**IAM domain — auth-mechanism coverage rule (Sprint 2C / M3.5; generalised post-2026-05).** The IAM domain MUST emit one `security_controls[]` entry **per discovered authentication mechanism** — *not* a single aggregate row. A mechanism is "discovered" when one of recon §6.1 (Auth & session), §6.9 (OAuth/OIDC), §6.24 (Client-side routing & auth guards), or §6.31 (Service-to-Service & Cloud-IAM Authentication) lists evidence for it. Frontend-only flows (e.g. a Google OAuth client component without server callback) STILL count.
+**IAM domain — auth-mechanism coverage rule (Sprint 2C / M3.5; generalised post-2026-05).** The IAM domain MUST emit one `security_controls[]` entry **per discovered authentication mechanism** — *not* a single aggregate row. A mechanism is "discovered" when one of recon §7.1 (Auth & session), §7.9 (OAuth/OIDC), §7.24 (Client-side routing & auth guards), or §7.31 (Service-to-Service & Cloud-IAM Authentication) lists evidence for it. Frontend-only flows (e.g. a Google OAuth client component without server callback) STILL count.
 
 The catalog MUST emit one row per detected mechanism from the union of these tables:
 
-**(a) User-facing web mechanisms** — typical evidence in recon §6.1, §6.9, §6.24:
+**(a) User-facing web mechanisms** — typical evidence in recon §7.1, §7.9, §7.24:
 
 | Mechanism | Recon evidence to look for | Control name (canonical) |
 |---|---|---|
@@ -1584,7 +1584,7 @@ The catalog MUST emit one row per detected mechanism from the union of these tab
 | Magic-link / passwordless | recon 7.1: `magic-link`, `passwordless`, signed-token email flow | `Magic-Link Sign-In` |
 | Password Reset | recon 7.1: `/reset-password`, `resetPassword`, security-question or token-email | `Password Reset Flow` |
 
-**(b) Service-to-service & cloud-IAM mechanisms** — typical evidence in recon §6.31:
+**(b) Service-to-service & cloud-IAM mechanisms** — typical evidence in recon §7.31:
 
 | Mechanism | Recon evidence to look for | Control name (canonical) |
 |---|---|---|
@@ -1614,9 +1614,9 @@ A historical run shipped a §6.3 with `#### 6.3.1 JWT RS256 Signing Flow` instea
 
 **⚠ Phase 8 IAM self-check (mandatory — perform before emitting `PHASE_END`).** After writing the IAM rows to `.security-controls.json`, inspect them and do not close Phase 8 until all three hold:
 
-1. **Mechanism floor.** If recon §6.1 / §6.9 / §6.24 show ANY login, OAuth/OIDC, or TOTP/2FA evidence (a `/login` route, `oauth*.component`, `routes/2fa.ts`, `otplib`/`speakeasy`, a `password` form field, …), the IAM domain MUST contain at least one row with `kind: mechanism` drawn from the mechanism table above (`Password-Based Login`, `Federated Identity / OAuth`, `Multi-Factor Authentication`, …). An IAM domain that contains ONLY `kind: primitive` rows is the regression described above — add the missing mechanism row(s) before `PHASE_END`.
+1. **Mechanism floor.** If recon §7.1 / §7.9 / §7.24 show ANY login, OAuth/OIDC, or TOTP/2FA evidence (a `/login` route, `oauth*.component`, `routes/2fa.ts`, `otplib`/`speakeasy`, a `password` form field, …), the IAM domain MUST contain at least one row with `kind: mechanism` drawn from the mechanism table above (`Password-Based Login`, `Federated Identity / OAuth`, `Multi-Factor Authentication`, …). An IAM domain that contains ONLY `kind: primitive` rows is the regression described above — add the missing mechanism row(s) before `PHASE_END`.
 2. **No primitive- or token-format-as-mechanism.** The control names `JWT Bearer Authentication`, `JWT Authentication`, `Password Hashing`, and `Login Rate Limiting` are NEVER valid IAM `kind: mechanism` rows. `Password Hashing` → `kind: primitive`; rate limiting → `Authentication Rate Limiting`, `kind: primitive`; JWT signing/validation → `domain: SessionMgmt`, `kind: primitive` (renders under §6.3). If one of these is your only IAM row, you have mis-cataloged: re-derive the real mechanism it serves (almost always `Password-Based Login`) and demote these to `kind: primitive` aspects of it.
-3. **OAuth/2FA are easy to miss.** They frequently appear ONLY in the frontend (`oauth.component.ts`) or a dedicated route (`routes/2fa.ts`) with no server-side callback — a frontend-only OAuth client STILL earns a `Federated Identity / OAuth` mechanism row (rule (a) above). Actively confirm each mechanism's presence/absence against recon §6.1/§6.9/§6.24 rather than defaulting to "not present".
+3. **OAuth/2FA are easy to miss.** They frequently appear ONLY in the frontend (`oauth.component.ts`) or a dedicated route (`routes/2fa.ts`) with no server-side callback — a frontend-only OAuth client STILL earns a `Federated Identity / OAuth` mechanism row (rule (a) above). Actively confirm each mechanism's presence/absence against recon §7.1/§7.9/§7.24 rather than defaulting to "not present".
 
 This self-check is the **data-side counterpart** to the `auth_method_decomposition` contract gate in `qa_checks.py`: that gate now hard-fails §6.2 when a primitive, library, or token-format heading appears there, so a Phase 8 that skips this check will trip the downstream Re-Render Loop and cost a full sonnet repair pass. Catching it here is cheap; catching it in the loop is not.
 

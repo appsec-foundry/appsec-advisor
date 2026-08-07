@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/stride-evidence-bundle.schema.json",
+  "title": "Bounded per-component STRIDE evidence bundle",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "component",
+    "repository_state",
+    "evidence",
+    "source_slices",
+    "truncation",
+    "limits"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "component": {
+      "type": "object",
+      "required": ["id", "name", "description", "paths"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,99}$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "repository_state": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 17,
+      "items": {
+        "type": "object",
+        "required": ["repository_id", "kind", "commit_sha", "dirty_worktree_sha256"],
+        "properties": {
+          "repository_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "kind": { "enum": ["primary", "related"] },
+          "commit_sha": { "type": "string", "pattern": "^(?:[a-f0-9]{40,64}|unversioned)$" },
+          "dirty_worktree_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "repository_id": { "const": "primary" } }, "required": ["repository_id"] },
+            "then": { "properties": { "kind": { "const": "primary" } } },
+            "else": { "properties": { "kind": { "const": "related" } } }
+          }
+        ],
+        "additionalProperties": false
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "interfaces",
+        "controls",
+        "actors",
+        "trust_boundaries",
+        "known_threats",
+        "prior_findings",
+        "requirements",
+        "cross_repo",
+        "recon_signals"
+      ],
+      "properties": {
+        "interfaces": { "$ref": "#/$defs/record_array" },
+        "controls": { "$ref": "#/$defs/record_array" },
+        "actors": { "$ref": "#/$defs/record_array" },
+        "trust_boundaries": { "$ref": "#/$defs/record_array" },
+        "known_threats": { "$ref": "#/$defs/record_array" },
+        "prior_findings": { "$ref": "#/$defs/record_array" },
+        "requirements": { "$ref": "#/$defs/record_array" },
+        "cross_repo": { "$ref": "#/$defs/record_array" },
+        "recon_signals": { "$ref": "#/$defs/record_array" }
+      },
+      "additionalProperties": false
+    },
+    "source_slices": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "required": [
+          "repository_id",
+          "path",
+          "start_line",
+          "end_line",
+          "signal_kind",
+          "content_sha256"
+        ],
+        "properties": {
+          "repository_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "not": {
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+            }
+          },
+          "start_line": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+          "end_line": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+          "signal_kind": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "truncation": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": [
+          "signal_class",
+          "original_count",
+          "retained_count",
+          "omitted_count",
+          "cap",
+          "ordering_key"
+        ],
+        "properties": {
+          "signal_class": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "original_count": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "retained_count": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "omitted_count": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "cap": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "ordering_key": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": ["serialized_bytes", "estimated_tokens", "referenced_source_lines"],
+      "properties": {
+        "serialized_bytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "estimated_tokens": { "type": "integer", "minimum": 1, "maximum": 16384 },
+        "referenced_source_lines": { "type": "integer", "minimum": 0, "maximum": 400 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "record_array": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["source", "value", "content_sha256", "truncated"],
+        "properties": {
+          "source": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "value": { "type": "string", "maxLength": 4096 },
+          "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "truncated": { "type": "boolean" },
+          "original_chars": { "type": "integer", "minimum": 0, "maximum": 10000000 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

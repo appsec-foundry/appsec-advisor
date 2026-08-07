@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/evidence-verification.schema.json",
+  "title": "Evidence verifier side-channel summary",
+  "type": "object",
+  "required": ["version", "generated_at", "model_id", "depth", "summary", "flags"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "generated_at": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "model_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "depth": { "enum": ["quick", "standard", "thorough"] },
+    "summary": {
+      "type": "object",
+      "required": ["total_threats", "sampled", "verified", "refuted", "ambiguous", "unchecked"],
+      "additionalProperties": false,
+      "properties": {
+        "total_threats": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "sampled": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "verified": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "refuted": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "ambiguous": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "unchecked": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+      }
+    },
+    "flags": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "required": ["flag_id", "t_id", "verdict", "reason", "line_excerpt"],
+        "additionalProperties": false,
+        "properties": {
+          "flag_id": { "type": "string", "pattern": "^EV-[0-9]{3,}$" },
+          "t_id": { "type": "string", "pattern": "^T-[0-9]{3,}$" },
+          "verdict": { "enum": ["verified", "refuted", "ambiguous"] },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "line_excerpt": { "type": "string", "maxLength": 80 }
+        }
+      }
+    },
+    "degenerate_neutralized": { "type": "boolean" },
+    "degenerate_reason": { "type": "string", "maxLength": 1000 },
+    "degenerate_neutralized_at": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "verification_gate": { "const": "fallback_required" },
+    "verification_gate_reason": { "type": "string", "maxLength": 1000 },
+    "verification_gate_at": { "type": "string", "minLength": 1, "maxLength": 64 }
+  }
+}

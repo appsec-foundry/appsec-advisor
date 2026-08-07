@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -1655,6 +1656,46 @@ def test_main_writes_manifest_and_prints_selection(tmp_path, capsys):
     assert "STRIDE component selection" in out
 
 
+def test_main_context_v2_writes_fingerprinted_bundle_without_changing_selection(tmp_path):
+    _seed_output_dir(tmp_path)
+    resolved_profile = {
+        "stride_profile_label": "quick (depth-reduced via sonnet-economy)",
+        "skip_cvss_scoring": True,
+    }
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"stride_profile": resolved_profile}), encoding="utf-8")
+    analyst_context = tmp_path / ".stride-analyst-context.json"
+    analyst_context.write_text(json.dumps({"_stride_profile": "repository-authored profile"}), encoding="utf-8")
+    legacy = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    legacy_ids = [row["component_id"] for row in legacy["components"]]
+
+    assert (
+        bm.main(
+            [
+                str(tmp_path),
+                "--depth",
+                "standard",
+                "--plugin-root",
+                str(PLUGIN_ROOT),
+                "--repo-root",
+                str(tmp_path),
+                "--analyst-context",
+                str(analyst_context),
+                "--context-v2",
+            ]
+        )
+        == 0
+    )
+
+    manifest = json.loads((tmp_path / ".stride-dispatch-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["context_version"] == 2
+    assert manifest["stride_profile"] == resolved_profile
+    assert [row["component_id"] for row in manifest["components"]] == legacy_ids
+    for component in manifest["components"]:
+        bundle = tmp_path / component["evidence_bundle_path"]
+        assert bundle.is_file()
+        assert hashlib.sha256(bundle.read_bytes()).hexdigest() == component["evidence_bundle_sha256"]
+
+
 def test_main_returns_1_when_no_components(tmp_path, capsys):
     (tmp_path / ".components.json").write_text(json.dumps({"components": []}), encoding="utf-8")
 
@@ -1714,6 +1755,20 @@ def test_selection_reasons_cover_each_branch():
     assert "exposure-unknown (fail-safe inclusion)" in r(_c("u", zones=["docker-container"]), "standard")
     # ci-cd / crown-jewel are silent at quick (criteria not active) → no reason
     assert r(_c("c", zones=["ci-cd-runtime"]), "quick") == []
+
+
+def test_stride_lenses_are_fixed_enums_derived_from_validated_features():
+    component = _c("mobile-chat", name="Android LLM Client", zones=["internet"])
+    context = {"known_llm_patterns": "agent-framework tool-use"}
+    assert bm._stride_lens_ids(component, context) == ["agentic", "llm", "mobile"]
+
+
+def test_stride_lens_input_cannot_select_a_file_path():
+    component = _c("api", zones=["internet"])
+    context = {"known_llm_patterns": "../../repo-owned-instructions.md"}
+    lenses = bm._stride_lens_ids(component, context)
+    assert lenses == ["llm"]
+    assert all("/" not in lens and ".." not in lens for lens in lenses)
 
 
 def test_mobile_device_zone_is_exposed_at_quick():

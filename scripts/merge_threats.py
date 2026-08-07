@@ -46,6 +46,7 @@ from typing import Any
 import yaml
 from _atomic_io import atomic_write_json, atomic_write_text
 from _shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
+from jsonschema import Draft202012Validator
 from stride_outputs import component_id as _stride_component_id
 from stride_outputs import stride_output_files
 from weakness_classifier import classify_cwe, classify_threat, load_weakness_classes
@@ -273,6 +274,85 @@ def backfill_threat_boundary_leg(threat: dict) -> bool:
         ref.pop("leg", None)
         mutated = True
     return mutated
+
+
+def drop_invalid_threat_boundary_refs(threat: dict) -> bool:
+    """Drop malformed optional boundary links before the STRIDE schema gate.
+
+    Boundary links are traceability metadata, not finding evidence. The final
+    boundary validator already removes links that are stale, non-adjacent, or
+    not current-run candidates. This earlier backstop handles only the local,
+    mechanical contract: exact keys, bounded scalar values, and locations
+    already owned by the finding. It never invents or repairs a link.
+    """
+    if not isinstance(threat, dict) or "boundary_refs" not in threat:
+        return False
+    refs = threat.get("boundary_refs")
+    if not isinstance(refs, list):
+        threat["boundary_refs"] = []
+        return True
+
+    evidence: set[tuple[str, int | None]] = set()
+    primary = threat.get("evidence")
+    primary_rows = primary if isinstance(primary, list) else [primary]
+    for item in [*primary_rows, *(threat.get("instances") or [])]:
+        if isinstance(item, dict) and isinstance(item.get("file"), str):
+            evidence.add((item["file"], item.get("line")))
+
+    allowed = {"boundary_id", "origin_component_id", "rationale", "leg", "evidence_locations"}
+    cleaned: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for ref in refs:
+        if not isinstance(ref, dict) or not set(ref) <= allowed:
+            continue
+        boundary_id = ref.get("boundary_id")
+        origin = ref.get("origin_component_id")
+        rationale = ref.get("rationale")
+        locations = ref.get("evidence_locations")
+        key = (str(boundary_id or ""), str(origin or ""))
+        valid_locations = (
+            isinstance(locations, list)
+            and 1 <= len(locations) <= 3
+            and all(
+                isinstance(location, dict)
+                and set(location) <= {"file", "line"}
+                and isinstance(location.get("file"), str)
+                and 1 <= len(location["file"]) <= 512
+                and (
+                    "line" not in location
+                    or location["line"] is None
+                    or (
+                        isinstance(location["line"], int)
+                        and not isinstance(location["line"], bool)
+                        and location["line"] >= 1
+                    )
+                )
+                and (location["file"], location.get("line")) in evidence
+                for location in locations
+            )
+        )
+        if (
+            not isinstance(boundary_id, str)
+            or not re.fullmatch(r"tb-\d+", boundary_id)
+            or not isinstance(origin, str)
+            or not 1 <= len(origin) <= 128
+            or not isinstance(rationale, str)
+            or not 20 <= len(rationale.strip()) <= 240
+            or not valid_locations
+            or key in seen
+        ):
+            continue
+        kept = deepcopy(ref)
+        kept["rationale"] = rationale.strip()
+        cleaned.append(kept)
+        seen.add(key)
+        if len(cleaned) == 2:
+            break
+
+    if cleaned == refs:
+        return False
+    threat["boundary_refs"] = cleaned
+    return True
 
 
 def strip_ineligible_cvss_v4(threat: dict) -> bool:
@@ -1933,6 +2013,62 @@ def _load_merge_decisions_schema() -> dict:
     return json.loads(_MERGE_DECISIONS_SCHEMA.read_text(encoding="utf-8"))
 
 
+def validate_agent_decision_document(doc: object, candidates: object) -> list[str]:
+    """Return schema and admitted-candidate errors for merger output."""
+    try:
+        from jsonschema import Draft202012Validator
+
+        schema_errors = sorted(
+            Draft202012Validator(_load_merge_decisions_schema()).iter_errors(doc),
+            key=lambda error: list(error.path),
+        )
+    except (ImportError, OSError, ValueError, json.JSONDecodeError) as exc:
+        return [f"cannot load merge-decisions-v2 schema: {exc}"]
+    if schema_errors:
+        return [
+            f"merge-decisions-v2 schema error at {list(error.absolute_path)}: {error.message}"
+            for error in schema_errors[:10]
+        ]
+    if not isinstance(doc, dict) or not isinstance(candidates, dict):
+        return ["merge decisions and candidates must be objects"]
+    groups = candidates.get("candidate_groups")
+    if not isinstance(groups, list):
+        return ["merge review context has no candidate_groups array"]
+    group_map: dict[str, dict] = {}
+    for group in groups:
+        group_id = group.get("group_id") if isinstance(group, dict) else None
+        if not isinstance(group_id, str) or not group_id:
+            return ["merge review context contains a candidate without group_id"]
+        if group_id in group_map:
+            return [f"merge review context contains duplicate group {group_id}"]
+        group_map[group_id] = group
+
+    decisions = doc.get("decisions")
+    decision_ids = [str(decision["group_id"]) for decision in decisions]
+    unknown = sorted(set(decision_ids) - set(group_map))
+    if unknown:
+        return ["merge-decisions-v2 references unknown groups: " + ", ".join(unknown)]
+    missing = sorted(set(group_map) - set(decision_ids))
+    if missing:
+        return ["merge-decisions-v2 omits candidate groups: " + ", ".join(missing)]
+
+    used: dict[str, set[int]] = {}
+    for decision in decisions:
+        group_id = str(decision["group_id"])
+        member_count = len(group_map[group_id].get("members") or [])
+        indices = set(decision["member_indices"])
+        if any(index >= member_count for index in indices):
+            return [f"merge-decisions-v2 has out-of-range member index for {group_id}"]
+        if decision["action"] in {"merge", "consolidate"} and decision.get("merge_target_index") not in indices:
+            return [f"merge-decisions-v2 target is outside its member subset for {group_id}"]
+        overlap = used.setdefault(group_id, set()) & indices
+        if overlap:
+            rendered = ", ".join(str(index) for index in sorted(overlap))
+            return [f"merge-decisions-v2 has overlapping member subsets for {group_id}: {rendered}"]
+        used[group_id].update(indices)
+    return []
+
+
 def _read_agent_decisions(path: Path) -> list[dict]:
     """Read v2 decisions only when they satisfy their schema.
 
@@ -2162,6 +2298,33 @@ def cmd_collect(args: argparse.Namespace) -> int:
         "candidate_groups": candidates,  # groups >= 2 that need LLM judgment
         "resolved_prior_findings": resolved_prior,  # incremental affirmed-fix union
     }
+
+    schema_path = Path(__file__).resolve().parent.parent / "schemas" / "merge-candidates.schema.json"
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"merge_threats: ERROR — merge-candidates schema is unreadable: {exc}", file=sys.stderr)
+        return 1
+    schema_errors = sorted(Draft202012Validator(schema).iter_errors(payload), key=lambda item: list(item.path))
+    semantic_errors: list[str] = []
+    if payload["candidate_group_count"] != len(payload["candidate_groups"]):
+        semantic_errors.append("candidate_group_count does not match candidate_groups")
+    if payload["auto_decision_count"] != len(payload["auto_decisions"]):
+        semantic_errors.append("auto_decision_count does not match auto_decisions")
+    if payload["candidate_group_count_total"] != payload["candidate_group_count"] + payload["auto_decision_count"]:
+        semantic_errors.append("candidate_group_count_total does not match admitted and automatic groups")
+    if payload["threat_count_after_exact_dedup"] > payload["threat_count_raw"]:
+        semantic_errors.append("deduplicated threat count exceeds raw threat count")
+    group_ids = [group["group_id"] for group in payload["candidate_groups"]]
+    if len(group_ids) != len(set(group_ids)):
+        semantic_errors.append("candidate_groups contains duplicate group_id values")
+    for group in payload["candidate_groups"]:
+        if group["member_count"] != len(group["members"]):
+            semantic_errors.append(f"{group['group_id']} member_count does not match members")
+    if schema_errors or semantic_errors:
+        details = [error.message for error in schema_errors[:5]] + semantic_errors[:5]
+        print("merge_threats: ERROR — merge-candidates validation failed: " + "; ".join(details), file=sys.stderr)
+        return 1
 
     out_path = out_dir / ".merge-candidates.json"
     # Atomic write — a crash mid-serialize would leave a truncated JSON that
@@ -2843,6 +3006,26 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate_decisions(args: argparse.Namespace) -> int:
+    """Validate merger output against its schema and admitted candidate set."""
+    out_dir = Path(args.output_dir).resolve()
+    decisions_path = out_dir / ".merge-decisions.json"
+    candidates_path = Path(args.candidates).resolve()
+    try:
+        decisions = json.loads(decisions_path.read_text(encoding="utf-8"))
+        candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"INVALID: cannot read merger contract input: {exc}", file=sys.stderr)
+        return 2
+    errors = validate_agent_decision_document(decisions, candidates)
+    if errors:
+        for error in errors:
+            print(f"INVALID: {error}", file=sys.stderr)
+        return 2
+    print(f"VALID: merge-decisions-v2 ({len(decisions['decisions'])} decisions)")
+    return 0
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="merge_threats",
@@ -2871,6 +3054,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Directory containing .merge-candidates.json (and optionally .merge-decisions.json).",
     )
     f.set_defaults(func=cmd_finalize)
+
+    v = sub.add_parser(
+        "validate-decisions",
+        help="Validate .merge-decisions.json against its admitted candidate projection.",
+    )
+    v.add_argument("--output-dir", required=True, help="Directory containing .merge-decisions.json.")
+    v.add_argument("--candidates", required=True, help="Admitted merge review context JSON.")
+    v.set_defaults(func=cmd_validate_decisions)
 
     return p.parse_args(argv)
 

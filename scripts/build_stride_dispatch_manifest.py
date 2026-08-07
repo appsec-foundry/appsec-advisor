@@ -347,6 +347,24 @@ def _is_llm(c: dict) -> bool:
     return bool(_LLM_RE.search(_component_text(c)) or _LLM_RE.search(stack))
 
 
+def _stride_lens_ids(component: dict, context: dict) -> list[str]:
+    """Select fixed plugin-owned lens enums; input can never select a path."""
+    lenses: set[str] = set()
+    text = _component_text(component)
+    known_llm = str(context.get("known_llm_patterns") or "").lower()
+    if _is_llm(component) or known_llm:
+        lenses.add("llm")
+    if any(marker in known_llm for marker in ("agent-framework", "agent-memory", "tool-use", "crewai", "autogen")):
+        lenses.add("agentic")
+    if _is_frontend(component):
+        lenses.add("spa")
+    if any(marker in text for marker in ("mobile", "android", "ios", "react-native", "flutter")):
+        lenses.add("mobile")
+    if _is_cicd(component) or context.get("supply_chain_findings") not in (None, "", [], "none"):
+        lenses.add("supply-chain")
+    return sorted(lenses)
+
+
 # File-upload / file-processing role. A unit that accepts and parses
 # user-supplied files carries severe, zone-independent risk — unrestricted
 # upload (CWE-434), zip/path traversal, XXE, archive bombs, parser/
@@ -1492,6 +1510,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
         # keeps the analyzer's documented `moderate` default.
         if "estimated_threat_count" in comp:
             comp["estimated_threat_count_label"] = _etc_label(comp["estimated_threat_count"])
+        comp["lens_ids"] = _stride_lens_ids(c, ctx)
         out_components.append(comp)
 
     return {
@@ -1555,6 +1574,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--analyst-context", type=Path, default=None)
     ap.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
     ap.add_argument(
+        "--context-v2",
+        action="store_true",
+        help="Internal shadow rollout: build bounded evidence bundles and fingerprint them in the manifest.",
+    )
+    ap.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Analyzed repository root for --context-v2 (otherwise derived from output_dir).",
+    )
+    ap.add_argument(
+        "--repository-registry",
+        type=Path,
+        default=None,
+        help="Controller-owned related-repository registry for --context-v2.",
+    )
+    ap.add_argument(
         "--ceiling",
         type=int,
         default=None,
@@ -1585,6 +1621,21 @@ def main(argv: list[str] | None = None) -> int:
     if not manifest["components"]:
         print("ERROR: no components found in .components.json — nothing to dispatch.", file=sys.stderr)
         return 1
+    if ns.context_v2:
+        from build_stride_evidence_bundles import BundleError, build_all
+
+        resolved_profile = _read_json(ns.output_dir / ".skill-config.json", {}).get("stride_profile")
+        manifest["stride_profile"] = resolved_profile if isinstance(resolved_profile, (dict, str)) else "full"
+        try:
+            manifest = build_all(
+                ns.output_dir,
+                ns.repo_root or _guess_repo_root(ns.output_dir),
+                manifest,
+                repository_registry=ns.repository_registry,
+            )
+        except BundleError as exc:
+            print(f"ERROR: context-v2 evidence bundle build failed: {exc}", file=sys.stderr)
+            return 2
     sel = _read_json(ns.output_dir / ".stride-selection.json", {})
     out = ns.output_dir / ".stride-dispatch-manifest.json"
     out.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

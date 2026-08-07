@@ -15,6 +15,13 @@ Commands:
     orchestration_controller.py prepare-abuse --output-dir <path>
     orchestration_controller.py finalize-abuse --output-dir <path>
     orchestration_controller.py prepare-stage2 --output-dir <path>
+    orchestration_controller.py context-v2-prepare-stride --output-dir <path>
+    orchestration_controller.py context-v2-post-stride --output-dir <path>
+    orchestration_controller.py context-v2-post-merge --output-dir <path>
+    orchestration_controller.py context-v2-post-evidence --output-dir <path>
+    orchestration_controller.py context-v2-post-triage --output-dir <path>
+    orchestration_controller.py context-v2-finalize --output-dir <path>
+    orchestration_controller.py verify-receipts --output-dir <path> --receipt <path> <sha256> [...]
     orchestration_controller.py next --output-dir <path>
 """
 
@@ -22,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -30,10 +38,17 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from functools import cache
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator
+try:
+    from jsonschema import Draft202012Validator
+    from referencing import Registry, Resource
+except ImportError:  # pragma: no cover - exercised through the fail-closed guard
+    Draft202012Validator = None  # type: ignore[assignment,misc]
+    Registry = None  # type: ignore[assignment,misc]
+    Resource = None  # type: ignore[assignment,misc]
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
@@ -42,17 +57,180 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import check_permissions  # noqa: E402
 import detect_session_model  # noqa: E402
 import ensure_output_gitignore  # noqa: E402
+import merge_threats as merge_decision_contract  # noqa: E402
 import resolve_config  # noqa: E402
+import validate_intermediate as intermediate_contract  # noqa: E402
+import validate_recon_summary as recon_summary_contract  # noqa: E402
+import validate_threat_modeling_context as context_document_contract  # noqa: E402
 from event_log import format_line  # noqa: E402
 
 ACTION_SCHEMA = PLUGIN_ROOT / "schemas" / "orchestration-action.schema.json"
 THIN_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
 THIN_RERENDER_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
 THIN_STAGE1_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1.md"
+THIN_STAGE1_V2_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md"
 THIN_STAGE1B_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1b.md"
 THIN_STAGE1D_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1d.md"
 THIN_STAGE2_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage2.md"
 LEGACY_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
+CONTEXT_V2_GENERATION = "context-v2"
+LEGACY_GENERATION = "legacy"
+
+MAX_ACTION_BYTES = 65_536
+MAX_STRIDE_ANALYST_CONTEXT_BYTES = 1_048_576
+MAX_RECON_SIGNALS_BYTES = 1_048_576
+TARGET_RECON_SUMMARY_LINES = 200
+MAX_THREAT_MODELING_CONTEXT_BYTES = context_document_contract.MAX_BYTES
+_RECEIPT_RECORD_KEYS = {
+    "schemas/trust-boundary-assessment-input.schema.json#v1": "components",
+    "schemas/fragments/trust-boundaries.schema.json#v2": "trust_boundaries",
+    "schemas/stride-evidence-bundle.schema.json#v1": "source_slices",
+    "schemas/stride-dispatch-manifest.schema.yaml#v2": "components",
+    "schemas/stride-repository-registry.schema.json#v1": "repositories",
+    "schemas/threats-merged.schema.yaml#v1": "threats",
+    "schemas/triage-flags.schema.yaml#v2": "flags",
+    "schemas/fragments/mitigation-overrides.schema.json#v1": "splits",
+    "schemas/fragments/tier-root-causes.schema.json#v1": "tier_root_causes",
+    "schemas/merge-candidates.schema.json#v1": "candidate_groups",
+    "schemas/merge-review-context.schema.json#v1": "candidate_groups",
+    "schemas/merge-decisions.schema.json#v2": "decisions",
+    "schemas/route-inventory.schema.json#v1": "routes",
+    "schemas/actors-resolved.schema.yaml#v1": "resolved_actors",
+}
+_OPTIONAL_RECEIPT_RECORD_KEYS = {
+    "schemas/fragments/mitigation-overrides.schema.json#v1",
+}
+SEMANTIC_ROLE_REGISTRY: dict[str, dict[str, Any]] = {
+    "actor_discoverer": {
+        "agent": "appsec-actor-discoverer",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-actor-discoverer.md",
+        "tools": ("Read", "Glob", "Grep", "Bash", "Write"),
+        "output_contracts": ("schemas/actors-discovered.schema.yaml",),
+    },
+    "architecture_analyst": {
+        "agent": "appsec-architecture-analyst",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-architecture-analyst.md",
+        "tools": ("Read", "Grep", "Bash", "Write"),
+        "output_contracts": (
+            "schemas/fragments/components.schema.json",
+            "schemas/fragments/data-flows.schema.json",
+            "schemas/fragments/assets.schema.json",
+            "schemas/fragments/attack-surface-overrides.schema.json",
+        ),
+    },
+    "config_scanner": {
+        "agent": "appsec-config-scanner",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-config-scanner.md",
+        "tools": ("Read", "Glob", "Grep", "Bash", "Write"),
+        "output_contracts": ("schemas/config-scan-findings.schema.yaml",),
+    },
+    "context_resolver": {
+        "agent": "appsec-context-resolver",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-context-resolver.md",
+        "tools": ("Read", "Bash", "Write"),
+        "output_contracts": ("contract:threat-modeling-context-markdown-v1",),
+    },
+    "control_analyst": {
+        "agent": "appsec-control-analyst",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-control-analyst.md",
+        "tools": ("Read", "Grep", "Bash", "Write"),
+        "output_contracts": (
+            "schemas/fragments/security-controls.schema.json",
+            "schemas/stride-analyst-context.schema.json",
+        ),
+    },
+    "evidence_verifier": {
+        "agent": "appsec-evidence-verifier",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-evidence-verifier.md",
+        "tools": ("Read", "Grep", "Bash", "Write"),
+        "output_contracts": (
+            "schemas/evidence-verification.schema.json",
+            "schemas/threats-merged.schema.yaml",
+        ),
+    },
+    "post_stride_synthesizer": {
+        "agent": "appsec-post-stride-synthesizer",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-post-stride-synthesizer.md",
+        "tools": ("Read", "Bash", "Write"),
+        "output_contracts": (
+            "schemas/fragments/mitigation-overrides.schema.json",
+            "schemas/fragments/tier-root-causes.schema.json",
+        ),
+    },
+    "recon_scanner": {
+        "agent": "appsec-recon-scanner",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-recon-scanner.md",
+        "tools": ("Read", "Glob", "Grep", "Bash", "Write"),
+        "output_contracts": (
+            "contract:recon-summary-markdown-v1",
+            "schemas/recon-signals.schema.json",
+        ),
+    },
+    "stride_analyzer": {
+        "agent": "appsec-stride-analyzer-v2",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-stride-analyzer-v2.md",
+        "tools": ("Read", "Glob", "Grep", "Bash", "Write"),
+        "output_contracts": ("schemas/stride.schema.yaml",),
+    },
+    "threat_merger": {
+        "agent": "appsec-threat-merger",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-threat-merger.md",
+        "tools": ("Read", "Bash", "Write"),
+        "output_contracts": ("schemas/merge-decisions.schema.json",),
+    },
+    "triage_validator": {
+        "agent": "appsec-triage-validator",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-triage-validator.md",
+        "tools": ("Read", "Glob", "Grep", "Bash", "Write"),
+        "output_contracts": (
+            "schemas/triage-flags.schema.yaml",
+            "schemas/threats-merged.schema.yaml",
+        ),
+    },
+    "trust_boundary_analyst": {
+        "agent": "appsec-trust-boundary-analyst",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-trust-boundary-analyst.md",
+        "tools": ("Read", "Grep", "Write", "Bash"),
+        "output_contracts": ("schemas/fragments/trust-boundary-candidates.schema.json",),
+    },
+}
+
+SEMANTIC_ROLE_MODEL_KEYS = {
+    "actor_discoverer": "actor_discovery_model",
+    "architecture_analyst": "orchestrator_model",
+    "config_scanner": "config_scanner_model",
+    "context_resolver": "context_resolver_model",
+    "control_analyst": "orchestrator_model",
+    "evidence_verifier": "evidence_verifier_model",
+    "post_stride_synthesizer": "triage_model",
+    "recon_scanner": "recon_scanner_model",
+    "stride_analyzer": "stride_model",
+    "threat_merger": "merger_model",
+    "triage_validator": "triage_model",
+    "trust_boundary_analyst": "orchestrator_model",
+}
+
+# Every context-v2 LLM artifact is contract-gated before the next terminal
+# boundary. Producer-gated roles run the shared validator within their own
+# budget, so they can correct a bad write without restarting Stage 1. STRIDE
+# is the deliberate exception: its controller-owned bounded retry consumes the
+# same validator errors and redispatches only the affected component.
+CONTEXT_V2_PRODUCER_GATED_ROLES = frozenset(
+    {
+        "actor_discoverer",
+        "architecture_analyst",
+        "config_scanner",
+        "context_resolver",
+        "control_analyst",
+        "evidence_verifier",
+        "post_stride_synthesizer",
+        "recon_scanner",
+        "threat_merger",
+        "triage_validator",
+        "trust_boundary_analyst",
+    }
+)
+CONTEXT_V2_CONTROLLER_RECOVERY_ROLES = frozenset({"stride_analyzer"})
 
 _FULL_INTERMEDIATE_NAMES = {
     ".threats-merged.json",
@@ -90,6 +268,7 @@ _REBUILD_NAMES = {
     ".architect-review.md",
     ".threat-modeling-context.md",
     ".recon-summary.md",
+    ".recon-signals.json",
     ".sca-practice-findings.json",
     ".known-bad-libs-findings.json",
     ".threats-merged.json",
@@ -240,7 +419,186 @@ class ControllerError(RuntimeError):
         self.exit_code = exit_code
 
 
+def _canonical_json_bytes(value: Any) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ControllerError(f"internal action manifest is not canonical JSON: {exc}") from exc
+
+
+def _plugin_owned_instruction_paths() -> frozenset[Path]:
+    paths = {
+        THIN_RUNTIME,
+        THIN_RERENDER_RUNTIME,
+        THIN_STAGE1_RUNTIME,
+        THIN_STAGE1_V2_RUNTIME,
+        THIN_STAGE1B_RUNTIME,
+        THIN_STAGE1D_RUNTIME,
+        THIN_STAGE2_RUNTIME,
+        LEGACY_RUNTIME,
+    }
+    paths.update(record["instruction"] for record in SEMANTIC_ROLE_REGISTRY.values())
+    return frozenset(path.resolve() for path in paths)
+
+
+def _canonical_output_root(action: dict[str, Any]) -> Path | None:
+    artifact_paths = [
+        path
+        for job in action.get("dispatch_jobs", [])
+        for key in ("input_artifacts", "output_artifacts")
+        for path in job.get(key, [])
+    ]
+    artifact_paths.extend(receipt.get("artifact_path") for receipt in action.get("artifact_receipts", []))
+    artifact_paths = [path for path in artifact_paths if isinstance(path, str)]
+    if not artifact_paths:
+        return None
+    output_dir = action.get("dispatch_values", {}).get("output_dir")
+    if not isinstance(output_dir, str) or not output_dir:
+        raise ControllerError("internal action manifest with artifact paths requires dispatch_values.output_dir")
+    return Path(output_dir).resolve()
+
+
+def _resolve_artifact_path(output_root: Path, artifact_path: str) -> Path:
+    relative = Path(artifact_path)
+    if (
+        not artifact_path
+        or "\\" in artifact_path
+        or relative.is_absolute()
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise ControllerError(f"unsafe artifact path: {artifact_path!r}")
+    resolved = (output_root / relative).resolve()
+    try:
+        resolved.relative_to(output_root)
+    except ValueError as exc:
+        raise ControllerError(f"artifact path escapes output directory: {artifact_path!r}") from exc
+    return resolved
+
+
+def _prepare_context_v2_dispatch_outputs(output_root: Path, jobs: list[dict[str, Any]]) -> None:
+    """Remove prior bytes for outputs that the next semantic boundary must write.
+
+    A schema-valid artifact from an older full run must never satisfy the next
+    boundary when its current producer returned without writing. In-place
+    repair outputs are preserved only when the same action also names them as
+    inputs; their successor gate remains responsible for semantic validation.
+    """
+    output_root = output_root.resolve()
+    protected = {
+        artifact_path
+        for job in jobs
+        for artifact_path in job.get("input_artifacts", [])
+        if isinstance(artifact_path, str)
+    }
+    removed: list[str] = []
+    for artifact_path in {path for job in jobs for path in job.get("output_artifacts", []) if isinstance(path, str)}:
+        if artifact_path in protected:
+            continue
+        _resolve_artifact_path(output_root, artifact_path)
+        lexical_path = output_root / Path(artifact_path)
+        if not lexical_path.exists() and not lexical_path.is_symlink():
+            continue
+        if lexical_path.is_dir() and not lexical_path.is_symlink():
+            raise ControllerError(f"dispatch output artifact is a directory: {artifact_path!r}")
+        try:
+            lexical_path.unlink()
+        except OSError as exc:
+            raise ControllerError(f"cannot clear prior dispatch output {artifact_path!r}: {exc}") from exc
+        removed.append(artifact_path)
+    if removed:
+        _append_event(
+            output_root,
+            "CONTEXT_V2_STALE_OUTPUTS_CLEARED",
+            "removed=" + ",".join(sorted(removed)),
+        )
+
+
+def _validate_action_semantics(action: dict[str, Any]) -> None:
+    instruction_file = action.get("instruction_file")
+    if instruction_file is not None:
+        if not isinstance(instruction_file, str):
+            raise ControllerError("internal action instruction_file must be a string")
+        instruction = Path(instruction_file)
+        if not instruction.is_absolute() or instruction.resolve() not in _plugin_owned_instruction_paths():
+            raise ControllerError("internal action instruction_file is not plugin-owned")
+
+    semantic_role = action.get("semantic_role")
+    if semantic_role is not None and semantic_role not in SEMANTIC_ROLE_REGISTRY:
+        raise ControllerError(f"unknown semantic role: {semantic_role!r}")
+
+    job_ids: set[str] = set()
+    component_ids: set[str] = set()
+    output_owners: dict[str, str] = {}
+    all_inputs: set[str] = set()
+    for job in action.get("dispatch_jobs", []):
+        job_id = job["job_id"]
+        if job_id in job_ids:
+            raise ControllerError(f"duplicate dispatch job id: {job_id}")
+        job_ids.add(job_id)
+        component_id = job.get("component_id")
+        if component_id is not None:
+            if component_id in component_ids:
+                raise ControllerError(f"duplicate dispatch component id: {component_id}")
+            component_ids.add(component_id)
+        role = job["semantic_role"]
+        if role not in SEMANTIC_ROLE_REGISTRY:
+            raise ControllerError(f"unknown semantic role: {role!r}")
+        if semantic_role is not None and role != semantic_role:
+            raise ControllerError("action semantic role does not match its dispatch job role")
+        agent_type = job.get("agent_type")
+        expected_agent = f"appsec-advisor:{SEMANTIC_ROLE_REGISTRY[role]['agent']}"
+        if agent_type is not None and agent_type != expected_agent:
+            raise ControllerError(f"dispatch agent type does not match semantic role {role!r}")
+        model = job.get("model")
+        model_key = SEMANTIC_ROLE_MODEL_KEYS[role]
+        expected_model = _bare_agent_model(action.get("dispatch_values", {}).get(model_key))
+        if model is not None and model != expected_model:
+            raise ControllerError(f"dispatch model does not match semantic role {role!r}")
+        if role == "stride_analyzer" and job.get("analysis_depth") not in {"full", "light"}:
+            raise ControllerError("stride analyzer dispatch job requires analysis_depth full or light")
+        if role == "stride_analyzer":
+            expected_taxonomy = (
+                f".taxonomy-slices/{component_id}/threat-category-taxonomy.yaml" if component_id else None
+            )
+            if job.get("taxonomy_slice_path") != expected_taxonomy:
+                raise ControllerError("stride analyzer taxonomy slice does not match its component id")
+            if expected_taxonomy not in job.get("input_artifacts", []):
+                raise ControllerError("stride analyzer taxonomy slice is absent from input_artifacts")
+        all_inputs.update(job.get("input_artifacts", []))
+        for artifact_path in job.get("output_artifacts", []):
+            prior_owner = output_owners.get(artifact_path)
+            if prior_owner is not None:
+                raise ControllerError(
+                    f"duplicate dispatch output artifact {artifact_path!r}: {prior_owner!r} and {job_id!r}"
+                )
+            output_owners[artifact_path] = job_id
+
+    if action.get("action") == "dispatch_parallel":
+        overlap = sorted(all_inputs & set(output_owners))
+        if overlap:
+            raise ControllerError("parallel dispatch cannot read and write the same artifact: " + ", ".join(overlap))
+
+    output_root = _canonical_output_root(action)
+    if output_root is not None:
+        for job in action.get("dispatch_jobs", []):
+            for key in ("input_artifacts", "output_artifacts"):
+                for artifact_path in job.get(key, []):
+                    _resolve_artifact_path(output_root, artifact_path)
+        for receipt in action.get("artifact_receipts", []):
+            _resolve_artifact_path(output_root, receipt["artifact_path"])
+
+
 def _validate_action(action: dict[str, Any]) -> dict[str, Any]:
+    if Draft202012Validator is None:
+        raise ControllerError("internal action-manifest validation dependency is unavailable")
+    if len(_canonical_json_bytes(action)) > MAX_ACTION_BYTES:
+        raise ControllerError(f"internal action manifest exceeds the {MAX_ACTION_BYTES}-byte cap")
     schema = json.loads(ACTION_SCHEMA.read_text(encoding="utf-8"))
     errors = sorted(
         Draft202012Validator(schema).iter_errors(action),
@@ -249,7 +607,144 @@ def _validate_action(action: dict[str, Any]) -> dict[str, Any]:
     if errors:
         detail = "; ".join(error.message for error in errors[:5])
         raise ControllerError(f"internal action-manifest validation failed: {detail}")
+    _validate_action_semantics(action)
     return action
+
+
+@cache
+def _receipt_schema_registry():
+    if Registry is None or Resource is None:
+        raise ControllerError("cannot create artifact receipt: schema registry dependency is unavailable")
+    registry = Registry()
+    for name in (
+        "actors.schema.yaml",
+        "actors-discovered.schema.yaml",
+        "actors-resolved.schema.yaml",
+        "actors-repo.schema.yaml",
+    ):
+        import yaml
+
+        value = yaml.safe_load((PLUGIN_ROOT / "schemas" / name).read_text(encoding="utf-8"))
+        registry = registry.with_resource(value["$id"], Resource.from_contents(value))
+    return registry
+
+
+def create_artifact_receipt(
+    output_root: Path,
+    artifact_path: str,
+    *,
+    schema_id: str,
+    record_count: int,
+) -> dict[str, Any]:
+    """Create a receipt from exact artifact bytes after structural validation."""
+    path = _resolve_artifact_path(output_root.resolve(), artifact_path)
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise ControllerError(f"cannot read validated artifact {artifact_path!r}: {exc}") from exc
+    if schema_id not in _RECEIPT_RECORD_KEYS:
+        raise ControllerError(f"artifact receipt names an unregistered schema: {schema_id}")
+    schema_name = schema_id.split("#", 1)[0]
+    schema_path = (PLUGIN_ROOT / schema_name).resolve()
+    try:
+        schema_path.relative_to((PLUGIN_ROOT / "schemas").resolve())
+        value = json.loads(payload)
+        if schema_path.suffix == ".json":
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        else:
+            import yaml
+
+            schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ControllerError(f"cannot validate exact artifact bytes for {artifact_path!r}: {exc}") from exc
+    if Draft202012Validator is None:
+        raise ControllerError("cannot create artifact receipt: jsonschema dependency is unavailable")
+    try:
+        errors = sorted(
+            Draft202012Validator(schema, registry=_receipt_schema_registry()).iter_errors(value),
+            key=lambda item: list(item.path),
+        )
+    except Exception as exc:
+        raise ControllerError(f"artifact receipt schema resolution failed for {artifact_path!r}: {exc}") from exc
+    if errors:
+        detail = "; ".join(error.message for error in errors[:5])
+        raise ControllerError(f"artifact receipt schema validation failed for {artifact_path!r}: {detail}")
+    record_value = value.get(_RECEIPT_RECORD_KEYS[schema_id]) if isinstance(value, dict) else None
+    if record_value is None and schema_id in _OPTIONAL_RECEIPT_RECORD_KEYS:
+        record_value = []
+    actual_count = len(record_value) if isinstance(record_value, (list, dict)) else None
+    if actual_count is None or actual_count != record_count:
+        raise ControllerError(
+            f"artifact receipt record count is stale for {artifact_path!r}: expected {actual_count}, got {record_count}"
+        )
+    receipt = {
+        "schema_version": 1,
+        "artifact_path": artifact_path,
+        "schema_id": schema_id,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "record_count": record_count,
+        "validation_status": "valid",
+    }
+    _validate_action(
+        {
+            "schema_version": 1,
+            "action": "run_gate",
+            "dispatch_values": {"output_dir": str(output_root.resolve())},
+            "artifact_receipts": [receipt],
+        }
+    )
+    return receipt
+
+
+def consume_artifact_receipt(output_root: Path, receipt: dict[str, Any]) -> bytes:
+    """Re-read an artifact and reject bytes changed since receipt creation."""
+    _validate_action(
+        {
+            "schema_version": 1,
+            "action": "run_gate",
+            "dispatch_values": {"output_dir": str(output_root.resolve())},
+            "artifact_receipts": [receipt],
+        }
+    )
+    artifact_path = receipt["artifact_path"]
+    path = _resolve_artifact_path(output_root.resolve(), artifact_path)
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise ControllerError(f"cannot consume artifact {artifact_path!r}: {exc}") from exc
+    if hashlib.sha256(payload).hexdigest() != receipt["sha256"]:
+        raise ControllerError(f"artifact changed after validation: {artifact_path}")
+    return payload
+
+
+def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]]) -> dict[str, Any]:
+    """Re-hash one action's admitted inputs immediately before Agent dispatch."""
+    if not receipt_pairs:
+        raise ControllerError("receipt verification requires at least one artifact")
+    if len(receipt_pairs) > 64:
+        raise ControllerError("receipt verification exceeds the 64-artifact action cap")
+    seen: set[str] = set()
+    for artifact_path, expected_sha256 in receipt_pairs:
+        if artifact_path in seen:
+            raise ControllerError(f"duplicate receipt verification path: {artifact_path}")
+        seen.add(artifact_path)
+        if not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
+            raise ControllerError(f"invalid receipt fingerprint for {artifact_path!r}")
+        path = _resolve_artifact_path(output_root.resolve(), artifact_path)
+        try:
+            payload = path.read_bytes()
+        except OSError as exc:
+            raise ControllerError(f"cannot consume artifact {artifact_path!r}: {exc}") from exc
+        if hashlib.sha256(payload).hexdigest() != expected_sha256:
+            raise ControllerError(f"artifact changed after validation: {artifact_path}")
+    return _validate_action(
+        {
+            "schema_version": 1,
+            "action": "run_gate",
+            "dispatch_values": {"output_dir": str(output_root.resolve())},
+            "receipts": [f"Verified {len(receipt_pairs)} artifact receipt(s) immediately before dispatch"],
+        }
+    )
 
 
 def _emit(action: dict[str, Any]) -> int:
@@ -272,14 +767,9 @@ def _resolve(argv: list[str]) -> dict[str, Any]:
 
 
 def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
-    thin_eligible = (
-        os.environ.get("APPSEC_THIN_ORCHESTRATOR") != "0"
-        and not cfg.get("dry_run")
-        and not cfg.get("resume")
-        and not cfg.get("max_wall_time_seconds")
-        and not cfg.get("max_cost_usd")
-        and os.environ.get("APPSEC_LIVE_PHASE") != "1"
-    )
+    thin_eligible = resolve_config.compact_runtime_eligible(cfg)
+    if cfg.get("runtime_generation") == CONTEXT_V2_GENERATION and not thin_eligible:
+        raise ControllerError("incompatible runtime selection: context-v2 requires the compact top-level runtime")
     if thin_eligible and cfg.get("mode") in {"full", "rebuild"} and not cfg.get("rerender"):
         return "thin-full", THIN_RUNTIME
     if thin_eligible and cfg.get("mode") == "rerender":
@@ -1113,7 +1603,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "action": "dispatch_agent",
         "mode": cfg["mode"],
         "stage": "stage1",
-        "instruction_file": str(THIN_STAGE1_RUNTIME),
+        "instruction_file": str(_stage1_runtime_for(cfg)),
         "preflight_status": str(cfg.get("preflight_status") or ""),
         "run_plan": run_plan,
         "config_path": str(config_path),
@@ -1153,6 +1643,1474 @@ def _best_effort_script(
         return False
 
 
+def _run_auto_emitter_pass(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> None:
+    """Apply the shared deterministic YAML enrichment before quality gates."""
+    try:
+        _run_external(
+            [
+                "bash",
+                str(SCRIPT_DIR / "auto_emitter_pass.sh"),
+                str(output_dir),
+                str(cfg.get("repo_root") or output_dir),
+                str(PLUGIN_ROOT),
+                "true" if cfg.get("dry_run") else "false",
+            ]
+        )
+    except ControllerError as exc:
+        receipts.append("auto_emitter_pass.sh: best-effort failure")
+        _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+
+
+def _load_json_object(path: Path, *, contract: str) -> dict[str, Any]:
+    """Load a controller-consumed JSON object or fail at the boundary."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControllerError(f"cannot read {contract} artifact {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ControllerError(f"{contract} artifact must be a JSON object: {path}")
+    return value
+
+
+def _validate_json_artifact(path: Path, schema_path: Path, *, contract: str) -> dict[str, Any]:
+    """Validate one JSON artifact with the required structural dependency."""
+    if Draft202012Validator is None:
+        raise ControllerError(f"cannot validate {contract}: jsonschema dependency is unavailable")
+    value = _load_json_object(path, contract=contract)
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControllerError(f"cannot load schema for {contract}: {exc}") from exc
+    errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda item: list(item.path))
+    if errors:
+        detail = "; ".join(error.message for error in errors[:5])
+        raise ControllerError(f"{contract} validation failed: {detail}")
+    return value
+
+
+def _validate_evidence_verification(path: Path, threats_path: Path | None = None) -> dict[str, Any]:
+    """Validate the evidence side channel's structural and count contracts."""
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / "evidence-verification.schema.json",
+        contract="evidence-verification-v1",
+    )
+    valid, semantic_errors = intermediate_contract.validate_evidence_verification(value)
+    if not valid:
+        raise ControllerError(f"evidence-verification-v1 {semantic_errors[0]}")
+    summary = value["summary"]
+    total = summary["total_threats"]
+    flags = value["flags"]
+    if threats_path is not None:
+        merged = _load_json_object(threats_path, contract="threats-merged-v1")
+        threats = merged.get("threats")
+        if not isinstance(threats, list):
+            raise ControllerError("threats-merged-v1 artifact has no threats array")
+        if total != len(threats):
+            raise ControllerError("evidence-verification-v1 total_threats does not match the merged threat count")
+        by_id = {
+            threat.get("t_id"): threat
+            for threat in threats
+            if isinstance(threat, dict) and isinstance(threat.get("t_id"), str)
+        }
+        for flag in flags:
+            threat = by_id.get(flag["t_id"])
+            if threat is None:
+                raise ControllerError(f"evidence-verification-v1 references unknown threat {flag['t_id']}")
+            if threat.get("evidence_check") != flag["verdict"]:
+                raise ControllerError(f"evidence-verification-v1 verdict does not match merged threat {flag['t_id']}")
+            annotations = threat.get("evidence_flags")
+            if not isinstance(annotations, list) or not any(
+                isinstance(annotation, dict)
+                and annotation.get("flag_id") == flag["flag_id"]
+                and annotation.get("verdict") == flag["verdict"]
+                for annotation in annotations
+            ):
+                raise ControllerError(f"evidence-verification-v1 flag is absent from merged threat {flag['t_id']}")
+    return value
+
+
+def _validate_recon_signals(path: Path) -> dict[str, Any]:
+    """Validate the mandatory bounded actor/architecture signal artifact."""
+    try:
+        byte_count = path.stat().st_size
+    except OSError as exc:
+        raise ControllerError(f"cannot stat recon-signals-v1 artifact {path}: {exc}") from exc
+    if byte_count > MAX_RECON_SIGNALS_BYTES:
+        raise ControllerError(f"recon-signals-v1 artifact exceeds the {MAX_RECON_SIGNALS_BYTES}-byte cap")
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / "recon-signals.schema.json",
+        contract="recon-signals-v1",
+    )
+    valid, semantic_errors = intermediate_contract.validate_recon_signals(value)
+    if not valid:
+        raise ControllerError(f"recon-signals-v1 {semantic_errors[0]}")
+    return value
+
+
+@cache
+def _required_recon_headings() -> tuple[str, ...]:
+    """Expose the shared contract headings for controller fixtures."""
+    try:
+        return recon_summary_contract.required_headings()
+    except recon_summary_contract.ReconSummaryValidationError as exc:
+        raise ControllerError(str(exc)) from exc
+
+
+def _validate_recon_summary(path: Path) -> None:
+    """Validate the shared Markdown contract consumed downstream."""
+    try:
+        recon_summary_contract.validate_recon_summary(path)
+    except recon_summary_contract.ReconSummaryValidationError as exc:
+        raise ControllerError(str(exc)) from exc
+
+
+def _validate_threat_modeling_context(path: Path) -> None:
+    """Validate the shared bounded-context Markdown contract."""
+    try:
+        context_document_contract.validate_threat_modeling_context(path)
+    except context_document_contract.ThreatModelingContextValidationError as exc:
+        raise ControllerError(str(exc)) from exc
+
+
+def _repair_missing_threat_modeling_context_headings(path: Path) -> tuple[str, ...]:
+    """Apply the contract-owned, omission-only context normalization."""
+    try:
+        return context_document_contract.repair_missing_headings(path)
+    except context_document_contract.ThreatModelingContextValidationError as exc:
+        raise ControllerError(str(exc)) from exc
+
+
+def _normalize_context_v2_analyst_context(output_dir: Path) -> None:
+    """Remove routing state that the context-v2 semantic producer does not own."""
+    path = output_dir / ".stride-analyst-context.json"
+    _check_context_v2_analyst_context_size(path)
+    value = _load_json_object(path, contract="stride-analyst-context-v1")
+    if "_stride_profile" not in value:
+        return
+    value.pop("_stride_profile")
+    from _atomic_io import atomic_write_json
+
+    atomic_write_json(path, value, sort_keys=False)
+    _append_event(
+        output_dir,
+        "CONTEXT_V2_RESERVED_FIELD_DROPPED",
+        "removed producer-authored _stride_profile; resolved run configuration is authoritative",
+        level="WARN",
+    )
+
+
+def _check_context_v2_analyst_context_size(path: Path) -> None:
+    """Reject an unbounded producer artifact before parsing it."""
+    try:
+        byte_count = path.stat().st_size
+    except OSError as exc:
+        raise ControllerError(f"cannot stat stride-analyst-context-v1 artifact {path}: {exc}") from exc
+    if byte_count > MAX_STRIDE_ANALYST_CONTEXT_BYTES:
+        raise ControllerError(
+            f"stride-analyst-context-v1 artifact exceeds the {MAX_STRIDE_ANALYST_CONTEXT_BYTES}-byte cap"
+        )
+
+
+def _validate_context_v2_analyst_context(output_dir: Path) -> dict[str, Any]:
+    """Validate the bounded semantic overlay against finalized component IDs."""
+    path = output_dir / ".stride-analyst-context.json"
+    _check_context_v2_analyst_context_size(path)
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / "stride-analyst-context.schema.json",
+        contract="stride-analyst-context-v1",
+    )
+    components = _load_json_object(output_dir / ".components.json", contract="components-v1").get("components")
+    if not isinstance(components, list):
+        raise ControllerError("components-v1 artifact has no components array")
+    component_ids = {
+        component.get("id")
+        for component in components
+        if isinstance(component, dict) and isinstance(component.get("id"), str)
+    }
+    unknown = sorted(set(value) - component_ids)
+    if unknown:
+        raise ControllerError("stride-analyst-context-v1 contains unknown component IDs: " + ", ".join(unknown[:10]))
+    return value
+
+
+def _load_context_v2_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
+    """Load durable run state and refuse to continue under another generation.
+
+    The generation is read from the run's persisted config, never from the
+    current environment: the producer that already wrote artifacts into this
+    output directory is the only one allowed to continue writing them. An
+    operator who flips APPSEC_CONTEXT_V2 mid-run gets an explicit
+    incompatible-state abort instead of a second producer for one artifact.
+    """
+    output_dir, cfg = _load_run_config(output_dir)
+    generation = cfg.get("runtime_generation") or LEGACY_GENERATION
+    if generation != CONTEXT_V2_GENERATION:
+        raise ControllerError(
+            f"incompatible runtime generation: this run was prepared as {generation!r} and a "
+            "context-v2 action cannot continue it. Select the prior runtime for this "
+            "invocation, or start a new run with APPSEC_CONTEXT_V2=1."
+        )
+    versions = cfg.get("runtime_artifact_schema_versions")
+    expected_versions = resolve_config.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS
+    if versions != expected_versions:
+        raise ControllerError(
+            "incompatible context-v2 artifact schema versions; start a new run with the current plugin generation"
+        )
+    env_opt_in = os.environ.get("APPSEC_CONTEXT_V2", "").strip() == "1"
+    if not env_opt_in:
+        _append_event(
+            output_dir,
+            "RUNTIME_GENERATION_ENV_IGNORED",
+            "continuing persisted runtime_generation=context-v2; APPSEC_CONTEXT_V2 is not set in this environment",
+            level="WARN",
+        )
+    return output_dir, cfg
+
+
+def _stage1_runtime_for(cfg: dict[str, Any]) -> Path:
+    """The Stage-1 runtime for this run's persisted producer generation."""
+    if (cfg.get("runtime_generation") or LEGACY_GENERATION) == CONTEXT_V2_GENERATION:
+        return THIN_STAGE1_V2_RUNTIME
+    return THIN_STAGE1_RUNTIME
+
+
+def _reject_context_v2(cfg: dict[str, Any], stage: str) -> None:
+    """Keep a legacy Stage-1 gate off a context-v2 run.
+
+    Context-v2 has its own terminal Stage-1 gate. Letting a legacy gate also
+    run would put two producers on the same artifacts inside one invocation.
+    """
+    if (cfg.get("runtime_generation") or LEGACY_GENERATION) == CONTEXT_V2_GENERATION:
+        raise ControllerError(
+            f"incompatible runtime generation: {stage} is a legacy-producer gate and this run was "
+            "prepared as 'context-v2'. Use the context-v2 actions for this run."
+        )
+
+
+def _context_v2_common(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "mode": cfg["mode"],
+        "stage": "stage1c",
+        "instruction_file": str(THIN_STAGE1_V2_RUNTIME),
+        "config_path": str(output_dir / ".skill-config.json"),
+        "dispatch_values": _dispatch_values(cfg),
+    }
+
+
+def _bare_agent_model(value: Any) -> str:
+    """Reduce an operator-selected model ID to Claude Agent's closed aliases."""
+    lowered = str(value or "sonnet").lower()
+    for alias in ("opus", "haiku", "sonnet"):
+        if alias in lowered:
+            return alias
+    return "sonnet"
+
+
+def _context_v2_job_metadata(cfg: dict[str, Any], role: str) -> dict[str, str]:
+    record = SEMANTIC_ROLE_REGISTRY.get(role)
+    model_key = SEMANTIC_ROLE_MODEL_KEYS.get(role)
+    if record is None or model_key is None:
+        raise ControllerError(f"unknown semantic role: {role!r}")
+    if role not in CONTEXT_V2_PRODUCER_GATED_ROLES | CONTEXT_V2_CONTROLLER_RECOVERY_ROLES:
+        raise ControllerError(f"semantic role has no pre-handoff contract enforcement: {role!r}")
+    return {
+        "agent_type": f"appsec-advisor:{record['agent']}",
+        "model": _bare_agent_model(cfg.get(model_key)),
+    }
+
+
+def _context_v2_taxonomy_slice(output_dir: Path, component_id: str) -> tuple[str, str]:
+    """Build the bounded canonical CWE-to-TH input for one STRIDE job."""
+    _run_script(
+        "slice_taxonomy.py",
+        [
+            component_id,
+            str(output_dir),
+            "--component-id",
+            component_id,
+            "--data-dir",
+            str(PLUGIN_ROOT / "data"),
+            "--taxonomies",
+            "threats",
+        ],
+        acceptable=(0, 1),
+    )
+    relative = f".taxonomy-slices/{component_id}/threat-category-taxonomy.yaml"
+    path = _resolve_artifact_path(output_dir.resolve(), relative)
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise ControllerError(f"cannot read context-v2 taxonomy slice for {component_id}: {exc}") from exc
+    if not payload or len(payload) > 32_768:
+        raise ControllerError(f"context-v2 taxonomy slice for {component_id} is empty or exceeds 32768 bytes")
+    return relative, hashlib.sha256(payload).hexdigest()
+
+
+def _context_v2_dispatch(
+    output_dir: Path,
+    cfg: dict[str, Any],
+    *,
+    role: str,
+    job_id: str,
+    input_artifacts: list[str],
+    output_artifacts: list[str],
+    decision_keys: list[str],
+    receipts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return one closed-registry semantic boundary action."""
+    action = {
+        **_context_v2_common(output_dir, cfg),
+        "action": "dispatch_agent",
+        "semantic_role": role,
+        "dispatch_jobs": [
+            {
+                "schema_version": 1,
+                "job_id": job_id,
+                "semantic_role": role,
+                **_context_v2_job_metadata(cfg, role),
+                "input_artifacts": input_artifacts,
+                "output_artifacts": output_artifacts,
+                "unresolved_decision_keys": decision_keys,
+            }
+        ],
+        "artifact_receipts": receipts,
+        "unresolved_decision_keys": decision_keys,
+    }
+    _prepare_context_v2_dispatch_outputs(output_dir, action["dispatch_jobs"])
+    return _validate_action(action)
+
+
+def _validated_json_receipt(
+    output_dir: Path,
+    artifact_path: str,
+    *,
+    schema_id: str,
+    record_count: int,
+) -> dict[str, Any]:
+    return create_artifact_receipt(
+        output_dir,
+        artifact_path,
+        schema_id=schema_id,
+        record_count=record_count,
+    )
+
+
+def _write_merge_review_context(output_dir: Path, candidates: dict[str, Any], source_payload: bytes) -> dict[str, Any]:
+    """Project the full merge state into one bounded semantic-review artifact."""
+    from _atomic_io import atomic_write_text
+
+    groups = candidates.get("candidate_groups")
+    if not isinstance(groups, list) or not groups:
+        raise ControllerError("merge review context requires at least one candidate group")
+    if len(groups) > 64:
+        raise ControllerError("merge-candidates-v1 exceeds the 64-group semantic admission cap")
+    for group in groups:
+        members = group.get("members") if isinstance(group, dict) else None
+        if not isinstance(members, list) or len(members) > 256:
+            group_id = group.get("group_id") if isinstance(group, dict) else "unknown"
+            raise ControllerError(f"merge candidate group {group_id!r} exceeds the 256-member admission cap")
+        if group.get("member_count") != len(members):
+            raise ControllerError(f"merge candidate group {group.get('group_id')!r} has a stale member count")
+
+    payload = {
+        "schema_version": 1,
+        "source_artifact": ".merge-candidates.json",
+        "source_sha256": hashlib.sha256(source_payload).hexdigest(),
+        "candidate_group_count": len(groups),
+        "candidate_groups": groups,
+        "limits": {"serialized_bytes": 1, "estimated_tokens": 1},
+    }
+    previous: tuple[int, int] | None = None
+    rendered = b""
+    for _ in range(10):
+        rendered = _canonical_json_bytes(payload) + b"\n"
+        current = (len(rendered), (len(rendered) + 3) // 4)
+        payload["limits"] = {"serialized_bytes": current[0], "estimated_tokens": current[1]}
+        if current == previous:
+            rendered = _canonical_json_bytes(payload) + b"\n"
+            break
+        previous = current
+    else:
+        raise ControllerError("merge review context size metadata did not converge")
+    if len(rendered) > 262_144 or (len(rendered) + 3) // 4 > 65_536:
+        raise ControllerError("merge review context exceeds the 262144-byte semantic admission cap")
+
+    path = output_dir / ".merge-context" / "candidates.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, rendered.decode("utf-8"))
+    return payload
+
+
+def _context_v2_run_posture_emitters(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> None:
+    """Run the existing passive Phase-10 emitters without returning to a model."""
+    repo_root = str(cfg.get("repo_root") or output_dir)
+    _best_effort_script(
+        output_dir,
+        "emit_dep_update_activity.py",
+        ["--repo-root", repo_root, "--output-dir", str(output_dir)],
+        receipts,
+    )
+    for name in ("emit_sca_practice.py", "emit_known_bad_libs.py"):
+        _best_effort_script(
+            output_dir,
+            name,
+            ["--repo-root", repo_root, "--output-dir", str(output_dir), "--asset-tier", "T2"],
+            receipts,
+        )
+
+
+# Filesystem markers that make a config/IaC scan worth an agent. Fixed and
+# plugin-owned: repository content selects the boolean, never a path or command.
+_IAC_SURFACE_GLOBS = (
+    "Dockerfile",
+    "*.dockerfile",
+    "docker-compose*.yml",
+    "docker-compose*.yaml",
+    ".github/workflows/*.yml",
+    ".github/workflows/*.yaml",
+    ".github/dependabot.yml",
+    ".github/dependabot.yaml",
+    "renovate.json",
+    "renovate.json5",
+    ".renovaterc",
+    ".npmrc",
+    ".yarnrc.yml",
+)
+_CONFIG_SCAN_STUB = '{"parse_error": "skipped: no IaC surface detected", "findings": []}\n'
+
+
+# Directories that never carry a deployable IaC surface but dominate a
+# recursive walk on a real repository.
+_IAC_WALK_PRUNE = {".git", "node_modules", ".venv", "venv", "dist", "build", ".appsec-cache"}
+_IAC_WALK_MAX_ENTRIES = 200_000
+
+
+def _has_iac_surface(repo_root: Path) -> bool:
+    """Deterministic IaC-surface pre-check for the Phase-2.5 selection.
+
+    One bounded walk matching every pattern at once. Thirteen separate
+    recursive globs re-walk the tree per pattern and are the documented
+    cold-cache hazard on a monorepo. Hitting the entry cap answers "true" so an
+    unwalked remainder can never silently drop the config scan.
+    """
+    relative_globs = [pattern for pattern in _IAC_SURFACE_GLOBS if "/" in pattern]
+    name_globs = [pattern for pattern in _IAC_SURFACE_GLOBS if "/" not in pattern]
+    visited = 0
+    for dirpath, dirnames, filenames in os.walk(repo_root, followlinks=False):
+        dirnames[:] = [name for name in dirnames if name not in _IAC_WALK_PRUNE]
+        visited += len(filenames)
+        if visited > _IAC_WALK_MAX_ENTRIES:
+            return True
+        for filename in filenames:
+            if any(fnmatch.fnmatch(filename, pattern) for pattern in name_globs):
+                return True
+            relative = (Path(dirpath) / filename).relative_to(repo_root).as_posix()
+            if any(fnmatch.fnmatch(relative, f"*{pattern}") for pattern in relative_globs):
+                return True
+    return False
+
+
+def _context_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
+    """Reuse a prior context file only on an incremental run newer than HEAD.
+
+    A full or rebuild run always re-resolves context: an existing
+    `.threat-modeling-context.md` survives full cleanup, so treating mere
+    presence as a cache hit would silently reuse stale policy and prior-finding
+    data on every rerun.
+    """
+    if not cfg.get("incremental"):
+        return False
+    context_file = output_dir / ".threat-modeling-context.md"
+    try:
+        context_epoch = context_file.stat().st_mtime
+        _validate_threat_modeling_context(context_file)
+    except (OSError, ControllerError):
+        return False
+    head = subprocess.run(
+        ["git", "-C", str(cfg.get("repo_root") or output_dir), "log", "-1", "--format=%ct"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    try:
+        head_epoch = float(head.stdout.strip())
+    except ValueError:
+        return False
+    return context_epoch > head_epoch > 0
+
+
+def _recon_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
+    """Reuse a prior recon summary only when the fingerprint contract allows it."""
+    if not (output_dir / ".recon-summary.md").is_file() or not (output_dir / ".recon-signals.json").is_file():
+        return False
+    try:
+        _validate_recon_summary(output_dir / ".recon-summary.md")
+        _validate_recon_signals(output_dir / ".recon-signals.json")
+    except ControllerError:
+        return False
+    incremental = bool(cfg.get("incremental"))
+    if not incremental and not cfg.get("recon_reuse_eligible"):
+        return False
+    args = [
+        "check-fingerprint",
+        "--output-dir",
+        str(output_dir),
+        "--repo-root",
+        str(cfg.get("repo_root") or output_dir),
+    ]
+    if not incremental:
+        # An auto-upgraded full run has no incremental git-diff back-stop, so
+        # the tree must be git-provably unchanged before recon may be reused.
+        args.append("--require-clean-tree")
+    try:
+        _run_script("baseline_state.py", args)
+    except ControllerError:
+        return False
+    return True
+
+
+def context_v2_begin(output_dir: Path) -> dict[str, Any]:
+    """Run the Phase-1/2 pre-passes and return one bounded recon wave."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    repo_root = Path(str(cfg.get("repo_root") or output_dir))
+    receipts: list[str] = []
+
+    # These optional late-stage outputs may not get a producer in this run.
+    # Clear them at the fresh context-v2 entry boundary so a skipped verifier,
+    # empty threat set, or currently inactive mitigation branch cannot consume
+    # a schema-valid sidecar retained from an earlier full run.
+    _prepare_context_v2_dispatch_outputs(
+        output_dir,
+        [
+            {
+                "input_artifacts": [],
+                "output_artifacts": [
+                    ".evidence-verification.json",
+                    ".mitigation-overrides.json",
+                    ".tier-root-causes.json",
+                ],
+            }
+        ],
+    )
+
+    recon_skip = _recon_skip(output_dir, cfg)
+    has_iac = _has_iac_surface(repo_root)
+    if not has_iac:
+        from _atomic_io import atomic_write_text
+
+        # Downstream consumers read a contracted shape either way; the stub is
+        # what "no IaC surface" looks like, not a missing artifact.
+        atomic_write_text(output_dir / ".config-scan-findings.json", _CONFIG_SCAN_STUB)
+        receipts.append("config scan skipped: no IaC surface")
+
+    if not recon_skip:
+        pattern_args = ["all", "--repo-root", str(repo_root)]
+        if cfg.get("scan_manifest"):
+            pattern_args.extend(["--manifest-file", str(output_dir / ".scan-manifest.txt")])
+        try:
+            completed = _run_script("recon_patterns.py", pattern_args)
+            (output_dir / ".recon-patterns.json").write_text(completed.stdout, encoding="utf-8")
+        except (ControllerError, OSError) as exc:
+            # The recon-scanner falls back to LLM grep for these categories.
+            receipts.append("recon_patterns.py: best-effort failure")
+            _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+        # Without --output the script defaults into the scanned repository.
+        fragments = output_dir / ".fragments"
+        fragments.mkdir(parents=True, exist_ok=True)
+        _best_effort_script(
+            output_dir,
+            "extract_data_relations.py",
+            [str(repo_root), "--output", str(fragments / "data-relations.json"), "--quiet"],
+            receipts,
+        )
+
+    jobs: list[dict[str, Any]] = []
+    if not _context_skip(output_dir, cfg):
+        jobs.append(
+            {
+                "schema_version": 1,
+                "job_id": "phase1-context",
+                "semantic_role": "context_resolver",
+                **_context_v2_job_metadata(cfg, "context_resolver"),
+                "input_artifacts": [".skill-config.json"],
+                "output_artifacts": [
+                    ".threat-modeling-context.md",
+                    ".related-repos-loaded.json",
+                    ".cross-repo-register.json",
+                ],
+                "unresolved_decision_keys": [],
+            }
+        )
+    else:
+        receipts.append("context resolution reused from cache")
+    if not recon_skip:
+        jobs.append(
+            {
+                "schema_version": 1,
+                "job_id": "phase2-recon",
+                "semantic_role": "recon_scanner",
+                **_context_v2_job_metadata(cfg, "recon_scanner"),
+                "input_artifacts": [".skill-config.json"],
+                "output_artifacts": [".recon-summary.md", ".recon-signals.json"],
+                "unresolved_decision_keys": [],
+            }
+        )
+    else:
+        receipts.append("recon summary reused: fingerprint unchanged")
+    if has_iac:
+        jobs.append(
+            {
+                "schema_version": 1,
+                "job_id": "phase2_5-config",
+                "semantic_role": "config_scanner",
+                **_context_v2_job_metadata(cfg, "config_scanner"),
+                "input_artifacts": [".skill-config.json"],
+                "output_artifacts": [".config-scan-findings.json"],
+                "unresolved_decision_keys": [],
+            }
+        )
+    _append_event(
+        output_dir,
+        "CONTEXT_V2_RECON_WAVE",
+        f"jobs={len(jobs)} recon_skip={str(recon_skip).lower()} has_iac_surface={str(has_iac).lower()}",
+    )
+    if not jobs:
+        return _context_v2_after_recon(output_dir, cfg, receipts)
+    _prepare_context_v2_dispatch_outputs(output_dir, jobs)
+    return _validate_action(
+        {
+            **_context_v2_common(output_dir, cfg),
+            "action": "dispatch_parallel",
+            "dispatch_jobs": jobs,
+            "receipts": ["Context-v2 Phase-1/2 pre-passes complete", *receipts],
+        }
+    )
+
+
+def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> dict[str, Any]:
+    """Run Phases 2.5b, 2.6, and 2.7 until the next semantic boundary."""
+    repo_root = str(cfg.get("repo_root") or output_dir)
+    depth = str(cfg.get("assessment_depth") or "standard")
+
+    if not (output_dir / ".recon-summary.md").is_file():
+        raise ControllerError("context-v2 recon wave did not produce .recon-summary.md")
+    if not (output_dir / ".threat-modeling-context.md").is_file():
+        raise ControllerError("context-v2 context wave did not produce .threat-modeling-context.md")
+    context_path = output_dir / ".threat-modeling-context.md"
+    repaired_headings = _repair_missing_threat_modeling_context_headings(context_path)
+    if repaired_headings:
+        repaired_names = ", ".join(repaired_headings)
+        _append_event(output_dir, "CONTEXT_STRUCTURE_REPAIRED", f"inserted={repaired_names}", level="WARN")
+        receipts.append(f"context structure normalized: inserted {repaired_names}")
+    _validate_threat_modeling_context(context_path)
+    _validate_recon_summary(output_dir / ".recon-summary.md")
+    recon_line_count = len((output_dir / ".recon-summary.md").read_text(encoding="utf-8").splitlines())
+    if recon_line_count > TARGET_RECON_SUMMARY_LINES:
+        _append_event(
+            output_dir,
+            "RECON_SUMMARY_TARGET_EXCEEDED",
+            f"lines={recon_line_count} target={TARGET_RECON_SUMMARY_LINES}",
+            level="WARN",
+        )
+    _validate_recon_signals(output_dir / ".recon-signals.json")
+
+    # Phase 2.5b — normalize and validate the config scan. Enrichment only: a
+    # malformed sidecar reduces coverage but must not abort the assessment.
+    config_findings = output_dir / ".config-scan-findings.json"
+    if config_findings.is_file():
+        _best_effort_script(output_dir, "normalize_config_scan.py", [str(config_findings)], receipts)
+        _best_effort_script(
+            output_dir,
+            "validate_intermediate.py",
+            ["config_scan_findings", str(config_findings)],
+            receipts,
+        )
+
+    # Phase 2.5 Step 1c — cross-repository register.
+    register_args = [
+        "--repo-root",
+        repo_root,
+        "--recon-summary",
+        str(output_dir / ".recon-summary.md"),
+        "--output",
+        str(output_dir / ".cross-repo-register.json"),
+    ]
+    declared = output_dir / ".related-repos-loaded.json"
+    if declared.is_file():
+        register_args.extend(["--declared-json", str(declared)])
+    _best_effort_script(output_dir, "build_cross_repo_register.py", register_args, receipts)
+
+    # Phase 2.6 — deterministic architecture-coverage pre-pass. Always runs so
+    # "always-on" rules still emit not_applicable rows on an unmatched repo.
+    _run_script(
+        "route_inventory.py",
+        ["--repo-root", repo_root, "--output-dir", str(output_dir)],
+    )
+    if depth == "thorough":
+        _best_effort_script(
+            output_dir,
+            "database_privilege_separation.py",
+            ["--repo-root", repo_root, "--output-dir", str(output_dir), "--assessment-depth", "thorough"],
+            receipts,
+        )
+    _best_effort_script(
+        output_dir,
+        "architecture_coverage_checks.py",
+        ["--repo-root", repo_root, "--output-dir", str(output_dir), "--assessment-depth", depth],
+        receipts,
+    )
+
+    # Phase 2.7 Step 1 — static actor layers. Never skipped; quick depth drops
+    # only the LLM discovery steps.
+    resolve_args = _actor_resolver_args(output_dir, cfg)
+    if depth == "quick":
+        resolve_args.append("--quick")
+    _run_script("resolve_actors.py", resolve_args)
+    _run_script(
+        "validate_intermediate.py",
+        ["actors_resolved", str(output_dir / ".actors-resolved.json")],
+    )
+
+    if depth == "quick" or not _actor_discovery_enabled(output_dir):
+        return _context_v2_dispatch_architecture(output_dir, cfg, receipts)
+
+    try:
+        cache_key = _run_script(
+            "actor_discovery_cache.py",
+            ["compute", "--output-dir", str(output_dir), "--plugin-root", str(PLUGIN_ROOT)],
+        ).stdout.strip()
+        cached = _run_script(
+            "actor_discovery_cache.py",
+            [
+                "check",
+                "--discovery-output",
+                str(output_dir / ".actors-discovered.json"),
+                "--expected-key",
+                cache_key,
+            ],
+        ).stdout.strip()
+    except ControllerError as exc:
+        receipts.append("actor_discovery_cache.py: best-effort failure")
+        _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+        return _context_v2_dispatch_architecture(output_dir, cfg, receipts)
+
+    if cached == "hit" and not cfg.get("refresh_actor_discovery"):
+        receipts.append("actor discovery reused from cache")
+        return _context_v2_dispatch_architecture(output_dir, cfg, receipts)
+
+    return _context_v2_dispatch(
+        output_dir,
+        cfg,
+        role="actor_discoverer",
+        job_id="phase2_7-actors",
+        input_artifacts=[".actors-merged-static.json", ".recon-summary.md"],
+        output_artifacts=[".actors-discovered.json"],
+        decision_keys=["discovered_actor_set"],
+        receipts=[],
+    )
+
+
+def _record_count(path: Path, key: str) -> int:
+    """Length of a contracted array, for a receipt that has already validated."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")).get(key)
+    except (OSError, json.JSONDecodeError, AttributeError) as exc:
+        raise ControllerError(f"cannot read record count from {path.name}: {exc}") from exc
+    if not isinstance(value, list):
+        raise ControllerError(f"{path.name} has no {key!r} array")
+    return len(value)
+
+
+def _actor_resolver_args(output_dir: Path, cfg: dict[str, Any]) -> list[str]:
+    args = [
+        "--plugin-root",
+        str(PLUGIN_ROOT),
+        "--repo-root",
+        str(cfg.get("repo_root") or output_dir),
+        "--output-dir",
+        str(output_dir),
+        "--signals",
+        str(output_dir / ".recon-signals.json"),
+    ]
+    org_profile = output_dir / ".org-profile-effective.json"
+    if org_profile.is_file():
+        args.extend(["--org-profile-effective", str(org_profile)])
+    return args
+
+
+def _actor_discovery_enabled(output_dir: Path) -> bool:
+    """Repository configuration may disable discovery; absence never enables it."""
+    try:
+        resolved = json.loads((output_dir / ".actors-resolved.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(resolved.get("discovery_enabled"))
+
+
+def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> dict[str, Any]:
+    structured = [
+        _validated_json_receipt(
+            output_dir,
+            ".route-inventory.json",
+            schema_id="schemas/route-inventory.schema.json#v1",
+            record_count=_record_count(output_dir / ".route-inventory.json", "routes"),
+        ),
+        _validated_json_receipt(
+            output_dir,
+            ".actors-resolved.json",
+            schema_id="schemas/actors-resolved.schema.yaml#v1",
+            record_count=_record_count(output_dir / ".actors-resolved.json", "resolved_actors"),
+        ),
+    ]
+    action = _context_v2_dispatch(
+        output_dir,
+        cfg,
+        role="architecture_analyst",
+        job_id="phase3-6-architecture",
+        input_artifacts=[".recon-summary.md", ".route-inventory.json", ".actors-resolved.json"],
+        output_artifacts=[
+            ".components.json",
+            ".data-flows.json",
+            ".assets.json",
+            ".attack-surface-overrides.json",
+        ],
+        decision_keys=["component_inventory", "data_flows", "assets", "attack_surface"],
+        receipts=structured,
+    )
+    action["receipts"] = ["Context-v2 Phases 2.5b-2.7 complete", *receipts]
+    return _validate_action(action)
+
+
+def context_v2_post_recon(output_dir: Path) -> dict[str, Any]:
+    """Continue after the Phase-1/2 recon wave returns."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    return _context_v2_after_recon(output_dir, cfg, [])
+
+
+def context_v2_post_actors(output_dir: Path) -> dict[str, Any]:
+    """Validate discovery output and finalize the resolved actor set."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    receipts: list[str] = []
+    discovered = output_dir / ".actors-discovered.json"
+    # Recomputed rather than carried in a sidecar: none of the key's five
+    # inputs change while the discoverer runs, so this is the same key the
+    # dispatch decision used.
+    try:
+        cache_key = _run_script(
+            "actor_discovery_cache.py",
+            ["compute", "--output-dir", str(output_dir), "--plugin-root", str(PLUGIN_ROOT)],
+        ).stdout.strip()
+    except ControllerError:
+        cache_key = ""
+    try:
+        _run_script("validate_intermediate.py", ["actors_discovered", str(discovered)])
+    except ControllerError:
+        # An invalid contract degrades to the static actor set rather than
+        # letting unvalidated discovery reach the resolver.
+        _best_effort_script(
+            output_dir,
+            "actor_discovery_cache.py",
+            [
+                "write-empty",
+                "--output",
+                str(discovered),
+                "--cache-key",
+                cache_key,
+                "--rationale",
+                "Actor discovery returned an invalid contract; static actor layers remain authoritative.",
+            ],
+            receipts,
+        )
+        receipts.append("actor discovery rejected: invalid contract")
+    _run_script(
+        "resolve_actors.py",
+        [*_actor_resolver_args(output_dir, cfg), "--discovery-output", str(discovered)],
+    )
+    _run_script(
+        "validate_intermediate.py",
+        ["actors_resolved", str(output_dir / ".actors-resolved.json")],
+    )
+    return _context_v2_dispatch_architecture(output_dir, cfg, receipts)
+
+
+def context_v2_post_architecture(output_dir: Path) -> dict[str, Any]:
+    """Gate the Phase 3-6 artifacts and open the trust-boundary boundary."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    _gate_architecture_stage(output_dir, cfg, controller_owned_handoff=True)
+    return _context_v2_dispatch(
+        output_dir,
+        cfg,
+        role="trust_boundary_analyst",
+        job_id="phase7-boundary",
+        input_artifacts=[".trust-boundary-assessment-input.json"],
+        output_artifacts=[".trust-boundary-candidates.json"],
+        decision_keys=["trust_boundary_candidates"],
+        receipts=[
+            _validated_json_receipt(
+                output_dir,
+                ".trust-boundary-assessment-input.json",
+                schema_id="schemas/trust-boundary-assessment-input.schema.json#v1",
+                record_count=_record_count(output_dir / ".trust-boundary-assessment-input.json", "components"),
+            )
+        ],
+    )
+
+
+def context_v2_post_boundary(output_dir: Path) -> dict[str, Any]:
+    """Promote Phase-7 candidates and open the Phase-8 control boundary."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    _gate_trust_boundary_promotion(output_dir, cfg)
+    return _context_v2_dispatch(
+        output_dir,
+        cfg,
+        role="control_analyst",
+        job_id="phase8-controls",
+        input_artifacts=[".components.json", ".trust-boundaries.json", ".architecture-coverage.json"],
+        output_artifacts=[".security-controls.json", ".stride-analyst-context.json"],
+        decision_keys=["security_controls", "stride_semantic_context"],
+        receipts=[
+            _validated_json_receipt(
+                output_dir,
+                ".trust-boundaries.json",
+                schema_id="schemas/fragments/trust-boundaries.schema.json#v2",
+                record_count=_record_count(output_dir / ".trust-boundaries.json", "trust_boundaries"),
+            )
+        ],
+    )
+
+
+def _context_v2_stride_wave_action(
+    output_dir: Path,
+    cfg: dict[str, Any],
+    manifest: dict[str, Any],
+    *,
+    initialize: bool,
+) -> dict[str, Any] | None:
+    """Claim and admit exactly one persisted STRIDE wave.
+
+    The wave helper owns attempt counts and retries. Returning every manifest
+    component directly would bypass both the configured concurrency bound and
+    the persisted two-attempt budget.
+    """
+    components = manifest.get("components")
+    if manifest.get("context_version") != 2 or not isinstance(components, list) or not components:
+        raise ControllerError("stride-dispatch-manifest-v2 has no selected components")
+    by_id = {
+        component.get("component_id"): component
+        for component in components
+        if isinstance(component, dict) and isinstance(component.get("component_id"), str)
+    }
+    if len(by_id) != len(components):
+        raise ControllerError("stride-dispatch-manifest-v2 contains duplicate or invalid component IDs")
+
+    if initialize:
+        _run_script(
+            "stride_dispatch_waves.py",
+            [
+                "init",
+                str(output_dir),
+                "--concurrency",
+                str(cfg.get("stride_concurrency") or 8),
+            ],
+        )
+    claimed = _run_script("stride_dispatch_waves.py", ["claim", str(output_dir)])
+    try:
+        claim_payload = json.loads(claimed.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ControllerError(f"STRIDE wave claim returned invalid JSON: {exc}") from exc
+    if not isinstance(claim_payload, dict):
+        raise ControllerError("STRIDE wave claim must return a JSON object")
+    status = claim_payload.get("status")
+    if status == "complete":
+        return None
+    if status != "claimed":
+        raise ControllerError(f"STRIDE wave claim returned unsupported status: {status!r}")
+    wave = claim_payload.get("wave")
+    claimed_components = wave.get("components") if isinstance(wave, dict) else None
+    if not isinstance(claimed_components, list) or not claimed_components:
+        raise ControllerError("STRIDE wave claim has no component entries")
+
+    repository_registry = output_dir / ".stride-repository-registry.json"
+
+    jobs: list[dict[str, Any]] = []
+    structured: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for claimed_component in claimed_components:
+        claimed_id = claimed_component.get("component_id") if isinstance(claimed_component, dict) else None
+        component = by_id.get(claimed_id)
+        component_id = component.get("component_id") if isinstance(component, dict) else None
+        bundle_path = component.get("evidence_bundle_path") if isinstance(component, dict) else None
+        if not isinstance(component_id, str) or not isinstance(bundle_path, str):
+            raise ControllerError("STRIDE wave references an incomplete or unknown component entry")
+        if component_id in seen:
+            raise ControllerError(f"duplicate dispatch component id: {component_id}")
+        seen.add(component_id)
+        canonical_bundle = _resolve_artifact_path(output_dir, bundle_path)
+        bundle = _load_json_object(canonical_bundle, contract="stride-evidence-bundle-v1")
+        bundle_component = bundle.get("component")
+        if not isinstance(bundle_component, dict) or bundle_component.get("id") != component_id:
+            raise ControllerError(f"evidence bundle component mismatch for {component_id}")
+        slices = bundle.get("source_slices")
+        if not isinstance(slices, list):
+            raise ControllerError(f"stride-evidence-bundle-v1 has no source_slices for {component_id}")
+        bundle_receipt = _validated_json_receipt(
+            output_dir,
+            bundle_path,
+            schema_id="schemas/stride-evidence-bundle.schema.json#v1",
+            record_count=len(slices),
+        )
+        structured.append(bundle_receipt)
+        taxonomy_path, taxonomy_sha256 = _context_v2_taxonomy_slice(output_dir, component_id)
+        input_artifacts = [".stride-dispatch-manifest.json", bundle_path, taxonomy_path]
+        if repository_registry.is_file():
+            input_artifacts.append(".stride-repository-registry.json")
+        jobs.append(
+            {
+                "schema_version": 1,
+                "job_id": f"stride:{component_id}",
+                "component_id": component_id,
+                "semantic_role": "stride_analyzer",
+                **_context_v2_job_metadata(cfg, "stride_analyzer"),
+                "analysis_depth": "light"
+                if bool(claimed_component.get("cheap_stride", component.get("cheap_stride", False)))
+                else "full",
+                "max_turns": int(claimed_component.get("max_turns") or component.get("max_turns") or 1),
+                "sampling_required": bool(
+                    claimed_component.get("sampling_required", component.get("sampling_required", False))
+                ),
+                "file_count": int(component.get("file_count") or 0),
+                "estimated_threat_count": str(component.get("estimated_threat_count_label") or "moderate"),
+                "lens_ids": list(component.get("lens_ids") or []),
+                "evidence_bundle_sha256": bundle_receipt["sha256"],
+                "taxonomy_slice_path": taxonomy_path,
+                "taxonomy_slice_sha256": taxonomy_sha256,
+                "input_artifacts": input_artifacts,
+                "output_artifacts": [f".stride-{component_id}.json"],
+                "unresolved_decision_keys": [f"stride:{category}" for category in "STRIDE"],
+            }
+        )
+    structured.insert(
+        0,
+        _validated_json_receipt(
+            output_dir,
+            ".stride-dispatch-manifest.json",
+            schema_id="schemas/stride-dispatch-manifest.schema.yaml#v2",
+            record_count=len(components),
+        ),
+    )
+    if repository_registry.is_file():
+        registry_value = _load_json_object(repository_registry, contract="stride-repository-registry-v1")
+        repositories = registry_value.get("repositories")
+        if not isinstance(repositories, list):
+            raise ControllerError("stride-repository-registry-v1 has no repositories array")
+        structured.insert(
+            1,
+            _validated_json_receipt(
+                output_dir,
+                ".stride-repository-registry.json",
+                schema_id="schemas/stride-repository-registry.schema.json#v1",
+                record_count=len(repositories),
+            ),
+        )
+    _prepare_context_v2_dispatch_outputs(output_dir, jobs)
+    return _validate_action(
+        {
+            **_context_v2_common(output_dir, cfg),
+            "action": "dispatch_parallel",
+            "dispatch_jobs": jobs,
+            "artifact_receipts": structured,
+            "receipts": [
+                f"Context-v2 STRIDE wave admitted for {len(jobs)} component(s) after persisted attempt accounting"
+            ],
+        }
+    )
+
+
+def context_v2_prepare_stride(output_dir: Path) -> dict[str, Any]:
+    """Build context-v2 bundles and return the first persisted STRIDE wave."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    controls_path = output_dir / ".security-controls.json"
+    analyst_context_path = output_dir / ".stride-analyst-context.json"
+    _run_script("validate_fragment.py", ["security-controls", str(controls_path)])
+    _normalize_context_v2_analyst_context(output_dir)
+    _validate_context_v2_analyst_context(output_dir)
+    build_args = [
+        str(output_dir),
+        "--depth",
+        str(cfg.get("assessment_depth") or "standard"),
+        "--ceiling",
+        str(cfg.get("max_stride_components") or 12),
+        "--analyst-context",
+        str(analyst_context_path),
+        "--context-v2",
+        "--repo-root",
+        str(cfg.get("repo_root") or output_dir),
+    ]
+    repository_registry = output_dir / ".stride-repository-registry.json"
+    try:
+        from build_stride_evidence_bundles import BundleError, write_repository_registry
+
+        write_repository_registry(Path(str(cfg.get("repo_root") or output_dir)), repository_registry)
+    except (BundleError, OSError) as exc:
+        raise ControllerError(f"cannot build context-v2 repository registry: {exc}") from exc
+    build_args.extend(["--repository-registry", str(repository_registry)])
+    _run_script("build_stride_dispatch_manifest.py", build_args)
+    manifest_path = output_dir / ".stride-dispatch-manifest.json"
+    _run_script("validate_dispatch_manifest.py", [str(manifest_path), str(output_dir)])
+    manifest = _load_json_object(manifest_path, contract="stride-dispatch-manifest-v2")
+    action = _context_v2_stride_wave_action(output_dir, cfg, manifest, initialize=True)
+    if action is None:
+        raise ControllerError("new context-v2 STRIDE wave plan unexpectedly has no pending components")
+    return action
+
+
+def _context_v2_after_merge(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Advance from a finalized merge to evidence verification or triage."""
+    _run_script(
+        "validate_intermediate.py",
+        ["threats_merged", str(output_dir / ".threats-merged.json")],
+    )
+    merged = _load_json_object(output_dir / ".threats-merged.json", contract="threats-merged-v1")
+    threats = merged.get("threats")
+    if not isinstance(threats, list):
+        raise ControllerError("threats-merged-v1 artifact has no threats array")
+    structured = [
+        _validated_json_receipt(
+            output_dir,
+            ".threats-merged.json",
+            schema_id="schemas/threats-merged.schema.yaml#v1",
+            record_count=len(threats),
+        )
+    ]
+    human: list[str] = []
+    _context_v2_run_posture_emitters(output_dir, cfg, human)
+    if threats and int(cfg.get("evidence_verifier_max_findings") or 0) != 0:
+        return _context_v2_dispatch(
+            output_dir,
+            cfg,
+            role="evidence_verifier",
+            job_id="phase10a-evidence",
+            input_artifacts=[".threats-merged.json"],
+            output_artifacts=[".evidence-verification.json", ".threats-merged.json"],
+            decision_keys=["sampled_evidence_verdicts"],
+            receipts=structured,
+        )
+    return _context_v2_after_evidence(output_dir, cfg)
+
+
+def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Run deterministic triage and stop only for qualitative synthesis."""
+    receipts: list[str] = []
+    _run_script(
+        "validate_intermediate.py",
+        ["threats_merged", str(output_dir / ".threats-merged.json")],
+    )
+    if (output_dir / ".evidence-verification.json").is_file():
+        evidence_summary_valid = True
+        try:
+            _validate_evidence_verification(
+                output_dir / ".evidence-verification.json",
+                output_dir / ".threats-merged.json",
+            )
+        except ControllerError as exc:
+            # Evidence verification is optional enrichment. Invalid side-channel
+            # data supplies no refutation signal, while the guard still inspects
+            # annotations in the canonical merged-threat artifact.
+            evidence_summary_valid = False
+            receipts.append("evidence verification rejected: invalid contract")
+            _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+        _best_effort_script(
+            output_dir,
+            "guard_evidence_verification.py",
+            [str(output_dir), *([] if evidence_summary_valid else ["--ignore-summary"])],
+            receipts,
+        )
+    _run_script(
+        "triage_validate_ratings.py",
+        [str(output_dir), "--depth", str(cfg.get("assessment_depth") or "standard")],
+    )
+    try:
+        _run_script(
+            "triage_compute_ranking.py",
+            [
+                str(output_dir),
+                "--repo-root",
+                str(cfg.get("repo_root") or output_dir),
+                "--force",
+                "--bootstrap-yaml",
+            ],
+        )
+    except ControllerError:
+        merged = _load_json_object(output_dir / ".threats-merged.json", contract="threats-merged-v1")
+        threats = merged.get("threats")
+        if not isinstance(threats, list):
+            raise ControllerError("threats-merged-v1 artifact has no threats array")
+        inputs = [".threats-merged.json"]
+        if (output_dir / ".triage-flags.json").is_file():
+            inputs.append(".triage-flags.json")
+        receipt = _validated_json_receipt(
+            output_dir,
+            ".threats-merged.json",
+            schema_id="schemas/threats-merged.schema.yaml#v1",
+            record_count=len(threats),
+        )
+        return _context_v2_dispatch(
+            output_dir,
+            cfg,
+            role="triage_validator",
+            job_id="phase10b-triage-repair",
+            input_artifacts=inputs,
+            output_artifacts=[".triage-flags.json", ".threats-merged.json"],
+            decision_keys=["triage_ranking"],
+            receipts=[receipt],
+        )
+    return _context_v2_after_triage(output_dir, cfg)
+
+
+def _context_v2_after_triage(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Validate triage output and select optional qualitative synthesis."""
+    _run_script(
+        "validate_intermediate.py",
+        ["threats_merged", str(output_dir / ".threats-merged.json")],
+    )
+    _run_script(
+        "validate_intermediate.py",
+        ["triage_flags", str(output_dir / ".triage-flags.json")],
+    )
+    flags = _load_json_object(output_dir / ".triage-flags.json", contract="triage-flags-v2")
+    flag_values = flags.get("flags")
+    if not isinstance(flag_values, list):
+        raise ControllerError("triage-flags-v2 artifact has no flags array")
+    merged = _load_json_object(output_dir / ".threats-merged.json", contract="threats-merged-v1")
+    threats = merged.get("threats")
+    if not isinstance(threats, list):
+        raise ControllerError("threats-merged-v1 artifact has no threats array")
+    if threats:
+        structured = [
+            _validated_json_receipt(
+                output_dir,
+                ".threats-merged.json",
+                schema_id="schemas/threats-merged.schema.yaml#v1",
+                record_count=len(threats),
+            ),
+            _validated_json_receipt(
+                output_dir,
+                ".triage-flags.json",
+                schema_id="schemas/triage-flags.schema.yaml#v2",
+                record_count=len(flag_values),
+            ),
+        ]
+        return _context_v2_dispatch(
+            output_dir,
+            cfg,
+            role="post_stride_synthesizer",
+            job_id="phase10b-root-causes",
+            input_artifacts=[".threats-merged.json", ".triage-flags.json"],
+            output_artifacts=[".tier-root-causes.json"],
+            decision_keys=["tier_root_causes"],
+            receipts=structured,
+        )
+    return _context_v2_finalize(output_dir, cfg)
+
+
+def _context_v2_finalize(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Build and gate the Stage-2 handoff after the last semantic boundary."""
+    from _atomic_io import atomic_write_text
+
+    receipts: list[str] = []
+    for kind, name in (
+        ("mitigation-overrides", ".mitigation-overrides.json"),
+        ("tier-root-causes", ".tier-root-causes.json"),
+    ):
+        if (output_dir / name).is_file():
+            _run_script("validate_fragment.py", [kind, str(output_dir / name)])
+            value = _load_json_object(output_dir / name, contract=f"{kind}-v1")
+            record_value = (
+                value.get("splits", []) if kind == "mitigation-overrides" else value.get("tier_root_causes", {})
+            )
+            record_count = len(record_value) if isinstance(record_value, (list, dict)) else 0
+            receipt = _validated_json_receipt(
+                output_dir,
+                name,
+                schema_id=f"schemas/fragments/{kind}.schema.json#v1",
+                record_count=record_count,
+            )
+            consume_artifact_receipt(output_dir, receipt)
+    _run_script(
+        "build_threat_model_yaml.py",
+        [
+            str(output_dir),
+            "--repo-root",
+            str(cfg.get("repo_root") or output_dir),
+            "--plugin-root",
+            str(PLUGIN_ROOT),
+        ],
+    )
+    _run_script(
+        "validate_intermediate.py",
+        ["threat_model_output", str(output_dir / "threat-model.yaml")],
+    )
+    # Context-v2 builds canonical YAML directly instead of passing through the
+    # legacy post_stage1 gate. It still needs the same deterministic enrichment
+    # before the P1/P2 actionability gate: scanner remediation backfill and
+    # mitigation-detail hydration copy concrete steps and verification from
+    # finding producers onto mitigation cards.
+    _run_auto_emitter_pass(output_dir, cfg, receipts)
+    _run_script("validate_mitigation_quality.py", [str(output_dir)])
+    _run_script(
+        "assert_completeness.py",
+        [str(output_dir), "--phase", "build", "--plugin-root", str(PLUGIN_ROOT)],
+    )
+    atomic_write_text(
+        output_dir / ".appsec-checkpoint",
+        "phase=10b status=completed need_render=true runtime_generation=context-v2\n",
+    )
+    _append_event(output_dir, "CONTEXT_V2_STAGE1_COMPLETE", "deterministic Stage-2 handoff passed")
+    return _validate_action(
+        {
+            **_context_v2_common(output_dir, cfg),
+            "action": "run_gate",
+            "receipts": ["Context-v2 Stage-1 artifacts and Stage-2 handoff gates passed", *receipts],
+        }
+    )
+
+
+def context_v2_post_stride(output_dir: Path) -> dict[str, Any]:
+    """Claim retries/next waves, then progress complete STRIDE to merge."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    manifest_path = output_dir / ".stride-dispatch-manifest.json"
+    _run_script("validate_dispatch_manifest.py", [str(manifest_path), str(output_dir)])
+    manifest = _load_json_object(manifest_path, contract="stride-dispatch-manifest-v2")
+    next_wave = _context_v2_stride_wave_action(output_dir, cfg, manifest, initialize=False)
+    if next_wave is not None:
+        return next_wave
+    _run_script("stride_dispatch_waves.py", ["verify", str(output_dir)])
+    _run_script("merge_threats.py", ["collect", "--output-dir", str(output_dir)])
+    candidates = _load_json_object(output_dir / ".merge-candidates.json", contract="merge-candidates-v1")
+    groups = candidates.get("candidate_groups")
+    if candidates.get("version") != 1 or not isinstance(groups, list):
+        raise ControllerError("merge-candidates-v1 artifact has an invalid version or candidate_groups")
+    group_ids: list[str] = []
+    for group in groups:
+        group_id = group.get("group_id") if isinstance(group, dict) else None
+        if not isinstance(group_id, str) or not group_id:
+            raise ControllerError("merge-candidates-v1 contains a candidate without group_id")
+        group_ids.append(group_id)
+    if len(group_ids) != len(set(group_ids)):
+        raise ControllerError("merge-candidates-v1 contains duplicate group_id values")
+    if len(group_ids) > 64:
+        raise ControllerError("merge-candidates-v1 exceeds the 64-group semantic admission cap")
+    if group_ids:
+        source_receipt = _validated_json_receipt(
+            output_dir,
+            ".merge-candidates.json",
+            schema_id="schemas/merge-candidates.schema.json#v1",
+            record_count=len(group_ids),
+        )
+        source_payload = consume_artifact_receipt(output_dir, source_receipt)
+        candidates = json.loads(source_payload)
+        review = _write_merge_review_context(output_dir, candidates, source_payload)
+        receipt = _validated_json_receipt(
+            output_dir,
+            ".merge-context/candidates.json",
+            schema_id="schemas/merge-review-context.schema.json#v1",
+            record_count=review["candidate_group_count"],
+        )
+        return _context_v2_dispatch(
+            output_dir,
+            cfg,
+            role="threat_merger",
+            job_id="phase9-merge-review",
+            input_artifacts=[".merge-context/candidates.json"],
+            output_artifacts=[".merge-decisions.json"],
+            decision_keys=group_ids,
+            receipts=[receipt],
+        )
+    _run_script("merge_threats.py", ["finalize", "--output-dir", str(output_dir)])
+    return _context_v2_after_merge(output_dir, cfg)
+
+
+def context_v2_post_merge(output_dir: Path) -> dict[str, Any]:
+    """Consume merger decisions and continue until the next semantic boundary."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    if not (output_dir / ".merge-decisions.json").is_file():
+        raise ControllerError("context-v2 merger dispatch did not produce .merge-decisions.json")
+    decisions = _validate_json_artifact(
+        output_dir / ".merge-decisions.json",
+        PLUGIN_ROOT / "schemas" / "merge-decisions.schema.json",
+        contract="merge-decisions-v2",
+    )
+    review = _validate_json_artifact(
+        output_dir / ".merge-context" / "candidates.json",
+        PLUGIN_ROOT / "schemas" / "merge-review-context.schema.json",
+        contract="merge-review-context-v1",
+    )
+    try:
+        candidate_payload = (output_dir / ".merge-candidates.json").read_bytes()
+    except OSError as exc:
+        raise ControllerError(f"cannot read merge-candidates-v1 artifact: {exc}") from exc
+    if hashlib.sha256(candidate_payload).hexdigest() != review.get("source_sha256"):
+        raise ControllerError("merge-candidates-v1 changed after semantic review admission")
+    candidates = _load_json_object(output_dir / ".merge-candidates.json", contract="merge-candidates-v1")
+    if review.get("candidate_groups") != candidates.get("candidate_groups"):
+        raise ControllerError("merge review context changed after semantic review admission")
+    if review.get("candidate_group_count") != len(review["candidate_groups"]):
+        raise ControllerError("merge-review-context-v1 candidate group count is stale")
+    review_path = output_dir / ".merge-context" / "candidates.json"
+    try:
+        review_bytes = review_path.read_bytes()
+    except OSError as exc:
+        raise ControllerError(f"cannot read merge-review-context-v1 artifact: {exc}") from exc
+    limits = review.get("limits") if isinstance(review.get("limits"), dict) else {}
+    if (
+        limits.get("serialized_bytes") != len(review_bytes)
+        or limits.get("estimated_tokens") != (len(review_bytes) + 3) // 4
+    ):
+        raise ControllerError("merge-review-context-v1 size metadata is stale")
+    decision_ids = [str(decision.get("group_id")) for decision in decisions.get("decisions", [])]
+    decision_errors = merge_decision_contract.validate_agent_decision_document(decisions, review)
+    if decision_errors:
+        raise ControllerError(decision_errors[0])
+    decision_receipt = _validated_json_receipt(
+        output_dir,
+        ".merge-decisions.json",
+        schema_id="schemas/merge-decisions.schema.json#v2",
+        record_count=len(decision_ids),
+    )
+    consume_artifact_receipt(output_dir, decision_receipt)
+    _run_script("merge_threats.py", ["finalize", "--output-dir", str(output_dir)])
+    return _context_v2_after_merge(output_dir, cfg)
+
+
+def _validate_context_v2_merge_decision_subsets(decisions: dict[str, Any], candidates: dict[str, Any]) -> None:
+    """Compatibility wrapper around the shared merger producer contract."""
+    errors = merge_decision_contract.validate_agent_decision_document(decisions, candidates)
+    if errors:
+        raise ControllerError(errors[0])
+
+
+def context_v2_post_evidence(output_dir: Path) -> dict[str, Any]:
+    """Continue after the optional evidence-verifier boundary."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    return _context_v2_after_evidence(output_dir, cfg)
+
+
+def context_v2_post_triage(output_dir: Path) -> dict[str, Any]:
+    """Continue after the exceptional focused triage boundary."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    return _context_v2_after_triage(output_dir, cfg)
+
+
+def context_v2_finalize(output_dir: Path) -> dict[str, Any]:
+    """Continue after optional post-STRIDE semantic synthesis."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    return _context_v2_finalize(output_dir, cfg)
+
+
 def _selected_coverage_errors(output_dir: Path) -> list[dict[str, str]]:
     """Blocked bounded-wave components, or [] when the gate does not apply.
 
@@ -1172,6 +3130,7 @@ def _selected_coverage_errors(output_dir: Path) -> list[dict[str, str]]:
 def post_stage1(output_dir: Path) -> dict[str, Any]:
     """Run the deterministic thin-path gates after the Stage-1 agents return."""
     output_dir, cfg = _load_run_config(output_dir)
+    _reject_context_v2(cfg, "post-stage1")
     config_path = output_dir / ".skill-config.json"
 
     # Bounded-wave coverage is checked FIRST, before the artifact precondition.
@@ -1233,20 +3192,7 @@ def post_stage1(output_dir: Path) -> dict[str, Any]:
         [str(output_dir), "--force"],
         receipts,
     )
-    try:
-        _run_external(
-            [
-                "bash",
-                str(SCRIPT_DIR / "auto_emitter_pass.sh"),
-                str(output_dir),
-                str(cfg.get("repo_root") or output_dir),
-                str(PLUGIN_ROOT),
-                "false",
-            ]
-        )
-    except ControllerError as exc:
-        receipts.append("auto_emitter_pass.sh: best-effort failure")
-        _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+    _run_auto_emitter_pass(output_dir, cfg, receipts)
 
     _run_script("validate_mitigation_quality.py", [str(output_dir)])
     _run_script(
@@ -1267,24 +3213,65 @@ def post_stage1(output_dir: Path) -> dict[str, Any]:
 def post_stage1a(output_dir: Path) -> dict[str, Any]:
     """Finalize architecture artifacts and open the Stage-1b dispatch gate."""
     output_dir, cfg = _load_run_config(output_dir)
+    _reject_context_v2(cfg, "post-stage1a")
     config_path = output_dir / ".skill-config.json"
-    required = (
+    _gate_architecture_stage(output_dir, cfg)
+    return {
+        "schema_version": 1,
+        "action": "dispatch_agent",
+        "mode": cfg["mode"],
+        "stage": "stage1b",
+        "instruction_file": str(THIN_STAGE1B_RUNTIME),
+        "config_path": str(config_path),
+        "dispatch_values": _dispatch_values(cfg),
+        "receipts": ["Stage-1a component, topology, and assessment-input gates passed"],
+    }
+
+
+def _bind_finalized_component_fingerprint(output_dir: Path) -> None:
+    """Bind derived data-flow metadata to the finalized component inventory."""
+    try:
+        flows = json.loads((output_dir / ".data-flows.json").read_text(encoding="utf-8"))
+        receipt = json.loads((output_dir / ".component-inventory-finalization.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControllerError(f"cannot bind finalized component fingerprint: {exc}") from exc
+    if not isinstance(flows, dict) or not isinstance(receipt, dict):
+        raise ControllerError("cannot bind finalized component fingerprint: artifacts must be JSON objects")
+    fingerprint = receipt.get("component_inventory_fingerprint")
+    if not isinstance(fingerprint, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint):
+        raise ControllerError("cannot bind finalized component fingerprint: receipt fingerprint is invalid")
+    flows["component_inventory_fingerprint"] = fingerprint
+    from _atomic_io import atomic_write_json
+
+    atomic_write_json(output_dir / ".data-flows.json", flows, sort_keys=False)
+
+
+def _gate_architecture_stage(
+    output_dir: Path,
+    cfg: dict[str, Any],
+    *,
+    controller_owned_handoff: bool = False,
+) -> None:
+    """Validate the Phase 3-6 artifacts and build the boundary assessment input.
+
+    Shared by the legacy Stage-1a gate and the context-v2 architecture
+    boundary so both generations enforce one architecture contract.
+    """
+    required = [
         ".recon-summary.md",
         ".components.json",
-        ".component-inventory-finalization.json",
         ".data-flows.json",
         ".assets.json",
         ".attack-surface-overrides.json",
-    )
+    ]
+    if not controller_owned_handoff:
+        required.append(".component-inventory-finalization.json")
     missing = [name for name in required if not (output_dir / name).is_file()]
     if missing:
         raise ControllerError(f"Stage 1a did not produce required artifacts: {', '.join(missing)}")
     repo_root = Path(str(cfg.get("repo_root") or output_dir))
-    _run_script(
-        "finalize_component_inventory.py",
-        ["--repo-root", str(repo_root), "--output-dir", str(output_dir), "--validate-only"],
-    )
     for fragment_type, name in (
+        ("data-flows", ".data-flows.json"),
         ("assets", ".assets.json"),
         ("attack-surface-overrides", ".attack-surface-overrides.json"),
     ):
@@ -1292,6 +3279,16 @@ def post_stage1a(output_dir: Path) -> dict[str, Any]:
             "validate_fragment.py",
             [fragment_type, str(output_dir / name)],
         )
+    if controller_owned_handoff:
+        _run_script(
+            "finalize_component_inventory.py",
+            ["--repo-root", str(repo_root), "--output-dir", str(output_dir)],
+        )
+        _bind_finalized_component_fingerprint(output_dir)
+    _run_script(
+        "finalize_component_inventory.py",
+        ["--repo-root", str(repo_root), "--output-dir", str(output_dir), "--validate-only"],
+    )
     _run_script(
         "build_trust_boundary_assessment_input.py",
         [
@@ -1314,6 +3311,13 @@ def post_stage1a(output_dir: Path) -> dict[str, Any]:
             "Stage 1b was not dispatched because the Stage-1a turn budget was exhausted; "
             "the immutable assessment input was preserved for --resume"
         )
+    if controller_owned_handoff:
+        from _atomic_io import atomic_write_text
+
+        atomic_write_text(
+            output_dir / ".appsec-checkpoint",
+            "phase=6 status=completed need_boundary_assessment=true\n",
+        )
     checkpoint = {}
     try:
         checkpoint = dict(
@@ -1333,24 +3337,30 @@ def post_stage1a(output_dir: Path) -> dict[str, Any]:
             "phase=6 status=completed need_boundary_assessment=true"
         )
     _append_event(output_dir, "POST_STAGE1A_GATES_PASSED", "architecture handoff and boundary input verified")
-    return {
-        "schema_version": 1,
-        "action": "dispatch_agent",
-        "mode": cfg["mode"],
-        "stage": "stage1b",
-        "instruction_file": str(THIN_STAGE1B_RUNTIME),
-        "config_path": str(config_path),
-        "dispatch_values": _dispatch_values(cfg),
-        "receipts": ["Stage-1a component, topology, and assessment-input gates passed"],
-    }
 
 
 def finalize_stage1b(output_dir: Path) -> dict[str, Any]:
     """Promote candidate output and require complete deterministic coverage."""
-    from _atomic_io import atomic_write_text
-
     output_dir, cfg = _load_run_config(output_dir)
     config_path = output_dir / ".skill-config.json"
+    _gate_trust_boundary_promotion(output_dir, cfg)
+    return {
+        "schema_version": 1,
+        "action": "run_gate",
+        "mode": cfg["mode"],
+        "stage": "stage1b",
+        "config_path": str(config_path),
+        "receipts": ["Stage-1b candidates promoted; mandatory signal coverage passed"],
+    }
+
+
+def _gate_trust_boundary_promotion(output_dir: Path, cfg: dict[str, Any]) -> None:
+    """Promote Phase-7 candidates and require complete deterministic coverage.
+
+    Shared by the legacy Stage-1b gate and the context-v2 boundary transition.
+    """
+    from _atomic_io import atomic_write_text
+
     candidates = output_dir / ".trust-boundary-candidates.json"
     assessment = output_dir / ".trust-boundary-assessment-input.json"
     if not candidates.is_file():
@@ -1378,14 +3388,6 @@ def finalize_stage1b(output_dir: Path) -> dict[str, Any]:
         "phase=7 status=completed need_threat_analysis=true\n",
     )
     _append_event(output_dir, "POST_STAGE1B_GATES_PASSED", "candidate promotion and signal coverage verified")
-    return {
-        "schema_version": 1,
-        "action": "run_gate",
-        "mode": cfg["mode"],
-        "stage": "stage1b",
-        "config_path": str(config_path),
-        "receipts": ["Stage-1b candidates promoted; mandatory signal coverage passed"],
-    }
 
 
 def post_stage1c(output_dir: Path) -> dict[str, Any]:
@@ -2149,6 +4151,33 @@ def main(argv: list[str] | None = None) -> int:
     finalize_abuse_parser.add_argument("--output-dir", required=True)
     prepare_stage2_parser = sub.add_parser("prepare-stage2")
     prepare_stage2_parser.add_argument("--output-dir", required=True)
+    context_v2_begin_parser = sub.add_parser("context-v2-begin")
+    context_v2_begin_parser.add_argument("--output-dir", required=True)
+    context_v2_post_recon_parser = sub.add_parser("context-v2-post-recon")
+    context_v2_post_recon_parser.add_argument("--output-dir", required=True)
+    context_v2_post_actors_parser = sub.add_parser("context-v2-post-actors")
+    context_v2_post_actors_parser.add_argument("--output-dir", required=True)
+    context_v2_post_architecture_parser = sub.add_parser("context-v2-post-architecture")
+    context_v2_post_architecture_parser.add_argument("--output-dir", required=True)
+    context_v2_post_boundary_parser = sub.add_parser("context-v2-post-boundary")
+    context_v2_post_boundary_parser.add_argument("--output-dir", required=True)
+    context_v2_prepare_stride_parser = sub.add_parser("context-v2-prepare-stride")
+    context_v2_prepare_stride_parser.add_argument("--output-dir", required=True)
+    context_v2_post_stride_parser = sub.add_parser("context-v2-post-stride")
+    context_v2_post_stride_parser.add_argument("--output-dir", required=True)
+    context_v2_post_merge_parser = sub.add_parser("context-v2-post-merge")
+    context_v2_post_merge_parser.add_argument("--output-dir", required=True)
+    context_v2_post_evidence_parser = sub.add_parser("context-v2-post-evidence")
+    context_v2_post_evidence_parser.add_argument("--output-dir", required=True)
+    context_v2_post_triage_parser = sub.add_parser("context-v2-post-triage")
+    context_v2_post_triage_parser.add_argument("--output-dir", required=True)
+    context_v2_finalize_parser = sub.add_parser("context-v2-finalize")
+    context_v2_finalize_parser.add_argument("--output-dir", required=True)
+    verify_receipts_parser = sub.add_parser("verify-receipts")
+    verify_receipts_parser.add_argument("--output-dir", required=True)
+    verify_receipts_parser.add_argument(
+        "--receipt", nargs=2, action="append", required=True, metavar=("PATH", "SHA256")
+    )
     next_parser = sub.add_parser("next")
     next_parser.add_argument("--output-dir", required=True)
     args = parser.parse_args(argv)
@@ -2175,6 +4204,30 @@ def main(argv: list[str] | None = None) -> int:
             action = finalize_abuse(Path(args.output_dir))
         elif args.command == "prepare-stage2":
             action = prepare_stage2(Path(args.output_dir))
+        elif args.command == "context-v2-begin":
+            action = context_v2_begin(Path(args.output_dir))
+        elif args.command == "context-v2-post-recon":
+            action = context_v2_post_recon(Path(args.output_dir))
+        elif args.command == "context-v2-post-actors":
+            action = context_v2_post_actors(Path(args.output_dir))
+        elif args.command == "context-v2-post-architecture":
+            action = context_v2_post_architecture(Path(args.output_dir))
+        elif args.command == "context-v2-post-boundary":
+            action = context_v2_post_boundary(Path(args.output_dir))
+        elif args.command == "context-v2-prepare-stride":
+            action = context_v2_prepare_stride(Path(args.output_dir))
+        elif args.command == "context-v2-post-stride":
+            action = context_v2_post_stride(Path(args.output_dir))
+        elif args.command == "context-v2-post-merge":
+            action = context_v2_post_merge(Path(args.output_dir))
+        elif args.command == "context-v2-post-evidence":
+            action = context_v2_post_evidence(Path(args.output_dir))
+        elif args.command == "context-v2-post-triage":
+            action = context_v2_post_triage(Path(args.output_dir))
+        elif args.command == "context-v2-finalize":
+            action = context_v2_finalize(Path(args.output_dir))
+        elif args.command == "verify-receipts":
+            action = verify_receipt_hashes(Path(args.output_dir), [tuple(pair) for pair in args.receipt])
         else:
             action = next_action(Path(args.output_dir))
     except (ControllerError, SystemExit, OSError) as exc:

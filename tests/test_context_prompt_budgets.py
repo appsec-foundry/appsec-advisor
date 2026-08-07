@@ -15,6 +15,16 @@ def test_context_budget_contract_shape():
         assert (ROOT / spec["path"]).is_file(), name
         assert isinstance(spec["max_bytes"], int) and spec["max_bytes"] > 0
     assert 0 < BUDGETS["aggregate"]["thin_to_legacy_max_ratio"] < 1
+    admission = BUDGETS["admission"]
+    assert admission == {
+        "shared_kernel_max_tokens": 4000,
+        "role_contract_max_tokens": 3000,
+        "dispatch_task_max_tokens": 1500,
+        "state_manifest_max_tokens": 500,
+        "plugin_selected_startup_max_tokens": 10000,
+        "initial_resident_max_tokens": 30000,
+        "enforce_startup_totals": False,
+    }
 
 
 def _slice_bytes(spec: dict) -> int:
@@ -39,6 +49,13 @@ def test_each_live_prompt_surface_stays_within_budget():
         if actual > spec["max_bytes"]:
             failures.append(f"{name}: {actual} > {spec['max_bytes']} bytes")
     assert not failures, "\n".join(failures)
+
+
+def test_shared_kernel_stays_within_token_admission_budget():
+    spec = BUDGETS["surfaces"]["shared_threat_analysis_kernel"]
+    text = (ROOT / spec["path"]).read_text(encoding="utf-8")
+    assert len(text) // 4 <= BUDGETS["admission"]["shared_kernel_max_tokens"]
+    assert BUDGETS["admission"]["enforce_startup_totals"] is False
 
 
 def test_thin_full_initial_context_is_materially_smaller_than_legacy():
@@ -161,3 +178,70 @@ def test_thin_rerender_runtime_starts_at_stage2():
     assert "RENDERER_MODEL = renderer_model" in text
     assert "always run the non-dry Stage-3 safety" in text
     assert "including its final release gates" in text
+
+
+def test_context_v2_stage1_runtime_is_bounded_and_smaller_than_legacy():
+    base = ROOT / "skills" / "create-threat-model"
+    v2 = (base / "SKILL-thin-stage1-v2.md").read_bytes()
+    legacy = (base / "SKILL-thin-stage1.md").read_bytes()
+    assert len(v2) <= BUDGETS["surfaces"]["thin_stage1_v2_runtime"]["max_bytes"]
+    # The point of the split is a thinner Stage-1 prompt, not a second copy.
+    assert len(v2) < len(legacy)
+
+
+def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
+    text = (ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text(encoding="utf-8")
+    flat = " ".join(text.split())
+
+    # Anti-serial and anti-background dispatch rules are load-bearing: a
+    # backgrounded agent strands the run and a serial chain multiplies wall-clock.
+    assert "in ONE assistant message" in flat
+    assert "Never one call per message" in flat
+    assert "run_in_background: false" in text
+    assert "Do not end your turn after dispatching" in text
+    assert "Never re-dispatch an agent that already returned" in text
+    assert "filesystem is authoritative" in flat
+
+    # The skill must never select a producer itself.
+    assert "semantic_role" in text
+    assert "Never substitute an agent, model, instruction file, tool, or write path" in flat
+    assert "subagent_type=dispatch_jobs[].agent_type" in text
+    assert "model=dispatch_jobs[].model" in text
+    assert "untrusted data" in text
+    assert "Resolve every output-relative input and output path under absolute `OUTPUT_DIR`" in flat
+    assert "Resolve each output-relative path against absolute `OUTPUT_DIR`" in flat
+    assert "never resolve against `REPO_ROOT`" in flat
+    assert "taxonomy_slice_path`/`taxonomy_slice_sha256" in text
+    assert "`STRIDE_PROFILE` as canonical JSON" in text
+    assert "`THREAT_TAXONOMY_PATH`" in text
+    assert "`THREAT_TAXONOMY_SHA256=dispatch_jobs[].taxonomy_slice_sha256`" in text
+
+    # Every landed boundary command must be reachable from this runtime.
+    for command in (
+        "context-v2-begin",
+        "context-v2-post-recon",
+        "context-v2-post-actors",
+        "context-v2-post-architecture",
+        "context-v2-post-boundary",
+        "context-v2-prepare-stride",
+        "context-v2-post-stride",
+        "context-v2-post-merge",
+        "context-v2-post-evidence",
+        "context-v2-post-triage",
+        "context-v2-finalize",
+    ):
+        assert command in text, command
+
+    # It must not carry the legacy generation's stage machinery.
+    assert "SKILL-thin-stage1.md" in text  # names it only to forbid mixing
+    assert "STAGE1_PHASE_LIMIT" not in text
+    assert "RESUME_FROM_PHASE" not in text
+
+
+def test_compact_full_runtime_loads_the_controller_selected_stage1_runtime():
+    text = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
+    stage_section = text.split("## 5. Stages 1a–1d", 1)[1].split("## 6. Stage 2 onward", 1)[0]
+
+    assert "Read `ACTION.instruction_file` in full" in stage_section
+    assert "Read `SKILL-thin-stage1.md` in full" not in stage_section
+    assert "SKILL-thin-stage1-v2.md" in stage_section

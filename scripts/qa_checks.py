@@ -636,7 +636,23 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # `(f.ts:18)` in prose (this pass) vs `(`f.ts:18`)` in §8 tables (compose).
     # Deferred import mirrors the `_manifest_readers` idiom; compose only
     # imports qa_checks function-locally, so there is no import cycle.
-    from compose_threat_model import _codify_label_locator, _is_bare_finding_ref_line
+    from compose_threat_model import (
+        _codify_label_locator,
+        _is_bare_finding_ref_line,
+        _normalize_title_to_paren_form,
+    )
+
+    def _canonical_label(label: str) -> str:
+        """Render a YAML label in the public cross-reference form.
+
+        Finding titles are stored canonically as ``Title — file:line`` by
+        ``emit_clean_finding_titles.py``.  Cross-reference prose instead owns
+        the titled-link form ``Title (`file:line`)``.  Normalize at this
+        consumer boundary before codifying the locator so repeated autofix or
+        ``all`` passes cannot turn a compact link into an invalid em-dash
+        locator.
+        """
+        return _codify_label_locator(_normalize_title_to_paren_form(label))
 
     # Merge the TH-NN label index parsed from the rendered MD itself —
     # TH-NN titles live in §8 / §6.2 declarations, not in the yaml.
@@ -709,7 +725,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             entry = label_idx.get(full.upper())
             if entry:
                 label, anchor = entry
-                return f"[{full}](#{anchor}) — {_codify_label_locator(label)}"
+                return f"[{full}](#{anchor}) — {_canonical_label(label)}"
             return f"[{full}](#{fallback_anchor})"
 
         # Linkify bare T-NNN not already part of a link or an anchor.
@@ -832,7 +848,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 if pre.endswith("| ") and post.startswith(" |"):
                     return match.group(0)
                 label, _ = entry
-                return f"{match.group(0)} — {_codify_label_locator(label)}"
+                return f"{match.group(0)} — {_canonical_label(label)}"
 
             # Two patterns because F/T/M ids are 3-4 digits while TH-NN
             # is 2-3 digits; one combined regex would lose the digit-count

@@ -205,8 +205,8 @@ def test_session_agent_lookup_returns_the_most_recent_registration(tmp_path, mon
     ]
 
 
-def test_budget_scope_uses_the_widest_registered_budget(tmp_path, monkeypatch) -> None:
-    """The shared counter must not be measured against a sub-agent's small cap.
+def test_budget_scope_disables_multi_agent_shared_counter(tmp_path, monkeypatch) -> None:
+    """No individual cap can bound aggregate traffic from multiple agents.
 
     Otherwise a parallel STRIDE wave trips .budget-critical from its own
     aggregate traffic and forces every in-flight analyzer to wrap up early.
@@ -218,7 +218,7 @@ def test_budget_scope_uses_the_widest_registered_budget(tmp_path, monkeypatch) -
     monkeypatch.setattr(agent_logger, "_session_map_path", lambda: str(map_file))
 
     scope = agent_logger._budget_scope_agent("abcd1234")
-    assert scope == "threat-analyst", "budget scope must be the widest registered agent, not the most recent"
+    assert scope is None
 
 
 def test_tally_uses_budget_agent_when_supplied(tmp_path, monkeypatch) -> None:

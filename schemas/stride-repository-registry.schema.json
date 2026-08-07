@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/stride-repository-registry.schema.json",
+  "title": "Controller-owned local repository registry for context-v2 STRIDE",
+  "type": "object",
+  "required": ["schema_version", "repositories"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "repositories": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": [
+          "repository_id",
+          "kind",
+          "root",
+          "declared_name",
+          "declared_threat_model"
+        ],
+        "properties": {
+          "repository_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+          },
+          "kind": { "const": "related" },
+          "root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/])"
+          },
+          "declared_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "declared_threat_model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/])"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -103,6 +103,9 @@ properties:
                     type: array
                     items: {type: string}
                 reason: {type: string}
+                inherited_from:
+                  type: string
+                  pattern: "^[a-z][a-z0-9-]+$"
       accepted_risks:
         # Team-provided risks from `docs/known-threats.yaml` with `status: accepted`.
         # Phase 1 extracts these and the orchestrator emits them here during

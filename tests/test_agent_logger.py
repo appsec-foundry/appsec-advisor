@@ -1320,6 +1320,22 @@ class TestAssessmentSummary:
         assert "SESSION_STOP" in log
         assert "ASSESSMENT_SUMMARY" not in log
 
+    def test_stop_during_owned_run_does_not_emit_summary(self, tmp_path):
+        """A nested Stop sharing the parent SID is not assessment completion."""
+        self._seed_log(tmp_path, [])
+        out_dir = tmp_path / "docs" / "security"
+        (out_dir / ".appsec-lock").write_text("123\n0\nrunowner-full-session-id\n", encoding="utf-8")
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "runowner-full-session-id",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1000, "output_tokens": 500},
+        }
+        _, log = run_logger(event, tmp_path)
+        assert "SESSION_STOP" in log
+        assert "ASSESSMENT_SUMMARY" not in log
+        assert not (out_dir / ".assessment-summary-emitted").exists()
+
     def test_summary_aggregates_tokens(self, tmp_path):
         """Token counts from multiple SESSION_STOP entries are summed."""
         self._seed_log(

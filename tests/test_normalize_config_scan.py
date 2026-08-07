@@ -34,6 +34,11 @@ def test_unrecognised_unchanged():
     assert nc.normalize_generated_at("not-a-timestamp") == "not-a-timestamp"
 
 
+def test_normalize_cwe_restores_prefix_without_rewriting_canonical_values():
+    assert nc.normalize_cwe(["1104", 732, "CWE-89", None]) == ["CWE-1104", "CWE-732", "CWE-89", None]
+    assert nc.normalize_cwe("1104") == "1104"
+
+
 def test_file_rewrite_only_when_needed(tmp_path):
     p = tmp_path / ".config-scan-findings.json"
     p.write_text(
@@ -46,6 +51,23 @@ def test_file_rewrite_only_when_needed(tmp_path):
     assert data["findings"] == []
     # idempotent — second pass is a no-op
     assert nc.normalize_file(p) is False
+
+
+def test_normalize_file_repairs_config_scanner_cwe_projection(tmp_path):
+    path = tmp_path / ".config-scan-findings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-06-27T17:25:34Z",
+                "findings": [{"cwe": ["1104"]}, {"cwe": [732]}, {"cwe": ["CWE-89"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert nc.normalize_file(path) is True
+    findings = json.loads(path.read_text(encoding="utf-8"))["findings"]
+    assert [finding["cwe"] for finding in findings] == [["CWE-1104"], ["CWE-732"], ["CWE-89"]]
 
 
 def test_missing_file_is_false(tmp_path):

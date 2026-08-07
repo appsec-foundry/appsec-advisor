@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/stride-analyst-context.schema.json",
+  "title": "Bounded per-component semantic context for STRIDE bundle construction",
+  "type": "object",
+  "propertyNames": { "pattern": "^(?:_stride_profile|[a-z][a-z0-9-]{1,99})$" },
+  "properties": {
+    "_stride_profile": {
+      "oneOf": [
+        { "type": "string", "maxLength": 200 },
+        { "type": "object", "maxProperties": 20, "additionalProperties": { "$ref": "#/$defs/scalar" } }
+      ]
+    }
+  },
+  "additionalProperties": {
+    "type": "object",
+    "minProperties": 1,
+    "maxProperties": 10,
+    "properties": {
+      "interfaces": { "$ref": "#/$defs/text_or_list" },
+      "controls": { "$ref": "#/$defs/text_or_list" },
+      "known_secrets": { "$ref": "#/$defs/text_or_list" },
+      "known_vulns": { "$ref": "#/$defs/text_or_list" },
+      "known_llm_patterns": { "$ref": "#/$defs/text_or_list" },
+      "supply_chain_findings": { "$ref": "#/$defs/text_or_list" },
+      "estimated_threat_count": { "type": "integer", "minimum": 0, "maximum": 1000 },
+      "focus_paths": { "$ref": "#/$defs/text_or_list" },
+      "exclude_paths": { "$ref": "#/$defs/text_or_list" }
+    },
+    "additionalProperties": false
+  },
+  "$defs": {
+    "scalar": {
+      "oneOf": [
+        { "type": "string", "maxLength": 1000 },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    },
+    "text_or_list": {
+      "oneOf": [
+        { "type": "string", "minLength": 1, "maxLength": 4096 },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        }
+      ]
+    }
+  }
+}

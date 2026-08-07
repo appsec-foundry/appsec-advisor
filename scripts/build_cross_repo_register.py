@@ -263,7 +263,7 @@ def _discover_submodules(
 
 
 _RECON_25_HEADING_RE = re.compile(
-    r"^#{1,6}\s*(?:7\.|Section\s+7\.)?25\b.*$",
+    r"^#{1,6}\s*(?:[67]\.|Section\s+[67]\.)?25\b.*$",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -282,10 +282,12 @@ _RECON_ROW_NAME_RE = re.compile(r"\*\*([A-Za-z0-9_.\-]+)\*\*")
 
 
 def _parse_recon_25(recon_md: str) -> list[dict[str, Any]]:
-    """Best-effort parse for recon Section 7.25 dependencies. The recon
-    scanner renders this section as a mix of tables and bullet lists, so the
-    parser is liberal: any line with name=, **NAME**, or a leading bullet
-    that introduces a known name pattern contributes one entry.
+    """Best-effort parse for canonical recon Section 7.25 dependencies.
+
+    The parser also accepts legacy Section 6.25. The recon scanner renders
+    this section as a mix of tables and bullet lists, so any line with name=,
+    **NAME**, or a leading bullet that introduces a known name contributes one
+    entry.
     """
     section = _extract_recon_25(recon_md)
     if not section:

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/merge-candidates.schema.json",
+  "title": "Deterministic threat merge candidates",
+  "type": "object",
+  "required": [
+    "version",
+    "generated_at",
+    "source_files",
+    "threat_count_raw",
+    "threat_count_after_exact_dedup",
+    "candidate_group_count",
+    "candidate_group_count_total",
+    "auto_decision_count",
+    "auto_decisions",
+    "threats",
+    "candidate_groups",
+    "resolved_prior_findings"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "generated_at": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "source_files": {
+      "type": "array",
+      "maxItems": 1000,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+    },
+    "threat_count_raw": { "type": "integer", "minimum": 0 },
+    "threat_count_after_exact_dedup": { "type": "integer", "minimum": 0 },
+    "candidate_group_count": { "type": "integer", "minimum": 0, "maximum": 10000 },
+    "candidate_group_count_total": { "type": "integer", "minimum": 0 },
+    "auto_decision_count": { "type": "integer", "minimum": 0 },
+    "auto_decisions": { "type": "array", "maxItems": 1000, "items": { "type": "object" } },
+    "threats": { "type": "array", "maxItems": 10000, "items": { "type": "object" } },
+    "candidate_groups": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "required": ["group_id", "group_key", "member_count", "members"],
+        "properties": {
+          "group_id": { "type": "string", "pattern": "^GE?-[a-f0-9]{8}$" },
+          "group_key": { "enum": ["cwe_stride", "endpoint_family"] },
+          "member_count": { "type": "integer", "minimum": 2, "maximum": 10000 },
+          "members": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 10000,
+            "items": { "type": "object" }
+          },
+          "cwe": { "type": ["string", "null"], "maxLength": 64 },
+          "stride": { "type": ["string", "null"], "maxLength": 64 },
+          "endpoint": { "type": "string", "maxLength": 500 },
+          "cwe_family": { "type": "string", "maxLength": 100 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "resolved_prior_findings": { "type": "array", "maxItems": 10000, "items": { "type": "object" } }
+  },
+  "additionalProperties": false
+}

@@ -15,6 +15,14 @@ def _read_yaml(output_dir: Path) -> dict:
     return yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))
 
 
+def _write_merged(output_dir: Path, data: dict) -> None:
+    (output_dir / ".threats-merged.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def _read_merged(output_dir: Path) -> dict:
+    return json.loads((output_dir / ".threats-merged.json").read_text(encoding="utf-8"))
+
+
 def _threats(verdicts: list[str]) -> list[dict]:
     out = []
     for i, v in enumerate(verdicts, start=1):
@@ -36,6 +44,26 @@ def test_degenerate_all_ambiguous_is_neutralized(tmp_path: Path) -> None:
     for t in data["threats"]:
         assert "evidence_check" not in t
         assert "evidence_flags" not in t
+
+
+def test_context_v2_neutralizes_canonical_merged_json_before_render(tmp_path: Path) -> None:
+    _write_merged(tmp_path, {"version": 1, "threats": _threats(["ambiguous"] * 8)})
+
+    assert guard.guard(tmp_path) == 0
+
+    data = _read_merged(tmp_path)
+    assert all("evidence_check" not in threat for threat in data["threats"])
+    assert not (tmp_path / "threat-model.yaml").exists()
+
+
+def test_canonical_merged_json_takes_precedence_over_rendered_yaml(tmp_path: Path) -> None:
+    _write_merged(tmp_path, {"version": 1, "threats": _threats(["ambiguous"] * 8)})
+    _write_yaml(tmp_path, {"threats": _threats(["verified"] * 8)})
+
+    assert guard.guard(tmp_path) == 0
+
+    assert all("evidence_check" not in threat for threat in _read_merged(tmp_path)["threats"])
+    assert all(threat["evidence_check"] == "verified" for threat in _read_yaml(tmp_path)["threats"])
 
 
 def test_healthy_distribution_is_left_untouched(tmp_path: Path) -> None:
@@ -127,6 +155,20 @@ def test_summary_degenerate_fires_despite_floor_verified(tmp_path: Path) -> None
     assert kept.count("verified") == 7  # floor verdicts preserved
     assert kept.count("ambiguous") == 0  # LLM punts stripped
     assert kept.count(None) == 51
+
+
+def test_invalid_summary_can_be_ignored_in_favor_of_merged_distribution(tmp_path: Path) -> None:
+    _write_merged(tmp_path, {"version": 1, "threats": _threats(["verified"] + ["ambiguous"] * 7)})
+    (tmp_path / ".evidence-verification.json").write_text(
+        json.dumps({"summary": {"verified": 0, "refuted": 0, "ambiguous": 7}}),
+        encoding="utf-8",
+    )
+
+    assert guard.guard(tmp_path, ignore_summary=True) == 0
+
+    data = _read_merged(tmp_path)
+    assert data["threats"][0]["evidence_check"] == "verified"
+    assert data["threats"][1]["evidence_check"] == "ambiguous"
 
 
 def test_summary_healthy_keeps_everything(tmp_path: Path) -> None:

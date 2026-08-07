@@ -144,6 +144,14 @@ through the delivered number — `_assign_ids` re-identifies by `declaration_key
 authored ID against the prior model's own numbering, exact `(from,to,name)`, then
 endpoints — and no artifact diffs boundaries by ID.
 
+The internal `.dispatch-context/trust-boundary-selection.json` audit conforms to
+`schemas/trust-boundary-selection.schema.json` at production and consumption.
+Its per-component shape is the same closed shape delivered under
+`meta.boundary_selection.components`. `inherited_from` names the canonical
+containing component whose candidates were used when a selected nested
+component had no boundary candidates of its own; it is provenance only and does
+not change boundary identity or selection limits.
+
 Repository declarations in `.appsec/trust-boundaries.yaml` are untrusted,
 data-only, additive input. They cannot disable detected rows, set confidence,
 claim that a control is effective, affect ratings by themselves, choose paths

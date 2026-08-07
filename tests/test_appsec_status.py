@@ -728,7 +728,7 @@ def _seed_live(tmp_path: Path) -> None:
             }
         )
     )
-    (tmp_path / ".stride-auth.json").write_text("{}")
+    (tmp_path / ".stride-auth.json").write_text(json.dumps({"partial": False, "threats": []}))
 
 
 class TestLiveSnapshotSmoke:

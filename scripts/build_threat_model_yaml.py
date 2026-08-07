@@ -2344,6 +2344,14 @@ def main() -> int:
         meta["component_selection"] = component_selection
     boundary_selection = _load_json(od / ".dispatch-context" / "trust-boundary-selection.json")
     if isinstance(boundary_selection, dict):
+        from prepare_trust_boundary_context import validate_trust_boundary_selection
+
+        validate_trust_boundary_selection(
+            boundary_selection,
+            known_component_ids={
+                row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)
+            },
+        )
         audit = {
             key: boundary_selection[key]
             for key in ("depth", "max_candidates_per_component", "components")

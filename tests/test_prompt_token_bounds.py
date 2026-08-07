@@ -46,6 +46,10 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # repair plan or an explicitly forced semantic sample.
     "agents/appsec-qa-reviewer.md": (1_200, 3_000),
     "agents/appsec-threat-analyst.md": (22_000, 45_000),
+    "agents/appsec-architecture-analyst.md": (500, 3_000),
+    "agents/appsec-control-analyst.md": (500, 3_000),
+    "agents/appsec-post-stride-synthesizer.md": (500, 3_000),
+    "skills/internal-threat-analysis-kernel/SKILL.md": (700, 4_000),
     # Lowered 2026-05-23 after shared-file extraction (finding-title-contract,
     # supply-chain-patterns, spa-threats, cvss-metrics) and dedup of the
     # ops/progress sections. Measured 8_040.
@@ -76,6 +80,7 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # buffer); HEAD had sat 31 tokens under the old bound, leaving no room for
     # any addition at all. See tests/test_stage1_coverage_recovery_2026_08_02.py.
     "agents/appsec-stride-analyzer.md": (6_500, 17_400),
+    "agents/appsec-stride-analyzer-v2.md": (2_500, 3_000),
     # Parallel Stage-2 specialists intentionally keep only role-local
     # instructions. They load their relevant legacy contract slice on demand.
     "agents/appsec-secarch-renderer.md": (500, 1_200),

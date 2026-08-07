@@ -28,6 +28,13 @@ properties:
   schema_version:
     type: integer
     const: 1
+  context_version:
+    description: |
+      Evidence-admission contract. Absent/1 retains the legacy index-only
+      handoff. Version 2 requires one fingerprinted bounded evidence bundle per
+      selected component and activates canonical containment checks.
+    type: integer
+    enum: [1, 2]
   generated_at:
     type: string
     description: ISO-8601 UTC timestamp when Analyst-A wrote the manifest.
@@ -135,3 +142,37 @@ properties:
             requirements_violations: { type: string, minLength: 1 }
             relevant_actors:       { type: string, minLength: 1 }
             trust_boundaries:       { type: string, minLength: 1 }
+        lens_ids:
+          description: Fixed plugin-owned optional analysis lenses selected from validated component features.
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          items:
+            type: string
+            enum: [agentic, llm, mobile, spa, supply-chain]
+        evidence_bundle_path:
+          type: string
+          minLength: 1
+          maxLength: 500
+          pattern: "^\\.dispatch-context/[a-z0-9][a-z0-9-]*/evidence-bundle\\.json$"
+        evidence_bundle_sha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        evidence_bundle_estimated_tokens:
+          type: integer
+          minimum: 1
+          maximum: 16384
+
+allOf:
+  - if:
+      required: [context_version]
+      properties:
+        context_version: { const: 2 }
+    then:
+      properties:
+        components:
+          items:
+            required:
+              - evidence_bundle_path
+              - evidence_bundle_sha256
+              - evidence_bundle_estimated_tokens

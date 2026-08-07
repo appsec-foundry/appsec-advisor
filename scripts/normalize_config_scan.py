@@ -2,11 +2,9 @@
 """Deterministic post-pass over ``.config-scan-findings.json``.
 
 The config-scanner is an LLM agent; it occasionally emits ``generated_at`` with
-sub-second precision (e.g. ``2026-06-27T17:25:34.082802Z``). Every other sidecar
-— and ``config-scan-findings.schema.yaml`` — uses whole-second UTC
-(``%Y-%m-%dT%H:%M:%SZ``). Strip the sub-second precision deterministically before
-the schema gate so the format is fixed at the producer boundary rather than by
-relaxing the schema (AGENTS.md §12 — fix the producer, never loosen validation).
+sub-second precision or strips the canonical ``CWE-`` prefix while projecting
+checks from ``data/config-iac-checks.yaml``. Canonicalize those lossless format
+drifts before the schema gate rather than relaxing the delivered contract.
 
 Idempotent: a file already in canonical form is left untouched (no rewrite).
 """
@@ -39,6 +37,21 @@ def normalize_generated_at(value: Any) -> Any:
     return m.group(1) + "Z"
 
 
+def normalize_cwe(value: Any) -> Any:
+    """Restore canonical CWE prefixes on list items without inventing IDs."""
+    if not isinstance(value, list):
+        return value
+    normalized: list[Any] = []
+    for item in value:
+        if isinstance(item, int) and item >= 0:
+            normalized.append(f"CWE-{item}")
+        elif isinstance(item, str) and item.strip().isdigit():
+            normalized.append(f"CWE-{item.strip()}")
+        else:
+            normalized.append(item)
+    return normalized
+
+
 def normalize_file(path: Path) -> bool:
     """Normalize ``generated_at`` in the JSON object at ``path``.
 
@@ -51,11 +64,24 @@ def normalize_file(path: Path) -> bool:
         return False
     if not isinstance(data, dict):
         return False
+    changed = False
     before = data.get("generated_at")
     after = normalize_generated_at(before)
-    if after == before:
+    if after != before:
+        data["generated_at"] = after
+        changed = True
+    findings = data.get("findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            before_cwe = finding.get("cwe")
+            after_cwe = normalize_cwe(before_cwe)
+            if after_cwe != before_cwe:
+                finding["cwe"] = after_cwe
+                changed = True
+    if not changed:
         return False
-    data["generated_at"] = after
     atomic_write_json(path, data, sort_keys=False)
     return True
 

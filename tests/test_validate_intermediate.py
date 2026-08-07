@@ -13,6 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -223,6 +224,43 @@ def test_stride_minimal_valid():
     }
     ok, errors = vi.validate_stride(minimal)
     assert ok, f"Expected valid stride, got errors: {errors}"
+
+
+def test_stride_discovery_escape_accepts_safe_relative_paths_with_spaces():
+    data = {
+        "component_id": "auth-svc",
+        "component_name": "Auth Service",
+        "analyzed_at": "2026-08-06T10:00:00Z",
+        "discovery_escapes": [
+            {
+                "reason": "missing-control-proof",
+                "decision_key": "auth-control",
+                "search_paths": ["src/auth flow.py"],
+            }
+        ],
+        "threats": [],
+    }
+    ok, errors = vi.validate_stride(data)
+    assert ok, errors
+
+
+@pytest.mark.parametrize("path", ["/etc/passwd", "../outside.py", "src/../../outside.py", "https://example.test/a"])
+def test_stride_discovery_escape_rejects_non_relative_or_traversing_paths(path):
+    data = {
+        "component_id": "auth-svc",
+        "component_name": "Auth Service",
+        "analyzed_at": "2026-08-06T10:00:00Z",
+        "discovery_escapes": [
+            {
+                "reason": "missing-control-proof",
+                "decision_key": "auth-control",
+                "search_paths": [path],
+            }
+        ],
+        "threats": [],
+    }
+    ok, _ = vi.validate_stride(data)
+    assert not ok
 
 
 def _stride_threat_with_code_example(code_example):
@@ -1462,3 +1500,14 @@ def test_glob_consistency_suggestion_part_in_advisory():
     }
     adv = vi._check_component_path_glob_consistency(data)
     assert adv and "consider one of" in adv[0]
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["recon_signals", "stride_analyst_context", "evidence_verification", "merge_decisions"],
+)
+def test_context_v2_schema_only_contracts_are_registered(kind):
+    assert kind in vi._VALIDATORS
+    ok, errors = vi._VALIDATORS[kind]([])
+    assert not ok
+    assert errors == ["root must be a mapping"]

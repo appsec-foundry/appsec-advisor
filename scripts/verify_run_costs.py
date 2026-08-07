@@ -46,6 +46,8 @@ from typing import Any
 # ---------------------------------------------------------------------------
 # Pricing models (USD per 1M tokens)
 # ---------------------------------------------------------------------------
+PRICING_TABLE_VERSION = "2026-08-05"
+
 PRICING_MODELS: dict[str, dict[str, float]] = {
     "sonnet-4-6": {
         "input": 3.00,
@@ -60,10 +62,10 @@ PRICING_MODELS: dict[str, dict[str, float]] = {
         "cache_read": 1.50,
     },
     "haiku-4-5": {
-        "input": 0.80,
-        "output": 4.00,
-        "cache_write": 1.00,
-        "cache_read": 0.08,
+        "input": 1.00,
+        "output": 5.00,
+        "cache_write": 1.25,
+        "cache_read": 0.10,
     },
     # Standard (post-intro) rates. Sonnet 5 has an intro rate of $2.00/$10.00
     # input/output through 2026-08-31 not modeled here — this table is meant
@@ -75,6 +77,12 @@ PRICING_MODELS: dict[str, dict[str, float]] = {
         "cache_read": 0.30,
     },
     "opus-4-8": {
+        "input": 5.00,
+        "output": 25.00,
+        "cache_write": 6.25,
+        "cache_read": 0.50,
+    },
+    "opus-5": {
         "input": 5.00,
         "output": 25.00,
         "cache_write": 6.25,
@@ -1153,6 +1161,7 @@ def verify_run_costs(
         "agent_models": agent_models,
         "mixed_model_costs": mixed_model_costs,
         "pricing_model": pricing_model,
+        "pricing_table_version": PRICING_TABLE_VERSION,
         "pricing": pricing,
         "billing": "api" if has_api_key else "subscription",
         "warnings": warnings,

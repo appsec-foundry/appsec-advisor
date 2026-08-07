@@ -32,6 +32,14 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from build_stride_evidence_bundles import (  # noqa: E402
+    BundleError,
+    load_repository_registry,
+    validate_bundle,
+)
+
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-dispatch-manifest.schema.yaml"
 
@@ -57,6 +65,16 @@ def _resolve(output_dir: Path, value: str) -> Path:
     return p if p.is_absolute() else (output_dir / value)
 
 
+def _resolve_contained(output_dir: Path, value: str) -> Path:
+    output_dir = output_dir.resolve()
+    candidate = Path(value)
+    if "\\" in value or any(part == ".." for part in candidate.parts):
+        raise ValueError(f"unsafe path: {value}")
+    resolved = candidate.resolve() if candidate.is_absolute() else (output_dir / candidate).resolve()
+    resolved.relative_to(output_dir)
+    return resolved
+
+
 def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], list[str]]:
     """Return (ok, errors, warnings)."""
     errors: list[str] = []
@@ -70,6 +88,7 @@ def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], li
         return False, [f"manifest unreadable / invalid JSON: {e}"], []
 
     # 1. Schema validation.
+    context_v2 = data.get("context_version") == 2
     try:
         from jsonschema import Draft202012Validator
 
@@ -78,6 +97,8 @@ def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], li
             loc = "/".join(str(p) for p in err.path) or "<root>"
             errors.append(f"schema: {loc}: {err.message}")
     except ModuleNotFoundError:
+        if context_v2:
+            return False, ["jsonschema not installed — context-v2 validation fails closed"], warnings
         warnings.append("jsonschema not installed — skipped structural validation")
     except (OSError, ValueError) as e:
         return False, [f"schema load failed: {e}"], warnings
@@ -88,15 +109,58 @@ def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], li
     components = data.get("components", [])
 
     # 2. index_paths existence.
+    seen_component_ids: set[str] = set()
     for comp in components:
         cid = comp.get("component_id", "<unknown>")
+        if context_v2:
+            if cid in seen_component_ids:
+                errors.append(f"duplicate component_id in context-v2 manifest: {cid}")
+            seen_component_ids.add(cid)
         idx = comp.get("index_paths", {})
         for key in _INDEX_KEYS:
             val = idx.get(key)
             if val is None or val == "none":
                 continue
-            if not _resolve(output_dir, val).is_file():
+            try:
+                path = _resolve_contained(output_dir, val) if context_v2 else _resolve(output_dir, val)
+            except ValueError:
+                errors.append(f"{cid}: index_paths.{key} escapes output_dir: {val}")
+                continue
+            if not path.is_file():
                 errors.append(f"{cid}: index_paths.{key} points at a missing file: {val}")
+
+    if context_v2 and not errors:
+        cfg_path = output_dir / ".skill-config.json"
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            repo_root = Path(cfg["repo_root"])
+        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+            errors.append("context-v2 requires .skill-config.json with repo_root")
+        else:
+            registry_path = output_dir / ".stride-repository-registry.json"
+            try:
+                registry = load_repository_registry(
+                    repo_root,
+                    registry_path if registry_path.is_file() else None,
+                )
+                for comp in components:
+                    cid = comp["component_id"]
+                    expected = f".dispatch-context/{cid}/evidence-bundle.json"
+                    bundle_value = comp["evidence_bundle_path"]
+                    if bundle_value != expected:
+                        raise BundleError(f"evidence bundle path for {cid} must be {expected}, got {bundle_value}")
+                    bundle_path = _resolve_contained(output_dir, bundle_value)
+                    bundle = validate_bundle(
+                        bundle_path,
+                        registry,
+                        expected_component_id=cid,
+                        expected_sha256=comp["evidence_bundle_sha256"],
+                        output_dir=output_dir,
+                    )
+                    if bundle["limits"]["estimated_tokens"] != comp["evidence_bundle_estimated_tokens"]:
+                        raise BundleError(f"evidence-bundle token estimate is stale for {cid}")
+            except (BundleError, ValueError) as exc:
+                errors.append(f"context-v2 evidence validation failed: {exc}")
 
     # 3 + 4. Component coverage vs .components.json.
     comp_json = output_dir / ".components.json"

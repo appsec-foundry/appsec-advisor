@@ -422,6 +422,20 @@ Threats with no flags get no `triage_flags` field (omit, don't add an empty arra
 
 **Write protocol:** Use a single `python3 -c` Bash call that reads both files, merges the flag references, and writes back `.threats-merged.json` with `json.dump(..., indent=2, ensure_ascii=False, sort_keys=False)`. Preserve the original ordering and all existing fields.
 
+## Producer contract gate
+
+After the final write and before the console summary, use one Bash tool call:
+
+```bash
+set -e
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" triage_flags "$OUTPUT_DIR/.triage-flags.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" threats_merged "$OUTPUT_DIR/.threats-merged.json"
+```
+
+Do not print completion before both commands exit 0. Correct only the ranking
+and flag fields owned by this role, then repeat the complete gate if either
+command fails.
+
 ### Console summary
 
 **Print when done:**

@@ -61,7 +61,7 @@ def _seed_run(
             )
         )
     for comp in completed_components or []:
-        (tmp_path / f".stride-{comp}.json").write_text("{}")
+        (tmp_path / f".stride-{comp}.json").write_text(json.dumps({"partial": False, "threats": []}))
     if active_tool_age is not None:
         (tmp_path / ".active-tool-calls" / "toolu_abc.json").write_text(
             json.dumps(
@@ -122,15 +122,40 @@ def test_cutoff_verdict_api_stall_surfaced(tmp_path, appsec_status):
     assert "--resume" in lead
 
 
-def test_cutoff_verdict_budget_default_when_stride_present(tmp_path, appsec_status):
-    # STRIDE files on disk but no stall ⇒ Phase-11 branch default (budget).
+def test_cutoff_verdict_budget_default_when_render_ready(tmp_path, appsec_status):
+    # A merged register plus a Phase-11 checkpoint identifies render recovery.
     (tmp_path / ".scan-start-epoch").write_text("1000000000\n")
     (tmp_path / ".agent-run.log").write_text("")
     (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=started")
-    (tmp_path / ".stride-auth.json").write_text("{}")
+    (tmp_path / ".threats-merged.json").write_text("{}")
     verdict = appsec_status._cutoff_verdict(tmp_path)
     assert verdict is not None
     assert verdict["kind"] == "budget"
+
+
+def test_cutoff_verdict_does_not_claim_merge_from_partial_stride(tmp_path, appsec_status):
+    (tmp_path / ".scan-start-epoch").write_text("1000000000\n")
+    (tmp_path / ".agent-run.log").write_text("")
+    (tmp_path / ".appsec-checkpoint").write_text("phase=7 status=completed")
+    (tmp_path / ".stride-auth.json").write_text("{}")
+    verdict = appsec_status._cutoff_verdict(tmp_path)
+    assert verdict is not None
+    assert verdict["kind"] == "interrupted"
+    rendered = appsec_status._render_cutoff(verdict)
+    assert "threats merged" not in rendered
+    assert "before threat merge" not in rendered
+
+
+def test_cutoff_verdict_context_v2_requires_fresh_restart(tmp_path, appsec_status):
+    (tmp_path / ".scan-start-epoch").write_text("1000000000\n")
+    (tmp_path / ".agent-run.log").write_text("")
+    (tmp_path / ".appsec-checkpoint").write_text("phase=7 status=completed")
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"runtime_generation": "context-v2"}))
+    verdict = appsec_status._cutoff_verdict(tmp_path)
+    assert verdict is not None
+    rendered = appsec_status._render_cutoff(verdict)
+    assert "Restart:" in rendered
+    assert "--resume" not in rendered
 
 
 def test_cutoff_verdict_suppressed_while_run_live(tmp_path, appsec_status):
@@ -141,6 +166,73 @@ def test_cutoff_verdict_suppressed_while_run_live(tmp_path, appsec_status):
     # Lock held by THIS (alive) process ⇒ a scan is running, not cut off.
     (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n{int(time.time())}\n")
     assert appsec_status._cutoff_verdict(tmp_path) is None
+
+
+def test_cutoff_verdict_suppressed_for_fresh_heartbeat_with_dead_launcher_pid(tmp_path, appsec_status):
+    _seed_stall_log(tmp_path)
+    (tmp_path / ".appsec-checkpoint").write_text("phase=2 status=completed")
+    # V2 lock PIDs identify short-lived launcher subprocesses. A fresh
+    # heartbeat remains authoritative after that PID exits.
+    (tmp_path / ".appsec-lock").write_text(f"999999999\n{int(time.time())}\n")
+    assert appsec_status._cutoff_verdict(tmp_path) is None
+
+
+def test_cutoff_verdict_suppressed_by_recent_tool_call_when_launcher_lock_is_stale(tmp_path, appsec_status):
+    _seed_stall_log(tmp_path)
+    (tmp_path / ".appsec-checkpoint").write_text("phase=7 status=completed")
+    snapshot = {
+        "ts": int(time.time()),
+        "threshold_seconds": 270,
+        "current": None,
+        "active_tool_calls": [{"tool_use_id": "tool-1", "age_s": 320}],
+    }
+    assert appsec_status._cutoff_verdict(tmp_path, live_snapshot=snapshot) is None
+
+
+def test_cutoff_verdict_suppressed_by_recent_completed_phase_during_dispatch_gap(tmp_path, appsec_status):
+    _seed_stall_log(tmp_path)
+    (tmp_path / ".appsec-checkpoint").write_text("phase=7 status=completed")
+    snapshot = {
+        "ts": int(time.time()),
+        "threshold_seconds": 270,
+        "current": {"status": "phase_completed", "age_s": 37},
+        "active_tool_calls": [],
+    }
+    assert appsec_status._cutoff_verdict(tmp_path, live_snapshot=snapshot) is None
+
+
+def test_in_window_controller_abort_overrides_stale_active_tool_marker(tmp_path, appsec_status):
+    now = int(time.time())
+    (tmp_path / ".scan-start-epoch").write_text(f"{now - 10}\n")
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    (tmp_path / ".agent-run.log").write_text(
+        f"{timestamp}  [--------]  WARN   skill-controller    RUN_ABORTED         merge contract failure\n"
+    )
+    (tmp_path / ".appsec-checkpoint").write_text("phase=7 status=completed")
+    snapshot = {
+        "ts": now,
+        "threshold_seconds": 270,
+        "current": {"status": "phase_completed", "age_s": 20},
+        "active_tool_calls": [{"tool_use_id": "stale-controller", "age_s": 20}],
+    }
+
+    verdict = appsec_status._cutoff_verdict(tmp_path, live_snapshot=snapshot)
+    assert verdict is not None
+    assert verdict["kind"] == "controller_abort"
+    assert "RUN_ABORTED" in verdict["block"]
+
+
+def test_old_agent_registration_does_not_hide_a_terminal_cutoff(tmp_path, appsec_status):
+    _seed_stall_log(tmp_path)
+    (tmp_path / ".appsec-checkpoint").write_text("phase=7 status=completed")
+    now = int(time.time())
+    snapshot = {
+        "ts": now,
+        "threshold_seconds": 270,
+        "current": None,
+        "active_tool_calls": [{"agent:appsec-control-analyst:old": now - 541}],
+    }
+    assert appsec_status._cutoff_verdict(tmp_path, live_snapshot=snapshot) is not None
 
 
 def test_returns_run_state_when_artefacts_present(tmp_path, appsec_status):
@@ -224,6 +316,12 @@ def test_completed_stride_count_is_surfaced(tmp_path, appsec_status):
     )
     snap = appsec_status._live_snapshot(tmp_path)
     assert snap["stride_files"] == 1
+
+
+def test_seed_stride_file_not_counted_as_completed(tmp_path, appsec_status):
+    _seed_run(tmp_path, completed_components=["auth"])
+    (tmp_path / ".stride-worker.json").write_text(json.dumps({"partial": True, "seed_only": True, "threats": []}))
+    assert appsec_status._live_snapshot(tmp_path)["stride_files"] == 1
 
 
 # ---------------------------------------------------------------------------

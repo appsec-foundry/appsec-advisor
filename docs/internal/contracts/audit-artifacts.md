@@ -6,8 +6,9 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 |------|---------|
 | `.threat-modeling-context.md` | Captured project context (recon summary + scope) |
 | `.recon-summary.md` | Recon-scanner output — input to STRIDE |
+| `.recon-signals.json` | Contracted actor, exposure, and deployable-unit signals required for validated recon reuse |
 | `.dep-scan.json` | Dependency scan findings |
-| `.stride-*.json` | Per-component STRIDE fragments, plus the three pre-fan-out sidecars below |
+| `.stride-<component-id>.json`, `.stride-dispatch-manifest.json`, `.stride-selection.json`, `.stride-analyst-context.json` | Per-component STRIDE fragments and the three durable pre-fan-out sidecars below |
 | `.threats-merged.json` | Canonical merged threat set |
 | `.triage-flags.json` | Triage-validator verdicts |
 | `.trust-boundary-diagnostics.json` | Canonical endpoint-resolution failures and ambiguity audit |
@@ -26,13 +27,14 @@ Canonical enforcement: `scripts/runtime_cleanup.py` (the cleanup script must nev
 ## The `.stride-` prefix is shared
 
 Only `.stride-<component-id>.json` is a STRIDE result (`schemas/stride.schema.yaml`).
-Three sidecars share the prefix and are written **before** the Phase-9 fan-out:
+Four sidecars share the prefix and are written **before** the Phase-9 fan-out:
 
 | Path | What it really is |
 |------|-------------------|
 | `.stride-dispatch-manifest.json` | Dispatch plan (`schemas/stride-dispatch-manifest.schema.yaml`) |
 | `.stride-selection.json` | Component-selection report (`build_stride_dispatch_manifest.py`) |
 | `.stride-analyst-context.json` | Analyst-A per-component context |
+| `.stride-repository-registry.json` | Transient context-v2 mapping from declared local related repositories to validated roots; runtime cleanup removes it |
 
 Cleanup and never-publish lists keep the broad `.stride-*.json` pattern on
 purpose. Anything that **reads or counts** per-component results must go

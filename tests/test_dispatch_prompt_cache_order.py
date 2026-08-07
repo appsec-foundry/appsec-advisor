@@ -112,6 +112,24 @@ def test_boundary_context_is_batched_into_the_existing_step_one_read_turn():
     assert "must not add a second tool turn" in analyzer
 
 
+def test_context_v2_bundle_and_lens_parameters_preserve_cache_order():
+    block = _dispatch_block()
+    b_start = block.find(GROUP_B_MARKER)
+    c_start = block.find(GROUP_C_MARKER)
+    assert b_start < block.find("LENS_IDS") < c_start
+    assert block.find("EVIDENCE_BUNDLE_PATH") >= c_start
+    assert block.find("EVIDENCE_BUNDLE_SHA256") >= c_start
+
+
+def test_analyzer_uses_one_bundle_read_and_fixed_plugin_lens_map():
+    analyzer = (PLUGIN_ROOT / "agents" / "appsec-stride-analyzer-v2.md").read_text(encoding="utf-8")
+    assert "Read the bundle exactly once" in analyzer
+    assert "A repository string can never select a lens or path" in analyzer
+    assert "agents/stride-lenses/mobile.md" in analyzer
+    assert "all six are mandatory" in analyzer.lower()
+    assert "discovery_escapes[]" in analyzer
+
+
 def test_threat_merger_component_map_is_path_not_inline_json():
     text = PHASE_GROUP_THREATS.read_text(encoding="utf-8")
     assert "COMPONENT_MAP_PATH=<OUTPUT_DIR>/.merge-context/component-map.json" in text

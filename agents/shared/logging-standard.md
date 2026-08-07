@@ -21,9 +21,16 @@ All agents (orchestrator + sub-agents) MUST follow this logging standard. Replac
 
 | Scope | Events |
 |-------|--------|
-| Orchestrator only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT` |
-| All agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `WRAP_UP_TRIGGERED` |
-| Watchdog-emitted (via PostToolUse hook) | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog (`scripts/budget_watchdog.py`) counts tool calls per session and emits these deterministically — agents do not author them. On `BUDGET_CRITICAL` the watchdog writes `$OUTPUT_DIR/.budget-critical`; agents poll for the file at phase boundaries and execute their wrap-up sequence. The skill-layer post-run banner reads these events. |
+| Controller / skill / legacy orchestrator only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT` |
+| Semantic agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `WRAP_UP_TRIGGERED` |
+| Watchdog-emitted (via PostToolUse hook) | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog (`scripts/budget_watchdog.py`) counts tool calls only while one Agent dispatch owns the hook session. Once a second dispatch is registered under the same session, the hook resets and disables the shared counter because it cannot attribute calls per Agent; each Agent harness then owns its `maxTurns` ceiling. On a valid single-Agent `BUDGET_CRITICAL`, the watchdog writes `$OUTPUT_DIR/.budget-critical`; agents poll for the file at phase boundaries and execute their wrap-up sequence. |
+
+Claude Code may assign the parent session ID to multiple Agent dispatches. In
+that case hook-authored tool and completion telemetry uses `shared-session`, and
+`AGENT_COMPLETE` states `scope=session-cumulative`; it must not assign the
+cumulative transcript usage to whichever Agent type was registered most
+recently. Plugin-owned `appsec-*` roles are registered by their canonical short
+name even when they are newer than the logger's explicit compatibility map.
 | Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
 
 ## Budget wrap-up signal (read at every phase boundary)
@@ -39,6 +46,10 @@ The `WRAP_UP_TRIGGERED` event format:
 <ts>  [<sid>]  WARN   <agent>  WRAP_UP_TRIGGERED   reason=budget_critical  skipped=[<comma-separated phase/component list>]
 ```
 
+An assessment summary is emitted only after the owning run has released
+`.appsec-lock`. A nested `Stop` from a sub-agent that shares the parent session
+ID must not create `.assessment-summary-emitted` or report the run complete.
+
 ## Agent purpose reference (user-visible dispatch echos)
 
 Single source of truth for the one-line **purpose** the orchestrator prints immediately before each sub-agent dispatch (the `⟶ Dispatching …` line). Keep these short — they appear on the console and tell the user *what the agent will do* and *which artifact it produces*. Update this table whenever an agent's responsibility changes; the dispatch echos in `appsec-threat-analyst.md` and the phase-group files read from here.
@@ -48,6 +59,9 @@ Single source of truth for the one-line **purpose** the orchestrator prints imme
 | `context-resolver` | extracts team, asset tier, compliance scope, prior findings, known threats, requirements → `.threat-modeling-context.md` |
 | `recon-scanner` | enumerates 26 security categories (routes, dependencies, secrets, auth, crypto, logging, IaC, …) → `.recon-summary.md` |
 | `stride-analyzer` | per component: enumerates Spoofing / Tampering / Repudiation / Information-Disclosure / DoS / EoP threats with CWE + evidence → `.stride-<id>.json` |
+| `architecture-analyst` | projects validated recon and topology into Phase-3–6 architecture sidecars |
+| `control-analyst` | rates evidenced controls and writes bounded per-component STRIDE semantic context |
+| `post-stride-synthesizer` | writes only requested qualitative mitigation overrides and tier root causes |
 | `threat-merger` | deduplicates candidate threats via CWE + component + title fingerprint → merge decisions feed `.threats-merged.json` |
 | `triage-validator` | infers breach distance, detects compound attack chains, computes effective severity, re-ranks top threats → `.triage-flags.json` |
 | `qa-reviewer` | verifies rendered `threat-model.md` against `data/sections-contract.yaml` (11 deterministic checks: links, xrefs, anchors, invariants, MS structure, …); emits `.qa-repair-plan.json` on drift |
@@ -128,7 +142,10 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <AGENT>  AGENT_END   <A
 
 ## Minimum log entries
 
-Every agent MUST log at minimum: `AGENT_START`, each step/check start+end, file writes, errors, and `AGENT_END`.
+Every semantic agent MUST log at minimum: `AGENT_START`, its semantic step/check
+events, file writes, errors, and `AGENT_END`. The controller and skill emit
+`AGENT_INVOKE`/`AGENT_DONE`, phase transitions, and fixed presentation. A
+controller proxy event must never claim to be an agent-authored semantic event.
 
 ## Orchestrator-specific logging (threat-analyst only)
 

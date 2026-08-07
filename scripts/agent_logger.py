@@ -504,6 +504,16 @@ _AGENT_SHORT_NAMES = {
 }
 
 
+def _short_agent_name(subtype: str) -> str:
+    """Canonical log name for a plugin-owned Agent subtype."""
+    raw = subtype.split(":")[-1]
+    if raw in _AGENT_SHORT_NAMES:
+        return _AGENT_SHORT_NAMES[raw]
+    if raw.startswith("appsec-"):
+        return raw.removeprefix("appsec-")
+    return ""
+
+
 def _session_map_path() -> str:
     """Path to the lightweight session→agent mapping file."""
     return os.path.join(_output_dir(), ".session-agent-map")
@@ -512,39 +522,47 @@ def _session_map_path() -> str:
 def _save_session_agent(sid: str, agent: str) -> None:
     """Persist a session_id → agent_name mapping for SESSION_STOP attribution.
 
-    Uses atomic write (write to temp file, then rename) to avoid corruption
-    when multiple parallel agents write simultaneously.
+    Serialize the bounded read-modify-write so concurrent Agent dispatch hooks
+    cannot replace one another's registrations.
     """
     try:
-        import tempfile
+        import fcntl
 
         map_file = _session_map_path()
-        # Read existing mappings (keep last 20 to avoid unbounded growth)
-        lines = []
-        if os.path.exists(map_file):
-            with open(map_file) as fh:
-                lines = fh.readlines()[-20:]
-        lines.append(f"{sid}={agent}\n")
-        # Atomic write: write to temp file in same directory, then rename
-        dir_name = os.path.dirname(map_file)
-        fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix=".session-map-tmp-")
-        try:
-            with os.fdopen(fd, "w") as fh:
-                fh.writelines(lines[-20:])
-            os.replace(tmp_path, map_file)
-        except Exception:
-            # Clean up temp file on failure
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        os.makedirs(os.path.dirname(map_file), exist_ok=True)
+        with open(map_file, "a+", encoding="utf-8") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            fh.seek(0)
+            lines = fh.readlines()[-19:]
+            lines.append(f"{sid}={agent}\n")
+            fh.seek(0)
+            fh.truncate()
+            fh.writelines(lines)
+            fh.flush()
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
     except Exception:
         pass  # never crash a hook
 
 
+def _lookup_session_agent_registrations(sid: str) -> list[str]:
+    """Every agent registration for ``sid``, oldest first."""
+    registrations: list[str] = []
+    try:
+        map_file = _session_map_path()
+        if not os.path.exists(map_file):
+            return registrations
+        with open(map_file, encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.strip().split("=", 1)
+                if len(parts) == 2 and parts[0] == sid:
+                    registrations.append(parts[1])
+    except Exception:
+        pass
+    return registrations
+
+
 def _lookup_session_agents(sid: str) -> list[str]:
-    """Every agent registered for ``sid``, oldest first, duplicates removed.
+    """Every distinct agent registered for ``sid``, oldest first.
 
     Sub-agents inherit the parent's ``session_id``, so this map is one-to-many
     per run: an assessment registers ``threat-analyst``, ``recon-scanner``,
@@ -553,17 +571,9 @@ def _lookup_session_agents(sid: str) -> list[str]:
     cannot be told apart from a tool call alone.
     """
     seen: list[str] = []
-    try:
-        map_file = _session_map_path()
-        if not os.path.exists(map_file):
-            return seen
-        with open(map_file) as fh:
-            for line in fh:
-                parts = line.strip().split("=", 1)
-                if len(parts) == 2 and parts[0] == sid and parts[1] not in seen:
-                    seen.append(parts[1])
-    except Exception:
-        pass
+    for agent in _lookup_session_agent_registrations(sid):
+        if agent not in seen:
+            seen.append(agent)
     return seen
 
 
@@ -582,28 +592,35 @@ def _lookup_session_agent(sid: str) -> str:
     return agents[-1] if agents else ""
 
 
-def _budget_scope_agent(sid: str) -> str:
-    """Agent whose maxTurns bounds the SHARED per-session turn counter.
+def _session_agent_label(sid: str) -> str:
+    """Honest telemetry label when hook events share one session ID."""
+    registrations = _lookup_session_agent_registrations(sid)
+    if not registrations:
+        return ""
+    if len(registrations) > 1:
+        return "shared-session"
+    return registrations[0]
+
+
+def _budget_scope_agent(sid: str) -> str | None:
+    """Agent whose maxTurns bounds a single-agent session counter.
 
     The counter aggregates the orchestrator's calls and every concurrent
-    sub-agent's calls, because they all arrive under one ``session_id``. Scoping
-    it to the *largest* registered budget is the only safe reading: a smaller
-    one would trip ``.budget-critical`` from other agents' traffic and force
-    every in-flight analyzer into an immediate wrap-up (juice-shop 2026-07-20).
+    sub-agent's calls, because they all arrive under one ``session_id``. Once a
+    second dispatch is registered, no individual maxTurns value can bound that
+    shared total. Return ``None`` so the caller clears and disables the shared
+    watchdog for that session.
 
     Per-sub-agent budgeting is therefore NOT enforced here -- it cannot be, with
     the fields hooks receive. It is enforced by the analyzer's harness
     ``maxTurns`` ceiling and its Step-2 read budget instead.
     """
-    agents = _lookup_session_agents(sid)
-    if not agents:
+    registrations = _lookup_session_agent_registrations(sid)
+    if not registrations:
         return ""
-    try:
-        from budget_watchdog import get_max_turns
-
-        return max(agents, key=get_max_turns)
-    except Exception:
-        return agents[0]
+    if len(registrations) > 1:
+        return None
+    return registrations[0]
 
 
 # ---------------------------------------------------------------------------
@@ -715,7 +732,7 @@ def _record_tool_start(data: dict, sid: str) -> None:
         os.makedirs(d, exist_ok=True)
         tool = data.get("tool_name", "?")
         inp = data.get("tool_input", {}) or {}
-        agent = _lookup_session_agent((sid or "")[:8]) or ""
+        agent = _session_agent_label((sid or "")[:8]) or ""
         record = {
             "tool_use_id": tool_use_id,
             "session_id": (sid or "")[:8],
@@ -993,6 +1010,17 @@ def _write_trace_summary(sid: str) -> None:
 # ---------------------------------------------------------------------------
 # Assessment summary — aggregated on outermost Stop event
 # ---------------------------------------------------------------------------
+
+
+def _run_lock_owner_sid() -> str:
+    """Return the persisted run owner without applying a heartbeat-age test."""
+    try:
+        lock_path = os.path.join(_output_dir(), ".appsec-lock")
+        with open(lock_path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        return lines[2].strip()[:8] if len(lines) >= 3 else ""
+    except (OSError, IndexError):
+        return ""
 
 
 def _write_assessment_summary(sid: str) -> None:
@@ -1988,7 +2016,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         )
         _write_trace(
             "AGENT_DISPATCH",
-            f"agent={_AGENT_SHORT_NAMES.get(subtype.split(':')[-1], subtype.split(':')[-1])}  "
+            f"agent={_short_agent_name(subtype) or subtype.split(':')[-1]}  "
             f"model={model}  bg={str(bg).lower()}  "
             f"context_chars={context_chars:,}  context_ktok={context_ktok}  "
             f"max_turns={max_turns_val}",
@@ -2000,7 +2028,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # Each hook invocation is a separate process, so we persist the
     # mapping in a lightweight file.
     raw_name = subtype.split(":")[-1] if ":" in subtype else subtype
-    short = _AGENT_SHORT_NAMES.get(raw_name, "")
+    short = _short_agent_name(subtype)
     if short and sid:
         _save_session_agent(sid[:8], short)
 
@@ -2213,17 +2241,20 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     # Look up which appsec agent owns this session via the file-based
     # mapping written during AGENT_SPAWN (each hook call is a new process).
     agent_name = _lookup_session_agent(sid[:8]) if sid else ""
+    telemetry_agent = _session_agent_label(sid[:8]) if sid else ""
 
     if agent_name:
         # Mirror SESSION_STOP with token/cost summary to agent-run.log.
         # SubagentStop fires on the *parent* session for the same child
         # completion that already fired a Stop event — suppress the duplicate.
         if event_name != "SubagentStop":
-            _write_agent_run(level, agent_name, "SESSION_STOP", detail)
+            _write_agent_run(level, telemetry_agent or agent_name, "SESSION_STOP", detail)
 
         # Mirror MAX_TURNS to agent-run.log so it's visible in the unified log
         if reason == "max_turns":
-            _write_agent_run("ERROR", agent_name, "MAX_TURNS", "Agent terminated — maxTurns limit reached")
+            _write_agent_run(
+                "ERROR", telemetry_agent or agent_name, "MAX_TURNS", "Agent terminated — maxTurns limit reached"
+            )
 
         # Stamp the checkpoint as aborted when the outermost orchestrator
         # session ends uncleanly. Leaves a durable signal that the next
@@ -2252,7 +2283,8 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                 _write_agent_run("WARN", who, "SESSION_ABORTED_MIDRUN", f"phase={aborted_phase}  reason={reason}")
 
     # --- Tracing: emit AGENT_COMPLETE with per-session token/cost/wall-time ---
-    if _TRACING and agent_name:
+    if _TRACING and (telemetry_agent or agent_name):
+        trace_agent = telemetry_agent or agent_name
         wall_secs = "?"
         dispatch_key = (sid or "")[:8]
         dispatched_at = _take_dispatch_time(dispatch_key)
@@ -2260,7 +2292,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
             # Subagent: the dispatch was recorded under the parent session id,
             # so fall back to the agent-name index (see
             # _take_dispatch_time_for_agent).
-            dispatched_at = _take_dispatch_time_for_agent(agent_name)
+            dispatched_at = _take_dispatch_time_for_agent(trace_agent)
         if dispatched_at is not None:
             wall_secs = str(round(time.time() - dispatched_at))
         turns_used = "?"
@@ -2285,7 +2317,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         cost_val = f"${_calc_cost(usage):.4f}" if has_usage else "n/a"
         _write_trace(
             "AGENT_COMPLETE",
-            f"agent={agent_name}  "
+            f"agent={trace_agent}  scope=session-cumulative  "
             f"in={inp:,}  out={out:,}  cache_write={cw:,}  cache_read={cr:,}  "
             f"cost={cost_val}  turns={turns_used}  stop={reason}  "
             f"wall_secs={wall_secs}",
@@ -2298,7 +2330,12 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     # both pass the exists()-check before either has written it (TOCTOU fix).
     # The sentinel is written BEFORE the summary so that a second process racing
     # on the same event always loses — summary runs at most once.
-    if event_name == "Stop":
+    # Current Claude Code releases also emit `Stop` inside sub-agent sessions,
+    # all with the parent's session_id. While the run lock is still owned by
+    # this session, that event cannot be the completed outer assessment. The
+    # happy path releases the lock before its final Stop.
+    run_still_owned = bool(sid and _run_lock_owner_sid() == sid[:8])
+    if event_name == "Stop" and not run_still_owned:
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
         try:
             with open(sentinel, "x") as fh:  # atomic O_CREAT|O_EXCL
@@ -2472,16 +2509,20 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     # Runs LAST so any earlier early-return paths still count the call. Failures
     # are swallowed inside the watchdog itself — never blocks the hook.
     try:
-        from budget_watchdog import format_detail, tally_and_check
+        from budget_watchdog import format_detail, reset_session, tally_and_check
 
         agent = _lookup_session_agent((sid or "")[:8]) or "unknown"
-        # Report the current agent, but bound the SHARED counter by the widest
-        # registered budget — see _budget_scope_agent for why a tighter bound
-        # would produce false criticals during a parallel STRIDE wave.
-        budget_agent = _budget_scope_agent((sid or "")[:8]) or agent
-        crossing = tally_and_check(sid, agent, _output_dir(), budget_agent=budget_agent)
-        if crossing is not None:
-            _write("WARN ", crossing["event"], format_detail(crossing), sid)
+        budget_agent = _budget_scope_agent((sid or "")[:8])
+        if budget_agent is None:
+            # Multiple Agent dispatches share this hook session. Their tool
+            # calls cannot be assigned to individual budgets, so remove any
+            # threshold state accumulated before the second registration and
+            # rely on each Agent harness's own maxTurns ceiling.
+            reset_session(sid, _output_dir())
+        else:
+            crossing = tally_and_check(sid, agent, _output_dir(), budget_agent=budget_agent or agent)
+            if crossing is not None:
+                _write("WARN ", crossing["event"], format_detail(crossing), sid)
     except Exception:
         # Watchdog must never break a run.
         pass

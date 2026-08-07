@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/trust-boundary-selection.schema.json",
+  "title": "Deterministic per-component trust-boundary selection audit",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "depth",
+    "max_candidates_per_component",
+    "components",
+    "coverage"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "depth": {"type": "string", "enum": ["quick", "standard", "thorough"]},
+    "max_candidates_per_component": {"type": "integer", "minimum": 1, "maximum": 6},
+    "components": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9-]+$"},
+      "additionalProperties": {"$ref": "#/$defs/component_audit"}
+    },
+    "coverage": {"$ref": "#/$defs/coverage"}
+  },
+  "$defs": {
+    "boundary_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^tb-[0-9]+$"}
+    },
+    "component_audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eligible_ids", "selected_ids", "omitted_ids", "deferred_ids"],
+      "properties": {
+        "eligible_ids": {"$ref": "#/$defs/boundary_ids"},
+        "selected_ids": {"$ref": "#/$defs/boundary_ids"},
+        "omitted_ids": {"$ref": "#/$defs/boundary_ids"},
+        "deferred_ids": {"$ref": "#/$defs/boundary_ids"},
+        "invalid_ids": {"$ref": "#/$defs/boundary_ids"},
+        "focus_reasons": {
+          "type": "object",
+          "propertyNames": {"pattern": "^tb-[0-9]+$"},
+          "additionalProperties": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "reason": {"type": "string"},
+        "inherited_from": {"type": "string", "pattern": "^[a-z][a-z0-9-]+$"}
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resolved_ids", "covered_ids", "uncovered_ids", "redistributed"],
+      "properties": {
+        "resolved_ids": {"$ref": "#/$defs/boundary_ids"},
+        "covered_ids": {"$ref": "#/$defs/boundary_ids"},
+        "uncovered_ids": {"$ref": "#/$defs/boundary_ids"},
+        "redistributed": {
+          "type": "object",
+          "propertyNames": {"pattern": "^tb-[0-9]+$"},
+          "additionalProperties": {"type": "string", "pattern": "^[a-z][a-z0-9-]+$"}
+        }
+      }
+    }
+  }
+}

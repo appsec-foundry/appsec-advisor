@@ -144,6 +144,9 @@ ALWAYS_FILES = [
     # Bounded STRIDE wave schedule + persisted two-attempt counters. Component
     # outputs are the durable audit artifacts; scheduling state is transient.
     ".dispatch-waves.json",
+    # Controller-owned local root mapping used only while validating and
+    # dispatching context-v2 evidence bundles.
+    ".stride-repository-registry.json",
     # Scan manifest written when --scan-manifest is passed; transient audit
     # file that belongs to the run, not to the persisted threat model.
     ".scan-manifest.txt",
@@ -245,6 +248,7 @@ POST_ARCH_FILES_IF_PASS = [
 NEVER = {
     ".threat-modeling-context.md",
     ".recon-summary.md",
+    ".recon-signals.json",
     ".sca-practice-findings.json",
     ".known-bad-libs-findings.json",
     ".dep-update-activity.json",

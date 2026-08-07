@@ -18,6 +18,25 @@ import verify_run_costs as vrc
 SONNET = vrc.PRICING_MODELS["sonnet-4-6"]
 
 
+def test_pricing_table_uses_current_haiku_4_5_rates():
+    assert vrc.PRICING_TABLE_VERSION == "2026-08-05"
+    assert vrc.PRICING_MODELS["haiku-4-5"] == {
+        "input": 1.00,
+        "output": 5.00,
+        "cache_write": 1.25,
+        "cache_read": 0.10,
+    }
+
+
+def test_pricing_table_includes_recorded_opus_5_model():
+    assert vrc.PRICING_MODELS["opus-5"] == {
+        "input": 5.00,
+        "output": 25.00,
+        "cache_write": 6.25,
+        "cache_read": 0.50,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Log-line builders matching the module's regexes
 # ---------------------------------------------------------------------------
@@ -570,6 +589,7 @@ class TestVerifyRunCosts:
         assert res["sessions"][0]["agents"] == ["threat-analyst"]
         assert res["billing"] in ("api", "subscription")
         assert res["subagent_estimate"] is not None
+        assert res["pricing_table_version"] == vrc.PRICING_TABLE_VERSION
 
     def test_full_run_mismatch_warning(self, tmp_path):
         self._good_run(tmp_path, cost_final=2.0)  # logged cost tiny vs computed -> MISMATCH

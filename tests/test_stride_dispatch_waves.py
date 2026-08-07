@@ -308,6 +308,47 @@ def test_completion_drops_an_off_enum_boundary_leg(tmp_path: Path) -> None:
     assert ref["boundary_id"] == "tb-3"
 
 
+@pytest.mark.parametrize(
+    "bad_ref",
+    [
+        {
+            "boundary_id": "tb-1",
+            "rationale": "The missing authorization check occurs at this crossing.",
+            "evidence_locations": [{"file": "src/service.py", "line": 10}],
+        },
+        {
+            "id": "tb-1",
+            "leg": "authorization",
+            "rationale": "The missing authorization check occurs at this crossing.",
+        },
+        {
+            "boundary_id": "tb-1",
+            "origin_component_id": "service-01",
+            "rationale": "The missing authorization check occurs at this crossing.",
+            "evidence_locations": [{"file": "src/other.py", "line": 99}],
+        },
+    ],
+)
+def test_completion_drops_malformed_optional_boundary_ref_without_retry(tmp_path: Path, bad_ref: dict) -> None:
+    data = _stride_component_with("CWE-89", "TH-01")
+    data["threats"][0]["boundary_refs"] = [bad_ref]
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    assert json.loads(path.read_text(encoding="utf-8"))["threats"][0]["boundary_refs"] == []
+
+
+@pytest.mark.parametrize("cwe, expected", [("CWE-799", "TH-12"), ("CWE-620", "TH-02")])
+def test_completion_backfills_live_smoke_unclassified_cwes(tmp_path: Path, cwe: str, expected: str) -> None:
+    data = _stride_component_with(cwe, "TH-UNCLASSIFIED")
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    assert json.loads(path.read_text(encoding="utf-8"))["threats"][0]["threat_category_id"] == expected
+
+
 def test_completion_keeps_usable_attack_steps(tmp_path: Path) -> None:
     """Two or more real steps are authored content and stay untouched."""
     steps = [

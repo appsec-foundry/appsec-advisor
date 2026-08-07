@@ -67,6 +67,10 @@ _SCHEMA_FILES = {
     "actors_resolved": "actors-resolved.schema.yaml",
     "actors_repo": "actors-repo.schema.yaml",
     "actor": "actors.schema.yaml",
+    "recon_signals": "recon-signals.schema.json",
+    "stride_analyst_context": "stride-analyst-context.schema.json",
+    "evidence_verification": "evidence-verification.schema.json",
+    "merge_decisions": "merge-decisions.schema.json",
 }
 
 
@@ -1321,6 +1325,63 @@ def validate_actor(data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
+def _validate_schema_only(kind: str, data: Any) -> tuple[bool, list[str]]:
+    """Validate a closed JSON sidecar with no additional semantic rules."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors(kind, data)
+    return len(errors) == 0, errors
+
+
+def validate_recon_signals(data: Any) -> tuple[bool, list[str]]:
+    ok, errors = _validate_schema_only("recon_signals", data)
+    if not isinstance(data, dict):
+        return ok, errors
+    hints = data.get("component_hints")
+    if isinstance(hints, list):
+        ids = [hint.get("component_id") for hint in hints if isinstance(hint, dict)]
+        if len(ids) != len(set(ids)):
+            errors.append("component_hints contains duplicate component_id values")
+    return len(errors) == 0, errors
+
+
+def validate_stride_analyst_context(data: Any) -> tuple[bool, list[str]]:
+    return _validate_schema_only("stride_analyst_context", data)
+
+
+def validate_evidence_verification(data: Any) -> tuple[bool, list[str]]:
+    ok, errors = _validate_schema_only("evidence_verification", data)
+    if not isinstance(data, dict) or not ok:
+        return ok, errors
+    summary = data["summary"]
+    sampled = summary["sampled"]
+    total = summary["total_threats"]
+    resolved = sum(summary[key] for key in ("verified", "refuted", "ambiguous"))
+    if sampled > total:
+        errors.append("sampled count exceeds total_threats")
+    if resolved + summary["unchecked"] != sampled:
+        errors.append("outcome counts do not partition sampled")
+    flags = data["flags"]
+    if len(flags) != resolved:
+        errors.append("flag count does not match resolved outcomes")
+    flag_ids = [flag["flag_id"] for flag in flags]
+    expected_ids = [f"EV-{index:03d}" for index in range(1, len(flags) + 1)]
+    if flag_ids != expected_ids:
+        errors.append("flag_id values must be sequential from EV-001")
+    threat_ids = [flag["t_id"] for flag in flags]
+    if len(threat_ids) != len(set(threat_ids)):
+        errors.append("flags contain duplicate t_id values")
+    for verdict in ("verified", "refuted", "ambiguous"):
+        actual = sum(flag["verdict"] == verdict for flag in flags)
+        if actual != summary[verdict]:
+            errors.append(f"{verdict} count does not match flags")
+    return len(errors) == 0, errors
+
+
+def validate_merge_decisions(data: Any) -> tuple[bool, list[str]]:
+    return _validate_schema_only("merge_decisions", data)
+
+
 _VALIDATORS = {
     "stride": validate_stride,
     "threats_merged": validate_threats_merged,
@@ -1335,6 +1396,10 @@ _VALIDATORS = {
     "actors_resolved": validate_actors_resolved,
     "actors_repo": validate_actors_repo,
     "actor": validate_actor,
+    "recon_signals": validate_recon_signals,
+    "stride_analyst_context": validate_stride_analyst_context,
+    "evidence_verification": validate_evidence_verification,
+    "merge_decisions": validate_merge_decisions,
 }
 
 

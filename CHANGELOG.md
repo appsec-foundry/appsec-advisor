@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Automated SCA scanning` is now rated only from scanners the pipeline actually invokes, not from a tool name in a comment, a step label, or string data.
 - Completed component analyses now survive repairable schema and walkthrough defects.
 - Requested Threat Dragon and SARIF exports are now always written and listed in the completion summary.
+- Reconnaissance now reserves its final turns for validated output, so large repositories cannot crowd out required security sections.
+- Context-v2 semantic agents now validate outputs before handoff, with deterministic recovery for omitted context headings and bounded STRIDE retries.
+- Threat-model assembly now accepts validated trust-boundary inheritance provenance instead of aborting before report rendering.
 
 ### Changed
 

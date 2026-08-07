@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -129,6 +130,14 @@ def test_route_keeps_deadline_paths_on_legacy(monkeypatch, tmp_path, key):
     cfg[key] = 60
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
     assert controller.route([])["runtime"] == "legacy"
+
+
+def test_route_rejects_context_v2_generation_on_legacy_runtime(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.update({"runtime_generation": "context-v2", "max_wall_time_seconds": 1800})
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    with pytest.raises(controller.ControllerError, match="context-v2 requires the compact"):
+        controller.route([])
 
 
 def test_route_keeps_live_phase_on_legacy(monkeypatch, tmp_path):
@@ -1188,6 +1197,249 @@ def test_action_schema_dispatch_keys_match_controller():
     assert schema_keys == controller_keys
 
 
+def _semantic_action(tmp_path: Path, jobs: list[dict]) -> dict:
+    return {
+        "schema_version": 1,
+        "action": "dispatch_parallel",
+        "mode": "full",
+        "stage": "stage1",
+        "instruction_file": str(controller.THIN_STAGE1_RUNTIME),
+        "config_path": str(tmp_path / ".skill-config.json"),
+        "dispatch_values": {"output_dir": str(tmp_path)},
+        "dispatch_jobs": jobs,
+    }
+
+
+def _semantic_job(job_id: str = "architecture", component_id: str | None = None) -> dict:
+    job = {
+        "schema_version": 1,
+        "job_id": job_id,
+        "semantic_role": "architecture_analyst",
+        "agent_type": "appsec-advisor:appsec-architecture-analyst",
+        "model": "sonnet",
+        "input_artifacts": [".recon-summary.md"],
+        "output_artifacts": [".components.json"],
+        "unresolved_decision_keys": [],
+    }
+    if component_id is not None:
+        job["component_id"] = component_id
+    return job
+
+
+def test_action_semantics_accept_plugin_owned_role_dispatch(tmp_path):
+    action = _semantic_action(tmp_path, [_semantic_job()])
+    assert controller._validate_action(action) == action
+
+
+def test_semantic_role_registry_is_closed_and_plugin_owned():
+    schema = json.loads(controller.ACTION_SCHEMA.read_text(encoding="utf-8"))
+    assert set(schema["$defs"]["semantic_role"]["enum"]) == set(controller.SEMANTIC_ROLE_REGISTRY)
+    agent_enum = set(schema["$defs"]["dispatch_job"]["properties"]["agent_type"]["enum"])
+    assert agent_enum == {f"appsec-advisor:{record['agent']}" for record in controller.SEMANTIC_ROLE_REGISTRY.values()}
+    for role, record in controller.SEMANTIC_ROLE_REGISTRY.items():
+        instruction = record["instruction"].resolve()
+        assert instruction.is_relative_to(controller.PLUGIN_ROOT)
+        assert instruction.is_file(), role
+        assert "Agent" not in record["tools"], role
+        for contract in record["output_contracts"]:
+            assert contract.startswith("contract:") or (controller.PLUGIN_ROOT / contract).is_file(), (
+                role,
+                contract,
+            )
+
+
+def test_action_semantics_reject_agent_type_that_does_not_match_role(tmp_path):
+    job = _semantic_job()
+    job["agent_type"] = "appsec-advisor:appsec-control-analyst"
+    with pytest.raises(controller.ControllerError, match="does not match semantic role"):
+        controller._validate_action(_semantic_action(tmp_path, [job]))
+
+
+def test_action_semantics_reject_model_that_does_not_match_role_routing(tmp_path):
+    job = _semantic_job()
+    job["model"] = "opus"
+    with pytest.raises(controller.ControllerError, match="model does not match semantic role"):
+        controller._validate_action(_semantic_action(tmp_path, [job]))
+
+
+def test_action_semantics_reject_top_level_role_that_differs_from_jobs(tmp_path):
+    action = _semantic_action(tmp_path, [_semantic_job()])
+    action["semantic_role"] = "control_analyst"
+    with pytest.raises(controller.ControllerError, match="does not match its dispatch job role"):
+        controller._validate_action(action)
+
+
+def test_action_semantics_reject_repository_selected_instruction(tmp_path):
+    instruction = tmp_path / "agent.md"
+    instruction.write_text("untrusted", encoding="utf-8")
+    action = _semantic_action(tmp_path, [_semantic_job()])
+    action["instruction_file"] = str(instruction)
+    with pytest.raises(controller.ControllerError, match="not plugin-owned"):
+        controller._validate_action(action)
+
+
+def test_action_semantics_reject_duplicate_job_ids(tmp_path):
+    action = _semantic_action(tmp_path, [_semantic_job(), _semantic_job()])
+    with pytest.raises(controller.ControllerError, match="duplicate dispatch job id"):
+        controller._validate_action(action)
+
+
+def test_action_semantics_reject_duplicate_component_ids(tmp_path):
+    jobs = [_semantic_job("job-a", "api"), _semantic_job("job-b", "api")]
+    with pytest.raises(controller.ControllerError, match="duplicate dispatch component id"):
+        controller._validate_action(_semantic_action(tmp_path, jobs))
+
+
+def test_action_semantics_reject_duplicate_output_owners(tmp_path):
+    jobs = [_semantic_job("job-a"), _semantic_job("job-b")]
+    with pytest.raises(controller.ControllerError, match="duplicate dispatch output artifact"):
+        controller._validate_action(_semantic_action(tmp_path, jobs))
+
+
+def test_action_semantics_reject_parallel_read_write_collision(tmp_path):
+    jobs = [_semantic_job("writer")]
+    reader = _semantic_job("reader")
+    reader["input_artifacts"] = [".components.json"]
+    reader["output_artifacts"] = [".assets.json"]
+    jobs.append(reader)
+    with pytest.raises(controller.ControllerError, match="parallel dispatch cannot read and write"):
+        controller._validate_action(_semantic_action(tmp_path, jobs))
+
+
+def test_action_schema_rejects_empty_dispatch_wave(tmp_path):
+    with pytest.raises(controller.ControllerError, match="should be non-empty"):
+        controller._validate_action(_semantic_action(tmp_path, []))
+
+
+@pytest.mark.parametrize("artifact", ["../outside.json", "/tmp/outside.json", "a\\outside.json"])
+def test_action_semantics_reject_unsafe_artifact_paths(tmp_path, artifact):
+    job = _semantic_job()
+    job["output_artifacts"] = [artifact]
+    with pytest.raises(controller.ControllerError):
+        controller._validate_action(_semantic_action(tmp_path, [job]))
+
+
+def test_action_semantics_reject_symlink_escape(tmp_path):
+    outside = tmp_path.parent / "outside"
+    outside.mkdir(exist_ok=True)
+    (tmp_path / "linked").symlink_to(outside, target_is_directory=True)
+    job = _semantic_job()
+    job["output_artifacts"] = ["linked/result.json"]
+    with pytest.raises(controller.ControllerError, match="escapes output directory"):
+        controller._validate_action(_semantic_action(tmp_path, [job]))
+
+
+def test_action_semantics_reject_oversized_canonical_action(tmp_path):
+    action = _semantic_action(tmp_path, [_semantic_job()])
+    action["dispatch_values"].update(
+        {
+            "invocation_args": "x" * 8192,
+            "run_id": "x" * 8192,
+            "scope": ["x" * 1000] * 32,
+            "scan_manifest": "x" * 8192,
+            "requirements_url_override": "x" * 8192,
+        }
+    )
+    with pytest.raises(controller.ControllerError, match="65536-byte cap"):
+        controller._validate_action(action)
+
+
+def test_action_validation_fails_closed_without_jsonschema(tmp_path, monkeypatch):
+    monkeypatch.setattr(controller, "Draft202012Validator", None)
+    with pytest.raises(controller.ControllerError, match="dependency is unavailable"):
+        controller._validate_action(_semantic_action(tmp_path, [_semantic_job()]))
+
+
+def test_artifact_receipt_rejects_changed_bytes(tmp_path):
+    artifact = tmp_path / "result.json"
+    artifact.write_text(
+        json.dumps({"version": 2, "generated_at": "2026-08-06T00:00:00Z", "model": "test", "decisions": []}),
+        encoding="utf-8",
+    )
+    receipt = controller.create_artifact_receipt(
+        tmp_path,
+        "result.json",
+        schema_id="schemas/merge-decisions.schema.json#v2",
+        record_count=0,
+    )
+    assert controller.consume_artifact_receipt(tmp_path, receipt) == artifact.read_bytes()
+
+    artifact.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "generated_at": "2026-08-06T00:00:00Z",
+                "model": "changed",
+                "decisions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(controller.ControllerError, match="changed after validation"):
+        controller.consume_artifact_receipt(tmp_path, receipt)
+
+
+def test_artifact_receipt_requires_structural_validation(tmp_path):
+    (tmp_path / "result.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(controller.ControllerError, match="schema validation failed"):
+        controller.create_artifact_receipt(
+            tmp_path,
+            "result.json",
+            schema_id="schemas/merge-decisions.schema.json#v2",
+            record_count=0,
+        )
+
+
+def test_artifact_receipt_rejects_unknown_contract_version(tmp_path):
+    (tmp_path / "result.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(controller.ControllerError, match="unregistered schema"):
+        controller.create_artifact_receipt(
+            tmp_path,
+            "result.json",
+            schema_id="schemas/merge-decisions.schema.json#v999",
+            record_count=0,
+        )
+
+
+def test_artifact_receipt_accepts_optional_empty_mitigation_splits(tmp_path):
+    (tmp_path / "overrides.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "additions": [
+                    {
+                        "id": "M-001",
+                        "title": "Centralize secret rotation",
+                        "threat_ids": ["T-001"],
+                        "kind": "process",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    receipt = controller.create_artifact_receipt(
+        tmp_path,
+        "overrides.json",
+        schema_id="schemas/fragments/mitigation-overrides.schema.json#v1",
+        record_count=0,
+    )
+
+    assert receipt["record_count"] == 0
+
+
+def test_verify_receipt_hashes_rejects_a_post_validation_change(tmp_path):
+    artifact = tmp_path / "result.json"
+    artifact.write_text("original\n", encoding="utf-8")
+    expected = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    assert controller.verify_receipt_hashes(tmp_path, [("result.json", expected)])["action"] == "run_gate"
+
+    artifact.write_text("changed\n", encoding="utf-8")
+    with pytest.raises(controller.ControllerError, match="changed after validation"):
+        controller.verify_receipt_hashes(tmp_path, [("result.json", expected)])
+
+
 def test_dispatch_values_supply_runtime_defaults(tmp_path):
     values = controller._dispatch_values(
         _cfg(tmp_path),
@@ -1226,6 +1478,992 @@ def test_dispatch_values_preserve_slug(tmp_path):
         },
     )
     assert values["slug"] == "juice-shop-quick"
+
+
+def _write_context_v2_config(tmp_path: Path, **overrides) -> Path:
+    output = tmp_path / "out"
+    output.mkdir(exist_ok=True)
+    cfg = _cfg(tmp_path)
+    cfg["runtime_generation"] = "context-v2"
+    cfg["runtime_artifact_schema_versions"] = dict(controller.resolve_config.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS)
+    cfg.update(overrides)
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    return output
+
+
+def test_context_v2_dispatch_clears_prior_output_but_preserves_in_place_input(tmp_path):
+    output = _write_context_v2_config(tmp_path)
+    stale = output / ".components.json"
+    stale.write_text("stale", encoding="utf-8")
+    controller._context_v2_dispatch(
+        output,
+        _cfg(tmp_path),
+        role="architecture_analyst",
+        job_id="architecture",
+        input_artifacts=[".recon-summary.md"],
+        output_artifacts=[".components.json"],
+        decision_keys=["components"],
+        receipts=[],
+    )
+    assert not stale.exists()
+
+    repair = output / ".triage-flags.json"
+    repair.write_text("current partial state", encoding="utf-8")
+    controller._context_v2_dispatch(
+        output,
+        _cfg(tmp_path),
+        role="triage_validator",
+        job_id="triage-repair",
+        input_artifacts=[".triage-flags.json"],
+        output_artifacts=[".triage-flags.json"],
+        decision_keys=["triage"],
+        receipts=[],
+    )
+    assert repair.read_text(encoding="utf-8") == "current partial state"
+
+
+def test_context_v2_begin_clears_optional_outputs_with_no_current_producer(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    optional = [
+        output / ".evidence-verification.json",
+        output / ".mitigation-overrides.json",
+        output / ".tier-root-causes.json",
+    ]
+    for path in optional:
+        path.write_text("stale", encoding="utf-8")
+    monkeypatch.setattr(controller, "_recon_skip", lambda *_args: True)
+    monkeypatch.setattr(controller, "_context_skip", lambda *_args: True)
+    monkeypatch.setattr(controller, "_has_iac_surface", lambda *_args: False)
+    monkeypatch.setattr(controller, "_context_v2_after_recon", lambda *_args: {"action": "run_gate"})
+
+    assert controller.context_v2_begin(output) == {"action": "run_gate"}
+    assert all(not path.exists() for path in optional)
+
+
+def _write_minimal_context_v2_manifest(output: Path) -> None:
+    (output / ".stride-dispatch-manifest.json").write_text(
+        json.dumps({"context_version": 2, "components": [{"component_id": "api"}]}),
+        encoding="utf-8",
+    )
+
+
+def _merge_candidates(*group_ids: str) -> dict:
+    groups = [
+        {
+            "group_id": group_id,
+            "group_key": "cwe_stride",
+            "member_count": 2,
+            "members": [{"index": 0}, {"index": 1}],
+            "cwe": "CWE-79",
+            "stride": "Tampering",
+        }
+        for group_id in group_ids
+    ]
+    return {
+        "version": 1,
+        "generated_at": "2026-08-06T00:00:00Z",
+        "source_files": [".stride-api.json"],
+        "threat_count_raw": len(groups) * 2,
+        "threat_count_after_exact_dedup": len(groups) * 2,
+        "candidate_group_count": len(groups),
+        "candidate_group_count_total": len(groups),
+        "auto_decision_count": 0,
+        "auto_decisions": [],
+        "threats": [],
+        "candidate_groups": groups,
+        "resolved_prior_findings": [],
+    }
+
+
+def _receipt_stub(output_dir: Path, artifact_path: str, *, schema_id: str, record_count: int) -> dict:
+    return {
+        "schema_version": 1,
+        "artifact_path": artifact_path,
+        "schema_id": schema_id,
+        "sha256": "0" * 64,
+        "record_count": record_count,
+        "validation_status": "valid",
+    }
+
+
+def _write_architecture_receipt_inputs(output: Path, *, discovery_enabled: bool = False) -> None:
+    (output / ".route-inventory.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "routes": [],
+                "coverage": {"frameworks_detected": [], "unsupported_route_files": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output / ".actors-resolved.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "quick_mode": False,
+                "discovery_enabled": discovery_enabled,
+                "discovery_skip_reason": None,
+                "actors_inputs_fingerprint": "0" * 64,
+                "alias_map": {},
+                "resolved_actors": [],
+                "confirmed_relevant": [],
+                "inputs_questioned": [],
+                "run_issues": [],
+                "discovery_actor_count": 0,
+                "rejected_discovery_actors": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _valid_recon_signals() -> dict:
+    keys = (
+        "has_public_routes",
+        "has_auth_surface",
+        "has_role_concept",
+        "has_secrets_in_repo",
+        "has_ci_pipeline",
+        "has_external_apis",
+        "has_client_storage",
+        "has_multi_tenancy_signal",
+        "has_open_self_registration",
+    )
+    return {
+        "schema_version": 1,
+        "signals": {key: False for key in keys},
+        "signal_evidence": {key: "none" for key in keys},
+        "signal_classification": {"has_open_self_registration": "deterministic"},
+        "component_hints": [],
+    }
+
+
+def _valid_recon_summary() -> str:
+    return "\n".join(controller._required_recon_headings()) + "\n"
+
+
+def _valid_threat_modeling_context() -> str:
+    headings = (
+        "# Threat Modeling Context",
+        "## External Context",
+        "## Business Context",
+        "## Security Policy",
+        "## Architecture Notes",
+        "## API Surface",
+        "## Deployment Topology",
+        "## Data Model Summary",
+        "## Architecture Decisions (ADRs)",
+        "## Environment & Configuration",
+        "## Recent Changes",
+        "## Known Threats (Team-Provided)",
+        "## Cross-Repository Dependency Threat Models",
+    )
+    return (
+        "\n".join(
+            [headings[0], headings[1], '<untrusted-data source="test">', "none", "</untrusted-data>", *headings[2:]]
+        )
+        + "\n"
+    )
+
+
+def _trust_boundary_assessment() -> dict:
+    component = {
+        "id": "api",
+        "name": "API",
+        "tier": "application",
+        "deployment_zones": [],
+        "handles_sensitive_data": False,
+        "paths": ["src/**"],
+    }
+    source_context = {
+        "route_inventory": {"status": "missing", "routes": []},
+        "attack_surface_additions": [],
+        "cross_repository": {"status": "missing", "entries": []},
+        "recon_signals": {
+            "values": {
+                "has_public_routes": False,
+                "has_auth_surface": False,
+                "has_role_concept": False,
+                "has_ci_pipeline": False,
+                "has_external_apis": False,
+                "has_client_storage": False,
+                "has_multi_tenancy_signal": False,
+            },
+            "evidence": [],
+        },
+        "boundary_declarations": {"status": "missing", "fingerprint": None, "keys": []},
+        "incremental": False,
+    }
+    return {
+        "schema_version": 1,
+        "component_inventory_fingerprint": "sha256:" + "1" * 64,
+        "assessment_input_fingerprint": "sha256:" + "2" * 64,
+        "assessment_depth": "standard",
+        "components": [component, component | {"id": "db", "name": "Database", "tier": "data"}],
+        "data_flows": [],
+        "signals": [],
+        "prior_boundary_identity_hints": [],
+        "source_context": source_context,
+    }
+
+
+CONTEXT_V2_ENTRYPOINTS = (
+    "context_v2_prepare_stride",
+    "context_v2_post_stride",
+    "context_v2_post_merge",
+    "context_v2_post_evidence",
+    "context_v2_post_triage",
+    "context_v2_finalize",
+)
+
+
+@pytest.mark.parametrize("entrypoint", CONTEXT_V2_ENTRYPOINTS)
+def test_context_v2_action_refuses_a_legacy_run(tmp_path, monkeypatch, entrypoint):
+    output = _write_context_v2_config(tmp_path, runtime_generation="legacy")
+    monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
+    with pytest.raises(controller.ControllerError) as excinfo:
+        getattr(controller, entrypoint)(output)
+    assert "incompatible runtime generation" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("entrypoint", CONTEXT_V2_ENTRYPOINTS)
+def test_context_v2_action_refuses_a_run_without_a_persisted_generation(tmp_path, monkeypatch, entrypoint):
+    output = tmp_path / "out"
+    output.mkdir(exist_ok=True)
+    cfg = _cfg(tmp_path)
+    cfg.pop("runtime_generation", None)
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
+    with pytest.raises(controller.ControllerError) as excinfo:
+        getattr(controller, entrypoint)(output)
+    assert "incompatible runtime generation" in str(excinfo.value)
+
+
+def test_context_v2_action_refuses_stale_persisted_schema_versions(tmp_path):
+    output = _write_context_v2_config(tmp_path)
+    cfg_path = output / ".skill-config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["runtime_artifact_schema_versions"]["merge-review-context"] = 999
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+    with pytest.raises(controller.ControllerError, match="artifact schema versions"):
+        controller.context_v2_begin(output)
+
+
+def test_context_v2_continues_persisted_generation_when_env_is_unset(tmp_path, monkeypatch):
+    """A cleared APPSEC_CONTEXT_V2 must not switch producers mid-run."""
+    output = _write_context_v2_config(tmp_path)
+    _write_minimal_context_v2_manifest(output)
+    monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
+
+    def fake_script(name, args, **kwargs):
+        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+            return _completed(json.dumps({"status": "complete"}))
+        if name == "merge_threats.py" and args[0] == "collect":
+            (output / ".merge-candidates.json").write_text(json.dumps(_merge_candidates()), encoding="utf-8")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_context_v2_after_merge", lambda *_a, **_k: {"action": "run_gate"})
+    assert controller.context_v2_post_stride(output)["action"] == "run_gate"
+    assert "RUNTIME_GENERATION_ENV_IGNORED" in (output / ".agent-run.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("entrypoint", ("post_stage1", "post_stage1a"))
+def test_legacy_stage1_gate_refuses_a_context_v2_run(tmp_path, entrypoint):
+    output = _write_context_v2_config(tmp_path)
+    with pytest.raises(controller.ControllerError) as excinfo:
+        getattr(controller, entrypoint)(output)
+    assert "incompatible runtime generation" in str(excinfo.value)
+
+
+def test_context_v2_post_stride_dispatches_merger_only_for_ambiguous_groups(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    _write_minimal_context_v2_manifest(output)
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_script(name, args, **kwargs):
+        calls.append((name, args))
+        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+            return _completed(json.dumps({"status": "complete"}))
+        if name == "merge_threats.py" and args[0] == "collect":
+            (output / ".merge-candidates.json").write_text(
+                json.dumps(_merge_candidates("G-aaaaaaaa")),
+                encoding="utf-8",
+            )
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.context_v2_post_stride(output)
+    names = [name for name, _ in calls]
+    assert names[:4] == [
+        "validate_dispatch_manifest.py",
+        "stride_dispatch_waves.py",
+        "stride_dispatch_waves.py",
+        "merge_threats.py",
+    ]
+    assert names.count("merge_threats.py") == 1
+    assert action["action"] == "dispatch_agent"
+    assert action["semantic_role"] == "threat_merger"
+    assert action["unresolved_decision_keys"] == ["G-aaaaaaaa"]
+    assert action["dispatch_jobs"][0]["input_artifacts"] == [".merge-context/candidates.json"]
+    assert action["dispatch_jobs"][0]["output_artifacts"] == [".merge-decisions.json"]
+    assert action["artifact_receipts"][0]["artifact_path"] == ".merge-context/candidates.json"
+
+
+def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path, max_stride_components=12)
+    (output / ".stride-analyst-context.json").write_text("{}", encoding="utf-8")
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "api"}, {"id": "worker"}]}),
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_script(name, args, **kwargs):
+        calls.append((name, args))
+        if name == "build_stride_dispatch_manifest.py":
+            components = []
+            for component_id in ("api", "worker"):
+                bundle_dir = output / ".dispatch-context" / component_id
+                bundle_dir.mkdir(parents=True)
+                bundle_path = bundle_dir / "evidence-bundle.json"
+                bundle_path.write_text(
+                    json.dumps({"component": {"id": component_id}, "source_slices": []}),
+                    encoding="utf-8",
+                )
+                components.append(
+                    {
+                        "component_id": component_id,
+                        "evidence_bundle_path": f".dispatch-context/{component_id}/evidence-bundle.json",
+                        "cheap_stride": component_id == "worker",
+                    }
+                )
+            (output / ".stride-dispatch-manifest.json").write_text(
+                json.dumps({"context_version": 2, "components": components}),
+                encoding="utf-8",
+            )
+        elif name == "stride_dispatch_waves.py" and args[0] == "claim":
+            components = json.loads((output / ".stride-dispatch-manifest.json").read_text(encoding="utf-8"))[
+                "components"
+            ]
+            return _completed(json.dumps({"status": "claimed", "wave": {"components": components}}))
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    monkeypatch.setattr(
+        controller,
+        "_context_v2_taxonomy_slice",
+        lambda _output, cid: (f".taxonomy-slices/{cid}/threat-category-taxonomy.yaml", "a" * 64),
+    )
+    action = controller.context_v2_prepare_stride(output)
+    assert action["action"] == "dispatch_parallel"
+    assert [job["component_id"] for job in action["dispatch_jobs"]] == ["api", "worker"]
+    assert all(job["semantic_role"] == "stride_analyzer" for job in action["dispatch_jobs"])
+    assert all(job["agent_type"] == "appsec-advisor:appsec-stride-analyzer-v2" for job in action["dispatch_jobs"])
+    assert all(job["model"] == "sonnet" for job in action["dispatch_jobs"])
+    assert [job["analysis_depth"] for job in action["dispatch_jobs"]] == ["full", "light"]
+    assert all(job["taxonomy_slice_sha256"] == "a" * 64 for job in action["dispatch_jobs"])
+    assert all(job["taxonomy_slice_path"] in job["input_artifacts"] for job in action["dispatch_jobs"])
+    assert all(
+        job["unresolved_decision_keys"] == ["stride:S", "stride:T", "stride:R", "stride:I", "stride:D", "stride:E"]
+        for job in action["dispatch_jobs"]
+    )
+    assert len(action["artifact_receipts"]) == 4
+    wave_calls = [args[0] for name, args in calls if name == "stride_dispatch_waves.py"]
+    assert wave_calls == ["init", "claim"]
+
+
+def test_context_v2_post_stride_claims_retry_before_verify_or_merge(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    bundle_dir = output / ".dispatch-context" / "api"
+    bundle_dir.mkdir(parents=True)
+    bundle_path = bundle_dir / "evidence-bundle.json"
+    bundle_path.write_text(
+        json.dumps({"component": {"id": "api"}, "source_slices": []}),
+        encoding="utf-8",
+    )
+    component = {
+        "component_id": "api",
+        "evidence_bundle_path": ".dispatch-context/api/evidence-bundle.json",
+    }
+    (output / ".stride-dispatch-manifest.json").write_text(
+        json.dumps({"context_version": 2, "components": [component]}),
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_script(name, args, **kwargs):
+        calls.append((name, args))
+        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+            return _completed(json.dumps({"status": "claimed", "wave": {"components": [component]}}))
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    monkeypatch.setattr(
+        controller,
+        "_context_v2_taxonomy_slice",
+        lambda _output, cid: (f".taxonomy-slices/{cid}/threat-category-taxonomy.yaml", "a" * 64),
+    )
+    action = controller.context_v2_post_stride(output)
+
+    assert action["action"] == "dispatch_parallel"
+    assert action["dispatch_jobs"][0]["component_id"] == "api"
+    assert [name for name, _ in calls[:2]] == ["validate_dispatch_manifest.py", "stride_dispatch_waves.py"]
+    assert all(name not in {"merge_threats.py"} for name, _ in calls)
+
+
+def test_context_v2_taxonomy_slice_is_bounded_and_fingerprinted(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+
+    relative, digest = controller._context_v2_taxonomy_slice(output, "backend-api")
+
+    path = output / relative
+    payload = path.read_bytes()
+    assert relative == ".taxonomy-slices/backend-api/threat-category-taxonomy.yaml"
+    assert len(payload) <= 32_768
+    assert hashlib.sha256(payload).hexdigest() == digest
+    assert b"cwe_to_th:" in payload
+
+
+def test_context_v2_prepare_stride_rejects_bundle_escape_after_external_gate(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    (output / ".stride-analyst-context.json").write_text("{}", encoding="utf-8")
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "api"}]}),
+        encoding="utf-8",
+    )
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({"component": {"id": "api"}, "source_slices": []}), encoding="utf-8")
+
+    def fake_script(name, args, **kwargs):
+        if name == "build_stride_dispatch_manifest.py":
+            (output / ".stride-dispatch-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "context_version": 2,
+                        "components": [
+                            {
+                                "component_id": "api",
+                                "evidence_bundle_path": "../outside.json",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        elif name == "stride_dispatch_waves.py" and args[0] == "claim":
+            return _completed(
+                json.dumps(
+                    {
+                        "status": "claimed",
+                        "wave": {
+                            "components": [
+                                {
+                                    "component_id": "api",
+                                    "evidence_bundle_path": "../outside.json",
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    with pytest.raises(controller.ControllerError, match="unsafe artifact path"):
+        controller.context_v2_prepare_stride(output)
+
+
+def test_context_v2_candidate_free_success_runs_to_stage2_handoff_without_agent(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path, evidence_verifier_max_findings=30)
+    _write_minimal_context_v2_manifest(output)
+    calls: list[str] = []
+
+    def fake_script(name, args, **kwargs):
+        calls.append(name)
+        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+            return _completed(json.dumps({"status": "complete"}))
+        if name == "merge_threats.py" and args[0] == "collect":
+            (output / ".merge-candidates.json").write_text(
+                json.dumps(_merge_candidates()),
+                encoding="utf-8",
+            )
+        elif name == "merge_threats.py" and args[0] == "finalize":
+            (output / ".threats-merged.json").write_text(
+                json.dumps({"version": 1, "generated_at": "2026-08-06T00:00:00Z", "threats": []}),
+                encoding="utf-8",
+            )
+        elif name == "triage_validate_ratings.py":
+            (output / ".triage-flags.json").write_text(
+                json.dumps({"version": 1, "flags": []}),
+                encoding="utf-8",
+            )
+        elif name == "build_threat_model_yaml.py":
+            (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(
+        controller,
+        "_run_external",
+        lambda command, **_kwargs: calls.append(Path(command[1]).name) or _completed(),
+    )
+    action = controller.context_v2_post_stride(output)
+    assert action["action"] == "run_gate"
+    assert action["stage"] == "stage1c"
+    assert "semantic_role" not in action
+    assert calls[:5] == [
+        "validate_dispatch_manifest.py",
+        "stride_dispatch_waves.py",
+        "stride_dispatch_waves.py",
+        "merge_threats.py",
+        "merge_threats.py",
+    ]
+    assert "triage_validate_ratings.py" in calls
+    assert "triage_compute_ranking.py" in calls
+    assert "build_threat_model_yaml.py" in calls
+    assert calls.index("validate_intermediate.py") < calls.index("auto_emitter_pass.sh")
+    assert calls.index("auto_emitter_pass.sh") < calls.index("validate_mitigation_quality.py")
+    assert "appsec-threat-analyst" not in json.dumps(action)
+    assert "runtime_generation=context-v2" in (output / ".appsec-checkpoint").read_text(encoding="utf-8")
+
+
+def test_context_v2_after_merge_dispatches_evidence_only_when_sample_has_work(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path, evidence_verifier_max_findings=30)
+    (output / ".threats-merged.json").write_text(
+        json.dumps({"version": 1, "threats": [{"t_id": "T-001"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    action = controller._context_v2_after_merge(output, _cfg(tmp_path) | {"evidence_verifier_max_findings": 30})
+    assert action["semantic_role"] == "evidence_verifier"
+    assert action["unresolved_decision_keys"] == ["sampled_evidence_verdicts"]
+    assert action["dispatch_jobs"][0]["output_artifacts"] == [
+        ".evidence-verification.json",
+        ".threats-merged.json",
+    ]
+
+
+def test_context_v2_normalizes_producer_authored_stride_profile_before_schema_gate(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    path = output / ".stride-analyst-context.json"
+    path.write_text(
+        json.dumps(
+            {
+                "_stride_profile": "x" * 397,
+                "backend-api": {
+                    "interfaces": ["REST API"],
+                    "estimated_threat_count": 8,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    controller._normalize_context_v2_analyst_context(output)
+
+    normalized = controller._validate_json_artifact(
+        path,
+        controller.PLUGIN_ROOT / "schemas" / "stride-analyst-context.schema.json",
+        contract="stride-analyst-context-v1",
+    )
+    assert "_stride_profile" not in normalized
+    assert normalized["backend-api"]["estimated_threat_count"] == 8
+
+
+def test_context_v2_analyst_context_allows_more_than_legacy_component_count(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    component_ids = [f"service-{index:03d}" for index in range(70)]
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": value} for value in component_ids]}),
+        encoding="utf-8",
+    )
+    (output / ".stride-analyst-context.json").write_text(
+        json.dumps({value: {"interfaces": ["internal"]} for value in component_ids}),
+        encoding="utf-8",
+    )
+
+    value = controller._validate_context_v2_analyst_context(output)
+
+    assert len(value) == 70
+
+
+def test_context_v2_analyst_context_rejects_unknown_component_id(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "api"}]}),
+        encoding="utf-8",
+    )
+    (output / ".stride-analyst-context.json").write_text(
+        json.dumps({"invented-service": {"controls": ["none"]}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="unknown component IDs: invented-service"):
+        controller._validate_context_v2_analyst_context(output)
+
+
+@pytest.mark.parametrize("overlay", [{}, {"controls": []}, {"interfaces": ""}])
+def test_context_v2_analyst_context_rejects_empty_component_overlays(tmp_path, overlay):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "api"}]}),
+        encoding="utf-8",
+    )
+    (output / ".stride-analyst-context.json").write_text(
+        json.dumps({"api": overlay}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="stride-analyst-context-v1 validation failed"):
+        controller._validate_context_v2_analyst_context(output)
+
+
+def test_context_v2_analyst_context_rejects_oversized_artifact(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "api"}]}),
+        encoding="utf-8",
+    )
+    (output / ".stride-analyst-context.json").write_text(
+        " " * (controller.MAX_STRIDE_ANALYST_CONTEXT_BYTES + 1),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="1048576-byte cap"):
+        controller._validate_context_v2_analyst_context(output)
+
+
+def test_context_v2_after_evidence_skips_triage_agent_and_dispatches_only_root_cause_synthesis(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    (output / ".threats-merged.json").write_text(
+        json.dumps({"version": 1, "threats": [{"t_id": "T-001"}]}),
+        encoding="utf-8",
+    )
+
+    def fake_script(name, args, **kwargs):
+        if name == "triage_validate_ratings.py":
+            (output / ".triage-flags.json").write_text(
+                json.dumps({"version": 2, "flags": []}),
+                encoding="utf-8",
+            )
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    action = controller.context_v2_post_evidence(output)
+    assert action["semantic_role"] == "post_stride_synthesizer"
+    assert action["unresolved_decision_keys"] == ["tier_root_causes"]
+    assert all(job["semantic_role"] != "triage_validator" for job in action["dispatch_jobs"])
+
+
+def test_evidence_verification_semantics_reject_inconsistent_counts(tmp_path):
+    path = tmp_path / ".evidence-verification.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-08-06T12:00:00Z",
+                "model_id": "sonnet",
+                "depth": "quick",
+                "summary": {
+                    "total_threats": 4,
+                    "sampled": 2,
+                    "verified": 1,
+                    "refuted": 0,
+                    "ambiguous": 0,
+                    "unchecked": 2,
+                },
+                "flags": [
+                    {
+                        "flag_id": "EV-001",
+                        "t_id": "T-001",
+                        "verdict": "verified",
+                        "reason": "The cited sink is present.",
+                        "line_excerpt": "query(input)",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="do not partition sampled"):
+        controller._validate_evidence_verification(path)
+
+
+def test_evidence_verification_rejects_sidechannel_annotation_drift(tmp_path):
+    path = tmp_path / ".evidence-verification.json"
+    threats = tmp_path / ".threats-merged.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-08-06T12:00:00Z",
+                "model_id": "sonnet",
+                "depth": "quick",
+                "summary": {
+                    "total_threats": 1,
+                    "sampled": 1,
+                    "verified": 1,
+                    "refuted": 0,
+                    "ambiguous": 0,
+                    "unchecked": 0,
+                },
+                "flags": [
+                    {
+                        "flag_id": "EV-001",
+                        "t_id": "T-001",
+                        "verdict": "verified",
+                        "reason": "The cited sink is present.",
+                        "line_excerpt": "query(input)",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    threats.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "threats": [
+                    {
+                        "t_id": "T-001",
+                        "evidence_check": "ambiguous",
+                        "evidence_flags": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="verdict does not match merged threat T-001"):
+        controller._validate_evidence_verification(path, threats)
+
+
+def test_evidence_verification_rejects_total_that_does_not_match_merged_artifact(tmp_path):
+    path = tmp_path / ".evidence-verification.json"
+    threats = tmp_path / ".threats-merged.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-08-06T12:00:00Z",
+                "model_id": "sonnet",
+                "depth": "quick",
+                "summary": {
+                    "total_threats": 0,
+                    "sampled": 0,
+                    "verified": 0,
+                    "refuted": 0,
+                    "ambiguous": 0,
+                    "unchecked": 0,
+                },
+                "flags": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    threats.write_text(
+        json.dumps({"version": 1, "threats": [{"t_id": "T-001"}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="does not match the merged threat count"):
+        controller._validate_evidence_verification(path, threats)
+
+
+def test_context_v2_invalid_evidence_summary_is_nonfatal_enrichment(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    (output / ".evidence-verification.json").write_text("{}", encoding="utf-8")
+    guard_calls = []
+
+    monkeypatch.setattr(
+        controller,
+        "_validate_evidence_verification",
+        lambda *paths: (_ for _ in ()).throw(controller.ControllerError("invalid evidence contract")),
+    )
+    monkeypatch.setattr(
+        controller,
+        "_best_effort_script",
+        lambda output_dir, name, args, receipts: guard_calls.append((name, list(args), list(receipts))),
+    )
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda output_dir, cfg: {"action": "sentinel"})
+
+    assert controller._context_v2_after_evidence(output, _cfg(tmp_path)) == {"action": "sentinel"}
+    assert guard_calls == [
+        (
+            "guard_evidence_verification.py",
+            [str(output), "--ignore-summary"],
+            ["evidence verification rejected: invalid contract"],
+        )
+    ]
+
+
+def test_context_v2_dispatches_triage_only_when_deterministic_ranking_fails(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    (output / ".threats-merged.json").write_text(
+        json.dumps({"version": 1, "threats": [{"t_id": "T-001"}]}),
+        encoding="utf-8",
+    )
+
+    def fake_script(name, args, **kwargs):
+        if name == "triage_validate_ratings.py":
+            (output / ".triage-flags.json").write_text(
+                json.dumps({"version": 1, "flags": []}),
+                encoding="utf-8",
+            )
+        if name == "triage_compute_ranking.py":
+            raise controller.ControllerError("semantic ranking fallback required")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    action = controller.context_v2_post_evidence(output)
+    assert action["semantic_role"] == "triage_validator"
+    assert action["unresolved_decision_keys"] == ["triage_ranking"]
+    assert action["dispatch_jobs"][0]["output_artifacts"] == [
+        ".triage-flags.json",
+        ".threats-merged.json",
+    ]
+
+
+def test_context_v2_post_merge_rejects_decisions_for_unknown_group(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    (output / ".merge-candidates.json").write_text(
+        json.dumps(_merge_candidates("G-aaaaaaaa")),
+        encoding="utf-8",
+    )
+    candidate_payload = (output / ".merge-candidates.json").read_bytes()
+    controller._write_merge_review_context(output, json.loads(candidate_payload), candidate_payload)
+    (output / ".merge-decisions.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "generated_at": "2026-08-05T00:00:00Z",
+                "model": "sonnet",
+                "decisions": [
+                    {
+                        "group_id": "G-bbbbbbbb",
+                        "action": "keep",
+                        "member_indices": [0],
+                        "rationale": "Distinct mechanisms.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    with pytest.raises(controller.ControllerError, match="unknown groups"):
+        controller.context_v2_post_merge(output)
+
+
+def test_context_v2_post_merge_rejects_omitted_candidate_group(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    (output / ".merge-candidates.json").write_text(
+        json.dumps(_merge_candidates("G-aaaaaaaa")),
+        encoding="utf-8",
+    )
+    candidate_payload = (output / ".merge-candidates.json").read_bytes()
+    controller._write_merge_review_context(output, json.loads(candidate_payload), candidate_payload)
+    (output / ".merge-decisions.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "generated_at": "2026-08-06T00:00:00Z",
+                "model": "sonnet",
+                "decisions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+
+    with pytest.raises(controller.ControllerError, match="omits candidate groups"):
+        controller.context_v2_post_merge(output)
+
+
+def test_context_v2_post_merge_accepts_disjoint_partial_cluster_decisions(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    candidates = _merge_candidates("G-e7a248ce")
+    candidates["candidate_groups"][0]["member_count"] = 3
+    candidates["candidate_groups"][0]["members"] = [{"index": 0}, {"index": 1}, {"index": 2}]
+    (output / ".merge-candidates.json").write_text(json.dumps(candidates), encoding="utf-8")
+    payload = (output / ".merge-candidates.json").read_bytes()
+    controller._write_merge_review_context(output, candidates, payload)
+    (output / ".merge-decisions.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "generated_at": "2026-08-06T00:00:00Z",
+                "model": "sonnet",
+                "decisions": [
+                    {
+                        "group_id": "G-e7a248ce",
+                        "action": "merge",
+                        "member_indices": [0, 2],
+                        "merge_target_index": 0,
+                        "rationale": "Same authorization defect.",
+                    },
+                    {
+                        "group_id": "G-e7a248ce",
+                        "action": "keep",
+                        "member_indices": [1],
+                        "rationale": "Distinct validation defect.",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    monkeypatch.setattr(controller, "consume_artifact_receipt", lambda *_args, **_kwargs: b"")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(controller, "_context_v2_after_merge", lambda *_args, **_kwargs: {"action": "run_gate"})
+
+    assert controller.context_v2_post_merge(output) == {"action": "run_gate"}
+
+
+def test_context_v2_merge_decisions_reject_overlapping_partial_subsets():
+    candidates = _merge_candidates("G-e7a248ce")
+    decisions = {
+        "version": 2,
+        "generated_at": "2026-08-07T00:00:00Z",
+        "model": "sonnet",
+        "decisions": [
+            {
+                "group_id": "G-e7a248ce",
+                "action": "merge",
+                "member_indices": [0, 1],
+                "merge_target_index": 0,
+                "rationale": "Members zero and one share one mechanism.",
+            },
+            {
+                "group_id": "G-e7a248ce",
+                "action": "keep",
+                "member_indices": [1],
+                "rationale": "Member one remains distinct.",
+            },
+        ],
+    }
+
+    with pytest.raises(controller.ControllerError, match="overlapping member subsets"):
+        controller._validate_context_v2_merge_decision_subsets(decisions, candidates)
 
 
 def test_duration_estimate_forwards_resolved_profile(monkeypatch, tmp_path):
@@ -1870,3 +3108,461 @@ def test_next_action_exports_before_stamping(tmp_path):
     assert action["action"] == "complete"
     assert (output / "threat-model.threatdragon.json").is_file()
     assert (output / "threat-model-s1.threatdragon.json").is_file()
+
+
+def _context_v2_run(tmp_path: Path, **overrides) -> Path:
+    """A context-v2 run directory with a repo root that exists."""
+    (tmp_path / "repo").mkdir(exist_ok=True)
+    return _write_context_v2_config(tmp_path, **overrides)
+
+
+class TestContextV2ReconWave:
+    def test_every_semantic_role_has_pre_handoff_contract_enforcement(self):
+        classified = controller.CONTEXT_V2_PRODUCER_GATED_ROLES | controller.CONTEXT_V2_CONTROLLER_RECOVERY_ROLES
+
+        assert classified == set(controller.SEMANTIC_ROLE_REGISTRY)
+        assert controller.CONTEXT_V2_PRODUCER_GATED_ROLES.isdisjoint(controller.CONTEXT_V2_CONTROLLER_RECOVERY_ROLES)
+
+    def test_begin_dispatches_context_recon_and_config_when_iac_exists(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        (tmp_path / "repo" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        action = controller.context_v2_begin(output)
+        assert action["action"] == "dispatch_parallel"
+        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
+        assert roles == ["context_resolver", "recon_scanner", "config_scanner"]
+        recon = next(job for job in action["dispatch_jobs"] if job["semantic_role"] == "recon_scanner")
+        assert recon["output_artifacts"] == [".recon-summary.md", ".recon-signals.json"]
+
+    def test_begin_writes_a_config_scan_stub_without_iac_surface(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        action = controller.context_v2_begin(output)
+        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
+        assert "config_scanner" not in roles
+        stub = json.loads((output / ".config-scan-findings.json").read_text(encoding="utf-8"))
+        assert stub["findings"] == []
+        assert "parse_error" in stub
+
+    def test_a_full_run_always_re_resolves_context(self, tmp_path, monkeypatch):
+        """An existing context file survives full cleanup; presence is not a cache hit."""
+        output = _context_v2_run(tmp_path)
+        (output / ".threat-modeling-context.md").write_text("stale\n", encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        action = controller.context_v2_begin(output)
+        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
+        assert "context_resolver" in roles
+
+    def test_incremental_reuses_context_newer_than_head(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path, incremental=True)
+        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller.subprocess, "run", lambda *a, **k: _completed("1\n"))
+        action = controller.context_v2_begin(output)
+        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
+        assert "context_resolver" not in roles
+
+    def test_incremental_re_resolves_context_older_than_head(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path, incremental=True)
+        (output / ".threat-modeling-context.md").write_text("stale\n", encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        future = str(int(Path(output / ".threat-modeling-context.md").stat().st_mtime) + 10_000)
+        monkeypatch.setattr(controller.subprocess, "run", lambda *a, **k: _completed(future + "\n"))
+        action = controller.context_v2_begin(output)
+        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
+        assert "context_resolver" in roles
+
+    def test_begin_reuses_recon_when_the_fingerprint_is_unchanged(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path, incremental=True)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        action = controller.context_v2_begin(output)
+        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
+        assert "recon_scanner" not in roles
+
+    def test_begin_runs_recon_when_the_fingerprint_check_fails(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path, incremental=True)
+        (output / ".recon-summary.md").write_text("prior\n", encoding="utf-8")
+
+        def fake_script(name, args, **kwargs):
+            if name == "baseline_state.py":
+                raise controller.ControllerError("fingerprint changed")
+            return _completed("{}")
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+        action = controller.context_v2_begin(output)
+        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
+        assert "recon_scanner" in roles
+
+    def test_begin_continues_deterministically_when_the_wave_is_empty(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path, incremental=True)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
+        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller.subprocess, "run", lambda *a, **k: _completed("1\n"))
+        monkeypatch.setattr(controller, "_context_v2_after_recon", lambda *_a, **_k: {"action": "dispatch_agent"})
+        assert controller.context_v2_begin(output)["action"] == "dispatch_agent"
+
+
+class TestContextV2PostRecon:
+    def _prepare(self, tmp_path, **overrides):
+        output = _context_v2_run(tmp_path, **overrides)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+        (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
+        _write_architecture_receipt_inputs(output)
+        return output
+
+    def test_post_recon_requires_the_recon_summary(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        with pytest.raises(controller.ControllerError, match="recon-summary"):
+            controller.context_v2_post_recon(output)
+
+    def test_post_recon_requires_the_context_artifact(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        with pytest.raises(controller.ControllerError, match="threat-modeling-context"):
+            controller.context_v2_post_recon(output)
+
+    def test_post_recon_rejects_nested_untrusted_context_fences(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        context = (output / ".threat-modeling-context.md").read_text(encoding="utf-8")
+        context = context.replace("none", '<untrusted-data source="nested">\nnone\n</untrusted-data>')
+        (output / ".threat-modeling-context.md").write_text(context, encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        with pytest.raises(controller.ControllerError, match="nested or unbalanced fences"):
+            controller.context_v2_post_recon(output)
+
+    def test_post_recon_repairs_missing_context_heading_before_dispatch(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        context_path = output / ".threat-modeling-context.md"
+        missing = "## Architecture Decisions (ADRs)"
+        context_path.write_text(
+            context_path.read_text(encoding="utf-8").replace(f"{missing}\n", "", 1), encoding="utf-8"
+        )
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        action = controller.context_v2_post_recon(output)
+
+        repaired = context_path.read_text(encoding="utf-8")
+        assert missing in repaired
+        assert repaired.index("## Data Model Summary") < repaired.index(missing)
+        assert repaired.index(missing) < repaired.index("## Environment & Configuration")
+        assert action["semantic_role"] == "architecture_analyst"
+        assert any("context structure normalized" in receipt for receipt in action["receipts"])
+
+    def test_post_recon_does_not_repair_reordered_context_headings(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        context_path = output / ".threat-modeling-context.md"
+        context = context_path.read_text(encoding="utf-8")
+        context = context.replace("## API Surface", "TEMP", 1)
+        context = context.replace("## Deployment Topology", "## API Surface", 1)
+        context = context.replace("TEMP", "## Deployment Topology", 1)
+        context_path.write_text(context, encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        with pytest.raises(controller.ControllerError, match="reorders required headings"):
+            controller.context_v2_post_recon(output)
+
+    def test_post_recon_rejects_reordered_or_missing_recon_headings(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        invalid = _valid_recon_summary().replace("### 7.29 docker-compose Security\n", "")
+        (output / ".recon-summary.md").write_text(invalid, encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        with pytest.raises(controller.ControllerError, match=r"missing or reorders security section 7\.29"):
+            controller.context_v2_post_recon(output)
+
+    def test_post_recon_rejects_invalid_signal_contract(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        (output / ".recon-signals.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        with pytest.raises(controller.ControllerError, match="recon-signals-v1 validation failed"):
+            controller.context_v2_post_recon(output)
+
+    def test_quick_depth_resolves_static_actors_but_skips_discovery(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path, assessment_depth="quick")
+        calls: list[tuple[str, list[str]]] = []
+        monkeypatch.setattr(
+            controller, "_run_script", lambda name, args, **k: (calls.append((name, args)), _completed())[1]
+        )
+        action = controller.context_v2_post_recon(output)
+        assert action["semantic_role"] == "architecture_analyst"
+        assert not any(name == "actor_discovery_cache.py" for name, _ in calls)
+        resolver = [args for name, args in calls if name == "resolve_actors.py"]
+        assert resolver and "--quick" in resolver[0]
+
+    def test_thorough_depth_runs_the_database_separation_scan(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path, assessment_depth="thorough")
+        calls: list[str] = []
+        monkeypatch.setattr(controller, "_run_script", lambda name, args, **k: (calls.append(name), _completed())[1])
+        controller.context_v2_post_recon(output)
+        assert "database_privilege_separation.py" in calls
+
+    def test_standard_depth_omits_the_database_separation_scan(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        calls: list[str] = []
+        monkeypatch.setattr(controller, "_run_script", lambda name, args, **k: (calls.append(name), _completed())[1])
+        controller.context_v2_post_recon(output)
+        assert "database_privilege_separation.py" not in calls
+
+    def test_discovery_disabled_by_repo_config_goes_straight_to_architecture(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        calls: list[str] = []
+        monkeypatch.setattr(controller, "_run_script", lambda name, args, **k: (calls.append(name), _completed())[1])
+        action = controller.context_v2_post_recon(output)
+        assert action["semantic_role"] == "architecture_analyst"
+        assert "actor_discovery_cache.py" not in calls
+
+    def test_discovery_cache_miss_dispatches_the_discoverer(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        _write_architecture_receipt_inputs(output, discovery_enabled=True)
+
+        def fake_script(name, args, **kwargs):
+            if name == "actor_discovery_cache.py":
+                return _completed("cache-key-1" if args[0] == "compute" else "miss")
+            return _completed()
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+        action = controller.context_v2_post_recon(output)
+        assert action["semantic_role"] == "actor_discoverer"
+        assert action["dispatch_jobs"][0]["output_artifacts"] == [".actors-discovered.json"]
+
+    def test_discovery_cache_hit_skips_the_discoverer(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        _write_architecture_receipt_inputs(output, discovery_enabled=True)
+
+        def fake_script(name, args, **kwargs):
+            if name == "actor_discovery_cache.py":
+                return _completed("cache-key-1" if args[0] == "compute" else "hit")
+            return _completed()
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+        assert controller.context_v2_post_recon(output)["semantic_role"] == "architecture_analyst"
+
+
+class TestContextV2PostActors:
+    def _prepare(self, tmp_path):
+        output = _context_v2_run(tmp_path)
+        (output / ".recon-summary.md").write_text("recon\n", encoding="utf-8")
+        _write_architecture_receipt_inputs(output)
+        return output
+
+    @staticmethod
+    def _script(calls: list[tuple[str, list[str]]], *, invalid_discovery: bool = False):
+        def fake_script(name, args, **kwargs):
+            calls.append((name, args))
+            if name == "actor_discovery_cache.py" and args[0] == "compute":
+                return _completed("cache-key-1")
+            if invalid_discovery and name == "validate_intermediate.py" and args[0] == "actors_discovered":
+                raise controller.ControllerError("invalid discovery contract")
+            return _completed()
+
+        return fake_script
+
+    def test_valid_discovery_feeds_the_resolver_and_dispatches_architecture(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        calls: list[tuple[str, list[str]]] = []
+        monkeypatch.setattr(controller, "_run_script", self._script(calls))
+        action = controller.context_v2_post_actors(output)
+        assert action["semantic_role"] == "architecture_analyst"
+        resolver = [args for name, args in calls if name == "resolve_actors.py"]
+        assert resolver and "--discovery-output" in resolver[0]
+        # Valid output is never overwritten with the empty-discovery stub.
+        assert not any(name == "actor_discovery_cache.py" and args[0] == "write-empty" for name, args in calls)
+
+    def test_invalid_discovery_degrades_to_the_static_actor_set(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        calls: list[tuple[str, list[str]]] = []
+        monkeypatch.setattr(controller, "_run_script", self._script(calls, invalid_discovery=True))
+        action = controller.context_v2_post_actors(output)
+        assert action["semantic_role"] == "architecture_analyst"
+        write_empty = [args for name, args in calls if name == "actor_discovery_cache.py" and args[0] == "write-empty"]
+        assert write_empty
+        # The stub must carry the same key the dispatch decision used.
+        assert "cache-key-1" in write_empty[0]
+
+
+class TestContextV2ArchitectureAndBoundary:
+    def test_post_architecture_gates_then_dispatches_the_boundary_analyst(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        (output / ".trust-boundary-assessment-input.json").write_text(
+            json.dumps(_trust_boundary_assessment()), encoding="utf-8"
+        )
+        gated: list[bool] = []
+
+        def gate(_output, _cfg, *, controller_owned_handoff=False):
+            gated.append(controller_owned_handoff)
+
+        monkeypatch.setattr(controller, "_gate_architecture_stage", gate)
+        action = controller.context_v2_post_architecture(output)
+        assert gated == [True]
+        assert action["semantic_role"] == "trust_boundary_analyst"
+        assert action["dispatch_jobs"][0]["output_artifacts"] == [".trust-boundary-candidates.json"]
+        receipt = action["artifact_receipts"][0]
+        assert receipt["record_count"] == 2
+        assert receipt["validation_status"] == "valid"
+        # The receipt must bind the exact bytes on disk, not the agent's word.
+        controller.consume_artifact_receipt(output, receipt)
+        (output / ".trust-boundary-assessment-input.json").write_text("{}", encoding="utf-8")
+        with pytest.raises(controller.ControllerError):
+            controller.consume_artifact_receipt(output, receipt)
+
+    def test_post_architecture_propagates_a_failed_gate(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+
+        def fail(*_a, **_k):
+            raise controller.ControllerError("architecture artifacts missing")
+
+        monkeypatch.setattr(controller, "_gate_architecture_stage", fail)
+        with pytest.raises(controller.ControllerError, match="architecture artifacts missing"):
+            controller.context_v2_post_architecture(output)
+
+    def test_context_v2_gate_finalizes_inventory_binds_fingerprint_and_writes_checkpoint(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        for name in (
+            ".recon-summary.md",
+            ".components.json",
+            ".data-flows.json",
+            ".assets.json",
+            ".attack-surface-overrides.json",
+        ):
+            (output / name).write_text("{}", encoding="utf-8")
+        fingerprint = "sha256:" + "a" * 64
+        calls: list[tuple[str, list[str]]] = []
+
+        def fake_script(name, args, **_kwargs):
+            calls.append((name, args))
+            if name == "finalize_component_inventory.py" and "--validate-only" not in args:
+                (output / ".component-inventory-finalization.json").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "component_inventory_fingerprint": fingerprint,
+                            "component_ids": ["api"],
+                            "injected_component_ids": [],
+                            "collapsed_duplicate_count": 0,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            return _completed()
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+        controller._gate_architecture_stage(output, _cfg(tmp_path), controller_owned_handoff=True)
+
+        finalizer_calls = [args for name, args in calls if name == "finalize_component_inventory.py"]
+        assert len(finalizer_calls) == 2
+        assert "--validate-only" not in finalizer_calls[0]
+        assert "--validate-only" in finalizer_calls[1]
+        assert (
+            json.loads((output / ".data-flows.json").read_text(encoding="utf-8"))["component_inventory_fingerprint"]
+            == fingerprint
+        )
+        assert (output / ".appsec-checkpoint").read_text(encoding="utf-8") == (
+            "phase=6 status=completed need_boundary_assessment=true\n"
+        )
+
+    def test_post_boundary_gates_then_dispatches_the_control_analyst(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        (output / ".trust-boundaries.json").write_text(
+            json.dumps({"schema_version": 2, "trust_boundaries": []}), encoding="utf-8"
+        )
+        gated: list[str] = []
+        monkeypatch.setattr(controller, "_gate_trust_boundary_promotion", lambda *_a, **_k: gated.append("boundary"))
+        action = controller.context_v2_post_boundary(output)
+        assert gated == ["boundary"]
+        assert action["semantic_role"] == "control_analyst"
+        assert action["dispatch_jobs"][0]["output_artifacts"] == [
+            ".security-controls.json",
+            ".stride-analyst-context.json",
+        ]
+
+    @pytest.mark.parametrize(
+        "entrypoint",
+        [
+            "context_v2_begin",
+            "context_v2_post_recon",
+            "context_v2_post_actors",
+            "context_v2_post_architecture",
+            "context_v2_post_boundary",
+        ],
+    )
+    def test_pre_stride_actions_refuse_a_legacy_run(self, tmp_path, entrypoint):
+        output = _context_v2_run(tmp_path, runtime_generation="legacy")
+        with pytest.raises(controller.ControllerError, match="incompatible runtime generation"):
+            getattr(controller, entrypoint)(output)
+
+
+class TestStage1RuntimeSelection:
+    """prepare() hands the skill the runtime that matches the run's generation."""
+
+    def test_the_two_stage1_runtimes_are_distinct_files(self):
+        assert controller.THIN_STAGE1_RUNTIME.name == "SKILL-thin-stage1.md"
+        assert controller.THIN_STAGE1_V2_RUNTIME.name == "SKILL-thin-stage1-v2.md"
+
+    def test_both_stage1_runtimes_are_plugin_owned(self):
+        owned = controller._plugin_owned_instruction_paths()
+        assert controller.THIN_STAGE1_RUNTIME.resolve() in owned
+        assert controller.THIN_STAGE1_V2_RUNTIME.resolve() in owned
+
+    def test_context_v2_actions_name_the_v2_runtime(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        action = controller.context_v2_begin(output)
+        assert action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
+
+    @pytest.mark.parametrize(
+        ("generation", "expected"),
+        [("legacy", "SKILL-thin-stage1.md"), ("context-v2", "SKILL-thin-stage1-v2.md")],
+    )
+    def test_stage1_runtime_follows_the_persisted_generation(self, tmp_path, generation, expected):
+        cfg = _cfg(tmp_path)
+        cfg["runtime_generation"] = generation
+        assert controller._stage1_runtime_for(cfg).name == expected
+
+    def test_a_run_without_a_generation_falls_back_to_legacy(self, tmp_path):
+        cfg = _cfg(tmp_path)
+        cfg.pop("runtime_generation", None)
+        assert controller._stage1_runtime_for(cfg) is controller.THIN_STAGE1_RUNTIME
+
+
+class TestIacSurfaceDetection:
+    def test_detects_a_top_level_marker(self, tmp_path):
+        (tmp_path / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+        assert controller._has_iac_surface(tmp_path) is True
+
+    def test_detects_a_nested_marker(self, tmp_path):
+        nested = tmp_path / "services" / "api"
+        nested.mkdir(parents=True)
+        (nested / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+        assert controller._has_iac_surface(tmp_path) is True
+
+    def test_detects_a_path_scoped_marker(self, tmp_path):
+        workflows = tmp_path / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text("on: push\n", encoding="utf-8")
+        assert controller._has_iac_surface(tmp_path) is True
+
+    def test_a_bare_yml_outside_workflows_is_not_a_surface(self, tmp_path):
+        (tmp_path / "config.yml").write_text("a: 1\n", encoding="utf-8")
+        assert controller._has_iac_surface(tmp_path) is False
+
+    def test_empty_repository_has_no_surface(self, tmp_path):
+        assert controller._has_iac_surface(tmp_path) is False
+
+    def test_pruned_directories_do_not_select_a_surface(self, tmp_path):
+        vendored = tmp_path / "node_modules" / "pkg"
+        vendored.mkdir(parents=True)
+        (vendored / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+        assert controller._has_iac_surface(tmp_path) is False
+
+    def test_hitting_the_entry_cap_fails_safe_to_true(self, tmp_path, monkeypatch):
+        """An unwalked remainder must never silently drop the config scan."""
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        monkeypatch.setattr(controller, "_IAC_WALK_MAX_ENTRIES", 0)
+        assert controller._has_iac_surface(tmp_path) is True

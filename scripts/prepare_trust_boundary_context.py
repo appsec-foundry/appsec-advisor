@@ -39,6 +39,7 @@ DIAGNOSTICS_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-diagnostics.schem
 CANDIDATES_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "trust-boundary-candidates.schema.json"
 ASSESSMENT_INPUT_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-assessment-input.schema.json"
 COVERAGE_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-coverage.schema.json"
+SELECTION_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-selection.schema.json"
 KINDS = {"network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"}
 # `kind` mixes three questions: HOW the crossing happens (network/process),
 # WHAT changes across it (identity/privilege/tenant/data-origin) and WHO operates
@@ -1388,6 +1389,38 @@ def _focus(boundary: dict, component: dict, prior_refs: set[tuple[str, str]]) ->
     return "catalog-only", ["ordinary crossing without prioritized trust-change signal"]
 
 
+@lru_cache(maxsize=1)
+def _selection_validator() -> jsonschema.Draft202012Validator:
+    schema = json.loads(SELECTION_SCHEMA.read_text(encoding="utf-8"))
+    return jsonschema.Draft202012Validator(schema)
+
+
+def validate_trust_boundary_selection(
+    audit: Any,
+    *,
+    known_component_ids: set[str] | None = None,
+) -> None:
+    """Validate the selection sidecar and inherited-component references."""
+    _selection_validator().validate(audit)
+    components = audit["components"]
+    for component_id, entry in components.items():
+        parent_id = entry.get("inherited_from")
+        if not parent_id:
+            continue
+        if parent_id == component_id:
+            raise jsonschema.ValidationError(
+                f"components.{component_id}.inherited_from must not reference the component itself"
+            )
+        if known_component_ids is not None and parent_id not in known_component_ids:
+            raise jsonschema.ValidationError(
+                f"components.{component_id}.inherited_from references unknown component {parent_id!r}"
+            )
+        if parent_id not in components:
+            raise jsonschema.ValidationError(
+                f"components.{component_id}.inherited_from references component {parent_id!r} without a selection audit"
+            )
+
+
 def prepare_contexts(
     *,
     repo_root: Path,
@@ -1625,6 +1658,7 @@ def prepare_contexts(
             "it can acquire no findings this run",
             file=sys.stderr,
         )
+    validate_trust_boundary_selection(audit, known_component_ids=component_id_set)
     atomic_write_json(context_root / "trust-boundary-selection.json", audit, sort_keys=False)
     return audit
 

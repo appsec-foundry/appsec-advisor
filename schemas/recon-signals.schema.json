@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/recon-signals.schema.json",
+  "title": "Deterministic reconnaissance signals for actor and architecture resolution",
+  "type": "object",
+  "required": ["schema_version", "signals", "signal_evidence", "signal_classification", "component_hints"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "signals": {
+      "type": "object",
+      "required": [
+        "has_public_routes",
+        "has_auth_surface",
+        "has_role_concept",
+        "has_secrets_in_repo",
+        "has_ci_pipeline",
+        "has_external_apis",
+        "has_client_storage",
+        "has_multi_tenancy_signal",
+        "has_open_self_registration"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "has_public_routes": { "type": "boolean" },
+        "has_auth_surface": { "type": "boolean" },
+        "has_role_concept": { "type": "boolean" },
+        "has_secrets_in_repo": { "type": "boolean" },
+        "has_ci_pipeline": { "type": "boolean" },
+        "has_external_apis": { "type": "boolean" },
+        "has_client_storage": { "type": "boolean" },
+        "has_multi_tenancy_signal": { "type": "boolean" },
+        "has_open_self_registration": { "type": "boolean" }
+      }
+    },
+    "signal_evidence": {
+      "type": "object",
+      "required": [
+        "has_public_routes",
+        "has_auth_surface",
+        "has_role_concept",
+        "has_secrets_in_repo",
+        "has_ci_pipeline",
+        "has_external_apis",
+        "has_client_storage",
+        "has_multi_tenancy_signal",
+        "has_open_self_registration"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "has_public_routes": { "$ref": "#/$defs/evidence" },
+        "has_auth_surface": { "$ref": "#/$defs/evidence" },
+        "has_role_concept": { "$ref": "#/$defs/evidence" },
+        "has_secrets_in_repo": { "$ref": "#/$defs/evidence" },
+        "has_ci_pipeline": { "$ref": "#/$defs/evidence" },
+        "has_external_apis": { "$ref": "#/$defs/evidence" },
+        "has_client_storage": { "$ref": "#/$defs/evidence" },
+        "has_multi_tenancy_signal": { "$ref": "#/$defs/evidence" },
+        "has_open_self_registration": { "$ref": "#/$defs/evidence" }
+      }
+    },
+    "signal_classification": {
+      "type": "object",
+      "required": ["has_open_self_registration"],
+      "additionalProperties": false,
+      "properties": {
+        "has_open_self_registration": { "enum": ["deterministic", "llm-fallback"] }
+      }
+    },
+    "component_hints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["component_id", "component_type", "deployment_zones", "classification"],
+        "additionalProperties": false,
+        "properties": {
+          "component_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,99}$" },
+          "component_type": {
+            "enum": [
+              "auth-service",
+              "admin-interface",
+              "payment-handler",
+              "ci-cd-pipeline",
+              "developer-workstation",
+              "data-store",
+              "api-endpoint",
+              "web-frontend",
+              "mobile-app",
+              "worker",
+              "gateway",
+              "service-proxy"
+            ]
+          },
+          "deployment_zones": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "internet",
+                "dmz",
+                "client-device",
+                "mobile-device",
+                "internal-network",
+                "peer-service",
+                "prod-env",
+                "prod-write-db",
+                "ci-cd-runtime",
+                "ci-cd-secrets",
+                "build-pipeline",
+                "deployment-pipeline"
+              ]
+            }
+          },
+          "classification": { "enum": ["deterministic", "llm-fallback"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "evidence": { "type": "string", "minLength": 1, "maxLength": 1000 }
+  }
+}

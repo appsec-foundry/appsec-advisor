@@ -18,9 +18,11 @@ import importlib.util
 import io
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
+import budget_watchdog
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -195,6 +197,65 @@ class TestSessionAgentMap:
         assert len(lines) <= 20
         # most recent retained
         assert al._lookup_session_agent("sid00029") == "agent29"
+
+    def test_parallel_registrations_are_not_lost(self, al):
+        threads = [threading.Thread(target=al._save_session_agent, args=("parallel", f"agent{i}")) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert set(al._lookup_session_agent_registrations("parallel")) == {f"agent{i}" for i in range(8)}
+
+    def test_multi_agent_session_disables_shared_budget_scope(self, al):
+        al._save_session_agent("parallel", "context-resolver")
+        al._save_session_agent("parallel", "recon-scanner")
+        assert al._budget_scope_agent("parallel") is None
+
+    def test_multi_agent_session_uses_honest_shared_telemetry_label(self, al):
+        al._save_session_agent("parallel", "context-resolver")
+        al._save_session_agent("parallel", "config-scanner")
+        assert al._session_agent_label("parallel") == "shared-session"
+
+    def test_new_plugin_roles_get_a_canonical_short_name(self, al):
+        assert al._short_agent_name("appsec-advisor:appsec-config-scanner") == "config-scanner"
+        assert al._short_agent_name("appsec-advisor:appsec-architecture-analyst") == "architecture-analyst"
+        assert al._short_agent_name("third-party-agent") == ""
+
+    def test_repeated_agent_dispatch_disables_shared_budget_scope(self, al):
+        al._save_session_agent("parallel", "stride-analyzer")
+        al._save_session_agent("parallel", "stride-analyzer")
+        assert al._budget_scope_agent("parallel") is None
+
+    def test_single_agent_session_keeps_its_budget_scope(self, al):
+        al._save_session_agent("single01", "recon-scanner")
+        assert al._budget_scope_agent("single01") == "recon-scanner"
+
+    def test_multi_agent_tool_call_resets_instead_of_tallying(self, al, tmp_path, monkeypatch):
+        al._save_session_agent("parallel", "context-resolver")
+        al._save_session_agent("parallel", "recon-scanner")
+        resets = []
+        monkeypatch.setattr(
+            budget_watchdog,
+            "reset_session",
+            lambda sid, output_dir: resets.append((sid, output_dir)),
+        )
+        monkeypatch.setattr(
+            budget_watchdog,
+            "tally_and_check",
+            lambda *_args, **_kwargs: pytest.fail("shared session must not be tallied"),
+        )
+        source = tmp_path / "source.txt"
+        source.write_text("content", encoding="utf-8")
+        al.handle_post_tool_use(
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(source)},
+                "tool_response": "content",
+                "tool_use_id": "tool-1",
+            },
+            "parallel",
+        )
+        assert resets == [("parallel", str(tmp_path))]
 
 
 # ---------------------------------------------------------------------------

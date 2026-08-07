@@ -5,14 +5,15 @@
 `$OUTPUT_DIR/.stride-<component-id>.json`, one file per analyzed component,
 written by `appsec-stride-analyzer` during the Phase-9 fan-out.
 
-Three *other* artifacts squat the same `.stride-` prefix in the same
+Four *other* artifacts squat the same `.stride-` prefix in the same
 directory, all written BEFORE the fan-out and none of them a STRIDE result:
 
   * `.stride-dispatch-manifest.json`  (schemas/stride-dispatch-manifest.schema.yaml)
   * `.stride-selection.json`          (build_stride_dispatch_manifest.py sidecar)
   * `.stride-analyst-context.json`    (Analyst-A per-component context)
+  * `.stride-repository-registry.json` (context-v2 controller-owned local roots)
 
-A bare `output_dir.glob(".stride-*.json")` therefore counts up to three
+A bare `output_dir.glob(".stride-*.json")` therefore counts up to four
 phantom "finished components" from the moment the manifest lands. That broke
 real observability, not just cosmetics: the watchdog's Phase-9 canary fires on
 `stride_count == 0`, so with a sidecar on disk it could never fire and a wedged
@@ -41,6 +42,7 @@ RESERVED_SIDECARS = frozenset(
         ".stride-dispatch-manifest.json",
         ".stride-selection.json",
         ".stride-analyst-context.json",
+        ".stride-repository-registry.json",
     }
 )
 

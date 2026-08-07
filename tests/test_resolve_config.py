@@ -2689,3 +2689,80 @@ class TestRunPlanCLI:
         r = self._run("--effective-routing", "--session-model", "", "--output", str(out_dir))
         assert r.returncode == 0
         assert "undetected" in r.stdout
+
+
+class TestRuntimeGeneration:
+    """context-v2 is operator-selected, mode-restricted, and never repo-selected."""
+
+    def test_default_is_legacy(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
+        resolved = rc.resolve_runtime_generation("full")
+        assert resolved["runtime_generation"] == "legacy"
+        assert resolved["runtime_artifact_schema_versions"] == {}
+
+    @pytest.mark.parametrize("mode", ["full", "rebuild"])
+    def test_env_opt_in_selects_context_v2_for_full_and_rebuild(self, monkeypatch, mode):
+        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
+        resolved = rc.resolve_runtime_generation(mode)
+        assert resolved["runtime_generation"] == "context-v2"
+        assert resolved["runtime_artifact_schema_versions"] == rc.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS
+        assert "APPSEC_CONTEXT_V2=1" in resolved["runtime_generation_label"]
+
+    @pytest.mark.parametrize("mode", ["incremental", "rerender"])
+    def test_unsupported_modes_stay_legacy_despite_opt_in(self, monkeypatch, mode):
+        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
+        resolved = rc.resolve_runtime_generation(mode)
+        assert resolved["runtime_generation"] == "legacy"
+        assert mode in resolved["runtime_generation_label"]
+
+    @pytest.mark.parametrize("value", ["", "0", "true", "yes", " 1 x"])
+    def test_only_the_exact_opt_in_value_selects_context_v2(self, monkeypatch, value):
+        monkeypatch.setenv("APPSEC_CONTEXT_V2", value)
+        assert rc.resolve_runtime_generation("full")["runtime_generation"] == "legacy"
+
+    def test_ineligible_compact_runtime_keeps_legacy_generation(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
+        resolved = rc.resolve_runtime_generation("full", compact_eligible=False)
+        assert resolved["runtime_generation"] == "legacy"
+        assert resolved["runtime_artifact_schema_versions"] == {}
+        assert "requires the compact runtime" in resolved["runtime_generation_label"]
+
+    @pytest.mark.parametrize("flag,value", [("--max-wall-time", "30m"), ("--max-cost", "5")])
+    def test_deadline_guardrail_cannot_persist_context_v2_on_legacy_runtime(self, tmp_path, monkeypatch, flag, value):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--emit-file",
+                "--full",
+                "--output",
+                str(out_dir),
+                flag,
+                value,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        cfg = json.loads((out_dir / ".skill-config.json").read_text(encoding="utf-8"))
+        assert cfg["runtime_generation"] == "legacy"
+        assert cfg["runtime_artifact_schema_versions"] == {}
+
+    def test_generation_is_persisted_to_skill_config(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--emit-file", "--output", str(out_dir)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        cfg = json.loads((out_dir / ".skill-config.json").read_text(encoding="utf-8"))
+        assert cfg["runtime_generation"] == "context-v2"
+        assert cfg["runtime_artifact_schema_versions"]["stride-dispatch-manifest"] == 2

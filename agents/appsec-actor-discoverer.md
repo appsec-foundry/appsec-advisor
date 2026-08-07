@@ -222,6 +222,18 @@ Before writing, re-check each proposal:
    distinction.
 4. Confidence is high. Otherwise omit the proposal.
 
+## Producer contract gate
+
+Immediately after writing `.actors-discovered.json`, run:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+  actors_discovered "$OUTPUT_DIR/.actors-discovered.json"
+```
+
+Do not print completion before this exits 0. Correct the artifact and run the
+same command again if it fails.
+
 **Print when done:**
 ```
 [actor-discoverer] ✓ Discovery complete — .actors-discovered.json written

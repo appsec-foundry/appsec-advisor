@@ -33,6 +33,7 @@ from merge_threats import (
     backfill_threat_boundary_leg,
     backfill_threat_category_id,
     backfill_threat_cvss_v4,
+    drop_invalid_threat_boundary_refs,
 )
 from validate_intermediate import validate_stride
 
@@ -244,6 +245,8 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
             if backfill_threat_attack_steps(threat):
                 repaired = True
             if backfill_threat_boundary_leg(threat):
+                repaired = True
+            if drop_invalid_threat_boundary_refs(threat):
                 repaired = True
     if repaired:
         _atomic_write_json(path, data)

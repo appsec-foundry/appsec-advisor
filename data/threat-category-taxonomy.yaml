@@ -447,6 +447,7 @@ cwe_to_th:
   CWE-22: [TH-07]                # Path Traversal
   CWE-434: [TH-07]               # Unrestricted Upload
   CWE-400: [TH-12]               # Resource Consumption
+  CWE-799: [TH-12]               # Improper Control of Interaction Frequency
   CWE-601: [TH-18]               # Open Redirect
   CWE-918: [TH-08]               # SSRF
   CWE-922: [TH-04]               # Insecure Storage
@@ -459,6 +460,7 @@ cwe_to_th:
   CWE-521: [TH-02]               # Weak Password Requirements
   CWE-639: [TH-06]               # Authorization Bypass UC Key (IDOR)
   CWE-640: [TH-02]               # Weak Password Recovery
+  CWE-620: [TH-02]               # Unverified Password Change
   CWE-862: [TH-06, TH-09]        # Missing Authorization
   CWE-863: [TH-06]               # Incorrect Authorization
   CWE-285: [TH-06]               # Improper Authorization

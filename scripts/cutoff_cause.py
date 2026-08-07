@@ -64,6 +64,16 @@ _CAUSE_BLOCKS = {
         "           closed, the process was OOM-killed, or the host lost its\n"
         "           network link."
     ),
+    "interrupted": (
+        "  Cause:   the run stopped before report composition completed.\n"
+        "           The retained artifacts cannot\n"
+        "           distinguish a manual abort from a terminated session."
+    ),
+    "controller_abort": (
+        "  Cause:   the controller stopped at an authoritative validation\n"
+        "           gate. Inspect the terminal RUN_ABORTED reason; the run is\n"
+        "           no longer active and must not be resumed."
+    ),
     "budget": (
         "  Cause:   the orchestrator exhausted its per-session turn budget\n"
         "           before reaching composition — most common on long\n"
@@ -119,16 +129,30 @@ def detect_stall(output_dir: Path) -> bool:
     return False
 
 
+def detect_abort(output_dir: Path) -> bool:
+    """True iff a controller ``RUN_ABORTED`` event belongs to the current run."""
+    log = output_dir / ".agent-run.log"
+    start = _run_start_epoch(output_dir)
+    if start is None:
+        return False
+    try:
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return False
+    return any("RUN_ABORTED" in line and (epoch := _line_epoch(line)) is not None and epoch >= start for line in lines)
+
+
 def cause_for(output_dir: Path, default: str = "session_death") -> tuple[str, str]:
     """Return ``(kind, block)`` for a cut-off run — the single-source classifier.
 
-    ``kind`` is one of ``api_stall`` / ``session_death`` / ``budget``; ``block``
-    is the matching indented ``Cause:`` text. An in-window ``STALL_RECOVERY``
-    always wins over ``default``. Used by the cut-off banners (via ``main``) and
-    by ``appsec_status.py`` for its post-hoc last-run verdict so both surface the
+    ``kind`` is one of ``api_stall`` / ``session_death`` / ``interrupted`` /
+    ``controller_abort`` / ``budget``; ``block`` is the matching indented
+    ``Cause:`` text. An in-window controller abort wins over a stall, which wins
+    over ``default``. Used by the cut-off banners (via ``main``) and by
+    ``appsec_status.py`` for its post-hoc last-run verdict so both surface the
     same wording.
     """
-    kind = "api_stall" if detect_stall(output_dir) else default
+    kind = "controller_abort" if detect_abort(output_dir) else "api_stall" if detect_stall(output_dir) else default
     return kind, _CAUSE_BLOCKS[kind]
 
 

@@ -8,11 +8,13 @@ in the gate contract.
 
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import json
 import sys
 from pathlib import Path
 
+import build_stride_evidence_bundles as evidence_bundles
 import pytest
 
 SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "validate_dispatch_manifest.py"
@@ -140,7 +142,91 @@ class TestValidate:
         mp = _write_manifest(tmp_path, _minimal_manifest(components=[comp]))
         ok, errors, warnings = vdm.validate(mp, tmp_path)
         assert ok is True
-        assert errors == []
+
+    def test_context_v2_validates_bundle_fingerprint_and_component(self, vdm, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        manifest = _minimal_manifest()
+        evidence_bundles.build_all(output, tmp_path, manifest)
+        (output / ".skill-config.json").write_text(
+            json.dumps({"repo_root": str(tmp_path)}),
+            encoding="utf-8",
+        )
+        mp = _write_manifest(output, manifest)
+        ok, errors, warnings = vdm.validate(mp, output)
+        assert ok is True, errors
+
+    def test_context_v2_rejects_missing_bundle(self, vdm, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        manifest = _minimal_manifest()
+        evidence_bundles.build_all(output, tmp_path, manifest)
+        (output / ".skill-config.json").write_text(
+            json.dumps({"repo_root": str(tmp_path)}),
+            encoding="utf-8",
+        )
+        component = manifest["components"][0]
+        (output / component["evidence_bundle_path"]).unlink()
+        mp = _write_manifest(output, manifest)
+        ok, errors, warnings = vdm.validate(mp, output)
+        assert ok is False
+        assert any("evidence bundle is unreadable" in error for error in errors)
+
+    def test_context_v2_rejects_legacy_index_escape(self, vdm, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        manifest = _minimal_manifest()
+        evidence_bundles.build_all(output, tmp_path, manifest)
+        (output / ".skill-config.json").write_text(
+            json.dumps({"repo_root": str(tmp_path)}),
+            encoding="utf-8",
+        )
+        manifest["components"][0]["index_paths"]["prior_findings"] = "/etc/hosts"
+        mp = _write_manifest(output, manifest)
+        ok, errors, warnings = vdm.validate(mp, output)
+        assert ok is False
+        assert any("escapes output_dir" in error for error in errors)
+
+    def test_context_v2_rejects_duplicate_component_ids(self, vdm, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        component = _minimal_component()
+        manifest = _minimal_manifest(components=[component, dict(component)])
+        manifest["context_version"] = 2
+        for row in manifest["components"]:
+            row.update(
+                {
+                    "evidence_bundle_path": ".dispatch-context/express-backend/evidence-bundle.json",
+                    "evidence_bundle_sha256": "0" * 64,
+                    "evidence_bundle_estimated_tokens": 1,
+                }
+            )
+        mp = _write_manifest(output, manifest)
+        ok, errors, warnings = vdm.validate(mp, output)
+        assert ok is False
+        assert any("duplicate component_id" in error for error in errors)
+
+    def test_context_v2_fails_closed_without_jsonschema(self, vdm, tmp_path, monkeypatch):
+        component = _minimal_component(
+            evidence_bundle_path=".dispatch-context/express-backend/evidence-bundle.json",
+            evidence_bundle_sha256="0" * 64,
+            evidence_bundle_estimated_tokens=1,
+        )
+        mp = _write_manifest(
+            tmp_path,
+            _minimal_manifest(context_version=2, components=[component]),
+        )
+        real_import = builtins.__import__
+
+        def fail_jsonschema(name, *args, **kwargs):
+            if name == "jsonschema":
+                raise ModuleNotFoundError("jsonschema")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fail_jsonschema)
+        ok, errors, warnings = vdm.validate(mp, tmp_path)
+        assert ok is False
+        assert any("fails closed" in error for error in errors)
 
     def test_trust_boundary_index_path_must_exist(self, vdm, tmp_path):
         comp = _minimal_component()

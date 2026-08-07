@@ -1465,6 +1465,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.recon-scanner.stdout` | recon-scanner transient stdout |
 | `$OUTPUT_DIR/.coverage-gaps.json` | Phase 9 coverage-gap intermediate |
 | `$OUTPUT_DIR/.dispatch-waves.json` | bounded STRIDE wave schedule and retry checkpoint |
+| `$OUTPUT_DIR/.stride-repository-registry.json` | context-v2 local related-repository roots used only for STRIDE admission |
 | `$OUTPUT_DIR/.route-inventory.json` | deterministic route-extractor MVP (arch.md) — feeds Phase 6 `attack_surface[]` and architecture-coverage engine |
 | `$OUTPUT_DIR/.db-privilege-separation.json` | thorough-only database principal-separation evidence sidecar consumed by architecture coverage |
 | `$OUTPUT_DIR/.architecture-coverage.json` | always-on architecture-coverage rule evaluations (arch.md) — feeds `security_controls[]` / `threat_hypotheses[]` / Phase-9 bridge |
@@ -1482,7 +1483,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.merge-context/` (directory) | focused volatile context passed to threat-merger |
 | `$OUTPUT_DIR/.active-tool-calls/` (directory) | per-tool-call liveness markers |
 
-**Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
+**Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, per-component `.stride-<component-id>.json`, the three durable `.stride-` sidecars, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
 
 **Cleanup call — the orchestrator MUST invoke the standalone script instead of hand-rolling Bash:**
 

@@ -11,6 +11,7 @@
   - `docs/internal/contracts/schema-invariants.md`
   - `agents/shared/completion-contract.md`
   - `docs/internal/analysis/implplan-dedicated-trust-boundary-assessment-stage-2026-07-27.md`
+  - `docs/internal/analysis/analysis-context-routing-control-plane-2026-08-07.md`
 
 ## Status and decision
 
@@ -91,6 +92,8 @@ dispatch.
    behavior, and renderer/QA ownership.
 8. Keep the current Agent runtime, hooks, permission model, cancellation, and
    telemetry surfaces.
+9. Make every context delivery explainable through one schema-validated catalog
+   and effective routing plan before extending context reduction to Stage 2-4.
 
 ## Non-goals
 
@@ -139,7 +142,7 @@ instruction files, tools, or write paths.
 
 ## Turn-admission contract
 
-Every measured model turn receives one diagnostic category:
+Every measured model turn receives one primary diagnostic category:
 
 | Category | Owner after migration | Admission rule |
 |---|---|---|
@@ -153,19 +156,32 @@ Every measured model turn receives one diagnostic category:
 | `workflow_routing` | Controller | At most one parent turn per semantic boundary |
 
 Extend `scripts/context_window_report.py` rather than adding a production
-sidecar. Its optional JSON diagnostic output should classify deduplicated
-assistant usage records from transcript tool calls with a documented precedence
-rule and report mixed or low-confidence classifications separately. This is
-benchmark telemetry, not authoritative runtime state.
+sidecar. Before classification, aggregate every JSONL content block with the
+same assistant `message.id`; deduplicating by retaining only the first block can
+drop a later `tool_use` block from the same model response. Its optional JSON
+diagnostic output should assign one primary category with a documented
+precedence rule, retain secondary category candidates, and report confidence.
+Mixed and low-confidence turns remain visible and require manual adjudication
+before a release gate may claim zero turns in a category. This is benchmark
+telemetry, not authoritative runtime state.
 
 The classifier must distinguish a batched turn from its number of tool uses.
 One response that dispatches eight STRIDE agents is one parent
 `agent_dispatch` turn, not eight turns. Subagent turns remain counted in their
 own transcripts.
 
+Transcript usage cannot attribute the first resident context to the runtime,
+agent definition, task, tool schemas, and preloaded skills. Measure static
+plugin-owned layers with the provider token-counting path when available, or
+with controlled one-variable startup A/B sessions otherwise. Use transcript
+usage only for the assembled first-resident measurement. Record the measurement
+method, Claude Code version, model, tool allow-list, task hash, and agent
+definition hash with every startup-layer result.
+
 ## Context-admission contract
 
-Create one concise shared threat-analysis kernel containing only:
+Create `skills/internal-threat-analysis-kernel/SKILL.md` as one concise,
+plugin-owned shared threat-analysis kernel containing only:
 
 - untrusted-input and evidence rules;
 - stable-ID and artifact-authority rules;
@@ -186,10 +202,26 @@ are:
 | Total plugin-selected startup payload, including tools and preloaded skills | 10k tokens |
 | Initial resident context, including measured runtime floor | 30k tokens |
 
-Replace the single `threat_analyst` byte allowance in
-`data/context-budgets.yaml` with separate kernel and role surfaces. Retain byte
-limits as fast drift guards, but use transcript token measurements for release
-acceptance.
+Preload the kernel through the documented custom-agent `skills` frontmatter so
+it is present before the first model turn. A semantic role must not spend a
+runtime `Read` turn loading it. Packaging and agent-definition tests must prove
+that only the intended roles preload it and that repository content cannot
+select another skill.
+
+Treat the kernel as a non-user-configurable transitive dependency of the
+focused core agents. Internal packaging must retain it whenever those agents are
+shipped, regardless of organization skill include/exclude policy or runtime
+skill toggles. Update the packaging contract and tests rather than allowing an
+internal build to ship an agent whose required kernel was filtered out.
+
+Add separate kernel and role surfaces to `data/context-budgets.yaml`. Retain the
+existing `threat_analyst` allowance while any legacy path can still select that
+agent; remove it only with the legacy agent or its final runtime reference.
+Byte limits remain fast drift guards, while static token measurements and
+transcript resident measurements own release acceptance. WP0 must measure the
+tool and preloaded-skill surface before the 10k total becomes an enforced gate:
+the four initial allocations already consume 9k and must be rebalanced if the
+required tool schemas do not fit in the remaining 1k.
 
 ## Contract changes
 
@@ -211,13 +243,43 @@ Add bounded, controller-authored fields for:
 - unresolved semantic decision keys; and
 - fixed resume action.
 
-The schema must cap array sizes and strings, reject unknown properties, and
-constrain artifact paths beneath the output directory. The controller derives
-receipts from files after validation. Agent prose cannot populate them.
+Keep the current human-readable `receipts: string[]` field for compatibility and
+add structured `artifact_receipts`; do not change the element type of the
+existing field in place. Version the new dispatch-job and receipt shapes. The
+schema must cap arrays, strings, and total jobs, and reject unknown properties.
+It can reject syntactic traversal and absolute paths, but it cannot prove total
+serialized size, filesystem containment, provenance, symlink safety, or
+uniqueness by object key.
+
+The controller-side semantic validator must therefore:
+
+- map the semantic role enum to plugin-owned agent, instruction, tool, and
+  output-contract constants; an action never carries a repository-selected
+  agent or instruction path;
+- resolve the canonical output root once and reject traversal, absolute paths,
+  and symlink escapes for every artifact path;
+- reject duplicate job and component IDs independently of JSON Schema;
+- reject an action whose canonical serialized form exceeds the documented byte
+  cap;
+- fail closed when the structural validator is unavailable;
+- derive receipts from the exact validated bytes, not agent prose; and
+- re-read and re-hash an artifact immediately before consumption so a receipt
+  cannot authorize bytes changed after validation.
+
+Subprocess stdout and stderr included in an action must be reduced to bounded
+status fields; full diagnostic output stays on disk. Agent prose cannot populate
+receipts.
 
 The action remains ephemeral. Do not add a persisted stage-receipt sidecar
 unless resume testing proves that current checkpoints and contracted artifacts
 cannot reconstruct the action.
+
+Before adding `fixed_resume_action`, define and test the reconstruction function
+from `.skill-config.json`, the runtime-generation marker, checkpoints, artifact
+schema versions, and validated artifact fingerprints. If two valid successor
+actions can be reconstructed from the same durable state, the state contract is
+insufficient and must be fixed before rollout rather than resolved by model
+judgment.
 
 ### Contract B — per-component STRIDE evidence bundle
 
@@ -245,11 +307,34 @@ turn imported strings into commands or instruction paths. Slice ranges and
 array sizes need explicit caps with deterministic risk ordering and disclosure
 when truncation occurs.
 
+The bundle contract must also cap total serialized bytes, estimated tokens,
+total referenced source lines, and values per signal class. Its ordering may use
+only documented deterministic signal fields; it must not infer qualitative
+security importance. Truncation metadata records the original count, retained
+count, omitted count, cap, and ordering key for every affected class.
+
+Every source slice records a repository ID from a controller-owned registry,
+repository-relative path, range, and content hash. The primary repository entry
+is bound to the analyzed commit plus a dirty-worktree fingerprint. A related
+repository entry is allowed only when it was resolved from
+`docs/related-repos.yaml` through the existing canonical source-resolution
+contract. The validator re-resolves every path under its registered repository
+root and re-hashes every slice before dispatch. A mismatch makes the bundle
+stale and requires deterministic regeneration; it never degrades to an
+unverified Agent read.
+
 Extend `schemas/stride-dispatch-manifest.schema.yaml` and
 `build_stride_dispatch_manifest.py` with the bundle path and fingerprint. Keep
 the existing individual index paths during the migration for compatibility.
 `validate_dispatch_manifest.py` must validate the bundle and its component ID
 before dispatch.
+
+On the context-v2 path, the validator must also apply the same canonical
+containment checks to the retained legacy `index_paths`. Compatibility means
+retaining those fields during migration, not retaining acceptance of arbitrary
+absolute paths. Missing `jsonschema`, malformed source artifacts, a stale
+fingerprint, duplicate component IDs, or a bundle outside `.dispatch-context/`
+is fatal before Agent dispatch.
 
 The existing `.dispatch-context/` cleanup entry already covers the new file.
 Update permission rationale, cleanup tests, and diagnostic inventory only where
@@ -274,11 +359,47 @@ agents/appsec-post-stride-synthesizer.md
 - The post-STRIDE synthesizer runs only for qualitative mitigation overrides,
   cross-finding root-cause synthesis, or other explicitly contracted outputs
   that deterministic producers cannot derive. It does not run merge, ranking,
-  YAML build, validators, logging, or stage routing.
+  YAML build, validators, workflow logging, or stage routing; it still emits its
+  own agent lifecycle and semantic step events.
 
 Keep `agents/appsec-threat-analyst.md` as the legacy path until full/rebuild,
 incremental, and resume parity are complete. Do not let new and legacy agents
 write the same artifact in one run.
+
+### Contract C1 — complete phase and producer ownership
+
+The migration is not activated from role names alone. Land and test this
+producer map before a focused agent is selectable:
+
+| Boundary | Semantic producer | Deterministic owner and required handoff |
+|---|---|---|
+| Phases 1 and 2 | Existing context resolver and recon scanner, dispatched as one bounded Level-0 wave | Controller resolves cache/fingerprint decisions and validates `.threat-modeling-context.md`, `.recon-summary.md`, and contracted recon sidecars |
+| Phase 2.5 | Existing config scanner only when the deterministic IaC-surface check selects it | Controller owns the surface check and validates `.config-scan-findings.json` |
+| Phase 2.6 | None unless an existing coverage contract explicitly selects a specialist | Existing route, database-separation, and architecture-coverage scripts own their sidecars and exit semantics |
+| Phase 2.7 | Existing actor discoverer only when the cache/depth contract selects it | Existing actor resolvers own the canonical actor artifacts and validation |
+| Phases 3–6 | Architecture analyst | Controller validates `.components.json`, `.data-flows.json`, `.assets.json`, attack-surface sidecars, architecture-stage fragments, and the Phase-6 checkpoint, then runs component finalization |
+| Phase 7 / Stage 1b | Existing trust-boundary analyst | Existing assessment-input builder, promotion, normalization, coverage gate, and checkpoint remain authoritative |
+| Phases 8 and 8b | Control analyst | Controller validates `.security-controls.json`, requirements violations, STRIDE-context inputs, early structural artifacts, and the Phase-8 checkpoint |
+| Phase 9 dispatch | Per-component STRIDE analyzers | Controller builds and validates bundles and the manifest; skill issues the bounded Agent wave; wave controller owns attempts and completion |
+| Phase 9 merge | Existing threat merger only for ambiguous candidate groups | `merge_threats.py` owns collect/finalize, ordering, and IDs |
+| Phase 10 | None | Existing deterministic posture emitters own their outputs |
+| Phase 10a | Existing evidence verifier only when its sampling contract selects findings | Controller validates the verification artifact and applies existing failure semantics |
+| Phase 10b | Existing triage validator only for unresolved semantic flags; post-STRIDE synthesizer only for contracted qualitative outputs | Existing rating validation and ranking scripts remain authoritative; controller validates `.mitigation-overrides.json` and `.tier-root-causes.json` |
+| YAML handoff | None | `build_threat_model_yaml.py`, `validate_intermediate.py`, completeness gates, and the Phase-10b checkpoint own the Stage-2 handoff |
+
+For every row, the implementation patch must name exact input and output schema
+versions, allowed writers, validator commands, exit-code classes, checkpoint
+transition, retry budget, and next action in the orchestration contract. The
+controller must preserve the existing parallel recon behavior, cache decisions,
+failure fallbacks, budget-critical handling, and trust-boundary substage; moving
+the Agent call to Level 0 must not silently simplify those contracts.
+
+The controller and skill own `AGENT_INVOKE`/`AGENT_DONE`, phase transitions, and
+fixed presentation. Focused agents own only their `AGENT_START`/`AGENT_END`,
+semantic step events, artifact writes, and semantic failure details. Update
+`agents/shared/logging-standard.md` and its tests with that ownership change.
+Logging remains batched with useful work, and no controller-authored proxy event
+may claim to be an agent-authored semantic event.
 
 ### Contract D — post-STRIDE progression
 
@@ -311,6 +432,61 @@ The deterministic ordering, stable-ID allocation, severity caps, CVSS
 eligibility, and current failure semantics remain authoritative. Remove any
 inline LLM fallback that would reimplement a deterministic script.
 
+Contract D is not production-selectable until the post-STRIDE synthesizer and
+all required semantic branches exist. WP3 may exercise controller transitions
+in unit, fixture, and shadow comparison modes, but the live runtime continues
+through the legacy Analyst-B boundary until WP4 activates the complete producer
+set atomically.
+
+### Contract E — context catalog and effective routing plan
+
+Add one plugin-owned, schema-validated catalog for context elements, consumers,
+and routing policy. It must describe the existing producer-consumer edges before
+it changes their behavior. Do not create a second orchestrator or a second
+semantic-role registry.
+
+The catalog separates plugin consumers from analyzed application components. A
+route binds one versioned context element to one plugin-owned semantic or
+deterministic consumer under validated run and component selectors:
+
+```text
+plugin consumer x application component x context element -> bounded delivery
+```
+
+Each independently routable context element defines its producer, schema or
+bounded scalar contract, scope, deterministic projector, trust class, delivery
+audience, limits, requiredness, priority, freshness inputs, and failure
+behavior. Core policy owns the allow-listed consumers, projectors, instruction
+files, tools, commands, paths, mandatory contexts, and maximum limits.
+Repository content may contribute validated facts, but it cannot select or
+alter those execution surfaces or remove a mandatory context.
+
+The controller resolves core policy, trusted organization extensions, bounded
+repository declarations, invocation settings, and the finalized component
+inventory into one schema-validated effective routing plan. Each plan entry
+records the dispatch job, application component, context ID, selection reason,
+source receipt, projector, trust class, requiredness, source and delivered size,
+truncation or omission, and exact-byte freshness binding. Orchestration actions
+reference the effective plan and artifact receipts instead of repeating large
+context descriptions.
+
+The catalog covers run state; discovery and recon; components, interfaces, data
+flows, actors, assets, trust boundaries, and external systems; known threats,
+prior findings, related repositories, cross-repository evidence, requirements,
+organization and external context, user-defined abuse cases, controls, source
+slices, focus and exclude paths, secrets, dependencies, supply-chain and LLM
+signals; taxonomy and lenses; merge, verification, rating, and mitigation
+inputs; stable identity and carry-forward state; and rendering and QA inputs.
+Not every element is agent-visible: deterministic consumers retain ownership of
+stable IDs, severity and CVSS enforcement, cleanup, schema validation, and
+report mutation order, and semantic roles receive only the bounded decision or
+projection they require.
+
+The detailed inventory, trust layers, selector model, example configuration,
+validation rules, and migration sequence are defined in
+`docs/internal/analysis/analysis-context-routing-control-plane-2026-08-07.md`.
+That analysis is subordinate to this plan; it is not a separate rollout plan.
+
 ## Work packages
 
 ### WP0 — freeze measurement and add turn telemetry
@@ -327,8 +503,18 @@ Add startup-layer reporting, role totals, turn-purpose classification,
 compaction duration, and unclassified/mixed-turn disclosure. Reproduce the
 existing totals before changing runtime behavior.
 
+Aggregate all content blocks by assistant `message.id` before inspecting tool
+uses. Add controlled startup measurements for the empty runtime floor, each
+tool allow-list, the shared kernel, each role definition, the dispatch task, and
+the state manifest. Do not label a counter-derived residual as a measured
+layer. Pin the Claude Code version, model ID, pricing table version, and input
+hashes in the diagnostic result.
+
 Exit gate: the report reconstructs 928 turns and USD 40.69 from the fixed run,
-and all existing output remains backward compatible unless a new flag is used.
+batched tool-use turns retain every content block, and all existing output
+remains backward compatible unless a new flag is used. A reviewed measurement
+record either proves that the required tool surface fits the 10k plugin-owned
+startup budget or amends the individual allocations before WP1 enforces them.
 
 ### WP1 — land schemas, admission budgets, and security constraints
 
@@ -337,23 +523,33 @@ Change:
 - `data/context-budgets.yaml`;
 - `tests/test_prompt_token_bounds.py`;
 - `tests/test_agent_definitions.py`;
+- `tests/test_skill_definitions.py`;
 - `schemas/orchestration-action.schema.json`;
 - `docs/internal/contracts/orchestration-actions.md`;
+- `scripts/package_internal_plugin.py`, its packaging contract, and packaging
+  tests for the mandatory internal kernel;
 - `data/required-permissions.yaml`; and
 - permission coverage tests.
 
-Add the shared kernel, role surfaces, bounded dispatch-job shape, artifact
-receipt shape, and evidence-bundle schema. No runtime selects the new path yet.
+Add the internal preloaded kernel, role surfaces, bounded and versioned
+dispatch-job shape, separate artifact-receipt shape, action-size cap, and
+evidence-bundle schema. Retain the legacy threat-analyst budget. No runtime
+selects the new path yet.
 
-Exit gate: schema tests reject traversal, absolute paths, unknown roles,
-repository-selected instruction paths, oversized arrays, duplicate component
-IDs, and unbounded strings.
+Exit gate: schema and semantic-validation tests reject traversal, absolute
+paths, symlink escapes, unknown roles, repository-selected instruction paths,
+oversized arrays/actions, duplicate component IDs, missing validation
+dependencies, and unbounded strings. Tests prove that role enums resolve only
+through the plugin-owned registry and that an artifact changed after receipt
+creation is rejected at consumption.
 
 ### WP2 — build and validate evidence bundles
 
 Implement `build_stride_evidence_bundles.py` with its mandatory
 `tests/test_build_stride_evidence_bundles.py`. Wire it into manifest production
-and validation behind a temporary internal rollout switch.
+and validation behind a temporary internal rollout switch. In Slice B this is a
+shadow/fixture path only: it may build and compare receipts, but it must not
+change the live Agent dispatch or artifact producer.
 
 Update:
 
@@ -366,32 +562,43 @@ Update:
 
 Exit gate: the same selected component set is produced, every selected
 component has a valid bundle, imported data cannot alter paths or execution,
-and bundle omission fails before Agent dispatch on the new path.
+and bundle omission fails before Agent dispatch on the new path. Total bytes,
+estimated tokens, source-line budgets, per-class truncation disclosure,
+primary-repository dirty-worktree changes, related-repository registry checks,
+stale slice hashes, legacy index-path containment, and cross-repository escape
+attempts have explicit success and failure tests.
 
 ### WP3 — extend the controller to run to semantic boundaries
 
-Add controller actions for STRIDE preparation, post-wave verification,
-conditional merge review, post-merge progression, conditional triage, and
-post-triage finalization. Reuse the current action schema and controller; do not
-add a parallel state machine.
+Add controller actions for the Phase-1/2 bounded wave, conditional Phase 2.5,
+Phase-2.6 deterministic work, Phase-2.7 actor resolution, architecture and
+control handoffs, STRIDE preparation, post-wave verification, conditional merge
+review, post-merge progression, conditional triage, and post-triage
+finalization. Reuse the current action schema and controller; do not add a
+parallel state machine.
 
 Change:
 
 - `scripts/orchestration_controller.py`;
 - `skills/create-threat-model/SKILL-thin-stage1.md`;
 - `docs/internal/contracts/orchestration-actions.md`;
+- `agents/shared/logging-standard.md`;
 - `tests/test_orchestration_controller.py`;
 - `tests/test_stage1_dispatch_contract.py`;
 - `tests/test_dispatch_prompt_cache_order.py`; and
 - the existing merge, triage, and checkpoint tests touched by ownership changes.
 
-The thin skill should perform only fixed presentation, one controller call,
-and the returned Agent wave. Logging and stats commands should be part of the
-controller operation where their contract allows it.
+At each boundary, the thin skill should perform only fixed presentation, one
+controller call, and the returned Agent wave. Logging and stats commands should
+be part of the controller operation where their updated contract assigns
+ownership. Preserve the current one-message parallel recon and STRIDE dispatch
+semantics.
 
 Exit gate: on a success-only fixture, post-STRIDE deterministic progression
 does not enter the threat analyst. Candidate-free merge and triage branches
 skip their specialists. Every semantic dispatch is allow-listed and bounded.
+The full producer map has transition tests, but live context-v2 activation is
+still disabled until WP4 supplies every semantic role.
 
 ### WP4 — split threat semantic roles atomically
 
@@ -407,6 +614,7 @@ Change:
 - relevant phase-group files so each algorithm has one owner;
 - `data/context-budgets.yaml`;
 - `tests/test_agent_definitions.py`;
+- `tests/test_skill_definitions.py` and packaging tests for the preloaded kernel;
 - `tests/test_prompt_token_bounds.py`; and
 - stage artifact and checkpoint tests.
 
@@ -415,7 +623,11 @@ validated projection is not a shippable intermediate state.
 
 Exit gate: each new role starts at or below the admission budgets, has no unused
 tool or preloaded skill, cannot execute future phases, and produces the same
-contracted artifacts and checkpoints as the legacy full/rebuild path.
+contracted artifacts and checkpoints as the legacy full/rebuild path. Context,
+recon, config, actor, boundary, merge, evidence, and triage specialists are
+dispatched only at the Level-0 boundaries in Contract C1; no focused semantic
+role retains the `Agent` tool unless a separately documented contract requires
+it.
 
 ### WP5 — modularize the STRIDE agent
 
@@ -423,6 +635,8 @@ Reduce `agents/appsec-stride-analyzer.md` to the mandatory six-category
 workflow, evidence rules, output contract, and failure semantics. Put optional
 component lenses in plugin-owned bounded files selected only from validated
 feature enums. Repository content may select data values but never a lens path.
+Preload the same internal kernel and remove duplicated shared invariants from
+the analyzer; do not add a runtime kernel-read turn.
 
 The analyzer must:
 
@@ -439,10 +653,49 @@ Exit gate: first resident STRIDE context falls by at least 16k tokens against
 the fixed run, selected-component and six-category coverage are unchanged, and
 broader-search escapes are measurable.
 
+### WP5a — centralize context catalog and routing
+
+Begin only after the context-v2 Stage-1 path completes one live full/rebuild
+invocation and its producer or schema blockers are closed. Fix the existing
+`focus_paths`/`exclude_paths` delivery gap first, then inventory and pin every
+current Stage-1 producer-consumer edge before changing admission behavior.
+
+Add:
+
+- the plugin-owned context catalog and its schema;
+- semantic validation for consumers, projectors, selectors, dependencies,
+  limits, trust layers, and failure behavior;
+- a deterministic resolver and schema-validated effective routing plan;
+- human-readable diagnostics that explain inclusion, exclusion, projection,
+  truncation, and missing optional context without exposing sensitive content;
+- exact-byte receipts and pre-dispatch freshness checks for each delivery; and
+- cleanup, permission, packaging, checkpoint, and resume contracts for the new
+  configuration and runtime artifacts.
+
+Migrate existing Stage-1 role metadata, evidence bundles, taxonomy slices,
+lenses, known threats, related-repository evidence, external and organization
+context, trust boundaries, actors, requirements, prior findings, controls,
+source slices, focus and exclude paths, and abuse cases one source at a time.
+Preserve selected components, cheap/full depth, six-category coverage, evidence,
+findings, and failure gates while the current behavior moves under the catalog.
+
+Repository declarations remain untrusted data. Trusted organization packages
+may add schema-backed context sources, catalogs, assignments, and stricter
+limits, but neither layer may select instructions, agents, tools, commands,
+projectors, arbitrary paths, or write targets. Neither layer may remove a
+mandatory core route, relax a maximum, or downgrade a failure rule.
+
+Exit gate: every Stage-1 context delivery has one catalog entry and validation
+path; the effective plan reconstructs and explains every dispatch input; all
+mandatory and forbidden deliveries are enforced; the existing Stage-1 fixtures
+remain behaviorally equivalent; and no complete shared artifact enters a
+focused role when a bounded projection exists.
+
 ### WP6 — reduce top-level and remaining fixed-prefix throughput
 
-After WP0-WP5 pass A/B, apply the same action-receipt and admission inventory to
-Stage 2-4 and then to other roles ranked by:
+After WP0-WP5a pass the controlled A/B, apply the same action-receipt and
+catalog-resolved admission inventory to Stage 2-4 and then to other roles ranked
+by:
 
 ```text
 first resident tokens * observed turns
@@ -461,6 +714,14 @@ Keep incremental and resume on the legacy threat analyst until full/rebuild
 parity is established. Then migrate one mode at a time with checkpoint,
 preserved-state, stable-ID, retry-budget, and cleanup tests.
 
+Resolve the temporary context-v2 selection in `resolve_config.py`, persist a
+`runtime_generation` value and relevant artifact schema versions in durable run
+state, and include them in controller reconstruction. Repository content cannot
+select the generation. Resume must continue the persisted generation or abort
+with an explicit incompatible-state result; it must never switch producers
+because the current environment variable changed. Rollback selects the prior
+runtime for a new invocation, not midway through an existing context-v2 run.
+
 Retain `APPSEC_THIN_ORCHESTRATOR=0` as the documented legacy escape hatch. The
 temporary context-v2 switch may become the default only after the acceptance
 matrix passes; remove it once both paths no longer need side-by-side A/B.
@@ -470,20 +731,280 @@ matrix passes; remove it once both paths no longer need side-by-side A/B.
 | Slice | Default behavior | Purpose |
 |---|---|---|
 | A | Existing runtime | WP0 telemetry only |
-| B | Existing runtime; context-v2 opt-in | WP1-WP3 contracts, bundles, and controller actions |
+| B | Existing runtime; context-v2 shadow/fixture evaluation only | WP1-WP3 contracts, bundles, and controller actions without changing the live producer path |
 | C | Context-v2 opt-in for full/rebuild | WP4 focused threat roles |
 | D | Context-v2 opt-in for full/rebuild | WP5 STRIDE modularization |
+| D2 | Context-v2 opt-in for full/rebuild | WP5a context catalog, effective routing plan, and Stage-1 migration |
 | E | Context-v2 default for full/rebuild | WP6 top-level changes after A/B |
 | F | Context-v2 default for all supported modes | WP7 incremental and resume parity |
 
 Each slice must be revertible by selection of the prior runtime. Do not keep
 two producers active for the same artifact within one invocation.
 
+## Implementation status
+
+Status as of 2026-08-07:
+
+| Work package | Status | Remaining gate |
+|---|---|---|
+| WP0 | Implemented, repository-tested, and captured in one complete live run | Reconfirm the measurements in the fixed comparison cohort |
+| WP1 | Implemented, repository-tested, and captured in one complete live run | Evaluate the admission targets in the fixed comparison cohort |
+| WP2 | Implemented, repository-tested, and exercised in one live context-v2 run | Collect the bounded-context acceptance measurements |
+| WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
+| WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
+| WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
+| WP5a | Entry gate satisfied; implementation not started | Implement and migrate the Stage-1 context catalog before the comparison cohort |
+| WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
+| WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
+
+The implemented WP0-WP5 scope includes:
+
+- controller actions from `context-v2-begin` through `context-v2-finalize`,
+  including the Phase-1/2 pre-passes, conditional Phase 2.5, Phase 2.6, and
+  Phase-2.7 actor resolution;
+- focused semantic roles, modular STRIDE lenses, bounded evidence bundles, and
+  the internal shared kernel;
+- exact-byte, versioned artifact receipts with pre-dispatch hash verification;
+- a controller-owned local repository registry with path, symlink, repository
+  identity, duplicate-root, and stale-slice enforcement;
+- a bounded merge-review projection instead of admitting the complete merge
+  candidate artifact, with one or more disjoint decisions per admitted group;
+- a shared deterministic auto-emitter handoff before mitigation-quality and
+  completeness validation in both legacy and context-v2 finalization; and
+- fail-closed authoritative gates plus persisted artifact-schema compatibility
+  checks.
+
+Slices C and D are available only by opt-in. `APPSEC_CONTEXT_V2=1` selects the
+context-v2 `runtime_generation` for compact-runtime full and rebuild runs.
+Deadline, cost-limited, live-phase, and compact-runtime opt-out invocations stay
+on `legacy`. `resolve_config.py` persists that generation and its artifact
+schema versions; the controller reads them from durable state, refuses a
+cross-generation continuation, and hands the skill
+`SKILL-thin-stage1-v2.md` instead of the legacy Stage-1 runtime.
+
+The implemented part of WP7 is limited to generation selection, persistence,
+schema-version persistence, and incompatible-generation rejection. Incremental
+and resume still use the legacy threat analyst. Context-v2 is not the default.
+
+Local verification on 2026-08-07 passed `git diff --check`, `make lint`,
+`make test`, and `make check`. The final `make test` and `make check` runs each
+reported 11,655 passed and 95 skipped; `make test` reported 91.92% coverage.
+
+The implementation plan is not complete. The first smoke attempt on 2026-08-06
+combined `APPSEC_CONTEXT_V2=1` with `--max-wall-time`, which selected the legacy
+top-level runtime while incorrectly persisting `context-v2`. Monitoring caught
+the legacy threat analyst after 54 turns and the run was aborted. The producer
+selection now derives from the same compact-runtime eligibility as routing and
+rejects an inconsistent combination. A second smoke attempt entered context-v2
+and dispatched the three-role recon wave, but exposed that concurrent Agent
+registrations could replace one another and that the hook counted all parallel
+tool calls against one 25-turn budget. It set `.budget-critical` at an aggregate
+25 turns and was aborted before STRIDE. Session registration is now serialized;
+shared-session budgeting is disabled after a second Agent dispatch, and nested
+`Stop` events cannot emit an assessment summary while the run lock remains
+owned. A third smoke attempt completed the parallel recon wave and the focused
+architecture Agent, then exposed a missing controller-owned component
+finalization, an overlong data-flow classification from the architecture
+producer, and a missing controller-owned Phase-6 checkpoint. The parent model
+manually repaired those runtime artifacts and reached the trust-boundary Agent
+before the run was aborted. The controller now validates architecture
+fragments, finalizes components, binds the derived inventory fingerprint into
+the data-flow sidecar, builds the boundary input, and writes the checkpoint in
+that order. The producer uses the bounded classification vocabulary, and the
+compact runtime treats an abort as terminal instead of entering a legacy repair
+loop. The same smoke also showed that shared-session telemetry attributed
+cumulative usage to the most recently recognized legacy role; plugin-owned
+roles are now registered generically and multi-Agent hook telemetry is labeled
+`shared-session` with `scope=session-cumulative`. Live status now suppresses a
+prior-run cutoff warning when the current v2 lock has a fresh heartbeat even if
+its short-lived launcher PID has exited. No successful live context-v2
+invocation or paid A/B cohort has run.
+
+A fourth smoke attempt, run
+`50badedf-90aa-4065-ac6a-6090d59148f2`, exercised the corrected path through
+parallel recon, architecture, trust-boundary analysis, control analysis,
+context-v2 manifest and evidence-bundle production, and the first six-component
+STRIDE wave. Architecture finalization produced one identical component
+fingerprint in the finalization receipt, data flows, and boundary input. The
+Phase-6 and Phase-7 controller gates passed without manual artifact edits, all
+six selected components received bounded bundles, all six analyzers wrote six
+categories with `partial=false`, and no shared-session budget marker fired.
+The first STRIDE wave reached approximately USD 3.72 in cumulative session
+telemetry. Its post-wave gate accepted only `frontend-spa`: the other five
+outputs carried malformed optional `boundary_refs` shapes, and two used
+unmapped CWE values with the forbidden `TH-UNCLASSIFIED` sentinel. The bounded
+retry controller therefore dispatched five second attempts, and the run was
+aborted before they completed. The producer now carries the exact boundary-ref
+shape, valid last-resort TH mappings, the literal progress command, and absolute
+bundle-path resolution. The merge-owned pre-gate normalizer drops malformed
+optional boundary links without changing findings or evidence, and the CWE map
+now covers CWE-620 and CWE-799. Replaying the six captured outputs through that
+gate validates all six without a retry. Post-abort live status now requires
+merged threats plus a late checkpoint before claiming budget exhaustion, and
+directs an incomplete context-v2 run to a fresh restart instead of unsupported
+resume. The post-STRIDE merge, evidence, triage, synthesis, YAML handoff, and
+rendering boundaries remained unexercised at that point.
+
+A fifth smoke attempt, run
+`6aa53070-5542-4b3d-afcf-3a5d618e1a08`, exercised the corrected path through
+seven-component STRIDE analysis and every remaining Stage-1 semantic boundary.
+All seven analyzers produced six-category outputs with `partial=false`, and the
+post-wave gate accepted them without retries. The controller merged 48 raw
+threats, admitted eight bounded merge decisions, verified a 16-threat sample,
+ran deterministic triage and post-STRIDE synthesis, and built a structurally
+valid canonical model with 42 threats and 42 mitigations. Finalization then
+failed mitigation-quality validation because context-v2 had omitted the shared
+deterministic auto-emitter pass that hydrates mitigation detail from threat
+remediation. The controller now calls the same auto-emitter helper in both
+legacy and context-v2 finalization, after initial structure validation and
+before mitigation-quality and completeness gates. A full
+`context-v2-finalize` replay against a preserved copy of the live runtime passed
+those gates and produced the Stage-1c render checkpoint without modifying the
+target runtime. Monitoring now excludes seed-only STRIDE placeholders from the
+completed count and describes interrupted runs without falsely claiming that
+merge was never reached. The smoke was aborted before live Stage-2 rendering,
+so no successful complete live context-v2 invocation or paid A/B cohort exists.
+
+A sixth smoke attempt, run
+`566f85ee-e2b3-4309-b866-fc433445c805`, completed recon, architecture, and the
+trust-boundary handoff. It produced six components, 15 data flows, 13 assets,
+10 boundary candidates, and 21 boundary dispositions before the Phase-8 gate
+rejected `.stride-analyst-context.json`. The control analyst had placed a
+397-character repository summary in the reserved `_stride_profile` field,
+whose compatibility schema permits only a string of at most 200 characters or
+a bounded scalar object. The context-v2 producer contract now forbids that
+field, the controller removes it as an ownership backstop before schema
+validation, and manifest construction derives the profile exclusively from the
+resolved run configuration. Replaying `context-v2-prepare-stride` against a
+copy of the captured runtime passed in three seconds, validated seven evidence
+bundles, and returned the seven-component STRIDE dispatch wave. The smoke also
+showed that live status could report an interrupted run after the short-lived
+launcher heartbeat expired despite recent tool or Agent activity, and that the
+trust-boundary producer could resolve `shared/logging-standard.md` under the
+wrong plugin directory. Live cutoff suppression now considers bounded recent
+activity, and the producer names the absolute plugin-owned logging contract.
+The run ended before STRIDE dispatch, so the corrected final Stage-1 gate and
+Stage 2-4 still have not passed in one live invocation.
+
+A seventh smoke attempt, run
+`c55b8503-375d-471a-8004-de1c7f228dd9`, passed the corrected Phase-8 contract,
+produced ten component contexts without the reserved `_stride_profile` field,
+and dispatched seven full-depth STRIDE analyzers. All seven wrote six-category
+outputs with `partial=false`; the post-wave gate accepted them without retries.
+The selected components were all authentication, frontend, LLM, real-time, or
+internet-exposed surfaces, so cheap-stride correctly screened none of them.
+Context-v2 had nevertheless dropped the user-visible full/light label from its
+dispatch-job contract; jobs now carry a required `analysis_depth` and the thin
+runtime uses it in Agent descriptions and progress prompts. The merger reviewed
+eight admitted groups and wrote nine decisions because one genuine partial
+cluster required disjoint `merge [0,2]` and `keep [1]` decisions. The controller
+incorrectly rejected the repeated group ID even though the v2 schema, producer
+contract, and deterministic merge consumer all support partial-cluster
+decisions. It now requires at least one decision per admitted group and validates
+index bounds, survivor membership, and disjoint subsets instead. Replaying the
+captured `context-v2-post-merge` boundary on a runtime copy accepted the exact
+artifact, produced 50 merged threats, and returned the evidence-verifier job.
+Live status now treats recent completed phase events as activity and lets an
+in-window `RUN_ABORTED` override stale tool markers with the explicit
+`controller_abort` cause. The thin runtime now also forbids legacy-style claims
+that `--full` resumes retained context-v2 artifacts at only the failed boundary;
+a later full run starts Stage 1 again. The live run ended at the merge gate, so
+a corrected complete Stage 1 and Stage 2-4 invocation still has not passed.
+
+A pre-A/B contract audit on 2026-08-06 then traced each changed Stage-1
+artifact through its producer, schema, controller gate, consumer, cleanup, and
+permission surface. It closed stale-output and duplicate-output ownership in
+semantic actions, declared the evidence and triage mutations of
+`.threats-merged.json` as in-place outputs, restored the resolved STRIDE profile
+and bounded taxonomy slice to every v2 analyzer dispatch, and corrected the
+client/server/data tier keys in post-STRIDE synthesis. Recon signals and
+evidence verification now have explicit schemas plus controller-owned semantic
+checks; the evidence summary's total is bound to the canonical merged threat
+count, and an invalid optional summary supplies no evidence-guard signal.
+
+The same audit bounded and validated the Markdown context and recon contracts,
+removed empty analyst-context placeholders, rejected unknown component IDs,
+and made recon reuse require both a valid summary and valid signal sidecar. It
+also found that the recon producer had mixed `6.x` and `7.x` references while
+the canonical template's Security-Relevant Code block and its consumers use
+Sections 7.1–7.32. The template, producer self-check, and controller gate now
+agree on 7.1–7.32; the cross-repository parser still accepts the previously
+emitted 6.25 form as a compatibility input. The 200-line recon size is an
+observable optimization target, not a blocking contract; the controller owns
+the 1,000-line and 262,144-byte safety limits. The interrupted Juice Shop
+runtime contains the superseded 6.x recon form and must not be resumed as a v2
+continuation; a fresh full run will replace it. The post-audit focused suite
+reported 1,228 passing tests. The subsequent repository-wide `make lint`,
+`make test`, and `make check` gates passed. `make test` reported 11,617 passed,
+95 skipped, and 91.92% coverage; the final `make check` run reported the same
+test counts and passed its format, configuration, fragment-registry, and
+target-specificity drift gates. No further contract defect was found by those
+gates.
+
+An eighth smoke attempt on 2026-08-07 aborted at the post-recon gate. The
+artifact was complete through Sections 8–10, so the reported truncation
+explanation was false: the recon producer had emitted the historical Cat-28
+mapping as `7.28 AI Coding Assistant` and omitted canonical Sections 7.28–7.32.
+The session transcript showed the structural cause. The role consumed exactly
+all 25 allowed tool calls; calls 23 and 24 wrote the two artifacts, and call 25
+printed completion statistics without running the required heading check.
+
+The correction does not rely on repository size or an optimistic turn-ceiling
+increase. The recon role now admits at most 22 discovery tool calls, reserves
+at least ten publication and validation calls, and retains four calls as
+failure headroom. Deterministic scans, finding lists, tree output, and source
+reads remain bounded, so a larger repository may extend deterministic scan
+runtime but cannot consume the model-turn publication reserve. The producer
+must run `validate_recon_summary.py` immediately after the summary write and
+before the signal write. That validator and the controller share the exact
+template-heading contract, including titles and order; the prompt and template
+also disambiguate Cat 28 from canonical Section 7.32 and require explicit
+no-surface bodies instead of conditional heading omission. The initial focused
+regression suite reported 418 passing tests; the broader contract suite reported
+776 passing tests. The subsequent `make lint`, `make test`, and `make check`
+gates passed. `make test` and `make check` each reported 11,624 passed and 95
+skipped; `make test` reported 91.93% coverage.
+
+A ninth smoke attempt, run `7073e7bf-f627-4a4e-8996-3df9f39829fc`, completed
+an opt-in context-v2 full invocation at quick depth without manual runtime
+artifact edits. Recon, architecture, trust-boundary analysis, control analysis,
+six component-specific STRIDE jobs, bounded merge review, evidence verification,
+deterministic triage, post-STRIDE synthesis, canonical YAML construction, Stage
+2 rendering, and the deterministic Stage-3 gate all completed. The controller
+merged 40 threats and the quick severity floor delivered 37 findings: six
+Critical, 20 High, and 11 Medium. The run produced `threat-model.yaml` and
+`threat-model.md`, cleared its checkpoint and lock, and ended after 58 minutes
+33 seconds. Cumulative shared-session telemetry reported 119,437 output tokens,
+368,939 cache-write tokens, 15,284,414 cache-read tokens, and USD 7.7612 under
+subscription accounting. These are cumulative session-throughput figures, not
+a measurement of simultaneously resident context, but they keep the remaining
+top-level reduction work visible.
+
+Monitoring found two nonterminal defects. The context resolver wrote and
+sourced a shell environment file containing repository-derived paths; its
+producer contract now keeps repository values out of executable shell text.
+An independent full-QA replay also found that anchor enrichment could expand a
+compact finding link with the YAML storage form `Title — file:line`; the
+consumer now converts the locator to the required backticked parenthesized form
+before enrichment.
+The exact completed output passes the full QA replay after that correction, and
+both fixes are covered by the repository-wide gates above. They have not been
+re-exercised in another paid live invocation.
+
+The acceptance matrix, runtime parity, 700-turn target, resident-context
+targets, and cost-reduction gates remain unverified. WP5a, WP6,
+incremental/resume migration, and rollout slices D2, E, and F must not be
+reported as implemented.
+
 ## Verification matrix
 
-Use the same target commit, Claude Code version, models, depth, concurrency,
-formats, and clean-session conditions. Run at least three baselines and three
-variants before evaluating p50 cost or turns.
+Use the same target commit, Claude Code version, exact model IDs, versioned
+pricing table, depth, concurrency, formats, and clean-session conditions. Run at
+least three baselines and three variants before evaluating p50 cost or turns.
+Alternate baseline and variant runs where practical, record median and range,
+and pair runs by time block so service-load drift is visible. A run on a
+different Claude Code version is a new benchmark cohort, not another sample in
+the fixed cohort.
 
 Required behavior coverage:
 
@@ -494,11 +1015,22 @@ Required behavior coverage:
 | STRIDE execution | parallel, serial fallback, bounded retry, blocked component |
 | Merge | no candidates, ambiguous candidates, failed specialist, invalid decision artifact |
 | Triage | no flags, semantic flags, missing specialist output, invalid output |
-| State | fresh output, preserved baseline, stale checkpoint, corrupted sidecar |
+| State | fresh output, preserved baseline, stale checkpoint, corrupted sidecar, incompatible runtime generation |
+| Evidence bundle | clean tree, dirty tree, stale slice hash, truncation, related repository, path and symlink escape |
+| Context routing | required, optional, forbidden, conditional, unmatched, ambiguous, duplicate, and contradictory routes |
+| Context selectors | component ID, type, technology, capability, zone, exposure, boundary, actor, related repository, mode, and depth |
+| Context extensions | stricter organization policy, repository data addition, attempted mandatory-route removal, attempted projector or instruction selection |
+| Context sources | known threats, prior findings, related repositories, external context, boundaries, actors, requirements, controls, focus/exclude paths, and abuse cases |
+| Runtime dependency | schema validator present, structural validator unavailable |
 | Report path | normal Stage 2, rerender, Stage 3 skipped, Stage 4 repair plan |
 
 Compare findings by stable mechanism, evidence location, component, and public
-identity rather than generated title wording.
+identity rather than generated title wording. Before running the A/B, freeze the
+matching keys and adjudication procedure. Every apparent loss, addition,
+unsupported item, duplicate, severity change, and component-selection delta is
+classified as expected variance, explained improvement/regression, or
+unresolved. Any unresolved quality delta blocks rollout; aggregate counts alone
+cannot waive a lost evidence-backed finding.
 
 ## Acceptance criteria
 
@@ -510,8 +1042,11 @@ Quality and compatibility:
 - no weakening of severity caps, CVSS eligibility, T/F identity, cross-links,
   cleanup, permission, renderer, QA, or architect-review gates;
 - no increase in unsupported, rejected, ambiguous, or duplicate findings;
-- no increase in incomplete exits or semantic repair frequency; and
-- full/rebuild parity before incremental/resume activation.
+- no increase in incomplete exits or semantic repair frequency;
+- full/rebuild parity before incremental/resume activation;
+- no unresolved finding, severity, evidence, or component-selection delta; and
+- runtime generation, schema versions, checkpoints, and artifact fingerprints
+  reconstruct exactly one valid successor action on resume.
 
 Context and turns:
 
@@ -525,8 +1060,18 @@ Context and turns:
 - p50 total usage turns at or below 700 from the 928-turn baseline;
 - zero dedicated `status_or_logging` turns;
 - no validation-only model re-entry after successful deterministic validation;
-- at most one `workflow_routing` turn per semantic boundary; and
-- no complete shared analysis artifact in a common prompt or initial dispatch.
+- at most one `workflow_routing` turn per semantic boundary;
+- no complete shared analysis artifact in a common prompt or initial dispatch;
+- every Stage-1 delivery represented by one validated effective-plan entry with
+  its selection reason, limit, trust class, source receipt, and delivered size;
+- mandatory routes cannot be removed or weakened by organization or repository
+  configuration, and forbidden routes cannot be added;
+- effective-plan diagnostics disclose omission, truncation, staleness, and
+  unmatched selectors without disclosing sensitive source content;
+- every usage turn aggregated from all of its JSONL content blocks before
+  classification; and
+- no unadjudicated mixed, low-confidence, or unclassified turn in a zero-turn
+  release claim.
 
 Cost and latency:
 
@@ -534,12 +1079,14 @@ Cost and latency:
   thorough;
 - no compaction latency in focused threat sessions on the target fixture; and
 - no regression in p50 wall time after controlling for model variance and
-  concurrency.
+  concurrency, with the cohort range reported beside the median.
 
 Repository gates:
 
 - targeted schema, controller, dispatch, permissions, cleanup, checkpoint,
   resume, and golden-fixture tests pass;
+- path containment, symlink escape, stale-fingerprint, runtime-generation, and
+  fail-closed validator tests pass;
 - every new `scripts/` module has a matching `tests/test_*.py` covering success
   and failure paths;
 - `make lint` passes;
@@ -559,6 +1106,17 @@ Repository gates:
 | Prompt reduction causes broad rereads | Measure full-artifact reads and bundle escapes; fail the A/B if they erase savings |
 | One cheaper run reflects model variance | Require three baseline and three variant runs and compare p50 plus finding identity |
 | New sidecars break cleanup or resume | Reuse `.dispatch-context/`, trace cleanup and diagnostics, and test every preserved-state mode |
+| The catalog becomes a second semantic-role registry | Keep one authoritative registry or generate one representation from the other; reject drift in tests |
+| A routing extension becomes a prompt or execution channel | Permit schema-backed data and bounded selectors only; keep consumers, projectors, tools, commands, instructions, and paths core-owned |
+| Over-granular entries make policy unmaintainable | Create a separate element only when it can be independently projected, limited, omitted, audited, or assigned |
+| Component changes silently stop a user assignment from matching | Prefer semantic selectors and report every unmatched or ambiguous rule in the effective-plan diagnostics |
+| Transcript deduplication hides a tool call | Aggregate all blocks by `message.id` before turn classification |
+| Startup layers are inferred from an aggregate counter | Use provider token counting or one-variable startup A/B; record residuals only as residuals |
+| A validated file changes before consumption | Bind receipts to exact bytes and re-hash immediately before use |
+| Absolute or symlinked compatibility paths escape output | Apply canonical containment to bundles and retained legacy index paths on context-v2 |
+| Environment changes the runtime during resume | Persist `runtime_generation` and refuse incompatible continuation |
+| The required tool surface cannot fit the 10k startup target | Measure it in WP0 and amend allocations before enforcing WP1; do not hide tools from the accounting |
+| Controller proxy logging obscures the acting agent | Assign event ownership in the shared logging contract and keep semantic events agent-authored |
 
 ## Stop conditions
 
@@ -570,9 +1128,14 @@ Do not make context-v2 the default if any of these occur:
 - initial resident context remains near 66k after the agent split, indicating
   the assumed avoidable startup producer was wrong;
 - repair or incomplete-exit frequency increases materially;
-- incremental or resume changes T/F identity; or
+- incremental or resume changes T/F identity;
 - cost falls by less than 20% at thorough after WP0-WP6 while quality remains
-  constant.
+  constant;
+- any release metric depends on unadjudicated mixed or low-confidence turns;
+- bundle freshness cannot be reconstructed from repository and artifact
+  fingerprints; or
+- durable state permits more than one valid runtime generation or successor
+  action on resume.
 
 If startup remains high, remeasure runtime, task, tools, preloaded skills, and
 agent-definition layers independently before changing the architecture. If

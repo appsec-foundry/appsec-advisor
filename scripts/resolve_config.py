@@ -411,6 +411,78 @@ def resolve_stride_concurrency() -> dict:
     return {"stride_concurrency": value}
 
 
+# Artifact contracts a context-v2 run reconstructs its successor action from.
+# Persisted with the run so a resume can prove the on-disk artifacts still match
+# the producer that wrote them instead of re-deriving the answer from the
+# current environment.
+CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS = {
+    "orchestration-action": 1,
+    "route-inventory": 1,
+    "recon-signals": 1,
+    "actors-resolved": 1,
+    "trust-boundary-assessment-input": 1,
+    "trust-boundaries": 2,
+    "stride-analyst-context": 1,
+    "stride-dispatch-manifest": 2,
+    "stride-evidence-bundle": 1,
+    "stride-repository-registry": 1,
+    "merge-candidates": 1,
+    "merge-review-context": 1,
+    "merge-decisions": 2,
+    "threats-merged": 1,
+    "evidence-verification": 1,
+    "triage-flags": 2,
+    "mitigation-overrides": 1,
+    "tier-root-causes": 1,
+}
+
+
+def compact_runtime_eligible(cfg: dict) -> bool:
+    """Return whether this invocation can use the compact top-level runtime."""
+    return (
+        os.environ.get("APPSEC_THIN_ORCHESTRATOR") != "0"
+        and not cfg.get("dry_run")
+        and not cfg.get("resume")
+        and not cfg.get("max_wall_time_seconds")
+        and not cfg.get("max_cost_usd")
+        and os.environ.get("APPSEC_LIVE_PHASE") != "1"
+    )
+
+
+def resolve_runtime_generation(mode: str, *, compact_eligible: bool = True) -> dict:
+    """Select the producer generation for a NEW invocation.
+
+    Only the operator environment may select context-v2; repository content
+    never reaches this decision. Context-v2 is offered for compact full and
+    rebuild runs only. Special paths that retain the legacy top-level runtime
+    must also persist the legacy producer generation.
+    """
+    requested = os.environ.get("APPSEC_CONTEXT_V2", "").strip() == "1"
+    if not requested:
+        return {
+            "runtime_generation": "legacy",
+            "runtime_generation_label": "legacy (default)",
+            "runtime_artifact_schema_versions": {},
+        }
+    if mode not in ("full", "rebuild"):
+        return {
+            "runtime_generation": "legacy",
+            "runtime_generation_label": f"legacy (context-v2 not supported for {mode})",
+            "runtime_artifact_schema_versions": {},
+        }
+    if not compact_eligible:
+        return {
+            "runtime_generation": "legacy",
+            "runtime_generation_label": "legacy (context-v2 requires the compact runtime)",
+            "runtime_artifact_schema_versions": {},
+        }
+    return {
+        "runtime_generation": "context-v2",
+        "runtime_generation_label": "context-v2 (APPSEC_CONTEXT_V2=1)",
+        "runtime_artifact_schema_versions": dict(CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS),
+    }
+
+
 def resolve_evidence_verifier_cap(ns: argparse.Namespace, depth: str) -> dict:
     """Bound Phase 10a work while preserving every Critical finding.
 
@@ -1886,6 +1958,16 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # flags always win — org-profile only fills in fields that were not
     # explicitly toggled by the user.
     cfg.update(_apply_org_profile(ns, cfg, plugin_root))
+
+    # Select the producer only after CLI and organization guardrails have
+    # resolved. Context-v2 executes inside the compact top-level runtime; a
+    # deadline, cost cap, live-phase run, or explicit compact-runtime opt-out
+    # retains both the legacy runtime and the legacy producer generation.
+    cfg.update(
+        resolve_runtime_generation(
+            cfg["mode"], compact_eligible=compact_runtime_eligible(cfg)
+        )
+    )
 
     # Opus ceiling — MUST be the last model step. Sourced from (CLI --no-opus)
     # OR (env APPSEC_DISABLE_OPUS) OR (org-profile policy.disable_opus, merged

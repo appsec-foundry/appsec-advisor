@@ -21,7 +21,7 @@ as signal is catastrophic downstream:
 
 This guard runs BEFORE `emit_review_mitigations.py` in `auto_emitter_pass.sh`.
 When the distribution is degenerate it strips `evidence_check` / `evidence_flags`
-from every threat so the run is treated as *unverified-neutral*: no review cards
+from every affected threat so the run is treated as *unverified-neutral*: no review cards
 are synthesised, real fix mitigations are produced normally, and the downstream
 deterministic floor (`validate_evidence_lines.py`, which only fills threats that
 carry NO prior verdict) re-derives sensible per-line verdicts for §8.
@@ -39,12 +39,14 @@ Requiring 0 verified AND 0 refuted is deliberate: a real verifier run on a
 vulnerable target surfaces plenty of `verified`, so an all-ambiguous-with-zero-
 signal result is a model failure, not a genuinely uncertain codebase.
 
-Best-effort and idempotent: on a healthy (non-degenerate) run it is a no-op and
+The context-v2 boundary operates on the canonical `.threats-merged.json` before
+rendering. Legacy callers that have only `threat-model.yaml` retain that file as
+a fallback. Best-effort and idempotent: on a healthy (non-degenerate) run it is a no-op and
 exits 0. Any error is non-fatal (exit 0) so it can never abort a run that has
 already spent 25+ minutes in Stage 1.
 
 Usage:
-    python3 guard_evidence_verification.py <output_dir>
+    python3 guard_evidence_verification.py <output_dir> [--ignore-summary]
 """
 
 from __future__ import annotations
@@ -172,6 +174,37 @@ def _log(output_dir: Path, event: str, msg: str) -> None:
         pass
 
 
+def _load_threat_artifact(output_dir: Path) -> tuple[Path, dict] | None:
+    """Load the canonical merged artifact, or the rendered legacy fallback."""
+    json_path = output_dir / ".threats-merged.json"
+    yaml_path = output_dir / "threat-model.yaml"
+    path = json_path if json_path.is_file() else yaml_path
+    if not path.is_file():
+        return None
+    try:
+        if path.suffix == ".json":
+            data = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, yaml.YAMLError) as exc:
+        print(f"guard_evidence_verification: could not parse {path}: {exc}", file=sys.stderr)
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("threats"), list):
+        print(f"guard_evidence_verification: no threats array in {path} — skipping", file=sys.stderr)
+        return None
+    return path, data
+
+
+def _write_threat_artifact(path: Path, data: dict) -> None:
+    if path.suffix == ".json":
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    else:
+        path.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
+            encoding="utf-8",
+        )
+
+
 def _annotate_summary(output_dir: Path, counts: dict) -> None:
     """Record the neutralisation in the side-channel summary for observability."""
     path = output_dir / ".evidence-verification.json"
@@ -218,23 +251,19 @@ def _mark_fallback_required(output_dir: Path) -> None:
         pass
 
 
-def guard(output_dir: Path) -> int:
-    yaml_path = output_dir / "threat-model.yaml"
-    if not yaml_path.is_file():
-        print(f"guard_evidence_verification: no yaml at {yaml_path} — skipping", file=sys.stderr)
+def guard(output_dir: Path, *, ignore_summary: bool = False) -> int:
+    loaded = _load_threat_artifact(output_dir)
+    if loaded is None:
+        print(f"guard_evidence_verification: no threat artifact in {output_dir} — skipping", file=sys.stderr)
         return 0
-    try:
-        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-    except (yaml.YAMLError, OSError) as exc:
-        print(f"guard_evidence_verification: could not parse {yaml_path}: {exc}", file=sys.stderr)
-        return 0
+    artifact_path, data = loaded
     if not isinstance(data, dict):
         return 0
     threats = data.get("threats") or []
     if not isinstance(threats, list):
         return 0
 
-    no_verdicts = summary_has_no_verdicts(output_dir)
+    no_verdicts = None if ignore_summary else summary_has_no_verdicts(output_dir)
     if no_verdicts:
         _mark_fallback_required(output_dir)
         _log(
@@ -251,7 +280,7 @@ def guard(output_dir: Path) -> int:
     counts = _distribution(threats)
     # Prefer the LLM verifier's own summary (uncontaminated by the deterministic
     # floor); fall back to the yaml distribution when it is unavailable.
-    summary_signal = summary_degenerate(output_dir)
+    summary_signal = None if ignore_summary else summary_degenerate(output_dir)
     degenerate = summary_signal if summary_signal is not None else is_degenerate(counts)
     if not degenerate:
         print(
@@ -271,10 +300,7 @@ def guard(output_dir: Path) -> int:
         )
         return 0
     try:
-        yaml_path.write_text(
-            yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
-            encoding="utf-8",
-        )
+        _write_threat_artifact(artifact_path, data)
     except OSError as exc:
         print(f"guard_evidence_verification: write-back failed: {exc}", file=sys.stderr)
         return 0
@@ -292,10 +318,10 @@ def guard(output_dir: Path) -> int:
 
 
 def main(argv: list) -> int:
-    if len(argv) != 1:
-        print("Usage: guard_evidence_verification.py <output_dir>", file=sys.stderr)
+    if len(argv) not in {1, 2} or (len(argv) == 2 and argv[1] != "--ignore-summary"):
+        print("Usage: guard_evidence_verification.py <output_dir> [--ignore-summary]", file=sys.stderr)
         return 2
-    return guard(Path(argv[0]))
+    return guard(Path(argv[0]), ignore_summary=len(argv) == 2)
 
 
 if __name__ == "__main__":

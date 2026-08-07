@@ -5,6 +5,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+import jsonschema
 import pytest
 import yaml
 from jsonschema import Draft202012Validator
@@ -500,9 +501,30 @@ def test_component_audit_satisfies_delivered_output_schema(tmp_path: Path) -> No
     schema in-process depends on none of that, so it also catches the *next* key.
     """
     repo, out = _repo(tmp_path)
-    # A row that resolves to an invalid endpoint populates `invalid_ids` — the
-    # key whose absence from the schema caused the outage. The remaining lists
-    # are exercised by their own tests above.
+    # The nested component has no crossing of its own and therefore inherits
+    # the containing API's row. This is the only branch that emits
+    # `inherited_from`; omitting it here let the 2026-08-07 full run reach final
+    # YAML validation before the producer/output-schema drift was detected.
+    _write_json(
+        out / ".components.json",
+        {
+            "schema_version": 1,
+            "components": [
+                {
+                    "id": "web-api",
+                    "name": "Web API",
+                    "paths": ["src/**"],
+                    "handles_sensitive_data": True,
+                },
+                {
+                    "id": "web3-nft",
+                    "name": "Web3 NFT",
+                    "paths": ["src/web3/**"],
+                    "handles_sensitive_data": False,
+                },
+            ],
+        },
+    )
     _write_json(
         out / ".trust-boundaries.json",
         {
@@ -510,7 +532,6 @@ def test_component_audit_satisfies_delivered_output_schema(tmp_path: Path) -> No
             "trust_boundaries": [
                 {
                     **_row(id="tb-9"),
-                    "from": "Public Internet",
                     "resolution_status": "resolved",
                     "sources": ["detected"],
                 }
@@ -521,24 +542,88 @@ def test_component_audit_satisfies_delivered_output_schema(tmp_path: Path) -> No
     audit = prep.prepare_contexts(
         repo_root=repo,
         output_dir=out,
-        component_ids=["web-api"],
+        component_ids=["web-api", "web3-nft"],
         depth="standard",
     )
+    assert audit["components"]["web3-nft"]["inherited_from"] == "web-api"
 
-    schema = yaml.safe_load(
+    output_schema = yaml.safe_load(
         (Path(__file__).resolve().parents[1] / "schemas" / "threat-model.output.schema.yaml").read_text(
             encoding="utf-8"
         )
     )
-    per_component = schema["properties"]["meta"]["properties"]["boundary_selection"]["properties"]["components"][
+    selection_schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "schemas" / "trust-boundary-selection.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    Draft202012Validator(selection_schema).validate(audit)
+    per_component = output_schema["properties"]["meta"]["properties"]["boundary_selection"]["properties"]["components"][
         "additionalProperties"
     ]
+    selection_component = selection_schema["$defs"]["component_audit"]
+    assert set(per_component["required"]) == set(selection_component["required"])
+    assert set(per_component["properties"]) == set(selection_component["properties"])
     validator = Draft202012Validator(per_component)
 
     assert audit["components"], "audit must carry a component for this to mean anything"
     for cid, entry in audit["components"].items():
         errors = list(validator.iter_errors(entry))
         assert not errors, f"{cid}: " + "; ".join(f"{e.json_path}: {e.message}" for e in errors)
+
+
+def test_selection_contract_rejects_unknown_inherited_component(tmp_path: Path) -> None:
+    repo, out = _repo(tmp_path)
+    _write_json(
+        out / ".trust-boundaries.json",
+        {
+            "schema_version": 2,
+            "trust_boundaries": [
+                {
+                    **_row(id="tb-9"),
+                    "resolution_status": "resolved",
+                    "sources": ["detected"],
+                }
+            ],
+        },
+    )
+    audit = prep.prepare_contexts(
+        repo_root=repo,
+        output_dir=out,
+        component_ids=["web-api"],
+        depth="standard",
+    )
+    audit["components"]["web-api"]["inherited_from"] = "missing-parent"
+
+    with pytest.raises(jsonschema.ValidationError, match="unknown component 'missing-parent'"):
+        prep.validate_trust_boundary_selection(audit, known_component_ids={"web-api", "worker"})
+
+
+def test_selection_contract_rejects_inherited_component_without_audit(tmp_path: Path) -> None:
+    repo, out = _repo(tmp_path)
+    _write_json(
+        out / ".trust-boundaries.json",
+        {
+            "schema_version": 2,
+            "trust_boundaries": [
+                {
+                    **_row(id="tb-9"),
+                    "resolution_status": "resolved",
+                    "sources": ["detected"],
+                }
+            ],
+        },
+    )
+    audit = prep.prepare_contexts(
+        repo_root=repo,
+        output_dir=out,
+        component_ids=["web-api"],
+        depth="standard",
+    )
+    audit["components"]["web-api"]["inherited_from"] = "worker"
+
+    with pytest.raises(jsonschema.ValidationError, match="without a selection audit"):
+        prep.validate_trust_boundary_selection(audit, known_component_ids={"web-api", "worker"})
 
 
 def test_reorder_and_unambiguous_rename_preserve_ids(tmp_path: Path) -> None:
@@ -984,6 +1069,58 @@ def test_component_without_own_candidates_inherits_from_its_containing_component
     assert audit["components"]["auth"]["inherited_from"] == "web-api"
     reasons = audit["components"]["auth"]["focus_reasons"]["tb-1"]
     assert any("inherited from containing component" in reason for reason in reasons)
+
+
+@pytest.mark.parametrize(
+    ("parent_id", "child_id", "parent_glob", "child_glob", "evidence_file"),
+    [
+        ("platform-api", "billing-worker", "services/**", "services/billing/**", "services/root.py"),
+        ("monolith", "admin-console", "app/**", "app/admin/**", "app/server.py"),
+    ],
+)
+def test_component_inheritance_is_repository_agnostic(
+    tmp_path: Path,
+    parent_id: str,
+    child_id: str,
+    parent_glob: str,
+    child_glob: str,
+    evidence_file: str,
+) -> None:
+    repo, out = _repo(tmp_path)
+    _write_json(
+        out / ".components.json",
+        {
+            "schema_version": 1,
+            "components": [
+                {"id": parent_id, "name": "Parent", "paths": [parent_glob]},
+                {"id": child_id, "name": "Nested", "paths": [child_glob]},
+            ],
+        },
+    )
+    _write_json(
+        out / ".trust-boundaries.json",
+        {
+            "schema_version": 2,
+            "trust_boundaries": [
+                {
+                    **_row(id="tb-1", to=parent_id, evidence=[{"file": evidence_file, "line": 1}]),
+                    "resolution_status": "resolved",
+                    "sources": ["detected"],
+                }
+            ],
+        },
+    )
+
+    audit = prep.prepare_contexts(
+        repo_root=repo,
+        output_dir=out,
+        component_ids=[parent_id, child_id],
+        depth="standard",
+    )
+
+    assert audit["components"][child_id]["selected_ids"] == ["tb-1"]
+    assert audit["components"][child_id]["inherited_from"] == parent_id
+    prep.validate_trust_boundary_selection(audit, known_component_ids={parent_id, child_id})
 
 
 def test_inheritance_never_overrides_a_components_own_candidates(tmp_path: Path) -> None:

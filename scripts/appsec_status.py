@@ -297,11 +297,40 @@ def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
 _CUTOFF_ONELINE = {
     "api_stall": "API stream stall (server-side) — NOT a plugin, repository, or configuration fault.",
     "session_death": "the Claude Code session ended mid-run (window closed / OOM / network) — NOT a plugin fault.",
+    "interrupted": "the run stopped before report composition completed.",
+    "controller_abort": "the controller stopped at an authoritative validation gate.",
     "budget": "turn budget exhausted before final compose — threats merged, only rendering is missing.",
 }
 
 
-def _cutoff_verdict(output_dir: Path) -> dict | None:
+def _snapshot_has_recent_activity(snapshot: dict | None) -> bool:
+    """Return whether a live snapshot contains a recent in-flight signal."""
+    if not isinstance(snapshot, dict):
+        return False
+    threshold = max(int(snapshot.get("threshold_seconds") or 0), 1)
+    current = snapshot.get("current")
+    if isinstance(current, dict):
+        status = str(current.get("status") or "").lower()
+        terminal_statuses = {"aborted", "error", "failed"}
+        if status not in terminal_statuses and int(current.get("age_s") or 0) <= threshold * 2:
+            return True
+    now = int(snapshot.get("ts") or time.time())
+    for entry in snapshot.get("active_tool_calls") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("tool_use_id") and int(entry.get("age_s") or 0) <= threshold * 2:
+            return True
+        registrations = [
+            value
+            for key, value in entry.items()
+            if isinstance(key, str) and key.startswith("agent:") and isinstance(value, (int, float))
+        ]
+        if registrations and now - int(max(registrations)) <= threshold * 2:
+            return True
+    return False
+
+
+def _cutoff_verdict(output_dir: Path, *, live_snapshot: dict | None = None) -> dict | None:
     """Post-hoc last-run verdict when a run ended without a ``threat-model.md``.
 
     The in-run cut-off banners only print while the orchestrator turn is alive;
@@ -312,8 +341,8 @@ def _cutoff_verdict(output_dir: Path) -> dict | None:
     Returns ``None`` (nothing to warn about) when:
       * the run completed (``threat-model.md`` on disk), or
       * there is no evidence of a run at all, or
-      * a scan is currently live (a held lock with a live pid) — never
-        false-alarm an in-progress run.
+      * a scan is currently live (a fresh heartbeat, or a live PID for a
+        legacy lock) — never false-alarm an in-progress run.
 
     Otherwise returns ``{"kind": ..., "block": ...}`` from ``cutoff_cause``.
     """
@@ -321,23 +350,63 @@ def _cutoff_verdict(output_dir: Path) -> dict | None:
         return None
     if not ((output_dir / ".agent-run.log").is_file() or (output_dir / ".appsec-checkpoint").is_file()):
         return None
-    # Suppress while a scan is genuinely running (lock held by a live process).
-    try:
-        from check_state import classify  # type: ignore
-
-        if (classify(output_dir).get("lock") or {}).get("alive") is True:
-            return None
-    except Exception:
-        pass
     try:
         import cutoff_cause  # type: ignore
 
-        # Mirror the banner defaults: no STRIDE files yet ⇒ the early-cut-off
-        # branch (session_death default); STRIDE present but no compose ⇒ the
-        # Phase-11 branch (budget default).
-        default = "budget" if stride_output_files(output_dir) else "session_death"
+        explicitly_aborted = cutoff_cause.detect_abort(output_dir)
+    except Exception:
+        explicitly_aborted = False
+    if not explicitly_aborted:
+        if _snapshot_has_recent_activity(live_snapshot):
+            return None
+    # Suppress while a scan is genuinely running.  The heartbeat is
+    # authoritative for v2 locks because the stored PID belongs to a short-lived
+    # launcher subprocess and is commonly dead while the parent session remains
+    # active.  Keep this aligned with check_state.classify instead of
+    # reinterpreting its raw lock fields here.
+    if not explicitly_aborted:
+        try:
+            from check_state import classify  # type: ignore
+
+            if classify(output_dir).get("state") == "active":
+                return None
+        except Exception:
+            pass
+    try:
+        import cutoff_cause  # type: ignore
+
+        # A STRIDE file only proves that one analyzer returned.  It does not
+        # prove that Phase 9 merged the findings or that the run reached the
+        # render-only recovery boundary.  Claim budget exhaustion only from
+        # the authoritative merged artifact plus a late checkpoint.
+        checkpoint: dict[str, str] = {}
+        try:
+            checkpoint = {
+                key: value
+                for token in (output_dir / ".appsec-checkpoint").read_text(encoding="utf-8").split()
+                if "=" in token
+                for key, value in [token.split("=", 1)]
+            }
+        except OSError:
+            pass
+        render_ready = (output_dir / ".threats-merged.json").is_file() and (
+            checkpoint.get("phase") == "11"
+            or (
+                checkpoint.get("phase") == "10b"
+                and checkpoint.get("status") == "completed"
+                and checkpoint.get("need_render") == "true"
+            )
+        )
+        default = "budget" if render_ready else "interrupted"
         kind, block = cutoff_cause.cause_for(output_dir, default)
-        return {"kind": kind, "block": block}
+        generation = None
+        try:
+            generation = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8")).get(
+                "runtime_generation"
+            )
+        except (OSError, ValueError):
+            pass
+        return {"kind": kind, "block": block, "runtime_generation": generation}
     except Exception:
         return None
 
@@ -345,12 +414,28 @@ def _cutoff_verdict(output_dir: Path) -> dict | None:
 def _render_cutoff(verdict: dict) -> str:
     """One-line lead + the single-sourced Cause block + the resume hint."""
     lead = _CUTOFF_ONELINE.get(verdict["kind"], "run ended without producing a threat model.")
+    if verdict.get("runtime_generation") == "context-v2":
+        recovery = (
+            "  → Restart: start a fresh context-v2 session and repeat the original --full/--rebuild invocation.\n"
+        )
+    else:
+        recovery = "  → Resume:  /appsec-advisor:create-threat-model --resume\n"
     return (
-        "⚠ Last run incomplete — no threat-model.md was produced.\n"
-        f"  Cause: {lead}\n"
-        "  → Resume:  /appsec-advisor:create-threat-model --resume\n"
-        f"\n{verdict['block']}\n"
+        f"⚠ Last run incomplete — no threat-model.md was produced.\n  Cause: {lead}\n{recovery}\n{verdict['block']}\n"
     )
+
+
+def _completed_stride_count(output_dir: Path) -> int:
+    """Count final component outputs, excluding write-first seed artifacts."""
+    completed = 0
+    for path in stride_output_files(output_dir):
+        value = _load_json(path)
+        if not isinstance(value, dict):
+            continue
+        if value.get("seed_only") is True or value.get("partial") is not False:
+            continue
+        completed += 1
+    return completed
 
 
 def _last_run_info(output_dir: Path) -> dict:
@@ -659,7 +744,7 @@ def _live_snapshot(output_dir: Path) -> dict:
             )
     progress.sort(key=lambda e: e.get("age_s", 0), reverse=True)
 
-    stride_count = len(stride_output_files(output_dir))
+    stride_count = _completed_stride_count(output_dir)
 
     return {
         "ts": now,
@@ -758,7 +843,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.live:
         snap = _live_snapshot(output_dir)
-        snap["cutoff"] = _cutoff_verdict(output_dir)
+        snap["cutoff"] = _cutoff_verdict(output_dir, live_snapshot=snap)
         if args.json:
             print(json.dumps(snap, indent=2, sort_keys=True))
         else:
@@ -778,6 +863,7 @@ def main(argv: list[str] | None = None) -> int:
     if _skill_exists("audit-security-requirements"):
         capsules["requirements_audit"] = {"command": "/appsec-advisor:audit-security-requirements"}
 
+    live_snapshot = _live_snapshot(output_dir)
     data = {
         "plugin": {
             "plugin_version": plugin_json.get("version", "unknown"),
@@ -798,7 +884,7 @@ def main(argv: list[str] | None = None) -> int:
         "fast_path": _fast_path_preview(output_dir, repo_root),
         "auto_clean": auto_clean,
         "org_profile": _org_profile_status(output_dir),
-        "cutoff": _cutoff_verdict(output_dir),
+        "cutoff": _cutoff_verdict(output_dir, live_snapshot=live_snapshot),
     }
 
     if args.json:

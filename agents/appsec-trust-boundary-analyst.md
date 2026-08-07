@@ -246,7 +246,8 @@ Do not write `.trust-boundaries.json`, `.trust-boundary-coverage.json`,
 diagnostics, reports, findings, checkpoints, or any other semantic artifact.
 The deterministic Stage-1b gate owns canonical promotion.
 
-Follow `shared/logging-standard.md` through `scripts/log_event.py`, using agent
+Follow `$CLAUDE_PLUGIN_ROOT/agents/shared/logging-standard.md` through
+`scripts/log_event.py`, using agent
 name `trust-boundary-analyst` and writing to `$OUTPUT_DIR/.agent-run.log`.
 Return only:
 

@@ -230,9 +230,11 @@ Then emit the normal handoff banner using the controller estimate:
 
 ## 5. Stages 1a–1d
 
-Read `SKILL-thin-stage1.md` in full and follow it. It replaces the verbose
-Stage-1 slice from `SKILL-impl.md` for this runtime; do not load that legacy
-slice. Only when `SKIP_ABUSE_CASE_VERIFICATION=false`, read
+Read `ACTION.instruction_file` in full and follow it. The controller permits
+only plugin-owned Stage-1 runtimes: legacy returns `SKILL-thin-stage1.md` and
+context-v2 returns `SKILL-thin-stage1-v2.md`. Do not substitute either or load
+the verbose Stage-1 slice from `SKILL-impl.md`. Only when
+`SKIP_ABUSE_CASE_VERIFICATION=false`, read
 `SKILL-thin-stage1d.md` in full as the Stage-1d abuse runtime and
 follow it. Otherwise do not load any Stage-1d instructions.
 

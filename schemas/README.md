@@ -5,11 +5,27 @@ produces or consumes. The schemas are the **single source of truth** for the
 data contracts; `scripts/validate_intermediate.py` loads them at runtime
 and enforces runtime artifacts via `jsonschema`; plugin-shipped config/data
 catalogs are checked by dedicated validators such as `scripts/validate_config.py`.
+The numbered Markdown API in `.recon-summary.md` is defined by
+`agents/shared/recon-output-template.md` and validated by the producer and
+controller through `scripts/validate_recon_summary.py`. The ordered Markdown
+API in `.threat-modeling-context.md` is defined by the context resolver's
+output template and validated at the same two boundaries through
+`scripts/validate_threat_modeling_context.py`; neither contract is JSONSchema.
 
 | Schema | Artifact | Written by | Read by |
 |--------|----------|------------|---------|
 | `stride.schema.yaml` | `$OUTPUT_DIR/.stride-<component-id>.json` | `appsec-stride-analyzer` | orchestrator Phase 9 merge |
+| `stride-evidence-bundle.schema.json` | `$OUTPUT_DIR/.dispatch-context/<component-id>/evidence-bundle.json` | `scripts/build_stride_evidence_bundles.py` | context-v2 manifest validator and STRIDE analyzer |
+| `stride-analyst-context.schema.json` | `$OUTPUT_DIR/.stride-analyst-context.json` | `appsec-control-analyst` on context-v2; legacy threat analyst otherwise | `scripts/build_stride_dispatch_manifest.py` |
+| `recon-signals.schema.json` | `$OUTPUT_DIR/.recon-signals.json` | `appsec-recon-scanner` | actor resolution, trust-boundary input, and STRIDE bundle construction |
+| `trust-boundary-selection.schema.json` | `$OUTPUT_DIR/.dispatch-context/trust-boundary-selection.json` | `scripts/prepare_trust_boundary_context.py` | STRIDE context dispatch and `scripts/build_threat_model_yaml.py` |
+| `stride-repository-registry.schema.json` | `$OUTPUT_DIR/.stride-repository-registry.json` | context-v2 controller via `build_stride_evidence_bundles.py` | evidence-bundle builder, manifest validator, and STRIDE analyzer |
+| `stride-dispatch-manifest.schema.yaml` | `$OUTPUT_DIR/.stride-dispatch-manifest.json` | `scripts/build_stride_dispatch_manifest.py` | Level-0 dispatcher and `scripts/validate_dispatch_manifest.py` |
+| `orchestration-action.schema.json` | ephemeral controller stdout | `scripts/orchestration_controller.py` | thin skill runtimes |
+| `merge-candidates.schema.json` | `$OUTPUT_DIR/.merge-candidates.json` | `scripts/merge_threats.py collect` | threat merger and `scripts/merge_threats.py finalize` |
+| `merge-review-context.schema.json` | `$OUTPUT_DIR/.merge-context/candidates.json` | context-v2 controller | focused threat merger |
 | `threats-merged.schema.yaml` | `$OUTPUT_DIR/.threats-merged.json` | orchestrator Phase 9 | diagram annotator, YAML/SARIF exporters, changelog writer, triage validator |
+| `evidence-verification.schema.json` | `$OUTPUT_DIR/.evidence-verification.json` | `appsec-evidence-verifier` | evidence guard and Phase 10b triage |
 | `merge-decisions.schema.json` | `$OUTPUT_DIR/.merge-decisions.json` | `appsec-threat-merger` (Phase 9) | `scripts/merge_threats.py finalize` |
 | `triage-flags.schema.yaml` | `$OUTPUT_DIR/.triage-flags.json` | `appsec-triage-validator` (Phase 10b) | Phase 11 rendering, QA reviewer |
 | `threat-model.output.schema.yaml` | `$OUTPUT_DIR/threat-model.yaml` | orchestrator Phase 10/11 | CI/CD, DefectDojo, SonarQube, cross-repo discovery |
