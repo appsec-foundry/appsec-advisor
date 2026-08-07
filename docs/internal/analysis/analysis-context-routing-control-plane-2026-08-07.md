@@ -1,7 +1,7 @@
 # Analysis — context routing control plane
 
 - Date: 2026-08-07
-- Status: proposed prerequisite for WP6
+- Status: Stage-1 edge inventory complete; shadow catalog implementation pending
 - Parent plan:
   `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`
 
@@ -40,6 +40,87 @@ This distribution makes four questions unnecessarily difficult to answer:
 3. Which limit, projection, trust rule, or fallback applied?
 4. Can an organization add domain context without adding instructions or
    bypassing mandatory security context?
+
+## Frozen current Stage-1 edge inventory
+
+This inventory freezes the context-v2 full/rebuild path at commit `6473fe17`.
+It records current behavior before a catalog resolver changes admission. The
+declared action inputs are not treated as a complete inventory: several roles
+also read repository evidence, plugin policy, or output sidecars named only in
+their prompts.
+
+The delivery labels below have fixed meanings:
+
+- `declared` means the path is present in `dispatch_jobs[].input_artifacts`;
+- `implicit` means the consumer reads it under current prompt or script rules
+  but the action does not declare it;
+- `direct-source` means bounded or broad reads under `REPO_ROOT`;
+- `plugin-owned` means a fixed plugin path selected by code or agent contract;
+- `scalar` means a bounded value copied from resolved configuration; and
+- `projected` means a deterministic component- or decision-scoped artifact.
+
+### Semantic consumer deliveries
+
+| Consumer | Phase and current producer | Current deliveries | Contract, limit, and freshness behavior |
+|---|---|---|---|
+| `consumer:context_resolver` | Phase 1; `appsec-context-resolver` | declared `.skill-config.json`; implicit `.requirements.yaml`, plugin/org configuration, external context, repository policy/architecture/business files, `docs/known-threats.yaml`, and `docs/related-repos.yaml`; direct-source repository metadata | Markdown validator caps and fences `.threat-modeling-context.md`; related-repository helpers validate their JSON outputs. The action has no exact-byte receipts for these inputs or outputs. External failure is optional; requested requirements failure blocks. |
+| `consumer:recon_scanner` | Phase 2; `appsec-recon-scanner` | declared `.skill-config.json`; implicit `.recon-patterns.json` and optional `.scan-manifest.txt`; direct-source repository docs, manifests, deployment/configuration files, and security patterns; plugin-owned scan exclusions and recon template | Recon Markdown and `recon-signals` validators run at producer and controller boundaries. Per-category examples and discovery calls are capped, but the action does not receipt the pre-pass, source reads, or template bytes. |
+| `consumer:config_scanner` | Phase 2.5; `appsec-config-scanner` or deterministic empty stub | declared `.skill-config.json`; direct-source selected IaC/configuration files; plugin-owned `data/config-iac-checks.yaml`; scalar assessment depth | `config-scan-findings` schema validation is best-effort enrichment. Quick depth caps files per category. The check catalog and selected source bytes are not action-receipted. |
+| `consumer:actor_discoverer` | Phase 2.7; `appsec-actor-discoverer` | declared `.actors-merged-static.json` and `.recon-summary.md`; implicit `.recon-signals.json` and discovery cache key; scalar depth | Discovery schema validation degrades to the static set on failure. Cache freshness binds plugin defaults, org/repository actor inputs, recon signals, and prompt version outside the action receipt model. |
+| `consumer:architecture_analyst` | Phases 3-6; `appsec-architecture-analyst` | declared `.recon-summary.md`, projected `.route-inventory.json`, and projected `.actors-resolved.json`; direct-source targeted Grep; plugin-owned ID reservation | Route and actor inputs have exact-byte receipts. Recon Markdown and direct source do not. Four output schemas, inventory finalization, data-flow fingerprint binding, coverage gates, and boundary-input construction block on failure. |
+| `consumer:trust_boundary_analyst` | Phase 7; `appsec-trust-boundary-analyst` | declared projected `.trust-boundary-assessment-input.json`; scalar run paths | The assessment input has a schema, size limits, component coverage, and an exact-byte receipt. The role forbids recon/context Markdown and arbitrary source discovery. Candidate validation and deterministic promotion block. |
+| `consumer:control_analyst` | Phase 8; `appsec-control-analyst` | declared `.components.json`, `.trust-boundaries.json`, and `.architecture-coverage.json`; implicit requirements-violation evidence referenced by the prompt; direct-source targeted Grep | Canonical boundaries have an exact-byte receipt; the other declared inputs do not. Both outputs are schema-gated. Unknown components, oversized overlays, reserved profile values, and unsafe focus/exclude paths block later bundle construction. |
+| `consumer:stride_analyzer` | Phase 9 per selected component; `appsec-stride-analyzer-v2` | declared manifest, projected evidence bundle, projected taxonomy slice, and optional repository registry; plugin-owned fixed lenses; direct-source receipted ranges plus optional component-local discovery; scalar depth, budgets, sampling, lens IDs, and profile | Manifest, bundle, registry, and taxonomy bytes are checked immediately before dispatch. Bundle limits are 65,536 bytes, 16,384 estimated tokens, 400 source lines, 24 slices, and 32 values per evidence class. Lens bytes and optional discovery results are not exact-byte action receipts. |
+| `consumer:threat_merger` | Phase 9 merge; `appsec-threat-merger` | declared projected `.merge-context/candidates.json`; scalar unresolved group IDs; optional component map exists only on the legacy prompt surface | The projection is capped at 64 groups and 262,144 bytes, carries the full-source hash, and has an exact-byte receipt. Source code and full `.merge-candidates.json` are forbidden. Decisions are schema-checked and rebound to unchanged source candidates. |
+| `consumer:evidence_verifier` | Phase 10a; `appsec-evidence-verifier` | declared `.threats-merged.json`; direct-source sampled evidence windows selected from finding citations; scalar depth and sample cap | Merged threats have an exact-byte receipt before dispatch. Source windows are not preprojected or receipted. The verifier writes incremental in-place annotations plus an optional sidecar; invalid side-channel data is ignored while canonical annotations remain guarded. |
+| `consumer:triage_validator` | Exceptional Phase 10b fallback; `appsec-triage-validator` | declared `.threats-merged.json` and optional `.triage-flags.json`; implicit optional `.recon-summary.md`; plugin-owned breach-distance, compound-chain, and critical-criteria data; direct-source access through deterministic ranking helpers | Dispatch occurs only after deterministic ranking fails. Merged threats are receipted; triage flags, optional recon context, plugin policy bytes, and helper source reads are not all represented by the action. Both mutated artifacts are revalidated before synthesis. |
+| `consumer:post_stride_synthesizer` | Phase 10b; `appsec-post-stride-synthesizer` | declared `.threats-merged.json` and `.triage-flags.json`; scalar unresolved synthesis keys | Both inputs have exact-byte receipts. The current controller requests only tier-root-cause synthesis; the role contract also permits mitigation overrides when a future controller key requests them. Accepted outputs are schema-validated and receipted before YAML consumption. |
+| `consumer:abuse_case_verifier` | Stage 1d; `appsec-abuse-case-verifier` outside the semantic-role registry | implicit projected `.abuse-case-matches.json`; scalar abuse-case ID and model; direct-source entry, sink, and control reads; plugin/org/repository abuse-case catalogs feed the matcher | The action carries candidate IDs and titles, not `dispatch_jobs`, input artifacts, or artifact receipts. Candidate count is capped at 64. Per-case verdict schemas, deterministic merge/finalize, the release gate, and YAML rebuild own the handoff. |
+
+### Deterministic producer and projection edges
+
+| Edge | Producer and source | Current consumer and delivery | Validation, failure, and lifecycle behavior |
+|---|---|---|---|
+| `edge:preflight_run_config` | `resolve_config.py`, persisted `.skill-config.json`, invocation and org profile | every controller action and scalar prompt alias | Action schema allow-lists dispatch keys. Runtime generation and artifact-version mismatches block. The file is not separately receipted per dispatch. |
+| `edge:preflight_repository_signals` | `route_inventory.py`, `architecture_coverage_checks.py`, optional database checks, and `source_auth_scanner.py` read repository source | recon, architecture, control, bundle construction, merge, and YAML builders through sidecars | Individual schemas and downstream gates vary. Best-effort prepasses may leave absent optional sidecars; source-auth and route evidence later enter bundles when present. |
+| `edge:requirements_resolution` | `fetch_requirements.py` resolves invocation, org, URL, cache, or skipped stub into `.requirements.yaml` | context resolver, requirement checks, component violation slices, and final model | Requested missing input blocks preflight. The resolved file is not currently an action receipt, and context-v2 does not explicitly prove creation of every later per-component violation slice. |
+| `edge:recon_projection` | deterministic recon patterns plus recon agent source inspection | `.recon-summary.md` and `.recon-signals.json` consumed by actor resolution, architecture, matching, and later deterministic checks | Producer and controller validation block malformed canonical headings/signals. Markdown freshness is cache/fingerprint based rather than exact-byte action-receipted. |
+| `edge:related_repository_projection` | `load_related_repos.py`, `build_cross_repo_register.py`, declarations, and registered local Git roots | context Markdown, architecture annotations, and intended per-component cross-repository bundle evidence | Declarations and JSON outputs are schema-validated; URL/path policy applies. The current context-v2 controller rebuilds the register but does not explicitly invoke the component slicer before manifest construction. |
+| `edge:actor_resolution` | default, organization, repository, optional discovered actors, and recon signals through `resolve_actors.py` | projected `.actors-resolved.json`, `.actors-for-<component>.json`, architecture, bundles, and final model | Resolver schema and fingerprint/cache checks apply. Architecture receives a receipt for the resolved set; per-component slices are file-presence driven in the manifest. |
+| `edge:architecture_finalization` | four analyst fragments plus route, coverage, config, source-auth, and data-relation signals | finalized components/data flows/assets/attack surface and `.trust-boundary-assessment-input.json` | Fragment schemas, component finalization, inventory fingerprint, completeness, and exact assessment-input receipt block. |
+| `edge:boundary_promotion` | assessment input, boundary candidates, optional prior model, and organization/repository boundary declarations | canonical `.trust-boundaries.json`, coverage/diagnostics, and per-component boundary slices | Promotion and schema checks block. Canonical boundaries are receipted for control analysis; component slices are later admitted by file presence. |
+| `edge:stride_dispatch_projection` | finalized components, control overlay, component selection, actor/boundary/index slices, deterministic signal sidecars, repository registry, taxonomy, and plugin lens selection | manifest, evidence bundles, taxonomy slices, and STRIDE jobs | Selection, schemas, containment, size limits, repository fingerprints, exact-byte receipts, and pre-dispatch rehashing block. Prior, known-threat, cross-repository, and requirements projections currently depend on pre-existing component slice files. |
+| `edge:stride_merge_projection` | selected `.stride-<component>.json` outputs plus deterministic findings | `.merge-candidates.json`, bounded merge review context, decisions, and `.threats-merged.json` | Wave verification and STRIDE schemas block. Empty candidates skip the semantic merger. Full candidates are rebound by hash after review. |
+| `edge:evidence_and_posture` | merged threats plus repository evidence and passive posture emitters | evidence verifier, guarded merged annotations, and triage inputs | Verifier selection is depth/cap bounded. Optional invalid summary degrades explicitly; canonical merged validation remains blocking. |
+| `edge:triage_and_synthesis` | merged threats, evidence verdicts, plugin severity/CVSS policy, deterministic ranking, and optional semantic repair | triage flags, tier root causes, mitigation overrides, and canonical YAML inputs | Rating validation blocks. Semantic fallback is exceptional. Accepted synthesis artifacts are schema-validated and consumed through exact-byte receipts. |
+| `edge:stage1_yaml_handoff` | all validated Phase 3-10b sidecars through `build_threat_model_yaml.py` and deterministic emitters | canonical `threat-model.yaml`, Stage 2, and later Stage 1d rebuild | YAML schema, mitigation quality, completeness, and checkpoint generation block. Stable IDs and report mutation remain deterministic. |
+| `edge:abuse_case_projection` | plugin, organization, and repository catalogs plus recon signals and canonical findings through `match_abuse_cases.py` | projected matches, per-case verifiers, verdict merge, finding promotion, ranking, and YAML rebuild | Match failures may retain partial candidates; fan-out overflow and configured release gates block. The current candidate action has no structured delivery receipts. |
+
+### Pinned gaps before shadow catalog work
+
+The inventory exposes these current contracts without repairing them in this
+slice:
+
+1. Action `input_artifacts` do not describe all semantic inputs for context,
+   recon, config, actors, controls, triage, or abuse-case verification.
+2. Context and recon Markdown are validated but not represented by exact-byte
+   dispatch receipts. Plugin lenses and several fixed policy files are also
+   selected without per-delivery hashes.
+3. Direct source reads by recon, config, architecture, controls, evidence,
+   triage helpers, and abuse verification are bounded by role-specific rules,
+   not one routing plan.
+4. Component prior-finding, known-threat, related-repository, and requirements
+   bundle inputs are admitted only when their legacy slice files already
+   exist. The context-v2 controller does not yet own every slice producer.
+5. Stage 1d uses candidate IDs and prompt aliases instead of the structured
+   semantic-role and artifact-receipt path used by context-v2 Stage 1a-1c.
+6. Runtime cleanup knows `.dispatch-context/`, `.taxonomy-slices/`, and
+   `.merge-context/`, but the future effective-plan artifact still needs an
+   explicit full/rebuild, diagnostic, packaging, checkpoint, and resume
+   contract.
+
+These gaps are migration inputs. None authorizes weakening an existing gate or
+changing delivery behavior while the catalog first runs in shadow mode.
 
 ## Model
 

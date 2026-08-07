@@ -794,7 +794,7 @@ Status as of 2026-08-07:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
-| WP5a | First focus/exclude contract-repair slice implemented and repository-tested | Inventory and pin the Stage-1 edges, then migrate the catalog before the comparison cohort |
+| WP5a | Focus/exclude repair complete; current Stage-1 semantic and deterministic edges inventoried and drift-pinned | Add the catalog schema, semantic validator, shadow resolver, and effective-plan schema before migrating one source at a time |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
 
@@ -806,7 +806,12 @@ focus, deterministic, selected, or cited evidence. The exact-byte bundle
 receipt carries the normalized decision, and the v2 consumer reads it only
 from the bundle. Path containment, symlink escape, unknown component, list
 limit, overlap, mandatory-evidence, dispatch, and freshness cases are covered.
-The Stage-1 edge inventory and context catalog have not started.
+The frozen Stage-1 inventory now covers all context-v2 semantic roles, the
+separate Stage-1d abuse verifier, deterministic projections, implicit prompt
+inputs, direct source reads, plugin-owned references, receipts, failure modes,
+and lifecycle effects. Drift tests bind the inventory to the current role
+registry and consumer contracts. The catalog schema, resolver, effective plan,
+and runtime migration have not started.
 
 The implemented WP0-WP5 scope includes:
 
