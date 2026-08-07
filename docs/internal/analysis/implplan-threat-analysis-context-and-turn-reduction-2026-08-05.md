@@ -794,7 +794,7 @@ Status as of 2026-08-07:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
-| WP5a | Focus/exclude repair complete; current Stage-1 semantic and deterministic edges inventoried and drift-pinned | Add the catalog schema, semantic validator, shadow resolver, and effective-plan schema before migrating one source at a time |
+| WP5a | Focus/exclude repair, Stage-1 edge inventory, human catalog, internal bindings, semantic validation, and shadow effective plan repository-tested | Migrate existing inputs one source at a time, then satisfy full reconstruction and bounded-projection exit gates |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
 
@@ -810,8 +810,25 @@ The frozen Stage-1 inventory now covers all context-v2 semantic roles, the
 separate Stage-1d abuse verifier, deterministic projections, implicit prompt
 inputs, direct source reads, plugin-owned references, receipts, failure modes,
 and lifecycle effects. Drift tests bind the inventory to the current role
-registry and consumer contracts. The catalog schema, resolver, effective plan,
-and runtime migration have not started.
+registry and consumer contracts.
+
+The completed shadow WP5a slice adds a human-readable catalog, separate
+plugin-owned bindings, schema and semantic validation, and a schema-validated
+shadow effective plan with an exact-byte receipt. The controller records context-v2
+actions without changing their dispatch inputs. Human assignments name the
+threat-modeling category, agent, required, optional, or forbidden delivery,
+optional-context importance, whole-run, current-component, or current-candidate
+target, and reason. Paths, schemas, models, commands, projectors, trust labels,
+and limits remain internal. The review removed unused component selectors and
+runtime migration status from the human surface.
+
+Source migration has not started. The current STRIDE manifest and
+related-repository registry remain whole-run inputs, prior findings remain an
+upstream source inside the component-evidence path, and the Stage-1d abuse-case
+verifier remains legacy. Migrate current role metadata, evidence bundles,
+taxonomy, lenses, and receipts before moving known threats, repositories,
+business context, boundaries, actors, requirements, prior findings, and abuse
+cases source by source.
 
 The implemented WP0-WP5 scope includes:
 

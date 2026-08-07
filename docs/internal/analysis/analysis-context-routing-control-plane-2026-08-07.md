@@ -1,7 +1,7 @@
 # Analysis — context routing control plane
 
 - Date: 2026-08-07
-- Status: Stage-1 edge inventory complete; shadow catalog implementation pending
+- Status: Stage-1 edge inventory and human-readable shadow catalog implemented; source migration pending
 - Parent plan:
   `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`
 
@@ -266,66 +266,56 @@ file.
 
 ## Core configuration
 
-Use one plugin-owned configuration as the source of truth for context elements,
-consumers, and routes. The exact filenames are an implementation decision, but
-the logical shape is:
+Keep the human decision surface separate from runtime implementation bindings.
+`data/context-routing-catalog.yaml` names categories, contexts, agents, and
+assignments in language an AppSec or engineering owner can review without
+reading controller code:
 
 ```yaml
-version: 1
+schema_version: 1
 
-context_elements:
-  threats.known.component_relevant:
-    producer: known_threat_resolver
-    artifact_schema: known-threat-projection-v1
-    scope: per_component
-    projector: known_threats_by_component_v1
-    trust: repository_untrusted
-    delivery: agent
-    limits:
-      max_items: 40
-      max_tokens: 3000
+categories:
+  - id: actors_and_abuse_cases
+    name: Actors and abuse cases
+    description: Human and system actors, privileges, attacker goals, abuse-case candidates, and verification evidence.
 
-  boundaries.adjacent:
-    producer: trust_boundary_resolver
-    artifact_schema: trust-boundary-projection-v1
-    scope: per_component
-    projector: adjacent_boundaries_v1
-    trust: generated_validated
-    delivery: both
+agents:
+  - id: stride_analyzer
+    name: STRIDE component analyst
+    purpose: Analyze one selected component from bounded evidence, taxonomy, and fixed lenses.
+    scope: one_component
+    stage: Threat analysis
 
-consumers:
-  stride_component_analyst:
-    phase: threat_analysis
-    scope: per_component
-    required:
-      - evidence.component
-      - boundaries.adjacent
-      - actors.interacting
-    forbidden:
-      - recon.complete_markdown
-      - architecture.complete_model
+contexts:
+  - id: controls.component_evidence
+    name: Component security evidence
+    category: security_controls_and_evidence
+    description: Bounded controls, gaps, deterministic signals, and source slices relevant to one component.
+    scope: one_component
 
-routes:
-  - id: stride-related-repository-evidence
-    consumer: stride_component_analyst
-    context: repositories.related.component_evidence
-    when:
-      component.related_repository_links: present
-    required: false
-    priority: high
-    on_missing: continue_with_diagnostic
-    on_invalid: abort
+assignments:
+  - id: stride-component-evidence
+    context: controls.component_evidence
+    agents: [stride_analyzer]
+    delivery: required
+    importance: essential
+    applies_to: current_component
+    reason: Each component analyst receives only its bounded and receipted security evidence.
 ```
 
-Projectors, producers, consumer IDs, instruction files, tools, commands, and
-write targets resolve only through plugin-owned allow-listed registries. The
-configuration must not duplicate the current semantic-role registry. Migrate
-that registry into the same authoritative model or generate one representation
-from the other.
+The human file deliberately has no schemas, paths, producers, projectors,
+models, commands, byte limits, token limits, or write targets. Those values
+live in `data/context-routing-bindings.json`, which is plugin-owned and binds
+the same IDs to closed registries and hard safety caps. The semantic validator
+requires the human and internal context and agent sets to match exactly, binds
+all context-v2 agents to the current semantic-role registry, and permits only
+the already inventoried abuse-case verifier on the Stage-1d legacy binding.
 
-## Selectors and extension layers
+## Future selectors and extension layers
 
-Routes may use bounded selectors over validated data:
+The first human catalog deliberately exposes no component-type, capability, or
+path selectors. A later trusted extension may add bounded selectors only after
+the resolver validates and enforces them over canonical data:
 
 - canonical component ID;
 - component type and tier;
@@ -340,10 +330,15 @@ Exact component IDs are target-specific and may change after architecture
 updates. The resolver must report unmatched and ambiguous selectors. Prefer
 stable semantic selectors when a project does not control component identity.
 
+The human target field remains limited to `whole_run`, `current_component`, and
+`current_candidate`. Runtime migration state and technical selection details
+remain outside the human catalog.
+
 Configuration has four trust layers:
 
-1. **Core plugin policy** defines mandatory contexts, consumers, projectors,
-   limits, forbidden deliveries, and failure behavior.
+1. **Core plugin policy** defines mandatory and forbidden human assignments;
+   its separate internal bindings define projectors, limits, and failure
+   behavior.
 2. **Packaged organization policy** may add schema-backed context sources,
    catalogs, assignments, and stricter limits.
 3. **Repository declarations** may contribute facts such as known threats,
@@ -352,9 +347,11 @@ Configuration has four trust layers:
 
 Repository declarations are untrusted data. They may not select agents,
 instructions, tools, commands, projectors, schemas, arbitrary paths, or write
-targets. They may not remove a mandatory context, relax a limit, downgrade a
-failure rule, or make imported prose executable. A new organization-defined
-context shape requires a trusted packaged schema and producer registration.
+targets. They may not remove a mandatory context, relax an internal limit,
+downgrade a failure rule, or make imported prose executable. A new
+organization-defined context shape requires a trusted packaged schema and
+internal producer binding; those technical settings never become parameters
+in the human assignment file.
 
 ## Effective routing plan
 
@@ -365,8 +362,9 @@ explicitly by contract.
 
 For every delivery, record:
 
-- run, action, consumer, dispatch-job, and application-component identity;
-- context-element ID and schema version;
+- run, action, named agent, dispatch-job, and application-component identity;
+- human category, context name, assignment, importance, and reason;
+- context-element ID and internal contract version;
 - producer and source artifact receipt;
 - deterministic projector and selector match reason;
 - trust and sensitivity class;
@@ -430,6 +428,13 @@ stride_component_analyst / auth-service
 9. Migrate incremental and resume only after full/rebuild parity.
 10. Run the controlled A/B cohort and consider default rollout only after the
     acceptance matrix passes.
+
+Steps 1-4 are implemented. The shadow resolver does not change dispatch
+inputs. The shared STRIDE manifest and related-repository registry remain
+whole-run inputs and are recorded as migration work rather than described as
+component projections. The abuse-case verifier remains on the inventoried
+Stage-1d legacy path. Per-source migration starts with existing role metadata,
+evidence bundles, taxonomy, lenses, and receipts.
 
 ## Exit gates
 

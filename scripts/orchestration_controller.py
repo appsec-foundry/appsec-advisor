@@ -55,6 +55,7 @@ PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import check_permissions  # noqa: E402
+import context_routing  # noqa: E402
 import detect_session_model  # noqa: E402
 import ensure_output_gitignore  # noqa: E402
 import merge_threats as merge_decision_contract  # noqa: E402
@@ -250,6 +251,8 @@ _FULL_INTERMEDIATE_NAMES = {
     ".run-issues-fixes.json",
     ".preserved-provenance.json",
     ".dispatch-waves.json",
+    ".context-routing-plan.json",
+    ".context-routing-plan.receipt.json",
     ".budget-critical",
     ".budget-warning",
     ".trust-boundary-assessment-input.json",
@@ -292,6 +295,8 @@ _REBUILD_NAMES = {
     ".recon-scanner.stdout",
     ".coverage-gaps.json",
     ".dispatch-waves.json",
+    ".context-routing-plan.json",
+    ".context-routing-plan.receipt.json",
     ".scan-manifest.txt",
     ".requirements.yaml",
     ".prior-findings-index.json",
@@ -750,6 +755,25 @@ def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]
 def _emit(action: dict[str, Any]) -> int:
     try:
         action = _validate_action(action)
+        if action.get("instruction_file") == str(THIN_STAGE1_V2_RUNTIME) and action.get("action") in {
+            "dispatch_agent",
+            "dispatch_parallel",
+        }:
+            try:
+                plan = context_routing.resolve_shadow_action(
+                    action,
+                    Path(action["dispatch_values"]["output_dir"]),
+                    semantic_roles=SEMANTIC_ROLE_REGISTRY,
+                    model_keys=SEMANTIC_ROLE_MODEL_KEYS,
+                    plugin_root=PLUGIN_ROOT,
+                )
+            except context_routing.ContextRoutingError as exc:
+                raise ControllerError(f"context routing shadow validation failed: {exc}") from exc
+            _append_event(
+                Path(action["dispatch_values"]["output_dir"]),
+                "CONTEXT_ROUTING_SHADOW",
+                f"revision={plan['revision']} actions={len(plan['actions'])} deliveries={len(plan['deliveries'])}",
+            )
     except ControllerError as exc:
         action = {
             "schema_version": 1,
@@ -2176,6 +2200,10 @@ def _recon_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
 def context_v2_begin(output_dir: Path) -> dict[str, Any]:
     """Run the Phase-1/2 pre-passes and return one bounded recon wave."""
     output_dir, cfg = _load_context_v2_config(output_dir)
+    try:
+        context_routing.reset_shadow_plan(output_dir)
+    except context_routing.ContextRoutingError as exc:
+        raise ControllerError(f"cannot reset context routing shadow plan: {exc}") from exc
     repo_root = Path(str(cfg.get("repo_root") or output_dir))
     receipts: list[str] = []
 

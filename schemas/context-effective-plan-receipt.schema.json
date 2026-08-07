@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/context-effective-plan-receipt.schema.json",
+  "title": "Exact-byte receipt for the effective context routing plan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_path",
+    "schema_id",
+    "sha256",
+    "record_count",
+    "validation_status"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "artifact_path": {"const": ".context-routing-plan.json"},
+    "schema_id": {"const": "schemas/context-effective-plan.schema.json#v1"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "record_count": {"type": "integer", "minimum": 1, "maximum": 4096},
+    "validation_status": {"const": "valid"}
+  },
+  "additionalProperties": false
+}

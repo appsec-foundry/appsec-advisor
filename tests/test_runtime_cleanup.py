@@ -149,6 +149,8 @@ NEVER_CLEANUP = {
     ".triage-flags.json",
     ".trust-boundary-diagnostics.json",
     ".trust-boundary-renumber.json",
+    ".context-routing-plan.json",
+    ".context-routing-plan.receipt.json",
     ".architect-review.md",
     ".requirements.yaml",
     ".appsec-cache",

@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/context-effective-plan.schema.json",
+  "title": "Effective Stage-1 context routing plan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "catalog_id",
+    "catalog_sha256",
+    "bindings_sha256",
+    "runtime_generation",
+    "run_key_sha256",
+    "revision",
+    "actions",
+    "deliveries",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "catalog_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "catalog_sha256": {"$ref": "#/$defs/sha256"},
+    "bindings_sha256": {"$ref": "#/$defs/sha256"},
+    "runtime_generation": {"const": "context-v2"},
+    "run_key_sha256": {"$ref": "#/$defs/sha256"},
+    "revision": {"type": "integer", "minimum": 1, "maximum": 4096},
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/action"}
+    },
+    "deliveries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {"$ref": "#/$defs/delivery"}
+    },
+    "diagnostics": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {"$ref": "#/$defs/diagnostic"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "action": {
+      "type": "object",
+      "required": ["action_id", "action_sha256", "action_type", "stage", "job_ids"],
+      "properties": {
+        "action_id": {"$ref": "#/$defs/identifier"},
+        "action_sha256": {"$ref": "#/$defs/sha256"},
+        "action_type": {"enum": ["dispatch_agent", "dispatch_parallel"]},
+        "stage": {"type": "string", "pattern": "^stage[0-9][A-Za-z0-9]*$", "maxLength": 32},
+        "job_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/identifier"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_receipt": {
+      "type": "object",
+      "required": ["sha256", "byte_count", "estimated_tokens", "item_count", "line_count", "validation_status"],
+      "properties": {
+        "artifact_path": {"$ref": "#/$defs/relative_path"},
+        "plugin_path": {"$ref": "#/$defs/relative_path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "byte_count": {"type": "integer", "minimum": 0, "maximum": 4194304},
+        "estimated_tokens": {"type": "integer", "minimum": 0, "maximum": 1048576},
+        "item_count": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "line_count": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "schema_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/#-]{0,255}$"
+        },
+        "validation_status": {
+          "enum": ["action_validated", "shadow_hashed", "plugin_owned", "scalar_canonical"]
+        }
+      },
+      "oneOf": [
+        {"required": ["artifact_path"]},
+        {"required": ["plugin_path"]},
+        {
+          "not": {
+            "anyOf": [
+              {"required": ["artifact_path"]},
+              {"required": ["plugin_path"]}
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "freshness": {
+      "type": "object",
+      "required": ["catalog_sha256", "bindings_sha256", "action_sha256"],
+      "properties": {
+        "catalog_sha256": {"$ref": "#/$defs/sha256"},
+        "bindings_sha256": {"$ref": "#/$defs/sha256"},
+        "action_sha256": {"$ref": "#/$defs/sha256"},
+        "source_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "delivery": {
+      "type": "object",
+      "required": [
+        "delivery_id",
+        "action_id",
+        "job_id",
+        "agent_id",
+        "agent_name",
+        "context_id",
+        "context_name",
+        "category_id",
+        "category_name",
+        "assignment_id",
+        "producer",
+        "projector",
+        "scope",
+        "applies_to",
+        "trust",
+        "sensitivity",
+        "delivery",
+        "importance",
+        "failure_behavior",
+        "reason",
+        "status",
+        "match_reason",
+        "disclosures",
+        "freshness"
+      ],
+      "properties": {
+        "delivery_id": {"$ref": "#/$defs/identifier"},
+        "action_id": {"$ref": "#/$defs/identifier"},
+        "job_id": {"$ref": "#/$defs/identifier"},
+        "agent_id": {"$ref": "#/$defs/identifier"},
+        "agent_name": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]+$"},
+        "component_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"},
+        "context_id": {"$ref": "#/$defs/identifier"},
+        "context_name": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]+$"},
+        "category_id": {"$ref": "#/$defs/identifier"},
+        "category_name": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]+$"},
+        "assignment_id": {"$ref": "#/$defs/identifier"},
+        "producer": {"$ref": "#/$defs/identifier"},
+        "projector": {"enum": ["identity_v1", "contract_only_v1", "plugin_registry_v1", "scalar_group_v1"]},
+        "scope": {"enum": ["whole_run", "one_component", "one_candidate"]},
+        "applies_to": {"enum": ["whole_run", "current_component", "current_candidate"]},
+        "trust": {
+          "enum": ["operator_validated", "repository_untrusted", "generated_validated", "plugin_owned"]
+        },
+        "sensitivity": {"enum": ["metadata", "source", "security_evidence"]},
+        "delivery": {"enum": ["required", "optional", "forbidden"]},
+        "importance": {"enum": ["essential", "supporting", "background"]},
+        "failure_behavior": {"enum": ["abort", "continue_with_diagnostic", "not_applicable"]},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\r\\n]+$"},
+        "status": {
+          "enum": [
+            "delivered",
+            "observed_implicit",
+            "observed_plugin_owned",
+            "observed_scalar",
+            "omitted_optional",
+            "legacy_unreceipted",
+            "forbidden"
+          ]
+        },
+        "match_reason": {"type": "string", "minLength": 1, "maxLength": 500},
+        "source_receipt": {"$ref": "#/$defs/source_receipt"},
+        "disclosures": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "none",
+              "optional-missing",
+              "legacy-unreceipted",
+              "forbidden-by-core",
+              "shadow-only"
+            ]
+          }
+        },
+        "freshness": {"$ref": "#/$defs/freshness"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": ["delivered", "observed_implicit", "observed_plugin_owned", "observed_scalar"]
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {"required": ["source_receipt"]}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": ["code", "action_id", "job_id", "agent_id", "context_id"],
+      "properties": {
+        "code": {
+          "enum": ["OPTIONAL_CONTEXT_ABSENT", "LEGACY_CONTEXT_UNRECEIPTED", "FORBIDDEN_CONTEXT_WITHHELD"]
+        },
+        "action_id": {"$ref": "#/$defs/identifier"},
+        "job_id": {"$ref": "#/$defs/identifier"},
+        "agent_id": {"$ref": "#/$defs/identifier"},
+        "context_id": {"$ref": "#/$defs/identifier"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

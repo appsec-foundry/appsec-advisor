@@ -59,7 +59,7 @@ required:
     category: file
 
   - entry: "Read(${PLUGIN_ROOT}/**)"
-    reason: "agents and scripts read plugin data files (schemas, templates, CWE taxonomy, etc.)"
+    reason: "agents and scripts read plugin data files, including schemas, templates, CWE taxonomy, and the human context catalog with its internal runtime bindings"
     category: file
 
   - entry: "Read(${HOME}/.claude/projects/**)"
@@ -79,7 +79,7 @@ required:
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"
-    reason: "agents and deterministic preparers write direct dotfile sidecars, including finalized components/data flows and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents and deterministic preparers write direct dotfile sidecars, including the effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/**)"

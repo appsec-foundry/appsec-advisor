@@ -25,9 +25,44 @@ the thin full/rebuild and rerender runtimes (the defaults; opt out with
 - Existing agents, phase groups, deterministic gates, renderer, QA, and
   cleanup remain authoritative for analysis and report quality.
 
-The action is not a persisted runtime sidecar. Rehydration reads existing
-`.skill-config.json`, checkpoints, validated phase artifacts, and status files.
-Therefore it adds no cleanup-whitelist or diagnostic-bundle entry.
+The action itself is not a persisted runtime sidecar. Rehydration reads
+existing `.skill-config.json`, checkpoints, validated phase artifacts, and
+status files.
+
+## Context routing shadow plan
+
+`data/context-routing-catalog.yaml` is the human-readable Stage-1 context
+configuration. It groups context into target and run, business and
+requirements, repository discovery, architecture, assets, and data flows,
+actors and abuse cases, trust boundaries, security controls and evidence,
+threat analysis, verification and risk, and prior-run identity. Each assignment
+names the context, the receiving agents, whether delivery is required,
+optional, or forbidden, its optional-context importance, its whole-run,
+current-component, or current-candidate target, and the reason. It deliberately
+contains no paths, schemas, producers, projectors, models, commands, byte
+limits, token limits, runtime migration switches, or unresolved selectors.
+
+`data/context-routing-bindings.json` is the plugin-owned implementation
+contract. It binds the human names to closed semantic roles, artifact
+contracts, paths, projectors, trust and sensitivity classes, and hard limits.
+Repository content cannot select or modify either execution surfaces or core
+required and forbidden assignments.
+
+For every emitted context-v2 semantic action, `scripts/context_routing.py`
+validates both files, binds them to the controller role registry, and appends a
+shadow-only decision to `.context-routing-plan.json`. The exact-byte
+`.context-routing-plan.receipt.json` detects plan mutation. The shadow resolver
+must explain every declared action input but does not add, remove, reorder, or
+replace any dispatch input. Existing implicit artifacts are hashed as
+`observed_implicit`; direct reads and unresolved plugin registries are marked
+`legacy_unreceipted`. Neither status represents migrated admission behavior.
+
+Both plan files are local audit artifacts. Successful runtime cleanup preserves
+them, while the next full or rebuild preflight removes them before a fresh plan
+is created. Context-v2 still has no incremental or resume path; stale catalog,
+binding, run, plan, or receipt bytes block rather than being carried forward.
+Diagnostic bundles include only their filename, byte count, and hash through
+the existing metadata inventory and never copy their contents.
 
 ## Context-v2 STRIDE admission
 

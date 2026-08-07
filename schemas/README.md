@@ -35,6 +35,10 @@ output template and validated at the same two boundaries through
 | `actors-repo.schema.yaml` | `<repo>/.appsec/actors.yaml` | analyzed team | `scripts/resolve_actors.py` |
 | `actors-discovered.schema.yaml` | `$OUTPUT_DIR/.actors-discovered.json` | `appsec-actor-discoverer` | `scripts/resolve_actors.py` |
 | `actors-resolved.schema.yaml` | `$OUTPUT_DIR/.actors-resolved.json` | `scripts/resolve_actors.py` | actor slicer, report composer, architect review |
+| `context-routing-catalog.schema.json` | `data/context-routing-catalog.yaml` | plugin maintainers | semantic validator and context-v2 shadow resolver |
+| `context-routing-bindings.schema.json` | `data/context-routing-bindings.json` | plugin maintainers | semantic validator and context-v2 shadow resolver |
+| `context-effective-plan.schema.json` | `$OUTPUT_DIR/.context-routing-plan.json` | `scripts/context_routing.py` | local audit and shadow migration diagnostics |
+| `context-effective-plan-receipt.schema.json` | `$OUTPUT_DIR/.context-routing-plan.receipt.json` | `scripts/context_routing.py` | exact-byte plan freshness validation |
 | `threat-summary.schema.json` | `<OUTPUT_DIR>/threat-summary.json` (when `--format json` or `both`) | `scripts/aggregate_threat_summary.py` | External dashboards / internal reporting jobs |
 
 ## Design notes

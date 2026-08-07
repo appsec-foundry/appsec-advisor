@@ -1,0 +1,674 @@
+schema_version: 1
+catalog_id: core-stage1-shadow-v1
+
+# Human review surface: threat-modeling categories, contexts, agents, and
+# routing decisions. Implementation and security mappings live separately.
+categories:
+  - id: target_and_run
+    name: Target and run
+    description: What is being assessed and which operator-selected run settings apply.
+  - id: business_and_requirements
+    name: Business context and requirements
+    description: Business purpose, security expectations, policies, requirements, and related project facts.
+  - id: repository_discovery
+    name: Repository discovery
+    description: Technologies, entry points, deployment surfaces, configuration, and other discovered repository
+      signals.
+  - id: architecture_and_data_flows
+    name: Architecture, assets, and data flows
+    description: Components, routes, assets, interfaces, relationships, and validated data-flow structure.
+  - id: actors_and_abuse_cases
+    name: Actors and abuse cases
+    description: Human and system actors, privileges, attacker goals, abuse-case candidates, and verification evidence.
+  - id: trust_boundaries
+    name: Trust boundaries
+    description: Boundary candidates, canonical boundaries, crossings, assumptions, and coverage decisions.
+  - id: security_controls_and_evidence
+    name: Security controls and evidence
+    description: Existing controls, control gaps, deterministic checks, source evidence, and bounded evidence samples.
+  - id: threat_analysis
+    name: Threat analysis
+    description: Threat hypotheses, STRIDE categories, analysis lenses, threat candidates, and consolidation decisions.
+  - id: verification_and_risk
+    name: Verification and risk
+    description: Evidence verdicts, severity and ranking decisions, triage state, and bounded synthesis requests.
+  - id: prior_runs_and_identity
+    name: Prior runs and identity
+    description: Stable finding identity, prior findings, accepted risk, baselines, and carry-forward state.
+
+# Names and purposes are written for AppSec and engineering reviewers.
+agents:
+  - id: context_resolver
+    name: Project context resolver
+    purpose: Resolve bounded business, policy, requirements, and related-repository context.
+    scope: whole_run
+    stage: Project context
+  - id: recon_scanner
+    name: Repository reconnaissance scanner
+    purpose: Discover repository technologies, entry points, deployment surfaces, and security signals.
+    scope: whole_run
+    stage: Repository discovery
+  - id: config_scanner
+    name: Configuration and infrastructure scanner
+    purpose: Inspect bounded configuration, infrastructure-as-code, container, and deployment surfaces.
+    scope: whole_run
+    stage: Configuration discovery
+  - id: actor_discoverer
+    name: Actor discoverer
+    purpose: Propose repository-specific actors from the validated static actor set and recon signals.
+    scope: whole_run
+    stage: Actor discovery
+  - id: architecture_analyst
+    name: Architecture analyst
+    purpose: Build the component, data-flow, asset, and attack-surface model.
+    scope: whole_run
+    stage: Architecture analysis
+  - id: trust_boundary_analyst
+    name: Trust-boundary analyst
+    purpose: Assess only the bounded deterministic trust-boundary handoff.
+    scope: whole_run
+    stage: Trust-boundary analysis
+  - id: control_analyst
+    name: Security-control analyst
+    purpose: Assess component controls and produce bounded per-component analysis guidance.
+    scope: whole_run
+    stage: Security-control analysis
+  - id: stride_analyzer
+    name: STRIDE component analyst
+    purpose: Analyze one selected component from bounded evidence, taxonomy, and fixed lenses.
+    scope: one_component
+    stage: Threat analysis
+  - id: threat_merger
+    name: Threat merge reviewer
+    purpose: Review bounded candidate groups without reading the complete architecture or source tree.
+    scope: whole_run
+    stage: Threat consolidation
+  - id: evidence_verifier
+    name: Evidence verifier
+    purpose: Verify a bounded sample of finding citations against repository evidence.
+    scope: whole_run
+    stage: Evidence verification
+  - id: triage_validator
+    name: Triage fallback validator
+    purpose: Repair triage only when deterministic ranking cannot complete.
+    scope: whole_run
+    stage: Risk triage
+  - id: post_stride_synthesizer
+    name: Post-STRIDE synthesizer
+    purpose: Synthesize only requested root-cause or mitigation decisions from validated threat inputs.
+    scope: whole_run
+    stage: Risk synthesis
+  - id: abuse_case_verifier
+    name: Abuse-case verifier
+    purpose: Verify one matched abuse case against bounded entry-point, sink, and control evidence.
+    scope: one_candidate
+    stage: Abuse-case verification
+
+# Runtime migration state is reported by effective-plan receipts and the
+# implementation plan; it is not a human routing choice.
+contexts:
+  - id: run.configuration
+    name: Resolved run configuration
+    category: target_and_run
+    description: Validated run choices and bounded operator inputs used by early analysis.
+    scope: whole_run
+  - id: run.assessment_depth
+    name: Assessment depth
+    category: target_and_run
+    description: Validated quick, standard, or thorough depth used to bound optional discovery and analysis effort.
+    scope: whole_run
+  - id: run.scan_manifest
+    name: Operator scan manifest
+    category: target_and_run
+    description: Optional file selection explicitly supplied by the operator for this run.
+    scope: whole_run
+  - id: business.project_context
+    name: Resolved project context
+    category: business_and_requirements
+    description: Bounded business purpose, architecture decisions, policy, and related-project facts treated as
+      data.
+    scope: whole_run
+  - id: business.context_sources
+    name: Project context source documents
+    category: business_and_requirements
+    description: Repository and organization documents used to derive business and security context.
+    scope: whole_run
+  - id: requirements.security
+    name: Resolved security requirements
+    category: business_and_requirements
+    description: Validated requirements selected from operator, organization, repository, or fallback policy.
+    scope: whole_run
+  - id: prior_run.findings
+    name: Prior findings and stable identity
+    category: prior_runs_and_identity
+    description: Prior canonical findings and identity anchors used for carry-forward and stable references.
+    scope: whole_run
+  - id: discovery.recon_patterns
+    name: Deterministic recon patterns
+    category: repository_discovery
+    description: Best-effort deterministic reconnaissance signals prepared before semantic discovery.
+    scope: whole_run
+  - id: discovery.repository_surface
+    name: Repository discovery surface
+    category: repository_discovery
+    description: Bounded direct reads used to discover technology, entry points, deployment, and security signals.
+    scope: whole_run
+  - id: discovery.scan_policy
+    name: Core scan policy
+    category: repository_discovery
+    description: Plugin-owned exclusions and output structure that constrain broad reconnaissance.
+    scope: whole_run
+  - id: discovery.config_checks
+    name: Configuration and IaC checks
+    category: repository_discovery
+    description: Plugin-owned checks, evidence requirements, mappings, and false-positive exclusions.
+    scope: whole_run
+  - id: discovery.config_surface
+    name: Configuration discovery surface
+    category: repository_discovery
+    description: Bounded selected configuration, infrastructure, container, and deployment files.
+    scope: whole_run
+  - id: discovery.recon_summary
+    name: Validated reconnaissance summary
+    category: repository_discovery
+    description: Bounded numbered summary of the discovered application and security surface.
+    scope: whole_run
+  - id: discovery.recon_signals
+    name: Structured reconnaissance signals
+    category: repository_discovery
+    description: Validated deployable-unit, exposure, actor, and capability signals.
+    scope: whole_run
+  - id: architecture.routes
+    name: Route inventory
+    category: architecture_and_data_flows
+    description: Deterministically extracted application routes and entry-point metadata.
+    scope: whole_run
+  - id: architecture.targeted_source
+    name: Targeted architecture source reads
+    category: architecture_and_data_flows
+    description: Bounded reads used to resolve architecture details absent from deterministic projections.
+    scope: whole_run
+  - id: architecture.components
+    name: Final application components
+    category: architecture_and_data_flows
+    description: Validated component identities, types, paths, technologies, exposure, and trust placement.
+    scope: whole_run
+  - id: architecture.coverage
+    name: Architecture coverage signals
+    category: architecture_and_data_flows
+    description: Deterministic architecture-control checks and coverage dispositions.
+    scope: whole_run
+  - id: architecture.complete_model
+    name: Complete shared architecture model
+    category: architecture_and_data_flows
+    description: Aggregate architecture context forbidden to focused consumers when bounded projections exist.
+    scope: whole_run
+  - id: actors.static
+    name: Static actor set
+    category: actors_and_abuse_cases
+    description: Validated default, organization, and repository actors available before semantic discovery.
+    scope: whole_run
+  - id: actors.resolved
+    name: Resolved actor set
+    category: actors_and_abuse_cases
+    description: Final actor identities and privileges after static and optional semantic discovery are merged.
+    scope: whole_run
+  - id: abuse_cases.matches
+    name: Matched abuse-case candidates
+    category: actors_and_abuse_cases
+    description: Bounded abuse-case candidates matched from plugin, organization, and repository catalogs.
+    scope: one_candidate
+  - id: abuse_cases.evidence
+    name: Abuse-case verification evidence
+    category: actors_and_abuse_cases
+    description: Bounded entry-point, sink, and control evidence used to verify one candidate.
+    scope: one_candidate
+  - id: trust_boundaries.assessment
+    name: Trust-boundary assessment handoff
+    category: trust_boundaries
+    description: Bounded deterministic component and flow projection for boundary assessment.
+    scope: whole_run
+  - id: trust_boundaries.canonical
+    name: Canonical trust boundaries
+    category: trust_boundaries
+    description: Validated promoted boundaries, crossings, assumptions, and coverage decisions.
+    scope: whole_run
+  - id: controls.analysis_source
+    name: Current control-analysis source context
+    category: security_controls_and_evidence
+    description: Targeted source and requirements reads still outside exact-byte action receipts during shadow rollout.
+    scope: whole_run
+  - id: controls.component_evidence
+    name: Component security evidence
+    category: security_controls_and_evidence
+    description: Bounded controls, gaps, deterministic signals, and source slices relevant to one component.
+    scope: one_component
+  - id: controls.sampled_evidence
+    name: Sampled finding evidence
+    category: security_controls_and_evidence
+    description: Bounded source windows selected from existing finding citations for verification.
+    scope: whole_run
+  - id: threats.dispatch_plan
+    name: Shared STRIDE dispatch manifest
+    category: threat_analysis
+    description: Current whole-run selection manifest; component projection remains a migration step.
+    scope: whole_run
+  - id: threats.component_taxonomy
+    name: Component threat taxonomy
+    category: threat_analysis
+    description: Bounded plugin-owned threat and CWE taxonomy selected for one component.
+    scope: one_component
+  - id: threats.related_repositories
+    name: Shared related-repository registry
+    category: threat_analysis
+    description: Optional whole-run mapping used to validate declared related-repository evidence; component projection
+      remains pending.
+    scope: whole_run
+  - id: threats.analysis_lenses
+    name: Applicable threat-analysis lenses
+    category: threat_analysis
+    description: Fixed plugin-owned technology and capability lenses selected from a closed registry.
+    scope: one_component
+  - id: threats.optional_discovery
+    name: Optional component discovery
+    category: threat_analysis
+    description: Existing component-local optional discovery that must not expand repository access.
+    scope: one_component
+  - id: threats.analysis_settings
+    name: Bounded component analysis policy
+    category: threat_analysis
+    description: Controller-selected analysis effort and evidence-sampling decisions for one component.
+    scope: one_component
+  - id: threats.merge_review
+    name: Merge review candidate groups
+    category: threat_analysis
+    description: Bounded candidate groups projected from the complete deterministic merge state.
+    scope: whole_run
+  - id: threats.merge_scope
+    name: Merge decision scope
+    category: threat_analysis
+    description: Group identifiers for which the merge reviewer must return decisions.
+    scope: whole_run
+  - id: threats.merged
+    name: Canonical merged threats
+    category: threat_analysis
+    description: Validated semantic and deterministic threats before evidence and triage updates.
+    scope: whole_run
+  - id: verification.triage_flags
+    name: Triage decisions
+    category: verification_and_risk
+    description: Validated ranking, severity, evidence, and review flags associated with merged threats.
+    scope: whole_run
+  - id: verification.triage_context
+    name: Current triage policy context
+    category: verification_and_risk
+    description: Existing policy and helper reads still outside exact-byte action receipts during shadow rollout.
+    scope: whole_run
+  - id: verification.synthesis_scope
+    name: Requested synthesis decisions
+    category: verification_and_risk
+    description: Bounded decision identifiers that constrain post-STRIDE synthesis.
+    scope: whole_run
+
+# Required and forbidden entries are core security policy. Extensions may make
+# policy stricter but may not weaken these decisions.
+assignments:
+  - id: run-config-for-early-analysis
+    context: run.configuration
+    agents:
+      - context_resolver
+      - recon_scanner
+      - config_scanner
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Early analysis must use the validated run settings and may not infer them from repository content.
+  - id: assessment-depth-for-bounded-discovery
+    context: run.assessment_depth
+    agents:
+      - config_scanner
+      - actor_discoverer
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Assessment depth bounds optional discovery work.
+  - id: scan-manifest-for-recon
+    context: run.scan_manifest
+    agents:
+      - recon_scanner
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: The manifest narrows discovery only when the operator explicitly provides it.
+  - id: business-context-sources
+    context: business.context_sources
+    agents:
+      - context_resolver
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Project documents provide bounded facts and remain untrusted data.
+  - id: security-requirements
+    context: requirements.security
+    agents:
+      - context_resolver
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Requirements enrich project context while the configured requirements fail mode remains authoritative.
+  - id: deterministic-recon-patterns
+    context: discovery.recon_patterns
+    agents:
+      - recon_scanner
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Deterministic patterns reduce broad discovery and retain the documented fallback.
+  - id: repository-discovery
+    context: discovery.repository_surface
+    agents:
+      - recon_scanner
+    delivery: optional
+    importance: background
+    applies_to: whole_run
+    reason: Recon may inspect bounded repository surfaces after deterministic inputs are considered.
+  - id: core-scan-policy
+    context: discovery.scan_policy
+    agents:
+      - recon_scanner
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Broad discovery must always apply plugin-owned exclusions and output structure.
+  - id: core-config-checks
+    context: discovery.config_checks
+    agents:
+      - config_scanner
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Configuration findings require plugin-owned checks and false-positive exclusions.
+  - id: configuration-discovery
+    context: discovery.config_surface
+    agents:
+      - config_scanner
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: The scanner may read only bounded configuration and infrastructure surfaces.
+  - id: static-actors-for-discovery
+    context: actors.static
+    agents:
+      - actor_discoverer
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Semantic actor discovery extends a validated set rather than replacing it.
+  - id: recon-summary-for-actors-and-architecture
+    context: discovery.recon_summary
+    agents:
+      - actor_discoverer
+      - architecture_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Actor and architecture decisions depend on the validated bounded reconnaissance summary.
+  - id: recon-signals-for-actors
+    context: discovery.recon_signals
+    agents:
+      - actor_discoverer
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Structured signals improve actor discovery and cache binding without replacing the static actor set.
+  - id: resolved-actors-for-architecture
+    context: actors.resolved
+    agents:
+      - architecture_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Architecture must use finalized actor identities and privileges.
+  - id: routes-for-architecture
+    context: architecture.routes
+    agents:
+      - architecture_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Deterministically extracted routes anchor attack-surface decisions.
+  - id: targeted-source-for-architecture
+    context: architecture.targeted_source
+    agents:
+      - architecture_analyst
+    delivery: optional
+    importance: background
+    applies_to: whole_run
+    reason: Targeted reads may resolve details absent from deterministic architecture inputs.
+  - id: bounded-boundary-handoff
+    context: trust_boundaries.assessment
+    agents:
+      - trust_boundary_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Boundary analysis receives only its validated deterministic assessment projection.
+  - id: components-for-control-analysis
+    context: architecture.components
+    agents:
+      - control_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Control overlays must reference finalized component identities.
+  - id: boundaries-for-control-analysis
+    context: trust_boundaries.canonical
+    agents:
+      - control_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Control analysis must use canonical promoted trust boundaries.
+  - id: coverage-for-control-analysis
+    context: architecture.coverage
+    agents:
+      - control_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Deterministic coverage signals must remain visible to control analysis.
+  - id: current-control-source-context
+    context: controls.analysis_source
+    agents:
+      - control_analyst
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Shadow mode records current targeted reads without claiming they are already projected or receipted.
+  - id: stride-dispatch-plan
+    context: threats.dispatch_plan
+    agents:
+      - stride_analyzer
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Each component analyst currently receives the validated shared manifest until a component projection
+      replaces it.
+  - id: stride-component-evidence
+    context: controls.component_evidence
+    agents:
+      - stride_analyzer
+    delivery: required
+    importance: essential
+    applies_to: current_component
+    reason: Each component analyst receives only its bounded and receipted security evidence.
+  - id: stride-component-taxonomy
+    context: threats.component_taxonomy
+    agents:
+      - stride_analyzer
+    delivery: required
+    importance: essential
+    applies_to: current_component
+    reason: Threat categories are selected by the plugin and cannot be supplied by repository content.
+  - id: stride-related-repositories
+    context: threats.related_repositories
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: The current shared registry is available only when a validated local relationship exists and still needs
+      component projection.
+  - id: stride-analysis-lenses
+    context: threats.analysis_lenses
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: Applicable lenses resolve only from the plugin-owned closed registry.
+  - id: stride-optional-discovery
+    context: threats.optional_discovery
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: background
+    applies_to: current_component
+    reason: Existing optional discovery remains component-local and may not expand repository access.
+  - id: stride-analysis-settings
+    context: threats.analysis_settings
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: Controller-selected settings explain the bounded analysis effort.
+  - id: bounded-merge-review
+    context: threats.merge_review
+    agents:
+      - threat_merger
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Merge review operates only on the bounded candidate projection.
+  - id: merge-decision-scope
+    context: threats.merge_scope
+    agents:
+      - threat_merger
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Decision identifiers constrain review to deterministic candidate groups.
+  - id: merged-threats-for-late-analysis
+    context: threats.merged
+    agents:
+      - evidence_verifier
+      - triage_validator
+      - post_stride_synthesizer
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Evidence verification, triage, and synthesis use the same validated canonical threat set.
+  - id: sampled-evidence-for-verification
+    context: controls.sampled_evidence
+    agents:
+      - evidence_verifier
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Verification may read only bounded windows selected from existing finding citations.
+  - id: optional-triage-flags-for-repair
+    context: verification.triage_flags
+    agents:
+      - triage_validator
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Failed deterministic ranking may or may not leave a usable triage sidecar.
+  - id: required-triage-flags-for-synthesis
+    context: verification.triage_flags
+    agents:
+      - post_stride_synthesizer
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Post-STRIDE synthesis requires validated final triage decisions.
+  - id: current-triage-context
+    context: verification.triage_context
+    agents:
+      - triage_validator
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Shadow mode records current policy and helper reads without claiming exact-byte delivery.
+  - id: requested-synthesis-scope
+    context: verification.synthesis_scope
+    agents:
+      - post_stride_synthesizer
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: The controller constrains synthesis to explicitly requested decisions.
+  - id: abuse-case-candidates
+    context: abuse_cases.matches
+    agents:
+      - abuse_case_verifier
+    delivery: required
+    importance: essential
+    applies_to: current_candidate
+    reason: Each verification job is constrained to a deterministically matched abuse-case candidate.
+  - id: abuse-case-evidence
+    context: abuse_cases.evidence
+    agents:
+      - abuse_case_verifier
+    delivery: optional
+    importance: supporting
+    applies_to: current_candidate
+    reason: Verification reads only bounded entry-point, sink, and control evidence relevant to the candidate.
+  - id: no-business-context-for-boundary-analysis
+    context: business.project_context
+    agents:
+      - trust_boundary_analyst
+    delivery: forbidden
+    importance: essential
+    applies_to: whole_run
+    reason: Boundary analysis must use only its bounded deterministic handoff.
+  - id: no-recon-summary-for-focused-analysis
+    context: discovery.recon_summary
+    agents:
+      - trust_boundary_analyst
+      - stride_analyzer
+      - post_stride_synthesizer
+    delivery: forbidden
+    importance: essential
+    applies_to: whole_run
+    reason: Focused agents receive narrower validated projections instead of the shared recon summary.
+  - id: no-business-context-for-focused-analysis
+    context: business.project_context
+    agents:
+      - stride_analyzer
+      - threat_merger
+      - triage_validator
+    delivery: forbidden
+    importance: essential
+    applies_to: whole_run
+    reason: Focused agents must not receive the complete shared project-context document.
+  - id: no-complete-architecture-for-focused-analysis
+    context: architecture.complete_model
+    agents:
+      - stride_analyzer
+      - threat_merger
+      - triage_validator
+    delivery: forbidden
+    importance: essential
+    applies_to: whole_run
+    reason: Focused agents use bounded component or decision projections instead of the complete architecture model.
+  - id: no-shared-prior-findings-for-stride
+    context: prior_run.findings
+    agents:
+      - stride_analyzer
+    delivery: forbidden
+    importance: essential
+    applies_to: whole_run
+    reason: The component analyst receives component-scoped prior findings through its evidence bundle and never
+      the whole-run index.

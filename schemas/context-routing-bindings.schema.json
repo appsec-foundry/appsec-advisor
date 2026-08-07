@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/context-routing-bindings.schema.json",
+  "title": "Plugin-owned context routing runtime bindings",
+  "type": "object",
+  "required": ["schema_version", "catalog_id", "limit_profiles", "trust_classes", "sensitivity_classes", "agents", "contexts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "catalog_id": {"$ref": "#/$defs/id"},
+    "limit_profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {"$ref": "#/$defs/limits"}
+    },
+    "trust_classes": {
+      "type": "object",
+      "required": ["operator_validated", "repository_untrusted", "generated_validated", "plugin_owned"],
+      "properties": {
+        "operator_validated": {"$ref": "#/$defs/id_list"},
+        "repository_untrusted": {"$ref": "#/$defs/id_list"},
+        "generated_validated": {"$ref": "#/$defs/id_list"},
+        "plugin_owned": {"$ref": "#/$defs/id_list"}
+      },
+      "additionalProperties": false
+    },
+    "sensitivity_classes": {
+      "type": "object",
+      "required": ["metadata", "source", "security_evidence"],
+      "properties": {
+        "metadata": {"$ref": "#/$defs/id_list"},
+        "source": {"$ref": "#/$defs/id_list"},
+        "security_evidence": {"$ref": "#/$defs/id_list"}
+      },
+      "additionalProperties": false
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/agent_binding"}
+    },
+    "contexts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/context_binding"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "maxLength": 128
+    },
+    "id_list": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/id"}
+    },
+    "agent_binding": {
+      "type": "object",
+      "required": ["id", "runtime", "agent_type", "limits"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "runtime": {"enum": ["context_v2", "stage1d_legacy"]},
+        "semantic_role": {"$ref": "#/$defs/id"},
+        "agent_type": {"type": "string", "pattern": "^appsec-[a-z0-9][a-z0-9-]{0,99}$"},
+        "model_setting": {"$ref": "#/$defs/id"}
+        ,"limits": {
+          "type": "object",
+          "required": ["max_contexts", "max_bytes"],
+          "properties": {
+            "max_contexts": {"type": "integer", "minimum": 1, "maximum": 64},
+            "max_bytes": {"type": "integer", "minimum": 1, "maximum": 16777216}
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"runtime": {"const": "context_v2"}}, "required": ["runtime"]},
+          "then": {"required": ["semantic_role", "model_setting"]}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["output_artifact", "plugin_artifact", "plugin_registry", "direct_source", "scalar"]},
+        "artifact_pattern": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/{\\}-]+$"
+        },
+        "plugin_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+        },
+        "scalar_fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "output_artifact"}}, "required": ["kind"]}, "then": {"required": ["artifact_pattern"]}},
+        {"if": {"properties": {"kind": {"const": "plugin_artifact"}}, "required": ["kind"]}, "then": {"required": ["plugin_path"]}},
+        {"if": {"properties": {"kind": {"const": "scalar"}}, "required": ["kind"]}, "then": {"required": ["scalar_fields"]}}
+      ],
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": ["max_bytes", "max_tokens", "max_items", "max_lines", "max_paths"],
+      "properties": {
+        "max_bytes": {"type": "integer", "minimum": 1, "maximum": 4194304},
+        "max_tokens": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "max_items": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "max_paths": {"type": "integer", "minimum": 1, "maximum": 1024}
+      },
+      "additionalProperties": false
+    },
+    "context_binding": {
+      "type": "object",
+      "required": ["id", "producer", "contract", "delivery", "projector", "source", "limit_profile", "depends_on"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "producer": {"$ref": "#/$defs/id"},
+        "contract": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/#-]{0,255}$"
+        },
+        "delivery": {"enum": ["declared", "implicit", "direct-source", "plugin-owned", "scalar"]},
+        "delivery_overrides": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {"$ref": "#/$defs/id"},
+          "additionalProperties": {"enum": ["declared", "implicit", "direct-source", "plugin-owned", "scalar"]}
+        },
+        "projector": {"enum": ["identity_v1", "contract_only_v1", "plugin_registry_v1", "scalar_group_v1"]},
+        "source": {"$ref": "#/$defs/source"},
+        "limit_profile": {"$ref": "#/$defs/id"},
+        "depends_on": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

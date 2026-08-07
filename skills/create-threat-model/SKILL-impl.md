@@ -1648,6 +1648,7 @@ Full run: discarding stale intermediate artifacts to avoid cross-contamination.
     .pre-render-repair-plan.json, .qa-repair-plan.json, .architect-repair-plan.json (stale repair signals)
     .stage-stats.jsonl, .run-issues.json, .run-issues-fixes.json (prior-run observability — must not bleed into this run's stats)
     .dispatch-waves.json (bounded STRIDE schedule and retry checkpoint)
+    .context-routing-plan.json, .context-routing-plan.receipt.json (prior context-v2 shadow audit)
     .budget-critical, .budget-warning (prior-session turn-budget signals)
     .trust-boundary-assessment-input.json, .trust-boundary-candidates.json (transient Stage-1b handoff)
   Preserved:
@@ -1672,6 +1673,7 @@ WIPED_COUNT=$(find . -maxdepth 1 \
      -o -name ".architect-repair-plan.json" \
      -o -name ".stage-stats.jsonl" -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \
      -o -name ".preserved-provenance.json" -o -name ".dispatch-waves.json" \
+     -o -name ".context-routing-plan.json" -o -name ".context-routing-plan.receipt.json" \
      -o -name ".budget-critical" -o -name ".budget-warning" \
      -o -name ".trust-boundary-assessment-input.json" \
      -o -name ".trust-boundary-candidates.json" \) \
