@@ -7,6 +7,7 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -25,6 +26,9 @@ MAX_SOURCE_SLICES = 24
 MAX_SLICE_LINES = 40
 MAX_CLASS_VALUES = 32
 MAX_VALUE_CHARS = 4096
+MAX_ROUTING_PATHS = 16
+MAX_ROUTING_PATH_CHARS = 500
+MAX_FOCUS_ENUM_ENTRIES = 100_000
 
 EVIDENCE_CLASSES = (
     "interfaces",
@@ -319,6 +323,83 @@ def _owned(component_paths: list[str], relative: str) -> bool:
     return False
 
 
+def _path_overlaps(left: str, right: str) -> bool:
+    """Return whether two normalized literal paths contain one another."""
+    return left == right or left.startswith(right + "/") or right.startswith(left + "/")
+
+
+def _normalize_routing_values(component: dict[str, Any], registry: dict[str, Path]) -> tuple[list[str], list[str]]:
+    """Normalize the compatibility string-or-list routing inputs at dispatch."""
+    component_id = component["component_id"]
+    paths_value = component.get("component_paths") or []
+    component_paths = [paths_value] if isinstance(paths_value, str) else [str(value) for value in paths_value]
+    repo_root = registry["primary"]
+
+    def normalize(name: str) -> list[str]:
+        raw = component.get(name)
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            values = raw.split(",")
+        elif isinstance(raw, list):
+            values = raw
+        else:
+            raise BundleError(f"{name} for {component_id} must be a string or list")
+        if not values or len(values) > MAX_ROUTING_PATHS:
+            raise BundleError(f"{name} for {component_id} exceeds the {MAX_ROUTING_PATHS}-path cap")
+
+        normalized: list[str] = []
+        for raw_value in values:
+            if not isinstance(raw_value, str):
+                raise BundleError(f"{name} for {component_id} contains a non-string path")
+            value = raw_value.strip().rstrip("/")
+            if not value or len(value) > MAX_ROUTING_PATH_CHARS:
+                raise BundleError(f"{name} for {component_id} contains an empty or oversized path")
+            if re.match(r"^(?:[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)", value):
+                raise BundleError(f"{name} for {component_id} contains an absolute path or URL")
+            if any(char in value for char in "*?[]{}!"):
+                raise BundleError(f"{name} for {component_id} must contain literal repository-relative paths")
+            resolved = _canonical_under(repo_root, value)
+            if not resolved.exists():
+                raise BundleError(f"{name} for {component_id} names a missing repository path: {value!r}")
+            if not (_owned(component_paths, value) or (resolved.is_dir() and _owned(component_paths, value + "/x"))):
+                raise BundleError(f"{name} for {component_id} is outside the component paths: {value!r}")
+            if value in normalized:
+                continue
+            if any(_path_overlaps(value, prior) for prior in normalized):
+                raise BundleError(f"{name} for {component_id} contains overlapping paths: {value!r}")
+            normalized.append(value)
+        return normalized
+
+    focus_paths = normalize("focus_paths")
+    exclude_paths = normalize("exclude_paths")
+    for focus in focus_paths:
+        for excluded in exclude_paths:
+            if _path_overlaps(focus, excluded):
+                raise BundleError(
+                    f"focus_paths and exclude_paths overlap for {component_id}: {focus!r} and {excluded!r}"
+                )
+    component["focus_paths"] = focus_paths
+    component["exclude_paths"] = exclude_paths
+    return focus_paths, exclude_paths
+
+
+def _referenced_primary_paths(value: Any) -> set[str]:
+    """Collect primary-repository file citations from already admitted evidence."""
+    found: set[str] = set()
+    if isinstance(value, dict):
+        candidate = value.get("file") or value.get("path")
+        repository_id = value.get("repository_id", "primary")
+        if isinstance(candidate, str) and repository_id == "primary":
+            found.add(candidate)
+        for child in value.values():
+            found.update(_referenced_primary_paths(child))
+    elif isinstance(value, list):
+        for child in value:
+            found.update(_referenced_primary_paths(child))
+    return found
+
+
 def _walk_signal_rows(value: Any, signal_kind: str) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     if isinstance(value, dict):
@@ -367,7 +448,7 @@ def _source_signals(
     output_dir: Path,
     component_paths: list[str],
     registry: dict[str, Path],
-) -> tuple[list[dict[str, Any]], list[Any], int]:
+) -> tuple[list[dict[str, Any]], list[Any], int, set[str]]:
     candidates: list[dict[str, Any]] = []
     for signal_kind, filename in SIGNAL_FILES:
         path = output_dir / filename
@@ -420,7 +501,131 @@ def _source_signals(
             continue
         retained.append(row)
         source_lines += span
-    return retained, summaries, len(ordered)
+    protected_paths = {row["path"] for row in normalized if row["repository_id"] == "primary"}
+    return retained, summaries, len(ordered), protected_paths
+
+
+def _focus_candidate_files(repo_root: Path, relative: str) -> tuple[list[str], bool]:
+    """Enumerate one literal focus path without following an escaping symlink."""
+    from scan_excludes import is_excluded, is_oversize
+
+    root_path = _canonical_under(repo_root, relative)
+    if root_path.is_file():
+        candidates = [root_path]
+        truncated = False
+    elif root_path.is_dir():
+        candidates = []
+        visited = 0
+        truncated = False
+        for dirpath, dirnames, filenames in os.walk(root_path, followlinks=False):
+            dirnames.sort()
+            filenames.sort()
+            visited += len(dirnames) + len(filenames)
+            if visited > MAX_FOCUS_ENUM_ENTRIES:
+                truncated = True
+                break
+            for filename in filenames:
+                candidates.append(Path(dirpath) / filename)
+    else:
+        candidates = []
+        truncated = False
+
+    retained: list[str] = []
+    for candidate in candidates:
+        candidate_relative = candidate.relative_to(repo_root).as_posix()
+        canonical = _canonical_under(repo_root, candidate_relative)
+        if not canonical.is_file() or is_excluded(candidate_relative) or is_oversize(canonical):
+            continue
+        retained.append(candidate_relative)
+    return sorted(dict.fromkeys(retained)), truncated
+
+
+def _focus_source_slices(
+    repo_root: Path,
+    focus_paths: list[str],
+    component_paths: list[str],
+    mandatory_slices: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Project focus paths into the remaining source-slice and line budgets."""
+    retained = list(mandatory_slices)
+    retained_keys = {
+        (row["repository_id"], row["path"], row["start_line"], row["end_line"], row["signal_kind"]) for row in retained
+    }
+    retained_files = {row["path"] for row in retained if row["repository_id"] == "primary"}
+    source_lines = sum(row["end_line"] - row["start_line"] + 1 for row in retained)
+    decisions: list[dict[str, Any]] = []
+
+    for focus_path in focus_paths:
+        files, enumeration_truncated = _focus_candidate_files(repo_root, focus_path)
+        if any(not _owned(component_paths, path) for path in files):
+            raise BundleError(f"focus path projection escapes component paths: {focus_path!r}")
+        projected: list[str] = []
+        omitted = 0
+        for relative in files:
+            if relative in retained_files:
+                projected.append(relative)
+                continue
+            path = _canonical_under(repo_root, relative)
+            try:
+                line_count = len(path.read_bytes().splitlines())
+            except OSError as exc:
+                raise BundleError(f"cannot read focus path projection {relative}: {exc}") from exc
+            if line_count < 1:
+                omitted += 1
+                continue
+            end_line = min(line_count, MAX_SLICE_LINES)
+            if len(retained) >= MAX_SOURCE_SLICES or source_lines + end_line > MAX_SOURCE_LINES:
+                omitted += 1
+                continue
+            row = {
+                "repository_id": "primary",
+                "path": relative,
+                "start_line": 1,
+                "end_line": end_line,
+                "signal_kind": "focus-path",
+                "content_sha256": _slice_hash(path, 1, end_line),
+            }
+            key = ("primary", relative, 1, end_line, "focus-path")
+            if key not in retained_keys:
+                retained.append(row)
+                retained_keys.add(key)
+                retained_files.add(relative)
+                source_lines += end_line
+            projected.append(relative)
+
+        if projected and (omitted or enumeration_truncated):
+            reason = "partially-projected"
+        elif projected:
+            reason = "projected"
+        elif enumeration_truncated:
+            reason = "enumeration-budget"
+        elif files:
+            reason = "source-budget"
+        else:
+            reason = "no-readable-files"
+        decisions.append(
+            {
+                "path": focus_path,
+                "status": "admitted" if projected else "omitted",
+                "reason": reason,
+                "candidate_files": len(files),
+                "projected_files": sorted(projected),
+                "omitted_files": omitted,
+                "enumeration_truncated": enumeration_truncated,
+            }
+        )
+
+    def focus_rank(row: dict[str, Any]) -> tuple[int, int, str, int, str]:
+        rank = len(focus_paths)
+        for index, focus_path in enumerate(focus_paths):
+            if row["repository_id"] == "primary" and (
+                row["path"] == focus_path or row["path"].startswith(focus_path + "/")
+            ):
+                rank = index
+                break
+        return rank, 0 if row["signal_kind"] == "focus-path" else 1, row["path"], row["start_line"], row["signal_kind"]
+
+    return sorted(retained, key=focus_rank), decisions
 
 
 def _truncation_rows(
@@ -476,6 +681,8 @@ def build_bundle(
     component_id = component["component_id"]
     paths_value = component.get("component_paths") or []
     component_paths = [paths_value] if isinstance(paths_value, str) else [str(value) for value in paths_value]
+    focus_paths = list(component.get("focus_paths") or [])
+    exclude_paths = list(component.get("exclude_paths") or [])
     path_original = len(component_paths)
     component_paths = sorted(dict.fromkeys(component_paths))[:32]
 
@@ -492,12 +699,34 @@ def build_bundle(
         except (OSError, json.JSONDecodeError) as exc:
             raise BundleError(f"validated component index is unreadable: {value}: {exc}") from exc
 
-    source_slices, signal_summaries, original_slice_count = _source_signals(
+    mandatory_slices, signal_summaries, original_slice_count, protected_paths = _source_signals(
         output_dir,
         component_paths,
         registry,
     )
     raw["recon_signals"].extend(signal_summaries)
+    for evidence_class in EVIDENCE_CLASSES:
+        protected_paths.update(_referenced_primary_paths(raw[evidence_class]))
+    normalized_protected: set[str] = set()
+    for relative in protected_paths:
+        try:
+            _canonical_under(registry["primary"], relative)
+        except BundleError:
+            continue
+        normalized_protected.add(relative.rstrip("/"))
+    for excluded in exclude_paths:
+        conflicts = sorted(path for path in normalized_protected if _path_overlaps(excluded, path))
+        if conflicts:
+            raise BundleError(
+                f"exclude_paths for {component_id} would hide mandatory or cited evidence: " + ", ".join(conflicts[:5])
+            )
+
+    source_slices, focus_decisions = _focus_source_slices(
+        registry["primary"],
+        focus_paths,
+        component_paths,
+        mandatory_slices,
+    )
 
     evidence: dict[str, list[dict[str, Any]]] = {}
     stats: dict[str, dict[str, int]] = {}
@@ -528,6 +757,18 @@ def build_bundle(
             "paths": component_paths,
         },
         "repository_state": repository_state,
+        "path_routing": {
+            "focus_paths": focus_paths,
+            "exclude_paths": exclude_paths,
+            "focus_admission": focus_decisions,
+            "exclude_application": [
+                {"path": path, "status": "applied", "scope": "optional-discovery-only"} for path in exclude_paths
+            ],
+            "protected_evidence_path_count": len(normalized_protected),
+            "protected_evidence_paths_sha256": hashlib.sha256(
+                _canonical_bytes(sorted(normalized_protected))
+            ).hexdigest(),
+        },
         "evidence": evidence,
         "source_slices": source_slices,
         "truncation": [],
@@ -548,13 +789,13 @@ def build_bundle(
                 "ordering_key": "lexical-path",
             }
         )
-    if original_slice_count > len(source_slices):
+    if original_slice_count > len(mandatory_slices):
         bundle["truncation"].append(
             {
                 "signal_class": "source_slices",
                 "original_count": original_slice_count,
-                "retained_count": len(source_slices),
-                "omitted_count": original_slice_count - len(source_slices),
+                "retained_count": len(mandatory_slices),
+                "omitted_count": original_slice_count - len(mandatory_slices),
                 "cap": MAX_SOURCE_SLICES,
                 "ordering_key": "repository-id,path,start-line,end-line,signal-kind",
             }
@@ -596,6 +837,8 @@ def validate_bundle_bytes(
     *,
     expected_component_id: str | None = None,
     expected_sha256: str | None = None,
+    expected_focus_paths: list[str] | None = None,
+    expected_exclude_paths: list[str] | None = None,
     excluded_root: Path | None = None,
 ) -> dict[str, Any]:
     if expected_sha256 and hashlib.sha256(payload).hexdigest() != expected_sha256:
@@ -611,6 +854,15 @@ def validate_bundle_bytes(
         raise BundleError(f"evidence bundle schema validation failed: {detail}")
     if expected_component_id and bundle["component"]["id"] != expected_component_id:
         raise BundleError("evidence-bundle component id does not match its dispatch entry")
+    routing = bundle.get("path_routing")
+    if not isinstance(routing, dict):
+        if expected_focus_paths or expected_exclude_paths:
+            raise BundleError("evidence-bundle path routing is missing for a routed dispatch entry")
+    else:
+        if expected_focus_paths is not None and routing.get("focus_paths") != expected_focus_paths:
+            raise BundleError("evidence-bundle focus paths do not match the dispatch entry")
+        if expected_exclude_paths is not None and routing.get("exclude_paths") != expected_exclude_paths:
+            raise BundleError("evidence-bundle exclude paths do not match the dispatch entry")
     if bundle["limits"]["serialized_bytes"] != len(payload):
         raise BundleError("evidence-bundle serialized byte count is stale")
     if bundle["limits"]["estimated_tokens"] != (len(payload) + 3) // 4:
@@ -662,6 +914,63 @@ def validate_bundle_bytes(
     for row in bundle["truncation"]:
         if row["original_count"] != row["retained_count"] + row["omitted_count"]:
             raise BundleError("evidence-bundle truncation counts are inconsistent")
+    if isinstance(routing, dict):
+        focus_paths = routing["focus_paths"]
+        exclude_paths = routing["exclude_paths"]
+        if [row["path"] for row in routing["focus_admission"]] != focus_paths:
+            raise BundleError("evidence-bundle focus admission receipt is incomplete or reordered")
+        if [row["path"] for row in routing["exclude_application"]] != exclude_paths:
+            raise BundleError("evidence-bundle exclude application receipt is incomplete or reordered")
+        component_paths = bundle["component"]["paths"]
+        for name, paths in (("focus_paths", focus_paths), ("exclude_paths", exclude_paths)):
+            for index, relative in enumerate(paths):
+                if relative != relative.strip().rstrip("/"):
+                    raise BundleError(f"evidence-bundle {name} is not normalized: {relative!r}")
+                if any(_path_overlaps(relative, prior) for prior in paths[:index]):
+                    raise BundleError(f"evidence-bundle {name} contains overlapping paths")
+                resolved = _canonical_under(registry["primary"], relative)
+                if not resolved.exists():
+                    raise BundleError(f"evidence-bundle {name} path is stale: {relative!r}")
+                if not (
+                    _owned(component_paths, relative)
+                    or (resolved.is_dir() and _owned(component_paths, relative + "/x"))
+                ):
+                    raise BundleError(f"evidence-bundle {name} escapes component paths: {relative!r}")
+        for focus in focus_paths:
+            if any(_path_overlaps(focus, excluded) for excluded in exclude_paths):
+                raise BundleError("evidence-bundle focus and exclude paths overlap")
+        for row in routing["focus_admission"]:
+            projected_files = row["projected_files"]
+            if row["candidate_files"] != len(projected_files) + row["omitted_files"]:
+                raise BundleError("evidence-bundle focus admission counts are inconsistent")
+            if (row["status"] == "admitted") != bool(projected_files):
+                raise BundleError("evidence-bundle focus admission status is inconsistent")
+            expected_reason = (
+                "partially-projected"
+                if projected_files and (row["omitted_files"] or row["enumeration_truncated"])
+                else "projected"
+                if projected_files
+                else "enumeration-budget"
+                if row["enumeration_truncated"]
+                else "source-budget"
+                if row["candidate_files"]
+                else "no-readable-files"
+            )
+            if row["reason"] != expected_reason:
+                raise BundleError("evidence-bundle focus admission reason is inconsistent")
+            if any(path != row["path"] and not path.startswith(row["path"] + "/") for path in projected_files):
+                raise BundleError("evidence-bundle focus receipt projects a file outside its focus path")
+        projected = {path for row in routing["focus_admission"] for path in row["projected_files"]}
+        slice_paths = {row["path"] for row in bundle["source_slices"] if row["repository_id"] == "primary"}
+        if not projected.issubset(slice_paths):
+            raise BundleError("evidence-bundle focus receipt names a source file without an admitted slice")
+        if any(
+            _path_overlaps(excluded, row["path"])
+            for excluded in exclude_paths
+            for row in bundle["source_slices"]
+            if row["repository_id"] == "primary"
+        ):
+            raise BundleError("evidence-bundle exclude path overlaps admitted source evidence")
     return bundle
 
 
@@ -671,6 +980,8 @@ def validate_bundle(
     *,
     expected_component_id: str | None = None,
     expected_sha256: str | None = None,
+    expected_focus_paths: list[str] | None = None,
+    expected_exclude_paths: list[str] | None = None,
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
     try:
@@ -682,6 +993,8 @@ def validate_bundle(
         registry,
         expected_component_id=expected_component_id,
         expected_sha256=expected_sha256,
+        expected_focus_paths=expected_focus_paths,
+        expected_exclude_paths=expected_exclude_paths,
         excluded_root=output_dir,
     )
 
@@ -701,6 +1014,7 @@ def build_all(
         if not isinstance(component_id, str) or component_id in seen:
             raise BundleError(f"invalid or duplicate component id: {component_id!r}")
         seen.add(component_id)
+        _normalize_routing_values(component, registry)
         bundle, payload = build_bundle(output_dir, component, registry)
         bundle_dir = output_dir / ".dispatch-context" / component_id
         bundle_dir.mkdir(parents=True, exist_ok=True)

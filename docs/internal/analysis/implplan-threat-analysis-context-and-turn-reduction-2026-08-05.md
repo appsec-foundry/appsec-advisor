@@ -660,6 +660,47 @@ invocation and its producer or schema blockers are closed. Fix the existing
 `focus_paths`/`exclude_paths` delivery gap first, then inventory and pin every
 current Stage-1 producer-consumer edge before changing admission behavior.
 
+The first implementation slice is fixed and must complete before catalog
+scaffolding begins:
+
+1. Trace and test the existing path from the control-analyst producer and
+   `stride-analyst-context` schema through the STRIDE dispatch manifest to the
+   evidence-bundle builder, bundle schema, thin runtime, and v2 STRIDE
+   consumer. The current loss occurs after manifest construction: live
+   component `focus_paths` survive into the manifest but do not enter the
+   evidence bundle or v2 consumer admission.
+2. Define one normalized, bounded, repository-relative representation for both
+   fields. Compatibility input may remain string-or-list during migration, but
+   the deterministic boundary must reject empty values, absolute paths,
+   traversal, repository or symlink escape, invalid component references, and
+   over-limit path collections before dispatch.
+3. Treat focus paths as component-scoped prioritization inputs, not additional
+   read permission. Admit their bounded source projections before optional
+   broad discovery, record every admitted or omitted path in the bundle
+   receipt, and retain the existing component, repository-registry, freshness,
+   and byte limits.
+4. Treat exclude paths only as component-local suppression of optional broad
+   discovery. They must not suppress a focus path, a mandatory deterministic
+   signal, an already selected or cited evidence file, a contracted receipt,
+   or any other component's inputs. A conflict fails validation instead of
+   silently hiding evidence.
+5. Carry the normalized routing decision through the evidence-bundle schema
+   and exact-byte receipt. Do not inline source files or complete shared
+   artifacts into the dispatch prompt; the v2 consumer continues to read only
+   its bounded bundle and plugin-owned references.
+6. Add producer, schema, manifest, bundle, dispatch, path-containment, limit,
+   conflict, stale-input, and negative security tests. Use neutral fixtures and
+   cover absolute paths, traversal, symlink escape, unknown components,
+   oversized lists, focus/exclude overlap, and attempts to exclude mandatory
+   evidence.
+
+This slice exits only when a valid focus path measurably changes bounded bundle
+admission, a valid exclude path affects only optional discovery, all decisions
+are reconstructable from receipts, and neither field can widen repository
+access or hide mandatory evidence. It is a contract repair, not the context
+catalog migration itself. After it passes, inventory the current Stage-1 edges
+and pin their behavior before introducing the catalog resolver in shadow form.
+
 Add:
 
 - the plugin-owned context catalog and its schema;
@@ -753,9 +794,19 @@ Status as of 2026-08-07:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
-| WP5a | Entry gate satisfied; implementation not started | Implement and migrate the Stage-1 context catalog before the comparison cohort |
+| WP5a | First focus/exclude contract-repair slice implemented and repository-tested | Inventory and pin the Stage-1 edges, then migrate the catalog before the comparison cohort |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
+
+The first WP5a slice now normalizes bounded literal repository-relative focus
+and exclude paths at the deterministic manifest-to-bundle boundary. Focus
+paths admit receipted source projections before optional discovery; exclude
+paths affect only component-local optional discovery and fail on overlap with
+focus, deterministic, selected, or cited evidence. The exact-byte bundle
+receipt carries the normalized decision, and the v2 consumer reads it only
+from the bundle. Path containment, symlink escape, unknown component, list
+limit, overlap, mandatory-evidence, dispatch, and freshness cases are covered.
+The Stage-1 edge inventory and context catalog have not started.
 
 The implemented WP0-WP5 scope includes:
 

@@ -646,6 +646,17 @@ def test_builder_merges_analyst_context(tmp_path):
     assert be["interfaces"] == "REST /api" and be["controls"] == "JWT (unsafe)"
 
 
+def test_builder_carries_compatibility_routing_inputs_to_deterministic_boundary(tmp_path):
+    _seed_output_dir(tmp_path)
+    ctx = {"backend-api": {"focus_paths": "routes/auth.ts", "exclude_paths": ["routes/generated"]}}
+
+    manifest = bm.build(tmp_path, "standard", ctx, PLUGIN_ROOT)
+    backend = next(component for component in manifest["components"] if component["component_id"] == "backend-api")
+
+    assert backend["focus_paths"] == "routes/auth.ts"
+    assert backend["exclude_paths"] == ["routes/generated"]
+
+
 def test_builder_trust_boundary_scoped_per_component(tmp_path):
     _seed_output_dir(tmp_path)
     manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)

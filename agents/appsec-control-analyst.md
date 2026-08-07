@@ -64,6 +64,13 @@ value from `.skill-config.json`. Each component object may contain only
 `known_llm_patterns`, `supply_chain_findings`, `estimated_threat_count`,
 `focus_paths`, and `exclude_paths` as defined by the schema.
 
+Write `focus_paths` and `exclude_paths` only as literal repository-relative
+file or directory paths already owned by that component. Use `focus_paths` to
+prioritize source that should enter the bounded bundle. Use `exclude_paths`
+only to suppress optional broad discovery; never name a focus path, evidence
+citation, deterministic signal, output artifact, receipt, another component,
+absolute path, traversal, symlink, or glob.
+
 ## Producer contract gate
 
 Immediately after writing both artifacts, use one Bash tool call:

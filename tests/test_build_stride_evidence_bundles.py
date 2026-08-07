@@ -90,6 +90,236 @@ def test_build_all_emits_bounded_valid_component_bundle(tmp_path):
     assert parsed["evidence"]["interfaces"][0]["value"] == "POST /login"
 
 
+def test_focus_path_is_normalized_and_changes_bounded_admission(tmp_path):
+    repo, output = _repo(tmp_path)
+    focused = repo / "src" / "priority.py"
+    focused.write_text("def priority():\n    return True\n", encoding="utf-8")
+
+    baseline = bundles.build_all(output, repo, _manifest(_component()))
+    baseline_bundle = json.loads((output / baseline["components"][0]["evidence_bundle_path"]).read_text())
+    assert baseline_bundle["source_slices"] == []
+
+    manifest = bundles.build_all(
+        output,
+        repo,
+        _manifest(_component(focus_paths="  src/priority.py  ")),
+    )
+    component = manifest["components"][0]
+    bundle = json.loads((output / component["evidence_bundle_path"]).read_text())
+
+    assert component["focus_paths"] == ["src/priority.py"]
+    assert component["exclude_paths"] == []
+    assert bundle["source_slices"][0]["path"] == "src/priority.py"
+    assert bundle["source_slices"][0]["signal_kind"] == "focus-path"
+    assert bundle["path_routing"]["focus_admission"] == [
+        {
+            "path": "src/priority.py",
+            "status": "admitted",
+            "reason": "projected",
+            "candidate_files": 1,
+            "projected_files": ["src/priority.py"],
+            "omitted_files": 0,
+            "enumeration_truncated": False,
+        }
+    ]
+
+
+def test_focus_receipt_discloses_source_budget_omissions(tmp_path):
+    repo, output = _repo(tmp_path)
+    for index in range(bundles.MAX_SOURCE_SLICES + 2):
+        (repo / "src" / f"file-{index:02d}.py").write_text("value = 1\n", encoding="utf-8")
+
+    manifest = bundles.build_all(output, repo, _manifest(_component(focus_paths=["src"])))
+    bundle = json.loads((output / manifest["components"][0]["evidence_bundle_path"]).read_text())
+    receipt = bundle["path_routing"]["focus_admission"][0]
+
+    assert len(bundle["source_slices"]) == bundles.MAX_SOURCE_SLICES
+    assert receipt["status"] == "admitted"
+    assert receipt["reason"] == "partially-projected"
+    assert receipt["candidate_files"] == bundles.MAX_SOURCE_SLICES + 3
+    assert len(receipt["projected_files"]) == bundles.MAX_SOURCE_SLICES
+    assert receipt["omitted_files"] == 3
+
+
+def test_exclude_path_is_receipted_without_removing_bundle_evidence(tmp_path):
+    repo, output = _repo(tmp_path)
+    optional = repo / "src" / "optional"
+    optional.mkdir()
+    (optional / "helper.py").write_text("value = 1\n", encoding="utf-8")
+    _write_signal(output)
+
+    manifest = bundles.build_all(output, repo, _manifest(_component(exclude_paths="src/optional")))
+    component = manifest["components"][0]
+    bundle = json.loads((output / component["evidence_bundle_path"]).read_text())
+
+    assert component["exclude_paths"] == ["src/optional"]
+    assert bundle["source_slices"][0]["path"] == "src/app.py"
+    assert bundle["path_routing"]["exclude_application"] == [
+        {"path": "src/optional", "status": "applied", "scope": "optional-discovery-only"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("focus_paths", "", "empty or oversized"),
+        ("focus_paths", "/etc", "unsafe repository-relative"),
+        ("focus_paths", "https://example.invalid/source.py", "absolute path or URL"),
+        ("focus_paths", "../outside.py", "unsafe repository-relative"),
+        ("focus_paths", "src/*.py", "literal repository-relative"),
+        ("exclude_paths", ["src/app.py"] * 17, "16-path cap"),
+    ],
+)
+def test_routing_rejects_empty_unsafe_glob_and_oversized_inputs(tmp_path, field, value, message):
+    repo, output = _repo(tmp_path)
+    with pytest.raises(bundles.BundleError, match=message):
+        bundles.build_all(output, repo, _manifest(_component(**{field: value})))
+
+
+def test_routing_rejects_path_outside_component_scope(tmp_path):
+    repo, output = _repo(tmp_path)
+    other = repo / "other.py"
+    other.write_text("value = 1\n", encoding="utf-8")
+    with pytest.raises(bundles.BundleError, match="outside the component paths"):
+        bundles.build_all(output, repo, _manifest(_component(focus_paths=["other.py"])))
+
+
+def test_focus_receipt_discloses_enumeration_limit(tmp_path, monkeypatch):
+    repo, output = _repo(tmp_path)
+    monkeypatch.setattr(bundles, "MAX_FOCUS_ENUM_ENTRIES", 0)
+
+    manifest = bundles.build_all(output, repo, _manifest(_component(focus_paths=["src"])))
+    bundle = json.loads((output / manifest["components"][0]["evidence_bundle_path"]).read_text())
+    receipt = bundle["path_routing"]["focus_admission"][0]
+
+    assert receipt["status"] == "omitted"
+    assert receipt["reason"] == "enumeration-budget"
+    assert receipt["enumeration_truncated"] is True
+
+
+def test_routing_rejects_symlink_escape(tmp_path):
+    repo, output = _repo(tmp_path)
+    outside = tmp_path / "outside.py"
+    outside.write_text("secret\n", encoding="utf-8")
+    (repo / "src" / "linked.py").symlink_to(outside)
+    with pytest.raises(bundles.BundleError, match="escapes registered repository root"):
+        bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/linked.py"])))
+
+
+def test_routing_rejects_focus_exclude_overlap(tmp_path):
+    repo, output = _repo(tmp_path)
+    with pytest.raises(bundles.BundleError, match="focus_paths and exclude_paths overlap"):
+        bundles.build_all(
+            output,
+            repo,
+            _manifest(_component(focus_paths=["src/app.py"], exclude_paths=["src"])),
+        )
+
+
+def test_exclude_rejects_mandatory_deterministic_signal(tmp_path):
+    repo, output = _repo(tmp_path)
+    _write_signal(output)
+    with pytest.raises(bundles.BundleError, match="hide mandatory or cited evidence"):
+        bundles.build_all(output, repo, _manifest(_component(exclude_paths=["src/app.py"])))
+
+
+def test_exclude_rejects_already_cited_index_evidence(tmp_path):
+    repo, output = _repo(tmp_path)
+    context = output / ".dispatch-context" / "backend-api"
+    context.mkdir(parents=True)
+    prior = context / "prior-findings.json"
+    prior.write_text(json.dumps([{"id": "F-001", "evidence": {"file": "src/app.py", "line": 1}}]))
+    component = _component(exclude_paths=["src/app.py"])
+    component["index_paths"]["prior_findings"] = ".dispatch-context/backend-api/prior-findings.json"
+
+    with pytest.raises(bundles.BundleError, match="hide mandatory or cited evidence"):
+        bundles.build_all(output, repo, _manifest(component))
+
+
+def test_bundle_rejects_manifest_routing_drift(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/app.py"])))
+    component = manifest["components"][0]
+    bundle_path = output / component["evidence_bundle_path"]
+
+    with pytest.raises(bundles.BundleError, match="focus paths do not match"):
+        bundles.validate_bundle(
+            bundle_path,
+            {"primary": repo},
+            expected_sha256=component["evidence_bundle_sha256"],
+            expected_focus_paths=[],
+            expected_exclude_paths=[],
+            output_dir=output,
+        )
+
+
+def test_focus_projection_becomes_stale_when_source_changes(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/app.py"])))
+    component = manifest["components"][0]
+    bundle_path = output / component["evidence_bundle_path"]
+    (repo / "src" / "app.py").write_text("def login(user):\n    return None\n", encoding="utf-8")
+
+    with pytest.raises(bundles.BundleError, match="stale for repository|source slice changed"):
+        bundles.validate_bundle(
+            bundle_path,
+            {"primary": repo},
+            expected_sha256=component["evidence_bundle_sha256"],
+            expected_focus_paths=["src/app.py"],
+            expected_exclude_paths=[],
+            output_dir=output,
+        )
+
+
+def test_bundle_rejects_inconsistent_focus_receipt(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/app.py"])))
+    bundle_path = output / manifest["components"][0]["evidence_bundle_path"]
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    bundle["path_routing"]["focus_admission"][0]["omitted_files"] = 1
+    payload = bundles._render_bundle(bundle)
+
+    with pytest.raises(bundles.BundleError, match="focus admission counts are inconsistent"):
+        bundles.validate_bundle_bytes(payload, {"primary": repo}, excluded_root=output)
+
+
+def test_unrouted_v1_bundle_remains_resume_compatible(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(output, repo, _manifest())
+    bundle_path = output / manifest["components"][0]["evidence_bundle_path"]
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    bundle.pop("path_routing")
+    payload = bundles._render_bundle(bundle)
+
+    parsed = bundles.validate_bundle_bytes(
+        payload,
+        {"primary": repo},
+        expected_focus_paths=[],
+        expected_exclude_paths=[],
+        excluded_root=output,
+    )
+
+    assert "path_routing" not in parsed
+
+
+def test_routed_dispatch_rejects_legacy_bundle_without_routing_receipt(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(output, repo, _manifest())
+    bundle_path = output / manifest["components"][0]["evidence_bundle_path"]
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    bundle.pop("path_routing")
+    payload = bundles._render_bundle(bundle)
+
+    with pytest.raises(bundles.BundleError, match="path routing is missing"):
+        bundles.validate_bundle_bytes(
+            payload,
+            {"primary": repo},
+            expected_focus_paths=["src/app.py"],
+            expected_exclude_paths=[],
+            excluded_root=output,
+        )
+
+
 def test_bundle_discloses_per_class_and_value_truncation(tmp_path):
     repo, output = _repo(tmp_path)
     values = [f"route-{index}" for index in range(40)] + ["x" * 5000]

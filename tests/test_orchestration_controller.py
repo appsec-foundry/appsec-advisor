@@ -1830,12 +1830,23 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
                 bundle_dir.mkdir(parents=True)
                 bundle_path = bundle_dir / "evidence-bundle.json"
                 bundle_path.write_text(
-                    json.dumps({"component": {"id": component_id}, "source_slices": []}),
+                    json.dumps(
+                        {
+                            "component": {"id": component_id},
+                            "path_routing": {
+                                "focus_paths": [f"src/{component_id}"],
+                                "exclude_paths": [],
+                            },
+                            "source_slices": [],
+                        }
+                    ),
                     encoding="utf-8",
                 )
                 components.append(
                     {
                         "component_id": component_id,
+                        "focus_paths": [f"src/{component_id}"],
+                        "exclude_paths": [],
                         "evidence_bundle_path": f".dispatch-context/{component_id}/evidence-bundle.json",
                         "cheap_stride": component_id == "worker",
                     }
@@ -1867,6 +1878,11 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     assert [job["analysis_depth"] for job in action["dispatch_jobs"]] == ["full", "light"]
     assert all(job["taxonomy_slice_sha256"] == "a" * 64 for job in action["dispatch_jobs"])
     assert all(job["taxonomy_slice_path"] in job["input_artifacts"] for job in action["dispatch_jobs"])
+    assert all("focus_paths" not in job and "exclude_paths" not in job for job in action["dispatch_jobs"])
+    assert all(
+        f".dispatch-context/{job['component_id']}/evidence-bundle.json" in job["input_artifacts"]
+        for job in action["dispatch_jobs"]
+    )
     assert all(
         job["unresolved_decision_keys"] == ["stride:S", "stride:T", "stride:R", "stride:I", "stride:D", "stride:E"]
         for job in action["dispatch_jobs"]
@@ -2109,6 +2125,38 @@ def test_context_v2_analyst_context_rejects_unknown_component_id(tmp_path):
     )
 
     with pytest.raises(controller.ControllerError, match="unknown component IDs: invented-service"):
+        controller._validate_context_v2_analyst_context(output)
+
+
+def test_context_v2_analyst_context_rejects_oversized_routing_list(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "api"}]}),
+        encoding="utf-8",
+    )
+    (output / ".stride-analyst-context.json").write_text(
+        json.dumps({"api": {"focus_paths": [f"src/file-{index}.py" for index in range(17)]}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="stride-analyst-context-v1 validation failed"):
+        controller._validate_context_v2_analyst_context(output)
+
+
+def test_context_v2_analyst_context_rejects_blank_routing_path(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "api"}]}),
+        encoding="utf-8",
+    )
+    (output / ".stride-analyst-context.json").write_text(
+        json.dumps({"api": {"exclude_paths": ["   "]}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="stride-analyst-context-v1 validation failed"):
         controller._validate_context_v2_analyst_context(output)
 
 

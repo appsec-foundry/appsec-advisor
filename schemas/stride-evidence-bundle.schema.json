@@ -54,6 +54,77 @@
         "additionalProperties": false
       }
     },
+    "path_routing": {
+      "type": "object",
+      "required": [
+        "focus_paths",
+        "exclude_paths",
+        "focus_admission",
+        "exclude_application",
+        "protected_evidence_path_count",
+        "protected_evidence_paths_sha256"
+      ],
+      "properties": {
+        "focus_paths": { "$ref": "#/$defs/routing_path_array" },
+        "exclude_paths": { "$ref": "#/$defs/routing_path_array" },
+        "focus_admission": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "status",
+              "reason",
+              "candidate_files",
+              "projected_files",
+              "omitted_files",
+              "enumeration_truncated"
+            ],
+            "properties": {
+              "path": { "$ref": "#/$defs/routing_path" },
+              "status": { "enum": ["admitted", "omitted"] },
+              "reason": {
+                "enum": [
+                  "projected",
+                  "partially-projected",
+                  "enumeration-budget",
+                  "source-budget",
+                  "no-readable-files"
+                ]
+              },
+              "candidate_files": { "type": "integer", "minimum": 0, "maximum": 100000 },
+              "projected_files": {
+                "type": "array",
+                "maxItems": 24,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/routing_path" }
+              },
+              "omitted_files": { "type": "integer", "minimum": 0, "maximum": 100000 },
+              "enumeration_truncated": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "exclude_application": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["path", "status", "scope"],
+            "properties": {
+              "path": { "$ref": "#/$defs/routing_path" },
+              "status": { "const": "applied" },
+              "scope": { "const": "optional-discovery-only" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "protected_evidence_path_count": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "protected_evidence_paths_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
     "evidence": {
       "type": "object",
       "required": [
@@ -147,6 +218,20 @@
     }
   },
   "$defs": {
+    "routing_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "not": {
+        "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\|[*?\\[\\]{}!]"
+      }
+    },
+    "routing_path_array": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/routing_path" }
+    },
     "record_array": {
       "type": "array",
       "maxItems": 32,

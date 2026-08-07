@@ -115,9 +115,19 @@ properties:
           description: Only for the ci-cd-pipeline component; otherwise omitted/none.
           oneOf: [ { type: string }, { type: array }, { type: "null" } ]
         focus_paths:
-          oneOf: [ { type: string }, { type: array } ]
+          description: Compatibility input; context version 2 normalizes this to a bounded list.
+          oneOf:
+            - { type: string, minLength: 1, maxLength: 4096 }
+            - type: array
+              maxItems: 16
+              items: { type: string, minLength: 1, maxLength: 500 }
         exclude_paths:
-          oneOf: [ { type: string }, { type: array } ]
+          description: Compatibility input; context version 2 normalizes this to a bounded list.
+          oneOf:
+            - { type: string, minLength: 1, maxLength: 4096 }
+            - type: array
+              maxItems: 16
+              items: { type: string, minLength: 1, maxLength: 500 }
         taxonomy_slice_dir:
           type: string
           description: Per-component taxonomy slice dir, or the plugin data dir.
@@ -176,3 +186,24 @@ allOf:
               - evidence_bundle_path
               - evidence_bundle_sha256
               - evidence_bundle_estimated_tokens
+            properties:
+              focus_paths:
+                type: array
+                maxItems: 16
+                uniqueItems: true
+                items:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  not:
+                    pattern: "^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\|[*?\\[\\]{}!]"
+              exclude_paths:
+                type: array
+                maxItems: 16
+                uniqueItems: true
+                items:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  not:
+                    pattern: "^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\|[*?\\[\\]{}!]"
