@@ -251,10 +251,16 @@ def load(
     hard_errors: list[str] = []
     for d in docs:
         record = _load_document(profile_dir, d)
+        record["applies_to_components"] = list(d.get("applies_to_components") or [])
         if record.pop("hard_error", False):
             hard_errors.append(f"document '{record['id']}': {record['reason']}")
         if record["loaded"]:
-            loaded_pieces.append(f"## Context: {record['id']} ({record['purpose']})\n\n{record['text'].rstrip()}\n")
+            applies_to = record["applies_to_components"]
+            scope = ", ".join(applies_to) if applies_to else "projector-determined"
+            loaded_pieces.append(
+                f"## Context: {record['id']} ({record['purpose']})\n\n"
+                f"Applies to components: {scope}\n\n{record['text'].rstrip()}\n"
+            )
         manifest.append(record)
 
     if loaded_pieces:
@@ -279,6 +285,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--emit-file", action="store_true")
+    parser.add_argument(
+        "--emit-artifact",
+        action="store_true",
+        help="write .org-context.md without replacing the resolved project-context artifact",
+    )
     args = parser.parse_args(argv)
 
     profile_path = Path(args.profile).resolve()
@@ -294,10 +305,11 @@ def main(argv: list[str] | None = None) -> int:
 
     print(wrapped, end="")
 
-    if args.emit_file and args.output_dir:
+    if (args.emit_file or args.emit_artifact) and args.output_dir:
         out_dir = Path(args.output_dir).resolve()
         out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / ".threat-modeling-context.md").write_text(wrapped)
+        artifact_name = ".org-context.md" if args.emit_artifact else ".threat-modeling-context.md"
+        (out_dir / artifact_name).write_text(wrapped)
         (out_dir / ".org-context-manifest.json").write_text(json.dumps({"documents": manifest}, indent=2) + "\n")
     return 1 if hard_errors else 0
 

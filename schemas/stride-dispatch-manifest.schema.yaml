@@ -84,6 +84,18 @@ properties:
         estimated_threat_count:
           type: integer
           minimum: 0
+        business_context:
+          description: Bounded human-readable business and organization facts for this component.
+          type: object
+          minProperties: 1
+          maxProperties: 5
+          additionalProperties: false
+          properties:
+            business_purpose: { type: string, minLength: 1, maxLength: 1000, pattern: "\\S" }
+            impact_if_compromised: { type: string, minLength: 1, maxLength: 1000, pattern: "\\S" }
+            sensitive_assets: { $ref: "#/$defs/context_list" }
+            security_obligations: { $ref: "#/$defs/context_list" }
+            security_assumptions: { $ref: "#/$defs/context_list" }
         estimated_threat_count_label:
           description: |
             Pacing band for `estimated_threat_count`, derived deterministically by
@@ -172,6 +184,29 @@ properties:
           type: integer
           minimum: 1
           maximum: 16384
+        business_context_path:
+          type: string
+          minLength: 1
+          maxLength: 500
+          pattern: "^\\.dispatch-context/[a-z0-9][a-z0-9-]*/business-context\\.json$"
+        business_context_sha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        business_context_estimated_tokens:
+          type: integer
+          minimum: 1
+          maximum: 4096
+      allOf:
+        - if:
+            anyOf:
+              - required: [business_context_path]
+              - required: [business_context_sha256]
+              - required: [business_context_estimated_tokens]
+          then:
+            required:
+              - business_context_path
+              - business_context_sha256
+              - business_context_estimated_tokens
 
 allOf:
   - if:
@@ -207,3 +242,15 @@ allOf:
                   maxLength: 500
                   not:
                     pattern: "^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\|[*?\\[\\]{}!]"
+
+$defs:
+  context_list:
+    type: array
+    minItems: 1
+    maxItems: 8
+    uniqueItems: true
+    items:
+      type: string
+      minLength: 1
+      maxLength: 300
+      pattern: "\\S"

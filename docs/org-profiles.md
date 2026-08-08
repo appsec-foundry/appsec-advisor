@@ -140,6 +140,7 @@ llm_context:
       path: context/sso.md
       purpose: identity_ecosystem
       max_bytes: 50000
+      applies_to_components: [identity-api]
 skill_toggles:
   publish-threat-model:
     enabled: false
@@ -152,8 +153,22 @@ presets:
       sarif: true
     requirements: { enabled: true }
     quality: { qa_review: auto }
+    context:
+      document_ids: [sso]
     guardrails: { max_wall_time: 1h, max_cost_usd: 20, tracing: true }
 ```
+
+`llm_context.documents` declares organization Markdown sources.
+`presets.<name>.context.document_ids` selects which sources a run uses;
+omitting the list selects all declared documents. The selected documents are
+loaded once as untrusted reference data. Context-v2 then projects only
+applicable component facts: business purpose, compromise impact, sensitive
+assets, security obligations, and explicit assumptions. These facts cannot
+select files, agents, tools, models, permissions, threat ratings, actors, abuse
+cases, trust boundaries, or controls.
+`applies_to_components` can place a hard upper bound on which final component
+IDs may receive facts from one document. Omit it when the control analyst must
+determine applicability from the document and component semantics.
 
 These rules apply in addition to the schema:
 

@@ -15,7 +15,7 @@
   "additionalProperties": {
     "type": "object",
     "minProperties": 1,
-    "maxProperties": 10,
+    "maxProperties": 11,
     "properties": {
       "interfaces": { "$ref": "#/$defs/text_or_list" },
       "controls": { "$ref": "#/$defs/text_or_list" },
@@ -24,6 +24,7 @@
       "known_llm_patterns": { "$ref": "#/$defs/text_or_list" },
       "supply_chain_findings": { "$ref": "#/$defs/text_or_list" },
       "estimated_threat_count": { "type": "integer", "minimum": 0, "maximum": 1000 },
+      "business_context": { "$ref": "#/$defs/business_context" },
       "focus_paths": { "$ref": "#/$defs/routing_input" },
       "exclude_paths": { "$ref": "#/$defs/routing_input" }
     },
@@ -60,6 +61,38 @@
           "items": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S" }
         }
       ]
+    },
+    "business_context": {
+      "description": "Human-readable business and organization facts projected for one component. These values inform scenarios and impact; they do not override repository evidence or severity policy.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 5,
+      "properties": {
+        "business_purpose": { "$ref": "#/$defs/context_text" },
+        "impact_if_compromised": { "$ref": "#/$defs/context_text" },
+        "sensitive_assets": { "$ref": "#/$defs/context_list" },
+        "security_obligations": { "$ref": "#/$defs/context_list" },
+        "security_assumptions": { "$ref": "#/$defs/context_list" }
+      },
+      "additionalProperties": false
+    },
+    "context_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "\\S"
+    },
+    "context_list": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300,
+        "pattern": "\\S"
+      }
     }
   }
 }

@@ -284,11 +284,18 @@ def normalize_skill_toggles(profile: dict) -> dict:
     return out
 
 
-def build_context_manifest(profile: dict, profile_dir: Path) -> list[dict]:
+def build_context_manifest(
+    profile: dict,
+    profile_dir: Path,
+    document_ids: list[str] | None = None,
+) -> list[dict]:
     """Lightweight manifest with sha256/size only; full markdown loading
     lives in ``load_org_context.py`` so the resolver stays cheap.
     """
     docs = ((profile.get("llm_context") or {}).get("documents")) or []
+    if document_ids is not None:
+        selected = set(document_ids)
+        docs = [document for document in docs if document.get("id") in selected]
     manifest: list[dict] = []
     for d in docs:
         rel = d.get("path", "")
@@ -309,6 +316,7 @@ def build_context_manifest(profile: dict, profile_dir: Path) -> list[dict]:
                 "id": d.get("id"),
                 "path": str(full),
                 "purpose": d.get("purpose"),
+                "applies_to_components": d.get("applies_to_components") or [],
                 "max_bytes": d.get("max_bytes", 50000),
                 "bytes": size,
                 "sha256": sha,
@@ -414,7 +422,9 @@ def resolve(
             lp = profile_path.parent / lp
         defaults["logo"] = str(lp)
 
-    manifest = build_context_manifest(profile, profile_path.parent)
+    preset_context = profile["presets"][chosen_preset].get("context") or {}
+    selected_document_ids = preset_context.get("document_ids")
+    manifest = build_context_manifest(profile, profile_path.parent, selected_document_ids)
     fingerprint = profile_fingerprint(profile_yaml_bytes, manifest)
     coach = profile.get("security_coach")
 

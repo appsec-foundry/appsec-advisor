@@ -5,10 +5,11 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | Path | Purpose |
 |------|---------|
 | `.threat-modeling-context.md` | Captured project context (recon summary + scope) |
+| `.org-context.md`, `.org-context-manifest.json` | Preset-selected organization reference data and its per-document load, omission, size, and hash records |
 | `.recon-summary.md` | Recon-scanner output — input to STRIDE |
 | `.recon-signals.json` | Contracted actor, exposure, and deployable-unit signals required for validated recon reuse |
 | `.dep-scan.json` | Dependency scan findings |
-| `.stride-<component-id>.json`, `.stride-dispatch-manifest.json`, `.stride-selection.json`, `.stride-analyst-context.json` | Per-component STRIDE fragments and the three durable pre-fan-out sidecars below |
+| `.stride-<component-id>.json`, `.stride-dispatch-manifest.json`, `.stride-selection.json`, `.stride-analyst-context.json` | Per-component STRIDE fragments and the three durable pre-fan-out sidecars below; the analyst context contains bounded component business projections |
 | `.threats-merged.json` | Canonical merged threat set |
 | `.triage-flags.json` | Triage-validator verdicts |
 | `.trust-boundary-diagnostics.json` | Canonical endpoint-resolution failures and ambiguity audit |

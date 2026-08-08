@@ -16,10 +16,11 @@
     },
     "trust_classes": {
       "type": "object",
-      "required": ["operator_validated", "repository_untrusted", "generated_validated", "plugin_owned"],
+      "required": ["operator_validated", "repository_untrusted", "organization_untrusted", "generated_validated", "plugin_owned"],
       "properties": {
         "operator_validated": {"$ref": "#/$defs/id_list"},
         "repository_untrusted": {"$ref": "#/$defs/id_list"},
+        "organization_untrusted": {"$ref": "#/$defs/id_list"},
         "generated_validated": {"$ref": "#/$defs/id_list"},
         "plugin_owned": {"$ref": "#/$defs/id_list"}
       },
@@ -152,7 +153,7 @@
           "propertyNames": {"$ref": "#/$defs/id"},
           "additionalProperties": {"enum": ["declared", "implicit", "direct-source", "plugin-owned", "scalar"]}
         },
-        "projector": {"enum": ["identity_v1", "contract_only_v1", "plugin_registry_v1", "scalar_group_v1"]},
+        "projector": {"enum": ["identity_v1", "contract_only_v1", "plugin_registry_v1", "scalar_group_v1", "business_context_v1"]},
         "source": {"$ref": "#/$defs/source"},
         "limit_profile": {"$ref": "#/$defs/id"},
         "depends_on": {

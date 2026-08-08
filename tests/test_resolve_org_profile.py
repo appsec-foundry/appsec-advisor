@@ -428,6 +428,23 @@ def test_build_context_manifest_missing_file(tmp_path):
     assert manifest[0]["reason"]
 
 
+def test_build_context_manifest_honors_preset_document_selection(tmp_path):
+    context = tmp_path / "context"
+    context.mkdir()
+    (context / "business.md").write_text("Business\n", encoding="utf-8")
+    (context / "platform.md").write_text("Platform\n", encoding="utf-8")
+    profile = {
+        "llm_context": {
+            "documents": [
+                {"id": "business", "path": "context/business.md", "purpose": "business_context"},
+                {"id": "platform", "path": "context/platform.md", "purpose": "platform_ecosystem"},
+            ]
+        }
+    }
+    manifest = rop.build_context_manifest(profile, tmp_path, ["business"])
+    assert [row["id"] for row in manifest] == ["business"]
+
+
 def test_resolve_profile_path_not_found(isolated_root, tmp_path):
     missing = tmp_path / "no-such.yaml"
     effective, errors = rop.resolve(str(missing), None, False, None, isolated_root, env={})

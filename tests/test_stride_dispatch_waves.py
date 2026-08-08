@@ -60,16 +60,16 @@ def test_fifty_components_are_partitioned_without_dropping_or_reordering() -> No
     waves.validate_plan(plan, manifest)
 
 
-@pytest.mark.parametrize("concurrency", [True, 0, 16, 33])
+@pytest.mark.parametrize("concurrency", [True, 0, 13, 33])
 def test_concurrency_is_bounded(concurrency: int | bool) -> None:
-    with pytest.raises(waves.WavePlanError, match="between 1 and 15"):
+    with pytest.raises(waves.WavePlanError, match="between 1 and 12"):
         waves.build_plan(_manifest(1), concurrency)
 
 
 def test_concurrency_cap_fits_worst_case_receipt_verification() -> None:
-    assert waves.MAX_CONCURRENCY == resolve_config.STRIDE_DISPATCH_CONCURRENCY_MAX == 15
-    assert 4 * waves.MAX_CONCURRENCY + 1 <= 64
-    assert 4 * (waves.MAX_CONCURRENCY + 1) + 1 > 64
+    assert waves.MAX_CONCURRENCY == resolve_config.STRIDE_DISPATCH_CONCURRENCY_MAX == 12
+    assert 5 * waves.MAX_CONCURRENCY + 1 <= 64
+    assert 5 * (waves.MAX_CONCURRENCY + 1) + 1 > 64
 
 
 def test_resume_returns_only_incomplete_members_of_earliest_wave(tmp_path: Path) -> None:

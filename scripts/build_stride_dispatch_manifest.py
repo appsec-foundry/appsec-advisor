@@ -20,7 +20,7 @@ Usage:
 The analyst-context JSON (optional) maps component_id → a dict of any of:
 ``interfaces``, ``controls``, ``known_secrets``, ``known_vulns``,
 ``known_llm_patterns``, ``supply_chain_findings``, ``estimated_threat_count``,
-``focus_paths``, ``exclude_paths``.
+``business_context``, ``focus_paths``, ``exclude_paths``.
 """
 
 from __future__ import annotations
@@ -1457,12 +1457,13 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             "known_llm_patterns",
             "supply_chain_findings",
             "estimated_threat_count",
+            "business_context",
             "focus_paths",
             "exclude_paths",
         ):
             if k in ctx and ctx[k] not in (None, "", []):
                 v = ctx[k]
-                if isinstance(v, dict):
+                if isinstance(v, dict) and k != "business_context":
                     v = "; ".join(f"{kk}: {vv}" for kk, vv in v.items())
                 # Schema requires estimated_threat_count as integer; the LLM
                 # sometimes emits it as a string label ("low", "high", …).

@@ -1,7 +1,7 @@
 # Analysis — context routing control plane
 
 - Date: 2026-08-07
-- Status: Stage-1 edge inventory and human-readable catalog implemented; first STRIDE source migration active
+- Status: Stage-1 edge inventory and human-readable catalog implemented; component-root and business-context STRIDE migrations active
 - Parent plan:
   `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`
 
@@ -121,6 +121,25 @@ slice:
 
 These gaps are migration inputs. None authorizes weakening an existing gate or
 changing delivery behavior while the catalog first runs in shadow mode.
+
+## Implemented migrations after the frozen inventory
+
+The frozen rows above retain their commit-specific state. The current
+context-v2 path additionally admits project context and preset-selected
+organization documents to the control analyst through exact-byte receipts.
+That producer emits at most five human-readable business attributes per final
+component. The bundle builder projects them into a separate bounded component
+artifact, and the STRIDE context plan either selects that artifact or omits it
+physically. It is never folded into the mandatory Evidence Bundle, never grants
+repository access, and never supplies evidence, controls, actors, boundaries,
+likelihood, or severity.
+
+This establishes the required routing granularity for later migrations:
+security architecture and assumptions, actors and abuse cases, trust
+boundaries, existing controls and mitigations, threats, and proposed
+mitigations need independent artifacts and plan rows when their consumers can
+receive or omit them independently. A field nested inside mandatory evidence
+does not count as a selectable context element.
 
 ## Model
 

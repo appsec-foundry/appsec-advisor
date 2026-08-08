@@ -339,7 +339,12 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
         (
             "control_analyst",
             "phase8-controls",
-            [".components.json", ".trust-boundaries.json", ".architecture-coverage.json"],
+            [
+                ".components.json",
+                ".trust-boundaries.json",
+                ".architecture-coverage.json",
+                ".threat-modeling-context.md",
+            ],
             None,
         ),
         (
@@ -370,6 +375,8 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
             stride = {row["context_id"]: row for row in plan["deliveries"] if row["agent_id"] == role}
             assert stride["controls.component_evidence"]["scope"] == "one_component"
             assert stride["controls.component_evidence"]["applies_to"] == "current_component"
+            assert stride["business.component_context"]["scope"] == "one_component"
+            assert stride["business.component_context"]["applies_to"] == "current_component"
             assert stride["threats.dispatch_plan"]["scope"] == "one_component"
             assert stride["threats.dispatch_plan"]["applies_to"] == "current_component"
             assert stride["threats.related_repositories"]["scope"] == "one_component"
@@ -477,6 +484,7 @@ def test_active_stride_deliveries_bind_to_one_receipted_plan_without_agent_expos
 
     active = {row["context_id"] for row in plan["deliveries"] if "plan-enforced" in row["disclosures"]}
     assert active == {
+        "business.component_context",
         "controls.component_evidence",
         "threats.dispatch_plan",
         "threats.component_taxonomy",
@@ -486,7 +494,7 @@ def test_active_stride_deliveries_bind_to_one_receipted_plan_without_agent_expos
     }
     bound = routing.bind_action_to_plan(action, plan, output)
     routing.validate_action_plan_reference(bound, output)
-    assert len(bound["dispatch_jobs"][0]["context_delivery_ids"]) == 6
+    assert len(bound["dispatch_jobs"][0]["context_delivery_ids"]) == 7
     assert routing.PLAN_NAME not in bound["dispatch_jobs"][0]["input_artifacts"]
     assert bound["context_plan"]["artifact_path"] == routing.PLAN_NAME
 
@@ -494,6 +502,53 @@ def test_active_stride_deliveries_bind_to_one_receipted_plan_without_agent_expos
     receipt_path.write_bytes(receipt_path.read_bytes() + b" ")
     with pytest.raises(routing.ContextRoutingError, match="stale receipt hash"):
         routing.validate_action_plan_reference(bound, output)
+
+
+def test_component_business_context_is_delivered_only_when_selected(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    required_inputs = [
+        ".dispatch-context/api/context-plan.json",
+        ".dispatch-context/api/evidence-bundle.json",
+        ".taxonomy-slices/api/threat-category-taxonomy.yaml",
+    ]
+    business_path = ".dispatch-context/api/business-context.json"
+    for relative in [*required_inputs, business_path]:
+        path = output / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n", encoding="utf-8")
+
+    omitted_action = _generic_action(
+        output,
+        "stride_analyzer",
+        "phase9-stride-api-without-business",
+        required_inputs,
+        component_id="api",
+    )
+    omitted_plan = _resolve(omitted_action, output)
+    omitted = next(
+        row
+        for row in omitted_plan["deliveries"]
+        if row["job_id"] == "phase9-stride-api-without-business" and row["context_id"] == "business.component_context"
+    )
+    assert omitted["status"] == "omitted_optional"
+    assert business_path not in omitted_action["dispatch_jobs"][0]["input_artifacts"]
+
+    selected_action = _generic_action(
+        output,
+        "stride_analyzer",
+        "phase9-stride-api-with-business",
+        [*required_inputs, business_path],
+        component_id="api",
+    )
+    selected_plan = _resolve(selected_action, output)
+    selected = next(
+        row
+        for row in selected_plan["deliveries"]
+        if row["job_id"] == "phase9-stride-api-with-business" and row["context_id"] == "business.component_context"
+    )
+    assert selected["status"] == "delivered"
+    assert selected["source_receipt"]["artifact_path"] == business_path
 
 
 def test_prior_plan_rejects_changed_catalog_hash(tmp_path, monkeypatch):

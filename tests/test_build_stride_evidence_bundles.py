@@ -88,6 +88,85 @@ def test_build_all_emits_bounded_valid_component_bundle(tmp_path):
     assert parsed["limits"]["estimated_tokens"] <= bundles.MAX_ESTIMATED_TOKENS
     assert parsed["source_slices"][0]["path"] == "src/app.py"
     assert parsed["evidence"]["interfaces"][0]["value"] == "POST /login"
+    assert "business_context" not in parsed
+    assert "business_context_path" not in component
+    assert not (output / ".dispatch-context/backend-api/business-context.json").exists()
+
+
+def test_business_context_is_normalized_and_receipted_per_component(tmp_path):
+    repo, output = _repo(tmp_path)
+    context = {
+        "business_purpose": "  Authorize customer payments.  ",
+        "impact_if_compromised": "Unauthorized transfers and delayed settlement.",
+        "sensitive_assets": [" Payment instructions ", "Account identifiers", "Account identifiers"],
+        "security_obligations": ["PCI DSS scope"],
+        "security_assumptions": ["The upstream identity provider authenticates workforce users."],
+    }
+    manifest = bundles.build_all(output, repo, _manifest(_component(business_context=context)))
+    component = manifest["components"][0]
+    assert component["business_context_path"] == ".dispatch-context/backend-api/business-context.json"
+    projection_path = output / component["business_context_path"]
+    projection = bundles.validate_business_context_bytes(
+        projection_path.read_bytes(),
+        expected_component_id="backend-api",
+        expected_sha256=component["business_context_sha256"],
+    )
+    assert projection["attributes"]["business_purpose"] == "Authorize customer payments."
+    assert projection["attributes"]["sensitive_assets"] == ["Payment instructions", "Account identifiers"]
+    assert (
+        projection["source_content_sha256"]
+        == hashlib.sha256(bundles._canonical_bytes(projection["attributes"])).hexdigest()
+    )
+    assert "business_context" not in component
+    bundle = json.loads((output / component["evidence_bundle_path"]).read_text())
+    assert "business_context" not in bundle
+
+
+@pytest.mark.parametrize(
+    ("business_context", "message"),
+    [
+        ({"criticality_weight": 9}, "unknown attributes"),
+        ({"business_purpose": "   "}, "empty or oversized"),
+        ({"sensitive_assets": []}, "must contain 1-8 items"),
+        ({"security_obligations": [f"obligation-{index}" for index in range(9)]}, "must contain 1-8 items"),
+    ],
+)
+def test_business_context_rejects_technical_unknown_empty_and_oversized_values(tmp_path, business_context, message):
+    repo, output = _repo(tmp_path)
+    with pytest.raises(bundles.BundleError, match=message):
+        bundles.build_all(output, repo, _manifest(_component(business_context=business_context)))
+
+
+def test_bundle_rejects_tampered_business_context_receipt(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(
+        output,
+        repo,
+        _manifest(_component(business_context={"business_purpose": "Process orders."})),
+    )
+    path = output / manifest["components"][0]["business_context_path"]
+    projection = json.loads(path.read_text(encoding="utf-8"))
+    projection["attributes"]["business_purpose"] = "Changed after admission."
+    payload = bundles._canonical_bytes(projection) + b"\n"
+
+    with pytest.raises(bundles.BundleError, match="source fingerprint is stale"):
+        bundles.validate_business_context_bytes(payload, expected_component_id="backend-api")
+
+
+def test_business_context_is_physically_omitted_for_unrelated_component(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(
+        output,
+        repo,
+        _manifest(
+            _component(business_context={"business_purpose": "Serve customers."}),
+            _component(component_id="internal-worker", component_name="Internal worker"),
+        ),
+    )
+    by_id = {row["component_id"]: row for row in manifest["components"]}
+    assert "business_context_path" in by_id["backend-api"]
+    assert "business_context_path" not in by_id["internal-worker"]
+    assert not (output / ".dispatch-context/internal-worker/business-context.json").exists()
 
 
 def test_focus_path_is_normalized_and_changes_bounded_admission(tmp_path):

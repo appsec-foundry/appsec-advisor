@@ -66,6 +66,20 @@ run-wide. `importance` distinguishes useful optional evidence from broad
 background discovery. `reason` makes each inclusion, omission, or prohibition
 reviewable without reading the controller.
 
+Every independently selectable intermediate result has its own bounded
+artifact and component-plan row. It is physically absent from the agent input
+when omitted; grouping it inside a required artifact does not count as context
+selection. The effective plan records both the delivered and omitted decision,
+and exact-byte receipts bind every delivered projection.
+
+The component business-impact projection uses five content attributes:
+business purpose, compromise impact, sensitive assets, security obligations,
+and declared security assumptions. They are facts a product or security
+reviewer can write and assess. Source selection remains a separate routing
+decision. Security architecture, analytically derived assumptions, actors,
+abuse cases, trust boundaries, existing controls and mitigations, threats, and
+proposed mitigations remain separate contexts owned by their analysis stages.
+
 Migration state, paths, schemas, models, commands, projectors, trust labels,
 and limits are not human routing choices. They stay in internal contracts or
 the implementation plan. Effective-plan receipts report what the runtime

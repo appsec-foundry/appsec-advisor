@@ -44,8 +44,16 @@
     "inputs": {
       "type": "array",
       "minItems": 2,
-      "maxItems": 3,
+      "maxItems": 4,
       "allOf": [
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "business.component_context"}},
+            "required": ["context_id"]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
         {
           "contains": {
             "properties": {"context_id": {"const": "controls.component_evidence"}},
@@ -78,6 +86,7 @@
           "context_id": {
             "enum": [
               "controls.component_evidence",
+              "business.component_context",
               "threats.component_taxonomy",
               "threats.related_repositories"
             ]

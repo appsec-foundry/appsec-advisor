@@ -134,6 +134,42 @@ def test_component_context_plan_requires_each_mandatory_input_exactly_once() -> 
     assert list(validator.iter_errors(plan)), "the optional projection cannot replace the taxonomy input"
 
 
+def test_component_context_plan_accepts_independently_selectable_business_context() -> None:
+    validator = _json_validator("stride-component-context-plan.schema.json")
+    plan = _component_context_plan()
+    plan["inputs"].append(
+        {
+            "context_id": "business.component_context",
+            "artifact_path": ".dispatch-context/api/business-context.json",
+            "sha256": "0" * 64,
+        }
+    )
+    assert not list(validator.iter_errors(plan))
+
+
+def test_component_business_context_schema_keeps_human_attributes_bounded() -> None:
+    validator = _json_validator("stride-component-business-context.schema.json")
+    value = {
+        "schema_version": 1,
+        "component_id": "api",
+        "source": "stride-analyst-context-v1",
+        "source_content_sha256": "0" * 64,
+        "attributes": {
+            "business_purpose": "Authorize customer payments.",
+            "security_assumptions": ["The upstream identity provider authenticates workforce users."],
+        },
+    }
+    assert not list(validator.iter_errors(value))
+
+    invalid = json.loads(json.dumps(value))
+    invalid["attributes"] = {"controls": ["A gateway validates every request."]}
+    assert list(validator.iter_errors(invalid)), "controls must remain an independently routable context"
+
+    invalid = json.loads(json.dumps(value))
+    invalid["attributes"] = {}
+    assert list(validator.iter_errors(invalid)), "an empty projection must be physically omitted"
+
+
 def test_component_repository_roots_reject_primary_and_identical_duplicates() -> None:
     validator = _json_validator("stride-component-repository-roots.schema.json")
     roots = {

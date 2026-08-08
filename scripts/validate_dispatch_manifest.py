@@ -36,8 +36,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_stride_evidence_bundles import (  # noqa: E402
     BundleError,
+    business_context_projection,
     load_repository_registry,
     validate_bundle,
+    validate_business_context_bytes,
 )
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -139,6 +141,12 @@ def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], li
         else:
             registry_path = output_dir / ".stride-repository-registry.json"
             try:
+                analyst_context: dict = {}
+                if any(component.get("business_context_path") is not None for component in components):
+                    analyst_context_path = output_dir / ".stride-analyst-context.json"
+                    analyst_context = json.loads(analyst_context_path.read_text(encoding="utf-8"))
+                    if not isinstance(analyst_context, dict):
+                        raise BundleError("stride-analyst-context-v1 must be an object")
                 registry = load_repository_registry(
                     repo_root,
                     registry_path if registry_path.is_file() else None,
@@ -161,7 +169,32 @@ def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], li
                     )
                     if bundle["limits"]["estimated_tokens"] != comp["evidence_bundle_estimated_tokens"]:
                         raise BundleError(f"evidence-bundle token estimate is stale for {cid}")
-            except (BundleError, ValueError) as exc:
+                    business_value = comp.get("business_context_path")
+                    if business_value is not None:
+                        expected_business = f".dispatch-context/{cid}/business-context.json"
+                        if business_value != expected_business:
+                            raise BundleError(
+                                f"business-context path for {cid} must be {expected_business}, got {business_value}"
+                            )
+                        business_path = _resolve_contained(output_dir, business_value)
+                        try:
+                            business_payload = business_path.read_bytes()
+                        except OSError as exc:
+                            raise BundleError(f"business-context projection is unreadable for {cid}: {exc}") from exc
+                        projection = validate_business_context_bytes(
+                            business_payload,
+                            expected_component_id=cid,
+                            expected_sha256=comp["business_context_sha256"],
+                        )
+                        overlay = analyst_context.get(cid)
+                        source_value = overlay.get("business_context") if isinstance(overlay, dict) else None
+                        current_projection = business_context_projection(source_value, cid)
+                        if current_projection != projection:
+                            raise BundleError(f"business-context projection is stale for {cid}")
+                        estimated_tokens = (len(business_payload) + 3) // 4
+                        if estimated_tokens != comp["business_context_estimated_tokens"]:
+                            raise BundleError(f"business-context token estimate is stale for {cid}")
+            except (BundleError, OSError, json.JSONDecodeError, ValueError) as exc:
                 errors.append(f"context-v2 evidence validation failed: {exc}")
 
     # 3 + 4. Component coverage vs .components.json.

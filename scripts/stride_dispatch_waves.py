@@ -41,7 +41,7 @@ DEFAULT_CONCURRENCY = 8
 # One context-v2 component can require four immediate receipt checks (bundle,
 # plan, repository projection, and taxonomy). Fifteen components plus the
 # effective-plan receipt remain within the controller's fixed 64-artifact cap.
-MAX_CONCURRENCY = 15
+MAX_CONCURRENCY = 12
 PLAN_NAME = ".dispatch-waves.json"
 _COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # Label stamped on a completed component's progress file by

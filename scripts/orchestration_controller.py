@@ -82,12 +82,14 @@ MAX_STRIDE_ANALYST_CONTEXT_BYTES = 1_048_576
 MAX_RECON_SIGNALS_BYTES = 1_048_576
 TARGET_RECON_SUMMARY_LINES = 200
 MAX_THREAT_MODELING_CONTEXT_BYTES = context_document_contract.MAX_BYTES
+MAX_ORG_CONTEXT_BYTES = 262_144
 _RECEIPT_RECORD_KEYS = {
     "schemas/trust-boundary-assessment-input.schema.json#v1": "components",
     "schemas/fragments/trust-boundaries.schema.json#v2": "trust_boundaries",
     "schemas/stride-evidence-bundle.schema.json#v1": "source_slices",
     "schemas/stride-component-context-plan.schema.json#v1": "inputs",
     "schemas/stride-component-repository-roots.schema.json#v1": "repositories",
+    "schemas/stride-component-business-context.schema.json#v1": "attributes",
     "schemas/stride-dispatch-manifest.schema.yaml#v2": "components",
     "schemas/stride-repository-registry.schema.json#v1": "repositories",
     "schemas/threats-merged.schema.yaml#v1": "threats",
@@ -2034,6 +2036,8 @@ def _write_stride_component_context_plan(
     bundle_sha256: str,
     taxonomy_path: str,
     taxonomy_sha256: str,
+    business_context_path: str | None = None,
+    business_context_sha256: str | None = None,
     repository_projection_path: str | None = None,
     repository_projection_sha256: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
@@ -2054,6 +2058,16 @@ def _write_stride_component_context_plan(
             "sha256": taxonomy_sha256,
         },
     ]
+    if (business_context_path is None) != (business_context_sha256 is None):
+        raise ControllerError("component business-context path and hash must be supplied together")
+    if business_context_path is not None and business_context_sha256 is not None:
+        inputs.append(
+            {
+                "context_id": "business.component_context",
+                "artifact_path": business_context_path,
+                "sha256": business_context_sha256,
+            }
+        )
     if (repository_projection_path is None) != (repository_projection_sha256 is None):
         raise ControllerError("component repository projection path and hash must be supplied together")
     if repository_projection_path is not None and repository_projection_sha256 is not None:
@@ -2240,6 +2254,52 @@ def _validate_stride_component_repository_roots(
     return value
 
 
+def _validate_stride_component_business_context(
+    output_root: Path,
+    job: dict[str, Any],
+    artifact_receipts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Validate an optional business projection that can be withheld independently."""
+    component_id = job.get("component_id")
+    expected_path = f".dispatch-context/{component_id}/business-context.json"
+    declared_path = job.get("business_context_path")
+    declared_hash = job.get("business_context_sha256")
+    inputs = job.get("input_artifacts", [])
+    if declared_path is None and declared_hash is None:
+        if expected_path in inputs:
+            raise ControllerError("stride analyzer received undeclared component business context")
+        return None
+    if declared_path != expected_path or expected_path not in inputs or not isinstance(declared_hash, str):
+        raise ControllerError("stride analyzer business-context projection does not match its component id")
+    path = _resolve_artifact_path(output_root, expected_path)
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / "stride-component-business-context.schema.json",
+        contract="stride-component-business-context-v1",
+    )
+    payload = path.read_bytes()
+    actual_sha256 = hashlib.sha256(payload).hexdigest()
+    if actual_sha256 != declared_hash:
+        raise ControllerError("stride analyzer business-context projection hash is stale")
+    attributes = value.get("attributes")
+    if value.get("component_id") != component_id or not isinstance(attributes, dict) or not attributes:
+        raise ControllerError("stride analyzer business-context projection has invalid component content")
+    expected_source_sha = hashlib.sha256(_canonical_json_bytes(attributes)).hexdigest()
+    if value.get("source_content_sha256") != expected_source_sha:
+        raise ControllerError("stride analyzer business-context source fingerprint is stale")
+    matching_receipts = [row for row in artifact_receipts if row.get("artifact_path") == expected_path]
+    if len(matching_receipts) != 1 or matching_receipts[0] != {
+        "schema_version": 1,
+        "artifact_path": expected_path,
+        "schema_id": "schemas/stride-component-business-context.schema.json#v1",
+        "sha256": actual_sha256,
+        "record_count": len(attributes),
+        "validation_status": "valid",
+    }:
+        raise ControllerError("stride analyzer business-context projection receipt is stale")
+    return value
+
+
 def _validate_stride_component_context_plan(
     output_root: Path,
     job: dict[str, Any],
@@ -2273,7 +2333,8 @@ def _validate_stride_component_context_plan(
         bundle,
         artifact_receipts,
     )
-    expected_input_count = 3 if repository_projection is not None else 2
+    business_context = _validate_stride_component_business_context(output_root, job, artifact_receipts)
+    expected_input_count = 2 + int(repository_projection is not None) + int(business_context is not None)
     if (
         plan_receipt.get("schema_id") != "schemas/stride-component-context-plan.schema.json#v1"
         or plan_receipt.get("sha256") != job.get("context_plan_sha256")
@@ -2295,6 +2356,8 @@ def _validate_stride_component_context_plan(
         raise ControllerError("stride analyzer job metadata drifted from its component context plan")
     inputs = {row["context_id"]: row for row in value["inputs"]}
     expected_context_ids = {"controls.component_evidence", "threats.component_taxonomy"}
+    if business_context is not None:
+        expected_context_ids.add("business.component_context")
     if repository_projection is not None:
         expected_context_ids.add("threats.related_repositories")
     if len(inputs) != len(value["inputs"]) or set(inputs) != expected_context_ids:
@@ -2305,6 +2368,12 @@ def _validate_stride_component_context_plan(
         "sha256": job.get("evidence_bundle_sha256"),
     }:
         raise ControllerError("stride analyzer evidence bundle drifted from its component context plan")
+    if business_context is not None and inputs["business.component_context"] != {
+        "context_id": "business.component_context",
+        "artifact_path": job.get("business_context_path"),
+        "sha256": job.get("business_context_sha256"),
+    }:
+        raise ControllerError("stride analyzer business context drifted from its component context plan")
     if inputs["threats.component_taxonomy"] != {
         "context_id": "threats.component_taxonomy",
         "artifact_path": job.get("taxonomy_slice_path"),
@@ -2380,6 +2449,124 @@ def _validated_json_receipt(
         artifact_path,
         schema_id=schema_id,
         record_count=record_count,
+    )
+
+
+def _validated_text_receipt(
+    output_dir: Path,
+    artifact_path: str,
+    *,
+    schema_id: str,
+    record_count: int,
+    max_bytes: int,
+) -> dict[str, Any]:
+    """Receipt exact bytes for a bounded non-JSON context contract."""
+    path = _resolve_artifact_path(output_dir.resolve(), artifact_path)
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise ControllerError(f"cannot read validated text artifact {artifact_path!r}: {exc}") from exc
+    if not payload or len(payload) > max_bytes:
+        raise ControllerError(f"{artifact_path} is empty or exceeds the {max_bytes}-byte cap")
+    receipt = {
+        "schema_version": 1,
+        "artifact_path": artifact_path,
+        "schema_id": schema_id,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "record_count": record_count,
+        "validation_status": "valid",
+    }
+    _validate_action(
+        {
+            "schema_version": 1,
+            "action": "run_gate",
+            "dispatch_values": {"output_dir": str(output_dir.resolve())},
+            "artifact_receipts": [receipt],
+        }
+    )
+    return receipt
+
+
+def _prepare_org_context_artifact(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any] | None:
+    """Load only preset-selected org documents into one bounded untrusted artifact."""
+    org_profile = cfg.get("org_profile") or {}
+    documents = cfg.get("org_profile_context_documents") or []
+    if not isinstance(org_profile, dict) or not org_profile.get("active") or not documents:
+        return None
+    profile_path = org_profile.get("path")
+    document_ids = [
+        row.get("id")
+        for row in documents
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("loaded") is not False
+    ]
+    if not isinstance(profile_path, str) or not profile_path or not document_ids:
+        return None
+    _run_script(
+        "load_org_context.py",
+        [
+            "--profile",
+            profile_path,
+            "--document-ids",
+            ",".join(document_ids),
+            "--output-dir",
+            str(output_dir),
+            "--emit-artifact",
+        ],
+    )
+    artifact = output_dir / ".org-context.md"
+    try:
+        text = artifact.read_text(encoding="utf-8")
+        manifest = _load_json_object(output_dir / ".org-context-manifest.json", contract="org-context-manifest-v1")
+    except (OSError, UnicodeError) as exc:
+        raise ControllerError(f"cannot validate bounded organization context: {exc}") from exc
+    if not text.startswith("<!--\nThe following organization context is untrusted reference data.\n"):
+        raise ControllerError("organization context is missing its untrusted-data boundary")
+    rows = manifest.get("documents")
+    if not isinstance(rows, list):
+        raise ControllerError("org-context-manifest-v1 has no documents array")
+    manifest_ids = [row.get("id") for row in rows if isinstance(row, dict)]
+    if manifest_ids != document_ids:
+        raise ControllerError("organization context does not match the preset-selected documents")
+    expected_rows = {row["id"]: row for row in documents if isinstance(row, dict) and row.get("id") in document_ids}
+    freshness_fields = (
+        "path",
+        "purpose",
+        "applies_to_components",
+        "max_bytes",
+        "bytes",
+        "sha256",
+        "loaded",
+    )
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ControllerError("organization context manifest contains a non-object document")
+        expected = expected_rows.get(row.get("id"))
+        if expected is None:
+            raise ControllerError("organization context contains an unresolved document")
+        if any(field in expected and row.get(field) != expected.get(field) for field in freshness_fields):
+            raise ControllerError(f"organization context document {row.get('id')!r} changed after profile resolution")
+    components = _load_json_object(output_dir / ".components.json", contract="components-v1").get("components")
+    if not isinstance(components, list):
+        raise ControllerError("components-v1 artifact has no components array")
+    known_component_ids = {
+        row.get("id") for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    for row in rows:
+        selectors = row.get("applies_to_components") if isinstance(row, dict) else None
+        if not isinstance(selectors, list) or any(not isinstance(value, str) for value in selectors):
+            raise ControllerError("organization context has invalid component applicability metadata")
+        unknown = sorted(set(selectors) - known_component_ids)
+        if unknown:
+            raise ControllerError(
+                f"organization context document {row.get('id')!r} references unknown component IDs: "
+                + ", ".join(unknown)
+            )
+    return _validated_text_receipt(
+        output_dir,
+        ".org-context.md",
+        schema_id="contract:bounded-org-context-markdown-v1",
+        record_count=len(rows),
+        max_bytes=MAX_ORG_CONTEXT_BYTES,
     )
 
 
@@ -2952,22 +3139,42 @@ def context_v2_post_boundary(output_dir: Path) -> dict[str, Any]:
     """Promote Phase-7 candidates and open the Phase-8 control boundary."""
     output_dir, cfg = _load_context_v2_config(output_dir)
     _gate_trust_boundary_promotion(output_dir, cfg)
+    _validate_threat_modeling_context(output_dir / ".threat-modeling-context.md")
+    project_context_receipt = _validated_text_receipt(
+        output_dir,
+        ".threat-modeling-context.md",
+        schema_id="contract:threat-modeling-context-markdown-v1",
+        record_count=1,
+        max_bytes=MAX_THREAT_MODELING_CONTEXT_BYTES,
+    )
+    org_context_receipt = _prepare_org_context_artifact(output_dir, cfg)
+    inputs = [
+        ".components.json",
+        ".trust-boundaries.json",
+        ".architecture-coverage.json",
+        ".threat-modeling-context.md",
+    ]
+    receipts = [
+        _validated_json_receipt(
+            output_dir,
+            ".trust-boundaries.json",
+            schema_id="schemas/fragments/trust-boundaries.schema.json#v2",
+            record_count=_record_count(output_dir / ".trust-boundaries.json", "trust_boundaries"),
+        ),
+        project_context_receipt,
+    ]
+    if org_context_receipt is not None:
+        inputs.append(".org-context.md")
+        receipts.append(org_context_receipt)
     return _context_v2_dispatch(
         output_dir,
         cfg,
         role="control_analyst",
         job_id="phase8-controls",
-        input_artifacts=[".components.json", ".trust-boundaries.json", ".architecture-coverage.json"],
+        input_artifacts=inputs,
         output_artifacts=[".security-controls.json", ".stride-analyst-context.json"],
         decision_keys=["security_controls", "stride_semantic_context"],
-        receipts=[
-            _validated_json_receipt(
-                output_dir,
-                ".trust-boundaries.json",
-                schema_id="schemas/fragments/trust-boundaries.schema.json#v2",
-                record_count=_record_count(output_dir / ".trust-boundaries.json", "trust_boundaries"),
-            )
-        ],
+        receipts=receipts,
     )
 
 
@@ -3058,6 +3265,31 @@ def _context_v2_stride_wave_action(
             record_count=len(slices),
         )
         structured.append(bundle_receipt)
+        business_context_path = component.get("business_context_path")
+        business_context_sha256 = component.get("business_context_sha256")
+        business_context_receipt: dict[str, Any] | None = None
+        if business_context_path is not None or business_context_sha256 is not None:
+            if not isinstance(business_context_path, str) or not isinstance(business_context_sha256, str):
+                raise ControllerError(f"incomplete business-context projection for {component_id}")
+            business_value = _validate_json_artifact(
+                _resolve_artifact_path(output_dir, business_context_path),
+                PLUGIN_ROOT / "schemas" / "stride-component-business-context.schema.json",
+                contract="stride-component-business-context-v1",
+            )
+            if business_value.get("component_id") != component_id:
+                raise ControllerError(f"business-context projection component mismatch for {component_id}")
+            attributes = business_value.get("attributes")
+            if not isinstance(attributes, dict) or not attributes:
+                raise ControllerError(f"business-context projection has no attributes for {component_id}")
+            business_context_receipt = _validated_json_receipt(
+                output_dir,
+                business_context_path,
+                schema_id="schemas/stride-component-business-context.schema.json#v1",
+                record_count=len(attributes),
+            )
+            if business_context_receipt["sha256"] != business_context_sha256:
+                raise ControllerError(f"business-context manifest hash is stale for {component_id}")
+            structured.append(business_context_receipt)
         taxonomy_path, taxonomy_sha256 = _context_v2_taxonomy_slice(output_dir, component_id)
         analysis = {
             "depth": "light"
@@ -3092,6 +3324,10 @@ def _context_v2_stride_wave_action(
             bundle_sha256=bundle_receipt["sha256"],
             taxonomy_path=taxonomy_path,
             taxonomy_sha256=taxonomy_sha256,
+            business_context_path=(business_context_path if business_context_receipt is not None else None),
+            business_context_sha256=(
+                business_context_receipt["sha256"] if business_context_receipt is not None else None
+            ),
             repository_projection_path=repository_projection_path,
             repository_projection_sha256=(
                 repository_projection_receipt["sha256"] if repository_projection_receipt is not None else None
@@ -3099,6 +3335,8 @@ def _context_v2_stride_wave_action(
         )
         structured.append(context_plan_receipt)
         input_artifacts = [context_plan_path, bundle_path, taxonomy_path]
+        if business_context_receipt is not None:
+            input_artifacts.append(business_context_path)
         if repository_projection_path is not None:
             input_artifacts.append(repository_projection_path)
         jobs.append(
@@ -3127,6 +3365,9 @@ def _context_v2_stride_wave_action(
         if repository_projection_path is not None and repository_projection_receipt is not None:
             jobs[-1]["repository_projection_path"] = repository_projection_path
             jobs[-1]["repository_projection_sha256"] = repository_projection_receipt["sha256"]
+        if business_context_receipt is not None:
+            jobs[-1]["business_context_path"] = business_context_path
+            jobs[-1]["business_context_sha256"] = business_context_receipt["sha256"]
     _prepare_context_v2_dispatch_outputs(output_dir, jobs)
     return _validate_action(
         {

@@ -16,7 +16,8 @@ categories:
       signals.
   - id: architecture_and_data_flows
     name: Architecture, assets, and data flows
-    description: Components, routes, assets, interfaces, relationships, and validated data-flow structure.
+    description: Components, security architecture, routes, assets, interfaces, relationships, assumptions, and
+      validated data-flow structure.
   - id: actors_and_abuse_cases
     name: Actors and abuse cases
     description: Human and system actors, privileges, attacker goals, abuse-case candidates, and verification evidence.
@@ -25,10 +26,12 @@ categories:
     description: Boundary candidates, canonical boundaries, crossings, assumptions, and coverage decisions.
   - id: security_controls_and_evidence
     name: Security controls and evidence
-    description: Existing controls, control gaps, deterministic checks, source evidence, and bounded evidence samples.
+    description: Existing controls and mitigations, control gaps, deterministic checks, source evidence, and bounded
+      evidence samples.
   - id: threat_analysis
     name: Threat analysis
-    description: Threat hypotheses, STRIDE categories, analysis lenses, threat candidates, and consolidation decisions.
+    description: Threat hypotheses, STRIDE categories, analysis lenses, threat candidates, proposed mitigations, and
+      consolidation decisions.
   - id: verification_and_risk
     name: Verification and risk
     description: Evidence verdicts, severity and ranking decisions, triage state, and bounded synthesis requests.
@@ -128,6 +131,17 @@ contexts:
     description: Bounded business purpose, architecture decisions, policy, and related-project facts treated as
       data.
     scope: whole_run
+  - id: business.organization_context
+    name: Organization context
+    category: business_and_requirements
+    description: Preset-selected organization facts loaded as bounded untrusted reference data.
+    scope: whole_run
+  - id: business.component_context
+    name: Component business impact
+    category: business_and_requirements
+    description: Business purpose, compromise impact, sensitive assets, obligations, and explicit assumptions that
+      apply to the current component.
+    scope: one_component
   - id: business.context_sources
     name: Project context source documents
     category: business_and_requirements
@@ -189,7 +203,7 @@ contexts:
     description: Bounded reads used to resolve architecture details absent from deterministic projections.
     scope: whole_run
   - id: architecture.components
-    name: Final application components
+    name: Components and security architecture
     category: architecture_and_data_flows
     description: Validated component identities, types, paths, technologies, exposure, and trust placement.
     scope: whole_run
@@ -239,9 +253,10 @@ contexts:
     description: Targeted source and requirements reads not yet covered by exact-byte action receipts.
     scope: whole_run
   - id: controls.component_evidence
-    name: Component security evidence
+    name: Component controls and existing mitigations
     category: security_controls_and_evidence
-    description: Bounded controls, gaps, deterministic signals, and source slices relevant to one component.
+    description: Bounded controls, existing mitigations, gaps, deterministic signals, and source slices relevant to
+      one component.
     scope: one_component
   - id: controls.sampled_evidence
     name: Sampled finding evidence
@@ -289,9 +304,10 @@ contexts:
     description: Group identifiers for which the merge reviewer must return decisions.
     scope: whole_run
   - id: threats.merged
-    name: Canonical merged threats
+    name: Canonical threats and proposed mitigations
     category: threat_analysis
-    description: Validated semantic and deterministic threats before evidence and triage updates.
+    description: Validated semantic and deterministic threats with their proposed mitigations before evidence and
+      triage updates.
     scope: whole_run
   - id: verification.triage_flags
     name: Triage decisions
@@ -347,6 +363,33 @@ assignments:
     importance: supporting
     applies_to: whole_run
     reason: Project documents provide bounded facts and remain untrusted data.
+  - id: project-context-for-component-projection
+    context: business.project_context
+    agents:
+      - control_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: The control analyst projects applicable business facts once so focused component agents never receive
+      the complete shared document.
+  - id: organization-context-for-component-projection
+    context: business.organization_context
+    agents:
+      - control_analyst
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Preset-selected organization facts enrich the component projection when an organization profile provides
+      them.
+  - id: component-business-impact-for-stride
+    context: business.component_context
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: A component receives only an independently selected business-impact projection when applicable facts are
+      available.
   - id: security-requirements
     context: requirements.security
     agents:

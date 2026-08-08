@@ -140,6 +140,8 @@ EXPECTED_POST_ARCH_FILES_IF_PASS = {
 # or leave the user without evidence for the report.
 NEVER_CLEANUP = {
     ".threat-modeling-context.md",
+    ".org-context.md",
+    ".org-context-manifest.json",
     ".recon-summary.md",
     ".recon-signals.json",
     ".sca-practice-findings.json",

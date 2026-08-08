@@ -126,6 +126,27 @@ def test_emit_file_writes_threat_modeling_context(tmp_path):
     assert any(d["loaded"] for d in manifest["documents"])
 
 
+def test_emit_artifact_keeps_project_context_separate(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    rc = loc.main(
+        [
+            "--profile",
+            str(FIXTURE_PATH),
+            "--document-ids",
+            "sso",
+            "--output-dir",
+            str(out),
+            "--emit-artifact",
+        ]
+    )
+    assert rc == 0
+    assert (out / ".org-context.md").is_file()
+    assert not (out / ".threat-modeling-context.md").exists()
+    manifest = json.loads((out / ".org-context-manifest.json").read_text())
+    assert [row["id"] for row in manifest["documents"]] == ["sso"]
+
+
 # ---------------------------------------------------------------------------
 # Coverage: _safe_resolve branches, frontmatter parse error, io-error, CLI
 # ---------------------------------------------------------------------------

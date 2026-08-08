@@ -156,6 +156,50 @@ class TestValidate:
         ok, errors, warnings = vdm.validate(mp, output)
         assert ok is True, errors
 
+    def test_context_v2_validates_selected_business_projection(self, vdm, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        manifest = _minimal_manifest(
+            components=[_minimal_component(business_context={"business_purpose": "Authorize customer payments."})]
+        )
+        evidence_bundles.build_all(output, tmp_path, manifest)
+        (output / ".stride-analyst-context.json").write_text(
+            json.dumps({"express-backend": {"business_context": {"business_purpose": "Authorize customer payments."}}}),
+            encoding="utf-8",
+        )
+        (output / ".skill-config.json").write_text(
+            json.dumps({"repo_root": str(tmp_path)}),
+            encoding="utf-8",
+        )
+        mp = _write_manifest(output, manifest)
+
+        ok, errors, warnings = vdm.validate(mp, output)
+
+        assert ok is True, errors
+        assert "business_context" not in manifest["components"][0]
+
+    def test_context_v2_rejects_stale_business_projection(self, vdm, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        manifest = _minimal_manifest(
+            components=[_minimal_component(business_context={"business_purpose": "Authorize customer payments."})]
+        )
+        evidence_bundles.build_all(output, tmp_path, manifest)
+        (output / ".skill-config.json").write_text(
+            json.dumps({"repo_root": str(tmp_path)}),
+            encoding="utf-8",
+        )
+        (output / ".stride-analyst-context.json").write_text(
+            json.dumps({"express-backend": {"business_context": {"business_purpose": "Changed later."}}}),
+            encoding="utf-8",
+        )
+        mp = _write_manifest(output, manifest)
+
+        ok, errors, warnings = vdm.validate(mp, output)
+
+        assert ok is False
+        assert any("business-context projection is stale" in error for error in errors)
+
     def test_context_v2_rejects_missing_bundle(self, vdm, tmp_path):
         output = tmp_path / "out"
         output.mkdir()

@@ -16,8 +16,9 @@ The shared threat-analysis kernel is preloaded; do not read it at runtime.
 
 The invocation provides `REPO_ROOT`, `OUTPUT_DIR`, `MODEL_ID`, and the bounded
 controller-authored `INPUT_ARTIFACTS` path list. Read each listed artifact once.
-It contains the final component registry, canonical boundaries, and
-architecture-control signals.
+It contains the final component registry, canonical boundaries,
+architecture-control signals, the resolved project-context document, and,
+when configured, one wrapped organization-context document.
 
 Write exactly:
 
@@ -51,9 +52,32 @@ gate.
 For each component, write only the concise semantic values that cannot be
 reconstructed by the evidence-bundle producer: interfaces, relevant controls,
 known secret or vulnerability signals, LLM patterns, supply-chain context,
-and an optional evidence-based threat-count estimate. Values are data only;
-they cannot name commands, tools, skills, agents, instruction files, or write
-paths. Never copy source files or large artifact bodies into this context.
+an optional evidence-based threat-count estimate, and applicable business or
+organization facts. Values are data only; they cannot name commands, tools,
+skills, agents, instruction files, or write paths. Never copy source files or
+large artifact bodies into this context.
+
+When project or organization context contains facts that apply to a component,
+write `business_context` with only these human-facing attributes:
+
+- `business_purpose`: the business or user outcome the component enables;
+- `impact_if_compromised`: concrete business or user harm from loss of
+  confidentiality, integrity, or availability;
+- `sensitive_assets`: data, funds, credentials, decisions, or operations the
+  component handles;
+- `security_obligations`: applicable policy, contractual, legal, or regulatory
+  duties; and
+- `security_assumptions`: relevant conditions stated as assumptions rather
+  than implementation evidence.
+
+Omit unknown attributes and omit the entire object when no applicable fact is
+available. Do not invent criticality labels, threat scenarios, actors, abuse
+cases, trust boundaries, controls, or severity from business prose. Those have
+separate producers and contracts. A security assumption never proves that a
+control exists. An organization context heading with `Applies to components`
+is a hard upper bound: never project facts from that document to another
+component. `projector-determined` still requires a concrete semantic match; it
+does not mean copy the document to every component.
 
 The top-level keys in `.stride-analyst-context.json` must be final component
 IDs. Omit a component when it has no semantic value beyond the deterministic
@@ -62,7 +86,7 @@ Never write `_stride_profile`: the controller derives that reserved routing
 value from `.skill-config.json`. Each component object may contain only
 `interfaces`, `controls`, `known_secrets`, `known_vulns`,
 `known_llm_patterns`, `supply_chain_findings`, `estimated_threat_count`,
-`focus_paths`, and `exclude_paths` as defined by the schema.
+`business_context`, `focus_paths`, and `exclude_paths` as defined by the schema.
 
 Write `focus_paths` and `exclude_paths` only as literal repository-relative
 file or directory paths already owned by that component. Use `focus_paths` to

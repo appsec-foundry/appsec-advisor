@@ -220,6 +220,15 @@ def test_preset_context_document_ids_must_exist(acme_profile):
     assert any("ghost" in e for e in errors), errors
 
 
+def test_context_component_applicability_uses_human_component_ids(acme_profile):
+    acme_profile["llm_context"]["documents"][0]["applies_to_components"] = ["identity-api", "admin-ui"]
+    assert vop.validate(acme_profile, FIXTURE_DIR) == []
+
+    acme_profile["llm_context"]["documents"][0]["applies_to_components"] = ["Identity API"]
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("applies_to_components" in error for error in errors), errors
+
+
 def test_target_profile_default_requires_repo_path(acme_profile):
     acme_profile["presets"]["release-review"]["target"] = {"repo": "profile_default"}
     errors = vop.validate(acme_profile, FIXTURE_DIR)

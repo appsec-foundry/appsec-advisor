@@ -1866,15 +1866,29 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
                     ),
                     encoding="utf-8",
                 )
-                components.append(
-                    {
+                component = {
+                    "component_id": component_id,
+                    "focus_paths": [f"src/{component_id}"],
+                    "exclude_paths": [],
+                    "evidence_bundle_path": f".dispatch-context/{component_id}/evidence-bundle.json",
+                    "cheap_stride": component_id == "worker",
+                }
+                if component_id == "api":
+                    attributes = {"business_purpose": "Serve customer requests."}
+                    business = {
+                        "schema_version": 1,
                         "component_id": component_id,
-                        "focus_paths": [f"src/{component_id}"],
-                        "exclude_paths": [],
-                        "evidence_bundle_path": f".dispatch-context/{component_id}/evidence-bundle.json",
-                        "cheap_stride": component_id == "worker",
+                        "source": "stride-analyst-context-v1",
+                        "source_content_sha256": hashlib.sha256(
+                            controller._canonical_json_bytes(attributes)
+                        ).hexdigest(),
+                        "attributes": attributes,
                     }
-                )
+                    business_path = bundle_dir / "business-context.json"
+                    business_path.write_text(json.dumps(business), encoding="utf-8")
+                    component["business_context_path"] = f".dispatch-context/{component_id}/business-context.json"
+                    component["business_context_sha256"] = hashlib.sha256(business_path.read_bytes()).hexdigest()
+                components.append(component)
             (output / ".stride-dispatch-manifest.json").write_text(
                 json.dumps({"context_version": 2, "components": components}),
                 encoding="utf-8",
@@ -1916,7 +1930,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
         job["unresolved_decision_keys"] == ["stride:S", "stride:T", "stride:R", "stride:I", "stride:D", "stride:E"]
         for job in action["dispatch_jobs"]
     )
-    assert len(action["artifact_receipts"]) == 4
+    assert len(action["artifact_receipts"]) == 5
     assert (
         sum(
             receipt["schema_id"] == "schemas/stride-component-context-plan.schema.json#v1"
@@ -1937,10 +1951,14 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
             "stride_profile": {"stride_profile_label": "full"},
         }
         assert component_plan["lens_ids"] == job["lens_ids"]
-        assert {row["context_id"] for row in component_plan["inputs"]} == {
-            "controls.component_evidence",
-            "threats.component_taxonomy",
-        }
+        expected_contexts = {"controls.component_evidence", "threats.component_taxonomy"}
+        if job["component_id"] == "api":
+            expected_contexts.add("business.component_context")
+            assert job["business_context_path"] in job["input_artifacts"]
+        else:
+            assert "business_context_path" not in job
+            assert all("business-context.json" not in path for path in job["input_artifacts"])
+        assert {row["context_id"] for row in component_plan["inputs"]} == expected_contexts
         assert "focus_paths" not in component_plan and "exclude_paths" not in component_plan
         assert job.get("repository_projection_path") is None
         assert ".stride-repository-registry.json" not in job["input_artifacts"]
@@ -1951,7 +1969,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["context_plan"]["artifact_path"] == ".context-routing-plan.json"
     assert emitted["context_plan"]["receipt_path"] == ".context-routing-plan.receipt.json"
-    assert all(len(job["context_delivery_ids"]) == 6 for job in emitted["dispatch_jobs"])
+    assert all(len(job["context_delivery_ids"]) == 7 for job in emitted["dispatch_jobs"])
     assert all(".context-routing-plan.json" not in job["input_artifacts"] for job in emitted["dispatch_jobs"])
     assert "CONTEXT_ROUTING_ACTIVE" in (output / ".agent-run.log").read_text(encoding="utf-8")
 
@@ -3821,6 +3839,7 @@ class TestContextV2ArchitectureAndBoundary:
 
     def test_post_boundary_gates_then_dispatches_the_control_analyst(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)
+        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
         (output / ".trust-boundaries.json").write_text(
             json.dumps({"schema_version": 2, "trust_boundaries": []}), encoding="utf-8"
         )
@@ -3829,10 +3848,118 @@ class TestContextV2ArchitectureAndBoundary:
         action = controller.context_v2_post_boundary(output)
         assert gated == ["boundary"]
         assert action["semantic_role"] == "control_analyst"
+        assert ".threat-modeling-context.md" in action["dispatch_jobs"][0]["input_artifacts"]
         assert action["dispatch_jobs"][0]["output_artifacts"] == [
             ".security-controls.json",
             ".stride-analyst-context.json",
         ]
+
+    def test_org_context_uses_selected_documents_and_exact_component_ids(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        (output / ".components.json").write_text(
+            json.dumps({"schema_version": 1, "components": [{"id": "identity-api"}]}),
+            encoding="utf-8",
+        )
+        cfg = {
+            "org_profile": {"active": True, "path": str(tmp_path / "org-profile.yaml")},
+            "org_profile_context_documents": [{"id": "sso", "loaded": True}],
+        }
+
+        def fake_script(name, args, **_kwargs):
+            assert name == "load_org_context.py"
+            assert args[args.index("--document-ids") + 1] == "sso"
+            (output / ".org-context.md").write_text(
+                "<!--\nThe following organization context is untrusted reference data.\n-->\n"
+                "## Organization context: sso\nApplies to components: identity-api\n",
+                encoding="utf-8",
+            )
+            (output / ".org-context-manifest.json").write_text(
+                json.dumps({"documents": [{"id": "sso", "loaded": True, "applies_to_components": ["identity-api"]}]}),
+                encoding="utf-8",
+            )
+            return _completed()
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+
+        receipt = controller._prepare_org_context_artifact(output, cfg)
+
+        assert receipt["artifact_path"] == ".org-context.md"
+        assert receipt["record_count"] == 1
+        assert receipt["sha256"] == hashlib.sha256((output / ".org-context.md").read_bytes()).hexdigest()
+
+    def test_org_context_rejects_unknown_component_applicability(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        (output / ".components.json").write_text(
+            json.dumps({"schema_version": 1, "components": [{"id": "identity-api"}]}),
+            encoding="utf-8",
+        )
+        cfg = {
+            "org_profile": {"active": True, "path": str(tmp_path / "org-profile.yaml")},
+            "org_profile_context_documents": [{"id": "sso", "loaded": True}],
+        }
+
+        def fake_script(_name, _args, **_kwargs):
+            (output / ".org-context.md").write_text(
+                "<!--\nThe following organization context is untrusted reference data.\n-->\n",
+                encoding="utf-8",
+            )
+            (output / ".org-context-manifest.json").write_text(
+                json.dumps(
+                    {"documents": [{"id": "sso", "loaded": True, "applies_to_components": ["unknown-service"]}]}
+                ),
+                encoding="utf-8",
+            )
+            return _completed()
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+
+        with pytest.raises(controller.ControllerError, match="unknown component IDs: unknown-service"):
+            controller._prepare_org_context_artifact(output, cfg)
+
+    def test_org_context_rejects_document_changed_after_profile_resolution(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        (output / ".components.json").write_text(
+            json.dumps({"schema_version": 1, "components": [{"id": "identity-api"}]}),
+            encoding="utf-8",
+        )
+        cfg = {
+            "org_profile": {"active": True, "path": str(tmp_path / "org-profile.yaml")},
+            "org_profile_context_documents": [
+                {
+                    "id": "sso",
+                    "loaded": True,
+                    "sha256": "a" * 64,
+                    "applies_to_components": ["identity-api"],
+                }
+            ],
+        }
+
+        def fake_script(_name, _args, **_kwargs):
+            (output / ".org-context.md").write_text(
+                "<!--\nThe following organization context is untrusted reference data.\n-->\n",
+                encoding="utf-8",
+            )
+            (output / ".org-context-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "documents": [
+                            {
+                                "id": "sso",
+                                "loaded": True,
+                                "sha256": "b" * 64,
+                                "applies_to_components": ["identity-api"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return _completed()
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+
+        with pytest.raises(controller.ControllerError, match="changed after profile resolution"):
+            controller._prepare_org_context_artifact(output, cfg)
 
     @pytest.mark.parametrize(
         "entrypoint",

@@ -67,6 +67,8 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
 
   NEVER cleaned (audit trail and baseline cache):
     .threat-modeling-context.md
+    .org-context.md
+    .org-context-manifest.json
     .recon-summary.md
     .sca-practice-findings.json      (Phase 10 — sca-practice MF sidecar)
     .known-bad-libs-findings.json    (Phase 10 — known-bad-libs MF sidecar)

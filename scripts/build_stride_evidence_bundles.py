@@ -16,6 +16,7 @@ from typing import Any
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-evidence-bundle.schema.json"
+BUSINESS_CONTEXT_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-component-business-context.schema.json"
 REGISTRY_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-repository-registry.schema.json"
 RELATED_REPOS_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "related-repos.schema.yaml"
 
@@ -29,6 +30,17 @@ MAX_VALUE_CHARS = 4096
 MAX_ROUTING_PATHS = 16
 MAX_ROUTING_PATH_CHARS = 500
 MAX_FOCUS_ENUM_ENTRIES = 100_000
+BUSINESS_CONTEXT_FIELDS = (
+    "business_purpose",
+    "impact_if_compromised",
+    "sensitive_assets",
+    "security_obligations",
+    "security_assumptions",
+)
+BUSINESS_CONTEXT_TEXT_FIELDS = {"business_purpose", "impact_if_compromised"}
+MAX_BUSINESS_CONTEXT_TEXT_CHARS = 1000
+MAX_BUSINESS_CONTEXT_ITEMS = 8
+MAX_BUSINESS_CONTEXT_ITEM_CHARS = 300
 
 EVIDENCE_CLASSES = (
     "interfaces",
@@ -308,6 +320,85 @@ def _bounded_records(source: str, values: list[Any]) -> tuple[list[dict[str, Any
     records = sorted((_record(source, value) for value in values), key=lambda row: _canonical_bytes(row))
     retained = records[:MAX_CLASS_VALUES]
     return retained, {"original": len(records), "value_truncations": sum(row["truncated"] for row in retained)}
+
+
+def business_context_projection(value: Any, component_id: str) -> dict[str, Any] | None:
+    """Normalize one independently selectable human-facing context projection."""
+    if value in (None, {}):
+        attributes: dict[str, Any] = {}
+    elif not isinstance(value, dict):
+        raise BundleError(f"business_context for {component_id} must be an object")
+    else:
+        unknown = sorted(set(value) - set(BUSINESS_CONTEXT_FIELDS))
+        if unknown:
+            raise BundleError(f"business_context for {component_id} contains unknown attributes: {', '.join(unknown)}")
+        attributes = {}
+        for name in BUSINESS_CONTEXT_FIELDS:
+            if name not in value:
+                continue
+            raw = value[name]
+            if name in BUSINESS_CONTEXT_TEXT_FIELDS:
+                if not isinstance(raw, str):
+                    raise BundleError(f"business_context.{name} for {component_id} must be text")
+                normalized = raw.strip()
+                if not normalized or len(normalized) > MAX_BUSINESS_CONTEXT_TEXT_CHARS:
+                    raise BundleError(f"business_context.{name} for {component_id} is empty or oversized")
+                attributes[name] = normalized
+                continue
+            if not isinstance(raw, list) or not raw or len(raw) > MAX_BUSINESS_CONTEXT_ITEMS:
+                raise BundleError(
+                    f"business_context.{name} for {component_id} must contain 1-{MAX_BUSINESS_CONTEXT_ITEMS} items"
+                )
+            normalized_items: list[str] = []
+            for item in raw:
+                if not isinstance(item, str):
+                    raise BundleError(f"business_context.{name} for {component_id} contains a non-string item")
+                normalized = item.strip()
+                if not normalized or len(normalized) > MAX_BUSINESS_CONTEXT_ITEM_CHARS:
+                    raise BundleError(f"business_context.{name} for {component_id} contains an empty or oversized item")
+                if normalized not in normalized_items:
+                    normalized_items.append(normalized)
+            attributes[name] = normalized_items
+    if not attributes:
+        return None
+    return {
+        "schema_version": 1,
+        "component_id": component_id,
+        "source": "stride-analyst-context-v1",
+        "source_content_sha256": hashlib.sha256(_canonical_bytes(attributes)).hexdigest(),
+        "attributes": attributes,
+    }
+
+
+def validate_business_context_bytes(
+    payload: bytes,
+    *,
+    expected_component_id: str | None = None,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    if expected_sha256 and hashlib.sha256(payload).hexdigest() != expected_sha256:
+        raise BundleError("business-context fingerprint does not match the manifest")
+    try:
+        value = json.loads(payload)
+        schema = json.loads(BUSINESS_CONTEXT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BundleError(f"business-context projection/schema is unreadable: {exc}") from exc
+    errors = sorted(_load_validator()(schema).iter_errors(value), key=lambda item: list(item.path))
+    if errors:
+        detail = "; ".join(error.message for error in errors[:5])
+        raise BundleError(f"business-context projection schema validation failed: {detail}")
+    if expected_component_id and value["component_id"] != expected_component_id:
+        raise BundleError("business-context component id does not match its dispatch entry")
+    attributes = value["attributes"]
+    if value["source_content_sha256"] != hashlib.sha256(_canonical_bytes(attributes)).hexdigest():
+        raise BundleError("business-context source fingerprint is stale")
+    for name, attribute in attributes.items():
+        if name in BUSINESS_CONTEXT_TEXT_FIELDS:
+            if attribute != attribute.strip():
+                raise BundleError("business-context text is not normalized")
+        elif any(item != item.strip() for item in attribute):
+            raise BundleError("business-context list is not normalized")
+    return value
 
 
 def _owned(component_paths: list[str], relative: str) -> bool:
@@ -1027,6 +1118,8 @@ def build_all(
             raise BundleError(f"invalid or duplicate component id: {component_id!r}")
         seen.add(component_id)
         _normalize_routing_values(component, registry)
+        business_context = business_context_projection(component.get("business_context"), component_id)
+        component.pop("business_context", None)
         bundle, payload = build_bundle(output_dir, component, registry)
         bundle_dir = output_dir / ".dispatch-context" / component_id
         bundle_dir.mkdir(parents=True, exist_ok=True)
@@ -1035,6 +1128,25 @@ def build_all(
         component["evidence_bundle_path"] = bundle_path.relative_to(output_dir).as_posix()
         component["evidence_bundle_sha256"] = hashlib.sha256(payload).hexdigest()
         component["evidence_bundle_estimated_tokens"] = bundle["limits"]["estimated_tokens"]
+        business_path = bundle_dir / "business-context.json"
+        for key in (
+            "business_context_path",
+            "business_context_sha256",
+            "business_context_estimated_tokens",
+        ):
+            component.pop(key, None)
+        if business_context is None:
+            if business_path.exists() or business_path.is_symlink():
+                if not business_path.is_file() and not business_path.is_symlink():
+                    raise BundleError(f"business-context projection path is not a file: {business_path}")
+                business_path.unlink()
+            continue
+        business_payload = _canonical_bytes(business_context) + b"\n"
+        validate_business_context_bytes(business_payload, expected_component_id=component_id)
+        business_path.write_bytes(business_payload)
+        component["business_context_path"] = business_path.relative_to(output_dir).as_posix()
+        component["business_context_sha256"] = hashlib.sha256(business_payload).hexdigest()
+        component["business_context_estimated_tokens"] = (len(business_payload) + 3) // 4
     manifest["context_version"] = 2
     return manifest
 

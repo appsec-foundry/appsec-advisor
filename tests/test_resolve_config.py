@@ -282,7 +282,7 @@ class TestResolveStrideConcurrency:
         monkeypatch.setenv("APPSEC_STRIDE_CONCURRENCY", "12")
         assert rc.resolve_stride_concurrency() == {"stride_concurrency": 12}
 
-    @pytest.mark.parametrize("value", ["0", "16", "33", "many"])
+    @pytest.mark.parametrize("value", ["0", "13", "16", "33", "many"])
     def test_invalid_override_fails_closed(self, monkeypatch, value):
         monkeypatch.setenv("APPSEC_STRIDE_CONCURRENCY", value)
         with pytest.raises(SystemExit, match="APPSEC_STRIDE_CONCURRENCY"):
