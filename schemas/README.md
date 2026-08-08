@@ -17,10 +17,11 @@ output template and validated at the same two boundaries through
 | `stride.schema.yaml` | `$OUTPUT_DIR/.stride-<component-id>.json` | `appsec-stride-analyzer` | orchestrator Phase 9 merge |
 | `stride-evidence-bundle.schema.json` | `$OUTPUT_DIR/.dispatch-context/<component-id>/evidence-bundle.json` | `scripts/build_stride_evidence_bundles.py` | context-v2 manifest validator and STRIDE analyzer |
 | `stride-component-context-plan.schema.json` | `$OUTPUT_DIR/.dispatch-context/<component-id>/context-plan.json` | `scripts/orchestration_controller.py` | context-v2 action validator and STRIDE analyzer |
+| `stride-component-repository-roots.schema.json` | `$OUTPUT_DIR/.dispatch-context/<component-id>/repository-roots.json` | `scripts/orchestration_controller.py` | context-v2 action validator and STRIDE analyzer |
 | `stride-analyst-context.schema.json` | `$OUTPUT_DIR/.stride-analyst-context.json` | `appsec-control-analyst` on context-v2; legacy threat analyst otherwise | `scripts/build_stride_dispatch_manifest.py` |
 | `recon-signals.schema.json` | `$OUTPUT_DIR/.recon-signals.json` | `appsec-recon-scanner` | actor resolution, trust-boundary input, and STRIDE bundle construction |
 | `trust-boundary-selection.schema.json` | `$OUTPUT_DIR/.dispatch-context/trust-boundary-selection.json` | `scripts/prepare_trust_boundary_context.py` | STRIDE context dispatch and `scripts/build_threat_model_yaml.py` |
-| `stride-repository-registry.schema.json` | `$OUTPUT_DIR/.stride-repository-registry.json` | context-v2 controller via `build_stride_evidence_bundles.py` | evidence-bundle builder, manifest validator, and STRIDE analyzer |
+| `stride-repository-registry.schema.json` | `$OUTPUT_DIR/.stride-repository-registry.json` | context-v2 controller via `build_stride_evidence_bundles.py` | evidence-bundle builder, manifest validator, and component repository projector |
 | `stride-dispatch-manifest.schema.yaml` | `$OUTPUT_DIR/.stride-dispatch-manifest.json` | `scripts/build_stride_dispatch_manifest.py` | Level-0 dispatcher and `scripts/validate_dispatch_manifest.py` |
 | `orchestration-action.schema.json` | ephemeral controller stdout | `scripts/orchestration_controller.py` | thin skill runtimes |
 | `merge-candidates.schema.json` | `$OUTPUT_DIR/.merge-candidates.json` | `scripts/merge_threats.py collect` | threat merger and `scripts/merge_threats.py finalize` |

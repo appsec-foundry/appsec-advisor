@@ -785,7 +785,7 @@ Parse the user's arguments for the following flags:
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
 | `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure*.svg` / `.pdf` / `.html` / `.sarif.json` / `pentest-tasks-<slug>.yaml`, figure and pentest-tasks references rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block, **and** run the post-run plugin diagnosis (`appsec-run-diagnostician` → `-- Plugin Diagnosis --` block; see §Plugin diagnosis) when the run recorded issues. Read-only: it never modifies plugin files. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
-| _(no CLI flag)_ | `APPSEC_STRIDE_CONCURRENCY=1..32` — bound the number of per-component STRIDE analyzers in one resumable wave. Changes execution pressure only; selected-component coverage is unchanged. | `8` |
+| _(no CLI flag)_ | `APPSEC_STRIDE_CONCURRENCY=1..15` — bound the number of per-component STRIDE analyzers in one resumable wave. Changes execution pressure only; selected-component coverage is unchanged. | `8` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
 - `--with-requirements` → `--requirements`
@@ -3374,7 +3374,7 @@ Pass the following variables to the agent prompt:
 - `RENDER_ROLE=<full|secarch|ms>` (perf 2026-06-05 — only set on Stage 2 dispatch. `full` (default / omit) = single-agent path: author MS + §7 + compose. `secarch` / `ms` = the two parallel split roles (`PARALLEL_RENDER=true`): each authors only its half and does NOT compose; the skill composes after both return. See `agents/appsec-threat-renderer.md` → "Render role — READ FIRST".)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 - `MAX_STRIDE_COMPONENTS=<operational ceiling, default 10>` (safety valve passed to the manifest builder as `--ceiling`; NOT the selection count — components are criteria-selected by `select_stride_components()`)
-- `STRIDE_CONCURRENCY=<1..32, default 8>` (maximum analyzer calls in one bounded wave; does not reduce selected-component coverage)
+- `STRIDE_CONCURRENCY=<1..15, default 8>` (maximum analyzer calls in one bounded wave; does not reduce selected-component coverage)
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
 - `STRIDE_TURNS_MODERATE=<15|22|28>`
 - `STRIDE_TURNS_COMPLEX=<20|31|35>`

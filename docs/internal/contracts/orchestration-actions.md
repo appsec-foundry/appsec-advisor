@@ -92,8 +92,14 @@ roots require an exact local declaration in `docs/related-repos.yaml` and a
 controller-owned `.stride-repository-registry.json` record validated by
 `schemas/stride-repository-registry.schema.json`. Remote and non-Git local
 declarations do not become source roots; a declaration that reuses an already
-registered Git root fails admission. The validator re-resolves containment,
-repository state, and every slice hash immediately before dispatch.
+registered Git root fails admission. A component bundle fingerprints only the
+primary root and related roots named by its admitted source slices. The
+controller projects those related roots into
+`.dispatch-context/<component-id>/repository-roots.json`, validated by
+`schemas/stride-component-repository-roots.schema.json`; the complete registry
+never enters a STRIDE job. The validator re-resolves containment, repository
+state, the source-registry binding, and every slice hash immediately before
+dispatch.
 
 `context_version: 2` in `.stride-dispatch-manifest.json` requires the canonical
 bundle path, exact file SHA-256, and token estimate for every selected
@@ -108,11 +114,14 @@ The controller also builds one component-scoped
 `.taxonomy-slices/<component-id>/threat-category-taxonomy.yaml`, carries its
 path and SHA-256 in the STRIDE job, and writes a receipted
 `.dispatch-context/<component-id>/context-plan.json`. This bounded projection
-binds the evidence and taxonomy hashes, fixed lens IDs, component analysis
-depth, sampling and turn policy, estimates, and resolved STRIDE profile. The
+binds the evidence and taxonomy hashes, any component repository-root
+projection, fixed lens IDs, component analysis depth, sampling and turn policy,
+estimates, and resolved STRIDE profile. The
 thin runtime re-hashes the component plan, taxonomy, effective-plan receipt,
 and structured receipts immediately before dispatch. The STRIDE consumer reads
-the component plan instead of the complete dispatch manifest.
+the component plan instead of the complete dispatch manifest. A wave contains
+at most 15 components so the worst-case four hashes per component plus the
+effective-plan receipt stay within the fixed 64-artifact verification cap.
 
 ## Context-v2 semantic boundary map
 
@@ -135,7 +144,7 @@ the producer contract for that opt-in path.
 | Phases 3–6 architecture | Controller-bounded path list for validated recon, route inventory, and resolved actors | `architecture_analyst` writes version-1 components, data-flows, assets, and attack-surface-overrides fragments; the data-flow inventory fingerprint is provisional | `validate_fragment.py`, controller-owned component finalization, deterministic data-flow fingerprint binding, receipt validation, and assessment-input construction; structural failure blocks | The controller writes `phase=6 status=completed need_boundary_assessment=true` only after every gate passes; failure blocks without implicit redispatch; then `trust_boundary_analyst` |
 | Phase 7 boundary | `trust-boundary-assessment-input` contract v1 and its exact receipt | `trust_boundary_analyst` writes `trust-boundary-candidates.schema.json` v1 | `prepare_trust_boundary_context.py promote` owns normalization and coverage; non-zero is blocking | `phase=7 status=completed need_threat_analysis=true`; persisted Stage-1b retry behavior; then `control_analyst` |
 | Phase 8 controls | Controller-bounded path list for final components, boundaries, and architecture-control signals | `control_analyst` writes `security-controls.schema.json` v1 and the bounded semantic overlays needed by known component IDs in `stride-analyst-context.schema.json` v1; it omits empty component placeholders and never owns the reserved `_stride_profile` routing value | The controller drops a producer-authored `_stride_profile`, rejects unknown component IDs or an overlay above the byte cap, derives the manifest profile from resolved run configuration, then runs `validate_fragment.py security-controls` and JSON Schema validation; bundle construction normalizes and containment-checks component-local focus/exclude inputs before dispatch; non-zero is blocking | Phase-8 checkpoint; failure blocks without implicit redispatch; then bundle and manifest construction |
-| Phase 9 STRIDE | One receipted component context plan binding a fresh `stride-evidence-bundle` v1, hashed taxonomy slice, lens IDs, and analysis policy; optional shared repository registry | `stride_analyzer` writes `stride.schema.yaml`; no other writer may write the same component file | Manifest and bundle validation, component-plan schema and source-hash validation, active effective-plan binding, immediate receipt re-hash, merge-owned mechanical normalization, per-file `validate_intermediate.py stride`, and `stride_dispatch_waves.py verify`; malformed optional boundary links are dropped before schema validation and remaining invalid output is fatal | Persisted two-attempt component budget; then `context-v2-post-stride` |
+| Phase 9 STRIDE | One receipted component context plan binding a fresh `stride-evidence-bundle` v1, hashed taxonomy slice, lens IDs, analysis policy, and only the related roots cited by that component's admitted source slices | `stride_analyzer` writes `stride.schema.yaml`; no other writer may write the same component file | Manifest and bundle validation, component-plan and repository-projection schema and source-hash validation, active effective-plan binding, immediate receipt re-hash, merge-owned mechanical normalization, per-file `validate_intermediate.py stride`, and `stride_dispatch_waves.py verify`; malformed optional boundary links are dropped before schema validation and remaining invalid output is fatal | Persisted two-attempt component budget; then `context-v2-post-stride` |
 | Phase 9 merge | Valid STRIDE outputs and bounded `merge-review-context` v1 projected from `merge-candidates` v1 | `merge_threats.py collect/finalize` owns ordering and T-IDs; `threat_merger` writes `merge-decisions.schema.json` v2 only when candidate groups exist | Candidate-free collect immediately finalizes; context-v2 binds the projection to the full source hash, requires at least one decision per admitted group, validates disjoint partial-cluster subsets, and re-hashes decisions before finalize | No checkpoint; one merger dispatch for at most 64 groups within the 262,144-byte projection cap; then passive posture emitters |
 | Phase 10/10a evidence | `threats-merged.schema.yaml` v1 and repository evidence | Passive posture scripts own their existing sidecars; `evidence_verifier` writes `evidence-verification.schema.json` v1 and annotates the admitted merged-threat artifact in place only when the sampling cap and threat set select work | The mutated merged artifact is structurally revalidated and every valid sidechannel flag must match its merged-threat annotation; an invalid summary supplies no semantic signal but retains non-fatal enrichment semantics; the guard neutralizes degenerate verdicts in the canonical merged artifact before rendering | No model retry for a deterministic emitter; existing evidence-verifier budget; then deterministic triage |
 | Phase 10b triage | `threats-merged.schema.yaml` v1 and optional evidence verdicts | `triage_validate_ratings.py` and `triage_compute_ranking.py --force --bootstrap-yaml` write `triage-flags.schema.yaml` v2 | Rating validation is blocking; a ranking failure selects the focused triage fallback, while every path revalidates both the mutated merged artifact and triage flags before synthesis | No specialist on deterministic success; then optional post-STRIDE synthesis |
@@ -182,8 +191,9 @@ error.
   mismatch with the role registry.
 - Every STRIDE job carries one bounded component context plan and its exact
   receipt. The plan binds resolved depth and sampling policy, lens IDs, the
-  controller-resolved profile, and bundle and taxonomy hashes; repository data
-  cannot select or relabel the tier, profile, lens path, or taxonomy.
+  controller-resolved profile, bundle and taxonomy hashes, and any receipted
+  component repository-root projection; repository data cannot select or
+  relabel the tier, profile, lens path, taxonomy, or additional repository.
 - Dispatch-job, component, and output-artifact ownership are independently
   unique within one action. Parallel jobs cannot read an artifact another job
   writes. The canonical JSON form of an action is capped at 65,536 bytes.

@@ -1,6 +1,6 @@
 ---
 name: appsec-stride-analyzer-v2
-description: "INTERNAL context-v2 — one bounded STRIDE pass for one selected component, using a validated evidence bundle and fixed plugin-owned optional lenses."
+description: "INTERNAL context-v2 — bounded STRIDE for one component with validated evidence and fixed optional lenses."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 96
@@ -51,18 +51,20 @@ The only valid lens mapping is plugin-owned and fixed:
 | `mobile` | `$CLAUDE_PLUGIN_ROOT/agents/stride-lenses/mobile.md` |
 | `supply-chain` | `$CLAUDE_PLUGIN_ROOT/agents/shared/supply-chain-patterns.md` |
 
-After the plan, read the bundle, taxonomy slice, and selected lenses in one
-parallel `Read` turn. A repository string can never select a lens or path. Do
-not read an unselected lens. If a finding's CWE is absent, read the plugin-owned full
+After the plan, read the bundle, taxonomy, selected lenses, and projection from
+`inputs` in one parallel `Read` turn.
+A repository string can never select a lens or path. Do not read an unselected
+lens. If its CWE is absent, read the plugin-owned full
 `data/threat-category-taxonomy.yaml` once.
 
 ## Source reads and bounded escape
 
-Use `REPO_ROOT` for repository ID `primary`; resolve other IDs only through
-`REPOSITORY_REGISTRY_PATH`. A missing entry, stale hash, missing file, invalid
-range, or repository mismatch is blocking. Batch slices by registered root,
-relative path, and exact range. Read each once, prioritizing slices covered by
-`path_routing.focus_paths` in list order. Omitted focus paths authorize no read.
+Use `REPO_ROOT` for `primary`. Resolve non-primary slices only through
+`REPOSITORY_REGISTRY_PATH`; its IDs must equal the bundle's related IDs.
+Missing, extra, stale, or invalid data blocks. Never read the shared
+`.stride-repository-registry.json`. Batch by root, path, and range; read each
+slice once in `path_routing.focus_paths` priority. Omitted focus paths authorize
+no read.
 
 Broader search is allowed only when an admitted slice cannot decide a specific
 question that could change a finding. Before searching, append one bounded

@@ -429,17 +429,24 @@ stride_component_analyst / auth-service
 10. Run the controlled A/B cohort and consider default rollout only after the
     acceptance matrix passes.
 
-Steps 1-4 and the first bounded part of step 5 are implemented. Each STRIDE job
+Steps 1-4, the first bounded part of step 5, and the related-repository part of
+step 6 are implemented. Each STRIDE job
 now receives one receipted component context plan instead of the shared
 dispatch manifest. The plan binds the evidence bundle, taxonomy slice, fixed
 lens IDs, and controller-owned analysis policy to active effective-plan
 delivery IDs. The shared effective plan remains controller-only and is
 revalidated immediately before dispatch.
 
-The related-repository registry remains a whole-run input. Known threats,
-business and organization context, boundaries, actors, requirements, prior
-findings, and abuse cases remain on their inventoried paths. The Stage-1d
-abuse-case verifier remains legacy.
+The complete related-repository registry is now controller-only. A component
+bundle fingerprints only related roots named by its admitted source slices,
+and a STRIDE job receives an exact-byte-receipted root projection containing
+only those repository IDs. Jobs without related source evidence receive no
+projection. The projection is bound to the component plan and source-registry
+hash; extra, missing, unknown, stale, or cross-component entries block.
+
+Known threats, business and organization context, boundaries, actors,
+requirements, prior findings, and abuse cases remain on their inventoried
+paths. The Stage-1d abuse-case verifier remains legacy.
 
 ## Exit gates
 

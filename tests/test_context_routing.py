@@ -225,7 +225,7 @@ def test_assignment_targets_match_the_threat_modeling_unit():
     assert by_id["stride-component-evidence"]["applies_to"] == "current_component"
     assert by_id["abuse-case-candidates"]["applies_to"] == "current_candidate"
     assert by_id["stride-dispatch-plan"]["applies_to"] == "current_component"
-    assert by_id["stride-related-repositories"]["applies_to"] == "whole_run"
+    assert by_id["stride-related-repositories"]["applies_to"] == "current_component"
 
 
 def test_semantics_reject_unknown_agent_and_contradictory_assignment():
@@ -348,8 +348,8 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
             [
                 ".dispatch-context/api/context-plan.json",
                 ".dispatch-context/api/evidence-bundle.json",
+                ".dispatch-context/api/repository-roots.json",
                 ".taxonomy-slices/api/threat-category-taxonomy.yaml",
-                ".stride-repository-registry.json",
             ],
             "api",
         ),
@@ -372,6 +372,8 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
             assert stride["controls.component_evidence"]["applies_to"] == "current_component"
             assert stride["threats.dispatch_plan"]["scope"] == "one_component"
             assert stride["threats.dispatch_plan"]["applies_to"] == "current_component"
+            assert stride["threats.related_repositories"]["scope"] == "one_component"
+            assert stride["threats.related_repositories"]["applies_to"] == "current_component"
     assert len(plan["actions"]) == len(jobs)
 
 
@@ -462,8 +464,8 @@ def test_active_stride_deliveries_bind_to_one_receipted_plan_without_agent_expos
     inputs = [
         ".dispatch-context/api/context-plan.json",
         ".dispatch-context/api/evidence-bundle.json",
+        ".dispatch-context/api/repository-roots.json",
         ".taxonomy-slices/api/threat-category-taxonomy.yaml",
-        ".stride-repository-registry.json",
     ]
     for relative in inputs:
         path = output / relative
@@ -478,12 +480,13 @@ def test_active_stride_deliveries_bind_to_one_receipted_plan_without_agent_expos
         "controls.component_evidence",
         "threats.dispatch_plan",
         "threats.component_taxonomy",
+        "threats.related_repositories",
         "threats.analysis_lenses",
         "threats.analysis_settings",
     }
     bound = routing.bind_action_to_plan(action, plan, output)
     routing.validate_action_plan_reference(bound, output)
-    assert len(bound["dispatch_jobs"][0]["context_delivery_ids"]) == 5
+    assert len(bound["dispatch_jobs"][0]["context_delivery_ids"]) == 6
     assert routing.PLAN_NAME not in bound["dispatch_jobs"][0]["input_artifacts"]
     assert bound["context_plan"]["artifact_path"] == routing.PLAN_NAME
 

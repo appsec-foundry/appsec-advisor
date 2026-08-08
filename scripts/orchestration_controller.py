@@ -87,6 +87,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/fragments/trust-boundaries.schema.json#v2": "trust_boundaries",
     "schemas/stride-evidence-bundle.schema.json#v1": "source_slices",
     "schemas/stride-component-context-plan.schema.json#v1": "inputs",
+    "schemas/stride-component-repository-roots.schema.json#v1": "repositories",
     "schemas/stride-dispatch-manifest.schema.yaml#v2": "components",
     "schemas/stride-repository-registry.schema.json#v1": "repositories",
     "schemas/threats-merged.schema.yaml#v1": "threats",
@@ -573,6 +574,10 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
             raise ControllerError(f"dispatch model does not match semantic role {role!r}")
         if role == "stride_analyzer" and job.get("analysis_depth") not in {"full", "light"}:
             raise ControllerError("stride analyzer dispatch job requires analysis_depth full or light")
+        if role != "stride_analyzer" and (
+            job.get("repository_projection_path") is not None or job.get("repository_projection_sha256") is not None
+        ):
+            raise ControllerError("component repository projections are valid only for stride analyzer jobs")
         if role == "stride_analyzer":
             expected_taxonomy = (
                 f".taxonomy-slices/{component_id}/threat-category-taxonomy.yaml" if component_id else None
@@ -589,6 +594,10 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
             if ".stride-dispatch-manifest.json" in job.get("input_artifacts", []):
                 raise ControllerError(
                     "stride analyzer must receive its component plan, not the shared dispatch manifest"
+                )
+            if ".stride-repository-registry.json" in job.get("input_artifacts", []):
+                raise ControllerError(
+                    "stride analyzer must receive component repository roots, not the shared registry"
                 )
         all_inputs.update(job.get("input_artifacts", []))
         for artifact_path in job.get("output_artifacts", []):
@@ -2025,39 +2034,210 @@ def _write_stride_component_context_plan(
     bundle_sha256: str,
     taxonomy_path: str,
     taxonomy_sha256: str,
+    repository_projection_path: str | None = None,
+    repository_projection_sha256: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Write one bounded STRIDE admission plan derived from validated inputs."""
     from _atomic_io import atomic_write_json
 
     relative = f".dispatch-context/{component_id}/context-plan.json"
     path = _resolve_artifact_path(output_dir.resolve(), relative)
+    inputs = [
+        {
+            "context_id": "controls.component_evidence",
+            "artifact_path": bundle_path,
+            "sha256": bundle_sha256,
+        },
+        {
+            "context_id": "threats.component_taxonomy",
+            "artifact_path": taxonomy_path,
+            "sha256": taxonomy_sha256,
+        },
+    ]
+    if (repository_projection_path is None) != (repository_projection_sha256 is None):
+        raise ControllerError("component repository projection path and hash must be supplied together")
+    if repository_projection_path is not None and repository_projection_sha256 is not None:
+        inputs.append(
+            {
+                "context_id": "threats.related_repositories",
+                "artifact_path": repository_projection_path,
+                "sha256": repository_projection_sha256,
+            }
+        )
     value = {
         "schema_version": 1,
         "component_id": component_id,
         "source_manifest_sha256": manifest_sha256,
         "analysis": analysis,
         "lens_ids": lens_ids,
-        "inputs": [
-            {
-                "context_id": "controls.component_evidence",
-                "artifact_path": bundle_path,
-                "sha256": bundle_sha256,
-            },
-            {
-                "context_id": "threats.component_taxonomy",
-                "artifact_path": taxonomy_path,
-                "sha256": taxonomy_sha256,
-            },
-        ],
+        "inputs": inputs,
     }
     atomic_write_json(path, value, sort_keys=True)
     receipt = _validated_json_receipt(
         output_dir,
         relative,
         schema_id="schemas/stride-component-context-plan.schema.json#v1",
-        record_count=2,
+        record_count=len(inputs),
     )
     return relative, receipt
+
+
+def _write_stride_component_repository_roots(
+    output_dir: Path,
+    *,
+    component_id: str,
+    bundle: dict[str, Any],
+    source_registry_path: Path,
+) -> tuple[str, dict[str, Any]] | None:
+    """Project only related roots referenced by one component's source slices."""
+    from _atomic_io import atomic_write_json
+
+    slices = bundle.get("source_slices")
+    if not isinstance(slices, list):
+        raise ControllerError(f"stride-evidence-bundle-v1 has no source_slices for {component_id}")
+    referenced_ids_raw = {
+        row.get("repository_id") for row in slices if isinstance(row, dict) and row.get("repository_id") != "primary"
+    }
+    if any(not isinstance(repository_id, str) for repository_id in referenced_ids_raw):
+        raise ControllerError(f"evidence bundle contains an invalid related repository id for {component_id}")
+    referenced_ids = sorted(referenced_ids_raw)
+    if not referenced_ids:
+        return None
+    if len(referenced_ids) > 16:
+        raise ControllerError(f"component {component_id} exceeds the 16-related-repository projection cap")
+
+    source_registry = _validate_json_artifact(
+        source_registry_path,
+        PLUGIN_ROOT / "schemas" / "stride-repository-registry.schema.json",
+        contract="stride-repository-registry-v1",
+    )
+    source_rows = source_registry.get("repositories")
+    if not isinstance(source_rows, list):
+        raise ControllerError("stride-repository-registry-v1 has no repositories array")
+    source_by_id = {row.get("repository_id"): row for row in source_rows if isinstance(row, dict)}
+    if len(source_by_id) != len(source_rows):
+        raise ControllerError("stride-repository-registry-v1 contains duplicate repository ids")
+    missing = sorted(set(referenced_ids) - set(source_by_id))
+    if missing:
+        raise ControllerError(
+            f"component {component_id} references repositories absent from the controller registry: "
+            + ", ".join(missing)
+        )
+    source_payload = source_registry_path.read_bytes()
+    relative = f".dispatch-context/{component_id}/repository-roots.json"
+    path = _resolve_artifact_path(output_dir.resolve(), relative)
+    value = {
+        "schema_version": 1,
+        "component_id": component_id,
+        "source_registry_sha256": hashlib.sha256(source_payload).hexdigest(),
+        "repositories": [
+            {
+                "repository_id": repository_id,
+                "kind": "related",
+                "root": source_by_id[repository_id]["root"],
+            }
+            for repository_id in referenced_ids
+        ],
+    }
+    atomic_write_json(path, value, sort_keys=True)
+    receipt = _validated_json_receipt(
+        output_dir,
+        relative,
+        schema_id="schemas/stride-component-repository-roots.schema.json#v1",
+        record_count=len(referenced_ids),
+    )
+    return relative, receipt
+
+
+def _validate_stride_component_repository_roots(
+    output_root: Path,
+    job: dict[str, Any],
+    bundle: dict[str, Any],
+    artifact_receipts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Reconstruct and validate the exact related-root projection for one job."""
+    component_id = job.get("component_id")
+    slices = bundle.get("source_slices")
+    if not isinstance(slices, list):
+        raise ControllerError(f"stride-evidence-bundle-v1 has no source_slices for {component_id}")
+    related_ids_raw = {
+        row.get("repository_id") for row in slices if isinstance(row, dict) and row.get("repository_id") != "primary"
+    }
+    if any(not isinstance(repository_id, str) for repository_id in related_ids_raw):
+        raise ControllerError(f"evidence bundle contains an invalid related repository id for {component_id}")
+    related_ids = sorted(related_ids_raw)
+    expected_path = f".dispatch-context/{component_id}/repository-roots.json"
+    declared_path = job.get("repository_projection_path")
+    declared_hash = job.get("repository_projection_sha256")
+    inputs = job.get("input_artifacts", [])
+    if not related_ids:
+        if declared_path is not None or declared_hash is not None or expected_path in inputs:
+            raise ControllerError("stride analyzer received related-repository roots without admitted related evidence")
+        return None
+    if declared_path != expected_path or expected_path not in inputs:
+        raise ControllerError("stride analyzer related-repository projection does not match its component id")
+
+    path = _resolve_artifact_path(output_root, expected_path)
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / "stride-component-repository-roots.schema.json",
+        contract="stride-component-repository-roots-v1",
+    )
+    payload = path.read_bytes()
+    actual_sha256 = hashlib.sha256(payload).hexdigest()
+    if actual_sha256 != declared_hash:
+        raise ControllerError("stride analyzer related-repository projection hash is stale")
+    matching_receipts = [row for row in artifact_receipts if row.get("artifact_path") == expected_path]
+    if len(matching_receipts) != 1:
+        raise ControllerError("stride analyzer related-repository projection requires one exact-byte receipt")
+    if matching_receipts[0] != {
+        "schema_version": 1,
+        "artifact_path": expected_path,
+        "schema_id": "schemas/stride-component-repository-roots.schema.json#v1",
+        "sha256": actual_sha256,
+        "record_count": len(related_ids),
+        "validation_status": "valid",
+    }:
+        raise ControllerError("stride analyzer related-repository projection receipt is stale")
+    if value.get("component_id") != component_id:
+        raise ControllerError("stride analyzer related-repository projection contains another component")
+    rows = value.get("repositories")
+    projected_by_id = {row.get("repository_id"): row for row in rows if isinstance(row, dict)}
+    if len(projected_by_id) != len(rows) or sorted(projected_by_id) != related_ids:
+        raise ControllerError("related-repository projection does not match the bundle source slices")
+
+    source_path = _resolve_artifact_path(output_root, ".stride-repository-registry.json")
+    source_payload = source_path.read_bytes()
+    if hashlib.sha256(source_payload).hexdigest() != value.get("source_registry_sha256"):
+        raise ControllerError("related-repository projection is stale for the controller registry")
+    source = _validate_json_artifact(
+        source_path,
+        PLUGIN_ROOT / "schemas" / "stride-repository-registry.schema.json",
+        contract="stride-repository-registry-v1",
+    )
+    source_rows = source.get("repositories")
+    source_by_id = {row.get("repository_id"): row for row in source_rows if isinstance(row, dict)}
+    if len(source_by_id) != len(source_rows):
+        raise ControllerError("stride-repository-registry-v1 contains duplicate repository ids")
+    expected_rows = {
+        repository_id: {
+            "repository_id": repository_id,
+            "kind": "related",
+            "root": source_by_id.get(repository_id, {}).get("root"),
+        }
+        for repository_id in related_ids
+    }
+    if projected_by_id != expected_rows or any(row["root"] is None for row in expected_rows.values()):
+        raise ControllerError("related-repository projection drifted from the controller registry")
+    state_rows = bundle.get("repository_state")
+    state_ids = (
+        {row.get("repository_id") for row in state_rows if isinstance(row, dict)}
+        if isinstance(state_rows, list)
+        else set()
+    )
+    if state_ids != {"primary", *related_ids} or len(state_ids) != len(state_rows):
+        raise ControllerError("evidence bundle repository state is not component-scoped")
+    return value
 
 
 def _validate_stride_component_context_plan(
@@ -2085,10 +2265,19 @@ def _validate_stride_component_context_plan(
     if len(matching_receipts) != 1:
         raise ControllerError("stride analyzer component context plan requires one exact-byte receipt")
     plan_receipt = matching_receipts[0]
+    bundle_path = f".dispatch-context/{component_id}/evidence-bundle.json"
+    bundle = _load_json_object(_resolve_artifact_path(output_root, bundle_path), contract="stride-evidence-bundle-v1")
+    repository_projection = _validate_stride_component_repository_roots(
+        output_root,
+        job,
+        bundle,
+        artifact_receipts,
+    )
+    expected_input_count = 3 if repository_projection is not None else 2
     if (
         plan_receipt.get("schema_id") != "schemas/stride-component-context-plan.schema.json#v1"
         or plan_receipt.get("sha256") != job.get("context_plan_sha256")
-        or plan_receipt.get("record_count") != 2
+        or plan_receipt.get("record_count") != expected_input_count
     ):
         raise ControllerError("stride analyzer component context plan receipt is stale")
     if value["component_id"] != component_id:
@@ -2105,9 +2294,11 @@ def _validate_stride_component_context_plan(
     if analysis != expected_analysis or value["lens_ids"] != job.get("lens_ids"):
         raise ControllerError("stride analyzer job metadata drifted from its component context plan")
     inputs = {row["context_id"]: row for row in value["inputs"]}
-    if set(inputs) != {"controls.component_evidence", "threats.component_taxonomy"}:
+    expected_context_ids = {"controls.component_evidence", "threats.component_taxonomy"}
+    if repository_projection is not None:
+        expected_context_ids.add("threats.related_repositories")
+    if len(inputs) != len(value["inputs"]) or set(inputs) != expected_context_ids:
         raise ControllerError("stride analyzer component context plan has duplicate or missing inputs")
-    bundle_path = f".dispatch-context/{component_id}/evidence-bundle.json"
     if inputs["controls.component_evidence"] != {
         "context_id": "controls.component_evidence",
         "artifact_path": bundle_path,
@@ -2120,6 +2311,12 @@ def _validate_stride_component_context_plan(
         "sha256": job.get("taxonomy_slice_sha256"),
     }:
         raise ControllerError("stride analyzer taxonomy drifted from its component context plan")
+    if repository_projection is not None and inputs["threats.related_repositories"] != {
+        "context_id": "threats.related_repositories",
+        "artifact_path": job.get("repository_projection_path"),
+        "sha256": job.get("repository_projection_sha256"),
+    }:
+        raise ControllerError("stride analyzer related repositories drifted from its component context plan")
     for row in inputs.values():
         artifact = _resolve_artifact_path(output_root, row["artifact_path"])
         try:
@@ -2875,6 +3072,16 @@ def _context_v2_stride_wave_action(
             "stride_profile": cfg.get("stride_profile"),
         }
         lens_ids = list(component.get("lens_ids") or [])
+        repository_projection = _write_stride_component_repository_roots(
+            output_dir,
+            component_id=component_id,
+            bundle=bundle,
+            source_registry_path=repository_registry,
+        )
+        repository_projection_path = repository_projection[0] if repository_projection is not None else None
+        repository_projection_receipt = repository_projection[1] if repository_projection is not None else None
+        if repository_projection_receipt is not None:
+            structured.append(repository_projection_receipt)
         context_plan_path, context_plan_receipt = _write_stride_component_context_plan(
             output_dir,
             component_id=component_id,
@@ -2885,11 +3092,15 @@ def _context_v2_stride_wave_action(
             bundle_sha256=bundle_receipt["sha256"],
             taxonomy_path=taxonomy_path,
             taxonomy_sha256=taxonomy_sha256,
+            repository_projection_path=repository_projection_path,
+            repository_projection_sha256=(
+                repository_projection_receipt["sha256"] if repository_projection_receipt is not None else None
+            ),
         )
         structured.append(context_plan_receipt)
         input_artifacts = [context_plan_path, bundle_path, taxonomy_path]
-        if repository_registry.is_file():
-            input_artifacts.append(".stride-repository-registry.json")
+        if repository_projection_path is not None:
+            input_artifacts.append(repository_projection_path)
         jobs.append(
             {
                 "schema_version": 1,
@@ -2913,20 +3124,9 @@ def _context_v2_stride_wave_action(
                 "unresolved_decision_keys": [f"stride:{category}" for category in "STRIDE"],
             }
         )
-    if repository_registry.is_file():
-        registry_value = _load_json_object(repository_registry, contract="stride-repository-registry-v1")
-        repositories = registry_value.get("repositories")
-        if not isinstance(repositories, list):
-            raise ControllerError("stride-repository-registry-v1 has no repositories array")
-        structured.insert(
-            0,
-            _validated_json_receipt(
-                output_dir,
-                ".stride-repository-registry.json",
-                schema_id="schemas/stride-repository-registry.schema.json#v1",
-                record_count=len(repositories),
-            ),
-        )
+        if repository_projection_path is not None and repository_projection_receipt is not None:
+            jobs[-1]["repository_projection_path"] = repository_projection_path
+            jobs[-1]["repository_projection_sha256"] = repository_projection_receipt["sha256"]
     _prepare_context_v2_dispatch_outputs(output_dir, jobs)
     return _validate_action(
         {

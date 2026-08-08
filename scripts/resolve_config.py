@@ -273,9 +273,12 @@ STRIDE_COMPONENT_CEILING = 10
 # Maximum number of per-component STRIDE agents dispatched in one foreground
 # wave. Selection remains uncapped for exposed/security-relevant components;
 # this bounds only concurrent execution pressure. Override for a particular
-# host with APPSEC_STRIDE_CONCURRENCY (1..32).
+# host with APPSEC_STRIDE_CONCURRENCY (1..15). The upper bound keeps one
+# context-v2 wave within the 64-artifact immediate receipt-verification cap:
+# bundle, component plan, optional repository projection, and taxonomy per
+# component, plus the effective-plan receipt.
 STRIDE_DISPATCH_CONCURRENCY = 8
-STRIDE_DISPATCH_CONCURRENCY_MAX = 32
+STRIDE_DISPATCH_CONCURRENCY_MAX = 15
 
 
 # ---------------------------------------------------------------------------
@@ -405,9 +408,13 @@ def resolve_stride_concurrency() -> dict:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise SystemExit("Error: APPSEC_STRIDE_CONCURRENCY must be an integer between 1 and 32") from exc
+        raise SystemExit(
+            f"Error: APPSEC_STRIDE_CONCURRENCY must be an integer between 1 and {STRIDE_DISPATCH_CONCURRENCY_MAX}"
+        ) from exc
     if not 1 <= value <= STRIDE_DISPATCH_CONCURRENCY_MAX:
-        raise SystemExit("Error: APPSEC_STRIDE_CONCURRENCY must be between 1 and 32")
+        raise SystemExit(
+            f"Error: APPSEC_STRIDE_CONCURRENCY must be between 1 and {STRIDE_DISPATCH_CONCURRENCY_MAX}"
+        )
     return {"stride_concurrency": value}
 
 
@@ -426,6 +433,7 @@ CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS = {
     "stride-dispatch-manifest": 2,
     "stride-evidence-bundle": 1,
     "stride-component-context-plan": 1,
+    "stride-component-repository-roots": 1,
     "stride-repository-registry": 1,
     "context-effective-plan": 1,
     "context-effective-plan-receipt": 1,

@@ -794,7 +794,7 @@ Status as of 2026-08-07:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
-| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, and first active STRIDE component-plan migration repository-tested | Migrate the remaining Stage-1 inputs source by source, then satisfy full reconstruction and bounded-projection exit gates |
+| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active STRIDE component plans, and component-scoped related-repository roots repository-tested | Migrate the remaining Stage-1 inputs source by source, then satisfy full reconstruction and bounded-projection exit gates |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
 
@@ -824,14 +824,24 @@ runtime migration status from the human surface.
 The first active migration gives every STRIDE analyzer one receipted component
 context plan instead of the full dispatch manifest. It binds the component
 evidence bundle, taxonomy slice, fixed lens IDs, depth and sampling policy,
-turn and estimate values, and resolved STRIDE profile to five active
+turn and estimate values, resolved STRIDE profile, and the optional
+related-repository projection to six active
 effective-plan delivery IDs. The full effective plan stays in the controller
 audit path and is revalidated by exact bytes immediately before dispatch; it is
 never an Agent input.
 
-The related-repository registry remains a whole-run input, and prior findings
-remain an upstream source inside the component-evidence path. Known threats,
-repositories, business and organization context, boundaries, actors,
+The complete related-repository registry is now controller-only. Each bundle
+fingerprints only the primary root and related roots cited by its admitted
+source slices. When those slices exist, the controller writes one bounded,
+receipted component projection containing exactly their repository IDs and
+validated roots, binds it to the component plan and source-registry hash, and
+rejects extra, missing, unknown, stale, cross-component, or non-STRIDE use. A
+job with no related source evidence receives no root projection. STRIDE wave
+concurrency is capped at 15 so worst-case projection receipts remain within the
+unchanged 64-artifact immediate verification gate.
+
+Prior findings remain an upstream source inside the component-evidence path.
+Known threats, business and organization context, boundaries, actors,
 requirements, prior findings, and abuse cases still require source-by-source
 migration. The Stage-1d abuse-case verifier remains legacy.
 

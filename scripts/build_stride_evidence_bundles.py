@@ -733,8 +733,15 @@ def build_bundle(
     for name in EVIDENCE_CLASSES:
         evidence[name], stats[name] = _bounded_records(name, raw[name])
 
+    admitted_repository_ids = {"primary", *(row["repository_id"] for row in source_slices)}
+    unknown_repository_ids = admitted_repository_ids - set(registry)
+    if unknown_repository_ids:
+        raise BundleError(
+            "component source slices name unknown repositories: " + ", ".join(sorted(unknown_repository_ids))
+        )
     repository_state = []
-    for repository_id, root in sorted(registry.items()):
+    for repository_id in sorted(admitted_repository_ids):
+        root = registry[repository_id]
         commit, dirty = repository_fingerprint(
             root,
             excluded_root=output_dir if repository_id == "primary" else None,
@@ -868,13 +875,18 @@ def validate_bundle_bytes(
     if bundle["limits"]["estimated_tokens"] != (len(payload) + 3) // 4:
         raise BundleError("evidence-bundle estimated token count is stale")
 
+    required_repository_ids = {"primary", *(row["repository_id"] for row in bundle["source_slices"])}
+    unknown_repository_ids = required_repository_ids - set(registry)
+    if unknown_repository_ids:
+        raise BundleError("source slice names unknown repository: " + ", ".join(sorted(unknown_repository_ids)))
     state_rows = bundle["repository_state"]
     state_by_id = {row["repository_id"]: row for row in state_rows}
     if len(state_rows) != len(state_by_id):
         raise BundleError("evidence-bundle repository state contains duplicate repository ids")
-    if set(state_by_id) != set(registry):
-        raise BundleError("evidence-bundle repository state does not match the controller registry")
-    for repository_id, root in registry.items():
+    if set(state_by_id) != required_repository_ids:
+        raise BundleError("evidence-bundle repository state does not match its admitted source slices")
+    for repository_id in sorted(required_repository_ids):
+        root = registry[repository_id]
         commit, dirty = repository_fingerprint(
             root,
             excluded_root=excluded_root if repository_id == "primary" else None,

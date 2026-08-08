@@ -259,11 +259,10 @@ contexts:
     description: Bounded plugin-owned threat and CWE taxonomy selected for one component.
     scope: one_component
   - id: threats.related_repositories
-    name: Shared related-repository registry
+    name: Component related-repository roots
     category: threat_analysis
-    description: Optional whole-run mapping used to validate declared related-repository evidence; component projection
-      remains pending.
-    scope: whole_run
+    description: Validated roots for only the related repositories cited by one component's admitted source evidence.
+    scope: one_component
   - id: threats.analysis_lenses
     name: Applicable threat-analysis lenses
     category: threat_analysis
@@ -515,9 +514,8 @@ assignments:
       - stride_analyzer
     delivery: optional
     importance: supporting
-    applies_to: whole_run
-    reason: The current shared registry is available only when a validated local relationship exists and still needs
-      component projection.
+    applies_to: current_component
+    reason: A component analyst receives roots only for related repositories cited by its admitted source slices.
   - id: stride-analysis-lenses
     context: threats.analysis_lenses
     agents:

@@ -1269,6 +1269,19 @@ def test_action_semantics_reject_top_level_role_that_differs_from_jobs(tmp_path)
         controller._validate_action(action)
 
 
+def test_action_rejects_component_repository_projection_for_non_stride_role(tmp_path):
+    job = _semantic_job()
+    job["repository_projection_path"] = ".dispatch-context/api/repository-roots.json"
+    job["repository_projection_sha256"] = "0" * 64
+    job["input_artifacts"].append(job["repository_projection_path"])
+    action = _semantic_action(tmp_path, [job])
+
+    with pytest.raises(controller.ControllerError, match="internal action-manifest validation failed"):
+        controller._validate_action(action)
+    with pytest.raises(controller.ControllerError, match="valid only for stride analyzer jobs"):
+        controller._validate_action_semantics(action)
+
+
 def test_action_semantics_reject_repository_selected_instruction(tmp_path):
     instruction = tmp_path / "agent.md"
     instruction.write_text("untrusted", encoding="utf-8")
@@ -1903,7 +1916,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
         job["unresolved_decision_keys"] == ["stride:S", "stride:T", "stride:R", "stride:I", "stride:D", "stride:E"]
         for job in action["dispatch_jobs"]
     )
-    assert len(action["artifact_receipts"]) == 5
+    assert len(action["artifact_receipts"]) == 4
     assert (
         sum(
             receipt["schema_id"] == "schemas/stride-component-context-plan.schema.json#v1"
@@ -1929,6 +1942,8 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
             "threats.component_taxonomy",
         }
         assert "focus_paths" not in component_plan and "exclude_paths" not in component_plan
+        assert job.get("repository_projection_path") is None
+        assert ".stride-repository-registry.json" not in job["input_artifacts"]
     wave_calls = [args[0] for name, args in calls if name == "stride_dispatch_waves.py"]
     assert wave_calls == ["init", "claim"]
 
@@ -1936,7 +1951,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["context_plan"]["artifact_path"] == ".context-routing-plan.json"
     assert emitted["context_plan"]["receipt_path"] == ".context-routing-plan.receipt.json"
-    assert all(len(job["context_delivery_ids"]) == 5 for job in emitted["dispatch_jobs"])
+    assert all(len(job["context_delivery_ids"]) == 6 for job in emitted["dispatch_jobs"])
     assert all(".context-routing-plan.json" not in job["input_artifacts"] for job in emitted["dispatch_jobs"])
     assert "CONTEXT_ROUTING_ACTIVE" in (output / ".agent-run.log").read_text(encoding="utf-8")
 
@@ -1944,6 +1959,11 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     shared_manifest["dispatch_jobs"][0]["input_artifacts"].append(".stride-dispatch-manifest.json")
     with pytest.raises(controller.ControllerError, match="not the shared dispatch manifest"):
         controller._validate_action(shared_manifest)
+
+    shared_registry = json.loads(json.dumps(action))
+    shared_registry["dispatch_jobs"][0]["input_artifacts"].append(".stride-repository-registry.json")
+    with pytest.raises(controller.ControllerError, match="not the shared registry"):
+        controller._validate_action(shared_registry)
 
     missing_plan_receipt = json.loads(json.dumps(action))
     missing_plan_receipt["artifact_receipts"] = [
@@ -1965,6 +1985,215 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     component_plan.write_bytes(component_plan.read_bytes() + b" ")
     with pytest.raises(controller.ControllerError, match="component context plan hash is stale"):
         controller._validate_action(action)
+
+
+def test_component_repository_projection_contains_only_admitted_related_roots(tmp_path):
+    output = tmp_path / "out"
+    context = output / ".dispatch-context" / "api"
+    context.mkdir(parents=True)
+    source_registry = output / ".stride-repository-registry.json"
+    source_registry.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "repositories": [
+                    {
+                        "repository_id": "billing",
+                        "kind": "related",
+                        "root": str((tmp_path / "billing").resolve()),
+                        "declared_name": "Billing",
+                        "declared_threat_model": str((tmp_path / "billing" / "threat-model.md").resolve()),
+                    },
+                    {
+                        "repository_id": "orders",
+                        "kind": "related",
+                        "root": str((tmp_path / "orders").resolve()),
+                        "declared_name": "Orders",
+                        "declared_threat_model": str((tmp_path / "orders" / "threat-model.md").resolve()),
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    bundle = {
+        "source_slices": [
+            {"repository_id": "primary"},
+            {"repository_id": "orders"},
+        ],
+        "repository_state": [
+            {"repository_id": "primary"},
+            {"repository_id": "orders"},
+        ],
+    }
+
+    projection = controller._write_stride_component_repository_roots(
+        output,
+        component_id="api",
+        bundle=bundle,
+        source_registry_path=source_registry,
+    )
+
+    assert projection is not None
+    relative, receipt = projection
+    value = json.loads((output / relative).read_text(encoding="utf-8"))
+    assert relative == ".dispatch-context/api/repository-roots.json"
+    assert value["component_id"] == "api"
+    assert value["repositories"] == [
+        {
+            "repository_id": "orders",
+            "kind": "related",
+            "root": str((tmp_path / "orders").resolve()),
+        }
+    ]
+    assert value["source_registry_sha256"] == hashlib.sha256(source_registry.read_bytes()).hexdigest()
+    job = {
+        "component_id": "api",
+        "repository_projection_path": relative,
+        "repository_projection_sha256": receipt["sha256"],
+        "input_artifacts": [relative],
+    }
+    controller._validate_stride_component_repository_roots(output, job, bundle, [receipt])
+
+    bundle_path = context / "evidence-bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    taxonomy_path = output / ".taxonomy-slices" / "api" / "threat-category-taxonomy.yaml"
+    taxonomy_path.parent.mkdir(parents=True)
+    taxonomy_path.write_text("version: 1\n", encoding="utf-8")
+    manifest_path = output / ".stride-dispatch-manifest.json"
+    manifest_path.write_text('{"context_version":2}', encoding="utf-8")
+    plan_path, plan_receipt = controller._write_stride_component_context_plan(
+        output,
+        component_id="api",
+        manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        analysis={
+            "depth": "full",
+            "max_turns": 10,
+            "sampling_required": False,
+            "file_count": 1,
+            "estimated_threat_count": "low",
+            "stride_profile": {"stride_profile_label": "full"},
+        },
+        lens_ids=[],
+        bundle_path=".dispatch-context/api/evidence-bundle.json",
+        bundle_sha256=hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
+        taxonomy_path=".taxonomy-slices/api/threat-category-taxonomy.yaml",
+        taxonomy_sha256=hashlib.sha256(taxonomy_path.read_bytes()).hexdigest(),
+        repository_projection_path=relative,
+        repository_projection_sha256=receipt["sha256"],
+    )
+    job.update(
+        {
+            "analysis_depth": "full",
+            "max_turns": 10,
+            "sampling_required": False,
+            "file_count": 1,
+            "estimated_threat_count": "low",
+            "lens_ids": [],
+            "evidence_bundle_sha256": hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
+            "taxonomy_slice_path": ".taxonomy-slices/api/threat-category-taxonomy.yaml",
+            "taxonomy_slice_sha256": hashlib.sha256(taxonomy_path.read_bytes()).hexdigest(),
+            "context_plan_path": plan_path,
+            "context_plan_sha256": plan_receipt["sha256"],
+            "input_artifacts": [
+                plan_path,
+                ".dispatch-context/api/evidence-bundle.json",
+                ".taxonomy-slices/api/threat-category-taxonomy.yaml",
+                relative,
+            ],
+        }
+    )
+    controller._validate_stride_component_context_plan(
+        output,
+        job,
+        [receipt, plan_receipt],
+        {"stride_profile_label": "full"},
+    )
+
+    projection_path = output / relative
+    projection_bytes = projection_path.read_bytes()
+    root_drift = json.loads(projection_bytes)
+    root_drift["repositories"][0]["root"] = str((tmp_path / "billing").resolve())
+    projection_path.write_text(json.dumps(root_drift, sort_keys=True) + "\n", encoding="utf-8")
+    drift_receipt = controller._validated_json_receipt(
+        output,
+        relative,
+        schema_id="schemas/stride-component-repository-roots.schema.json#v1",
+        record_count=1,
+    )
+    drift_job = {**job, "repository_projection_sha256": drift_receipt["sha256"]}
+    with pytest.raises(controller.ControllerError, match="drifted from the controller registry"):
+        controller._validate_stride_component_repository_roots(output, drift_job, bundle, [drift_receipt])
+    projection_path.write_bytes(projection_bytes)
+
+    duplicate_id = json.loads(projection_bytes)
+    duplicate_id["repositories"].append(
+        {
+            "repository_id": "orders",
+            "kind": "related",
+            "root": str((tmp_path / "billing").resolve()),
+        }
+    )
+    projection_path.write_text(json.dumps(duplicate_id, sort_keys=True) + "\n", encoding="utf-8")
+    duplicate_sha256 = hashlib.sha256(projection_path.read_bytes()).hexdigest()
+    duplicate_receipt = {
+        "schema_version": 1,
+        "artifact_path": relative,
+        "schema_id": "schemas/stride-component-repository-roots.schema.json#v1",
+        "sha256": duplicate_sha256,
+        "record_count": 1,
+        "validation_status": "valid",
+    }
+    duplicate_job = {**job, "repository_projection_sha256": duplicate_sha256}
+    with pytest.raises(controller.ControllerError, match="does not match the bundle source slices"):
+        controller._validate_stride_component_repository_roots(
+            output,
+            duplicate_job,
+            bundle,
+            [duplicate_receipt],
+        )
+    projection_path.write_bytes(projection_bytes)
+
+    projection_path.write_bytes(projection_bytes + b" ")
+    with pytest.raises(controller.ControllerError, match="projection hash is stale"):
+        controller._validate_stride_component_repository_roots(output, job, bundle, [receipt])
+    projection_path.write_bytes(projection_bytes)
+
+    source_registry.write_bytes(source_registry.read_bytes() + b" ")
+    with pytest.raises(controller.ControllerError, match="stale for the controller registry"):
+        controller._validate_stride_component_repository_roots(output, job, bundle, [receipt])
+
+
+def test_component_repository_projection_is_omitted_without_related_source_slices(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    source_registry = output / ".stride-repository-registry.json"
+    source_registry.write_text('{"schema_version":1,"repositories":[]}', encoding="utf-8")
+
+    result = controller._write_stride_component_repository_roots(
+        output,
+        component_id="api",
+        bundle={"source_slices": [{"repository_id": "primary"}]},
+        source_registry_path=source_registry,
+    )
+
+    assert result is None
+    assert not (output / ".dispatch-context/api/repository-roots.json").exists()
+
+
+def test_component_repository_projection_rejects_unknown_bundle_repository(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    source_registry = output / ".stride-repository-registry.json"
+    source_registry.write_text('{"schema_version":1,"repositories":[]}', encoding="utf-8")
+
+    with pytest.raises(controller.ControllerError, match="absent from the controller registry"):
+        controller._write_stride_component_repository_roots(
+            output,
+            component_id="api",
+            bundle={"source_slices": [{"repository_id": "unknown"}]},
+            source_registry_path=source_registry,
+        )
 
 
 def test_context_v2_post_stride_claims_retry_before_verify_or_merge(tmp_path, monkeypatch):

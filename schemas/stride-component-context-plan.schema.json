@@ -44,12 +44,44 @@
     "inputs": {
       "type": "array",
       "minItems": 2,
-      "maxItems": 2,
+      "maxItems": 3,
+      "allOf": [
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "controls.component_evidence"}},
+            "required": ["context_id"]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "threats.component_taxonomy"}},
+            "required": ["context_id"]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "threats.related_repositories"}},
+            "required": ["context_id"]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        }
+      ],
       "items": {
         "type": "object",
         "required": ["context_id", "artifact_path", "sha256"],
         "properties": {
-          "context_id": {"enum": ["controls.component_evidence", "threats.component_taxonomy"]},
+          "context_id": {
+            "enum": [
+              "controls.component_evidence",
+              "threats.component_taxonomy",
+              "threats.related_repositories"
+            ]
+          },
           "artifact_path": {"$ref": "#/$defs/relative_path"},
           "sha256": {"$ref": "#/$defs/sha256"}
         },

@@ -370,6 +370,52 @@ def test_bundle_rejects_unknown_source_repository(tmp_path):
         bundles.build_all(output, repo, _manifest())
 
 
+def test_bundle_fingerprints_only_related_roots_used_by_component_slices(tmp_path):
+    repo, output = _repo(tmp_path)
+    related_a = tmp_path / "related-a"
+    related_b = tmp_path / "related-b"
+    for related in (related_a, related_b):
+        related.mkdir()
+        _git(related, "init", "-b", "main")
+        _git(related, "config", "user.email", "test@example.invalid")
+        _git(related, "config", "user.name", "Test")
+        source = related / "src" / "service.py"
+        source.parent.mkdir()
+        source.write_text("value = True\n", encoding="utf-8")
+        _git(related, "add", "src/service.py")
+        _git(related, "commit", "-m", "fixture")
+    _write_signal(output, repository_id="related-a", file="src/service.py")
+    registry = {"primary": repo, "related-a": related_a, "related-b": related_b}
+
+    bundle, payload = bundles.build_bundle(output, _component(), registry)
+
+    assert {row["repository_id"] for row in bundle["repository_state"]} == {"primary", "related-a"}
+    assert {row["repository_id"] for row in bundle["source_slices"]} == {"related-a"}
+    bundles.validate_bundle_bytes(payload, registry, expected_component_id="backend-api", excluded_root=output)
+
+    (related_b / "src" / "service.py").write_text("unrelated = True\n", encoding="utf-8")
+    bundles.validate_bundle_bytes(payload, registry, expected_component_id="backend-api", excluded_root=output)
+
+
+def test_bundle_rejects_repository_state_for_unreferenced_related_root(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(output, repo, _manifest())
+    bundle_path = output / manifest["components"][0]["evidence_bundle_path"]
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    bundle["repository_state"].append(
+        {
+            "repository_id": "unrelated",
+            "kind": "related",
+            "commit_sha": "0" * 40,
+            "dirty_worktree_sha256": "0" * 64,
+        }
+    )
+    payload = bundles._render_bundle(bundle)
+
+    with pytest.raises(bundles.BundleError, match="does not match its admitted source slices"):
+        bundles.validate_bundle_bytes(payload, {"primary": repo}, excluded_root=output)
+
+
 def test_bundle_accepts_safe_source_paths_with_spaces_and_unicode(tmp_path):
     repo, output = _repo(tmp_path)
     source = repo / "src" / "über uns.py"

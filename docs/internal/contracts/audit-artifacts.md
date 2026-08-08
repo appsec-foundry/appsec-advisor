@@ -35,7 +35,7 @@ Four sidecars share the prefix and are written **before** the Phase-9 fan-out:
 | `.stride-dispatch-manifest.json` | Dispatch plan (`schemas/stride-dispatch-manifest.schema.yaml`) |
 | `.stride-selection.json` | Component-selection report (`build_stride_dispatch_manifest.py`) |
 | `.stride-analyst-context.json` | Analyst-A per-component context |
-| `.stride-repository-registry.json` | Transient context-v2 mapping from declared local related repositories to validated roots; runtime cleanup removes it |
+| `.stride-repository-registry.json` | Controller-only context-v2 mapping from declared local related repositories to validated roots; component projections under `.dispatch-context/` are the only mappings sent to STRIDE analyzers, and runtime cleanup removes both |
 
 Cleanup and never-publish lists keep the broad `.stride-*.json` pattern on
 purpose. Anything that **reads or counts** per-component results must go

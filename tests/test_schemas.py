@@ -8,6 +8,7 @@ JSONSchema Draft 2020-12 meta-schema, and that the canonical example
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,78 @@ def test_json_schema_is_valid_jsonschema(schema_path: Path) -> None:
 
 def test_json_schemas_directory_not_empty() -> None:
     assert ALL_JSON_SCHEMAS, "schemas/ must contain at least one top-level *.schema.json"
+
+
+def _json_validator(name: str) -> Draft202012Validator:
+    schema = json.loads((SCHEMAS_DIR / name).read_text(encoding="utf-8"))
+    return Draft202012Validator(schema)
+
+
+def _component_context_plan() -> dict:
+    sha256 = "0" * 64
+    return {
+        "schema_version": 1,
+        "component_id": "api",
+        "source_manifest_sha256": sha256,
+        "analysis": {
+            "depth": "full",
+            "max_turns": 8,
+            "sampling_required": False,
+            "file_count": 1,
+            "estimated_threat_count": "low",
+            "stride_profile": {"stride_profile_label": "full"},
+        },
+        "lens_ids": [],
+        "inputs": [
+            {
+                "context_id": "controls.component_evidence",
+                "artifact_path": ".dispatch-context/api/evidence-bundle.json",
+                "sha256": sha256,
+            },
+            {
+                "context_id": "threats.component_taxonomy",
+                "artifact_path": ".taxonomy-slices/api/threat-category-taxonomy.yaml",
+                "sha256": sha256,
+            },
+        ],
+    }
+
+
+def test_component_context_plan_requires_each_mandatory_input_exactly_once() -> None:
+    validator = _json_validator("stride-component-context-plan.schema.json")
+    plan = _component_context_plan()
+    assert not list(validator.iter_errors(plan))
+
+    plan["inputs"] = [plan["inputs"][0], dict(plan["inputs"][0])]
+    assert list(validator.iter_errors(plan)), "duplicate evidence inputs must fail schema validation"
+
+    plan = _component_context_plan()
+    plan["inputs"][1] = {
+        "context_id": "threats.related_repositories",
+        "artifact_path": ".dispatch-context/api/repository-roots.json",
+        "sha256": "0" * 64,
+    }
+    assert list(validator.iter_errors(plan)), "the optional projection cannot replace the taxonomy input"
+
+
+def test_component_repository_roots_reject_primary_and_identical_duplicates() -> None:
+    validator = _json_validator("stride-component-repository-roots.schema.json")
+    roots = {
+        "schema_version": 1,
+        "component_id": "api",
+        "source_registry_sha256": "0" * 64,
+        "repositories": [{"repository_id": "orders", "kind": "related", "root": "/srv/orders"}],
+    }
+    assert not list(validator.iter_errors(roots))
+
+    roots["repositories"][0]["repository_id"] = "primary"
+    assert list(validator.iter_errors(roots)), "the primary repository is never a related-root projection"
+
+    roots["repositories"] = [
+        {"repository_id": "orders", "kind": "related", "root": "/srv/orders"},
+        {"repository_id": "orders", "kind": "related", "root": "/srv/orders"},
+    ]
+    assert list(validator.iter_errors(roots)), "identical repository rows must not validate twice"
 
 
 def test_default_actor_library_validates_actor_schema() -> None:

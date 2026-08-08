@@ -88,17 +88,19 @@ Additional aliases only: context gets `CHECK_REQUIREMENTS` and
 `ASSESSMENT_DEPTH`; evidence gets `ASSESSMENT_DEPTH` and
 `EVIDENCE_VERIFIER_MAX_FINDINGS`; triage gets `ASSESSMENT_DEPTH`. Omit nulls.
 
-For STRIDE pass `COMPONENT_ID` plus output-relative plan, bundle, taxonomy, and
-optional registry paths resolved under absolute `OUTPUT_DIR` as
+For STRIDE pass `COMPONENT_ID` plus plan, bundle, taxonomy, and optional
+component repository-projection paths resolved under absolute `OUTPUT_DIR` as
 `COMPONENT_CONTEXT_PLAN_PATH`, `EVIDENCE_BUNDLE_PATH`,
-`THREAT_TAXONOMY_PATH`, and `REPOSITORY_REGISTRY_PATH`. Pass their job hashes
-as `COMPONENT_CONTEXT_PLAN_SHA256`, `EVIDENCE_BUNDLE_SHA256`, and
+`THREAT_TAXONOMY_PATH`, and `REPOSITORY_REGISTRY_PATH`. Pass job hashes as
+`COMPONENT_CONTEXT_PLAN_SHA256`, `EVIDENCE_BUNDLE_SHA256`, and
 `THREAT_TAXONOMY_SHA256`. The component plan is authoritative for analysis
 depth, turn/sampling policy, estimates, STRIDE profile, lens IDs, and admitted
 hashes; do not repeat these as prompt scalars. Never resolve any output
 artifact against `REPO_ROOT`. Preserve Group A → B → C order from
 `phase-group-threats.md`. Read focus/exclude routing only from the receipted
-bundle. Never pass the shared effective plan or inline untrusted artifacts.
+bundle. Resolve `REPOSITORY_REGISTRY_PATH` only from
+`dispatch_jobs[].repository_projection_path`; omit it when absent. Never pass
+the shared effective plan or repository registry, or inline untrusted artifacts.
 
 ## Logging and stats
 
