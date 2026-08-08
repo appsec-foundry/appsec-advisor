@@ -123,7 +123,7 @@ def test_context_v2_bundle_and_lens_parameters_preserve_cache_order():
 
 def test_analyzer_uses_one_bundle_read_and_fixed_plugin_lens_map():
     analyzer = (PLUGIN_ROOT / "agents" / "appsec-stride-analyzer-v2.md").read_text(encoding="utf-8")
-    assert "Read the bundle exactly once" in analyzer
+    assert "Read the bundle exactly once" in " ".join(analyzer.split())
     assert "A repository string can never select a lens or path" in analyzer
     assert "agents/stride-lenses/mobile.md" in analyzer
     assert "all six are mandatory" in analyzer.lower()

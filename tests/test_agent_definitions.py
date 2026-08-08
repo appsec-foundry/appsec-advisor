@@ -557,15 +557,18 @@ class TestBodyContentConsistency:
         assert "Never emit `TH-UNCLASSIFIED`" in stride
         assert 'bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh"' in stride
         assert "never invoke that shell script with Python" in stride
-        assert "`MODEL_ID` and `ANALYSIS_DEPTH`" in stride
-        assert "controller-resolved `STRIDE_PROFILE` JSON" in stride
-        assert "`THREAT_TAXONOMY_PATH` plus `THREAT_TAXONOMY_SHA256`" in stride
+        assert "`MODEL_ID` and the component plan's `analysis.depth`" in stride
+        assert "Never read the shared effective plan or dispatch manifest" in flat
+        assert "Its `analysis`, `lens_ids`, and `inputs` own the policy" in flat
+        assert "max_threats_per_category" in stride
         assert "read the plugin-owned full\n`data/threat-category-taxonomy.yaml` once" in stride
         thin_runtime = (AGENTS_DIR.parent / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text(
             encoding="utf-8"
         )
         assert "STRIDE (<dispatch_jobs[].analysis_depth>): <dispatch_jobs[].component_id>" in thin_runtime
-        assert "`ANALYSIS_DEPTH`" in thin_runtime
+        assert "`COMPONENT_CONTEXT_PLAN_PATH`" in thin_runtime
+        assert "`COMPONENT_CONTEXT_PLAN_SHA256`" in thin_runtime
+        assert "`THREAT_TAXONOMY_SHA256`" in thin_runtime
         flat_runtime = " ".join(thin_runtime.split())
         assert "Never recommend `--resume`" in flat_runtime
         assert "a later `--full` restarts Stage 1" in flat_runtime

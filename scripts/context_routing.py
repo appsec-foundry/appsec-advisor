@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Validate and shadow-resolve the Stage-1 context routing catalog.
+"""Validate and resolve the Stage-1 context routing catalog.
 
 The YAML catalog is the human configuration surface. Runtime paths, schemas,
 projectors, and hard safety limits live in the separate plugin-owned bindings
-file so a human never has to configure implementation details. Shadow
-resolution explains existing context-v2 actions without changing their inputs.
+file so a human never has to configure implementation details. Resolution
+explains every context-v2 action and binds the subset whose migration is active.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -32,10 +33,11 @@ PLAN_RECEIPT_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "context-effective-plan-rec
 PLAN_NAME = ".context-routing-plan.json"
 PLAN_RECEIPT_NAME = ".context-routing-plan.receipt.json"
 MAX_PLAN_BYTES = 4_194_304
+PLAN_SCHEMA_ID = "schemas/context-effective-plan.schema.json#v1"
 
 
 class ContextRoutingError(RuntimeError):
-    """Raised when catalog semantics or a shadow delivery are unsafe."""
+    """Raised when catalog semantics or a resolved delivery are unsafe."""
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -44,6 +46,20 @@ def _canonical_json_bytes(value: Any) -> bytes:
 
 def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def _action_basis(action: dict[str, Any]) -> dict[str, Any]:
+    """Remove the effective-plan self-reference before hashing an action."""
+    basis = copy.deepcopy(action)
+    basis.pop("context_plan", None)
+    for job in basis.get("dispatch_jobs", []):
+        job.pop("context_delivery_ids", None)
+    basis["artifact_receipts"] = [
+        receipt for receipt in basis.get("artifact_receipts", []) if receipt.get("artifact_path") != PLAN_NAME
+    ]
+    if not basis.get("artifact_receipts"):
+        basis.pop("artifact_receipts", None)
+    return basis
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -259,6 +275,13 @@ def validate_catalog_semantics(
             raise ContextRoutingError(f"context {context_id!r} has incompatible delivery and source kinds")
         if binding["delivery"] == "plugin-owned" and source["kind"] not in {"plugin_artifact", "plugin_registry"}:
             raise ContextRoutingError(f"plugin-owned context {context_id!r} has an unsafe source kind")
+        if binding.get("enforcement", "shadow") == "active":
+            if context_id not in positive_contexts:
+                raise ContextRoutingError(f"active context {context_id!r} has no positive human assignment")
+            if binding["delivery"] not in {"declared", "scalar"}:
+                raise ContextRoutingError(f"active context {context_id!r} must use declared or scalar delivery")
+            if source["kind"] not in {"output_artifact", "scalar"}:
+                raise ContextRoutingError(f"active context {context_id!r} must use a receiptable source")
         for agent_id, delivery in binding.get("delivery_overrides", {}).items():
             if agent_id not in agents:
                 raise ContextRoutingError(f"context {context_id!r} has an override for unknown agent {agent_id!r}")
@@ -347,6 +370,11 @@ def _source_receipt(
 
 def _failure_behavior(delivery: str) -> str:
     return {"required": "abort", "optional": "continue_with_diagnostic", "forbidden": "not_applicable"}[delivery]
+
+
+def _enforcement_disclosures(binding: dict[str, Any], *extra: str) -> list[str]:
+    mode = "plan-enforced" if binding.get("enforcement", "shadow") == "active" else "shadow-only"
+    return [*extra, mode]
 
 
 def _delivery_base(
@@ -447,7 +475,7 @@ def _resolve_delivery(
             base.update(
                 status="omitted_optional",
                 match_reason="The optional artifact is not declared for this job.",
-                disclosures=["optional-missing"],
+                disclosures=_enforcement_disclosures(binding, "optional-missing"),
             )
             return (
                 base,
@@ -467,7 +495,7 @@ def _resolve_delivery(
             base.update(
                 status="omitted_optional",
                 match_reason="The optional implicit artifact is not present.",
-                disclosures=["optional-missing"],
+                disclosures=_enforcement_disclosures(binding, "optional-missing"),
             )
             return (
                 base,
@@ -500,7 +528,7 @@ def _resolve_delivery(
                 else "The current agent contract reads this artifact implicitly."
             ),
             source_receipt=receipt,
-            disclosures=["shadow-only"],
+            disclosures=_enforcement_disclosures(binding),
         )
         return base, None, artifact if delivery_mode == "declared" else None
 
@@ -520,7 +548,7 @@ def _resolve_delivery(
             status="observed_plugin_owned",
             match_reason="The agent contract selects this fixed plugin-owned artifact.",
             source_receipt=receipt,
-            disclosures=["shadow-only"],
+            disclosures=_enforcement_disclosures(binding),
         )
         return base, None, None
 
@@ -538,7 +566,7 @@ def _resolve_delivery(
             base.update(
                 status="omitted_optional",
                 match_reason="No values are resolved for this optional setting.",
-                disclosures=["optional-missing"],
+                disclosures=_enforcement_disclosures(binding, "optional-missing"),
             )
             return (
                 base,
@@ -558,7 +586,7 @@ def _resolve_delivery(
             status="observed_scalar",
             match_reason="The controller resolved these bounded settings for this job.",
             source_receipt=receipt,
-            disclosures=["shadow-only"],
+            disclosures=_enforcement_disclosures(binding),
         )
         return base, None, None
 
@@ -584,13 +612,13 @@ def _plan_paths(output_root: Path) -> tuple[Path, Path]:
     return output_root / PLAN_NAME, output_root / PLAN_RECEIPT_NAME
 
 
-def reset_shadow_plan(output_root: Path) -> None:
-    """Remove only the two controller-owned shadow-plan files."""
+def reset_plan(output_root: Path) -> None:
+    """Remove only the two controller-owned effective-plan files."""
     output_root = output_root.resolve()
     for path in _plan_paths(output_root):
         if path.exists() or path.is_symlink():
             if path.is_dir() and not path.is_symlink():
-                raise ContextRoutingError(f"shadow plan path is a directory: {path.name}")
+                raise ContextRoutingError(f"effective plan path is a directory: {path.name}")
             path.unlink()
 
 
@@ -665,7 +693,7 @@ def _write_plan(output_root: Path, plan: dict[str, Any]) -> None:
     _validate_plan_receipt(plan_path, receipt_path)
 
 
-def resolve_shadow_action(
+def resolve_action(
     action: dict[str, Any],
     output_root: Path,
     *,
@@ -673,9 +701,9 @@ def resolve_shadow_action(
     model_keys: dict[str, str],
     plugin_root: Path = PLUGIN_ROOT,
 ) -> dict[str, Any]:
-    """Append one validated context-v2 action to the shadow effective plan."""
+    """Append one validated context-v2 action to the effective plan."""
     if action.get("action") not in {"dispatch_agent", "dispatch_parallel"}:
-        raise ContextRoutingError("shadow resolution accepts only semantic dispatch actions")
+        raise ContextRoutingError("context resolution accepts only semantic dispatch actions")
     catalog, bindings, catalog_sha, bindings_sha = load_catalog_contracts()
     validate_catalog_semantics(
         catalog,
@@ -688,7 +716,7 @@ def resolve_shadow_action(
     run_id = action.get("dispatch_values", {}).get("run_id")
     mode = action.get("mode")
     if not isinstance(run_id, str) or not run_id or mode not in {"full", "rebuild"}:
-        raise ContextRoutingError("context-v2 shadow plan requires a resolved full/rebuild run identity")
+        raise ContextRoutingError("context-v2 effective plan requires a resolved full/rebuild run identity")
     run_key_sha = _sha256(_canonical_json_bytes({"mode": mode, "run_id": run_id}))
     plan = _load_prior_plan(
         output_root,
@@ -716,7 +744,7 @@ def resolve_shadow_action(
         for agent_id in assignment["agents"]:
             assignments_by_agent[agent_id].append(assignment)
 
-    action_payload = _canonical_json_bytes(action)
+    action_payload = _canonical_json_bytes(_action_basis(action))
     action_sha = _sha256(action_payload)
     job_ids = sorted(job["job_id"] for job in action["dispatch_jobs"])
     action_id = f"{action.get('stage', 'stage1')}:{_sha256('|'.join(job_ids).encode())[:16]}"
@@ -795,6 +823,115 @@ def resolve_shadow_action(
     plan["revision"] += 1
     _write_plan(output_root, plan)
     return plan
+
+
+def bind_action_to_plan(action: dict[str, Any], plan: dict[str, Any], output_root: Path) -> dict[str, Any]:
+    """Reference active plan entries without exposing the shared plan to agents."""
+    basis_sha = _sha256(_canonical_json_bytes(_action_basis(action)))
+    action_rows = [row for row in plan["actions"] if row["action_sha256"] == basis_sha]
+    if len(action_rows) != 1:
+        raise ContextRoutingError("effective context plan does not contain exactly one matching action")
+    action_id = action_rows[0]["action_id"]
+    active = [
+        row for row in plan["deliveries"] if row["action_id"] == action_id and "plan-enforced" in row["disclosures"]
+    ]
+    if not active:
+        return action
+
+    bound = copy.deepcopy(action)
+    by_job: dict[str, list[str]] = {}
+    for row in active:
+        by_job.setdefault(row["job_id"], []).append(row["delivery_id"])
+    for job in bound["dispatch_jobs"]:
+        delivery_ids = sorted(by_job.get(job["job_id"], []))
+        if delivery_ids:
+            job["context_delivery_ids"] = delivery_ids
+
+    plan_path, receipt_path = _plan_paths(output_root.resolve())
+    validated_plan = _validate_plan_receipt(plan_path, receipt_path)
+    if validated_plan != plan:
+        raise ContextRoutingError("effective context plan changed before action binding")
+    receipt = _load_json(receipt_path)
+    receipt_sha = _sha256(receipt_path.read_bytes())
+    plan_artifact_receipt = {
+        "schema_version": 1,
+        "artifact_path": PLAN_NAME,
+        "schema_id": PLAN_SCHEMA_ID,
+        "sha256": receipt["sha256"],
+        "record_count": receipt["record_count"],
+        "validation_status": "valid",
+    }
+    receipts = [row for row in bound.get("artifact_receipts", []) if row.get("artifact_path") != PLAN_NAME]
+    receipts.append(plan_artifact_receipt)
+    bound["artifact_receipts"] = receipts
+    bound["context_plan"] = {
+        "artifact_path": PLAN_NAME,
+        "receipt_path": PLAN_RECEIPT_NAME,
+        "sha256": receipt["sha256"],
+        "receipt_sha256": receipt_sha,
+        "revision": plan["revision"],
+        "action_id": action_id,
+    }
+    validate_action_plan_reference(bound, output_root)
+    return bound
+
+
+def validate_action_plan_reference(action: dict[str, Any], output_root: Path) -> None:
+    """Fail closed when an action's active context-plan reference is stale."""
+    reference = action.get("context_plan")
+    if not isinstance(reference, dict):
+        raise ContextRoutingError("active context action is missing its effective-plan reference")
+    if reference.get("artifact_path") != PLAN_NAME or reference.get("receipt_path") != PLAN_RECEIPT_NAME:
+        raise ContextRoutingError("effective-plan reference uses an unexpected path")
+    plan_path, receipt_path = _plan_paths(output_root.resolve())
+    plan = _validate_plan_receipt(plan_path, receipt_path)
+    receipt = _load_json(receipt_path)
+    if reference.get("sha256") != receipt["sha256"]:
+        raise ContextRoutingError("effective-plan reference has a stale plan hash")
+    if reference.get("receipt_sha256") != _sha256(receipt_path.read_bytes()):
+        raise ContextRoutingError("effective-plan reference has a stale receipt hash")
+    if reference.get("revision") != plan["revision"]:
+        raise ContextRoutingError("effective-plan reference has a stale revision")
+
+    basis_sha = _sha256(_canonical_json_bytes(_action_basis(action)))
+    action_id = reference.get("action_id")
+    matching_actions = [
+        row for row in plan["actions"] if row["action_id"] == action_id and row["action_sha256"] == basis_sha
+    ]
+    if len(matching_actions) != 1:
+        raise ContextRoutingError("effective-plan action binding is stale")
+
+    deliveries = {row["delivery_id"]: row for row in plan["deliveries"] if row["action_id"] == action_id}
+    expected_by_job: dict[str, set[str]] = {}
+    for delivery_id, row in deliveries.items():
+        if "plan-enforced" in row["disclosures"]:
+            expected_by_job.setdefault(row["job_id"], set()).add(delivery_id)
+    referenced: set[str] = set()
+    for job in action.get("dispatch_jobs", []):
+        actual = set(job.get("context_delivery_ids", []))
+        expected = expected_by_job.get(job["job_id"], set())
+        if actual != expected:
+            raise ContextRoutingError(f"job {job['job_id']!r} has stale active context delivery references")
+        for delivery_id in actual:
+            row = deliveries.get(delivery_id)
+            if row is None or row.get("component_id") != job.get("component_id"):
+                raise ContextRoutingError(f"job {job['job_id']!r} references another job's context delivery")
+        referenced.update(actual)
+    if referenced != {delivery_id for values in expected_by_job.values() for delivery_id in values}:
+        raise ContextRoutingError("active context deliveries are not fully referenced by the action")
+
+    plan_receipts = [row for row in action.get("artifact_receipts", []) if row.get("artifact_path") == PLAN_NAME]
+    if len(plan_receipts) != 1 or plan_receipts[0] != {
+        "schema_version": 1,
+        "artifact_path": PLAN_NAME,
+        "schema_id": PLAN_SCHEMA_ID,
+        "sha256": reference["sha256"],
+        "record_count": receipt["record_count"],
+        "validation_status": "valid",
+    }:
+        raise ContextRoutingError("action is missing the exact-byte effective-plan receipt")
+    if any(PLAN_NAME in job.get("input_artifacts", []) for job in action.get("dispatch_jobs", [])):
+        raise ContextRoutingError("the shared effective plan must not enter an agent input")
 
 
 def inspect_plan(output_root: Path) -> str:

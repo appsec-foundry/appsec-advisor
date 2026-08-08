@@ -1,4 +1,4 @@
-"""Contracts for the human context catalog and shadow effective plan."""
+"""Contracts for the human context catalog and effective plan."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def _context_action(output: Path, *, inputs: list[str] | None = None) -> dict:
 
 
 def _resolve(action: dict, output: Path) -> dict:
-    return routing.resolve_shadow_action(
+    return routing.resolve_action(
         action,
         output,
         semantic_roles=controller.SEMANTIC_ROLE_REGISTRY,
@@ -128,6 +128,7 @@ def test_human_catalog_contains_only_human_decisions():
         "agent_type",
         "artifact_pattern",
         "contract",
+        "enforcement",
         "limit_profile",
         "max_bytes",
         "max_items",
@@ -223,7 +224,7 @@ def test_assignment_targets_match_the_threat_modeling_unit():
     by_id = {assignment["id"]: assignment for assignment in catalog["assignments"]}
     assert by_id["stride-component-evidence"]["applies_to"] == "current_component"
     assert by_id["abuse-case-candidates"]["applies_to"] == "current_candidate"
-    assert by_id["stride-dispatch-plan"]["applies_to"] == "whole_run"
+    assert by_id["stride-dispatch-plan"]["applies_to"] == "current_component"
     assert by_id["stride-related-repositories"]["applies_to"] == "whole_run"
 
 
@@ -345,7 +346,7 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
             "stride_analyzer",
             "phase9-stride-api",
             [
-                ".stride-dispatch-manifest.json",
+                ".dispatch-context/api/context-plan.json",
                 ".dispatch-context/api/evidence-bundle.json",
                 ".taxonomy-slices/api/threat-category-taxonomy.yaml",
                 ".stride-repository-registry.json",
@@ -369,8 +370,8 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
             stride = {row["context_id"]: row for row in plan["deliveries"] if row["agent_id"] == role}
             assert stride["controls.component_evidence"]["scope"] == "one_component"
             assert stride["controls.component_evidence"]["applies_to"] == "current_component"
-            assert stride["threats.dispatch_plan"]["scope"] == "whole_run"
-            assert stride["threats.dispatch_plan"]["applies_to"] == "whole_run"
+            assert stride["threats.dispatch_plan"]["scope"] == "one_component"
+            assert stride["threats.dispatch_plan"]["applies_to"] == "current_component"
     assert len(plan["actions"]) == len(jobs)
 
 
@@ -378,7 +379,7 @@ def test_forbidden_shared_context_cannot_enter_focused_agent_inputs(tmp_path):
     output = tmp_path / "out"
     output.mkdir()
     inputs = [
-        ".stride-dispatch-manifest.json",
+        ".dispatch-context/api/context-plan.json",
         ".dispatch-context/api/evidence-bundle.json",
         ".taxonomy-slices/api/threat-category-taxonomy.yaml",
         ".recon-summary.md",
@@ -455,6 +456,43 @@ def test_exact_byte_plan_receipt_detects_mutation(tmp_path):
         routing.inspect_plan(output)
 
 
+def test_active_stride_deliveries_bind_to_one_receipted_plan_without_agent_exposure(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    inputs = [
+        ".dispatch-context/api/context-plan.json",
+        ".dispatch-context/api/evidence-bundle.json",
+        ".taxonomy-slices/api/threat-category-taxonomy.yaml",
+        ".stride-repository-registry.json",
+    ]
+    for relative in inputs:
+        path = output / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n", encoding="utf-8")
+    action = _generic_action(output, "stride_analyzer", "phase9-stride-api", inputs, component_id="api")
+    action["dispatch_values"]["stride_profile"] = {"stride_profile_label": "full"}
+    plan = _resolve(action, output)
+
+    active = {row["context_id"] for row in plan["deliveries"] if "plan-enforced" in row["disclosures"]}
+    assert active == {
+        "controls.component_evidence",
+        "threats.dispatch_plan",
+        "threats.component_taxonomy",
+        "threats.analysis_lenses",
+        "threats.analysis_settings",
+    }
+    bound = routing.bind_action_to_plan(action, plan, output)
+    routing.validate_action_plan_reference(bound, output)
+    assert len(bound["dispatch_jobs"][0]["context_delivery_ids"]) == 5
+    assert routing.PLAN_NAME not in bound["dispatch_jobs"][0]["input_artifacts"]
+    assert bound["context_plan"]["artifact_path"] == routing.PLAN_NAME
+
+    receipt_path = output / routing.PLAN_RECEIPT_NAME
+    receipt_path.write_bytes(receipt_path.read_bytes() + b" ")
+    with pytest.raises(routing.ContextRoutingError, match="stale receipt hash"):
+        routing.validate_action_plan_reference(bound, output)
+
+
 def test_prior_plan_rejects_changed_catalog_hash(tmp_path, monkeypatch):
     output = tmp_path / "out"
     output.mkdir()
@@ -496,7 +534,7 @@ def test_fresh_run_reset_removes_only_plan_pair(tmp_path):
     _resolve(_context_action(output), output)
     keep = output / "keep.txt"
     keep.write_text("keep\n", encoding="utf-8")
-    routing.reset_shadow_plan(output)
+    routing.reset_plan(output)
     assert not (output / routing.PLAN_NAME).exists()
     assert not (output / routing.PLAN_RECEIPT_NAME).exists()
     assert keep.is_file()
@@ -533,6 +571,7 @@ def test_catalog_runtime_bindings_and_schemas_are_packaged(tmp_path):
         "schemas/context-routing-bindings.schema.json",
         "schemas/context-effective-plan.schema.json",
         "schemas/context-effective-plan-receipt.schema.json",
+        "schemas/stride-component-context-plan.schema.json",
         "scripts/context_routing.py",
     ):
         assert (build / relative).is_file()

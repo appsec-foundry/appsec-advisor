@@ -16,6 +16,7 @@ output template and validated at the same two boundaries through
 |--------|----------|------------|---------|
 | `stride.schema.yaml` | `$OUTPUT_DIR/.stride-<component-id>.json` | `appsec-stride-analyzer` | orchestrator Phase 9 merge |
 | `stride-evidence-bundle.schema.json` | `$OUTPUT_DIR/.dispatch-context/<component-id>/evidence-bundle.json` | `scripts/build_stride_evidence_bundles.py` | context-v2 manifest validator and STRIDE analyzer |
+| `stride-component-context-plan.schema.json` | `$OUTPUT_DIR/.dispatch-context/<component-id>/context-plan.json` | `scripts/orchestration_controller.py` | context-v2 action validator and STRIDE analyzer |
 | `stride-analyst-context.schema.json` | `$OUTPUT_DIR/.stride-analyst-context.json` | `appsec-control-analyst` on context-v2; legacy threat analyst otherwise | `scripts/build_stride_dispatch_manifest.py` |
 | `recon-signals.schema.json` | `$OUTPUT_DIR/.recon-signals.json` | `appsec-recon-scanner` | actor resolution, trust-boundary input, and STRIDE bundle construction |
 | `trust-boundary-selection.schema.json` | `$OUTPUT_DIR/.dispatch-context/trust-boundary-selection.json` | `scripts/prepare_trust_boundary_context.py` | STRIDE context dispatch and `scripts/build_threat_model_yaml.py` |
@@ -35,9 +36,9 @@ output template and validated at the same two boundaries through
 | `actors-repo.schema.yaml` | `<repo>/.appsec/actors.yaml` | analyzed team | `scripts/resolve_actors.py` |
 | `actors-discovered.schema.yaml` | `$OUTPUT_DIR/.actors-discovered.json` | `appsec-actor-discoverer` | `scripts/resolve_actors.py` |
 | `actors-resolved.schema.yaml` | `$OUTPUT_DIR/.actors-resolved.json` | `scripts/resolve_actors.py` | actor slicer, report composer, architect review |
-| `context-routing-catalog.schema.json` | `data/context-routing-catalog.yaml` | plugin maintainers | semantic validator and context-v2 shadow resolver |
-| `context-routing-bindings.schema.json` | `data/context-routing-bindings.json` | plugin maintainers | semantic validator and context-v2 shadow resolver |
-| `context-effective-plan.schema.json` | `$OUTPUT_DIR/.context-routing-plan.json` | `scripts/context_routing.py` | local audit and shadow migration diagnostics |
+| `context-routing-catalog.schema.json` | `data/context-routing-catalog.yaml` | plugin maintainers | semantic validator and context-v2 resolver |
+| `context-routing-bindings.schema.json` | `data/context-routing-bindings.json` | plugin maintainers | semantic validator and context-v2 resolver |
+| `context-effective-plan.schema.json` | `$OUTPUT_DIR/.context-routing-plan.json` | `scripts/context_routing.py` | local audit, active delivery binding, and migration diagnostics |
 | `context-effective-plan-receipt.schema.json` | `$OUTPUT_DIR/.context-routing-plan.receipt.json` | `scripts/context_routing.py` | exact-byte plan freshness validation |
 | `threat-summary.schema.json` | `<OUTPUT_DIR>/threat-summary.json` (when `--format json` or `both`) | `scripts/aggregate_threat_summary.py` | External dashboards / internal reporting jobs |
 

@@ -1,5 +1,5 @@
 schema_version: 1
-catalog_id: core-stage1-shadow-v1
+catalog_id: core-stage1-v1
 
 # Human review surface: threat-modeling categories, contexts, agents, and
 # routing decisions. Implementation and security mappings live separately.
@@ -236,7 +236,7 @@ contexts:
   - id: controls.analysis_source
     name: Current control-analysis source context
     category: security_controls_and_evidence
-    description: Targeted source and requirements reads still outside exact-byte action receipts during shadow rollout.
+    description: Targeted source and requirements reads not yet covered by exact-byte action receipts.
     scope: whole_run
   - id: controls.component_evidence
     name: Component security evidence
@@ -249,10 +249,10 @@ contexts:
     description: Bounded source windows selected from existing finding citations for verification.
     scope: whole_run
   - id: threats.dispatch_plan
-    name: Shared STRIDE dispatch manifest
+    name: Component STRIDE context plan
     category: threat_analysis
-    description: Current whole-run selection manifest; component projection remains a migration step.
-    scope: whole_run
+    description: Validated component projection binding analysis policy, lenses, and admitted artifact receipts.
+    scope: one_component
   - id: threats.component_taxonomy
     name: Component threat taxonomy
     category: threat_analysis
@@ -302,7 +302,7 @@ contexts:
   - id: verification.triage_context
     name: Current triage policy context
     category: verification_and_risk
-    description: Existing policy and helper reads still outside exact-byte action receipts during shadow rollout.
+    description: Existing policy and helper reads not yet covered by exact-byte action receipts.
     scope: whole_run
   - id: verification.synthesis_scope
     name: Requested synthesis decisions
@@ -491,9 +491,8 @@ assignments:
       - stride_analyzer
     delivery: required
     importance: essential
-    applies_to: whole_run
-    reason: Each component analyst currently receives the validated shared manifest until a component projection
-      replaces it.
+    applies_to: current_component
+    reason: Each component analyst receives one bounded plan instead of the whole-run STRIDE manifest.
   - id: stride-component-evidence
     context: controls.component_evidence
     agents:

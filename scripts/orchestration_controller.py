@@ -86,6 +86,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/trust-boundary-assessment-input.schema.json#v1": "components",
     "schemas/fragments/trust-boundaries.schema.json#v2": "trust_boundaries",
     "schemas/stride-evidence-bundle.schema.json#v1": "source_slices",
+    "schemas/stride-component-context-plan.schema.json#v1": "inputs",
     "schemas/stride-dispatch-manifest.schema.yaml#v2": "components",
     "schemas/stride-repository-registry.schema.json#v1": "repositories",
     "schemas/threats-merged.schema.yaml#v1": "threats",
@@ -525,6 +526,11 @@ def _prepare_context_v2_dispatch_outputs(output_root: Path, jobs: list[dict[str,
 
 
 def _validate_action_semantics(action: dict[str, Any]) -> None:
+    if action.get("context_plan") is not None and action.get("action") not in {
+        "dispatch_agent",
+        "dispatch_parallel",
+    }:
+        raise ControllerError("effective-plan references are valid only on dispatch actions")
     instruction_file = action.get("instruction_file")
     if instruction_file is not None:
         if not isinstance(instruction_file, str):
@@ -575,6 +581,15 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
                 raise ControllerError("stride analyzer taxonomy slice does not match its component id")
             if expected_taxonomy not in job.get("input_artifacts", []):
                 raise ControllerError("stride analyzer taxonomy slice is absent from input_artifacts")
+            expected_plan = f".dispatch-context/{component_id}/context-plan.json" if component_id else None
+            if job.get("context_plan_path") != expected_plan:
+                raise ControllerError("stride analyzer component context plan does not match its component id")
+            if expected_plan not in job.get("input_artifacts", []):
+                raise ControllerError("stride analyzer component context plan is absent from input_artifacts")
+            if ".stride-dispatch-manifest.json" in job.get("input_artifacts", []):
+                raise ControllerError(
+                    "stride analyzer must receive its component plan, not the shared dispatch manifest"
+                )
         all_inputs.update(job.get("input_artifacts", []))
         for artifact_path in job.get("output_artifacts", []):
             prior_owner = output_owners.get(artifact_path)
@@ -595,8 +610,23 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
             for key in ("input_artifacts", "output_artifacts"):
                 for artifact_path in job.get(key, []):
                     _resolve_artifact_path(output_root, artifact_path)
+            if job.get("semantic_role") == "stride_analyzer":
+                _validate_stride_component_context_plan(
+                    output_root,
+                    job,
+                    action.get("artifact_receipts", []),
+                    action.get("dispatch_values", {}).get("stride_profile"),
+                )
         for receipt in action.get("artifact_receipts", []):
             _resolve_artifact_path(output_root, receipt["artifact_path"])
+        has_delivery_references = any(job.get("context_delivery_ids") for job in action.get("dispatch_jobs", []))
+        if action.get("context_plan") is not None:
+            try:
+                context_routing.validate_action_plan_reference(action, output_root)
+            except context_routing.ContextRoutingError as exc:
+                raise ControllerError(f"active context routing validation failed: {exc}") from exc
+        elif has_delivery_references:
+            raise ControllerError("context delivery references require an effective-plan reference")
 
 
 def _validate_action(action: dict[str, Any]) -> dict[str, Any]:
@@ -760,7 +790,7 @@ def _emit(action: dict[str, Any]) -> int:
             "dispatch_parallel",
         }:
             try:
-                plan = context_routing.resolve_shadow_action(
+                plan = context_routing.resolve_action(
                     action,
                     Path(action["dispatch_values"]["output_dir"]),
                     semantic_roles=SEMANTIC_ROLE_REGISTRY,
@@ -768,10 +798,20 @@ def _emit(action: dict[str, Any]) -> int:
                     plugin_root=PLUGIN_ROOT,
                 )
             except context_routing.ContextRoutingError as exc:
-                raise ControllerError(f"context routing shadow validation failed: {exc}") from exc
+                raise ControllerError(f"context routing validation failed: {exc}") from exc
+            try:
+                action = context_routing.bind_action_to_plan(
+                    action,
+                    plan,
+                    Path(action["dispatch_values"]["output_dir"]),
+                )
+            except context_routing.ContextRoutingError as exc:
+                raise ControllerError(f"context routing action binding failed: {exc}") from exc
+            action = _validate_action(action)
+            event = "CONTEXT_ROUTING_ACTIVE" if action.get("context_plan") else "CONTEXT_ROUTING_SHADOW"
             _append_event(
                 Path(action["dispatch_values"]["output_dir"]),
-                "CONTEXT_ROUTING_SHADOW",
+                event,
                 f"revision={plan['revision']} actions={len(plan['actions'])} deliveries={len(plan['deliveries'])}",
             )
     except ControllerError as exc:
@@ -1974,6 +2014,129 @@ def _context_v2_taxonomy_slice(output_dir: Path, component_id: str) -> tuple[str
     return relative, hashlib.sha256(payload).hexdigest()
 
 
+def _write_stride_component_context_plan(
+    output_dir: Path,
+    *,
+    component_id: str,
+    manifest_sha256: str,
+    analysis: dict[str, Any],
+    lens_ids: list[str],
+    bundle_path: str,
+    bundle_sha256: str,
+    taxonomy_path: str,
+    taxonomy_sha256: str,
+) -> tuple[str, dict[str, Any]]:
+    """Write one bounded STRIDE admission plan derived from validated inputs."""
+    from _atomic_io import atomic_write_json
+
+    relative = f".dispatch-context/{component_id}/context-plan.json"
+    path = _resolve_artifact_path(output_dir.resolve(), relative)
+    value = {
+        "schema_version": 1,
+        "component_id": component_id,
+        "source_manifest_sha256": manifest_sha256,
+        "analysis": analysis,
+        "lens_ids": lens_ids,
+        "inputs": [
+            {
+                "context_id": "controls.component_evidence",
+                "artifact_path": bundle_path,
+                "sha256": bundle_sha256,
+            },
+            {
+                "context_id": "threats.component_taxonomy",
+                "artifact_path": taxonomy_path,
+                "sha256": taxonomy_sha256,
+            },
+        ],
+    }
+    atomic_write_json(path, value, sort_keys=True)
+    receipt = _validated_json_receipt(
+        output_dir,
+        relative,
+        schema_id="schemas/stride-component-context-plan.schema.json#v1",
+        record_count=2,
+    )
+    return relative, receipt
+
+
+def _validate_stride_component_context_plan(
+    output_root: Path,
+    job: dict[str, Any],
+    artifact_receipts: list[dict[str, Any]],
+    stride_profile: Any,
+) -> None:
+    """Bind duplicated dispatch labels to the receipted component plan."""
+    component_id = job.get("component_id")
+    relative = job.get("context_plan_path")
+    expected = f".dispatch-context/{component_id}/context-plan.json"
+    if relative != expected or relative not in job.get("input_artifacts", []):
+        raise ControllerError("stride analyzer component context plan does not match its component id")
+    path = _resolve_artifact_path(output_root, relative)
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / "stride-component-context-plan.schema.json",
+        contract="stride-component-context-plan-v1",
+    )
+    payload = path.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != job.get("context_plan_sha256"):
+        raise ControllerError("stride analyzer component context plan hash is stale")
+    matching_receipts = [row for row in artifact_receipts if row.get("artifact_path") == relative]
+    if len(matching_receipts) != 1:
+        raise ControllerError("stride analyzer component context plan requires one exact-byte receipt")
+    plan_receipt = matching_receipts[0]
+    if (
+        plan_receipt.get("schema_id") != "schemas/stride-component-context-plan.schema.json#v1"
+        or plan_receipt.get("sha256") != job.get("context_plan_sha256")
+        or plan_receipt.get("record_count") != 2
+    ):
+        raise ControllerError("stride analyzer component context plan receipt is stale")
+    if value["component_id"] != component_id:
+        raise ControllerError("stride analyzer component context plan contains another component")
+    analysis = value["analysis"]
+    expected_analysis = {
+        "depth": job.get("analysis_depth"),
+        "max_turns": job.get("max_turns"),
+        "sampling_required": job.get("sampling_required"),
+        "file_count": job.get("file_count"),
+        "estimated_threat_count": job.get("estimated_threat_count"),
+        "stride_profile": stride_profile,
+    }
+    if analysis != expected_analysis or value["lens_ids"] != job.get("lens_ids"):
+        raise ControllerError("stride analyzer job metadata drifted from its component context plan")
+    inputs = {row["context_id"]: row for row in value["inputs"]}
+    if set(inputs) != {"controls.component_evidence", "threats.component_taxonomy"}:
+        raise ControllerError("stride analyzer component context plan has duplicate or missing inputs")
+    bundle_path = f".dispatch-context/{component_id}/evidence-bundle.json"
+    if inputs["controls.component_evidence"] != {
+        "context_id": "controls.component_evidence",
+        "artifact_path": bundle_path,
+        "sha256": job.get("evidence_bundle_sha256"),
+    }:
+        raise ControllerError("stride analyzer evidence bundle drifted from its component context plan")
+    if inputs["threats.component_taxonomy"] != {
+        "context_id": "threats.component_taxonomy",
+        "artifact_path": job.get("taxonomy_slice_path"),
+        "sha256": job.get("taxonomy_slice_sha256"),
+    }:
+        raise ControllerError("stride analyzer taxonomy drifted from its component context plan")
+    for row in inputs.values():
+        artifact = _resolve_artifact_path(output_root, row["artifact_path"])
+        try:
+            actual_sha256 = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise ControllerError(f"cannot read component context input {row['artifact_path']!r}: {exc}") from exc
+        if actual_sha256 != row["sha256"]:
+            raise ControllerError(f"component context input changed after admission: {row['artifact_path']}")
+    manifest_path = _resolve_artifact_path(output_root, ".stride-dispatch-manifest.json")
+    try:
+        manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ControllerError(f"cannot read source dispatch manifest for component context plan: {exc}") from exc
+    if manifest_sha256 != value["source_manifest_sha256"]:
+        raise ControllerError("stride analyzer component context plan is stale for the dispatch manifest")
+
+
 def _context_v2_dispatch(
     output_dir: Path,
     cfg: dict[str, Any],
@@ -2201,9 +2364,9 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
     """Run the Phase-1/2 pre-passes and return one bounded recon wave."""
     output_dir, cfg = _load_context_v2_config(output_dir)
     try:
-        context_routing.reset_shadow_plan(output_dir)
+        context_routing.reset_plan(output_dir)
     except context_routing.ContextRoutingError as exc:
-        raise ControllerError(f"cannot reset context routing shadow plan: {exc}") from exc
+        raise ControllerError(f"cannot reset context routing effective plan: {exc}") from exc
     repo_root = Path(str(cfg.get("repo_root") or output_dir))
     receipts: list[str] = []
 
@@ -2634,6 +2797,12 @@ def _context_v2_stride_wave_action(
     }
     if len(by_id) != len(components):
         raise ControllerError("stride-dispatch-manifest-v2 contains duplicate or invalid component IDs")
+    manifest_path = _resolve_artifact_path(output_dir.resolve(), ".stride-dispatch-manifest.json")
+    try:
+        manifest_payload = manifest_path.read_bytes()
+    except OSError as exc:
+        raise ControllerError(f"cannot read stride-dispatch-manifest-v2 exact bytes: {exc}") from exc
+    manifest_sha256 = hashlib.sha256(manifest_payload).hexdigest()
 
     if initialize:
         _run_script(
@@ -2693,7 +2862,32 @@ def _context_v2_stride_wave_action(
         )
         structured.append(bundle_receipt)
         taxonomy_path, taxonomy_sha256 = _context_v2_taxonomy_slice(output_dir, component_id)
-        input_artifacts = [".stride-dispatch-manifest.json", bundle_path, taxonomy_path]
+        analysis = {
+            "depth": "light"
+            if bool(claimed_component.get("cheap_stride", component.get("cheap_stride", False)))
+            else "full",
+            "max_turns": int(claimed_component.get("max_turns") or component.get("max_turns") or 1),
+            "sampling_required": bool(
+                claimed_component.get("sampling_required", component.get("sampling_required", False))
+            ),
+            "file_count": int(component.get("file_count") or 0),
+            "estimated_threat_count": str(component.get("estimated_threat_count_label") or "moderate"),
+            "stride_profile": cfg.get("stride_profile"),
+        }
+        lens_ids = list(component.get("lens_ids") or [])
+        context_plan_path, context_plan_receipt = _write_stride_component_context_plan(
+            output_dir,
+            component_id=component_id,
+            manifest_sha256=manifest_sha256,
+            analysis=analysis,
+            lens_ids=lens_ids,
+            bundle_path=bundle_path,
+            bundle_sha256=bundle_receipt["sha256"],
+            taxonomy_path=taxonomy_path,
+            taxonomy_sha256=taxonomy_sha256,
+        )
+        structured.append(context_plan_receipt)
+        input_artifacts = [context_plan_path, bundle_path, taxonomy_path]
         if repository_registry.is_file():
             input_artifacts.append(".stride-repository-registry.json")
         jobs.append(
@@ -2703,40 +2897,29 @@ def _context_v2_stride_wave_action(
                 "component_id": component_id,
                 "semantic_role": "stride_analyzer",
                 **_context_v2_job_metadata(cfg, "stride_analyzer"),
-                "analysis_depth": "light"
-                if bool(claimed_component.get("cheap_stride", component.get("cheap_stride", False)))
-                else "full",
-                "max_turns": int(claimed_component.get("max_turns") or component.get("max_turns") or 1),
-                "sampling_required": bool(
-                    claimed_component.get("sampling_required", component.get("sampling_required", False))
-                ),
-                "file_count": int(component.get("file_count") or 0),
-                "estimated_threat_count": str(component.get("estimated_threat_count_label") or "moderate"),
-                "lens_ids": list(component.get("lens_ids") or []),
+                "analysis_depth": analysis["depth"],
+                "max_turns": analysis["max_turns"],
+                "sampling_required": analysis["sampling_required"],
+                "file_count": analysis["file_count"],
+                "estimated_threat_count": analysis["estimated_threat_count"],
+                "lens_ids": lens_ids,
                 "evidence_bundle_sha256": bundle_receipt["sha256"],
                 "taxonomy_slice_path": taxonomy_path,
                 "taxonomy_slice_sha256": taxonomy_sha256,
+                "context_plan_path": context_plan_path,
+                "context_plan_sha256": context_plan_receipt["sha256"],
                 "input_artifacts": input_artifacts,
                 "output_artifacts": [f".stride-{component_id}.json"],
                 "unresolved_decision_keys": [f"stride:{category}" for category in "STRIDE"],
             }
         )
-    structured.insert(
-        0,
-        _validated_json_receipt(
-            output_dir,
-            ".stride-dispatch-manifest.json",
-            schema_id="schemas/stride-dispatch-manifest.schema.yaml#v2",
-            record_count=len(components),
-        ),
-    )
     if repository_registry.is_file():
         registry_value = _load_json_object(repository_registry, contract="stride-repository-registry-v1")
         repositories = registry_value.get("repositories")
         if not isinstance(repositories, list):
             raise ControllerError("stride-repository-registry-v1 has no repositories array")
         structured.insert(
-            1,
+            0,
             _validated_json_receipt(
                 output_dir,
                 ".stride-repository-registry.json",

@@ -1485,6 +1485,8 @@ def _write_context_v2_config(tmp_path: Path, **overrides) -> Path:
     output.mkdir(exist_ok=True)
     cfg = _cfg(tmp_path)
     cfg["runtime_generation"] = "context-v2"
+    cfg["run_id"] = "test-run"
+    cfg["stride_profile"] = {"stride_profile_label": "full"}
     cfg["runtime_artifact_schema_versions"] = dict(controller.resolve_config.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS)
     cfg.update(overrides)
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
@@ -1576,14 +1578,23 @@ def _merge_candidates(*group_ids: str) -> dict:
 
 
 def _receipt_stub(output_dir: Path, artifact_path: str, *, schema_id: str, record_count: int) -> dict:
+    path = output_dir / artifact_path
     return {
         "schema_version": 1,
         "artifact_path": artifact_path,
         "schema_id": schema_id,
-        "sha256": "0" * 64,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "record_count": record_count,
         "validation_status": "valid",
     }
+
+
+def _taxonomy_stub(output_dir: Path, component_id: str) -> tuple[str, str]:
+    relative = f".taxonomy-slices/{component_id}/threat-category-taxonomy.yaml"
+    path = output_dir / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("schema_version: 1\ncategories: []\ncwe_to_th: {}\n", encoding="utf-8")
+    return relative, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _write_architecture_receipt_inputs(output: Path, *, discovery_enabled: bool = False) -> None:
@@ -1812,7 +1823,7 @@ def test_context_v2_post_stride_dispatches_merger_only_for_ambiguous_groups(tmp_
     assert action["artifact_receipts"][0]["artifact_path"] == ".merge-context/candidates.json"
 
 
-def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeypatch):
+def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeypatch, capsys):
     output = _write_context_v2_config(tmp_path, max_stride_components=12)
     (output / ".stride-analyst-context.json").write_text("{}", encoding="utf-8")
     (output / ".components.json").write_text(
@@ -1867,7 +1878,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     monkeypatch.setattr(
         controller,
         "_context_v2_taxonomy_slice",
-        lambda _output, cid: (f".taxonomy-slices/{cid}/threat-category-taxonomy.yaml", "a" * 64),
+        _taxonomy_stub,
     )
     action = controller.context_v2_prepare_stride(output)
     assert action["action"] == "dispatch_parallel"
@@ -1876,8 +1887,13 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     assert all(job["agent_type"] == "appsec-advisor:appsec-stride-analyzer-v2" for job in action["dispatch_jobs"])
     assert all(job["model"] == "sonnet" for job in action["dispatch_jobs"])
     assert [job["analysis_depth"] for job in action["dispatch_jobs"]] == ["full", "light"]
-    assert all(job["taxonomy_slice_sha256"] == "a" * 64 for job in action["dispatch_jobs"])
+    assert all(
+        job["taxonomy_slice_sha256"] == _taxonomy_stub(output, job["component_id"])[1]
+        for job in action["dispatch_jobs"]
+    )
     assert all(job["taxonomy_slice_path"] in job["input_artifacts"] for job in action["dispatch_jobs"])
+    assert all(job["context_plan_path"] in job["input_artifacts"] for job in action["dispatch_jobs"])
+    assert all(".stride-dispatch-manifest.json" not in job["input_artifacts"] for job in action["dispatch_jobs"])
     assert all("focus_paths" not in job and "exclude_paths" not in job for job in action["dispatch_jobs"])
     assert all(
         f".dispatch-context/{job['component_id']}/evidence-bundle.json" in job["input_artifacts"]
@@ -1887,9 +1903,68 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
         job["unresolved_decision_keys"] == ["stride:S", "stride:T", "stride:R", "stride:I", "stride:D", "stride:E"]
         for job in action["dispatch_jobs"]
     )
-    assert len(action["artifact_receipts"]) == 4
+    assert len(action["artifact_receipts"]) == 5
+    assert (
+        sum(
+            receipt["schema_id"] == "schemas/stride-component-context-plan.schema.json#v1"
+            for receipt in action["artifact_receipts"]
+        )
+        == 2
+    )
+    manifest_sha256 = hashlib.sha256((output / ".stride-dispatch-manifest.json").read_bytes()).hexdigest()
+    for job in action["dispatch_jobs"]:
+        component_plan = json.loads((output / job["context_plan_path"]).read_text(encoding="utf-8"))
+        assert component_plan["source_manifest_sha256"] == manifest_sha256
+        assert component_plan["analysis"] == {
+            "depth": job["analysis_depth"],
+            "estimated_threat_count": job["estimated_threat_count"],
+            "file_count": job["file_count"],
+            "max_turns": job["max_turns"],
+            "sampling_required": job["sampling_required"],
+            "stride_profile": {"stride_profile_label": "full"},
+        }
+        assert component_plan["lens_ids"] == job["lens_ids"]
+        assert {row["context_id"] for row in component_plan["inputs"]} == {
+            "controls.component_evidence",
+            "threats.component_taxonomy",
+        }
+        assert "focus_paths" not in component_plan and "exclude_paths" not in component_plan
     wave_calls = [args[0] for name, args in calls if name == "stride_dispatch_waves.py"]
     assert wave_calls == ["init", "claim"]
+
+    assert controller._emit(action) == 0
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["context_plan"]["artifact_path"] == ".context-routing-plan.json"
+    assert emitted["context_plan"]["receipt_path"] == ".context-routing-plan.receipt.json"
+    assert all(len(job["context_delivery_ids"]) == 5 for job in emitted["dispatch_jobs"])
+    assert all(".context-routing-plan.json" not in job["input_artifacts"] for job in emitted["dispatch_jobs"])
+    assert "CONTEXT_ROUTING_ACTIVE" in (output / ".agent-run.log").read_text(encoding="utf-8")
+
+    shared_manifest = json.loads(json.dumps(action))
+    shared_manifest["dispatch_jobs"][0]["input_artifacts"].append(".stride-dispatch-manifest.json")
+    with pytest.raises(controller.ControllerError, match="not the shared dispatch manifest"):
+        controller._validate_action(shared_manifest)
+
+    missing_plan_receipt = json.loads(json.dumps(action))
+    missing_plan_receipt["artifact_receipts"] = [
+        receipt
+        for receipt in missing_plan_receipt["artifact_receipts"]
+        if receipt["artifact_path"] != ".dispatch-context/api/context-plan.json"
+    ]
+    with pytest.raises(controller.ControllerError, match="requires one exact-byte receipt"):
+        controller._validate_action(missing_plan_receipt)
+
+    manifest_path = output / ".stride-dispatch-manifest.json"
+    manifest_bytes = manifest_path.read_bytes()
+    manifest_path.write_bytes(manifest_bytes + b" ")
+    with pytest.raises(controller.ControllerError, match="stale for the dispatch manifest"):
+        controller._validate_action(action)
+    manifest_path.write_bytes(manifest_bytes)
+
+    component_plan = output / ".dispatch-context/api/context-plan.json"
+    component_plan.write_bytes(component_plan.read_bytes() + b" ")
+    with pytest.raises(controller.ControllerError, match="component context plan hash is stale"):
+        controller._validate_action(action)
 
 
 def test_context_v2_post_stride_claims_retry_before_verify_or_merge(tmp_path, monkeypatch):
@@ -1922,7 +1997,7 @@ def test_context_v2_post_stride_claims_retry_before_verify_or_merge(tmp_path, mo
     monkeypatch.setattr(
         controller,
         "_context_v2_taxonomy_slice",
-        lambda _output, cid: (f".taxonomy-slices/{cid}/threat-category-taxonomy.yaml", "a" * 64),
+        _taxonomy_stub,
     )
     action = controller.context_v2_post_stride(output)
 

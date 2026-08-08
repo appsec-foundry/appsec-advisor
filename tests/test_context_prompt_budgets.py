@@ -209,12 +209,15 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     assert "model=dispatch_jobs[].model" in text
     assert "untrusted data" in text
     assert "Resolve every output-relative input and output path under absolute `OUTPUT_DIR`" in flat
-    assert "Resolve each output-relative path against absolute `OUTPUT_DIR`" in flat
-    assert "never resolve against `REPO_ROOT`" in flat
+    assert "paths resolved under absolute `OUTPUT_DIR`" in flat
+    assert "resolve any output artifact against `REPO_ROOT`" in flat
     assert "taxonomy_slice_path`/`taxonomy_slice_sha256" in text
-    assert "`STRIDE_PROFILE` as canonical JSON" in text
+    assert "The component plan is authoritative for analysis depth" in flat
+    assert "Never pass the shared effective plan" in flat
+    assert "`COMPONENT_CONTEXT_PLAN_PATH`" in text
+    assert "`COMPONENT_CONTEXT_PLAN_SHA256`" in text
     assert "`THREAT_TAXONOMY_PATH`" in text
-    assert "`THREAT_TAXONOMY_SHA256=dispatch_jobs[].taxonomy_slice_sha256`" in text
+    assert "`THREAT_TAXONOMY_SHA256`" in text
 
     # Every landed boundary command must be reachable from this runtime.
     for command in (

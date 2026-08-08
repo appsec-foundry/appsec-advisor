@@ -193,7 +193,8 @@
               "optional-missing",
               "legacy-unreceipted",
               "forbidden-by-core",
-              "shadow-only"
+              "shadow-only",
+              "plan-enforced"
             ]
           }
         },

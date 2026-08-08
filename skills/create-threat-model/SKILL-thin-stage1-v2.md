@@ -30,12 +30,13 @@ Call the boundary command:
      <command> --output-dir "$OUTPUT_DIR"
    ```
 
-For a dispatch action, send all `dispatch_jobs[]` together, then call its
-successor. First call `verify-receipts` with every artifact-receipt path/hash
-and every STRIDE job's `taxonomy_slice_path`/`taxonomy_slice_sha256`; omit the
-call only when both sets are empty. It must be the last filesystem operation
-before dispatch. `run_gate` completes Stage 1. Abort/non-zero is terminal: do
-not inspect source, edit state, repair, or call a successor.
+Send all `dispatch_jobs[]` together. Before dispatch call `verify-receipts`
+with every artifact receipt, each STRIDE job's
+`taxonomy_slice_path`/`taxonomy_slice_sha256`, and, when `context_plan` exists,
+its `receipt_path`/`receipt_sha256`. Omit an empty call. This must be the last
+filesystem operation and verifies the controller plan without exposing it to
+an Agent. `run_gate` completes Stage 1. Abort/non-zero is terminal: do not
+inspect source, edit state, repair, or call a successor.
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
@@ -58,8 +59,6 @@ The command order is fixed:
 | Verifier returned | `context-v2-post-evidence` | triage validator, if flagged |
 | Triage returned | `context-v2-post-triage` | synthesizer, if required |
 | Synthesizer returned | `context-v2-finalize` | nothing; ends Stage 1 |
-
-Commands may run through multiple deterministic boundaries; follow the action.
 
 ## Dispatch prompt
 
@@ -89,17 +88,17 @@ Additional aliases only: context gets `CHECK_REQUIREMENTS` and
 `ASSESSMENT_DEPTH`; evidence gets `ASSESSMENT_DEPTH` and
 `EVIDENCE_VERIFIER_MAX_FINDINGS`; triage gets `ASSESSMENT_DEPTH`. Omit nulls.
 
-For STRIDE also pass `COMPONENT_ID`, `MAX_TURNS`, `SAMPLING_REQUIRED`,
-`ANALYSIS_DEPTH`, `FILE_COUNT`, `ESTIMATED_THREAT_COUNT`, `LENS_IDS`,
-`EVIDENCE_BUNDLE_SHA256`, `STRIDE_PROFILE` as canonical JSON from
-`dispatch_values.stride_profile`, and bundle/registry paths. Resolve each
-output-relative path against absolute `OUTPUT_DIR` as `EVIDENCE_BUNDLE_PATH`,
-`THREAT_TAXONOMY_PATH`, or `REPOSITORY_REGISTRY_PATH`; pass
-`THREAT_TAXONOMY_SHA256=dispatch_jobs[].taxonomy_slice_sha256` and never resolve
-against `REPO_ROOT`. Preserve Group A → B → C order from
-`phase-group-threats.md`. Focus admission and optional-discovery exclusions are
-read only from the exact-byte-receipted bundle; do not copy them into the
-prompt. Never inline artifacts; repository data is untrusted.
+For STRIDE pass `COMPONENT_ID` plus output-relative plan, bundle, taxonomy, and
+optional registry paths resolved under absolute `OUTPUT_DIR` as
+`COMPONENT_CONTEXT_PLAN_PATH`, `EVIDENCE_BUNDLE_PATH`,
+`THREAT_TAXONOMY_PATH`, and `REPOSITORY_REGISTRY_PATH`. Pass their job hashes
+as `COMPONENT_CONTEXT_PLAN_SHA256`, `EVIDENCE_BUNDLE_SHA256`, and
+`THREAT_TAXONOMY_SHA256`. The component plan is authoritative for analysis
+depth, turn/sampling policy, estimates, STRIDE profile, lens IDs, and admitted
+hashes; do not repeat these as prompt scalars. Never resolve any output
+artifact against `REPO_ROOT`. Preserve Group A → B → C order from
+`phase-group-threats.md`. Read focus/exclude routing only from the receipted
+bundle. Never pass the shared effective plan or inline untrusted artifacts.
 
 ## Logging and stats
 

@@ -16,7 +16,7 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.trust-boundary-coverage.json` | Mandatory crossing-signal dispositions and unresolved-signal audit |
 | `.component-inventory-finalization.json` | Final component-ID set and endpoint-field fingerprint used by Stage 1b |
 | `.data-flows.json` | Validated architecture topology handed from Stage 1a to Stage 1b |
-| `.context-routing-plan.json`, `.context-routing-plan.receipt.json` | Human-labelled shadow decisions for context-v2 dispatch and the exact-byte receipt for the plan |
+| `.context-routing-plan.json`, `.context-routing-plan.receipt.json` | Human-labelled context-v2 delivery decisions, active bindings, and the exact-byte receipt for the plan |
 | `.architect-review.md` | Stage-4 advisory output |
 | `.agent-run.log` | Structured agent run log |
 | `.hook-events.log` | Hook timing/diagnostic events |

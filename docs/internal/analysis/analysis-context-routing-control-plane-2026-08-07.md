@@ -1,7 +1,7 @@
 # Analysis — context routing control plane
 
 - Date: 2026-08-07
-- Status: Stage-1 edge inventory and human-readable shadow catalog implemented; source migration pending
+- Status: Stage-1 edge inventory and human-readable catalog implemented; first STRIDE source migration active
 - Parent plan:
   `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`
 
@@ -429,12 +429,17 @@ stride_component_analyst / auth-service
 10. Run the controlled A/B cohort and consider default rollout only after the
     acceptance matrix passes.
 
-Steps 1-4 are implemented. The shadow resolver does not change dispatch
-inputs. The shared STRIDE manifest and related-repository registry remain
-whole-run inputs and are recorded as migration work rather than described as
-component projections. The abuse-case verifier remains on the inventoried
-Stage-1d legacy path. Per-source migration starts with existing role metadata,
-evidence bundles, taxonomy, lenses, and receipts.
+Steps 1-4 and the first bounded part of step 5 are implemented. Each STRIDE job
+now receives one receipted component context plan instead of the shared
+dispatch manifest. The plan binds the evidence bundle, taxonomy slice, fixed
+lens IDs, and controller-owned analysis policy to active effective-plan
+delivery IDs. The shared effective plan remains controller-only and is
+revalidated immediately before dispatch.
+
+The related-repository registry remains a whole-run input. Known threats,
+business and organization context, boundaries, actors, requirements, prior
+findings, and abuse cases remain on their inventoried paths. The Stage-1d
+abuse-case verifier remains legacy.
 
 ## Exit gates
 

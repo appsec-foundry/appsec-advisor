@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/stride-component-context-plan.schema.json",
+  "title": "Bounded STRIDE component context plan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "component_id",
+    "source_manifest_sha256",
+    "analysis",
+    "lens_ids",
+    "inputs"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "component_id": {"$ref": "#/$defs/component_id"},
+    "source_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "analysis": {
+      "type": "object",
+      "required": [
+        "depth",
+        "max_turns",
+        "sampling_required",
+        "file_count",
+        "estimated_threat_count",
+        "stride_profile"
+      ],
+      "properties": {
+        "depth": {"enum": ["full", "light"]},
+        "max_turns": {"type": "integer", "minimum": 1, "maximum": 200},
+        "sampling_required": {"type": "boolean"},
+        "file_count": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "estimated_threat_count": {"enum": ["low", "moderate", "high"]},
+        "stride_profile": {"$ref": "#/$defs/stride_profile"}
+      },
+      "additionalProperties": false
+    },
+    "lens_ids": {
+      "type": "array",
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {"enum": ["agentic", "llm", "mobile", "spa", "supply-chain"]}
+    },
+    "inputs": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["context_id", "artifact_path", "sha256"],
+        "properties": {
+          "context_id": {"enum": ["controls.component_evidence", "threats.component_taxonomy"]},
+          "artifact_path": {"$ref": "#/$defs/relative_path"},
+          "sha256": {"$ref": "#/$defs/sha256"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "component_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,99}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "stride_profile": {
+      "type": "object",
+      "required": ["stride_profile_label"],
+      "properties": {
+        "stride_profile_label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "skip_verification_greps": {"type": "boolean"},
+        "max_threats_per_category": {"type": "integer", "minimum": 1, "maximum": 50},
+        "skip_code_examples": {"type": "boolean"},
+        "skip_evidence_excerpt": {"type": "boolean"},
+        "skip_cvss_scoring": {"type": "boolean"},
+        "turn_budget_hard_cap": {"type": "integer", "minimum": 1, "maximum": 200}
+      },
+      "additionalProperties": false
+    }
+  }
+}
