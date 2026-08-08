@@ -15,7 +15,7 @@
   "additionalProperties": {
     "type": "object",
     "minProperties": 1,
-    "maxProperties": 11,
+    "maxProperties": 12,
     "properties": {
       "interfaces": { "$ref": "#/$defs/text_or_list" },
       "controls": { "$ref": "#/$defs/text_or_list" },
@@ -25,6 +25,7 @@
       "supply_chain_findings": { "$ref": "#/$defs/text_or_list" },
       "estimated_threat_count": { "type": "integer", "minimum": 0, "maximum": 1000 },
       "business_context": { "$ref": "#/$defs/business_context" },
+      "architecture_context": { "$ref": "#/$defs/architecture_context" },
       "focus_paths": { "$ref": "#/$defs/routing_input" },
       "exclude_paths": { "$ref": "#/$defs/routing_input" }
     },
@@ -73,6 +74,20 @@
         "sensitive_assets": { "$ref": "#/$defs/context_list" },
         "security_obligations": { "$ref": "#/$defs/context_list" },
         "security_assumptions": { "$ref": "#/$defs/context_list" }
+      },
+      "additionalProperties": false
+    },
+    "architecture_context": {
+      "description": "Human-readable security architecture facts projected for one component. These values inform topology and assumptions; they do not prove a control, boundary, threat, or finding.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 5,
+      "properties": {
+        "security_role": { "$ref": "#/$defs/context_text" },
+        "exposed_interfaces": { "$ref": "#/$defs/context_list" },
+        "security_dependencies": { "$ref": "#/$defs/context_list" },
+        "deployment_constraints": { "$ref": "#/$defs/context_list" },
+        "architecture_assumptions": { "$ref": "#/$defs/context_list" }
       },
       "additionalProperties": false
     },

@@ -1874,6 +1874,24 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
                     "cheap_stride": component_id == "worker",
                 }
                 if component_id == "api":
+                    architecture_attributes = {"security_role": "Route public API requests."}
+                    architecture = {
+                        "schema_version": 1,
+                        "component_id": component_id,
+                        "source": "stride-analyst-context-v1",
+                        "source_content_sha256": hashlib.sha256(
+                            controller._canonical_json_bytes(architecture_attributes)
+                        ).hexdigest(),
+                        "attributes": architecture_attributes,
+                    }
+                    architecture_path = bundle_dir / "architecture-context.json"
+                    architecture_path.write_text(json.dumps(architecture), encoding="utf-8")
+                    component["architecture_context_path"] = (
+                        f".dispatch-context/{component_id}/architecture-context.json"
+                    )
+                    component["architecture_context_sha256"] = hashlib.sha256(
+                        architecture_path.read_bytes()
+                    ).hexdigest()
                     attributes = {"business_purpose": "Serve customer requests."}
                     business = {
                         "schema_version": 1,
@@ -1930,7 +1948,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
         job["unresolved_decision_keys"] == ["stride:S", "stride:T", "stride:R", "stride:I", "stride:D", "stride:E"]
         for job in action["dispatch_jobs"]
     )
-    assert len(action["artifact_receipts"]) == 5
+    assert len(action["artifact_receipts"]) == 6
     assert (
         sum(
             receipt["schema_id"] == "schemas/stride-component-context-plan.schema.json#v1"
@@ -1953,9 +1971,13 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
         assert component_plan["lens_ids"] == job["lens_ids"]
         expected_contexts = {"controls.component_evidence", "threats.component_taxonomy"}
         if job["component_id"] == "api":
+            expected_contexts.add("architecture.component_context")
+            assert job["architecture_context_path"] in job["input_artifacts"]
             expected_contexts.add("business.component_context")
             assert job["business_context_path"] in job["input_artifacts"]
         else:
+            assert "architecture_context_path" not in job
+            assert all("architecture-context.json" not in path for path in job["input_artifacts"])
             assert "business_context_path" not in job
             assert all("business-context.json" not in path for path in job["input_artifacts"])
         assert {row["context_id"] for row in component_plan["inputs"]} == expected_contexts
@@ -1969,7 +1991,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["context_plan"]["artifact_path"] == ".context-routing-plan.json"
     assert emitted["context_plan"]["receipt_path"] == ".context-routing-plan.receipt.json"
-    assert all(len(job["context_delivery_ids"]) == 7 for job in emitted["dispatch_jobs"])
+    assert all(len(job["context_delivery_ids"]) == 8 for job in emitted["dispatch_jobs"])
     assert all(".context-routing-plan.json" not in job["input_artifacts"] for job in emitted["dispatch_jobs"])
     assert "CONTEXT_ROUTING_ACTIVE" in (output / ".agent-run.log").read_text(encoding="utf-8")
 

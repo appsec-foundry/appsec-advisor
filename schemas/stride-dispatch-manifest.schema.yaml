@@ -96,6 +96,18 @@ properties:
             sensitive_assets: { $ref: "#/$defs/context_list" }
             security_obligations: { $ref: "#/$defs/context_list" }
             security_assumptions: { $ref: "#/$defs/context_list" }
+        architecture_context:
+          description: Bounded human-readable security architecture facts for this component.
+          type: object
+          minProperties: 1
+          maxProperties: 5
+          additionalProperties: false
+          properties:
+            security_role: { type: string, minLength: 1, maxLength: 1000, pattern: "\\S" }
+            exposed_interfaces: { $ref: "#/$defs/context_list" }
+            security_dependencies: { $ref: "#/$defs/context_list" }
+            deployment_constraints: { $ref: "#/$defs/context_list" }
+            architecture_assumptions: { $ref: "#/$defs/context_list" }
         estimated_threat_count_label:
           description: |
             Pacing band for `estimated_threat_count`, derived deterministically by
@@ -196,6 +208,18 @@ properties:
           type: integer
           minimum: 1
           maximum: 4096
+        architecture_context_path:
+          type: string
+          minLength: 1
+          maxLength: 500
+          pattern: "^\\.dispatch-context/[a-z0-9][a-z0-9-]*/architecture-context\\.json$"
+        architecture_context_sha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        architecture_context_estimated_tokens:
+          type: integer
+          minimum: 1
+          maximum: 4096
       allOf:
         - if:
             anyOf:
@@ -207,6 +231,16 @@ properties:
               - business_context_path
               - business_context_sha256
               - business_context_estimated_tokens
+        - if:
+            anyOf:
+              - required: [architecture_context_path]
+              - required: [architecture_context_sha256]
+              - required: [architecture_context_estimated_tokens]
+          then:
+            required:
+              - architecture_context_path
+              - architecture_context_sha256
+              - architecture_context_estimated_tokens
 
 allOf:
   - if:

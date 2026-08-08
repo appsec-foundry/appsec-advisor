@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/stride-component-architecture-context.schema.json",
+  "title": "Bounded security architecture context for one STRIDE component",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "component_id",
+    "source",
+    "source_content_sha256",
+    "attributes"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "component_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,99}$" },
+    "source": { "const": "stride-analyst-context-v1" },
+    "source_content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "attributes": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 5,
+      "properties": {
+        "security_role": { "$ref": "#/$defs/context_text" },
+        "exposed_interfaces": { "$ref": "#/$defs/context_list" },
+        "security_dependencies": { "$ref": "#/$defs/context_list" },
+        "deployment_constraints": { "$ref": "#/$defs/context_list" },
+        "architecture_assumptions": { "$ref": "#/$defs/context_list" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "context_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "\\S"
+    },
+    "context_list": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300,
+        "pattern": "\\S"
+      }
+    }
+  }
+}

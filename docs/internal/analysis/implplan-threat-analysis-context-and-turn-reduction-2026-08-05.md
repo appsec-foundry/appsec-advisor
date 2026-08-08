@@ -794,7 +794,7 @@ Status as of 2026-08-08:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
-| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active STRIDE component plans, component-scoped related-repository roots, and component business-context projection repository-tested | Migrate the remaining Stage-1 inputs source by source, then satisfy full reconstruction and bounded-projection exit gates |
+| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active STRIDE component plans, component-scoped related-repository roots, and component business and architecture projections repository-tested | Migrate the remaining Stage-1 inputs source by source, then satisfy full reconstruction and bounded-projection exit gates |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
 
@@ -825,7 +825,7 @@ The first active migration gives every STRIDE analyzer one receipted component
 context plan instead of the full dispatch manifest. It binds the component
 evidence bundle, taxonomy slice, fixed lens IDs, depth and sampling policy,
 turn and estimate values, resolved STRIDE profile, and the optional
-related-repository and business-context projections to seven active
+related-repository, business-context, and architecture-context projections to eight active
 effective-plan delivery decisions. An omitted optional projection remains an
 audited omission and is physically absent from the component plan and Agent
 inputs. The full effective plan stays in the controller
@@ -845,10 +845,19 @@ object from the manifest, validates the component and content fingerprints,
 and dispatches the artifact only when the component plan selects it. The
 Evidence Bundle remains mandatory and contains no business projection, so one
 context can be withheld without hiding evidence or changing repository access.
-Security architecture, analytically derived assumptions, actors, abuse cases,
-trust boundaries, existing controls and mitigations, threats, and proposed
-mitigations remain separate source migrations rather than fields in this
-business object.
+Security architecture and analytically derived assumptions remain separate
+from the business object. Actors, abuse cases, trust boundaries, existing
+controls and mitigations, threats, and proposed mitigations remain separate
+source migrations.
+
+The architecture-context migration now projects security role, exposed
+interfaces, security dependencies, deployment constraints, and analytical
+architecture assumptions into a separate optional component artifact. The
+projection is physically absent when the control analyst has no
+security-relevant architecture fact beyond the component registry. It cannot
+carry actors, boundary decisions, controls, mitigations, threats, findings,
+severity, or path-selection instructions, and the complete architecture model
+remains forbidden to STRIDE agents.
 
 The complete related-repository registry is now controller-only. Each bundle
 fingerprints only the primary root and related roots cited by its admitted
@@ -857,13 +866,17 @@ receipted component projection containing exactly their repository IDs and
 validated roots, binds it to the component plan and source-registry hash, and
 rejects extra, missing, unknown, stale, cross-component, or non-STRIDE use. A
 job with no related source evidence receives no root projection. STRIDE wave
-concurrency is capped at 12 so worst-case projection receipts remain within the
+concurrency is capped at 10 so worst-case projection receipts remain within the
 unchanged 64-artifact immediate verification gate.
 
 Prior findings remain an upstream source inside the component-evidence path.
 Known threats, boundaries, actors, requirements, prior findings, controls,
-architecture assumptions, threats, mitigations, and abuse cases still require
+threats, mitigations, and abuse cases still require
 source-by-source migration. The Stage-1d abuse-case verifier remains legacy.
+The first six of those sources still share the required Evidence Bundle, so
+their current catalog entries describe provenance but do not yet provide
+independent physical omission. Each must move to its own bounded projection and
+component-plan row before the WP5a reconstruction gate can pass.
 
 The implemented WP0-WP5 scope includes:
 

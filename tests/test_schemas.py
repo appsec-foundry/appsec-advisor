@@ -147,6 +147,19 @@ def test_component_context_plan_accepts_independently_selectable_business_contex
     assert not list(validator.iter_errors(plan))
 
 
+def test_component_context_plan_accepts_independently_selectable_architecture_context() -> None:
+    validator = _json_validator("stride-component-context-plan.schema.json")
+    plan = _component_context_plan()
+    plan["inputs"].append(
+        {
+            "context_id": "architecture.component_context",
+            "artifact_path": ".dispatch-context/api/architecture-context.json",
+            "sha256": "0" * 64,
+        }
+    )
+    assert not list(validator.iter_errors(plan))
+
+
 def test_component_business_context_schema_keeps_human_attributes_bounded() -> None:
     validator = _json_validator("stride-component-business-context.schema.json")
     value = {
@@ -164,6 +177,29 @@ def test_component_business_context_schema_keeps_human_attributes_bounded() -> N
     invalid = json.loads(json.dumps(value))
     invalid["attributes"] = {"controls": ["A gateway validates every request."]}
     assert list(validator.iter_errors(invalid)), "controls must remain an independently routable context"
+
+    invalid = json.loads(json.dumps(value))
+    invalid["attributes"] = {}
+    assert list(validator.iter_errors(invalid)), "an empty projection must be physically omitted"
+
+
+def test_component_architecture_context_schema_keeps_categories_separate() -> None:
+    validator = _json_validator("stride-component-architecture-context.schema.json")
+    value = {
+        "schema_version": 1,
+        "component_id": "api",
+        "source": "stride-analyst-context-v1",
+        "source_content_sha256": "0" * 64,
+        "attributes": {
+            "security_role": "Validate and route authenticated API requests.",
+            "architecture_assumptions": ["The ingress preserves the authenticated principal."],
+        },
+    }
+    assert not list(validator.iter_errors(value))
+
+    invalid = json.loads(json.dumps(value))
+    invalid["attributes"] = {"mitigations": ["Validate tokens at the gateway."]}
+    assert list(validator.iter_errors(invalid)), "mitigations must remain an independently routable context"
 
     invalid = json.loads(json.dumps(value))
     invalid["attributes"] = {}

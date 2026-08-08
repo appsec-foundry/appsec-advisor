@@ -80,6 +80,12 @@ decision. Security architecture, analytically derived assumptions, actors,
 abuse cases, trust boundaries, existing controls and mitigations, threats, and
 proposed mitigations remain separate contexts owned by their analysis stages.
 
+The component security-architecture projection is separate from business
+impact. It contains only security role, exposed interfaces, security
+dependencies, deployment constraints, and analytical architecture assumptions.
+The complete architecture model remains forbidden to focused STRIDE agents;
+assumptions express uncertainty and never prove a boundary, control, or threat.
+
 Migration state, paths, schemas, models, commands, projectors, trust labels,
 and limits are not human routing choices. They stay in internal contracts or
 the implementation plan. Effective-plan receipts report what the runtime

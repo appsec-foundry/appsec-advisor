@@ -114,13 +114,13 @@ The controller also builds one component-scoped
 `.taxonomy-slices/<component-id>/threat-category-taxonomy.yaml`, carries its
 path and SHA-256 in the STRIDE job, and writes a receipted
 `.dispatch-context/<component-id>/context-plan.json`. This bounded projection
-binds the evidence and taxonomy hashes, any selected component business or
-repository-root projection, fixed lens IDs, component analysis depth, sampling
+binds the evidence and taxonomy hashes, any selected component business,
+architecture, or repository-root projection, fixed lens IDs, component analysis depth, sampling
 and turn policy, estimates, and resolved STRIDE profile. The
 thin runtime re-hashes the component plan, taxonomy, effective-plan receipt,
 and structured receipts immediately before dispatch. The STRIDE consumer reads
 the component plan instead of the complete dispatch manifest. A wave contains
-at most 12 components so the worst-case five hashes per component plus the
+at most 10 components so the worst-case six hashes per component plus the
 effective-plan receipt stay within the fixed 64-artifact verification cap.
 
 ## Context-v2 semantic boundary map

@@ -200,6 +200,50 @@ class TestValidate:
         assert ok is False
         assert any("business-context projection is stale" in error for error in errors)
 
+    def test_context_v2_validates_selected_architecture_projection(self, vdm, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        manifest = _minimal_manifest(
+            components=[_minimal_component(architecture_context={"security_role": "Route public API requests."})]
+        )
+        evidence_bundles.build_all(output, tmp_path, manifest)
+        (output / ".stride-analyst-context.json").write_text(
+            json.dumps({"express-backend": {"architecture_context": {"security_role": "Route public API requests."}}}),
+            encoding="utf-8",
+        )
+        (output / ".skill-config.json").write_text(
+            json.dumps({"repo_root": str(tmp_path)}),
+            encoding="utf-8",
+        )
+        mp = _write_manifest(output, manifest)
+
+        ok, errors, warnings = vdm.validate(mp, output)
+
+        assert ok is True, errors
+        assert "architecture_context" not in manifest["components"][0]
+
+    def test_context_v2_rejects_stale_architecture_projection(self, vdm, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        manifest = _minimal_manifest(
+            components=[_minimal_component(architecture_context={"security_role": "Route public API requests."})]
+        )
+        evidence_bundles.build_all(output, tmp_path, manifest)
+        (output / ".skill-config.json").write_text(
+            json.dumps({"repo_root": str(tmp_path)}),
+            encoding="utf-8",
+        )
+        (output / ".stride-analyst-context.json").write_text(
+            json.dumps({"express-backend": {"architecture_context": {"security_role": "Changed later."}}}),
+            encoding="utf-8",
+        )
+        mp = _write_manifest(output, manifest)
+
+        ok, errors, warnings = vdm.validate(mp, output)
+
+        assert ok is False
+        assert any("architecture-context projection is stale" in error for error in errors)
+
     def test_context_v2_rejects_missing_bundle(self, vdm, tmp_path):
         output = tmp_path / "out"
         output.mkdir()

@@ -89,6 +89,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/stride-evidence-bundle.schema.json#v1": "source_slices",
     "schemas/stride-component-context-plan.schema.json#v1": "inputs",
     "schemas/stride-component-repository-roots.schema.json#v1": "repositories",
+    "schemas/stride-component-architecture-context.schema.json#v1": "attributes",
     "schemas/stride-component-business-context.schema.json#v1": "attributes",
     "schemas/stride-dispatch-manifest.schema.yaml#v2": "components",
     "schemas/stride-repository-registry.schema.json#v1": "repositories",
@@ -2036,6 +2037,8 @@ def _write_stride_component_context_plan(
     bundle_sha256: str,
     taxonomy_path: str,
     taxonomy_sha256: str,
+    architecture_context_path: str | None = None,
+    architecture_context_sha256: str | None = None,
     business_context_path: str | None = None,
     business_context_sha256: str | None = None,
     repository_projection_path: str | None = None,
@@ -2058,6 +2061,16 @@ def _write_stride_component_context_plan(
             "sha256": taxonomy_sha256,
         },
     ]
+    if (architecture_context_path is None) != (architecture_context_sha256 is None):
+        raise ControllerError("component architecture-context path and hash must be supplied together")
+    if architecture_context_path is not None and architecture_context_sha256 is not None:
+        inputs.append(
+            {
+                "context_id": "architecture.component_context",
+                "artifact_path": architecture_context_path,
+                "sha256": architecture_context_sha256,
+            }
+        )
     if (business_context_path is None) != (business_context_sha256 is None):
         raise ControllerError("component business-context path and hash must be supplied together")
     if business_context_path is not None and business_context_sha256 is not None:
@@ -2254,6 +2267,52 @@ def _validate_stride_component_repository_roots(
     return value
 
 
+def _validate_stride_component_architecture_context(
+    output_root: Path,
+    job: dict[str, Any],
+    artifact_receipts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Validate an optional architecture projection that can be withheld independently."""
+    component_id = job.get("component_id")
+    expected_path = f".dispatch-context/{component_id}/architecture-context.json"
+    declared_path = job.get("architecture_context_path")
+    declared_hash = job.get("architecture_context_sha256")
+    inputs = job.get("input_artifacts", [])
+    if declared_path is None and declared_hash is None:
+        if expected_path in inputs:
+            raise ControllerError("stride analyzer received undeclared component architecture context")
+        return None
+    if declared_path != expected_path or expected_path not in inputs or not isinstance(declared_hash, str):
+        raise ControllerError("stride analyzer architecture-context projection does not match its component id")
+    path = _resolve_artifact_path(output_root, expected_path)
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / "stride-component-architecture-context.schema.json",
+        contract="stride-component-architecture-context-v1",
+    )
+    payload = path.read_bytes()
+    actual_sha256 = hashlib.sha256(payload).hexdigest()
+    if actual_sha256 != declared_hash:
+        raise ControllerError("stride analyzer architecture-context projection hash is stale")
+    attributes = value.get("attributes")
+    if value.get("component_id") != component_id or not isinstance(attributes, dict) or not attributes:
+        raise ControllerError("stride analyzer architecture-context projection has invalid component content")
+    expected_source_sha = hashlib.sha256(_canonical_json_bytes(attributes)).hexdigest()
+    if value.get("source_content_sha256") != expected_source_sha:
+        raise ControllerError("stride analyzer architecture-context source fingerprint is stale")
+    matching_receipts = [row for row in artifact_receipts if row.get("artifact_path") == expected_path]
+    if len(matching_receipts) != 1 or matching_receipts[0] != {
+        "schema_version": 1,
+        "artifact_path": expected_path,
+        "schema_id": "schemas/stride-component-architecture-context.schema.json#v1",
+        "sha256": actual_sha256,
+        "record_count": len(attributes),
+        "validation_status": "valid",
+    }:
+        raise ControllerError("stride analyzer architecture-context projection receipt is stale")
+    return value
+
+
 def _validate_stride_component_business_context(
     output_root: Path,
     job: dict[str, Any],
@@ -2333,8 +2392,14 @@ def _validate_stride_component_context_plan(
         bundle,
         artifact_receipts,
     )
+    architecture_context = _validate_stride_component_architecture_context(output_root, job, artifact_receipts)
     business_context = _validate_stride_component_business_context(output_root, job, artifact_receipts)
-    expected_input_count = 2 + int(repository_projection is not None) + int(business_context is not None)
+    expected_input_count = (
+        2
+        + int(repository_projection is not None)
+        + int(architecture_context is not None)
+        + int(business_context is not None)
+    )
     if (
         plan_receipt.get("schema_id") != "schemas/stride-component-context-plan.schema.json#v1"
         or plan_receipt.get("sha256") != job.get("context_plan_sha256")
@@ -2356,6 +2421,8 @@ def _validate_stride_component_context_plan(
         raise ControllerError("stride analyzer job metadata drifted from its component context plan")
     inputs = {row["context_id"]: row for row in value["inputs"]}
     expected_context_ids = {"controls.component_evidence", "threats.component_taxonomy"}
+    if architecture_context is not None:
+        expected_context_ids.add("architecture.component_context")
     if business_context is not None:
         expected_context_ids.add("business.component_context")
     if repository_projection is not None:
@@ -2368,6 +2435,12 @@ def _validate_stride_component_context_plan(
         "sha256": job.get("evidence_bundle_sha256"),
     }:
         raise ControllerError("stride analyzer evidence bundle drifted from its component context plan")
+    if architecture_context is not None and inputs["architecture.component_context"] != {
+        "context_id": "architecture.component_context",
+        "artifact_path": job.get("architecture_context_path"),
+        "sha256": job.get("architecture_context_sha256"),
+    }:
+        raise ControllerError("stride analyzer architecture context drifted from its component context plan")
     if business_context is not None and inputs["business.component_context"] != {
         "context_id": "business.component_context",
         "artifact_path": job.get("business_context_path"),
@@ -3265,6 +3338,31 @@ def _context_v2_stride_wave_action(
             record_count=len(slices),
         )
         structured.append(bundle_receipt)
+        architecture_context_path = component.get("architecture_context_path")
+        architecture_context_sha256 = component.get("architecture_context_sha256")
+        architecture_context_receipt: dict[str, Any] | None = None
+        if architecture_context_path is not None or architecture_context_sha256 is not None:
+            if not isinstance(architecture_context_path, str) or not isinstance(architecture_context_sha256, str):
+                raise ControllerError(f"incomplete architecture-context projection for {component_id}")
+            architecture_value = _validate_json_artifact(
+                _resolve_artifact_path(output_dir, architecture_context_path),
+                PLUGIN_ROOT / "schemas" / "stride-component-architecture-context.schema.json",
+                contract="stride-component-architecture-context-v1",
+            )
+            if architecture_value.get("component_id") != component_id:
+                raise ControllerError(f"architecture-context projection component mismatch for {component_id}")
+            attributes = architecture_value.get("attributes")
+            if not isinstance(attributes, dict) or not attributes:
+                raise ControllerError(f"architecture-context projection has no attributes for {component_id}")
+            architecture_context_receipt = _validated_json_receipt(
+                output_dir,
+                architecture_context_path,
+                schema_id="schemas/stride-component-architecture-context.schema.json#v1",
+                record_count=len(attributes),
+            )
+            if architecture_context_receipt["sha256"] != architecture_context_sha256:
+                raise ControllerError(f"architecture-context manifest hash is stale for {component_id}")
+            structured.append(architecture_context_receipt)
         business_context_path = component.get("business_context_path")
         business_context_sha256 = component.get("business_context_sha256")
         business_context_receipt: dict[str, Any] | None = None
@@ -3324,6 +3422,10 @@ def _context_v2_stride_wave_action(
             bundle_sha256=bundle_receipt["sha256"],
             taxonomy_path=taxonomy_path,
             taxonomy_sha256=taxonomy_sha256,
+            architecture_context_path=(architecture_context_path if architecture_context_receipt is not None else None),
+            architecture_context_sha256=(
+                architecture_context_receipt["sha256"] if architecture_context_receipt is not None else None
+            ),
             business_context_path=(business_context_path if business_context_receipt is not None else None),
             business_context_sha256=(
                 business_context_receipt["sha256"] if business_context_receipt is not None else None
@@ -3335,6 +3437,8 @@ def _context_v2_stride_wave_action(
         )
         structured.append(context_plan_receipt)
         input_artifacts = [context_plan_path, bundle_path, taxonomy_path]
+        if architecture_context_receipt is not None:
+            input_artifacts.append(architecture_context_path)
         if business_context_receipt is not None:
             input_artifacts.append(business_context_path)
         if repository_projection_path is not None:
@@ -3365,6 +3469,9 @@ def _context_v2_stride_wave_action(
         if repository_projection_path is not None and repository_projection_receipt is not None:
             jobs[-1]["repository_projection_path"] = repository_projection_path
             jobs[-1]["repository_projection_sha256"] = repository_projection_receipt["sha256"]
+        if architecture_context_receipt is not None:
+            jobs[-1]["architecture_context_path"] = architecture_context_path
+            jobs[-1]["architecture_context_sha256"] = architecture_context_receipt["sha256"]
         if business_context_receipt is not None:
             jobs[-1]["business_context_path"] = business_context_path
             jobs[-1]["business_context_sha256"] = business_context_receipt["sha256"]

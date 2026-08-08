@@ -1679,7 +1679,10 @@ def test_main_context_v2_writes_fingerprinted_bundle_without_changing_selection(
         json.dumps(
             {
                 "_stride_profile": "repository-authored profile",
-                "backend-api": {"business_context": {"business_purpose": "Serve customers."}},
+                "backend-api": {
+                    "business_context": {"business_purpose": "Serve customers."},
+                    "architecture_context": {"security_role": "Validate and route public API requests."},
+                },
             }
         ),
         encoding="utf-8",
@@ -1716,6 +1719,8 @@ def test_main_context_v2_writes_fingerprinted_bundle_without_changing_selection(
     backend = next(row for row in manifest["components"] if row["component_id"] == "backend-api")
     assert "business_context" not in backend
     assert (tmp_path / backend["business_context_path"]).is_file()
+    assert "architecture_context" not in backend
+    assert (tmp_path / backend["architecture_context_path"]).is_file()
 
 
 def test_main_returns_1_when_no_components(tmp_path, capsys):

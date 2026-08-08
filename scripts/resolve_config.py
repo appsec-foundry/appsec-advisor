@@ -273,12 +273,13 @@ STRIDE_COMPONENT_CEILING = 10
 # Maximum number of per-component STRIDE agents dispatched in one foreground
 # wave. Selection remains uncapped for exposed/security-relevant components;
 # this bounds only concurrent execution pressure. Override for a particular
-# host with APPSEC_STRIDE_CONCURRENCY (1..12). The upper bound keeps one
+# host with APPSEC_STRIDE_CONCURRENCY (1..10). The upper bound keeps one
 # context-v2 wave within the 64-artifact immediate receipt-verification cap:
-# bundle, component plan, optional business projection, optional repository
-# projection, and taxonomy per component, plus the effective-plan receipt.
+# bundle, component plan, optional business and architecture projections,
+# optional repository projection, and taxonomy per component, plus the
+# effective-plan receipt.
 STRIDE_DISPATCH_CONCURRENCY = 8
-STRIDE_DISPATCH_CONCURRENCY_MAX = 12
+STRIDE_DISPATCH_CONCURRENCY_MAX = 10
 
 
 # ---------------------------------------------------------------------------

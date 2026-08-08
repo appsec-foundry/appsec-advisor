@@ -36,8 +36,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_stride_evidence_bundles import (  # noqa: E402
     BundleError,
+    architecture_context_projection,
     business_context_projection,
     load_repository_registry,
+    validate_architecture_context_bytes,
     validate_bundle,
     validate_business_context_bytes,
 )
@@ -142,7 +144,11 @@ def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], li
             registry_path = output_dir / ".stride-repository-registry.json"
             try:
                 analyst_context: dict = {}
-                if any(component.get("business_context_path") is not None for component in components):
+                if any(
+                    component.get("business_context_path") is not None
+                    or component.get("architecture_context_path") is not None
+                    for component in components
+                ):
                     analyst_context_path = output_dir / ".stride-analyst-context.json"
                     analyst_context = json.loads(analyst_context_path.read_text(encoding="utf-8"))
                     if not isinstance(analyst_context, dict):
@@ -194,6 +200,34 @@ def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], li
                         estimated_tokens = (len(business_payload) + 3) // 4
                         if estimated_tokens != comp["business_context_estimated_tokens"]:
                             raise BundleError(f"business-context token estimate is stale for {cid}")
+                    architecture_value = comp.get("architecture_context_path")
+                    if architecture_value is not None:
+                        expected_architecture = f".dispatch-context/{cid}/architecture-context.json"
+                        if architecture_value != expected_architecture:
+                            raise BundleError(
+                                f"architecture-context path for {cid} must be {expected_architecture}, "
+                                f"got {architecture_value}"
+                            )
+                        architecture_path = _resolve_contained(output_dir, architecture_value)
+                        try:
+                            architecture_payload = architecture_path.read_bytes()
+                        except OSError as exc:
+                            raise BundleError(
+                                f"architecture-context projection is unreadable for {cid}: {exc}"
+                            ) from exc
+                        projection = validate_architecture_context_bytes(
+                            architecture_payload,
+                            expected_component_id=cid,
+                            expected_sha256=comp["architecture_context_sha256"],
+                        )
+                        overlay = analyst_context.get(cid)
+                        source_value = overlay.get("architecture_context") if isinstance(overlay, dict) else None
+                        current_projection = architecture_context_projection(source_value, cid)
+                        if current_projection != projection:
+                            raise BundleError(f"architecture-context projection is stale for {cid}")
+                        estimated_tokens = (len(architecture_payload) + 3) // 4
+                        if estimated_tokens != comp["architecture_context_estimated_tokens"]:
+                            raise BundleError(f"architecture-context token estimate is stale for {cid}")
             except (BundleError, OSError, json.JSONDecodeError, ValueError) as exc:
                 errors.append(f"context-v2 evidence validation failed: {exc}")
 

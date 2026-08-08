@@ -142,6 +142,12 @@ contexts:
     description: Business purpose, compromise impact, sensitive assets, obligations, and explicit assumptions that
       apply to the current component.
     scope: one_component
+  - id: architecture.component_context
+    name: Component security architecture
+    category: architecture_and_data_flows
+    description: Security role, exposed interfaces, security dependencies, deployment constraints, and analytical
+      assumptions that apply to the current component.
+    scope: one_component
   - id: business.context_sources
     name: Project context source documents
     category: business_and_requirements
@@ -390,6 +396,15 @@ assignments:
     applies_to: current_component
     reason: A component receives only an independently selected business-impact projection when applicable facts are
       available.
+  - id: component-security-architecture-for-stride
+    context: architecture.component_context
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: A component receives only its bounded security-architecture projection; the complete shared model remains
+      forbidden.
   - id: security-requirements
     context: requirements.security
     agents:

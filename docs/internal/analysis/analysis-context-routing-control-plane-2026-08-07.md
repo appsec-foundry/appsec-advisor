@@ -1,7 +1,7 @@
 # Analysis — context routing control plane
 
 - Date: 2026-08-07
-- Status: Stage-1 edge inventory and human-readable catalog implemented; component-root and business-context STRIDE migrations active
+- Status: Stage-1 edge inventory and human-readable catalog implemented; component-root, business-context, and architecture-context STRIDE migrations active
 - Parent plan:
   `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`
 

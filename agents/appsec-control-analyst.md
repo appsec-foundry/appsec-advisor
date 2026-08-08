@@ -79,6 +79,25 @@ is a hard upper bound: never project facts from that document to another
 component. `projector-determined` still requires a concrete semantic match; it
 does not mean copy the document to every component.
 
+When the validated component and architecture inputs contain security-relevant
+facts that cannot be reconstructed from the component's bounded source bundle,
+write `architecture_context` with only:
+
+- `security_role`: the component's security-relevant architectural
+  responsibility;
+- `exposed_interfaces`: externally or cross-component reachable interfaces;
+- `security_dependencies`: upstream or downstream components and services
+  whose security properties matter here;
+- `deployment_constraints`: relevant runtime placement or topology
+  constraints; and
+- `architecture_assumptions`: unresolved conditions used by the architecture
+  analysis.
+
+Omit generic framework descriptions and attributes already carried by the
+component registry. Do not encode actors, trust-boundary decisions, controls,
+mitigations, threats, findings, severity, or file-selection instructions in
+this object. An architecture assumption is uncertainty to test, not evidence.
+
 The top-level keys in `.stride-analyst-context.json` must be final component
 IDs. Omit a component when it has no semantic value beyond the deterministic
 bundle; never write an empty placeholder merely to enumerate the inventory.
@@ -86,7 +105,8 @@ Never write `_stride_profile`: the controller derives that reserved routing
 value from `.skill-config.json`. Each component object may contain only
 `interfaces`, `controls`, `known_secrets`, `known_vulns`,
 `known_llm_patterns`, `supply_chain_findings`, `estimated_threat_count`,
-`business_context`, `focus_paths`, and `exclude_paths` as defined by the schema.
+`business_context`, `architecture_context`, `focus_paths`, and `exclude_paths`
+as defined by the schema.
 
 Write `focus_paths` and `exclude_paths` only as literal repository-relative
 file or directory paths already owned by that component. Use `focus_paths` to

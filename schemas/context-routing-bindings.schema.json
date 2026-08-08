@@ -153,7 +153,7 @@
           "propertyNames": {"$ref": "#/$defs/id"},
           "additionalProperties": {"enum": ["declared", "implicit", "direct-source", "plugin-owned", "scalar"]}
         },
-        "projector": {"enum": ["identity_v1", "contract_only_v1", "plugin_registry_v1", "scalar_group_v1", "business_context_v1"]},
+        "projector": {"enum": ["identity_v1", "contract_only_v1", "plugin_registry_v1", "scalar_group_v1", "business_context_v1", "architecture_context_v1"]},
         "source": {"$ref": "#/$defs/source"},
         "limit_profile": {"$ref": "#/$defs/id"},
         "depends_on": {

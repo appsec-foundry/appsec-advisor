@@ -247,7 +247,7 @@ Full and rebuild scans keep every criteria-selected component in scope, includin
 inventories that exceed the operational component ceiling because many services
 are externally reachable. STRIDE analyzers run in resumable waves of up to eight
 components by default; completed component files are reused after an interrupted
-parent session. Set `APPSEC_STRIDE_CONCURRENCY=1..12` in the Claude Code
+parent session. Set `APPSEC_STRIDE_CONCURRENCY=1..10` in the Claude Code
 environment to tune host pressure without changing coverage. A selected component
 that remains missing, partial, or schema-invalid after one retry blocks merge and
 report publication.
@@ -438,6 +438,12 @@ analysis. It does not expose the complete Markdown document to every component
 agent. Do not put file-selection rules, agent instructions, threat ratings,
 actors, abuse cases, trust boundaries, or claimed controls in this file; those
 have separate configuration or evidence contracts.
+
+The same runtime derives a separate component security-architecture projection
+from validated analysis results. It contains only the component's security
+role, exposed interfaces, security dependencies, deployment constraints, and
+explicit architecture assumptions. There is no user-facing model, token,
+schema, path, or projector setting for this internal routing decision.
 
 ### Known threats — `docs/known-threats.yaml`
 

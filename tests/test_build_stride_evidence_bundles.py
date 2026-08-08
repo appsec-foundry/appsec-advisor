@@ -91,6 +91,9 @@ def test_build_all_emits_bounded_valid_component_bundle(tmp_path):
     assert "business_context" not in parsed
     assert "business_context_path" not in component
     assert not (output / ".dispatch-context/backend-api/business-context.json").exists()
+    assert "architecture_context" not in parsed
+    assert "architecture_context_path" not in component
+    assert not (output / ".dispatch-context/backend-api/architecture-context.json").exists()
 
 
 def test_business_context_is_normalized_and_receipted_per_component(tmp_path):
@@ -167,6 +170,80 @@ def test_business_context_is_physically_omitted_for_unrelated_component(tmp_path
     assert "business_context_path" in by_id["backend-api"]
     assert "business_context_path" not in by_id["internal-worker"]
     assert not (output / ".dispatch-context/internal-worker/business-context.json").exists()
+
+
+def test_architecture_context_is_normalized_and_receipted_per_component(tmp_path):
+    repo, output = _repo(tmp_path)
+    context = {
+        "security_role": "  Validate and route authenticated API requests.  ",
+        "exposed_interfaces": [" HTTPS API ", "HTTPS API", "Internal event consumer"],
+        "security_dependencies": ["Identity provider", "Payment service"],
+        "deployment_constraints": ["Runs behind the public ingress"],
+        "architecture_assumptions": ["The ingress preserves the authenticated principal."],
+    }
+    manifest = bundles.build_all(output, repo, _manifest(_component(architecture_context=context)))
+    component = manifest["components"][0]
+    assert component["architecture_context_path"] == ".dispatch-context/backend-api/architecture-context.json"
+    projection_path = output / component["architecture_context_path"]
+    projection = bundles.validate_architecture_context_bytes(
+        projection_path.read_bytes(),
+        expected_component_id="backend-api",
+        expected_sha256=component["architecture_context_sha256"],
+    )
+    assert projection["attributes"]["security_role"] == "Validate and route authenticated API requests."
+    assert projection["attributes"]["exposed_interfaces"] == ["HTTPS API", "Internal event consumer"]
+    assert "architecture_context" not in component
+    bundle = json.loads((output / component["evidence_bundle_path"]).read_text())
+    assert "architecture_context" not in bundle
+
+
+@pytest.mark.parametrize(
+    ("architecture_context", "message"),
+    [
+        ({"trust_boundaries": ["internet"]}, "unknown attributes"),
+        ({"security_role": "   "}, "empty or oversized"),
+        ({"exposed_interfaces": []}, "must contain 1-8 items"),
+        ({"architecture_assumptions": [f"assumption-{index}" for index in range(9)]}, "must contain 1-8 items"),
+    ],
+)
+def test_architecture_context_rejects_other_categories_empty_and_oversized_values(
+    tmp_path, architecture_context, message
+):
+    repo, output = _repo(tmp_path)
+    with pytest.raises(bundles.BundleError, match=message):
+        bundles.build_all(output, repo, _manifest(_component(architecture_context=architecture_context)))
+
+
+def test_architecture_context_is_physically_omitted_for_unrelated_component(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(
+        output,
+        repo,
+        _manifest(
+            _component(architecture_context={"security_role": "Public API ingress."}),
+            _component(component_id="internal-worker", component_name="Internal worker"),
+        ),
+    )
+    by_id = {row["component_id"]: row for row in manifest["components"]}
+    assert "architecture_context_path" in by_id["backend-api"]
+    assert "architecture_context_path" not in by_id["internal-worker"]
+    assert not (output / ".dispatch-context/internal-worker/architecture-context.json").exists()
+
+
+def test_bundle_rejects_tampered_architecture_context_receipt(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(
+        output,
+        repo,
+        _manifest(_component(architecture_context={"security_role": "Route public API requests."})),
+    )
+    path = output / manifest["components"][0]["architecture_context_path"]
+    projection = json.loads(path.read_text(encoding="utf-8"))
+    projection["attributes"]["security_role"] = "Changed after admission."
+    payload = bundles._canonical_bytes(projection) + b"\n"
+
+    with pytest.raises(bundles.BundleError, match="source fingerprint is stale"):
+        bundles.validate_architecture_context_bytes(payload, expected_component_id="backend-api")
 
 
 def test_focus_path_is_normalized_and_changes_bounded_admission(tmp_path):

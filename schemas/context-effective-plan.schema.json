@@ -159,7 +159,7 @@
         "category_name": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]+$"},
         "assignment_id": {"$ref": "#/$defs/identifier"},
         "producer": {"$ref": "#/$defs/identifier"},
-        "projector": {"enum": ["identity_v1", "contract_only_v1", "plugin_registry_v1", "scalar_group_v1", "business_context_v1"]},
+        "projector": {"enum": ["identity_v1", "contract_only_v1", "plugin_registry_v1", "scalar_group_v1", "business_context_v1", "architecture_context_v1"]},
         "scope": {"enum": ["whole_run", "one_component", "one_candidate"]},
         "applies_to": {"enum": ["whole_run", "current_component", "current_candidate"]},
         "trust": {
