@@ -78,6 +78,7 @@ def test_stale_matcher_identity_does_not_render_dead_finding_link():
     assert model["rows"][0]["evidence"] == "routes/verify.ts:53"
     assert model["matched_finding_ids"] == []
 
+
 _THREAT_MODEL = {
     "threats": [
         {"t_id": "T-010", "title": "Persistent XSS via bypassSecurityTrustHtml", "risk": "High"},

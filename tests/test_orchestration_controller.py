@@ -895,6 +895,13 @@ def test_context_v2_prepare_abuse_dispatches_receipted_candidate_projections(tmp
     assert emitted["context_plan"]["receipt_sha256"]
     assert emitted["dispatch_jobs"][0]["context_delivery_ids"]
 
+    projection_path = output / ".dispatch-context/abuse-cases/AC-T-001.json"
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["limits"]["source_chars"] = 1
+    _rewrite_projection_with_current_size(projection_path, projection)
+    with pytest.raises(controller.ControllerError, match="differs from its deterministic projection"):
+        controller._context_v2_abuse_candidate_receipt(output, "AC-T-001", tmp_path / "repo")
+
 
 def test_prepare_abuse_carries_candidate_titles_for_dispatch_labels(tmp_path, monkeypatch):
     """Without titles the verifier fan-out is a column of bare AC-ids in the
@@ -2600,6 +2607,33 @@ def test_context_v2_taxonomy_slice_is_bounded_and_fingerprinted(tmp_path):
     assert b"cwe_to_th:" in payload
 
 
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ("schema_version: 1\ncategories:\n  - id: TH-01\ncwe_to_th: {}\n", "validation failed"),
+        (
+            "schema_version: 1\ncategories: []\ncwe_to_th:\n  CWE-79: [TH-01]\n",
+            "maps CWEs to absent categories",
+        ),
+    ],
+)
+def test_context_v2_taxonomy_slice_rejects_invalid_contract(tmp_path, monkeypatch, payload, message):
+    output = tmp_path / "out"
+    output.mkdir()
+
+    def fake_slice(_name, args, **_kwargs):
+        component_id = args[args.index("--component-id") + 1]
+        path = output / ".taxonomy-slices" / component_id / "threat-category-taxonomy.yaml"
+        path.parent.mkdir(parents=True)
+        path.write_text(payload, encoding="utf-8")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_slice)
+
+    with pytest.raises(controller.ControllerError, match=message):
+        controller._context_v2_taxonomy_slice(output, "api")
+
+
 def test_context_v2_prepare_stride_rejects_bundle_escape_after_external_gate(tmp_path, monkeypatch):
     output = _write_context_v2_config(tmp_path)
     (output / ".stride-analyst-context.json").write_text("{}", encoding="utf-8")
@@ -2720,6 +2754,45 @@ def test_context_v2_after_merge_dispatches_evidence_only_when_sample_has_work(tm
     assert action["dispatch_jobs"][0]["output_artifacts"] == [
         ".evidence-verification.json",
     ]
+
+
+def _rewrite_projection_with_current_size(path: Path, value: dict) -> None:
+    for _ in range(3):
+        payload = (json.dumps(value, indent=2, sort_keys=False) + "\n").encode()
+        value["limits"]["serialized_bytes"] = len(payload)
+    path.write_text(json.dumps(value, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
+def test_evidence_projection_reconstruction_rejects_schema_valid_limit_drift(tmp_path):
+    output = _write_context_v2_config(tmp_path, evidence_verifier_max_findings=30)
+    _write_post_stride_sources(tmp_path, output, [_post_stride_threat()])
+    path = post_stride_contexts.write_evidence_context(output, tmp_path / "repo", "standard", 30)
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["limits"]["selected_samples"] = 0
+    _rewrite_projection_with_current_size(path, value)
+
+    with pytest.raises(controller.ControllerError, match="differs from its deterministic projection"):
+        controller._context_v2_evidence_projection_receipt(
+            output,
+            _cfg(tmp_path) | {"evidence_verifier_max_findings": 30},
+        )
+
+
+@pytest.mark.parametrize("generated", [True, False])
+def test_synthesis_projection_reconstruction_rejects_schema_valid_limit_drift(tmp_path, generated):
+    output = _write_context_v2_config(tmp_path)
+    _write_post_stride_sources(tmp_path, output, [_post_stride_threat()])
+    generated_path, mitigation_path = post_stride_contexts.write_synthesis_contexts(output)
+    path = generated_path if generated else mitigation_path
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["limits"]["ordering_key"] = "canonical merged threat order"
+    value["limits"]["max_records"] = 512
+    record_key = "threats" if generated else "mitigations"
+    value[record_key][0]["t_id"] = "T-999"
+    _rewrite_projection_with_current_size(path, value)
+
+    with pytest.raises(controller.ControllerError, match="differs from its deterministic projection"):
+        controller._context_v2_synthesis_projection_receipt(output, generated=generated)
 
 
 def test_context_v2_normalizes_producer_authored_stride_profile_before_schema_gate(tmp_path):
@@ -4257,6 +4330,21 @@ class TestContextV2PostRecon:
         monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
 
         with pytest.raises(controller.ControllerError, match="stale for .recon-summary.md"):
+            controller.context_v2_post_recon(output)
+
+    @pytest.mark.parametrize("projection_name", ["recon-summary-context.json", "route-context.json"])
+    def test_post_recon_rejects_schema_valid_projection_drift(self, tmp_path, monkeypatch, projection_name):
+        output = self._prepare(tmp_path)
+        projection_path = output / ".dispatch-context" / "architecture" / projection_name
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        if projection_name == "recon-summary-context.json":
+            projection["sections"][0]["lines"] = ["schema-valid replacement"]
+        else:
+            projection["coverage"]["frameworks_detected"] = ["unknown"]
+        projection_path.write_text(json.dumps(projection), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        with pytest.raises(controller.ControllerError, match="differs from its deterministic projection"):
             controller.context_v2_post_recon(output)
 
     def test_quick_depth_resolves_static_actors_but_skips_discovery(self, tmp_path, monkeypatch):

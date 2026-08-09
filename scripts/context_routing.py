@@ -252,6 +252,9 @@ def validate_catalog_semantics(
     for context_id, binding in context_bindings.items():
         if binding["limit_profile"] not in profiles:
             raise ContextRoutingError(f"unknown limit profile for context {context_id!r}")
+        contract_path = binding["contract"].partition("#")[0]
+        if contract_path.startswith("schemas/"):
+            _validate_plugin_path(plugin_root, contract_path)
         source = binding["source"]
         if source["kind"] == "output_artifact":
             _safe_template(source["artifact_pattern"])

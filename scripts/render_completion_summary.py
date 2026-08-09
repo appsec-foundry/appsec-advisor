@@ -96,6 +96,14 @@ def _load_text(path: Path) -> str:
         return ""
 
 
+def _load_json_object(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def _has_cost_signal(output_dir: Path) -> bool:
     """Cheaply detect whether verify_run_costs.py can have useful input."""
     signal_tokens = (
@@ -122,7 +130,11 @@ def _has_cost_signal(output_dir: Path) -> bool:
 _MD_COMPONENT_RE = re.compile(r"^###\s+2\.3\s+", re.MULTILINE)
 
 
-def extract_metrics(yaml_data: dict, md_text: str) -> dict[str, Any]:
+def extract_metrics(
+    yaml_data: dict,
+    md_text: str,
+    stride_selection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Extract counts from yaml (authoritative) + md (fallback)."""
     # Threats.
     threats = yaml_data.get("threats") or []
@@ -138,6 +150,17 @@ def extract_metrics(yaml_data: dict, md_text: str) -> dict[str, Any]:
     n_components = len(components)
     if n_components == 0 and md_text:
         n_components = len(_MD_COMPONENT_RE.findall(md_text))
+    component_ids = {row.get("id") for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)}
+    selected = stride_selection.get("selected") if isinstance(stride_selection, dict) else None
+    selected_ids = [row.get("id") for row in selected if isinstance(row, dict)] if isinstance(selected, list) else []
+    n_stride_components: int | None = None
+    if (
+        isinstance(selected, list)
+        and len(selected_ids) == len(selected)
+        and len(set(selected_ids)) == len(selected_ids)
+        and (not component_ids or set(selected_ids) <= component_ids)
+    ):
+        n_stride_components = len(selected_ids)
 
     # Controls — count status badges in yaml if present, otherwise scan md.
     controls = yaml_data.get("security_controls") or yaml_data.get("controls") or []
@@ -169,6 +192,7 @@ def extract_metrics(yaml_data: dict, md_text: str) -> dict[str, Any]:
         "threats_total": len(threats),
         "threats_by_sev": by_sev,
         "n_components": n_components,
+        "n_stride_components": n_stride_components,
         "controls_total": len(controls),
         "control_status": control_status,
         "requirements": req_counts,
@@ -751,21 +775,29 @@ def build_next_steps(
 ) -> list[str]:
     """Apply the conditional rules from SKILL.md → "Next Steps block".
 
-    Returns a capped 5-item list (most actionable first). Always-lines 1
-    and 2 take priority, then architect-review, then SARIF, then
-    requirements, then reasoning-model hint, then dep-scan, then baseline.
+    Returns a capped 5-item list (most actionable first). The report and
+    read-only question paths take priority, then triage, architect review,
+    SARIF, the reasoning-model hint, and the incremental baseline notice.
     """
     lines: list[str] = []
     sev = metrics["threats_by_sev"]
     critical = sev.get("Critical", 0)
     high = sev.get("High", 0)
 
-    # Always line 1.
-    lines.append(f'Open {output_dir}/threat-model.md → "Management Summary" for verdict + top risks')
-    # Always line 2 (if any Critical/High).
+    # Keep the report overview and its highest-priority register slice in one
+    # reading action. Splitting them made one document look like two workflows.
+    report_step = f'Open {output_dir}/threat-model.md → "Management Summary" for verdict + top risks'
     if critical or high:
         top = "Critical" if critical else "High"
-        lines.append(f'Review {top} findings in Section 8 "Findings Register"')
+        report_step += f', then Section 8 "Findings Register" for {top} findings'
+    lines.append(report_step)
+
+    # Asking is the non-mutating default exploration path and must remain
+    # visible in the numbered list rather than an easy-to-miss footer.
+    lines.append(
+        'Ask questions without changing the model, e.g. "what should I fix first?" or '
+        '"does it cover SSRF?": /appsec-advisor:ask-threat-model'
+    )
 
     # Triage — whenever the run surfaced findings, point at the consumer skill
     # that turns them into a prioritised, owned remediation plan. Runs later and
@@ -796,10 +828,6 @@ def build_next_steps(
     # SARIF uploaded.
     if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
         lines.append("Upload threat-model.sarif.json to GitHub Advanced Security / SonarQube / DefectDojo")
-
-    # Requirements not checked.
-    if not cfg.get("check_requirements"):
-        lines.append("Re-run with --requirements to verify SEC-* baseline compliance")
 
     # Sonnet-only run with significant Critical/High.
     if cfg.get("reasoning_model") == "sonnet" and (critical + high) >= 3:
@@ -899,7 +927,12 @@ def render_metrics(metrics: dict, cfg: dict) -> list[str]:
         f"{s['Critical']} Critical | {s['High']} High | "
         f"{s['Medium']} Medium | {s['Low']} Low"
     )
-    lines.append(f"  Components : {metrics['n_components']} analyzed")
+    if metrics.get("n_stride_components") is not None:
+        lines.append(
+            f"  Components : {metrics['n_stride_components']} STRIDE-analyzed | {metrics['n_components']} modeled"
+        )
+    else:
+        lines.append(f"  Components : {metrics['n_components']} modeled")
     cs = metrics["control_status"]
     # RC.F — render all 5 effectiveness buckets per sections-contract.yaml
     # `effectiveness_taxonomy` (adequate/partial/weak/unsafe/missing). Earlier
@@ -1461,17 +1494,6 @@ def render_composition_health(health: Optional[dict]) -> list[str]:
     return lines
 
 
-# The numbered list is capped at 5 and its slots are contested by conditional
-# rules, so the Q&A lane gets an unnumbered footer instead of a sixth step: it
-# applies to every completed run, costs no slot, and can never displace an
-# action line. The example questions are the point — they show the user that
-# free-form questions are a real surface, which a bare skill name does not.
-_ASK_HINT = (
-    'Or just ask, e.g. "what are the critical findings?" · "does it cover SSRF?" · '
-    '"is there a fix for F-003?"  → /appsec-advisor:ask-threat-model'
-)
-
-
 def render_next_steps(next_steps: list[str]) -> list[str]:
     if not next_steps:
         return []
@@ -1479,8 +1501,6 @@ def render_next_steps(next_steps: list[str]) -> list[str]:
     lines.append("Next Steps")
     for i, step in enumerate(next_steps, start=1):
         lines.append(f"  {i}. {step}")
-    lines.append("")
-    lines.append(f"  {_ASK_HINT}")
     return lines
 
 
@@ -1650,7 +1670,11 @@ def render_summary(
 ) -> str:
     yaml_data = _load_yaml(output_dir / "threat-model.yaml")
     md_text = _load_text(output_dir / "threat-model.md")
-    metrics = extract_metrics(yaml_data, md_text)
+    metrics = extract_metrics(
+        yaml_data,
+        md_text,
+        _load_json_object(output_dir / ".stride-selection.json"),
+    )
     change = extract_change_summary(yaml_data)
     stats = extract_run_statistics(output_dir, yaml_data)
     cost = extract_costs(output_dir, plugin_root)
@@ -1707,7 +1731,7 @@ def render_dry_run(output_dir: Path, repo_root: Path) -> str:
 
     lines = [RULE, "  Dry-Run — Threat Model Preview", RULE, ""]
     lines.append(f"  Repository      : {repo_root}")
-    lines.append(f"  Components      : {metrics['n_components']} analyzed")
+    lines.append(f"  Components      : {metrics['n_components']} modeled (STRIDE analysis not run)")
     lines.append("")
     if ms_block:
         lines.append(ms_block)

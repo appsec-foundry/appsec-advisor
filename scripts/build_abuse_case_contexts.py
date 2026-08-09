@@ -11,8 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from _atomic_io import atomic_write_json
 import scan_excludes
+from _atomic_io import atomic_write_json
 
 MAX_CANDIDATES = 64
 MAX_CONTEXT_BYTES = 65_536

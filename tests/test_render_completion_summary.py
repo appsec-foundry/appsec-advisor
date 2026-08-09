@@ -99,6 +99,24 @@ class TestExtractMetrics:
         m = rcs.extract_metrics(yaml_data, "")
         assert m["n_components"] == 3
 
+    def test_stride_selection_distinguishes_analyzed_from_modeled_components(self):
+        yaml_data = {"components": [{"id": f"c{i}"} for i in range(8)]}
+        selection = {"selected": [{"id": f"c{i}"} for i in range(6)]}
+
+        metrics = rcs.extract_metrics(yaml_data, "", selection)
+        rendered = rcs.render_metrics(metrics, {})
+
+        assert metrics["n_components"] == 8
+        assert metrics["n_stride_components"] == 6
+        assert "  Components : 6 STRIDE-analyzed | 8 modeled" in rendered
+
+    def test_invalid_stride_selection_is_not_reported_as_analyzed(self):
+        yaml_data = {"components": [{"id": "api"}]}
+        metrics = rcs.extract_metrics(yaml_data, "", {"selected": [{"id": "invented"}]})
+
+        assert metrics["n_stride_components"] is None
+        assert "  Components : 1 modeled" in rcs.render_metrics(metrics, {})
+
     def test_components_fallback_to_md_headings(self):
         md = "## 2. Architecture\n### 2.3 Component A\n### 2.3 Component B\n"
         m = rcs.extract_metrics({}, md)
@@ -439,10 +457,13 @@ class TestNextSteps:
     def test_always_line_1_present(self, tmp_path):
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
         assert "Management Summary" in lines[0]
+        assert "ask-threat-model" in lines[1]
+        assert "what should I fix first?" in lines[1]
 
-    def test_line_2_only_when_critical_or_high(self, tmp_path):
+    def test_high_priority_register_slice_is_part_of_the_report_step(self, tmp_path):
         lines_with = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), self._cfg())
-        assert any("Critical findings" in l for l in lines_with)
+        assert "Management Summary" in lines_with[0]
+        assert 'Section 8 "Findings Register" for Critical findings' in lines_with[0]
         lines_without = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
         assert not any("Section 8" in l for l in lines_without)
 
@@ -472,21 +493,14 @@ class TestNextSteps:
         )
         assert any("sarif" in l.lower() for l in lines)
 
-    def test_requirements_hint_only_when_disabled(self, tmp_path):
+    def test_requirements_are_not_a_generic_follow_up(self, tmp_path):
         lines = rcs.build_next_steps(
             tmp_path,
             tmp_path,
             self._metrics(),
             self._cfg(),
         )
-        assert any("--requirements" in l for l in lines)
-        lines_on = rcs.build_next_steps(
-            tmp_path,
-            tmp_path,
-            self._metrics(),
-            self._cfg(check_requirements=True),
-        )
-        assert not any("--requirements" in l for l in lines_on)
+        assert not any("--requirements" in l for l in lines)
 
     def test_reasoning_hint_only_for_sonnet_with_findings(self, tmp_path):
         sonnet_many = rcs.build_next_steps(
@@ -1321,16 +1335,9 @@ class TestRenderMisc:
     def test_render_next_steps_empty(self):
         assert rcs.render_next_steps([]) == []
 
-    def test_render_next_steps_footer_names_the_ask_lane(self):
-        """The Q&A lane rides as an unnumbered footer, never as a sixth step:
-        the numbered list is capped at 5 and its slots are contested, so a
-        numbered entry could silently displace an action line.
-        """
-        out = rcs.render_next_steps([f"step {i}" for i in range(5)])
-        assert "/appsec-advisor:ask-threat-model" in out[-1]
-        assert not out[-1].strip().startswith("6.")
-        # Example questions carry the message that free-form asking works.
-        assert "critical findings" in out[-1]
+    def test_render_next_steps_does_not_append_hidden_actions(self):
+        out = rcs.render_next_steps(["read", "ask"])
+        assert out == ["", "Next Steps", "  1. read", "  2. ask"]
 
     def test_render_log_files(self, tmp_path: Path):
         (tmp_path / ".qa-status.json").write_text("{}")

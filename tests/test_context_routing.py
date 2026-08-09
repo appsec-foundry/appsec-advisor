@@ -324,6 +324,16 @@ def test_semantics_reject_unsafe_artifact_bindings(unsafe):
         _semantic_validate(catalog, changed)
 
 
+def test_semantics_reject_missing_schema_referenced_by_active_route():
+    catalog, bindings = _contracts()
+    changed = copy.deepcopy(bindings)
+    route = next(row for row in changed["contexts"] if row["id"] == "architecture.route_projection")
+    route["contract"] = "schemas/missing-active-route.schema.json#v1"
+
+    with pytest.raises(routing.ContextRoutingError, match="plugin context path is missing"):
+        _semantic_validate(catalog, changed)
+
+
 def test_semantics_reject_plugin_symlink_escape(tmp_path):
     catalog, bindings = _contracts()
     plugin = tmp_path / "plugin"

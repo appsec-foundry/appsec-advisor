@@ -1481,7 +1481,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.taxonomy-slices/` (directory) | per-component taxonomy slices |
 | `$OUTPUT_DIR/.dispatch-context/` (directory) | per-component volatile context slices passed to STRIDE analyzers |
 | `$OUTPUT_DIR/.merge-context/` (directory) | focused volatile context passed to threat-merger |
-| `$OUTPUT_DIR/.active-tool-calls/` (directory) | per-tool-call liveness markers |
+| `$OUTPUT_DIR/.active-tool-calls/` (directory) | per-tool-call liveness markers; the terminal outer-session hook clears them even when other runtime artifacts are preserved |
 
 **Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, per-component `.stride-<component-id>.json`, the three durable `.stride-` sidecars, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
 

@@ -48,7 +48,7 @@ The command order is fixed:
 
 | At | Command | Dispatches |
 |---|---|---|
-| Stage-1 start | `context-v2-begin` | recon wave (context, recon, config) |
+| Stage-1 start | `context-v2-begin` | recon wave (context/config are deterministic) |
 | Recon wave returned | `context-v2-post-recon` | actor discoverer, or architecture |
 | Actor discoverer returned | `context-v2-post-actors` | architecture analyst |
 | Architecture returned | `context-v2-post-architecture` | trust-boundary analyst |
@@ -104,10 +104,14 @@ the shared effective plan or repository registry, or inline untrusted artifacts.
 
 ## Logging and stats
 
-The controller/skill own invoke/done and phase events; agents own start/end and
-semantic steps. Record each wave with
-`record_stage_stats.py --accumulate`, passing the wave's own subagent type and
-model. Stats failures are non-blocking.
+Before each dispatch capture `WAVE_START_ISO`. After its jobs return, group the
+returned jobs by `semantic_role`, `agent_type`, and `model`, then sum each
+group's `<usage>` `total_tokens`, `tool_uses`, and `duration_ms`. For every
+group run `record_stage_stats.py` with positional `$OUTPUT_DIR`, `--stage 1
+--variant "<semantic_role>" --name "<semantic_role>" --agent "<agent_type>"
+--model "<model>" --duration-ms <sum> --tool-uses <sum> --tokens <sum>
+--accumulate --subagent-type "<agent_type>" --since-iso "$WAVE_START_ISO"`.
+Stats failures are non-blocking.
 
 ## Close
 

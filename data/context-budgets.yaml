@@ -55,9 +55,10 @@ surfaces:
     # The context-v2 Stage-1 runtime. It replaces the legacy Stage-1 file for a
     # run prepared as runtime_generation=context-v2 and must stay materially
     # smaller: it carries the boundary loop and dispatch rules only, never a
-    # phase algorithm.
+    # phase algorithm. The 6400-byte ceiling leaves operational headroom after
+    # adding the executable per-role telemetry call required at each wave.
     path: skills/create-threat-model/SKILL-thin-stage1-v2.md
-    max_bytes: 6000
+    max_bytes: 6400
   thin_stage1b_runtime:
     path: skills/create-threat-model/SKILL-thin-stage1b.md
     max_bytes: 4300

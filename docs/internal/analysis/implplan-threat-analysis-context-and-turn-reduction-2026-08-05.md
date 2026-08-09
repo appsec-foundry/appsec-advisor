@@ -800,7 +800,7 @@ Status as of 2026-08-09:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
-| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active receipted projections for STRIDE components, recon, architecture, evidence verification, post-STRIDE synthesis, and abuse-case candidates repository-tested | Satisfy the reconstruction and projection exit gates in the next live run |
+| WP5a | Repository implementation complete through the post-R9 projection, contract, lifecycle, summary, and telemetry fixes | Pass the R10 live acceptance checkpoint, then establish parity in the controlled A/B cohort |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
 
@@ -1133,7 +1133,7 @@ regression suite reported 418 passing tests; the broader contract suite reported
 gates passed. `make test` and `make check` each reported 11,624 passed and 95
 skipped; `make test` reported 91.93% coverage.
 
-A ninth smoke attempt, run `7073e7bf-f627-4a4e-8996-3df9f39829fc`, completed
+An earlier smoke attempt, run `7073e7bf-f627-4a4e-8996-3df9f39829fc`, completed
 an opt-in context-v2 full invocation at quick depth without manual runtime
 artifact edits. Recon, architecture, trust-boundary analysis, control analysis,
 six component-specific STRIDE jobs, bounded merge review, evidence verification,
@@ -1377,15 +1377,67 @@ fully SHA-pinned lint-fixer workflow, reports the absent npm lockfile, and
 evaluates the nested smoke-test Dockerfile. A failed fresh producer cannot
 reuse stale config bytes, and config enrichment remains non-blocking.
 
-The next required live checkpoint uses Juice Shop commit
-`33518f5a0911e25d9df747b1e70fb7af279a755c`, Claude Code 2.1.226, and the same
-quick-depth model cohort as R4 through R8 while forcing Stage 1d so its candidate
-routing is exercised:
+The designated R9 checkpoint at
+`/tmp/appsec-context-v2-wp5a-smoke-20260809-r9` completed successfully through
+final rendering and deterministic gates. It produced 42 findings: six
+Critical, 21 High, and 15 Medium. The headless result recorded 157 total turns,
+5,114,602 milliseconds, 29,589,045 cache-read tokens, 1,496,506 cache-write
+tokens, 369,404 output tokens, and USD 19.66941455. Six components were selected
+for STRIDE while the final model retained eight components. Active effective-
+plan deliveries carried physical line, byte, and estimated-token counts and no
+active delivery used `shadow_hashed`.
+
+R9 also exposed measurement and lifecycle defects that did not fail the run.
+Only abuse verification and rendering reached `.stage-stats.jsonl`, so the run
+cannot support an exact phase-by-phase cost claim. The preserved output retained
+19 `.active-tool-calls` entries after termination. The Completion Summary called
+all eight modeled components analyzed even though the selection contained six.
+The abuse-verifier row reported 212,533 tokens, 101 tool calls, and 185,975
+milliseconds and was the largest recorded role cost driver, but its priced token
+classes and turns are unavailable. Do not allocate the exact run cost to roles
+proportionally; that would create unsupported precision.
+
+Two committed follow-ups after R9 reduce and protect the next run. Commit
+`022bf115` bounds abuse verification with exact source windows and a turn limit,
+removes redundant reads and writes, excludes scan and code-fix artifacts from
+recon, removes refuted threats from abuse inputs, and routes known
+vulnerabilities as `threats.known_threats`. Commit `7961c132` sorts the Findings
+Index by Critical, High, Medium, Low, and Info with deterministic tie-breaking.
+Neither change has been exercised in another live run.
+
+The pre-R10 repository follow-up closes the remaining generic false-pass and
+measurement paths. Projection gates now reconstruct recon, route, evidence,
+generated-threat, proposed-mitigation, and abuse-case inputs and compare every
+deterministic field except the self-referential serialized-byte field. The
+context catalog rejects missing schema paths, corrects the requirements route
+to `requirements-catalog.schema.yaml`, and gives the active taxonomy slice a
+schema plus category-reference validation. The terminal outer hook clears live
+tool markers even when other runtime diagnostics are preserved, without
+following a symlinked marker directory. Completion output distinguishes the
+STRIDE-selected count from the modeled inventory, combines its report reading
+path, exposes read-only threat-model Q&A as a numbered action, and no longer
+recommends a requirements rerun without user intent. Stage 1 records one
+aggregated usage row per semantic role, Stage 1d binds its row to the verifier
+dispatch window, and `measure_run.py` preserves stage variants, reports
+role-record coverage, and imports exact headless totals.
+
+The line-limit audit found no remaining semantic-versus-physical unit mismatch
+in the active large projections. Semantic producer caps remain separate from
+routing limits, which count serialized physical lines. R9 examples fit both
+dimensions: recon retained at most 200 semantic lines while serializing to 524
+physical lines; its route projection serialized to 1,756 physical lines; the
+largest evidence and synthesis projections remained below their physical line,
+byte, and token profiles. Regression tests construct projections whose physical
+line counts exceed their semantic window counts so either unit cannot silently
+stand in for the other.
+
+The next required live checkpoint is R10. It uses the same target and quick
+model cohort as R9 and forces Stage 1d:
 
 ```bash
 APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r9 \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r10 \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \
@@ -1394,36 +1446,50 @@ APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
   --rebuild
 ```
 
-The checkpoint passes only if the invocation exits successfully through final
-rendering, resolves `runtime_generation=context-v2`, spawns no context-resolver
-or config-scanner agent, records `/home/mrohr/juice-shop` as the exact context
-root, preserves the R4 component and STRIDE-selection mechanisms, and completes
-all six STRIDE categories for every selected component. The recon projection
-must retain at most 200 semantic source lines and remain within 1,024 serialized
-lines; the route projection must retain at most 96 routes. Evidence,
-generated-threat, proposed-mitigation, taxonomy, and per-candidate abuse inputs
-must carry current hashes, matching contracts, `action_validated` status, and
-their bounded counts and serialized sizes. No active delivery may use
-`shadow_hashed`.
+R10 passes only when all of these conditions hold:
 
-Focused evidence and synthesis jobs must not receive `.threats-merged.json`;
-abuse jobs must not receive `.abuse-case-matches.json` or another candidate.
-The deterministic Config/IaC producer must receive quick depth, inspect only
-Juice Shop, write only the output sidecar, evaluate all 24 catalog checks, and
-emit 30 findings for the pinned tree. IAC-011 must not flag the fully SHA-pinned
-lint-fixer workflow, and IAC-050 must report the absent npm lockfile. Verify that
-startup status does not show an incomplete-run warning during the pre-lock
-window and that no invalid optional artifact is routed. Record source, retained,
-and omitted counts; serialized lines, bytes, and estimated tokens per routed
-context; per-role peak context; automatic compactions; usage turns; cache reads
-and writes; output tokens; wall time; cost; evidence verdict mix; finding
-correspondence; and every routing or producer-gate warning. Compare the
-recon-pattern, recon-summary, route, evidence-sample, and post-STRIDE context
-reductions with R4 and record any targeted repository escape reads. Every
-emitted `discovery_escapes` record must use `decision_key`, `search_paths`, and
-optional `lens`; a retry must record its exact component-specific reason before
-the prior output is cleared. This is one smoke checkpoint, not the controlled
-three-pair A/B acceptance cohort.
+- the invocation exits successfully through final rendering with no context,
+  schema, contract, projection, or reconstruction abort;
+- `runtime_generation=context-v2` is authoritative, the repository root is
+  `/home/mrohr/juice-shop`, all selected components cover all six STRIDE
+  categories, and the final status, lock, checkpoint, and Completion Summary
+  agree;
+- every intended active context route is delivered through a current
+  `action_validated` receipt, no active delivery uses `shadow_hashed`, and
+  focused evidence, synthesis, and abuse jobs do not receive their complete
+  shared source artifacts or another candidate's projection;
+- every major projection reports source, retained and omitted records,
+  serialized physical lines, bytes, and estimated tokens; recon remains at or
+  below 200 semantic retained lines and 1,024 physical lines, routes remain at
+  or below 96 records, and every routing profile passes in its declared unit;
+- `.stage-stats.jsonl` has a usage row for every dispatched semantic role and
+  reports each role's aggregate tokens, tool calls, and duration; the headless
+  result reports exact total turns and per-model priced token classes and cost;
+  per-role turns and cost remain explicitly unavailable unless the runtime
+  starts emitting the required fields;
+- the abuse-verifier row is compared with R9's 212,533 tokens, 101 tool calls,
+  and 185,975 milliseconds, together with its candidate count and source-window
+  sizes, so the limiter's effect is measured rather than inferred;
+- total findings and the severity distribution are recorded and mapped against
+  both R9 and
+  `examples/threat-modeler/threat-model-juice-shop-quick-v0.5.2.yaml`; any real
+  loss is explained, and DOM-based XSS plus supported OAuth-derived credential
+  and JWT role/claim findings are restored where the source evidence remains;
+- no refuted finding or run, scan, code-fix, or generated output artifact is
+  reintroduced as a candidate, and targeted repository escape reads remain
+  receipted and bounded;
+- the Findings Index is ordered Critical, High, Medium, Low, Info with stable
+  within-severity order; `.active-tool-calls` is absent after terminal Stop even
+  with `--keep-runtime-files`; and the Completion Summary reports six
+  STRIDE-analyzed and eight modeled components when the R9 selection repeats;
+- deterministic Config/IaC evaluates all 24 checks and preserves its known
+  pinned-tree expectations, startup does not report a false incomplete run, and
+  every routing, retry, producer-gate, and compaction warning is retained for
+  review.
+
+R10 is a live smoke checkpoint, not the controlled three-pair A/B acceptance
+cohort. It cannot close WP6, the controlled A/B evidence, WP7 incremental and
+resume parity, default rollout, or the acceptance matrix.
 
 A subsequent governance audit moved standing orchestration and admission rules
 into the durable contracts, pinned the legacy/context-v2 tool topology, added a
@@ -1436,9 +1502,9 @@ a ruleset, so merge enforcement remains an external rollout gate rather than a
 repository-tested guarantee.
 
 The acceptance matrix, runtime parity, 700-turn target, resident-context
-targets, and cost-reduction gates remain unverified. WP5a, WP6,
-incremental/resume migration, and rollout slices D2, E, and F must not be
-reported as implemented.
+targets, and cost-reduction gates remain unverified. WP5a live acceptance,
+WP6, incremental/resume migration, and rollout slices E and F must not be
+reported as complete.
 
 ## Verification matrix
 

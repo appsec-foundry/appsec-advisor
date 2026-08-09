@@ -78,6 +78,41 @@ def test_post_is_idempotent_when_marker_missing(tmp_path, agent_logger):
     assert _read_active(tmp_path) == []
 
 
+def test_outer_terminal_stop_removes_stale_markers_even_when_runtime_is_preserved(tmp_path, agent_logger):
+    active = tmp_path / ".active-tool-calls"
+    active.mkdir()
+    (active / "toolu_stale.json").write_text('{"tool_use_id":"toolu_stale"}', encoding="utf-8")
+    (active / "dispatch-times.json").write_text('{"session":123}', encoding="utf-8")
+
+    agent_logger.handle_stop({"stop_reason": "end_turn"}, "terminal", "Stop")
+
+    assert not active.exists()
+
+
+def test_nested_stop_does_not_clear_parent_live_markers(tmp_path, agent_logger):
+    active = tmp_path / ".active-tool-calls"
+    active.mkdir()
+    marker = active / "toolu_live.json"
+    marker.write_text('{"tool_use_id":"toolu_live"}', encoding="utf-8")
+
+    agent_logger.handle_stop({"stop_reason": "end_turn"}, "nested", "SubagentStop")
+
+    assert marker.is_file()
+
+
+def test_terminal_stop_does_not_follow_active_directory_symlink(tmp_path, agent_logger):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    protected = outside / "protected.json"
+    protected.write_text("keep", encoding="utf-8")
+    (tmp_path / ".active-tool-calls").symlink_to(outside, target_is_directory=True)
+
+    agent_logger.handle_stop({"stop_reason": "end_turn"}, "terminal", "Stop")
+
+    assert protected.read_text(encoding="utf-8") == "keep"
+    assert not (tmp_path / ".active-tool-calls").exists()
+
+
 def test_pre_skips_when_tool_use_id_absent(tmp_path, agent_logger):
     al = agent_logger
     al._record_tool_start(

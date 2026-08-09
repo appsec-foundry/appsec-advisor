@@ -5,8 +5,9 @@ Folds the telemetry the plugin already emits into one ``.run-metrics.json``
 file so that performance and cost claims become falsifiable. This is *not*
 a greenfield parser — it composes outputs from helpers that already exist:
 
-    .stage-stats.jsonl     (per-stage tokens/duration/tool_uses)
+    .stage-stats.jsonl     (per-role tokens/duration/tool_uses)
     .hook-events.log       (SESSION_STOP cumulative cost + ASSESSMENT_TOKENS)
+    .headless-result.json  (exact total turns and per-model token/cost classes)
     verify_run_costs.py    (delta-based token/cost verification, --json)
 
 What it does NOT do:
@@ -15,6 +16,8 @@ What it does NOT do:
       are sourced through ``verify_run_costs.py --json``.
     - Replace ``cost_running_total.py`` — that script prints a running
       ticker during a run; this one summarises after the run is finished.
+    - Invent per-role turns or cost. Agent usage blocks do not expose either
+      turns or the priced token classes needed for additive cost attribution.
 
 Usage::
 
@@ -30,8 +33,11 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
+
+import headless_usage
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
@@ -53,14 +59,15 @@ def _read_stage_stats(output_dir: Path) -> list[dict]:
 
 
 def _stage_summary(records: list[dict]) -> dict[str, Any]:
-    """Aggregate per-stage stats; deduplicate by stage id (last write wins)."""
+    """Aggregate per-stage stats; deduplicate by stage and variant."""
     by_stage: dict[Any, dict] = {}
     for r in records:
-        key = r.get("stage") or r.get("name")
-        if key is None:
+        stage = r.get("stage")
+        if stage is None and not r.get("name"):
             continue
+        key = (stage, r.get("variant") or "") if stage is not None else (r.get("name"), "")
         by_stage[key] = r
-    stages = sorted(by_stage.values(), key=lambda r: r.get("stage", 0) or 0)
+    stages = sorted(by_stage.values(), key=lambda r: (r.get("stage", 0) or 0, r.get("variant") or ""))
     total_tokens = sum(int(r.get("tokens") or 0) for r in stages)
     total_duration_ms = sum(int(r.get("duration_ms") or 0) for r in stages)
     total_tool_uses = sum(int(r.get("tool_uses") or 0) for r in stages)
@@ -72,16 +79,64 @@ def _stage_summary(records: list[dict]) -> dict[str, Any]:
         "stages": [
             {
                 "stage": r.get("stage"),
+                "variant": r.get("variant") or "",
                 "name": r.get("name"),
                 "agent": r.get("agent"),
                 "model": r.get("model"),
                 "tokens": r.get("tokens"),
                 "duration_ms": r.get("duration_ms"),
                 "tool_uses": r.get("tool_uses"),
+                "dispatch_count": r.get("dispatch_count"),
             }
             for r in stages
         ],
     }
+
+
+_AGENT_SPAWN_RE = re.compile(r"\bAGENT_SPAWN\s+(?P<agent>\S+)")
+
+
+def _short_agent(value: Any) -> str:
+    agent = str(value or "")
+    if ":" in agent:
+        agent = agent.rsplit(":", 1)[-1]
+    return agent.removeprefix("appsec-")
+
+
+def _role_telemetry_coverage(output_dir: Path, stages: list[dict]) -> dict[str, Any]:
+    dispatched: Counter[str] = Counter()
+    hook_path = output_dir / ".hook-events.log"
+    if hook_path.is_file():
+        try:
+            for line in hook_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                match = _AGENT_SPAWN_RE.search(line)
+                if match:
+                    dispatched[_short_agent(match.group("agent"))] += 1
+        except OSError:
+            pass
+    recorded: Counter[str] = Counter()
+    for row in stages:
+        agent = _short_agent(row.get("agent"))
+        if agent:
+            recorded[agent] += 1
+    roles = [
+        {
+            "role": role,
+            "dispatched": dispatched[role],
+            "stats_records": recorded[role],
+            "covered": dispatched[role] == 0 or recorded[role] > 0,
+        }
+        for role in sorted(set(dispatched) | set(recorded))
+    ]
+    return {
+        "complete": bool(dispatched) and all(row["covered"] for row in roles),
+        "roles": roles,
+    }
+
+
+def _read_headless_usage(output_dir: Path) -> dict[str, Any] | None:
+    result = headless_usage.load_result(output_dir / ".headless-result.json")
+    return headless_usage.extract_usage(result) if result is not None else None
 
 
 def _run_verify_costs(output_dir: Path) -> dict[str, Any] | None:
@@ -148,9 +203,24 @@ def _read_compose_stats(output_dir: Path) -> dict[str, Any] | None:
 def measure(output_dir: Path) -> dict[str, Any]:
     if not output_dir.is_dir():
         raise SystemExit(f"measure_run: not a directory: {output_dir}")
+    stage_records = _read_stage_stats(output_dir)
+    exact_usage = _read_headless_usage(output_dir)
     return {
         "output_dir": str(output_dir),
-        "stages": _stage_summary(_read_stage_stats(output_dir)),
+        "stages": _stage_summary(stage_records),
+        "role_telemetry_coverage": _role_telemetry_coverage(output_dir, stage_records),
+        "headless_usage": exact_usage,
+        "attribution": {
+            "run_turns": "exact" if exact_usage is not None else "unavailable",
+            "run_cost_by_model": "exact" if exact_usage is not None else "unavailable",
+            "role_tokens_tools_duration": "agent_usage_blocks",
+            "role_turns": "unavailable",
+            "role_cost": "unavailable",
+            "reason": (
+                "Agent usage blocks expose total tokens, tool uses, and duration but not the priced token classes "
+                "or turns required for additive per-role cost attribution."
+            ),
+        },
         "verify_run_costs": _run_verify_costs(output_dir),
         "hook_events": _read_hook_events(output_dir),
         "compose_stats": _read_compose_stats(output_dir),

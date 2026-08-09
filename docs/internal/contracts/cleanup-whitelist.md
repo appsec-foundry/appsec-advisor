@@ -44,7 +44,7 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 
 ## Opt-outs
 
-- `--keep-runtime-files` / `KEEP_RUNTIME_FILES=true` skips cleanup entirely.
+- `--keep-runtime-files` / `KEEP_RUNTIME_FILES=true` preserves diagnostic runtime artifacts. The terminal outer-session hook still removes `.active-tool-calls/` because it is live state, not an audit artifact.
 - `--keep-run-issues` holds back `.run-issues.json` alone. The run passes it when it offered a plugin diagnosis that was not taken, because `/appsec-advisor:diagnose-run` reads that file later.
 
 ## Always-cleaned directories
@@ -56,3 +56,7 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .merge-context/
 .active-tool-calls/
 ```
+
+The outer-session `Stop` hook removes `.active-tool-calls/` at terminal run
+state even when runtime artifacts are otherwise preserved. Nested Agent stops
+must not clear it while the parent run still owns the lock.

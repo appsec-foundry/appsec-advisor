@@ -17,7 +17,7 @@ SURFACE_MAX_BYTES_RATCHET = {
     "thin_full_runtime": 13250,
     "thin_rerender_runtime": 10000,
     "thin_stage1_runtime": 11000,
-    "thin_stage1_v2_runtime": 6000,
+    "thin_stage1_v2_runtime": 6400,
     "thin_stage1b_runtime": 4300,
     "thin_stage1d_runtime": 3400,
     "thin_stage2_runtime": 3600,
@@ -248,6 +248,15 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     assert "Do not end your turn after dispatching" in text
     assert "Never re-dispatch an agent that already returned" in text
     assert "filesystem is authoritative" in flat
+
+    # Per-role measurement must be executable, not a prose suggestion. R9
+    # recorded only abuse verification and rendering despite dispatching all
+    # Stage-1 roles.
+    assert "WAVE_START_ISO" in text
+    assert "group the returned jobs by `semantic_role`, `agent_type`, and `model`" in flat
+    assert "`total_tokens`, `tool_uses`, and `duration_ms`" in text
+    assert '--variant "<semantic_role>"' in text
+    assert '--subagent-type "<agent_type>" --since-iso "$WAVE_START_ISO"' in flat
 
     # The skill must never select a producer itself.
     assert "semantic_role" in text

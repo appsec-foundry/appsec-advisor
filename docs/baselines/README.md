@@ -7,9 +7,9 @@ baseline here, no PR may assert a token or wall-time improvement.
 ## How a baseline is produced
 
 `scripts/measure_run.py` folds the telemetry a run already emits into one
-`.run-metrics.json`. It does **not** re-parse cost — it shells out to
-`verify_run_costs.py --json`, whose delta logic is the single source of truth
-for the cumulative-`SESSION_STOP` trap.
+`.run-metrics.json`. A completed headless run uses `.headless-result.json` for
+exact total turns and per-model cost. The cumulative-safe
+`verify_run_costs.py --json` estimate remains visible as a secondary source.
 
 ```bash
 # 1. Run an assessment to completion against a test repo, e.g.:
@@ -28,7 +28,10 @@ python3 scripts/measure_run.py <OUTPUT_DIR>                  # writes <OUTPUT_DI
 
 | Key | Source | Use |
 |---|---|---|
-| `stages` | `.stage-stats.jsonl` | per-stage wall-time (`duration_ms`), tokens, tool_uses; deduped by stage (last write wins) |
+| `stages` | `.stage-stats.jsonl` | per-role duration, tokens, and tool calls; deduped by stage and variant |
+| `role_telemetry_coverage` | `.hook-events.log` plus `.stage-stats.jsonl` | whether every dispatched role has a usage record |
+| `headless_usage` | `.headless-result.json` | exact total turns and per-model priced token classes and cost |
+| `attribution` | telemetry capabilities | labels run-level exact fields and unavailable per-role turns/cost |
 | `verify_run_costs` | `verify_run_costs.py --json` | authoritative token deltas + cost, `per_agent`, `totals.cache_savings_pct`, `subagent_estimate.best_estimate`/`confidence` |
 | `hook_events` | `.hook-events.log` | `stop_reasons` (matches the real `stop_reason=` emitter), `retry_hints` |
 | `compose_stats` | `.compose-stats.json` | renderer pass-through when present |

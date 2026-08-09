@@ -79,6 +79,9 @@ def test_hook_events_signal_extraction(mod, tmp_path):
 def test_missing_files_produce_empty_buckets(mod, tmp_path):
     metrics = mod.measure(tmp_path)
     assert metrics["stages"]["stage_count"] == 0
+    assert metrics["role_telemetry_coverage"] == {"complete": False, "roles": []}
+    assert metrics["headless_usage"] is None
+    assert metrics["attribution"]["role_cost"] == "unavailable"
     assert metrics["hook_events"] == {"present": False}
     assert metrics["compose_stats"] is None
 
@@ -88,3 +91,82 @@ def test_compose_stats_passthrough(mod, tmp_path):
     (tmp_path / ".compose-stats.json").write_text(json.dumps(payload), encoding="utf-8")
     metrics = mod.measure(tmp_path)
     assert metrics["compose_stats"] == payload
+
+
+def test_stage_summary_preserves_role_variants(mod):
+    records = [
+        {"stage": 1, "variant": "recon_scanner", "tokens": 10},
+        {"stage": 1, "variant": "architecture_analyst", "tokens": 20},
+        {"stage": 1, "variant": "recon_scanner", "tokens": 30},
+    ]
+
+    summary = mod._stage_summary(records)
+
+    assert summary["stage_count"] == 2
+    assert summary["tokens_total"] == 50
+    assert [row["variant"] for row in summary["stages"]] == [
+        "architecture_analyst",
+        "recon_scanner",
+    ]
+
+
+def test_role_telemetry_coverage_detects_missing_dispatched_role(mod, tmp_path):
+    (tmp_path / ".hook-events.log").write_text(
+        "\n".join(
+            [
+                "2026-08-09T10:00:00Z [sid] INFO AGENT_SPAWN appsec-advisor:appsec-recon-scanner model=sonnet",
+                "2026-08-09T10:01:00Z [sid] INFO AGENT_SPAWN appsec-advisor:appsec-stride-analyzer-v2 model=sonnet",
+                "2026-08-09T10:01:01Z [sid] INFO AGENT_SPAWN appsec-advisor:appsec-stride-analyzer-v2 model=sonnet",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    stages = [
+        {
+            "stage": 1,
+            "variant": "stride_analyzer",
+            "agent": "appsec-advisor:appsec-stride-analyzer-v2",
+        }
+    ]
+
+    coverage = mod._role_telemetry_coverage(tmp_path, stages)
+
+    assert coverage == {
+        "complete": False,
+        "roles": [
+            {"role": "recon-scanner", "dispatched": 1, "stats_records": 0, "covered": False},
+            {"role": "stride-analyzer-v2", "dispatched": 2, "stats_records": 1, "covered": True},
+        ],
+    }
+
+
+def test_headless_usage_is_exact_run_level_telemetry(mod, tmp_path):
+    (tmp_path / ".headless-result.json").write_text(
+        json.dumps(
+            {
+                "type": "result",
+                "total_cost_usd": 1.25,
+                "num_turns": 7,
+                "duration_ms": 9000,
+                "modelUsage": {
+                    "model-id": {
+                        "canonicalModel": "model",
+                        "inputTokens": 2,
+                        "outputTokens": 3,
+                        "cacheReadInputTokens": 5,
+                        "cacheCreationInputTokens": 7,
+                        "costUSD": 1.25,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metrics = mod.measure(tmp_path)
+
+    assert metrics["headless_usage"]["num_turns"] == 7
+    assert metrics["headless_usage"]["models"][0]["total_tokens"] == 17
+    assert metrics["attribution"]["run_cost_by_model"] == "exact"
+    assert metrics["attribution"]["role_turns"] == "unavailable"

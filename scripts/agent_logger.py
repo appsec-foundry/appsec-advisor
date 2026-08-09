@@ -776,6 +776,46 @@ def _record_tool_end(data: dict) -> int:
     return started_at
 
 
+def _clear_terminal_active_tool_calls() -> None:
+    """Remove live-only call state after the outer session has terminated.
+
+    Sub-agent PreToolUse hooks do not reliably receive matching PostToolUse
+    events.  Their markers are useful while the run is live, but retaining
+    them after the terminal outer Stop makes preserved-runtime diagnostics
+    report work that can no longer be active.
+    """
+    directory = _active_tools_dir()
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        directory_fd = os.open(directory, flags)
+    except OSError:
+        try:
+            if os.path.islink(directory):
+                os.unlink(directory)
+        except OSError:
+            pass
+        return
+    try:
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                if entry.is_file(follow_symlinks=False) or entry.is_symlink():
+                    try:
+                        os.unlink(entry.name, dir_fd=directory_fd)
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(directory_fd)
+        except OSError:
+            pass
+    try:
+        os.rmdir(directory)
+    except OSError:
+        pass
+
+
 def _dur_suffix(started_at: int) -> str:
     """Format `dur=<seconds>s` tail when started_at is known, else empty."""
     if not started_at:
@@ -2350,6 +2390,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     # happy path releases the lock before its final Stop.
     run_still_owned = bool(sid and _run_lock_owner_sid() == sid[:8])
     if event_name == "Stop" and not run_still_owned:
+        _clear_terminal_active_tool_calls()
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
         try:
             with open(sentinel, "x") as fh:  # atomic O_CREAT|O_EXCL

@@ -57,7 +57,9 @@ Stage-1d body from `SKILL-impl.md`.
        --stage 1 --variant abuse-verification --name "Abuse Case Verification" \
        --agent appsec-advisor:appsec-abuse-case-verifier \
        --model "$ABUSE_VERIFIER_MODEL" \
-       --duration-ms <ms> --tool-uses <n> --tokens <n> 2>/dev/null || true
+       --duration-ms <ms> --tool-uses <n> --tokens <n> \
+       --subagent-type appsec-advisor:appsec-abuse-case-verifier \
+       --since-iso "$STAGE_ABUSE_START_ISO" 2>/dev/null || true
    ```
 
    With no candidates, record a zero-token deterministic row instead: same call

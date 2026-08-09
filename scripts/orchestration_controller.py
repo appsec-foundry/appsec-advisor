@@ -42,6 +42,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 try:
     from jsonschema import Draft202012Validator
     from referencing import Registry, Resource
@@ -1819,6 +1821,24 @@ def _validate_json_artifact(path: Path, schema_path: Path, *, contract: str) -> 
     return value
 
 
+def _validate_yaml_artifact(path: Path, schema_path: Path, *, contract: str) -> dict[str, Any]:
+    """Validate one YAML artifact with the required structural dependency."""
+    if Draft202012Validator is None:
+        raise ControllerError(f"cannot validate {contract}: jsonschema dependency is unavailable")
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+        schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ControllerError(f"cannot load {contract} artifact or schema: {exc}") from exc
+    if not isinstance(value, dict) or not isinstance(schema, dict):
+        raise ControllerError(f"{contract} artifact and schema must be mappings")
+    errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda item: list(item.path))
+    if errors:
+        detail = "; ".join(error.message for error in errors[:5])
+        raise ControllerError(f"{contract} validation failed: {detail}")
+    return value
+
+
 def _validate_evidence_verification(path: Path, threats_path: Path | None = None) -> dict[str, Any]:
     """Validate the evidence side channel's structural and count contracts."""
     value = _validate_json_artifact(
@@ -2078,6 +2098,27 @@ def _context_v2_taxonomy_slice(output_dir: Path, component_id: str) -> tuple[str
         raise ControllerError(f"cannot read context-v2 taxonomy slice for {component_id}: {exc}") from exc
     if not payload or len(payload) > 32_768:
         raise ControllerError(f"context-v2 taxonomy slice for {component_id} is empty or exceeds 32768 bytes")
+    value = _validate_yaml_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / "threat-taxonomy-slice.schema.yaml",
+        contract="threat-taxonomy-slice-v1",
+    )
+    category_ids = [row.get("id") for row in value["categories"]]
+    if len(category_ids) != len(set(category_ids)):
+        raise ControllerError(f"threat-taxonomy-slice-v1 has duplicate category IDs for {component_id}")
+    category_id_set = set(category_ids)
+    unknown = sorted(
+        {
+            threat_id
+            for threat_ids in value["cwe_to_th"].values()
+            for threat_id in threat_ids
+            if threat_id not in category_id_set
+        }
+    )
+    if unknown:
+        raise ControllerError(
+            f"threat-taxonomy-slice-v1 maps CWEs to absent categories for {component_id}: {', '.join(unknown)}"
+        )
     return relative, hashlib.sha256(payload).hexdigest()
 
 
@@ -3326,8 +3367,9 @@ def _validated_projection_receipt(
     schema_id: str,
     record_key: str,
     source_artifact: str,
+    projector: Any | None = None,
 ) -> dict[str, Any]:
-    """Bind a bounded projection to both its exact bytes and exact source."""
+    """Bind a bounded projection to its exact bytes and deterministic source."""
     schema_relative = schema_id.partition("#")[0]
     projected = _validate_json_artifact(
         output_dir / artifact_path,
@@ -3338,11 +3380,19 @@ def _validated_projection_receipt(
     if not isinstance(source, dict) or source.get("artifact_path") != source_artifact:
         raise ControllerError(f"{artifact_path} names an unexpected source artifact")
     try:
-        source_sha256 = hashlib.sha256((output_dir / source_artifact).read_bytes()).hexdigest()
+        source_payload = (output_dir / source_artifact).read_bytes()
+        source_sha256 = hashlib.sha256(source_payload).hexdigest()
     except OSError as exc:
         raise ControllerError(f"cannot re-hash projection source {source_artifact}: {exc}") from exc
     if source.get("sha256") != source_sha256:
         raise ControllerError(f"{artifact_path} is stale for {source_artifact}")
+    if projector is not None:
+        try:
+            expected = projector(source_payload)
+        except Exception as exc:
+            raise ControllerError(f"cannot reconstruct deterministic projection {artifact_path}: {exc}") from exc
+        if projected != expected:
+            raise ControllerError(f"{artifact_path} differs from its deterministic projection")
     records = projected.get(record_key)
     if not isinstance(records, (list, dict)):
         raise ControllerError(f"{artifact_path} has no {record_key!r} records")
@@ -3355,22 +3405,28 @@ def _validated_projection_receipt(
 
 
 def _context_v2_recon_projection_receipt(output_dir: Path) -> dict[str, Any]:
+    from build_architecture_analysis_context import project_recon_summary  # noqa: PLC0415
+
     return _validated_projection_receipt(
         output_dir,
         ".dispatch-context/architecture/recon-summary-context.json",
         schema_id="schemas/recon-summary-context.schema.json#v1",
         record_key="sections",
         source_artifact=".recon-summary.md",
+        projector=project_recon_summary,
     )
 
 
 def _context_v2_route_projection_receipt(output_dir: Path) -> dict[str, Any]:
+    from build_architecture_analysis_context import project_routes  # noqa: PLC0415
+
     return _validated_projection_receipt(
         output_dir,
         ".dispatch-context/architecture/route-context.json",
         schema_id="schemas/architecture-route-context.schema.json#v1",
         record_key="routes",
         source_artifact=".route-inventory.json",
+        projector=project_routes,
     )
 
 
@@ -3739,7 +3795,7 @@ def _context_v2_stride_wave_action(
         taxonomy_receipt = _validated_text_receipt(
             output_dir,
             taxonomy_path,
-            schema_id="contract:threat-taxonomy-slice-yaml-v1",
+            schema_id="schemas/threat-taxonomy-slice.schema.yaml#v1",
             record_count=1,
             max_bytes=32_768,
         )
@@ -3898,6 +3954,23 @@ def _projection_size_is_current(path: Path, value: dict[str, Any]) -> None:
         raise ControllerError(f"context projection size metadata is stale for {path.name}")
 
 
+def _projection_semantics_are_current(
+    value: dict[str, Any],
+    expected: dict[str, Any],
+    *,
+    contract: str,
+) -> None:
+    """Compare every deterministic field except the self-referential byte count."""
+    actual_semantics = json.loads(json.dumps(value))
+    expected_semantics = json.loads(json.dumps(expected))
+    for document in (actual_semantics, expected_semantics):
+        limits = document.get("limits")
+        if isinstance(limits, dict):
+            limits.pop("serialized_bytes", None)
+    if actual_semantics != expected_semantics:
+        raise ControllerError(f"{contract} differs from its deterministic projection")
+
+
 def _context_v2_evidence_projection_receipt(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     """Reconstruct and receipt the exact selected evidence sample."""
     from build_post_stride_contexts import (  # noqa: PLC0415
@@ -3928,9 +4001,7 @@ def _context_v2_evidence_projection_receipt(output_dir: Path, cfg: dict[str, Any
         )
     except (OSError, PostStrideContextError) as exc:
         raise ControllerError(f"evidence-verifier-context-v1 validation failed: {exc}") from exc
-    for key in ("source", "policy", "samples"):
-        if value.get(key) != expected.get(key):
-            raise ControllerError(f"evidence-verifier-context-v1 {key} differs from deterministic selection")
+    _projection_semantics_are_current(value, expected, contract="evidence-verifier-context-v1")
     _projection_size_is_current(path, value)
     return _validated_json_receipt(
         output_dir,
@@ -3970,9 +4041,7 @@ def _context_v2_synthesis_projection_receipt(output_dir: Path, *, generated: boo
         )[expected_index]
     except (OSError, PostStrideContextError) as exc:
         raise ControllerError(f"{schema_name} validation failed: {exc}") from exc
-    for key in ("source", record_key):
-        if value.get(key) != expected.get(key):
-            raise ControllerError(f"{schema_name} differs from deterministic projection")
+    _projection_semantics_are_current(value, expected, contract=schema_name)
     _projection_size_is_current(path, value)
     return _validated_json_receipt(
         output_dir,
@@ -4707,9 +4776,7 @@ def _context_v2_abuse_candidate_receipt(
         )
     except (OSError, AbuseContextError) as exc:
         raise ControllerError(f"abuse-case-verifier-context-v1 validation failed: {exc}") from exc
-    for key in ("source", "candidate"):
-        if value.get(key) != expected.get(key):
-            raise ControllerError(f"abuse-case-verifier-context-v1 {key} differs from deterministic projection")
+    _projection_semantics_are_current(value, expected, contract="abuse-case-verifier-context-v1")
     _projection_size_is_current(path, value)
     return _validated_json_receipt(
         output_dir,
