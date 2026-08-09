@@ -504,6 +504,24 @@ class TestBodyContentConsistency:
         assert "never place discovered values into shell assignments" in flat
         assert "multiple paths in JSON" in flat
 
+    @pytest.mark.parametrize(
+        ("agent_name", "discovery_limit", "publication_reserve"),
+        [
+            ("appsec-architecture-analyst", 44, 16),
+            ("appsec-trust-boundary-analyst", 14, 10),
+            ("appsec-control-analyst", 28, 12),
+            ("appsec-post-stride-synthesizer", 12, 8),
+        ],
+    )
+    def test_required_context_v2_producers_reserve_publication_turns(
+        self, agent_name, discovery_limit, publication_reserve
+    ):
+        meta, body = parse_frontmatter(AGENTS_DIR / f"{agent_name}.md")
+        assert f"`DISCOVERY_TOOL_CALL_LIMIT={discovery_limit}`" in body
+        assert f"`PUBLICATION_TOOL_CALL_RESERVE={publication_reserve}`" in body
+        assert meta["maxTurns"] - discovery_limit >= publication_reserve
+        assert "Count every tool call" in " ".join(body.split())
+
     def test_context_v2_producers_gate_outputs_before_controller_handoff(self):
         expected_tokens = {
             "appsec-actor-discoverer.md": ("validate_intermediate.py", "actors_discovered"),

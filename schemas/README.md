@@ -8,8 +8,8 @@ catalogs are checked by dedicated validators such as `scripts/validate_config.py
 The numbered Markdown API in `.recon-summary.md` is defined by
 `agents/shared/recon-output-template.md` and validated by the producer and
 controller through `scripts/validate_recon_summary.py`. The ordered Markdown
-API in `.threat-modeling-context.md` is defined by the context resolver's
-output template and validated at the same two boundaries through
+API in `.threat-modeling-context.md` is defined by the legacy resolver's output
+template, emitted deterministically on context-v2, and validated through
 `scripts/validate_threat_modeling_context.py`; neither contract is JSONSchema.
 
 | Schema | Artifact | Written by | Read by |
@@ -38,7 +38,7 @@ output template and validated at the same two boundaries through
 | `merge-decisions.schema.json` | `$OUTPUT_DIR/.merge-decisions.json` | `appsec-threat-merger` (Phase 9) | `scripts/merge_threats.py finalize` |
 | `triage-flags.schema.yaml` | `$OUTPUT_DIR/.triage-flags.json` | `appsec-triage-validator` (Phase 10b) | Phase 11 rendering, QA reviewer |
 | `threat-model.output.schema.yaml` | `$OUTPUT_DIR/threat-model.yaml` | orchestrator Phase 10/11 | CI/CD, DefectDojo, SonarQube, cross-repo discovery |
-| `known-threats.schema.yaml` | `docs/known-threats.yaml` (user-supplied input) | analyzed team | `appsec-context-resolver` (Phase 1), STRIDE analyzer |
+| `known-threats.schema.yaml` | `docs/known-threats.yaml` (user-supplied input) | analyzed team | `build_threat_modeling_context.py` on context-v2 or `appsec-context-resolver` on legacy runs, then STRIDE analyzer |
 | `related-repos.schema.yaml` | `docs/related-repos.yaml` (user-supplied input) | analyzed team | `scripts/load_related_repos.py` |
 | `cross-repo-register.schema.json` | `$OUTPUT_DIR/.cross-repo-register.json` | `scripts/build_cross_repo_register.py` | STRIDE dispatcher, `coverage_checks.check_cross_repo`, Phase 11 §5/§7 renderer |
 | `actors-repo.schema.yaml` | `<repo>/.appsec/actors.yaml` | analyzed team | `scripts/resolve_actors.py` |

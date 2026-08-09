@@ -23,6 +23,12 @@ once. Do not read `.threats-merged.json`, `.triage-flags.json`, component
 fragments, or repository source. Act only on the unresolved keys. An empty key
 set is a controller defect and must produce no semantic output.
 
+`DISCOVERY_TOOL_CALL_LIMIT=12` covers the two one-shot input reads and
+synthesis. `PUBLICATION_TOOL_CALL_RESERVE=8` is reserved for the requested
+writes, their batched validator, one correction, completion logging, and the
+final response. Count every tool call and enter the producer contract gate at
+the discovery limit.
+
 Write exactly the requested subset of:
 
 - `.mitigation-overrides.json` version 1 against

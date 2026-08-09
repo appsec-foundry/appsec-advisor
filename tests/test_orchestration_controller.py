@@ -2123,7 +2123,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
         job["unresolved_decision_keys"] == ["stride:S", "stride:T", "stride:R", "stride:I", "stride:D", "stride:E"]
         for job in action["dispatch_jobs"]
     )
-    assert len(action["artifact_receipts"]) == 6
+    assert len(action["artifact_receipts"]) == 8
     assert (
         sum(
             receipt["schema_id"] == "schemas/stride-component-context-plan.schema.json#v1"
@@ -3907,6 +3907,15 @@ def _context_v2_run(tmp_path: Path, **overrides) -> Path:
     return _write_context_v2_config(tmp_path, **overrides)
 
 
+def _context_v2_prepass_stub(output: Path):
+    def run(name, _args, **_kwargs):
+        if name == "build_threat_modeling_context.py":
+            (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+        return _completed("{}")
+
+    return run
+
+
 class TestContextV2ReconWave:
     def test_every_semantic_role_has_pre_handoff_contract_enforcement(self):
         classified = controller.CONTEXT_V2_PRODUCER_GATED_ROLES | controller.CONTEXT_V2_CONTROLLER_RECOVERY_ROLES
@@ -3914,20 +3923,22 @@ class TestContextV2ReconWave:
         assert classified == set(controller.SEMANTIC_ROLE_REGISTRY)
         assert controller.CONTEXT_V2_PRODUCER_GATED_ROLES.isdisjoint(controller.CONTEXT_V2_CONTROLLER_RECOVERY_ROLES)
 
-    def test_begin_dispatches_context_recon_and_config_when_iac_exists(self, tmp_path, monkeypatch):
+    def test_begin_builds_context_then_dispatches_recon_and_config_when_iac_exists(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)
         (tmp_path / "repo" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
-        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         action = controller.context_v2_begin(output)
         assert action["action"] == "dispatch_parallel"
         roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
-        assert roles == ["context_resolver", "recon_scanner", "config_scanner"]
+        assert roles == ["recon_scanner", "config_scanner"]
+        assert (output / ".threat-modeling-context.md").is_file()
+        assert any(receipt["artifact_path"] == ".threat-modeling-context.md" for receipt in action["artifact_receipts"])
         recon = next(job for job in action["dispatch_jobs"] if job["semantic_role"] == "recon_scanner")
         assert recon["output_artifacts"] == [".recon-summary.md", ".recon-signals.json"]
 
     def test_begin_writes_a_config_scan_stub_without_iac_surface(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)
-        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         action = controller.context_v2_begin(output)
         roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
         assert "config_scanner" not in roles
@@ -3935,19 +3946,37 @@ class TestContextV2ReconWave:
         assert stub["findings"] == []
         assert "parse_error" in stub
 
+    def test_invalid_optional_recon_patterns_are_not_delivered(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+
+        def fake_script(name, _args, **_kwargs):
+            if name == "build_threat_modeling_context.py":
+                (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+            return _completed("{}")
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+
+        action = controller.context_v2_begin(output)
+
+        recon = next(job for job in action["dispatch_jobs"] if job["semantic_role"] == "recon_scanner")
+        assert recon["input_artifacts"] == [".skill-config.json"]
+        assert not (output / ".recon-patterns.json").exists()
+        assert not any(receipt["artifact_path"] == ".recon-patterns.json" for receipt in action["artifact_receipts"])
+
     def test_a_full_run_always_re_resolves_context(self, tmp_path, monkeypatch):
         """An existing context file survives full cleanup; presence is not a cache hit."""
         output = _context_v2_run(tmp_path)
         (output / ".threat-modeling-context.md").write_text("stale\n", encoding="utf-8")
-        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         action = controller.context_v2_begin(output)
         roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
-        assert "context_resolver" in roles
+        assert "context_resolver" not in roles
+        assert (output / ".threat-modeling-context.md").read_text(encoding="utf-8") != "stale\n"
 
     def test_incremental_reuses_context_newer_than_head(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path, incremental=True)
         (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
-        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         monkeypatch.setattr(controller.subprocess, "run", lambda *a, **k: _completed("1\n"))
         action = controller.context_v2_begin(output)
         roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
@@ -3956,18 +3985,20 @@ class TestContextV2ReconWave:
     def test_incremental_re_resolves_context_older_than_head(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path, incremental=True)
         (output / ".threat-modeling-context.md").write_text("stale\n", encoding="utf-8")
-        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         future = str(int(Path(output / ".threat-modeling-context.md").stat().st_mtime) + 10_000)
         monkeypatch.setattr(controller.subprocess, "run", lambda *a, **k: _completed(future + "\n"))
         action = controller.context_v2_begin(output)
         roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
-        assert "context_resolver" in roles
+        assert "context_resolver" not in roles
+        assert (output / ".threat-modeling-context.md").read_text(encoding="utf-8") != "stale\n"
 
     def test_begin_reuses_recon_when_the_fingerprint_is_unchanged(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path, incremental=True)
+        (tmp_path / "repo" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
-        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         action = controller.context_v2_begin(output)
         roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
         assert "recon_scanner" not in roles
@@ -3979,7 +4010,7 @@ class TestContextV2ReconWave:
         legacy["schema_version"] = 1
         legacy["signal_evidence"] = {key: "none" for key in legacy["signals"]}
         (output / ".recon-signals.json").write_text(json.dumps(legacy), encoding="utf-8")
-        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
 
         action = controller.context_v2_begin(output)
 
@@ -3993,6 +4024,8 @@ class TestContextV2ReconWave:
         def fake_script(name, args, **kwargs):
             if name == "baseline_state.py":
                 raise controller.ControllerError("fingerprint changed")
+            if name == "build_threat_modeling_context.py":
+                (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
             return _completed("{}")
 
         monkeypatch.setattr(controller, "_run_script", fake_script)
@@ -4025,6 +4058,26 @@ class TestContextV2PostRecon:
         monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
         with pytest.raises(controller.ControllerError, match="recon-summary"):
             controller.context_v2_post_recon(output)
+
+    def test_invalid_optional_config_scan_is_replaced_before_downstream_use(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        (output / ".config-scan-findings.json").write_text("not json\n", encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: _completed())
+
+        def best_effort(_output, name, args, _receipts, **_kwargs):
+            return not (name == "validate_intermediate.py" and args[0] == "config_scan_findings")
+
+        monkeypatch.setattr(controller, "_best_effort_script", best_effort)
+        monkeypatch.setattr(
+            controller,
+            "_context_v2_dispatch_architecture",
+            lambda *_a, **_k: {"action": "dispatch_agent"},
+        )
+
+        controller.context_v2_post_recon(output)
+
+        config = json.loads((output / ".config-scan-findings.json").read_text(encoding="utf-8"))
+        assert config == {"parse_error": "skipped: no IaC surface detected", "findings": []}
 
     def test_post_recon_requires_the_context_artifact(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)
@@ -4462,7 +4515,7 @@ class TestStage1RuntimeSelection:
 
     def test_context_v2_actions_name_the_v2_runtime(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)
-        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         action = controller.context_v2_begin(output)
         assert action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
 

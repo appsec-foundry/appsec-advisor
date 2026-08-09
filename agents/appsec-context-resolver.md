@@ -343,11 +343,11 @@ Check whether `docs/known-threats.yaml` exists in the repository root.
 
 If it exists, read the full file (up to 200 lines). This file contains team-provided known threats — prior pentest findings, accepted risks, or threats the team wants the assessment to explicitly address. Store the content **verbatim** for inclusion in the output. Do not summarize or filter — the threat IDs, statuses, and component mappings are used by the STRIDE analyzer and QA reviewer.
 
-Validate minimal structure: the file must contain a top-level `threats:` key that is a YAML list. Each entry should have at minimum `id`, `title`, `stride`, and `severity`. If the file exists but fails basic parsing, print a warning and continue without it.
+Validate the complete input with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" known_threats "$REPO_ROOT/docs/known-threats.yaml"`. Invalid team-provided threats are a blocking input error; log the validation failure and stop without writing `.threat-modeling-context.md` so they cannot be silently dropped or passed downstream as partial YAML.
 
 Print:
 - If found and valid: `[context-resolver]   ↳ Known threats: found — <n> entries (<n> open, <n> accepted, <n> mitigated)`
-- If found but invalid: `[context-resolver]   ↳ Known threats: found but invalid YAML — skipping`
+- If found but invalid: `[context-resolver]   ↳ Known threats: invalid — aborting context publication`
 - If not found: `[context-resolver]   ↳ Known threats: docs/known-threats.yaml not found`
 
 #### 4j — Cross-repository threat model resolution

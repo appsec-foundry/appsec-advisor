@@ -302,6 +302,24 @@ _CUTOFF_ONELINE = {
     "budget": "turn budget exhausted before final compose — threats merged, only rendering is missing.",
 }
 
+_HEADLESS_STARTUP_GRACE_SECONDS = 120
+
+
+def _recent_empty_headless_result(output_dir: Path, *, now: float | None = None) -> bool:
+    """Recognize the wrapper's bounded pre-lock startup window.
+
+    ``run-headless.sh`` creates the capture file before Claude acquires the
+    plugin lock.  A recent empty file is therefore a startup marker, while an
+    old empty file remains evidence of an interrupted wrapper.
+    """
+    path = output_dir / ".headless-result.json"
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    age = (time.time() if now is None else now) - stat.st_mtime
+    return stat.st_size == 0 and 0 <= age <= _HEADLESS_STARTUP_GRACE_SECONDS
+
 
 def _snapshot_has_recent_activity(snapshot: dict | None) -> bool:
     """Return whether a live snapshot contains a recent in-flight signal."""
@@ -357,6 +375,8 @@ def _cutoff_verdict(output_dir: Path, *, live_snapshot: dict | None = None) -> d
     except Exception:
         explicitly_aborted = False
     if not explicitly_aborted:
+        if _recent_empty_headless_result(output_dir):
+            return None
         if _snapshot_has_recent_activity(live_snapshot):
             return None
     # Suppress while a scan is genuinely running.  The heartbeat is

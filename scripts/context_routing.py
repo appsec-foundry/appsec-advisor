@@ -513,6 +513,10 @@ def _resolve_delivery(
         resolved = _resolve_output_path(output_root, artifact, require_file=True)
         payload = resolved.read_bytes()
         action_receipt = action_receipts.get(artifact)
+        if binding.get("enforcement", "shadow") == "active" and action_receipt is None:
+            raise ContextRoutingError(
+                f"active context {binding['id']!r} lacks a validated action receipt for {artifact!r}"
+            )
         receipt = _source_receipt(
             payload,
             binding,

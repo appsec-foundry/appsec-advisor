@@ -131,14 +131,15 @@ assign agents, choose paths or schemas, change models or tools, relax limits,
 or remove required or forbidden context. A trusted packaged extension that
 introduces a new context needs a separately reviewed internal binding.
 
-## Shadow behavior
+## Enforcement behavior
 
-The current resolver records context-v2 actions without changing them. Every
-declared action input must map to exactly one human assignment. Declared and
-available implicit artifacts receive byte hashes. Plugin-owned fixed files and
-scalar settings receive bounded receipts. Direct source reads and plugin
-registries that have not migrated are recorded as `legacy_unreceipted` rather
-than being represented as delivered.
+Every declared action input must map to exactly one human assignment. An active
+declared binding requires the producer's validated exact-byte action receipt;
+missing, stale, or contract-mismatched receipts reject the action before
+dispatch. Shadow bindings and available implicit artifacts receive diagnostic
+byte hashes. Plugin-owned fixed files and scalar settings receive bounded
+receipts. Direct source reads and plugin registries that have not migrated are
+recorded as `legacy_unreceipted` rather than being represented as delivered.
 
 The local `.context-routing-plan.json` repeats human category, agent, context,
 scope, target, delivery, importance, and reason fields beside the internal

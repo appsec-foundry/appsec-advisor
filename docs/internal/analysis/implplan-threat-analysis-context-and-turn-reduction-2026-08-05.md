@@ -1213,15 +1213,57 @@ set. The four schemas, deterministic producers, controller reconstruction,
 focused consumers, cleanup ownership, artifact-version registry, catalog
 routes, permissions, and regression tests move together.
 
+The R5 checkpoint at
+`/tmp/appsec-context-v2-wp5a-smoke-20260809-r5` stopped at the authoritative
+Stage-1 context gate. The context resolver spent all 25 tool calls and about
+51k tokens on discovery, returned without `.threat-modeling-context.md`, and
+prevented recon output from advancing. The same producer had emitted the
+plugin repository rather than the requested target as `Repo Root` in R4, so a
+larger publication reserve would not address the complete correctness defect.
+Context-v2 now replaces that model session with a deterministic producer that
+uses the controller's canonical repository root, caps source counts and bytes,
+rejects escaping symlinks, validates URLs and redirects, fences imported data,
+fails closed on invalid or oversized `known-threats.yaml`, writes the existing
+related-repository sidecars, and validates the final Markdown contract before
+recon dispatch. An offline Juice Shop replay produced a valid 9,344-byte
+context artifact with `Repo Root` set to `/home/mrohr/juice-shop`.
+
+R5 also exposed a JSON Schema overlap: integer recon line numbers matched both
+the `integer` and `number` branches of a `oneOf`, so a valid 96-record capped
+artifact failed validation. The scalar contract now uses one bounded `number`
+branch. The captured producer output retained 96 of 1,134 patterns, omitted
+1,038, and occupied 41,584 bytes versus 151,318 bytes in R4, a 72.5% reduction.
+Invalid optional recon output is removed before routing, and invalid optional
+config output is replaced by its schema-valid no-surface stub.
+
+The receipt audit found a broader enforcement defect: an active output binding
+could fall back to `shadow_hashed` when its action carried no validated
+producer receipt. Active delivery now requires an exact artifact, hash, and
+contract receipt. Applying that rule exposed previously unreceipted per-
+component taxonomy slices; the controller now validates and receipts each
+slice before STRIDE dispatch. Required architecture, boundary, control, and
+post-STRIDE producers also reserve fixed publication turns so repository size
+cannot consume their write and validation allowance. A schema-structure audit
+found no other `integer`/`number` union overlap.
+
+The headless wrapper creates an empty `.headless-result.json` before the run
+lock exists. Live status interpreted that bounded startup interval as a
+completed run without a report and displayed a false incomplete-run warning.
+A recent empty capture is now a 120-second startup marker unless an explicit
+abort exists; old empty captures remain terminal evidence. R5 reported 44,170
+output tokens, 4,691,069 cache-read tokens, 285,359 cache-write tokens, and USD
+2.04, but it did not reach architecture or STRIDE and is not an end-to-end
+cost sample.
+
 The next required live checkpoint uses Juice Shop commit
 `33518f5a0911e25d9df747b1e70fb7af279a755c`, Claude Code 2.1.226, and the same
-quick-depth model cohort as R4 while forcing Stage 1d so its candidate routing
-is exercised:
+quick-depth model cohort as R4 and R5 while forcing Stage 1d so its candidate
+routing is exercised:
 
 ```bash
 APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r5 \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r6 \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \
@@ -1231,17 +1273,22 @@ APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
 ```
 
 The checkpoint passes only if the invocation exits successfully through final
-rendering, resolves `runtime_generation=context-v2`, preserves the R4 component
-and STRIDE-selection mechanisms, and completes all six STRIDE categories for
-every selected component. The effective plan and action receipts must show the
-bounded recon, route, evidence, generated-threat, proposed-mitigation, and
-per-candidate abuse inputs with current hashes and sizes. Focused evidence and
-synthesis jobs must not receive `.threats-merged.json`; abuse jobs must not
-receive `.abuse-case-matches.json` or another candidate. Record retained and
-omitted counts, bytes, per-role peak context, automatic compactions, usage turns,
-cache reads and writes, output tokens, wall time, cost, evidence verdict mix,
-finding correspondence, and every routing or producer-gate warning. This is one
-smoke checkpoint, not the controlled three-pair A/B acceptance cohort.
+rendering, resolves `runtime_generation=context-v2`, spawns no context-resolver
+agent, records `/home/mrohr/juice-shop` as the exact context root, preserves the
+R4 component and STRIDE-selection mechanisms, and completes all six STRIDE
+categories for every selected component. The effective plan and action
+receipts must show the context document, bounded recon, route, evidence,
+generated-threat, proposed-mitigation, taxonomy, and per-candidate abuse inputs
+with current hashes, matching contracts, `action_validated` status, and sizes;
+no active delivery may use `shadow_hashed`. Focused evidence and synthesis jobs
+must not receive `.threats-merged.json`; abuse jobs must not receive
+`.abuse-case-matches.json` or another candidate. Verify that the startup status
+does not show an incomplete-run warning during the pre-lock window and that no
+invalid optional artifact is routed. Record retained and omitted counts,
+bytes, per-role peak context, automatic compactions, usage turns, cache reads
+and writes, output tokens, wall time, cost, evidence verdict mix, finding
+correspondence, and every routing or producer-gate warning. This is one smoke
+checkpoint, not the controlled three-pair A/B acceptance cohort.
 
 A subsequent governance audit moved standing orchestration and admission rules
 into the durable contracts, pinned the legacy/context-v2 tool topology, added a

@@ -31,6 +31,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
@@ -38,6 +39,7 @@ import recon_patterns as rp  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 SCRIPT = PLUGIN_ROOT / "scripts" / "recon_patterns.py"
+SCHEMA = PLUGIN_ROOT / "schemas" / "recon-patterns.schema.json"
 
 
 @pytest.fixture
@@ -145,6 +147,13 @@ class TestHardExcludes:
         assert files == ["src/small.ts"]
         assert "src/huge.json" in rp._OVERSIZE_SKIPPED
         assert "skipped oversize file" in capsys.readouterr().err
+
+    def test_schema_accepts_integer_finding_values(self, repo):
+        (repo / "app.ts").write_text('app.get("/admin", handler);\n', encoding="utf-8")
+
+        report = rp.run_all(repo)
+
+        jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8"))).validate(report)
 
     def test_run_all_reports_oversize_count(self, repo, monkeypatch):
         monkeypatch.setenv("APPSEC_MAX_FILE_BYTES", "1000")

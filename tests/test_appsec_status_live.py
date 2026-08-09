@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -166,6 +167,25 @@ def test_cutoff_verdict_suppressed_while_run_live(tmp_path, appsec_status):
     # Lock held by THIS (alive) process ⇒ a scan is running, not cut off.
     (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n{int(time.time())}\n")
     assert appsec_status._cutoff_verdict(tmp_path) is None
+
+
+def test_cutoff_verdict_suppressed_during_headless_pre_lock_startup(tmp_path, appsec_status):
+    _seed_stall_log(tmp_path)
+    (tmp_path / ".appsec-checkpoint").write_text("phase=2 status=completed")
+    (tmp_path / ".headless-result.json").write_bytes(b"")
+
+    assert appsec_status._cutoff_verdict(tmp_path) is None
+
+
+def test_old_empty_headless_result_does_not_hide_an_incomplete_run(tmp_path, appsec_status):
+    _seed_stall_log(tmp_path)
+    (tmp_path / ".appsec-checkpoint").write_text("phase=2 status=completed")
+    result = tmp_path / ".headless-result.json"
+    result.write_bytes(b"")
+    old = time.time() - appsec_status._HEADLESS_STARTUP_GRACE_SECONDS - 1
+    os.utime(result, (old, old))
+
+    assert appsec_status._cutoff_verdict(tmp_path) is not None
 
 
 def test_cutoff_verdict_suppressed_for_fresh_heartbeat_with_dead_launcher_pid(tmp_path, appsec_status):

@@ -3002,6 +3002,7 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
     )
 
     recon_skip = _recon_skip(output_dir, cfg)
+    context_skip = _context_skip(output_dir, cfg)
     has_iac = _has_iac_surface(repo_root)
     if not has_iac:
         from _atomic_io import atomic_write_text
@@ -3033,6 +3034,9 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
             )
         except (ControllerError, OSError) as exc:
             # The recon-scanner falls back to LLM grep for these categories.
+            # An optional producer failure must not leave bytes that routing
+            # can mistake for a validated delivery.
+            (output_dir / ".recon-patterns.json").unlink(missing_ok=True)
             receipts.append("recon_patterns.py: best-effort failure")
             _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
         # Without --output the script defaults into the scanned repository.
@@ -3045,25 +3049,34 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
             receipts,
         )
 
-    jobs: list[dict[str, Any]] = []
-    if not _context_skip(output_dir, cfg):
-        jobs.append(
-            {
-                "schema_version": 1,
-                "job_id": "phase1-context",
-                "semantic_role": "context_resolver",
-                **_context_v2_job_metadata(cfg, "context_resolver"),
-                "input_artifacts": [".skill-config.json"],
-                "output_artifacts": [
-                    ".threat-modeling-context.md",
-                    ".related-repos-loaded.json",
-                    ".cross-repo-register.json",
-                ],
-                "unresolved_decision_keys": [],
-            }
+    if not context_skip:
+        _run_script(
+            "build_threat_modeling_context.py",
+            [
+                "--repo-root",
+                str(repo_root),
+                "--output-dir",
+                str(output_dir),
+                "--plugin-root",
+                str(PLUGIN_ROOT),
+            ],
         )
+        context_path = output_dir / ".threat-modeling-context.md"
+        _validate_threat_modeling_context(context_path)
+        structured.append(
+            _validated_text_receipt(
+                output_dir,
+                ".threat-modeling-context.md",
+                schema_id="contract:threat-modeling-context-markdown-v1",
+                record_count=1,
+                max_bytes=MAX_THREAT_MODELING_CONTEXT_BYTES,
+            )
+        )
+        receipts.append("project context built deterministically")
     else:
         receipts.append("context resolution reused from cache")
+
+    jobs: list[dict[str, Any]] = []
     if not recon_skip:
         recon_inputs = [".skill-config.json"]
         if (output_dir / ".recon-patterns.json").is_file():
@@ -3096,7 +3109,8 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
     _append_event(
         output_dir,
         "CONTEXT_V2_RECON_WAVE",
-        f"jobs={len(jobs)} recon_skip={str(recon_skip).lower()} has_iac_surface={str(has_iac).lower()}",
+        f"jobs={len(jobs)} context_source=deterministic recon_skip={str(recon_skip).lower()} "
+        f"has_iac_surface={str(has_iac).lower()}",
     )
     if not jobs:
         return _context_v2_after_recon(output_dir, cfg, receipts)
@@ -3157,12 +3171,17 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
     config_findings = output_dir / ".config-scan-findings.json"
     if config_findings.is_file():
         _best_effort_script(output_dir, "normalize_config_scan.py", [str(config_findings)], receipts)
-        _best_effort_script(
+        config_valid = _best_effort_script(
             output_dir,
             "validate_intermediate.py",
             ["config_scan_findings", str(config_findings)],
             receipts,
         )
+        if not config_valid:
+            from _atomic_io import atomic_write_text
+
+            atomic_write_text(config_findings, _CONFIG_SCAN_STUB)
+            receipts.append("invalid config scan replaced with no-surface stub")
 
     # Phase 2.5 Step 1c — cross-repository register.
     register_args = [
@@ -3701,6 +3720,16 @@ def _context_v2_stride_wave_action(
                 {"context_id": context_id, "artifact_path": artifact_path, "sha256": projection_receipt["sha256"]}
             )
         taxonomy_path, taxonomy_sha256 = _context_v2_taxonomy_slice(output_dir, component_id)
+        taxonomy_receipt = _validated_text_receipt(
+            output_dir,
+            taxonomy_path,
+            schema_id="contract:threat-taxonomy-slice-yaml-v1",
+            record_count=1,
+            max_bytes=32_768,
+        )
+        if taxonomy_receipt["sha256"] != taxonomy_sha256:
+            raise ControllerError(f"taxonomy slice hash changed before receipt for {component_id}")
+        structured.append(taxonomy_receipt)
         analysis = {
             "depth": "light"
             if bool(claimed_component.get("cheap_stride", component.get("cheap_stride", False)))

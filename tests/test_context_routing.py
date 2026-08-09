@@ -86,6 +86,7 @@ def _generic_action(
     *,
     component_id: str | None = None,
     candidate_id: str | None = None,
+    receipted: bool = True,
 ) -> dict:
     job = {
         "schema_version": 1,
@@ -107,7 +108,7 @@ def _generic_action(
         )
     if candidate_id:
         job["candidate_id"] = candidate_id
-    return {
+    action = {
         "schema_version": 1,
         "action": "dispatch_agent",
         "mode": "full",
@@ -115,6 +116,33 @@ def _generic_action(
         "dispatch_values": {"output_dir": str(output), "run_id": "test-run", "assessment_depth": "standard"},
         "dispatch_jobs": [job],
     }
+    if receipted:
+        _catalog, bindings = _contracts()
+        receipts = []
+        for binding in bindings["contexts"]:
+            if binding.get("enforcement") != "active" or binding["source"]["kind"] != "output_artifact":
+                continue
+            artifact = binding["source"]["artifact_pattern"].format(
+                component_id=component_id or "",
+                candidate_id=candidate_id or "",
+            )
+            path = output / artifact
+            if artifact not in inputs or not path.is_file():
+                continue
+            payload = path.read_bytes()
+            receipts.append(
+                {
+                    "schema_version": 1,
+                    "artifact_path": artifact,
+                    "schema_id": binding["contract"],
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "record_count": 1,
+                    "validation_status": "valid",
+                }
+            )
+        if receipts:
+            action["artifact_receipts"] = receipts
+    return action
 
 
 def test_catalog_and_bindings_validate_and_bind_to_the_runtime_registry():
@@ -327,6 +355,23 @@ def test_shadow_plan_explains_delivery_omission_and_legacy_read(tmp_path):
     assert by_context["run.configuration"]["category_name"] == "Target and run"
     assert by_context["run.configuration"]["reason"]
     assert (output / routing.PLAN_RECEIPT_NAME).is_file()
+
+
+def test_active_declared_context_rejects_unreceipted_existing_bytes(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    path = output / ".recon-patterns.json"
+    path.write_text("{}\n", encoding="utf-8")
+    action = _generic_action(
+        output,
+        "recon_scanner",
+        "phase2-recon",
+        [".recon-patterns.json"],
+        receipted=False,
+    )
+
+    with pytest.raises(routing.ContextRoutingError, match="lacks a validated action receipt"):
+        _resolve(action, output)
 
 
 def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path):

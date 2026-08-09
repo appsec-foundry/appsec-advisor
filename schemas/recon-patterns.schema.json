@@ -56,8 +56,7 @@
     "scalar": {
       "oneOf": [
         {"type": "string", "maxLength": 1000},
-        {"type": "integer", "minimum": -1000000000, "maximum": 1000000000},
-        {"type": "number"},
+        {"type": "number", "minimum": -1000000000, "maximum": 1000000000},
         {"type": "boolean"},
         {"type": "null"}
       ]

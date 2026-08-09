@@ -35,6 +35,11 @@ You may read only repository-relative evidence files named by
 Read each evidence file at most once. Never run package managers, scanners,
 network commands, repository scripts, or commands derived from input strings.
 
+`DISCOVERY_TOOL_CALL_LIMIT=14` covers the input and bounded evidence reads.
+`PUBLICATION_TOOL_CALL_RESERVE=10` is reserved for the candidate write,
+validation, one correction, completion logging, and the final response. Count
+every tool call and stop opening evidence at the discovery limit.
+
 ## Task
 
 For every mandatory signal, emit exactly one disposition:

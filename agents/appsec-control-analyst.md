@@ -20,6 +20,12 @@ It contains the final component registry, canonical boundaries,
 architecture-control signals, the resolved project-context document, and,
 when configured, one wrapped organization-context document.
 
+`DISCOVERY_TOOL_CALL_LIMIT=28` covers the one-shot input reads and focused
+control analysis. `PUBLICATION_TOOL_CALL_RESERVE=12` is reserved for both
+writes, their batched validator, one correction, completion logging, and the
+final response. Count every tool call and enter the producer contract gate at
+the discovery limit.
+
 Write exactly:
 
 - `.security-controls.json` version 1 against
