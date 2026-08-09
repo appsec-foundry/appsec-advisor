@@ -3936,14 +3936,15 @@ class TestContextV2ReconWave:
         assert classified == set(controller.SEMANTIC_ROLE_REGISTRY)
         assert controller.CONTEXT_V2_PRODUCER_GATED_ROLES.isdisjoint(controller.CONTEXT_V2_CONTROLLER_RECOVERY_ROLES)
 
-    def test_begin_builds_context_then_dispatches_recon_and_config_when_iac_exists(self, tmp_path, monkeypatch):
+    def test_begin_builds_context_and_dispatches_only_recon_when_iac_exists(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)
         (tmp_path / "repo" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
         monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         action = controller.context_v2_begin(output)
         assert action["action"] == "dispatch_parallel"
         roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
-        assert roles == ["recon_scanner", "config_scanner"]
+        assert roles == ["recon_scanner"]
+        assert not (output / ".config-scan-findings.json").exists()
         assert (output / ".threat-modeling-context.md").is_file()
         assert any(receipt["artifact_path"] == ".threat-modeling-context.md" for receipt in action["artifact_receipts"])
         recon = next(job for job in action["dispatch_jobs"] if job["semantic_role"] == "recon_scanner")
@@ -4012,6 +4013,11 @@ class TestContextV2ReconWave:
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
         monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
+        monkeypatch.setattr(
+            controller,
+            "_context_v2_after_recon",
+            lambda *_a, **_k: {"action": "dispatch_agent", "dispatch_jobs": []},
+        )
         action = controller.context_v2_begin(output)
         roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
         assert "recon_scanner" not in roles
@@ -4091,6 +4097,68 @@ class TestContextV2PostRecon:
 
         config = json.loads((output / ".config-scan-findings.json").read_text(encoding="utf-8"))
         assert config == {"parse_error": "skipped: no IaC surface detected", "findings": []}
+
+    def test_post_recon_reproduces_config_scan_from_catalog_before_validation(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        repo = tmp_path / "repo"
+        (repo / "Dockerfile").write_text("FROM runtime:latest\n", encoding="utf-8")
+        (output / ".config-scan-findings.json").write_text("{}\n", encoding="utf-8")
+        calls = []
+
+        monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: _completed())
+
+        def best_effort(_output, name, args, _receipts, **_kwargs):
+            calls.append((name, args))
+            if name == "config_iac_scanner.py":
+                (output / ".config-scan-findings.json").write_text("{}\n", encoding="utf-8")
+            return True
+
+        monkeypatch.setattr(controller, "_best_effort_script", best_effort)
+        monkeypatch.setattr(
+            controller,
+            "_context_v2_dispatch_architecture",
+            lambda *_a, **_k: {"action": "dispatch_agent"},
+        )
+
+        controller.context_v2_post_recon(output)
+
+        config_call = next(args for name, args in calls if name == "config_iac_scanner.py")
+        assert config_call == [
+            "--repo-root",
+            str(repo),
+            "--output",
+            str(output / ".config-scan-findings.json"),
+            "--assessment-depth",
+            "standard",
+        ]
+        assert calls.index(("config_iac_scanner.py", config_call)) < next(
+            index
+            for index, (name, args) in enumerate(calls)
+            if name == "validate_intermediate.py" and args[0] == "config_scan_findings"
+        )
+
+    def test_post_recon_does_not_reuse_config_bytes_when_fresh_scan_fails(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        repo = tmp_path / "repo"
+        (repo / "Dockerfile").write_text("FROM runtime:latest\n", encoding="utf-8")
+        config_path = output / ".config-scan-findings.json"
+        config_path.write_text('{"version": 1, "checks_run": 24, "violations": 0, "findings": []}\n')
+
+        monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: _completed())
+        monkeypatch.setattr(
+            controller,
+            "_best_effort_script",
+            lambda _output, name, _args, _receipts, **_kwargs: name != "config_iac_scanner.py",
+        )
+        monkeypatch.setattr(
+            controller,
+            "_context_v2_dispatch_architecture",
+            lambda *_a, **_k: {"action": "dispatch_agent"},
+        )
+
+        controller.context_v2_post_recon(output)
+
+        assert not config_path.exists()
 
     def test_post_recon_requires_the_context_artifact(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)

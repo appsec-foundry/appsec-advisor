@@ -144,6 +144,7 @@ NEVER_CLEANUP = {
     ".org-context-manifest.json",
     ".recon-summary.md",
     ".recon-signals.json",
+    ".config-scan-findings.json",
     ".sca-practice-findings.json",
     ".known-bad-libs-findings.json",
     ".dep-update-activity.json",

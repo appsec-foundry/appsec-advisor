@@ -424,6 +424,41 @@ def test_focus_path_is_normalized_and_changes_bounded_admission(tmp_path):
     ]
 
 
+def test_focus_directory_matches_component_glob_with_file_suffix(tmp_path):
+    repo, output = _repo(tmp_path)
+    routes = repo / "routes"
+    routes.mkdir()
+    (routes / "login.ts").write_text("export const login = true\n", encoding="utf-8")
+
+    component = _component(component_paths=["routes/**/*.ts"], focus_paths=["routes"])
+    manifest = bundles.build_all(output, repo, _manifest(component))
+    bundle = json.loads((output / manifest["components"][0]["evidence_bundle_path"]).read_text())
+
+    assert manifest["components"][0]["focus_paths"] == ["routes"]
+    assert bundle["source_slices"][0]["path"] == "routes/login.ts"
+    assert bundle["path_routing"]["focus_admission"][0]["status"] == "admitted"
+    bundles.validate_bundle(
+        output / manifest["components"][0]["evidence_bundle_path"],
+        {"primary": repo},
+        expected_component_id="backend-api",
+        expected_sha256=manifest["components"][0]["evidence_bundle_sha256"],
+        output_dir=output,
+        expected_focus_paths=["routes"],
+        expected_exclude_paths=[],
+    )
+
+
+def test_focus_directory_above_component_glob_prefix_is_rejected(tmp_path):
+    repo, output = _repo(tmp_path)
+    api = repo / "src" / "api"
+    api.mkdir()
+    (api / "login.py").write_text("login = True\n", encoding="utf-8")
+
+    component = _component(component_paths=["src/api/**/*.py"], focus_paths=["src"])
+    with pytest.raises(bundles.BundleError, match="outside the component paths"):
+        bundles.build_all(output, repo, _manifest(component))
+
+
 def test_focus_receipt_discloses_source_budget_omissions(tmp_path):
     repo, output = _repo(tmp_path)
     for index in range(bundles.MAX_SOURCE_SLICES + 2):

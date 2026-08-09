@@ -3094,18 +3094,6 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
         )
     else:
         receipts.append("recon summary reused: fingerprint unchanged")
-    if has_iac:
-        jobs.append(
-            {
-                "schema_version": 1,
-                "job_id": "phase2_5-config",
-                "semantic_role": "config_scanner",
-                **_context_v2_job_metadata(cfg, "config_scanner"),
-                "input_artifacts": [".skill-config.json"],
-                "output_artifacts": [".config-scan-findings.json"],
-                "unresolved_decision_keys": [],
-            }
-        )
     _append_event(
         output_dir,
         "CONTEXT_V2_RECON_WAVE",
@@ -3166,9 +3154,28 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
         )
     _validate_recon_signals(output_dir / ".recon-signals.json", Path(repo_root))
 
-    # Phase 2.5b — normalize and validate the config scan. Enrichment only: a
-    # malformed sidecar reduces coverage but must not abort the assessment.
+    # Phase 2.5b — run the catalog scan deterministically before schema
+    # validation. Context-v2 does not dispatch a model for this mechanical
+    # producer. Clear any prior bytes first so a failed fresh scan cannot admit
+    # a stale but shape-valid enrichment artifact.
     config_findings = output_dir / ".config-scan-findings.json"
+    if _has_iac_surface(Path(repo_root)):
+        config_findings.unlink(missing_ok=True)
+        config_scan_valid = _best_effort_script(
+            output_dir,
+            "config_iac_scanner.py",
+            [
+                "--repo-root",
+                repo_root,
+                "--output",
+                str(config_findings),
+                "--assessment-depth",
+                depth,
+            ],
+            receipts,
+        )
+        if config_scan_valid:
+            receipts.append("config scan produced deterministically from the complete catalog")
     if config_findings.is_file():
         _best_effort_script(output_dir, "normalize_config_scan.py", [str(config_findings)], receipts)
         config_valid = _best_effort_script(

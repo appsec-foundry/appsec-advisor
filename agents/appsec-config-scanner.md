@@ -45,9 +45,23 @@ Follow the completion contract in `shared/completion-contract.md` — your final
 
 ## Process
 
+The only production scan implementation is the deterministic catalog executor.
+Do not independently read the catalog, inventory files, evaluate patterns, or
+author JSON. In one Bash call run:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/config_iac_scanner.py" \
+  --repo-root "$REPO_ROOT" \
+  --output "$OUTPUT_DIR/.config-scan-findings.json" \
+  --assessment-depth "$ASSESSMENT_DEPTH"
+```
+
+Steps 1-4 below describe what that script owns; they are not additional agent
+work.
+
 ### Step 1 — Load the check catalog
 
-Read `$CLAUDE_PLUGIN_ROOT/data/config-iac-checks.yaml` once. Build an in-memory index of checks grouped by `iac_type`:
+The script reads `$CLAUDE_PLUGIN_ROOT/data/config-iac-checks.yaml` once and builds an in-memory index grouped by `iac_type`:
 
 - `Dockerfile`
 - `github_workflow`
@@ -58,7 +72,7 @@ Read `$CLAUDE_PLUGIN_ROOT/data/config-iac-checks.yaml` once. Build an in-memory 
 
 ### Step 2 — Inventory target files
 
-Resolve every Glob, Grep, Read, and Bash scan target beneath the canonical
+The script resolves every scan target beneath the canonical
 `REPO_ROOT`. Never run a relative repository glob from the process working
 directory or scan `CLAUDE_PLUGIN_ROOT`; the plugin root supplies only the check
 catalog and validator code. Write only the declared absolute
@@ -77,7 +91,7 @@ When `ASSESSMENT_DEPTH=quick`, limit to the first 5 files per category. Otherwis
 
 ### Step 3 — Run checks per file
 
-For each target file, apply every check matching its `iac_type`:
+The script applies every check matching each target file's `iac_type`:
 
 1. **`expect: present`** — file must contain a match for `pattern`. Violation when no match.
 2. **`expect: absent`** — file must NOT contain `pattern`. Violation when match is found.
@@ -90,7 +104,7 @@ For every violation emit one finding entry into the in-memory results list.
 
 ### Step 4 — Emit findings to `.config-scan-findings.json`
 
-Write `$OUTPUT_DIR/.config-scan-findings.json`:
+The script writes `$OUTPUT_DIR/.config-scan-findings.json`:
 
 ```json
 {
@@ -118,7 +132,7 @@ Write `$OUTPUT_DIR/.config-scan-findings.json`:
 }
 ```
 
-**Write protocol:** single `python3 -c` Bash call, load yaml + glob + Python regex matching, emit JSON. Deterministic — identical input produces identical output.
+**Write protocol:** only `scripts/config_iac_scanner.py` may emit this artifact. Deterministic inputs produce the same rule/file selection and findings.
 
 **Mandatory fields per finding.** The downstream pipeline depends on every emitted finding carrying the full field set above — **not the leaner `{id, check, severity, file, line, detail}` shape** that some earlier prototype versions of this agent produced. Specifically:
 

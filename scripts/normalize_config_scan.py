@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Deterministic post-pass over ``.config-scan-findings.json``.
 
-The config-scanner is an LLM agent; it occasionally emits ``generated_at`` with
-sub-second precision or strips the canonical ``CWE-`` prefix while projecting
-checks from ``data/config-iac-checks.yaml``. Canonicalize those lossless format
-drifts before the schema gate rather than relaxing the delivered contract.
+The legacy config-scanner agent may emit ``generated_at`` with sub-second
+precision or strip the canonical ``CWE-`` prefix while projecting checks from
+``data/config-iac-checks.yaml``. Canonicalize those lossless format drifts
+before the schema gate rather than relaxing the delivered contract. The
+Context-v2 deterministic producer already emits canonical values.
 
 Idempotent: a file already in canonical form is left untouched (no rewrite).
 """

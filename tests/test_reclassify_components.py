@@ -106,6 +106,8 @@ def test_glob_to_regex_wildcards_and_specials():
     assert rc._glob_to_regex("routes/*.ts").search("routes/a.ts")
     assert not rc._glob_to_regex("routes/*.ts").search("routes/sub/a.ts")
     assert rc._glob_to_regex("routes/**").search("routes/sub/deep.ts")
+    assert rc._glob_to_regex("routes/**/*.ts").search("routes/login.ts")
+    assert rc._glob_to_regex("routes/**/*.ts").search("routes/auth/login.ts")
     assert rc._glob_to_regex("file?.ts").search("file1.ts")
     # special-char escaping: a literal dot only matches a dot
     pat = rc._glob_to_regex("a.b")

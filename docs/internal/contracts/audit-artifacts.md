@@ -8,6 +8,7 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.org-context.md`, `.org-context-manifest.json` | Preset-selected organization reference data and its per-document load, omission, size, and hash records |
 | `.recon-summary.md` | Authoritative recon-scanner output; semantic consumers receive bounded runtime projections |
 | `.recon-signals.json` | Contracted actor, exposure, and deployable-unit signals required for validated recon reuse |
+| `.config-scan-findings.json` | Complete deterministic Config/IaC catalog results consumed by merge and retained for finding audit |
 | `.dep-scan.json` | Dependency scan findings |
 | `.stride-<component-id>.json`, `.stride-dispatch-manifest.json`, `.stride-selection.json`, `.stride-analyst-context.json` | Per-component STRIDE fragments and the three durable pre-fan-out sidecars below; the analyst context contains bounded component business and architecture projections |
 | `.threats-merged.json` | Canonical merged threat set |

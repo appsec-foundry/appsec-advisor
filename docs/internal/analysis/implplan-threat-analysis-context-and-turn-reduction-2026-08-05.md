@@ -380,7 +380,7 @@ producer map before a focused agent is selectable:
 | Boundary | Semantic producer | Deterministic owner and required handoff |
 |---|---|---|
 | Phases 1 and 2 | Existing context resolver and recon scanner, dispatched as one bounded Level-0 wave | Controller resolves cache/fingerprint decisions and validates `.threat-modeling-context.md`, `.recon-summary.md`, and contracted recon sidecars |
-| Phase 2.5 | Existing config scanner only when the deterministic IaC-surface check selects it | Controller owns the surface check and validates `.config-scan-findings.json` |
+| Phase 2.5 | Legacy config agent only when the deterministic IaC-surface check selects it; Context-v2 uses the deterministic catalog producer directly | Controller owns the surface check and validates complete `.config-scan-findings.json` semantics |
 | Phase 2.6 | None unless an existing coverage contract explicitly selects a specialist | Existing route, database-separation, and architecture-coverage scripts own their sidecars and exit semantics |
 | Phase 2.7 | Existing actor discoverer only when the cache/depth contract selects it | Existing actor resolvers own the canonical actor artifacts and validation |
 | Phases 3–6 | Architecture analyst | Controller validates `.components.json`, `.data-flows.json`, `.assets.json`, attack-surface sidecars, architecture-stage fragments, and the Phase-6 checkpoint, then runs component finalization |
@@ -1337,15 +1337,55 @@ TTL, and the invalid API shape paid for a complete second dispatch. R7 is a
 useful failure-cost and bounded-context sample but is not an end-to-end cost or
 quality sample.
 
+The R8 checkpoint at
+`/tmp/appsec-context-v2-wp5a-smoke-20260809-r8` passed deterministic context
+publication, recon, architecture, boundary, and control gates. The raw
+493-line recon summary projected to 200 retained semantic lines, 525 serialized
+lines, 20,226 bytes, and 5,057 estimated tokens with 182 body lines omitted.
+The 247-route inventory again projected to 96 routes, 1,756 serialized lines,
+49,204 bytes, and 12,301 estimated tokens with 151 routes omitted. Both
+deliveries were `action_validated`; the full route inventory remained forbidden
+to the architecture role.
+
+R8 stopped while preparing STRIDE because the API component declared
+`routes/**/*.ts` while its bounded analyst routing selected the literal
+directory `routes`. Evidence-bundle containment tested that directory by
+inventing `routes/x`; the suffix-constrained file glob could never match that
+probe, and Python `fnmatch` also treated `**/` as requiring a nested directory.
+The bundle producer and validator now use the same component-glob semantics as
+the canonical reclassifier, where `**/` admits zero or more directory levels.
+A literal focus directory must equal or descend from the static prefix of a
+component glob; a broader parent remains invalid, and every projected file is
+still checked against the complete glob. Replaying the exact R8 artifacts now
+builds and validates all six component manifests and evidence bundles and
+returns the five-job first STRIDE wave. The API `routes` projection admitted 11
+of 61 candidate files and recorded 50 source-budget omissions.
+
+The same checkpoint exposed an independent producer gap before it became a
+blocking gate: the Config Scanner reported only 12 of 24 catalog checks and two
+findings. Context-v2 now skips that model dispatch and invokes a deterministic
+catalog executor after recon. The producer canonicalizes every selected file,
+rejects symlink escapes, evaluates every catalog entry, writes atomically, and
+uses the run epoch for a stable timestamp. Semantic validation binds
+`checks_run`, `violations`, local-ID sequence, check IDs, and finding metadata
+to the canonical catalog. The catalog inventory now shares category-wide
+patterns for recursive Dockerfiles, both YAML extensions, Compose aliases, and
+Dependabot alternatives, closing a gap where the surface selector started a
+scan for files the producer could not enumerate. An exact Juice Shop replay
+evaluates all 24 checks and emits 30 findings: unlike R7, it does not flag the
+fully SHA-pinned lint-fixer workflow, reports the absent npm lockfile, and
+evaluates the nested smoke-test Dockerfile. A failed fresh producer cannot
+reuse stale config bytes, and config enrichment remains non-blocking.
+
 The next required live checkpoint uses Juice Shop commit
 `33518f5a0911e25d9df747b1e70fb7af279a755c`, Claude Code 2.1.226, and the same
-quick-depth model cohort as R4 through R7 while forcing Stage 1d so its candidate
+quick-depth model cohort as R4 through R8 while forcing Stage 1d so its candidate
 routing is exercised:
 
 ```bash
 APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r8 \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r9 \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \
@@ -1356,31 +1396,34 @@ APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
 
 The checkpoint passes only if the invocation exits successfully through final
 rendering, resolves `runtime_generation=context-v2`, spawns no context-resolver
-agent, records `/home/mrohr/juice-shop` as the exact context root, preserves the
-R4 component and STRIDE-selection mechanisms, and completes all six STRIDE
-categories for every selected component. The recon projection must retain at
-most 200 semantic source lines and remain within 1,024 serialized lines; the
-route projection must retain at most 96 routes. Evidence, generated-threat,
-proposed-mitigation, taxonomy, and per-candidate abuse inputs must carry current
-hashes, matching contracts, `action_validated` status, and their bounded counts
-and serialized sizes. No active delivery may use `shadow_hashed`.
+or config-scanner agent, records `/home/mrohr/juice-shop` as the exact context
+root, preserves the R4 component and STRIDE-selection mechanisms, and completes
+all six STRIDE categories for every selected component. The recon projection
+must retain at most 200 semantic source lines and remain within 1,024 serialized
+lines; the route projection must retain at most 96 routes. Evidence,
+generated-threat, proposed-mitigation, taxonomy, and per-candidate abuse inputs
+must carry current hashes, matching contracts, `action_validated` status, and
+their bounded counts and serialized sizes. No active delivery may use
+`shadow_hashed`.
 
 Focused evidence and synthesis jobs must not receive `.threats-merged.json`;
 abuse jobs must not receive `.abuse-case-matches.json` or another candidate.
-The Config Scanner must receive quick depth, inspect only Juice Shop, write no
-artifact in the plugin or target repository, and report counts matching its
-validated output. Verify that startup status does not show an incomplete-run
-warning during the pre-lock window and that no invalid optional artifact is
-routed. Record source, retained, and omitted counts; serialized lines, bytes,
-and estimated tokens per routed context; per-role peak context; automatic
-compactions; usage turns; cache reads and writes; output tokens; wall time;
-cost; evidence verdict mix; finding correspondence; and every routing or
-producer-gate warning. Compare the recon-pattern, recon-summary, route,
-evidence-sample, and post-STRIDE context reductions with R4 and record any
-targeted repository escape reads. Every emitted `discovery_escapes` record must
-use `decision_key`, `search_paths`, and optional `lens`; a retry must record its
-exact component-specific reason before the prior output is cleared. This is
-one smoke checkpoint, not the controlled three-pair A/B acceptance cohort.
+The deterministic Config/IaC producer must receive quick depth, inspect only
+Juice Shop, write only the output sidecar, evaluate all 24 catalog checks, and
+emit 30 findings for the pinned tree. IAC-011 must not flag the fully SHA-pinned
+lint-fixer workflow, and IAC-050 must report the absent npm lockfile. Verify that
+startup status does not show an incomplete-run warning during the pre-lock
+window and that no invalid optional artifact is routed. Record source, retained,
+and omitted counts; serialized lines, bytes, and estimated tokens per routed
+context; per-role peak context; automatic compactions; usage turns; cache reads
+and writes; output tokens; wall time; cost; evidence verdict mix; finding
+correspondence; and every routing or producer-gate warning. Compare the
+recon-pattern, recon-summary, route, evidence-sample, and post-STRIDE context
+reductions with R4 and record any targeted repository escape reads. Every
+emitted `discovery_escapes` record must use `decision_key`, `search_paths`, and
+optional `lens`; a retry must record its exact component-specific reason before
+the prior output is cleared. This is one smoke checkpoint, not the controlled
+three-pair A/B acceptance cohort.
 
 A subsequent governance audit moved standing orchestration and admission rules
 into the durable contracts, pinned the legacy/context-v2 tool topology, added a

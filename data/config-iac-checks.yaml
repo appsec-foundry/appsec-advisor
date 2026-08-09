@@ -11,6 +11,8 @@
 #                                docker_compose, dependabot, npm_config,
 #                                kubernetes, terraform)
 #   file_pattern               — glob to find target files
+# Top-level `file_patterns_by_type` replaces that fallback with the complete
+# category inventory when a format has equivalent names or extensions.
 #   pattern                    — regex or keyword to match
 #   expect                     — `present`, `absent`, `all_third_party_actions`,
 #                                `any_of`, `all_of`
@@ -21,6 +23,26 @@
 #   remediation                — short fix text (becomes mitigation_title_hint)
 
 schema_version: 1
+
+# Category-wide inventory patterns. These are the authoritative alternatives
+# for checks in the named category; `file_pattern` remains the canonical
+# display path and fallback for categories without an entry here.
+file_patterns_by_type:
+  Dockerfile:
+    - "**/Dockerfile"
+    - "**/Dockerfile.*"
+    - "**/*.dockerfile"
+  github_workflow:
+    - "**/.github/workflows/*.yml"
+    - "**/.github/workflows/*.yaml"
+  docker_compose:
+    - "**/docker-compose*.yml"
+    - "**/docker-compose*.yaml"
+    - "**/compose*.yml"
+    - "**/compose*.yaml"
+  dependabot:
+    - "**/.github/dependabot.yml"
+    - "**/.github/dependabot.yaml"
 
 checks:
   # ============ Dockerfile ============

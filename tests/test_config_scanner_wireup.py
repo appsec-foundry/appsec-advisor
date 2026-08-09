@@ -48,7 +48,7 @@ def valid_findings_doc():
     return {
         "version": 1,
         "generated_at": "2026-05-01T10:00:00Z",
-        "checks_run": 5,
+        "checks_run": 24,
         "violations": 2,
         "findings": [
             {
@@ -58,14 +58,17 @@ def valid_findings_doc():
                 "file": "Dockerfile",
                 "line": 1,
                 "evidence_snippet": "FROM node:24",
-                "title": "Docker base image not digest-pinned",
+                "title": "Dockerfile base image must be digest-pinned",
                 "severity": "High",
                 "cwe": ["CWE-1104"],
+                "finding_type_id": "FT-140",
+                "recommended_mitigation_title": "Pin base image to @sha256:<digest>",
                 "breach_vector": "Build-Time",
             },
             {
                 "local_id": "CFG-002",
-                "check_id": "IAC-027a",
+                "check_id": None,
+                "check_slug": "runtime-cors",
                 "iac_type": "github_workflow",
                 "file": ".github/workflows/ci.yml",
                 "line": 12,
@@ -125,6 +128,24 @@ class TestSchemaValidation:
         rc, _, err = _validate_with_schema(valid_findings_doc)
         assert rc == 0, f"Empty findings list must be valid: {err}"
 
+    def test_partial_catalog_count_is_rejected(self, valid_findings_doc):
+        valid_findings_doc["checks_run"] = 12
+        rc, out, err = _validate_with_schema(valid_findings_doc)
+        assert rc != 0
+        assert "complete catalog size" in out + err
+
+    def test_stale_violation_count_is_rejected(self, valid_findings_doc):
+        valid_findings_doc["violations"] = 1
+        rc, out, err = _validate_with_schema(valid_findings_doc)
+        assert rc != 0
+        assert "violations must equal findings length" in out + err
+
+    def test_canonical_check_metadata_drift_is_rejected(self, valid_findings_doc):
+        valid_findings_doc["findings"][0]["severity"] = "Low"
+        rc, out, err = _validate_with_schema(valid_findings_doc)
+        assert rc != 0
+        assert "differs from canonical check IAC-001" in out + err
+
     def test_error_stub_accepted(self):
         stub = {"parse_error": "yaml load failed", "findings": []}
         rc, _, err = _validate_with_schema(stub)
@@ -143,9 +164,9 @@ class TestSpecIntegration:
 
     def test_config_scanner_contains_all_repository_access_and_output_paths(self):
         text = (ROOT / "agents" / "appsec-config-scanner.md").read_text()
-        assert "Resolve every Glob, Grep, Read, and Bash scan target" in text
-        assert "Never run a relative repository glob" in text
-        assert "Write only the declared absolute" in text
+        assert "scripts/config_iac_scanner.py" in text
+        assert "Do not independently read the catalog" in text
+        assert "only `scripts/config_iac_scanner.py` may emit this artifact" in text
         assert "derive `checks_run` and `violations` from those exact final bytes" in text
 
     def test_phase_group_recon_has_phase_2_5_block(self):

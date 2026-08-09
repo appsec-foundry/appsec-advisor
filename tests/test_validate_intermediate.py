@@ -562,6 +562,21 @@ def test_glob_advisory_kept_for_ambiguous_match():
     assert "consider one of" in advisories[0]
 
 
+def test_glob_advisory_accepts_recursive_glob_at_zero_directory_depth():
+    data = {
+        "components": [{"id": "backend", "paths": ["routes/**/*.ts"]}],
+        "threats": [
+            {
+                "id": "T-001",
+                "component": "backend",
+                "evidence": [{"file": "routes/login.ts", "line": 1}],
+            }
+        ],
+    }
+
+    assert vi._check_component_path_glob_consistency(data) == []
+
+
 # ===========================================================================
 # In-process coverage of helper invariants and validators
 # ===========================================================================
@@ -1262,7 +1277,7 @@ def test_config_scan_accepts_check_slug_and_null_check_id():
     doc = {
         "version": 1,
         "generated_at": "2026-07-24T00:00:00Z",
-        "checks_run": 1,
+        "checks_run": 24,
         "violations": 1,
         "findings": [finding],
     }
@@ -1275,7 +1290,7 @@ def test_config_scan_rejects_bad_check_slug():
     doc = {
         "version": 1,
         "generated_at": "2026-07-24T00:00:00Z",
-        "checks_run": 1,
+        "checks_run": 24,
         "violations": 1,
         "findings": [
             {

@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reconnaissance now reserves its final turns for validated output, so large repositories cannot crowd out required security sections.
 - Reconnaissance and architecture handoffs now remove unverifiable summary path claims, carry structured signal evidence, and reject stale repository paths before they can reach component analysis.
 - Context-v2 now builds project context deterministically, preserves rebuild configuration, gives semantic roles bounded receipted inputs, preserves schema-valid STRIDE discovery metadata across retries, serializes rebuild deliverables as full assessments, and rejects resume after authoritative controller aborts.
+- Context-v2 now evaluates the complete Config/IaC catalog without a model turn.
+- Context-v2 STRIDE routing now accepts component-owned focus directories under recursive file globs.
 - Threat-model assembly now accepts validated trust-boundary inheritance provenance instead of aborting before report rendering.
 
 ### Changed

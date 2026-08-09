@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import hashlib
 import json
 import os
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from _atomic_io import atomic_write_text
+from reclassify_components import _glob_to_regex
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-evidence-bundle.schema.json"
@@ -733,15 +733,50 @@ def validate_architecture_context_bytes(
     return value
 
 
+def _component_glob_matches(relative: str, pattern: str) -> bool:
+    """Match with the canonical component-glob semantics."""
+    return bool(_glob_to_regex(pattern).search(relative))
+
+
 def _owned(component_paths: list[str], relative: str) -> bool:
     if not component_paths:
         return True
     for pattern in component_paths:
         if pattern in {"**", "**/*"}:
             return True
-        if fnmatch.fnmatchcase(relative, pattern):
+        if _component_glob_matches(relative, pattern):
             return True
         if pattern.endswith("/**") and relative.startswith(pattern[:-3].rstrip("/") + "/"):
+            return True
+    return False
+
+
+def _owned_routing_path(component_paths: list[str], relative: str, *, is_directory: bool) -> bool:
+    """Return whether a literal routing path is inside component scope.
+
+    Files must match a component pattern exactly. A directory may also equal
+    or descend from the literal prefix of a glob: ``routes`` is a valid narrow
+    scope for ``routes/**/*.ts`` even though no invented directory probe can
+    satisfy the ``.ts`` suffix. Directories above that prefix remain outside
+    the component, and projected files are checked individually by the bundle
+    builder.
+    """
+    if _owned(component_paths, relative):
+        return True
+    if not is_directory:
+        return False
+    for pattern in component_paths:
+        literal_parts: list[str] = []
+        has_glob = False
+        for part in pattern.split("/"):
+            if any(char in part for char in "*?["):
+                has_glob = True
+                break
+            literal_parts.append(part)
+        if not has_glob or not literal_parts:
+            continue
+        prefix = "/".join(literal_parts).rstrip("/")
+        if relative == prefix or relative.startswith(prefix + "/"):
             return True
     return False
 
@@ -787,7 +822,7 @@ def _normalize_routing_values(component: dict[str, Any], registry: dict[str, Pat
             if not resolved.exists():
                 skipped_missing.append(f"{name} for {component_id}: {value!r}")
                 continue
-            if not (_owned(component_paths, value) or (resolved.is_dir() and _owned(component_paths, value + "/x"))):
+            if not _owned_routing_path(component_paths, value, is_directory=resolved.is_dir()):
                 raise BundleError(f"{name} for {component_id} is outside the component paths: {value!r}")
             if value in normalized:
                 continue
@@ -1370,10 +1405,7 @@ def validate_bundle_bytes(
                 resolved = _canonical_under(registry["primary"], relative)
                 if not resolved.exists():
                     raise BundleError(f"evidence-bundle {name} path is stale: {relative!r}")
-                if not (
-                    _owned(component_paths, relative)
-                    or (resolved.is_dir() and _owned(component_paths, relative + "/x"))
-                ):
+                if not _owned_routing_path(component_paths, relative, is_directory=resolved.is_dir()):
                     raise BundleError(f"evidence-bundle {name} escapes component paths: {relative!r}")
         for focus in focus_paths:
             if any(_path_overlaps(focus, excluded) for excluded in exclude_paths):

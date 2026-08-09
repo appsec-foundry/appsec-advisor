@@ -1,11 +1,4 @@
-"""Tests for data/config-iac-checks.yaml.
-
-The checks are evaluated by the appsec-config-scanner agent (LLM), so there is
-no deterministic runtime that exercises them. These tests guard the two things
-a data-only change can still break: every regex must compile, and the specific
-`expect: absent` / `expect: present` semantics must match the intended
-target-vs-noise behaviour.
-"""
+"""Focused rule semantics for the deterministic Config/IaC catalog."""
 
 from __future__ import annotations
 
@@ -38,6 +31,15 @@ def test_every_check_regex_compiles():
             re.compile(pat)
         except re.error as e:  # pragma: no cover - failure path
             raise AssertionError(f"{c.get('id')} pattern does not compile: {e}")
+
+
+def test_category_inventory_covers_surface_alternatives():
+    data = yaml.safe_load(CHECKS_PATH.read_text(encoding="utf-8"))
+    patterns = data["file_patterns_by_type"]
+    assert "**/.github/workflows/*.yaml" in patterns["github_workflow"]
+    assert "**/compose*.yaml" in patterns["docker_compose"]
+    assert "**/.github/dependabot.yaml" in patterns["dependabot"]
+    assert "**/Dockerfile" in patterns["Dockerfile"]
 
 
 def test_iac005_npm_ignore_scripts_only_fires_on_actual_js_install():

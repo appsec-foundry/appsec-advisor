@@ -990,7 +990,10 @@ def _check_component_path_glob_consistency(data: dict) -> list[str]:
       - component is unknown (other validators catch that)
       - any one evidence.file matches any one of the component's globs
     """
-    import fnmatch
+    from reclassify_components import _glob_to_regex
+
+    def matches(path: str, pattern: str) -> bool:
+        return bool(_glob_to_regex(pattern).search(path))
 
     advisories: list[str] = []
     components = data.get("components") or []
@@ -1025,11 +1028,13 @@ def _check_component_path_glob_consistency(data: dict) -> list[str]:
         globs = comp_paths_by_id[comp]
         if not globs:
             continue
-        # Match if ANY file matches ANY glob (fnmatch + simple prefix).
+        # Match if ANY file matches ANY glob. Use the same recursive-glob
+        # semantics as the deterministic reclassifier: ``**/`` may match zero
+        # directory levels.
         matched = False
         for f in files:
             for g in globs:
-                if fnmatch.fnmatch(f, g) or f.startswith(g.rstrip("*").rstrip("/")):
+                if matches(f, g):
                     matched = True
                     break
             if matched:
@@ -1045,7 +1050,7 @@ def _check_component_path_glob_consistency(data: dict) -> list[str]:
                 continue
             for f in files:
                 for g in other_globs:
-                    if fnmatch.fnmatch(f, g):
+                    if matches(f, g):
                         suggestions.append(other_cid)
                         break
                 else:
@@ -1239,19 +1244,58 @@ def validate_config_scan_findings(data: Any) -> tuple[bool, list[str]]:
     if not isinstance(data, dict):
         return False, ["root must be a mapping"]
     errors = _schema_errors("config_scan_findings", data)
-    # When in normal mode, sanity-check sequence: local_id CFG-NNN unique
+    # A shape-valid partial catalog scan is still incomplete. Bind the producer
+    # to the shipped catalog and to its own counters so an LLM cannot silently
+    # skip checks or rewrite authoritative check metadata.
     if "parse_error" not in data:
+        catalog_path = Path(__file__).resolve().parent.parent / "data" / "config-iac-checks.yaml"
+        try:
+            catalog_doc = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+            catalog = {
+                row["id"]: row
+                for row in catalog_doc.get("checks", [])
+                if isinstance(row, dict) and isinstance(row.get("id"), str)
+            }
+        except (OSError, yaml.YAMLError, AttributeError) as exc:
+            errors.append(f"cannot load canonical config check catalog: {exc}")
+            catalog = {}
+        if data.get("checks_run") != len(catalog):
+            errors.append(f"checks_run must equal the complete catalog size ({len(catalog)})")
+        findings = data.get("findings", []) or []
+        if isinstance(findings, list) and data.get("violations") != len(findings):
+            errors.append("violations must equal findings length")
         seen: set[str] = set()
-        for i, f in enumerate(data.get("findings", []) or []):
+        for i, f in enumerate(findings):
             if not isinstance(f, dict):
                 continue
             lid = f.get("local_id")
             if not isinstance(lid, str):
                 continue
+            expected_id = f"CFG-{i + 1:03d}"
+            if lid != expected_id:
+                errors.append(f"findings[{i}].local_id must be sequential {expected_id}")
             if lid in seen:
                 errors.append(f"findings[{i}].local_id '{lid}' is duplicated")
             else:
                 seen.add(lid)
+            check_id = f.get("check_id")
+            if not isinstance(check_id, str):
+                continue
+            check = catalog.get(check_id)
+            if check is None:
+                errors.append(f"findings[{i}].check_id '{check_id}' is not in the canonical catalog")
+                continue
+            expected_fields = {
+                "iac_type": check.get("iac_type"),
+                "title": check.get("name"),
+                "severity": check.get("severity_if_violated"),
+                "finding_type_id": check.get("finding_type"),
+                "cwe": [check.get("cwe")],
+                "recommended_mitigation_title": check.get("remediation"),
+            }
+            for field, expected in expected_fields.items():
+                if f.get(field) != expected:
+                    errors.append(f"findings[{i}].{field} differs from canonical check {check_id}")
     return len(errors) == 0, errors
 
 
