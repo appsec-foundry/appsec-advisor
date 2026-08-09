@@ -3597,6 +3597,15 @@ def _context_v2_stride_wave_action(
     claimed_components = wave.get("components") if isinstance(wave, dict) else None
     if not isinstance(claimed_components, list) or not claimed_components:
         raise ControllerError("STRIDE wave claim has no component entries")
+    retry_reasons = wave.get("retry_reasons") if isinstance(wave, dict) else None
+    if isinstance(retry_reasons, dict) and retry_reasons:
+        details = "; ".join(
+            f"{component_id}={reason}"
+            for component_id, reason in sorted(retry_reasons.items())
+            if isinstance(component_id, str) and isinstance(reason, str)
+        )
+        if details:
+            _append_event(output_dir, "CONTEXT_V2_STRIDE_RETRY", details)
 
     repository_registry = output_dir / ".stride-repository-registry.json"
 

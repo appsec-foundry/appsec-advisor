@@ -2090,7 +2090,17 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
             components = json.loads((output / ".stride-dispatch-manifest.json").read_text(encoding="utf-8"))[
                 "components"
             ]
-            return _completed(json.dumps({"status": "claimed", "wave": {"components": components}}))
+            return _completed(
+                json.dumps(
+                    {
+                        "status": "claimed",
+                        "wave": {
+                            "components": components,
+                            "retry_reasons": {"api": "schema validation failed: discovery_escapes[0]"},
+                        },
+                    }
+                )
+            )
         return _completed()
 
     monkeypatch.setattr(controller, "_run_script", fake_script)
@@ -2168,7 +2178,10 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     assert emitted["context_plan"]["receipt_path"] == ".context-routing-plan.receipt.json"
     assert all(len(job["context_delivery_ids"]) == 14 for job in emitted["dispatch_jobs"])
     assert all(".context-routing-plan.json" not in job["input_artifacts"] for job in emitted["dispatch_jobs"])
-    assert "CONTEXT_ROUTING_ACTIVE" in (output / ".agent-run.log").read_text(encoding="utf-8")
+    run_log = (output / ".agent-run.log").read_text(encoding="utf-8")
+    assert "CONTEXT_V2_STRIDE_RETRY" in run_log
+    assert "api=schema validation failed: discovery_escapes[0]" in run_log
+    assert "CONTEXT_ROUTING_ACTIVE" in run_log
 
     shared_manifest = json.loads(json.dumps(action))
     shared_manifest["dispatch_jobs"][0]["input_artifacts"].append(".stride-dispatch-manifest.json")

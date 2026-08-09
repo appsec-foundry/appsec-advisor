@@ -183,6 +183,31 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def _canonicalize_discovery_escape_aliases(data: dict[str, Any]) -> bool:
+    """Rename the analyzer's known pre-contract discovery-escape aliases.
+
+    The transformation is lossless and applies only when the canonical field
+    is absent. Conflicting canonical and alias fields remain untouched so the
+    schema gate rejects ambiguity instead of choosing one value.
+    """
+    escapes = data.get("discovery_escapes")
+    if not isinstance(escapes, list):
+        return False
+    changed = False
+    aliases = {
+        "unresolved_decision": "decision_key",
+        "selected_lens": "lens",
+    }
+    for escape in escapes:
+        if not isinstance(escape, dict):
+            continue
+        for alias, canonical in aliases.items():
+            if alias in escape and canonical not in escape:
+                escape[canonical] = escape.pop(alias)
+                changed = True
+    return changed
+
+
 def completion_error(output_dir: Path, component_id: str) -> str | None:
     path = output_dir / f".stride-{component_id}.json"
     if not path.is_file():
@@ -239,7 +264,11 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
     #   * a boundary_refs[].leg outside the closed enum, dropped (also optional);
     #     the merge step applies the same rule but only after this gate has
     #     already rejected the component.
+    #   * discovery_escapes aliases from the analyzer's pre-contract wording,
+    #     renamed to the exact schema fields without changing their values.
     # Persist the repaired output so merge and any resume see the canonical form.
+    if _canonicalize_discovery_escape_aliases(data):
+        repaired = True
     for threat in data["threats"]:
         if isinstance(threat, dict):
             if backfill_threat_category_id(threat):
@@ -410,9 +439,17 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
             "blocked_components": blocked,
             "incomplete": current["incomplete"],
         }, False
+    incomplete_reasons = {
+        row["component_id"]: row["reason"]
+        for row in current["incomplete"]
+        if isinstance(row, dict) and isinstance(row.get("component_id"), str) and isinstance(row.get("reason"), str)
+    }
     claimed_components: list[dict[str, Any]] = []
+    retry_reasons: dict[str, str] = {}
     for component in next_wave["components"]:
         component_id = component["component_id"]
+        if plan["attempts"][component_id] > 0:
+            retry_reasons[component_id] = incomplete_reasons.get(component_id, "incomplete output")
         plan["attempts"][component_id] += 1
         # Escalate the budget for every attempt after the first. A component
         # only lands here because the previous attempt did not complete, and the
@@ -428,6 +465,8 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
     next_wave["attempts"] = {
         component["component_id"]: plan["attempts"][component["component_id"]] for component in claimed_components
     }
+    if retry_reasons:
+        next_wave["retry_reasons"] = retry_reasons
     return {
         "status": "claimed",
         "complete": current["complete"],
@@ -506,14 +545,24 @@ def main(argv: list[str] | None = None) -> int:
                     _atomic_write_json(plan_path, plan)
                 elif payload["status"] == "blocked":
                     print(json.dumps(payload, indent=2))
+                    reasons = {
+                        row["component_id"]: row["reason"]
+                        for row in payload.get("incomplete", [])
+                        if isinstance(row, dict)
+                        and row.get("component_id") in payload["blocked_components"]
+                        and isinstance(row.get("reason"), str)
+                    }
+                    reason_text = "; ".join(
+                        f"{component_id}: {reasons.get(component_id, 'incomplete output')}"
+                        for component_id in payload["blocked_components"]
+                    )
                     print(
                         "stride_dispatch_waves: retry budget exhausted; selected-component "
-                        f"coverage is incomplete (budget={max_attempts()}). Retries already "
-                        "escalate the turn budget, so a component that still fails is "
-                        "genuinely too wide for one dispatch -- narrow its paths in the "
-                        "component inventory (split it) rather than only granting more "
-                        "attempts. APPSEC_STRIDE_MAX_ATTEMPTS=3 buys one more attempt but "
-                        "does not make an oversized component fit.",
+                        f"coverage is incomplete (budget={max_attempts()}): {reason_text}. "
+                        "Retries already escalate the turn budget, but failures can also be "
+                        "deterministic producer or contract defects. Fix schema failures at "
+                        "their producer; narrow component paths only when the reason shows "
+                        "that one dispatch cannot cover the component.",
                         file=sys.stderr,
                     )
                     return 1

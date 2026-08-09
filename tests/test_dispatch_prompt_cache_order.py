@@ -128,6 +128,9 @@ def test_analyzer_uses_one_bundle_read_and_fixed_plugin_lens_map():
     assert "agents/stride-lenses/mobile.md" in analyzer
     assert "all six are mandatory" in analyzer.lower()
     assert "discovery_escapes[]" in analyzer
+    assert "`decision_key`, `search_paths`, and optional `lens`" in analyzer
+    assert "fields `prior_id`, `cwe`, `title`, and `reason`" in analyzer
+    assert "fields `pattern`, `search_paths`, `hit_count:0`, and `searched_at`" in analyzer
     assert "path_routing.focus_paths" in analyzer
     assert "path_routing.exclude_paths" in analyzer
     assert "optional broad discovery" in analyzer

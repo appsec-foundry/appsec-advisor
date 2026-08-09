@@ -371,6 +371,47 @@ def test_completion_keeps_usable_attack_steps(tmp_path: Path) -> None:
     assert json.loads(path.read_text(encoding="utf-8"))["threats"][0]["attack_steps"] == steps
 
 
+def test_completion_canonicalizes_discovery_escape_field_aliases(tmp_path: Path) -> None:
+    data = _stride_component_with("CWE-89", "TH-09")
+    data["discovery_escapes"] = [
+        {
+            "reason": "component-path-sampling",
+            "unresolved_decision": "admin-route-authentication",
+            "search_paths": ["routes/"],
+            "selected_lens": None,
+        }
+    ]
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    escape = json.loads(path.read_text(encoding="utf-8"))["discovery_escapes"][0]
+    assert escape == {
+        "reason": "component-path-sampling",
+        "decision_key": "admin-route-authentication",
+        "search_paths": ["routes/"],
+        "lens": None,
+    }
+
+
+def test_completion_rejects_conflicting_discovery_escape_aliases(tmp_path: Path) -> None:
+    data = _stride_component_with("CWE-89", "TH-09")
+    data["discovery_escapes"] = [
+        {
+            "reason": "component-path-sampling",
+            "decision_key": "canonical-decision",
+            "unresolved_decision": "different-decision",
+            "search_paths": ["routes/"],
+        }
+    ]
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    reason = waves.completion_error(tmp_path, "service-01")
+    assert reason is not None
+    assert "unresolved_decision" in reason
+
+
 def test_plan_fingerprint_rejects_changed_manifest() -> None:
     original = _manifest(3)
     plan = waves.build_plan(original, concurrency=2)
@@ -391,11 +432,35 @@ def test_claim_persists_two_attempt_budget_across_resume(tmp_path: Path) -> None
     second, changed = waves.claim(plan, manifest, tmp_path)
     assert changed is True
     assert second["wave"]["attempts"] == {"service-01": 2}
+    assert second["wave"]["retry_reasons"] == {"service-01": "missing output"}
 
     blocked, changed = waves.claim(plan, manifest, tmp_path)
     assert changed is False
     assert blocked["status"] == "blocked"
     assert blocked["blocked_components"] == ["service-01"]
+
+
+def test_blocked_claim_reports_the_component_validation_reason(tmp_path: Path, capsys) -> None:
+    manifest = _manifest(1)
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    plan = waves.build_plan(manifest, concurrency=1)
+    plan["attempts"]["service-01"] = waves.DEFAULT_MAX_ATTEMPTS
+    (tmp_path / waves.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8")
+    data = _stride_component_with("CWE-89", "TH-09")
+    data["discovery_escapes"] = [
+        {
+            "reason": "component-path-sampling",
+            "decision_key": "admin-route-authentication",
+            "search_paths": ["routes/"],
+            "unexpected": True,
+        }
+    ]
+    (tmp_path / ".stride-service-01.json").write_text(json.dumps(data), encoding="utf-8")
+
+    assert waves.main(["claim", str(tmp_path)]) == 1
+    error = capsys.readouterr().err
+    assert "service-01: schema validation failed" in error
+    assert "producer or contract defects" in error
 
 
 def test_reinitializing_with_new_concurrency_preserves_attempts(tmp_path: Path, capsys) -> None:

@@ -1300,15 +1300,52 @@ recon projection as `action_validated` with 44 records, 525 physical lines,
 and USD 1.27, but it did not reach architecture analysis and remains unsuitable
 as an end-to-end cost or quality sample.
 
+The R7 checkpoint at
+`/tmp/appsec-context-v2-wp5a-smoke-20260809-r7` passed the context publication,
+recon, config, architecture, boundary, control, and first STRIDE-wave gates.
+The raw 485-line recon summary projected to 199 retained semantic lines, 524
+serialized lines, 17,906 bytes, and 4,477 estimated tokens with 181 body lines
+omitted. The 247-route inventory projected to 96 routes, 1,756 serialized
+lines, 49,204 bytes, and 12,301 estimated tokens with 151 routes omitted. Both
+deliveries were `action_validated`. The Config Scanner received quick depth,
+reported the same 24 checks and 27 findings as its validated artifact, cited
+only Juice Shop paths, and wrote no artifact in the plugin or target root.
+
+R7 selected six STRIDE components and dispatched five in the first wave. Four
+completed with one threat in each of the six categories. The API component
+authored six complete categories on both attempts, but each output used the
+old discovery-escape field names `unresolved_decision` and `selected_lens`.
+The version-1 STRIDE schema requires `decision_key` and `lens`, so the wave gate
+correctly rejected both outputs and exhausted the two-attempt budget before
+the second-wave Web3 component or any post-STRIDE work ran. The agent contract
+had described the values without naming their exact JSON fields, while tests
+covered schema acceptance and prompt presence separately instead of replaying
+the known producer alias shape through wave completion.
+
+The producer now names every discovery-escape field exactly. The wave gate
+also owns a lossless backstop that renames only those two aliases when the
+canonical field is absent; conflicting fields remain fatal. An isolated replay
+of the exact final R7 API artifact passes wave completion and persists the
+canonical names. Retry claims now carry their validation reasons into the
+controller log, and retry-budget errors include the component-specific reason
+instead of diagnosing every schema failure as an oversized component.
+
+R7 reported 270,901 output tokens, 14,211,199 cache-read tokens, 1,068,913
+cache-write tokens, 47 top-level turns, about 50.6 minutes wall time, and USD
+11.66. The long Control call and STRIDE wave each crossed the five-minute cache
+TTL, and the invalid API shape paid for a complete second dispatch. R7 is a
+useful failure-cost and bounded-context sample but is not an end-to-end cost or
+quality sample.
+
 The next required live checkpoint uses Juice Shop commit
 `33518f5a0911e25d9df747b1e70fb7af279a755c`, Claude Code 2.1.226, and the same
-quick-depth model cohort as R4 through R6 while forcing Stage 1d so its candidate
+quick-depth model cohort as R4 through R7 while forcing Stage 1d so its candidate
 routing is exercised:
 
 ```bash
 APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r7 \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r8 \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \
@@ -1340,8 +1377,10 @@ compactions; usage turns; cache reads and writes; output tokens; wall time;
 cost; evidence verdict mix; finding correspondence; and every routing or
 producer-gate warning. Compare the recon-pattern, recon-summary, route,
 evidence-sample, and post-STRIDE context reductions with R4 and record any
-targeted repository escape reads. This is one smoke checkpoint, not the
-controlled three-pair A/B acceptance cohort.
+targeted repository escape reads. Every emitted `discovery_escapes` record must
+use `decision_key`, `search_paths`, and optional `lens`; a retry must record its
+exact component-specific reason before the prior output is cleared. This is
+one smoke checkpoint, not the controlled three-pair A/B acceptance cohort.
 
 A subsequent governance audit moved standing orchestration and admission rules
 into the durable contracts, pinned the legacy/context-v2 tool topology, added a
