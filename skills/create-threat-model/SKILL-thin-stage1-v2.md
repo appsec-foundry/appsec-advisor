@@ -83,9 +83,9 @@ path under absolute `OUTPUT_DIR`; never probe for an empty alias.
 When present, alias boundary input as `ASSESSMENT_INPUT_PATH` and merger input
 as `CANDIDATES_FILE`.
 
-Additional aliases only: context gets `CHECK_REQUIREMENTS` and
+Aliases: context gets `CHECK_REQUIREMENTS` and
 `REQUIREMENTS_URL_OVERRIDE`; recon gets `SCOPE`, `SCAN_MANIFEST`, and
-`ASSESSMENT_DEPTH`; evidence gets `ASSESSMENT_DEPTH` and
+`ASSESSMENT_DEPTH`; config gets `ASSESSMENT_DEPTH`; evidence gets `ASSESSMENT_DEPTH` and
 `EVIDENCE_VERIFIER_MAX_FINDINGS`; triage gets `ASSESSMENT_DEPTH`. Omit nulls.
 
 For STRIDE pass `COMPONENT_ID` plus plan, bundle, taxonomy, and optional

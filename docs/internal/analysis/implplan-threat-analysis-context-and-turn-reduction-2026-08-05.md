@@ -1255,15 +1255,60 @@ output tokens, 4,691,069 cache-read tokens, 285,359 cache-write tokens, and USD
 2.04, but it did not reach architecture or STRIDE and is not an end-to-end
 cost sample.
 
+The R6 checkpoint at
+`/tmp/appsec-context-v2-wp5a-smoke-20260809-r6` confirmed the deterministic
+context producer, bounded recon-pattern projection, and startup-status fix. It
+then stopped before architecture because the routing profile compared 525
+physical pretty-printed JSON lines with the recon schema's 200 retained
+semantic source lines. The producer and routing unit tests had covered those
+limits separately and therefore missed the incompatible boundary. Routing
+`max_lines` now means physical serialized lines, while retained source lines
+and evidence windows remain schema-owned semantic limits. A maximal
+schema-valid producer test now crosses the receipt-counting and routing limit
+code for recon, routes, evidence samples, mitigation projections, and the
+default abuse-case library.
+
+The same audit found two latent instances of the unit mismatch. A maximal
+256-record evidence sample with 11-line source windows can exceed 2,816
+physical JSON lines, and a 512-record mitigation projection with 20 steps per
+record can exceed 10,000. Their serialized line profiles now admit the complete
+schema-valid shape while retaining the existing 524,288-byte caps. The unused
+`max_paths` binding field was removed because no routing code enforced it;
+path-bearing collections remain bounded by their artifact schemas, and a drift
+test now requires every declared profile field to map to an enforced counter.
+The remaining specialized profiles were replayed or exercised at their bounded
+producer shapes without another incompatibility.
+
+An R6 side effect exposed a separate config-producer contract drift. The
+context-v2 runtime omitted the Config Scanner's required `ASSESSMENT_DEPTH`
+alias, and its inventory instructions did not require repository operations to
+resolve beneath `REPO_ROOT`. The agent first wrote a 25-finding scan of the
+plugin worktree outside `OUTPUT_DIR`, then produced a 70-finding target artifact
+while its completion log retained the first scan's counts. Context-v2 now
+passes the depth alias, the producer contract confines every scan target to the
+canonical repository root and every output to the declared directory, and
+completion counts must be derived from the validated final bytes. Contract
+tests pin all three requirements.
+
+Replaying `context-v2-post-recon` against an isolated copy of the exact R6
+artifacts passed with the final bindings. The effective plan admitted the
+recon projection as `action_validated` with 44 records, 525 physical lines,
+18,253 bytes, and 4,564 estimated tokens. It admitted the route projection as
+`action_validated` with 96 records, 1,756 physical lines, 49,204 bytes, and
+12,301 estimated tokens, then emitted the architecture action. R6 reported
+32,800 output tokens, 2,767,407 cache-read tokens, 216,731 cache-write tokens,
+and USD 1.27, but it did not reach architecture analysis and remains unsuitable
+as an end-to-end cost or quality sample.
+
 The next required live checkpoint uses Juice Shop commit
 `33518f5a0911e25d9df747b1e70fb7af279a755c`, Claude Code 2.1.226, and the same
-quick-depth model cohort as R4 and R5 while forcing Stage 1d so its candidate
+quick-depth model cohort as R4 through R6 while forcing Stage 1d so its candidate
 routing is exercised:
 
 ```bash
 APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r6 \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r7 \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \
@@ -1276,19 +1321,27 @@ The checkpoint passes only if the invocation exits successfully through final
 rendering, resolves `runtime_generation=context-v2`, spawns no context-resolver
 agent, records `/home/mrohr/juice-shop` as the exact context root, preserves the
 R4 component and STRIDE-selection mechanisms, and completes all six STRIDE
-categories for every selected component. The effective plan and action
-receipts must show the context document, bounded recon, route, evidence,
-generated-threat, proposed-mitigation, taxonomy, and per-candidate abuse inputs
-with current hashes, matching contracts, `action_validated` status, and sizes;
-no active delivery may use `shadow_hashed`. Focused evidence and synthesis jobs
-must not receive `.threats-merged.json`; abuse jobs must not receive
-`.abuse-case-matches.json` or another candidate. Verify that the startup status
-does not show an incomplete-run warning during the pre-lock window and that no
-invalid optional artifact is routed. Record retained and omitted counts,
-bytes, per-role peak context, automatic compactions, usage turns, cache reads
-and writes, output tokens, wall time, cost, evidence verdict mix, finding
-correspondence, and every routing or producer-gate warning. This is one smoke
-checkpoint, not the controlled three-pair A/B acceptance cohort.
+categories for every selected component. The recon projection must retain at
+most 200 semantic source lines and remain within 1,024 serialized lines; the
+route projection must retain at most 96 routes. Evidence, generated-threat,
+proposed-mitigation, taxonomy, and per-candidate abuse inputs must carry current
+hashes, matching contracts, `action_validated` status, and their bounded counts
+and serialized sizes. No active delivery may use `shadow_hashed`.
+
+Focused evidence and synthesis jobs must not receive `.threats-merged.json`;
+abuse jobs must not receive `.abuse-case-matches.json` or another candidate.
+The Config Scanner must receive quick depth, inspect only Juice Shop, write no
+artifact in the plugin or target repository, and report counts matching its
+validated output. Verify that startup status does not show an incomplete-run
+warning during the pre-lock window and that no invalid optional artifact is
+routed. Record source, retained, and omitted counts; serialized lines, bytes,
+and estimated tokens per routed context; per-role peak context; automatic
+compactions; usage turns; cache reads and writes; output tokens; wall time;
+cost; evidence verdict mix; finding correspondence; and every routing or
+producer-gate warning. Compare the recon-pattern, recon-summary, route,
+evidence-sample, and post-STRIDE context reductions with R4 and record any
+targeted repository escape reads. This is one smoke checkpoint, not the
+controlled three-pair A/B acceptance cohort.
 
 A subsequent governance audit moved standing orchestration and admission rules
 into the durable contracts, pinned the legacy/context-v2 tool topology, added a

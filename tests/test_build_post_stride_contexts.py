@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import build_post_stride_contexts as contexts  # noqa: E402
+import context_routing as routing  # noqa: E402
 
 
 def _threat(t_id: str, risk: str, file: str, line: int, component: str = "api") -> dict:
@@ -72,6 +73,23 @@ def test_evidence_context_selects_and_embeds_exact_source_windows(tmp_path: Path
     assert value["limits"]["serialized_bytes"] == path.stat().st_size
     assert not _schema_errors("evidence-verifier-context.schema.json", value)
     contexts.validate_evidence_context_sources(value, (output / ".threats-merged.json").read_bytes(), repo)
+
+
+def test_max_evidence_sample_is_schema_and_routing_compatible(tmp_path: Path) -> None:
+    threats = [_threat(f"T-{index:03d}", "Critical", "app.py", 10) for index in range(1, 257)]
+    output, repo = _write_inputs(tmp_path, threats)
+
+    path = contexts.write_evidence_context(output, repo, "thorough", 256)
+    value = json.loads(path.read_text())
+    profile = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text())["limit_profiles"][
+        "evidence_sample"
+    ]
+    counts = routing._counts(path.read_bytes(), record_count=len(value["samples"]))  # noqa: SLF001
+
+    assert len(value["samples"]) == contexts.MAX_EVIDENCE_ITEMS
+    assert counts["line_count"] > 2_816
+    assert not _schema_errors("evidence-verifier-context.schema.json", value)
+    routing._enforce_limits("verification.evidence_sample", counts, profile)  # noqa: SLF001
 
 
 def test_evidence_context_rejects_stale_source_window(tmp_path: Path) -> None:
@@ -139,6 +157,25 @@ def test_synthesis_contexts_separate_threats_from_mitigations_and_validate(tmp_p
     assert mitigations["limits"]["serialized_bytes"] == mitigations_path.stat().st_size
     assert not _schema_errors("post-stride-generated-threats.schema.json", generated)
     assert not _schema_errors("post-stride-proposed-mitigations.schema.json", mitigations)
+
+
+def test_max_mitigation_projection_is_schema_and_routing_compatible(tmp_path: Path) -> None:
+    threats = [_threat(f"T-{index:03d}", "High", "app.py", 10) for index in range(1, 513)]
+    for threat in threats:
+        threat["remediation"]["steps"] = ["step"] * 20
+    output, _repo = _write_inputs(tmp_path, threats)
+
+    _generated_path, mitigations_path = contexts.write_synthesis_contexts(output)
+    value = json.loads(mitigations_path.read_text())
+    profile = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text())["limit_profiles"][
+        "post_stride_projection"
+    ]
+    counts = routing._counts(mitigations_path.read_bytes(), record_count=len(value["mitigations"]))  # noqa: SLF001
+
+    assert len(value["mitigations"]) == contexts.MAX_SYNTHESIS_ITEMS
+    assert counts["line_count"] > 10_000
+    assert not _schema_errors("post-stride-proposed-mitigations.schema.json", value)
+    routing._enforce_limits("threats.proposed_mitigations_projection", counts, profile)  # noqa: SLF001
 
 
 def test_synthesis_context_rejects_unknown_component(tmp_path: Path) -> None:

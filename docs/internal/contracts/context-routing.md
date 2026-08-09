@@ -122,9 +122,19 @@ actually delivered.
 
 `data/context-routing-bindings.json` owns schemas, artifact paths, semantic
 roles, model-setting keys, producers, projectors, trust and sensitivity
-classes, and byte, token, item, line, path, and aggregate limits. These values
+classes, and byte, token, item, line, and aggregate limits. These values
 are implementation and security contracts. A catalog editor does not repeat or
 override them.
+
+Routing `max_lines` counts physical lines in the serialized delivery. A
+structured contract's retained source lines, embedded evidence windows, and
+other semantic line units are enforced by that artifact's schema; they must
+not be reused as serialized-file limits because JSON object and array framing
+adds lines without adding admitted evidence.
+
+Path-bearing arrays and records are bounded by their artifact schemas. The
+bindings contract does not advertise a generic path limit because a serialized
+document has no schema-independent definition of which strings are paths.
 
 Repository declarations remain data inputs. They cannot edit the core catalog,
 assign agents, choose paths or schemas, change models or tools, relax limits,

@@ -58,7 +58,13 @@ Read `$CLAUDE_PLUGIN_ROOT/data/config-iac-checks.yaml` once. Build an in-memory 
 
 ### Step 2 — Inventory target files
 
-Glob for each file-pattern relevant to loaded checks:
+Resolve every Glob, Grep, Read, and Bash scan target beneath the canonical
+`REPO_ROOT`. Never run a relative repository glob from the process working
+directory or scan `CLAUDE_PLUGIN_ROOT`; the plugin root supplies only the check
+catalog and validator code. Write only the declared absolute
+`$OUTPUT_DIR/.config-scan-findings.json` artifact and the shared output log.
+
+Glob beneath `REPO_ROOT` for each file-pattern relevant to loaded checks:
 - `Dockerfile` / `**/Dockerfile` / `Dockerfile.*`
 - `.github/workflows/*.yml` / `.github/workflows/*.yaml`
 - `docker-compose*.yml` / `compose*.yml`
@@ -163,10 +169,14 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
 Do not print completion before this exits 0. Correct the artifact and repeat
 the gate if it fails.
 
+Before logging or reporting counts, re-read the validated output artifact and
+derive `checks_run` and `violations` from those exact final bytes. Do not report
+counters retained from an earlier scan or corrective write.
+
 ## Completion log
 
 ```
-[config-scanner] ✓ Scanned <n> config files, <m> checks run, <v> violations
+[config-scanner] ✓ Ran <m> config checks; <v> violations
   ↳ Wrote: <OUTPUT_DIR>/.config-scan-findings.json
 ```
 

@@ -153,6 +153,13 @@ def test_catalog_and_bindings_validate_and_bind_to_the_runtime_registry():
     )
 
 
+def test_every_declared_limit_profile_field_is_enforced():
+    _catalog, bindings = _contracts()
+    enforced = set(routing._COUNT_LIMIT_KEYS.values())  # noqa: SLF001
+
+    assert all(set(profile) == enforced for profile in bindings["limit_profiles"].values())
+
+
 def test_human_validate_command_checks_schema_and_agent_assignments(capsys):
     assert routing._main(["validate"]) == 0
     assert "schema- and semantic-valid catalog" in capsys.readouterr().out
@@ -372,6 +379,48 @@ def test_active_declared_context_rejects_unreceipted_existing_bytes(tmp_path):
 
     with pytest.raises(routing.ContextRoutingError, match="lacks a validated action receipt"):
         _resolve(action, output)
+
+
+def test_structured_line_profiles_count_serialization_not_semantic_windows():
+    _catalog, bindings = _contracts()
+    sample = {
+        "t_id": "T-001",
+        "title": "title",
+        "scenario": "scenario",
+        "risk": "High",
+        "source": "stride",
+        "evidence_summary": "summary",
+        "evidence": {"file": "src/api.ts", "line": 10},
+        "source_sha256": "a" * 64,
+        "source_window": [{"line": index, "text": "source"} for index in range(1, 12)],
+    }
+    payload = (json.dumps({"samples": [sample] * 64}, indent=2) + "\n").encode()
+    counts = routing._counts(payload, record_count=64)  # noqa: SLF001
+    profile = bindings["limit_profiles"]["evidence_sample"]
+
+    assert counts["line_count"] > 2_816
+    assert counts["byte_count"] <= profile["max_bytes"]
+    routing._enforce_limits("verification.evidence_sample", counts, profile)  # noqa: SLF001
+
+    mitigation = {
+        "t_id": "T-001",
+        "mitigation_title": None,
+        "effort": None,
+        "steps": ["step"] * 20,
+        "verification": None,
+        "reference": None,
+    }
+    mitigation_payload = (json.dumps({"mitigations": [mitigation] * 512}, indent=2) + "\n").encode()
+    mitigation_counts = routing._counts(mitigation_payload, record_count=512)  # noqa: SLF001
+    mitigation_profile = bindings["limit_profiles"]["post_stride_projection"]
+
+    assert mitigation_counts["line_count"] > 10_000
+    assert mitigation_counts["byte_count"] <= mitigation_profile["max_bytes"]
+    routing._enforce_limits(  # noqa: SLF001
+        "threats.proposed_mitigations_projection",
+        mitigation_counts,
+        mitigation_profile,
+    )
 
 
 def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path):

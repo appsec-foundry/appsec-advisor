@@ -123,13 +123,17 @@
     },
     "limits": {
       "type": "object",
-      "required": ["max_bytes", "max_tokens", "max_items", "max_lines", "max_paths"],
+      "required": ["max_bytes", "max_tokens", "max_items", "max_lines"],
       "properties": {
         "max_bytes": {"type": "integer", "minimum": 1, "maximum": 4194304},
         "max_tokens": {"type": "integer", "minimum": 1, "maximum": 1048576},
         "max_items": {"type": "integer", "minimum": 1, "maximum": 1000000},
-        "max_lines": {"type": "integer", "minimum": 1, "maximum": 1000000},
-        "max_paths": {"type": "integer", "minimum": 1, "maximum": 1024}
+        "max_lines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "description": "Maximum physical lines in the serialized delivery artifact. Semantic retained-line or source-window limits belong to the artifact schema."
+        }
       },
       "additionalProperties": false
     },

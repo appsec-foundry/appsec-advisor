@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import build_abuse_case_contexts as contexts  # noqa: E402
+import context_routing as routing  # noqa: E402
 
 
 def _match(candidate_id: str = "AC-T-001") -> dict:
@@ -143,7 +144,16 @@ def test_default_library_candidates_project_without_schema_or_chain_loss(tmp_pat
     )
 
     for case in library["abuse_cases"]:
-        projected = json.loads(contexts.write_candidate(tmp_path, case["id"]).read_text())
+        path = contexts.write_candidate(tmp_path, case["id"])
+        projected = json.loads(path.read_text())
         assert len(projected["candidate"]["chain"]) == len(case["chain"])
         assert len(projected["candidate"]["step_matches"]) == len(case["chain"])
         assert not _schema_errors(projected)
+        profile = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text())["limit_profiles"][
+            "abuse_candidate"
+        ]
+        routing._enforce_limits(  # noqa: SLF001
+            "abuse_cases.matches",
+            routing._counts(path.read_bytes(), record_count=len(projected["candidate"])),  # noqa: SLF001
+            profile,
+        )

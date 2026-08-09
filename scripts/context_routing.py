@@ -321,14 +321,16 @@ def _counts(payload: bytes, record_count: int | None = None) -> dict[str, int]:
     }
 
 
+_COUNT_LIMIT_KEYS = {
+    "byte_count": "max_bytes",
+    "estimated_tokens": "max_tokens",
+    "item_count": "max_items",
+    "line_count": "max_lines",
+}
+
+
 def _enforce_limits(context_id: str, counts: dict[str, int], limits: dict[str, int]) -> None:
-    mapping = {
-        "byte_count": "max_bytes",
-        "estimated_tokens": "max_tokens",
-        "item_count": "max_items",
-        "line_count": "max_lines",
-    }
-    for count_key, limit_key in mapping.items():
+    for count_key, limit_key in _COUNT_LIMIT_KEYS.items():
         if counts[count_key] > limits[limit_key]:
             raise ContextRoutingError(
                 f"context {context_id!r} exceeds {limit_key}: {counts[count_key]} > {limits[limit_key]}"

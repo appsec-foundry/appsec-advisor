@@ -137,6 +137,17 @@ class TestSchemaValidation:
 
 
 class TestSpecIntegration:
+    def test_context_v2_dispatch_supplies_config_depth_alias(self):
+        text = (ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text()
+        assert "config gets `ASSESSMENT_DEPTH`" in text
+
+    def test_config_scanner_contains_all_repository_access_and_output_paths(self):
+        text = (ROOT / "agents" / "appsec-config-scanner.md").read_text()
+        assert "Resolve every Glob, Grep, Read, and Bash scan target" in text
+        assert "Never run a relative repository glob" in text
+        assert "Write only the declared absolute" in text
+        assert "derive `checks_run` and `violations` from those exact final bytes" in text
+
     def test_phase_group_recon_has_phase_2_5_block(self):
         text = (ROOT / "agents" / "phases" / "phase-group-recon.md").read_text()
         assert "Phase 2.5" in text, "phase-group-recon.md must define Phase 2.5"

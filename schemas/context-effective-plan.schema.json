@@ -81,8 +81,18 @@
         "sha256": {"$ref": "#/$defs/sha256"},
         "byte_count": {"type": "integer", "minimum": 0, "maximum": 4194304},
         "estimated_tokens": {"type": "integer", "minimum": 0, "maximum": 1048576},
-        "item_count": {"type": "integer", "minimum": 0, "maximum": 1000000},
-        "line_count": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "item_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Producer-receipted top-level record count, or one for an unreceipted scalar or document delivery. Nested semantic collection limits belong to the artifact schema."
+        },
+        "line_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Physical line count of the serialized delivery artifact. Semantic source-window and retained-line limits belong to the artifact schema."
+        },
         "schema_id": {
           "type": "string",
           "minLength": 1,

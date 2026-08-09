@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import build_architecture_analysis_context as context  # noqa: E402
+import context_routing as routing  # noqa: E402
 
 
 def _schema(name: str) -> dict:
@@ -63,6 +64,31 @@ def test_recon_projection_rejects_non_markdown_input() -> None:
         raise AssertionError("missing heading must fail")
 
 
+def test_recon_projection_semantic_cap_fits_serialized_routing_cap() -> None:
+    payload = "\n".join(
+        line
+        for section in range(context.MAX_RECON_SECTIONS)
+        for line in (f"## Section {section}", *(f"body {section}-{index}" for index in range(8)))
+    ).encode()
+
+    projected = context.project_recon_summary(payload)
+    rendered = (json.dumps(projected, indent=2) + "\n").encode()
+    bindings = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text(encoding="utf-8"))
+    profile = bindings["limit_profiles"]["recon_projection"]
+    physical_lines = rendered.count(b"\n")
+
+    jsonschema.validate(projected, _schema("recon-summary-context.schema.json"))
+    assert projected["limits"]["retained_lines"] == context.MAX_RECON_RETAINED_LINES
+    assert physical_lines > context.MAX_RECON_RETAINED_LINES
+    assert physical_lines <= profile["max_lines"]
+    assert len(rendered) <= profile["max_bytes"]
+    routing._enforce_limits(  # noqa: SLF001
+        "discovery.recon_projection",
+        routing._counts(rendered, record_count=len(projected["sections"])),  # noqa: SLF001
+        profile,
+    )
+
+
 def test_route_projection_is_bounded_risk_first_and_diverse() -> None:
     routes = [_route(i) for i in range(1, 121)]
     routes.append(_route(121, framework="fastapi", file="service/api.py"))
@@ -81,6 +107,15 @@ def test_route_projection_is_bounded_risk_first_and_diverse() -> None:
     assert projected["routes"][0]["route_id"] == "R-122"
     assert {row["framework"] for row in projected["routes"]} == {"express", "fastapi", "spring"}
     assert projected["limits"]["omitted_routes"] == 26
+    rendered = (json.dumps(projected, indent=2) + "\n").encode()
+    profile = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text(encoding="utf-8"))[
+        "limit_profiles"
+    ]["route_projection"]
+    routing._enforce_limits(  # noqa: SLF001
+        "architecture.route_projection",
+        routing._counts(rendered, record_count=len(projected["routes"])),  # noqa: SLF001
+        profile,
+    )
 
 
 def test_build_writes_both_projection_artifacts(tmp_path: Path) -> None:
