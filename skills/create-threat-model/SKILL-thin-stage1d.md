@@ -18,13 +18,11 @@ Stage-1d body from `SKILL-impl.md`.
      prepare-abuse --output-dir "$OUTPUT_DIR"
    ```
 
-3. When the action carries `dispatch_jobs[]`, call `verify-receipts` with every
-   `artifact_receipts[]` path and SHA-256 pair as the final filesystem action,
-   then issue all jobs as foreground `appsec-advisor:appsec-abuse-case-verifier`
-   Agent calls in one assistant message. Never dispatch them sequentially.
-   Description: `Abuse case: <candidate_id> — <title>`, taking the title from
-   `candidate_titles[<candidate_id>]`; use the bare ID when it has no title.
-   Each prompt contains:
+3. For `dispatch_jobs[]`, call `verify-receipts` with all receipt paths and
+   SHA-256 pairs as the final filesystem action. Then issue every job as a
+   foreground `appsec-advisor:appsec-abuse-case-verifier` call in a
+   single assistant message. Description: `Abuse case: <candidate_id> — <title>`
+   from `candidate_titles`; fall back to the ID. Each prompt contains:
 
    ```text
    ABUSE_CASE_ID=<AC-ID>
@@ -35,15 +33,12 @@ Stage-1d body from `SKILL-impl.md`.
    MODEL_ID=<ABUSE_VERIFIER_MODEL>
    ```
 
-   Use the job's explicit model alias. Do not default a full/versioned id to
-   4.6. Collect aggregate
-   usage. Ask each verifier to return only concise status, artifact paths, and
-   blockers, without reproducing evidence or artifact content. When the action
-   is `run_gate`, no verifier is required.
-   An abort, including a candidate count above the bounded fan-out limit, is
-   fatal and must not silently drop candidates. The legacy action shape has no
-   `dispatch_jobs[]`; only there, retain the prior `candidates[]` fan-out and
-   `MATCH_RESULT_PATH=<OUTPUT_DIR>/.abuse-case-matches.json` prompt alias.
+   Use the job's model alias; never replace a versioned ID with 4.6. Aggregate
+   usage. Require concise status, paths, and blockers
+   without reproducing evidence or artifact content. `run_gate` needs no
+   verifier. Abort or candidate overflow is fatal; it must not silently drop candidates.
+   Only the legacy shape lacks `dispatch_jobs[]`; retain its `candidates[]` fan-out and
+   `MATCH_RESULT_PATH=<OUTPUT_DIR>/.abuse-case-matches.json` alias.
 4. Run:
 
    ```bash
@@ -52,8 +47,7 @@ Stage-1d body from `SKILL-impl.md`.
    ```
 
    Require `action=run_gate`, `stage=stage1d`. The controller owns merge,
-   finalize, verified-finding promotion, YAML rebuild, configured release gate,
-   ranking fold, and §9 rendering.
+   finding promotion, YAML rebuild, release gate, ranking, and §9 rendering.
 5. Send the final heartbeat, stop the watchdog, record the aggregated stats with
    `record_stage_stats.py` (`output_dir` is positional), and mark the task
    completed:
