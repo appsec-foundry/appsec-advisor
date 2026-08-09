@@ -24,6 +24,7 @@ from agent_logger import (  # noqa: E402
     _extract_param,
     _mask_secrets,
     _mirror_phase_events_to_hook_log,
+    _plain_log_text,
 )
 
 # ---------------------------------------------------------------------------
@@ -226,6 +227,25 @@ class TestAgentSpawn:
         assert rc == 0
         assert "AGENT_SPAWN" in log
         assert "appsec-context-resolver" in log
+
+    def test_agent_spawn_decodes_html_entities_for_plaintext_log(self, tmp_path):
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-stride-analyzer",
+                "description": "STRIDE (full): Authentication &amp; JWT Module",
+                "prompt": "COMPONENT_ID=auth-service REPO_ROOT=/tmp/repo",
+                "run_in_background": False,
+            },
+        )
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "Authentication & JWT Module" in log
+        assert "&amp;" not in log
+
+    def test_plain_log_text_decodes_once_and_blocks_encoded_newlines(self):
+        assert _plain_log_text("A &amp;amp; B") == "A &amp; B"
+        assert _plain_log_text("safe&#10;forged") == "safe forged"
 
     def test_agent_spawn_includes_model(self, tmp_path):
         """AGENT_SPAWN must include model= from agent definition."""

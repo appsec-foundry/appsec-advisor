@@ -687,7 +687,7 @@ _LEGACY_BOOTSTRAP_INVARIANTS = [
     (
         "resolver-legacy-md-auto-bootstraps-sets-mode-full",
         PLUGIN / "scripts" / "resolve_config.py",
-        ['"mode":             "full"', '"mode_label":       "full (bootstrap'],
+        ['"mode": "full"', '"mode_label": "full (bootstrap'],
         None,
         None,
         False,

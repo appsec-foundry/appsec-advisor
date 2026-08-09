@@ -4,7 +4,7 @@ Used by `appsec-recon-scanner` Step 4. Defines the exact Markdown structure that
 
 ## Template
 
-The agent fills in every `<placeholder>` and writes the resulting Markdown verbatim.
+The agent fills in every `<placeholder>` and writes the resulting Markdown verbatim. Each `Key files` value is either `none detected` or a comma-separated list of backticked `repository-relative-regular-file:single-line` references observed during discovery. Line ranges, bare paths, directories, globs, and annotations are invalid.
 
 ````markdown
 # Reconnaissance Summary

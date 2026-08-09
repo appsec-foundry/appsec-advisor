@@ -74,9 +74,9 @@ PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = (
     {d: phase_budgets.budgets_for_depth(d) for d in ("quick", "standard", "thorough")}
     if phase_budgets
     else {
-        "quick": {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
-        "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
-        "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
+        "quick": {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 300, "11": 300},
+        "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 480, "11": 600},
+        "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 720, "11": 900},
     }
 )
 

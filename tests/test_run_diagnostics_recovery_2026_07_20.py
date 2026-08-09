@@ -264,6 +264,6 @@ def test_raised_attempt_counts_still_validate(tmp_path: Path) -> None:
         "generated_at": "2026-07-20T09:00:00Z",
         "components": [{"component_id": "svc", "max_turns": 22, "index_paths": {}}],
     }
-    plan = waves.build_plan(manifest, 8)
+    plan = waves.build_plan(manifest, 5)
     plan["attempts"]["svc"] = 3
     waves.validate_plan(plan, manifest)  # must not raise

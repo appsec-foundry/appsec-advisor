@@ -129,23 +129,11 @@
       "type": "object",
       "required": [
         "interfaces",
-        "controls",
-        "actors",
-        "trust_boundaries",
-        "known_threats",
-        "prior_findings",
-        "requirements",
         "cross_repo",
         "recon_signals"
       ],
       "properties": {
         "interfaces": { "$ref": "#/$defs/record_array" },
-        "controls": { "$ref": "#/$defs/record_array" },
-        "actors": { "$ref": "#/$defs/record_array" },
-        "trust_boundaries": { "$ref": "#/$defs/record_array" },
-        "known_threats": { "$ref": "#/$defs/record_array" },
-        "prior_findings": { "$ref": "#/$defs/record_array" },
-        "requirements": { "$ref": "#/$defs/record_array" },
         "cross_repo": { "$ref": "#/$defs/record_array" },
         "recon_signals": { "$ref": "#/$defs/record_array" }
       },

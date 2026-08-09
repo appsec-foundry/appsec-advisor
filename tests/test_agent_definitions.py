@@ -93,6 +93,13 @@ INTERNAL_AGENTS = {
 # The orchestrator is the only user-facing agent
 ORCHESTRATOR = "appsec-threat-analyst"
 
+# Coexistence topology while both producer generations are shipped. The legacy
+# orchestrator alone may recurse through Agent; deterministic context-v2 owns
+# Level-0 dispatch. Edit remains limited to the two repair roles. WP7 must
+# change this guard explicitly when the legacy generation is removed.
+AGENT_TOOL_OWNERS = {"appsec-threat-analyst"}
+EDIT_TOOL_OWNERS = {"appsec-fragment-fixer", "appsec-qa-reviewer"}
+
 KERNEL_PRELOAD_ROLES = {
     "appsec-architecture-analyst",
     "appsec-control-analyst",
@@ -125,9 +132,31 @@ def agent_ids() -> list[str]:
     return [f.stem for f in agent_files()]
 
 
+def _frontmatter_tools(path: Path) -> set[str]:
+    meta, _ = parse_frontmatter(path)
+    return {tool.strip() for tool in str(meta.get("tools") or "").split(",") if tool.strip()}
+
+
 # ---------------------------------------------------------------------------
 # Semantic drift guards
 # ---------------------------------------------------------------------------
+
+
+def test_generation_coexistence_pins_recursive_and_edit_tool_owners():
+    agent_owners = {path.stem for path in agent_files() if "Agent" in _frontmatter_tools(path)}
+    edit_owners = {path.stem for path in agent_files() if "Edit" in _frontmatter_tools(path)}
+
+    assert agent_owners == AGENT_TOOL_OWNERS
+    assert edit_owners == EDIT_TOOL_OWNERS
+
+
+def test_pipeline_agent_frontmatter_never_admits_mcp_tools():
+    violations = {}
+    for path in agent_files():
+        tools = {tool for tool in _frontmatter_tools(path) if tool.lower() == "mcp" or tool.lower().startswith("mcp__")}
+        if tools:
+            violations[path.stem] = sorted(tools)
+    assert not violations, f"pipeline agent MCP tools are forbidden: {violations}"
 
 
 def test_actor_discovery_prompt_keeps_actor_identity_boundary():
@@ -438,6 +467,8 @@ class TestBodyContentConsistency:
         assert "scripts/validate_recon_summary.py" in body
         assert "the **next tool call**" in body
         assert "Do not write `.recon-signals.json`" in body
+        assert "--normalize-key-files" in body
+        assert "relative-file:single-line" in body
         assert "Section 7.28 is Container Runtime Hardening" in body
 
         discovery_limit = int(re.search(r"`DISCOVERY_TOOL_CALL_LIMIT=(\d+)`", body).group(1))

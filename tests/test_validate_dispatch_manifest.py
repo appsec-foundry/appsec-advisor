@@ -244,6 +244,33 @@ class TestValidate:
         assert ok is False
         assert any("architecture-context projection is stale" in error for error in errors)
 
+    def test_context_v2_reconstructs_security_projections_with_shared_budget(self, vdm, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        source_dir = output / ".dispatch-context" / "express-backend"
+        source_dir.mkdir(parents=True)
+        known_path = source_dir / "known-threats.json"
+        known_path.write_text(
+            json.dumps([f"known-{index}-" + "x" * 4000 for index in range(32)]),
+            encoding="utf-8",
+        )
+        component = _minimal_component(controls=[f"control-{index}-" + "y" * 4000 for index in range(32)])
+        component["index_paths"]["known_threats"] = known_path.relative_to(output).as_posix()
+        manifest = _minimal_manifest(components=[component])
+        evidence_bundles.build_all(output, tmp_path, manifest)
+        (output / ".skill-config.json").write_text(
+            json.dumps({"repo_root": str(tmp_path)}),
+            encoding="utf-8",
+        )
+        mp = _write_manifest(output, manifest)
+
+        ok, errors, warnings = vdm.validate(mp, output)
+
+        assert ok is True, errors
+        projections = manifest["components"][0]["security_context_projections"]
+        assert len(projections) == 2
+        assert sum(row["estimated_tokens"] for row in projections) <= evidence_bundles.MAX_ESTIMATED_TOKENS
+
     def test_context_v2_rejects_missing_bundle(self, vdm, tmp_path):
         output = tmp_path / "out"
         output.mkdir()

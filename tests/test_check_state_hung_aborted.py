@@ -206,6 +206,37 @@ def test_resume_guard_refuses_stale_aborted(tmp_path: Path):
     assert code == 3
 
 
+def test_resume_guard_refuses_current_controller_abort_with_partial_yaml(tmp_path: Path):
+    now = int(time.time())
+    (tmp_path / ".scan-start-epoch").write_text(f"{now - 10}\n")
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    (tmp_path / ".agent-run.log").write_text(
+        f"{timestamp}  [--------]  WARN   skill-controller    RUN_ABORTED         output schema validation failed\n"
+    )
+    (tmp_path / ".appsec-checkpoint").write_text("phase=7 status=completed\n")
+    (tmp_path / "threat-model.yaml").write_text("meta: {mode: rebuild}\n")
+
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+
+    assert code == 3
+    assert "RUN_ABORTED" in msg
+
+
+def test_resume_guard_ignores_controller_abort_from_prior_run(tmp_path: Path):
+    now = int(time.time())
+    (tmp_path / ".scan-start-epoch").write_text(f"{now}\n")
+    prior = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 60))
+    (tmp_path / ".agent-run.log").write_text(
+        f"{prior}  [--------]  WARN   skill-controller    RUN_ABORTED         prior run failed\n"
+    )
+    (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
+    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
+
+    code, _ = check_state._resume_guard_result(tmp_path, 900)
+
+    assert code == 0
+
+
 def test_resume_guard_cli_writes_json(tmp_path: Path, capsys):
     cp = tmp_path / ".appsec-checkpoint"
     cp.write_text("phase=5 status=started\n")

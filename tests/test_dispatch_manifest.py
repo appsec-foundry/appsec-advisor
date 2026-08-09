@@ -1417,6 +1417,9 @@ def test_detect_cicd_paths_cover_config_scan_surface(tmp_path):
     # supply-chain boundary) must glob the full config-scan file surface.
     repo = _fake_repo(tmp_path)
     (repo / "Dockerfile").write_text("FROM node:18\n", encoding="utf-8")
+    (repo / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    dependabot = repo / ".github" / "dependabot.yml"
+    dependabot.write_text("version: 2\n", encoding="utf-8")
     comp = bm._detect_cicd(repo)
     assert comp is not None
     paths = comp["paths"]
@@ -1434,6 +1437,9 @@ def test_detect_cicd_config_scan_evidence_matches_globs(tmp_path):
     import fnmatch
 
     repo = _fake_repo(tmp_path)
+    (repo / "Dockerfile").write_text("FROM node:18\n", encoding="utf-8")
+    (repo / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    (repo / ".github" / "dependabot.yml").write_text("version: 2\n", encoding="utf-8")
     comp = bm._detect_cicd(repo)
     globs = comp["paths"]
 
@@ -1448,6 +1454,43 @@ def test_detect_cicd_config_scan_evidence_matches_globs(tmp_path):
         ".github/workflows/ci.yml",
     ):
         assert _matches(evidence_file), f"{evidence_file!r} not matched by {globs}"
+
+
+def test_detect_cicd_paths_cover_nested_dockerfiles_scanned_by_config_agent(tmp_path):
+    import fnmatch
+
+    repo = _fake_repo(tmp_path)
+    nested = repo / "test" / "smoke"
+    nested.mkdir(parents=True)
+    (nested / "Dockerfile").write_text("FROM node:18\n", encoding="utf-8")
+
+    comp = bm._detect_cicd(repo)
+
+    assert comp is not None
+    assert "**/Dockerfile" in comp["paths"]
+    assert any(fnmatch.fnmatch("test/smoke/Dockerfile", glob) for glob in comp["paths"])
+
+
+def test_detect_cicd_does_not_claim_missing_config_surface(tmp_path):
+    repo = _fake_repo(tmp_path)
+
+    comp = bm._detect_cicd(repo)
+
+    assert comp is not None
+    assert "package.json" in comp["paths"]
+    assert "Dockerfile" not in comp["paths"]
+    assert "package-lock.json" not in comp["paths"]
+    assert ".github/dependabot.yml" not in comp["paths"]
+
+
+def test_detect_realtime_requires_source_site_not_dependency_alone(tmp_path):
+    repo = _fake_repo(tmp_path, socketio=False)
+    (repo / "package.json").write_text(
+        json.dumps({"dependencies": {"socket.io": "^4.0.0"}}),
+        encoding="utf-8",
+    )
+
+    assert bm._detect_realtime(repo) is None
 
 
 def test_reconcile_partial_evidence_only_cicd(tmp_path):

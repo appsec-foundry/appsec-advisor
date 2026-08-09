@@ -1194,6 +1194,67 @@ def test_evidence_integrity_suspicious_line(tmp_path: Path):
     assert any("suspicious" in i for i in report.issues)
 
 
+def test_evidence_integrity_accepts_verified_commented_out_control(tmp_path: Path):
+    code = tmp_path / "routes.ts"
+    cited = "// app.put('/items/:id', requireAdmin())"
+    code.write_text(f"{cited} // scanner annotation\n", encoding="utf-8")
+    (tmp_path / ".threats-merged.json").write_text(
+        json.dumps(
+            {
+                "threats": [
+                    {
+                        "t_id": "T-004",
+                        "scenario": "The authorization guard is commented out.",
+                        "evidence_summary": "Commenting out the guard disables authorization.",
+                        "evidence": {"file": "routes.ts", "line": 1},
+                        "evidence_check": "verified",
+                        "evidence_flags": [
+                            {
+                                "verdict": "verified",
+                                "reason": "The access-control call is commented out.",
+                                "line_excerpt": cited,
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = qa.check_evidence_integrity(tmp_path, tmp_path)
+    assert report.issues == []
+
+
+def test_evidence_integrity_still_rejects_verified_arbitrary_comment(tmp_path: Path):
+    code = tmp_path / "routes.ts"
+    cited = "// This handler updates an item"
+    code.write_text(f"{cited}\n", encoding="utf-8")
+    (tmp_path / ".threats-merged.json").write_text(
+        json.dumps(
+            {
+                "threats": [
+                    {
+                        "t_id": "T-005",
+                        "scenario": "The handler may be unsafe.",
+                        "evidence": {"file": "routes.ts", "line": 1},
+                        "evidence_check": "verified",
+                        "evidence_flags": [
+                            {
+                                "verdict": "verified",
+                                "reason": "The comment exists.",
+                                "line_excerpt": cited,
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = qa.check_evidence_integrity(tmp_path, tmp_path)
+    assert any("evidence_line_suspicious" in issue for issue in report.issues)
+
+
 def test_evidence_integrity_absence_grep_drift(tmp_path: Path):
     # repo_root must differ from output_dir; the absence grep skips files under
     # output_dir, so the searched code must live in a separate repo dir.

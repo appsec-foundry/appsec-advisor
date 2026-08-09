@@ -50,26 +50,26 @@ def _complete(output_dir: Path, component_id: str, *, threats: list | None = Non
 
 def test_fifty_components_are_partitioned_without_dropping_or_reordering() -> None:
     manifest = _manifest(50)
-    plan = waves.build_plan(manifest, concurrency=8)
+    plan = waves.build_plan(manifest, concurrency=5)
 
-    assert len(plan["waves"]) == 7
-    assert [len(wave["component_ids"]) for wave in plan["waves"]] == [8, 8, 8, 8, 8, 8, 2]
+    assert len(plan["waves"]) == 10
+    assert [len(wave["component_ids"]) for wave in plan["waves"]] == [5] * 10
     assert [cid for wave in plan["waves"] for cid in wave["component_ids"]] == [
         component["component_id"] for component in manifest["components"]
     ]
     waves.validate_plan(plan, manifest)
 
 
-@pytest.mark.parametrize("concurrency", [True, 0, 11, 33])
+@pytest.mark.parametrize("concurrency", [True, 0, 6, 33])
 def test_concurrency_is_bounded(concurrency: int | bool) -> None:
-    with pytest.raises(waves.WavePlanError, match="between 1 and 10"):
+    with pytest.raises(waves.WavePlanError, match="between 1 and 5"):
         waves.build_plan(_manifest(1), concurrency)
 
 
 def test_concurrency_cap_fits_worst_case_receipt_verification() -> None:
-    assert waves.MAX_CONCURRENCY == resolve_config.STRIDE_DISPATCH_CONCURRENCY_MAX == 10
-    assert 6 * waves.MAX_CONCURRENCY + 1 <= 64
-    assert 6 * (waves.MAX_CONCURRENCY + 1) + 1 > 64
+    assert waves.MAX_CONCURRENCY == resolve_config.STRIDE_DISPATCH_CONCURRENCY_MAX == 5
+    assert 11 * waves.MAX_CONCURRENCY + 1 <= 64
+    assert 11 * (waves.MAX_CONCURRENCY + 1) + 1 > 64
 
 
 def test_resume_returns_only_incomplete_members_of_earliest_wave(tmp_path: Path) -> None:
@@ -88,7 +88,7 @@ def test_resume_returns_only_incomplete_members_of_earliest_wave(tmp_path: Path)
 
 def test_complete_zero_finding_result_is_not_a_stub(tmp_path: Path) -> None:
     manifest = _manifest(1)
-    plan = waves.build_plan(manifest, concurrency=8)
+    plan = waves.build_plan(manifest, concurrency=5)
     _complete(tmp_path, "service-01")
 
     result = waves.status(plan, manifest, tmp_path)

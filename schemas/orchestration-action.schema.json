@@ -457,6 +457,33 @@
           "type": "string",
           "pattern": "^[a-f0-9]{64}$"
         },
+        "security_context_projections": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "required": ["context_id", "artifact_path", "sha256"],
+            "properties": {
+              "context_id": {
+                "enum": [
+                  "actors.component_context",
+                  "controls.component_context",
+                  "prior_run.component_findings",
+                  "requirements.component_context",
+                  "threats.known_threats",
+                  "trust_boundaries.component_context"
+                ]
+              },
+              "artifact_path": {
+                "$ref": "#/$defs/relative_artifact_path",
+                "pattern": "^\\.dispatch-context/[a-z0-9][a-z0-9-]{0,99}/(?:actors|controls|known-threats|prior-findings|requirements|trust-boundaries)-context\\.json$"
+              },
+              "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            },
+            "additionalProperties": false
+          }
+        },
         "context_delivery_ids": {
           "type": "array",
           "minItems": 1,
@@ -522,7 +549,12 @@
             "not": {
               "anyOf": [
                 {"required": ["repository_projection_path"]},
-                {"required": ["repository_projection_sha256"]}
+                {"required": ["repository_projection_sha256"]},
+                {"required": ["business_context_path"]},
+                {"required": ["business_context_sha256"]},
+                {"required": ["architecture_context_path"]},
+                {"required": ["architecture_context_sha256"]},
+                {"required": ["security_context_projections"]}
               ]
             }
           }

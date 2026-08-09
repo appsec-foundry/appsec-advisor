@@ -14,10 +14,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _atomic_io import atomic_write_text
+
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-evidence-bundle.schema.json"
 BUSINESS_CONTEXT_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-component-business-context.schema.json"
 ARCHITECTURE_CONTEXT_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-component-architecture-context.schema.json"
+SECURITY_CONTEXT_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-component-security-context.schema.json"
 REGISTRY_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "stride-repository-registry.schema.json"
 RELATED_REPOS_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "related-repos.schema.yaml"
 
@@ -53,15 +56,29 @@ ARCHITECTURE_CONTEXT_TEXT_FIELDS = {"security_role"}
 
 EVIDENCE_CLASSES = (
     "interfaces",
-    "controls",
-    "actors",
-    "trust_boundaries",
-    "known_threats",
-    "prior_findings",
-    "requirements",
     "cross_repo",
     "recon_signals",
 )
+SECURITY_CONTEXT_SPECS = {
+    "actors.component_context": ("relevant_actors", "actors", "actors-context.json"),
+    "prior_run.component_findings": ("prior_findings", "prior_findings", "prior-findings-context.json"),
+    "requirements.component_context": (
+        "requirements_violations",
+        "requirements",
+        "requirements-context.json",
+    ),
+    "threats.known_threats": ("known_threats", "known_threats", "known-threats-context.json"),
+    "trust_boundaries.component_context": (
+        "trust_boundaries",
+        "trust_boundaries",
+        "trust-boundaries-context.json",
+    ),
+}
+INLINE_SECURITY_CONTEXT_SPECS = {
+    "controls.component_context": ("controls", "controls-context.json"),
+}
+DETACHED_SECURITY_CONTEXT_CLASSES = (*tuple(spec[1] for spec in SECURITY_CONTEXT_SPECS.values()), "controls")
+ALL_EVIDENCE_CLASSES = (*EVIDENCE_CLASSES, *DETACHED_SECURITY_CONTEXT_CLASSES)
 INDEX_TO_CLASS = {
     "prior_findings": "prior_findings",
     "known_threats": "known_threats",
@@ -116,6 +133,17 @@ def _output_artifact(output_dir: Path, value: str) -> Path:
     except ValueError as exc:
         raise BundleError(f"component index escapes output directory: {value!r}") from exc
     return resolved
+
+
+def _component_context_directory(output_dir: Path, component_id: str) -> Path:
+    """Resolve one deterministic dispatch directory without following symlinks."""
+    raw = output_dir / ".dispatch-context" / component_id
+    resolved = _canonical_under(output_dir, f".dispatch-context/{component_id}")
+    if resolved != raw or raw.is_symlink():
+        raise BundleError(f"component dispatch directory is symlinked: {component_id}")
+    if raw.exists() and not raw.is_dir():
+        raise BundleError(f"component dispatch path is not a directory: {component_id}")
+    return raw
 
 
 def _git_output(repo_root: Path, *args: str) -> bytes:
@@ -318,7 +346,7 @@ def _rows(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
     if isinstance(value, dict):
-        for key in ("findings", "entries", "actors", "trust_boundaries", "violations", "items"):
+        for key in ("findings", "threats", "entries", "actors", "trust_boundaries", "violations", "items"):
             if isinstance(value.get(key), list):
                 return value[key]
         return [{key: value[key]} for key in sorted(value)]
@@ -329,6 +357,218 @@ def _bounded_records(source: str, values: list[Any]) -> tuple[list[dict[str, Any
     records = sorted((_record(source, value) for value in values), key=lambda row: _canonical_bytes(row))
     retained = records[:MAX_CLASS_VALUES]
     return retained, {"original": len(records), "value_truncations": sum(row["truncated"] for row in retained)}
+
+
+def _render_security_context(value: dict[str, Any]) -> bytes:
+    previous: tuple[int, int] | None = None
+    for _ in range(10):
+        rendered = _canonical_bytes(value) + b"\n"
+        current = (len(rendered), (len(rendered) + 3) // 4)
+        value["limits"]["serialized_bytes"], value["limits"]["estimated_tokens"] = current
+        if current == previous:
+            return _canonical_bytes(value) + b"\n"
+        previous = current
+    raise BundleError("component security-context size metadata did not converge")
+
+
+def _finish_security_context_projection(
+    *,
+    component_id: str,
+    context_id: str,
+    source: dict[str, Any],
+    record_source: str,
+    rows: list[Any],
+) -> tuple[dict[str, Any], bytes] | None:
+    if not rows:
+        return None
+    records, stats = _bounded_records(record_source, rows)
+    value = {
+        "schema_version": 1,
+        "component_id": component_id,
+        "context_id": context_id,
+        "source": source,
+        "records": records,
+        "limits": {
+            "original_count": stats["original"],
+            "retained_count": len(records),
+            "omitted_count": stats["original"] - len(records),
+            "value_truncations": stats["value_truncations"],
+            "serialized_bytes": 1,
+            "estimated_tokens": 1,
+        },
+    }
+    while True:
+        payload = _render_security_context(value)
+        if len(payload) <= MAX_BUNDLE_BYTES and value["limits"]["estimated_tokens"] <= MAX_ESTIMATED_TOKENS:
+            break
+        if len(records) <= 1:
+            raise BundleError(f"component security-context metadata exceeds {MAX_BUNDLE_BYTES} bytes")
+        records.pop()
+        value["limits"]["retained_count"] = len(records)
+        value["limits"]["omitted_count"] = stats["original"] - len(records)
+        value["limits"]["value_truncations"] = sum(record["truncated"] for record in records)
+    validate_security_context_bytes(
+        payload,
+        expected_component_id=component_id,
+        expected_context_id=context_id,
+    )
+    return value, payload
+
+
+def component_security_context_projection(
+    output_dir: Path,
+    component: dict[str, Any],
+    *,
+    index_name: str,
+    context_id: str,
+) -> tuple[dict[str, Any], bytes] | None:
+    """Project one component index independently from the required evidence bundle."""
+    component_id = component["component_id"]
+    source_value = (component.get("index_paths") or {}).get(index_name)
+    if source_value in (None, "none"):
+        return None
+    source_path = _output_artifact(output_dir, str(source_value))
+    try:
+        source_payload = source_path.read_bytes()
+        source_document = json.loads(source_payload)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BundleError(f"validated component index is unreadable: {source_value}: {exc}") from exc
+    rows = _rows(source_document)
+    relative_source = source_path.relative_to(output_dir.resolve()).as_posix()
+    return _finish_security_context_projection(
+        component_id=component_id,
+        context_id=context_id,
+        source={
+            "kind": "component_index",
+            "artifact_path": relative_source,
+            "artifact_sha256": hashlib.sha256(source_payload).hexdigest(),
+            "content_sha256": hashlib.sha256(_canonical_bytes(rows)).hexdigest(),
+        },
+        record_source=index_name,
+        rows=rows,
+    )
+
+
+def component_inline_security_context_projection(
+    component: dict[str, Any],
+    *,
+    field_name: str,
+    context_id: str,
+) -> tuple[dict[str, Any], bytes] | None:
+    """Project one component manifest field independently from the evidence bundle."""
+    rows = _rows(component.get(field_name))
+    return _finish_security_context_projection(
+        component_id=component["component_id"],
+        context_id=context_id,
+        source={
+            "kind": "component_manifest",
+            "manifest_field": field_name,
+            "content_sha256": hashlib.sha256(_canonical_bytes(rows)).hexdigest(),
+        },
+        record_source=field_name,
+        rows=rows,
+    )
+
+
+def validate_security_context_bytes(
+    payload: bytes,
+    *,
+    expected_component_id: str | None = None,
+    expected_context_id: str | None = None,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    if expected_sha256 and hashlib.sha256(payload).hexdigest() != expected_sha256:
+        raise BundleError("component security-context fingerprint does not match the manifest")
+    try:
+        value = json.loads(payload)
+        schema = json.loads(SECURITY_CONTEXT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BundleError(f"component security-context projection/schema is unreadable: {exc}") from exc
+    errors = sorted(_load_validator()(schema).iter_errors(value), key=lambda item: list(item.path))
+    if errors:
+        detail = "; ".join(error.message for error in errors[:5])
+        raise BundleError(f"component security-context projection schema validation failed: {detail}")
+    if expected_component_id and value["component_id"] != expected_component_id:
+        raise BundleError("component security-context component id does not match its dispatch entry")
+    if expected_context_id and value["context_id"] != expected_context_id:
+        raise BundleError("component security-context route does not match its dispatch entry")
+    limits = value["limits"]
+    records = value["records"]
+    if limits["retained_count"] != len(records):
+        raise BundleError("component security-context retained count is stale")
+    if limits["original_count"] != limits["retained_count"] + limits["omitted_count"]:
+        raise BundleError("component security-context omission count is stale")
+    if limits["value_truncations"] != sum(record["truncated"] for record in records):
+        raise BundleError("component security-context truncation count is stale")
+    if limits["serialized_bytes"] != len(payload) or limits["estimated_tokens"] != (len(payload) + 3) // 4:
+        raise BundleError("component security-context size metadata is stale")
+    for record in records:
+        if (
+            not record["truncated"]
+            and record["content_sha256"] != hashlib.sha256(record["value"].encode("utf-8")).hexdigest()
+        ):
+            raise BundleError("component security-context record fingerprint is stale")
+    return value
+
+
+def _bound_component_security_contexts(
+    projections: dict[str, tuple[dict[str, Any], bytes] | None],
+) -> dict[str, tuple[dict[str, Any], bytes] | None]:
+    """Keep independently selectable projections within the former shared budget."""
+    while True:
+        present = {context_id: projection for context_id, projection in projections.items() if projection is not None}
+        total_bytes = sum(len(projection[1]) for projection in present.values())
+        total_tokens = sum(projection[0]["limits"]["estimated_tokens"] for projection in present.values())
+        if total_bytes <= MAX_BUNDLE_BYTES and total_tokens <= MAX_ESTIMATED_TOKENS:
+            return projections
+        candidates = {
+            context_id: projection for context_id, projection in present.items() if len(projection[0]["records"]) > 1
+        }
+        if not candidates:
+            raise BundleError("component security-context projections exceed their aggregate admission budget")
+        context_id, (value, _payload) = max(
+            candidates.items(),
+            key=lambda item: (len(item[1][1]), item[0]),
+        )
+        value["records"].pop()
+        limits = value["limits"]
+        limits["retained_count"] = len(value["records"])
+        limits["omitted_count"] = limits["original_count"] - limits["retained_count"]
+        limits["value_truncations"] = sum(record["truncated"] for record in value["records"])
+        payload = _render_security_context(value)
+        validate_security_context_bytes(
+            payload,
+            expected_component_id=value["component_id"],
+            expected_context_id=context_id,
+        )
+        projections[context_id] = (value, payload)
+
+
+def component_security_context_projections(
+    output_dir: Path,
+    component: dict[str, Any],
+) -> dict[str, tuple[dict[str, Any], bytes] | None]:
+    """Build all split security contexts under their shared admission budget."""
+    projections = {
+        context_id: component_security_context_projection(
+            output_dir,
+            component,
+            index_name=index_name,
+            context_id=context_id,
+        )
+        for context_id, (index_name, _evidence_class, _filename) in SECURITY_CONTEXT_SPECS.items()
+    }
+    projections.update(
+        {
+            context_id: component_inline_security_context_projection(
+                component,
+                field_name=field_name,
+                context_id=context_id,
+            )
+            for context_id, (field_name, _filename) in INLINE_SECURITY_CONTEXT_SPECS.items()
+        }
+    )
+    return _bound_component_security_contexts(projections)
 
 
 def business_context_projection(value: Any, component_id: str) -> dict[str, Any] | None:
@@ -517,6 +757,7 @@ def _normalize_routing_values(component: dict[str, Any], registry: dict[str, Pat
     paths_value = component.get("component_paths") or []
     component_paths = [paths_value] if isinstance(paths_value, str) else [str(value) for value in paths_value]
     repo_root = registry["primary"]
+    skipped_missing: list[str] = []
 
     def normalize(name: str) -> list[str]:
         raw = component.get(name)
@@ -544,7 +785,8 @@ def _normalize_routing_values(component: dict[str, Any], registry: dict[str, Pat
                 raise BundleError(f"{name} for {component_id} must contain literal repository-relative paths")
             resolved = _canonical_under(repo_root, value)
             if not resolved.exists():
-                raise BundleError(f"{name} for {component_id} names a missing repository path: {value!r}")
+                skipped_missing.append(f"{name} for {component_id}: {value!r}")
+                continue
             if not (_owned(component_paths, value) or (resolved.is_dir() and _owned(component_paths, value + "/x"))):
                 raise BundleError(f"{name} for {component_id} is outside the component paths: {value!r}")
             if value in normalized:
@@ -556,6 +798,8 @@ def _normalize_routing_values(component: dict[str, Any], registry: dict[str, Pat
 
     focus_paths = normalize("focus_paths")
     exclude_paths = normalize("exclude_paths")
+    for missing in skipped_missing:
+        print(f"ROUTING_WARN: missing path skipped — {missing}", file=sys.stderr)
     for focus in focus_paths:
         for excluded in exclude_paths:
             if _path_overlaps(focus, excluded):
@@ -869,7 +1113,7 @@ def build_bundle(
     path_original = len(component_paths)
     component_paths = sorted(dict.fromkeys(component_paths))[:32]
 
-    raw: dict[str, list[Any]] = {name: [] for name in EVIDENCE_CLASSES}
+    raw: dict[str, list[Any]] = {name: [] for name in ALL_EVIDENCE_CLASSES}
     raw["interfaces"] = _rows(component.get("interfaces"))
     raw["controls"] = _rows(component.get("controls"))
     for index_name, evidence_class in INDEX_TO_CLASS.items():
@@ -888,7 +1132,7 @@ def build_bundle(
         registry,
     )
     raw["recon_signals"].extend(signal_summaries)
-    for evidence_class in EVIDENCE_CLASSES:
+    for evidence_class in ALL_EVIDENCE_CLASSES:
         protected_paths.update(_referenced_primary_paths(raw[evidence_class]))
     normalized_protected: set[str] = set()
     for relative in protected_paths:
@@ -1210,18 +1454,65 @@ def build_all(
             raise BundleError(f"invalid or duplicate component id: {component_id!r}")
         seen.add(component_id)
         _normalize_routing_values(component, registry)
+        bundle_dir = _component_context_directory(output_dir, component_id)
         business_context = business_context_projection(component.get("business_context"), component_id)
         architecture_context = architecture_context_projection(component.get("architecture_context"), component_id)
+        security_contexts = component_security_context_projections(output_dir, component)
         component.pop("business_context", None)
         component.pop("architecture_context", None)
         bundle, payload = build_bundle(output_dir, component, registry)
-        bundle_dir = output_dir / ".dispatch-context" / component_id
         bundle_dir.mkdir(parents=True, exist_ok=True)
         bundle_path = bundle_dir / "evidence-bundle.json"
-        bundle_path.write_bytes(payload)
+        atomic_write_text(bundle_path, payload.decode("utf-8"))
         component["evidence_bundle_path"] = bundle_path.relative_to(output_dir).as_posix()
         component["evidence_bundle_sha256"] = hashlib.sha256(payload).hexdigest()
         component["evidence_bundle_estimated_tokens"] = bundle["limits"]["estimated_tokens"]
+        component.pop("security_context_projections", None)
+        security_context_rows: list[dict[str, Any]] = []
+        for context_id, (_index_name, _evidence_class, filename) in SECURITY_CONTEXT_SPECS.items():
+            security_context_path = bundle_dir / filename
+            projection = security_contexts[context_id]
+            if projection is None:
+                if security_context_path.exists() or security_context_path.is_symlink():
+                    if not security_context_path.is_file() and not security_context_path.is_symlink():
+                        raise BundleError(
+                            f"component security-context projection path is not a file: {security_context_path}"
+                        )
+                    security_context_path.unlink()
+                continue
+            _, security_context_payload = projection
+            atomic_write_text(security_context_path, security_context_payload.decode("utf-8"))
+            security_context_rows.append(
+                {
+                    "context_id": context_id,
+                    "artifact_path": security_context_path.relative_to(output_dir).as_posix(),
+                    "sha256": hashlib.sha256(security_context_payload).hexdigest(),
+                    "estimated_tokens": (len(security_context_payload) + 3) // 4,
+                }
+            )
+        for context_id, (_field_name, filename) in INLINE_SECURITY_CONTEXT_SPECS.items():
+            security_context_path = bundle_dir / filename
+            projection = security_contexts[context_id]
+            if projection is None:
+                if security_context_path.exists() or security_context_path.is_symlink():
+                    if not security_context_path.is_file() and not security_context_path.is_symlink():
+                        raise BundleError(
+                            f"component security-context projection path is not a file: {security_context_path}"
+                        )
+                    security_context_path.unlink()
+                continue
+            _, security_context_payload = projection
+            atomic_write_text(security_context_path, security_context_payload.decode("utf-8"))
+            security_context_rows.append(
+                {
+                    "context_id": context_id,
+                    "artifact_path": security_context_path.relative_to(output_dir).as_posix(),
+                    "sha256": hashlib.sha256(security_context_payload).hexdigest(),
+                    "estimated_tokens": (len(security_context_payload) + 3) // 4,
+                }
+            )
+        if security_context_rows:
+            component["security_context_projections"] = security_context_rows
         business_path = bundle_dir / "business-context.json"
         for key in (
             "business_context_path",
@@ -1237,7 +1528,7 @@ def build_all(
         else:
             business_payload = _canonical_bytes(business_context) + b"\n"
             validate_business_context_bytes(business_payload, expected_component_id=component_id)
-            business_path.write_bytes(business_payload)
+            atomic_write_text(business_path, business_payload.decode("utf-8"))
             component["business_context_path"] = business_path.relative_to(output_dir).as_posix()
             component["business_context_sha256"] = hashlib.sha256(business_payload).hexdigest()
             component["business_context_estimated_tokens"] = (len(business_payload) + 3) // 4
@@ -1256,7 +1547,7 @@ def build_all(
         else:
             architecture_payload = _canonical_bytes(architecture_context) + b"\n"
             validate_architecture_context_bytes(architecture_payload, expected_component_id=component_id)
-            architecture_path.write_bytes(architecture_payload)
+            atomic_write_text(architecture_path, architecture_payload.decode("utf-8"))
             component["architecture_context_path"] = architecture_path.relative_to(output_dir).as_posix()
             component["architecture_context_sha256"] = hashlib.sha256(architecture_payload).hexdigest()
             component["architecture_context_estimated_tokens"] = (len(architecture_payload) + 3) // 4

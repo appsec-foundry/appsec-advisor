@@ -306,12 +306,30 @@ def test_scope_path_patterns_gate_case_without_shell_path_expansion(tmp_path: Pa
 
 def test_load_signals_reads_canonical_recon_sidecar_shape(tmp_path: Path):
     signal_path = tmp_path / ".recon-signals.json"
+    keys = {
+        "has_public_routes",
+        "has_auth_surface",
+        "has_role_concept",
+        "has_secrets_in_repo",
+        "has_ci_pipeline",
+        "has_external_apis",
+        "has_client_storage",
+        "has_multi_tenancy_signal",
+        "has_open_self_registration",
+    }
+    evidence = {key: {"status": "none", "locations": []} for key in keys}
+    evidence["has_auth_surface"] = {
+        "status": "supporting",
+        "locations": [{"file": "middleware/auth.ts", "line": 12}],
+    }
     signal_path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
-                "signals": {"has_auth_surface": True, "has_role_concept": False},
-                "signal_evidence": {"has_auth_surface": "middleware/auth.ts:12"},
+                "schema_version": 2,
+                "signals": {key: key == "has_auth_surface" for key in keys},
+                "signal_evidence": evidence,
+                "signal_classification": {"has_open_self_registration": "deterministic"},
+                "component_hints": [],
             }
         ),
         encoding="utf-8",
@@ -326,24 +344,65 @@ def test_load_signals_rejects_non_runtime_evidence_for_surface_signals(tmp_path:
     signal_path.write_text(
         json.dumps(
             {
+                "schema_version": 2,
                 "signals": {
+                    "has_public_routes": False,
                     "has_auth_surface": True,
                     "has_role_concept": True,
                     "has_client_storage": True,
                     "has_ci_pipeline": True,
+                    "has_secrets_in_repo": False,
+                    "has_external_apis": False,
+                    "has_multi_tenancy_signal": False,
+                    "has_open_self_registration": False,
                 },
                 "signal_evidence": {
-                    "has_auth_surface": "agents/phases/auth.md:12",
-                    "has_role_concept": "data/cwe-taxonomy.yaml:4",
-                    "has_client_storage": "docs/frontend-guide.md:8",
-                    "has_ci_pipeline": ".github/workflows/tests.yml:1",
+                    "has_public_routes": {"status": "none", "locations": []},
+                    "has_auth_surface": {
+                        "status": "supporting",
+                        "locations": [{"file": "agents/phases/auth.md", "line": 12}],
+                    },
+                    "has_role_concept": {
+                        "status": "supporting",
+                        "locations": [{"file": "data/cwe-taxonomy.yaml", "line": 4}],
+                    },
+                    "has_client_storage": {
+                        "status": "supporting",
+                        "locations": [{"file": "docs/frontend-guide.md", "line": 8}],
+                    },
+                    "has_ci_pipeline": {
+                        "status": "supporting",
+                        "locations": [{"file": ".github/workflows/tests.yml", "line": 1}],
+                    },
+                    "has_secrets_in_repo": {"status": "none", "locations": []},
+                    "has_external_apis": {"status": "none", "locations": []},
+                    "has_multi_tenancy_signal": {"status": "none", "locations": []},
+                    "has_open_self_registration": {"status": "none", "locations": []},
                 },
+                "signal_classification": {"has_open_self_registration": "deterministic"},
+                "component_hints": [],
             }
         ),
         encoding="utf-8",
     )
 
     assert mac._load_signals(str(signal_path)) == {"has_ci_pipeline"}
+
+
+def test_load_signals_rejects_legacy_free_form_recon_evidence(tmp_path: Path):
+    signal_path = tmp_path / ".recon-signals.json"
+    signal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "signals": {"has_auth_surface": True},
+                "signal_evidence": {"has_auth_surface": "middleware/auth.ts:12"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert mac._load_signals(str(signal_path)) is None
 
 
 def test_load_signals_treats_missing_sidecar_as_unknown_scope(tmp_path: Path):

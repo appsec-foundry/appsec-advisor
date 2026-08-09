@@ -4,6 +4,16 @@ version: 1
 # The runtime acceptance test still measures real resident tokens from JSONL
 # with scripts/context_window_report.py.
 surfaces:
+  contributor_instruction_loader:
+    path: CLAUDE.md
+    max_bytes: 256
+  contributor_instructions:
+    # Repository-local Claude development and headless benchmark sessions load
+    # CLAUDE.md, which imports AGENTS.md. Installed plugin sessions started in a
+    # target repository do not select this surface, so it is excluded from the
+    # plugin-selected aggregates but retained as a resident-context ratchet.
+    path: AGENTS.md
+    max_bytes: 18500
   skill_router:
     path: skills/create-threat-model/SKILL.md
     # Includes the cross-path release-gate schedule; keep enough slack for a
@@ -158,5 +168,6 @@ admission:
   plugin_selected_startup_max_tokens: 10000
   initial_resident_max_tokens: 30000
   # WP0 has a measurement format, but no reviewed provider/A-B tool-surface
-  # record yet. Keep the aggregate release gate disabled until that exists.
+  # record yet. Keep the aggregate release gate disabled until WP5a stabilizes
+  # the startup cohort and that record exists.
   enforce_startup_totals: false

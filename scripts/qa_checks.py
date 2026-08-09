@@ -3182,6 +3182,54 @@ def _is_suspicious_evidence_line(line: str, ext: str) -> tuple[bool, str]:
     return False, ""
 
 
+_DISABLED_BY_COMMENT_RE = re.compile(
+    r"\b(?:commented[- ]out|commenting out|disabled by (?:a )?comment|uncomment(?:ed|ing)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_verified_disabled_code_comment(threat: dict, line: str) -> bool:
+    """Accept a comment when the verified security signal is disabled code.
+
+    A commented-out guard or control is itself executable-configuration
+    evidence about what the runtime does not enforce.  The exception stays
+    narrow: the finding must describe that mechanism and a verifier must have
+    receipted the exact source line, so an arbitrary prose comment remains
+    suspicious.
+    """
+    if threat.get("evidence_check") != "verified":
+        return False
+    flags = threat.get("evidence_flags")
+    if not isinstance(flags, list):
+        return False
+    source = line.strip()
+
+    def receipt_matches(flag: dict) -> bool:
+        excerpt = flag.get("line_excerpt")
+        if flag.get("verdict") != "verified" or not isinstance(excerpt, str):
+            return False
+        excerpt = excerpt.strip()
+        if not excerpt or not source.startswith(excerpt):
+            return False
+        remainder = source[len(excerpt) :].lstrip()
+        return not remainder or remainder.startswith(("//", "#", "/*", "<!--"))
+
+    exact_receipt = any(isinstance(flag, dict) and receipt_matches(flag) for flag in flags)
+    if not exact_receipt:
+        return False
+    claim = " ".join(
+        str(value)
+        for value in (
+            threat.get("scenario"),
+            threat.get("evidence_summary"),
+            threat.get("controls_in_place"),
+            *(flag.get("reason") for flag in flags if isinstance(flag, dict)),
+        )
+        if value
+    )
+    return bool(_DISABLED_BY_COMMENT_RE.search(claim))
+
+
 class _GrepCache:
     """Per-call cache for _replay_absence_grep — file lists + file contents.
 
@@ -3423,7 +3471,9 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
                 )
                 continue
             suspicious, reason = _is_suspicious_evidence_line(lines[line_no - 1], resolved.suffix)
-            if suspicious:
+            if suspicious and not (
+                reason.startswith("comment-only") and _is_verified_disabled_code_comment(t, lines[line_no - 1])
+            ):
                 report.issues.append(f"{tid}: evidence_line_suspicious — {reason} at {ev_file}:{line_no}")
         # M4: re-run absence grep when claim is recorded.
         absent = t.get("controls_absent_evidence")

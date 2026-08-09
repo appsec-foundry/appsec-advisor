@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Completed component analyses now survive repairable schema and walkthrough defects.
 - Requested Threat Dragon and SARIF exports are now always written and listed in the completion summary.
 - Reconnaissance now reserves its final turns for validated output, so large repositories cannot crowd out required security sections.
-- Context-v2 semantic agents now validate outputs before handoff, carry bounded component focus, business impact, security architecture, discovery exclusions, receipted context plans, and only component-cited related-repository roots, recover omitted context headings, and retry STRIDE within fixed limits.
+- Reconnaissance and architecture handoffs now remove unverifiable summary path claims, carry structured signal evidence, and reject stale repository paths before they can reach component analysis.
+- Context-v2 now preserves rebuild configuration, serializes rebuild deliverables as full assessments, gives each STRIDE component receipted context, and rejects resume after authoritative controller aborts.
 - Threat-model assembly now accepts validated trust-boundary inheritance provenance instead of aborting before report rendering.
 
 ### Changed

@@ -49,6 +49,7 @@ Why both PreToolUse (AGENT_SPAWN / SCAN_START) and PostToolUse (SCAN_COMPLETE / 
   PostToolUse SCAN_START which incorrectly appeared *after* SESSION_STOP.
 """
 
+import html
 import json
 import os
 import re
@@ -707,7 +708,7 @@ def _summarise_tool_input(tool: str, inp: dict, max_len: int = 160) -> str:
         return _mask_secrets(_clip(raw, max_len))
     if tool == "Agent":
         subtype = inp.get("subagent_type", "")
-        desc = inp.get("description", "")
+        desc = _plain_log_text(inp.get("description", ""))
         return _mask_secrets(_clip(f"{subtype}: {desc}", max_len))
     if tool == "Grep":
         return _mask_secrets(_clip(str(inp.get("pattern", "")), max_len))
@@ -828,6 +829,19 @@ def _write(level: str, event: str, detail: str, sid: str = "") -> None:
 def _clip(s, n: int = 120) -> str:
     s = str(s).replace("\n", " ").strip()
     return s[:n] + "…" if len(s) > n else s
+
+
+def _plain_log_text(value: object) -> str:
+    """Normalize tool-protocol display text for one-line plaintext logs.
+
+    Claude Code may HTML-encode an Agent description before delivering the
+    hook payload. Event logs are plaintext, so retaining ``&amp;`` corrupts the
+    displayed component name. Decode exactly once, then replace control
+    characters (including encoded newlines) so untrusted descriptions cannot
+    inject additional log records.
+    """
+    decoded = html.unescape(str(value or ""))
+    return "".join(" " if ord(char) < 32 or ord(char) == 127 else char for char in decoded)
 
 
 # Patterns that match secret values in grep output or command results.
@@ -1988,7 +2002,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
 
     inp = data.get("tool_input", {})
     subtype = inp.get("subagent_type", "unknown")
-    desc = inp.get("description", "")
+    desc = _plain_log_text(inp.get("description", ""))
     bg = inp.get("run_in_background", False)
     bg_tag = " [bg]" if bg else "     "
     model = _agent_model(subtype, inp)
@@ -2372,7 +2386,7 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     # --- Agent invocation ---
     if tool == "Agent":
         subtype = inp.get("subagent_type", "unknown")
-        desc = inp.get("description", "")
+        desc = _plain_log_text(inp.get("description", ""))
         bg = inp.get("run_in_background", False)
         bg_tag = " [bg]" if bg else "     "
         model = _agent_model(subtype, inp)

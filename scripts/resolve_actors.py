@@ -35,7 +35,7 @@ from pathlib import Path
 
 import yaml
 from jsonschema import Draft202012Validator
-from validate_intermediate import validate_actor, validate_actors_repo, validate_actors_resolved
+from validate_intermediate import validate_actor, validate_actors_repo, validate_actors_resolved, validate_recon_signals
 
 _DISCOVERY_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "actors-discovered.schema.yaml"
 _ACT_X_RE = re.compile(r"^ACT-X-[0-9]{1,4}$")
@@ -416,7 +416,11 @@ def resolve(
     signals: dict = {}
     if signals_path and os.path.exists(signals_path):
         try:
-            signals = _load_json(signals_path).get("signals", {})
+            signal_document = _load_json(signals_path)
+            valid, errors = validate_recon_signals(signal_document, repo_root=Path(repo_root))
+            if not valid:
+                raise ValueError("; ".join(errors[:3]))
+            signals = signal_document["signals"]
         except Exception as e:
             print(f"[resolve_actors] WARNING: could not load signals: {e}", file=sys.stderr)
 

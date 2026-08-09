@@ -88,6 +88,9 @@ from pathlib import Path
 # or the YAML is missing — preserves pre-M3.6 behaviour for callers
 # without a checkpoint on disk.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cutoff_cause import detect_abort  # noqa: E402
+
 try:
     import phase_budgets  # type: ignore  # noqa: E402
 except Exception:  # pragma: no cover
@@ -680,6 +683,19 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
                     "only after verifying no assessment is running."
                 ),
             )
+
+    # A controller RUN_ABORTED event is an authoritative terminal verdict for
+    # the current run.  A partially written output such as threat-model.yaml
+    # must not turn that verdict into a resumable Stage-2 handoff merely because
+    # the file exists.  detect_abort bounds the event to .scan-start-epoch, so
+    # an older run's append-only log entry cannot block a later run.
+    if detect_abort(output_dir):
+        return (
+            3,
+            "Refusing to resume: the controller stopped at an authoritative "
+            "validation gate (RUN_ABORTED). Start a fresh run after fixing the "
+            "reported cause.",
+        )
 
     checkpoint_path = output_dir / CHECKPOINT_FILE
     if not checkpoint_path.is_file():

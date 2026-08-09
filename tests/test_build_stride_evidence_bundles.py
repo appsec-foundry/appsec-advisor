@@ -246,6 +246,150 @@ def test_bundle_rejects_tampered_architecture_context_receipt(tmp_path):
         bundles.validate_architecture_context_bytes(payload, expected_component_id="backend-api")
 
 
+def test_security_categories_are_independent_receipted_component_projections(tmp_path):
+    repo, output = _repo(tmp_path)
+    context_dir = output / ".dispatch-context" / "backend-api"
+    context_dir.mkdir(parents=True)
+    sources = {
+        "known_threats": ("known-threats.json", [{"id": "KT-1", "status": "open"}]),
+        "prior_findings": ("prior-findings.json", [{"id": "F-017", "status": "open"}]),
+        "relevant_actors": ("actors.json", {"actors": [{"id": "actor-customer"}]}),
+        "trust_boundaries": ("trust-boundaries.json", {"trust_boundaries": [{"id": "tb-1"}]}),
+        "requirements_violations": ("requirements.json", {"violations": [{"id": "REQ-1"}]}),
+    }
+    component = _component(controls=["Session cookie", "Authorization middleware"])
+    for index_name, (filename, document) in sources.items():
+        path = context_dir / filename
+        path.write_text(json.dumps(document), encoding="utf-8")
+        component["index_paths"][index_name] = path.relative_to(output).as_posix()
+
+    manifest = bundles.build_all(output, repo, _manifest(component))
+    built = manifest["components"][0]
+    by_id = {row["context_id"]: row for row in built["security_context_projections"]}
+    assert set(by_id) == {
+        "actors.component_context",
+        "controls.component_context",
+        "prior_run.component_findings",
+        "requirements.component_context",
+        "threats.known_threats",
+        "trust_boundaries.component_context",
+    }
+    for context_id, row in by_id.items():
+        payload = (output / row["artifact_path"]).read_bytes()
+        projection = bundles.validate_security_context_bytes(
+            payload,
+            expected_component_id="backend-api",
+            expected_context_id=context_id,
+            expected_sha256=row["sha256"],
+        )
+        assert projection["records"]
+        assert projection["limits"]["retained_count"] == len(projection["records"])
+        assert projection["limits"]["estimated_tokens"] == row["estimated_tokens"]
+
+    bundle = json.loads((output / built["evidence_bundle_path"]).read_text(encoding="utf-8"))
+    assert set(bundle["evidence"]) == {"interfaces", "cross_repo", "recon_signals"}
+
+
+def test_known_threat_projection_preserves_one_record_per_catalog_threat(tmp_path):
+    repo, output = _repo(tmp_path)
+    context_dir = output / ".dispatch-context" / "backend-api"
+    context_dir.mkdir(parents=True)
+    source = context_dir / "known-threats.json"
+    source.write_text(
+        json.dumps({"threats": [{"id": "KT-1"}, {"id": "KT-2"}], "schema_version": 1}),
+        encoding="utf-8",
+    )
+    component = _component()
+    component["index_paths"]["known_threats"] = source.relative_to(output).as_posix()
+
+    manifest = bundles.build_all(output, repo, _manifest(component))
+    row = manifest["components"][0]["security_context_projections"][0]
+    projection = json.loads((output / row["artifact_path"]).read_text(encoding="utf-8"))
+
+    assert projection["context_id"] == "threats.known_threats"
+    assert projection["limits"]["original_count"] == 2
+    assert {json.loads(record["value"])["id"] for record in projection["records"]} == {"KT-1", "KT-2"}
+
+
+def test_empty_security_category_is_physically_omitted_and_removes_stale_projection(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(output, repo, _manifest(_component(controls=["Session cookie"])))
+    component = manifest["components"][0]
+    assert {row["context_id"] for row in component["security_context_projections"]} == {"controls.component_context"}
+
+    rebuilt = bundles.build_all(output, repo, _manifest(_component(controls=[])))
+    component = rebuilt["components"][0]
+    assert "security_context_projections" not in component
+    assert not (output / ".dispatch-context/backend-api/controls-context.json").exists()
+
+
+def test_bundle_builder_rejects_symlinked_dispatch_directory(tmp_path):
+    repo, output = _repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (output / ".dispatch-context").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(bundles.BundleError, match="path escapes registered repository root"):
+        bundles.build_all(output, repo, _manifest())
+
+    assert list(outside.iterdir()) == []
+
+
+def test_security_context_projection_rejects_tampered_record_fingerprint(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(output, repo, _manifest(_component(controls=["Session cookie"])))
+    row = manifest["components"][0]["security_context_projections"][0]
+    path = output / row["artifact_path"]
+    projection = json.loads(path.read_text(encoding="utf-8"))
+    projection["records"][0]["value"] = "Session token!"
+    payload = bundles._canonical_bytes(projection) + b"\n"
+
+    with pytest.raises(bundles.BundleError, match="record fingerprint is stale"):
+        bundles.validate_security_context_bytes(payload, expected_component_id="backend-api")
+
+
+def test_security_context_schema_binds_route_to_source_kind(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = bundles.build_all(output, repo, _manifest(_component(controls=["Session cookie"])))
+    row = manifest["components"][0]["security_context_projections"][0]
+    projection = json.loads((output / row["artifact_path"]).read_text(encoding="utf-8"))
+    projection["source"] = {
+        "kind": "component_index",
+        "artifact_path": ".controls.json",
+        "artifact_sha256": "0" * 64,
+        "content_sha256": projection["source"]["content_sha256"],
+    }
+
+    with pytest.raises(bundles.BundleError, match="schema validation failed"):
+        bundles.validate_security_context_bytes(bundles._canonical_bytes(projection) + b"\n")
+
+
+def test_split_security_contexts_retain_the_former_aggregate_budget(tmp_path):
+    repo, output = _repo(tmp_path)
+    context_dir = output / ".dispatch-context" / "backend-api"
+    context_dir.mkdir(parents=True)
+    component = _component(controls=[f"control-{index}-" + "x" * 4000 for index in range(32)])
+    for index_name, filename in (
+        ("known_threats", "known-threats.json"),
+        ("prior_findings", "prior-findings.json"),
+        ("relevant_actors", "actors.json"),
+        ("trust_boundaries", "boundaries.json"),
+        ("requirements_violations", "requirements.json"),
+    ):
+        path = context_dir / filename
+        path.write_text(json.dumps([f"{index_name}-{index}-" + "y" * 4000 for index in range(32)]), encoding="utf-8")
+        component["index_paths"][index_name] = path.relative_to(output).as_posix()
+
+    manifest = bundles.build_all(output, repo, _manifest(component))
+    rows = manifest["components"][0]["security_context_projections"]
+    payloads = [(output / row["artifact_path"]).read_bytes() for row in rows]
+    projections = [json.loads(payload) for payload in payloads]
+
+    assert sum(len(payload) for payload in payloads) <= bundles.MAX_BUNDLE_BYTES
+    assert sum(value["limits"]["estimated_tokens"] for value in projections) <= bundles.MAX_ESTIMATED_TOKENS
+    assert sum(value["limits"]["omitted_count"] for value in projections) > 0
+
+
 def test_focus_path_is_normalized_and_changes_bounded_admission(tmp_path):
     repo, output = _repo(tmp_path)
     focused = repo / "src" / "priority.py"
@@ -330,6 +474,18 @@ def test_routing_rejects_empty_unsafe_glob_and_oversized_inputs(tmp_path, field,
     repo, output = _repo(tmp_path)
     with pytest.raises(bundles.BundleError, match=message):
         bundles.build_all(output, repo, _manifest(_component(**{field: value})))
+
+
+def test_routing_warns_and_skips_missing_focus_path(tmp_path, capsys):
+    repo, output = _repo(tmp_path)
+    # focus_paths names a file that does not exist in the repo — should warn, not abort
+    manifest = bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/nonexistent.py"])))
+    captured = capsys.readouterr()
+    assert "ROUTING_WARN" in captured.err
+    assert "nonexistent.py" in captured.err
+    # bundle still built; focus_paths is empty after the skip
+    component = manifest["components"][0]
+    assert component.get("focus_paths", []) == []
 
 
 def test_routing_rejects_path_outside_component_scope(tmp_path):

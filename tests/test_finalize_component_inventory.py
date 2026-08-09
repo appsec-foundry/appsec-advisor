@@ -34,18 +34,30 @@ def _write_components(output_dir: Path, rows: list[dict]) -> None:
     )
 
 
+def _materialize_component_paths(repo: Path, rows: list[dict]) -> None:
+    for row in rows:
+        for pattern in row.get("paths", []):
+            base = pattern.split("*", 1)[0].rstrip("/")
+            target = repo / base
+            if pattern.endswith("/**") or not target.suffix:
+                target.mkdir(parents=True, exist_ok=True)
+                (target / "component.py").write_text("value = 1\n", encoding="utf-8")
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("value = 1\n", encoding="utf-8")
+
+
 def test_finalizer_collapses_duplicates_and_is_idempotent(tmp_path: Path):
     repo = tmp_path / "repo"
     output = tmp_path / "out"
     repo.mkdir()
     output.mkdir()
-    _write_components(
-        output,
-        [
-            _component("api"),
-            _component("api", paths=["src/api/routes/**"], framework="express"),
-        ],
-    )
+    rows = [
+        _component("api"),
+        _component("api", paths=["src/api/routes/**"], framework="express"),
+    ]
+    _materialize_component_paths(repo, rows)
+    _write_components(output, rows)
 
     first, receipt1 = finalizer.finalize(repo, output)
     second, receipt2 = finalizer.finalize(repo, output)
@@ -62,7 +74,9 @@ def test_validate_receipt_rejects_post_boundary_drift(tmp_path: Path):
     output = tmp_path / "out"
     repo.mkdir()
     output.mkdir()
-    _write_components(output, [_component("api")])
+    rows = [_component("api")]
+    _materialize_component_paths(repo, rows)
+    _write_components(output, rows)
     finalizer.finalize(repo, output)
     document = json.loads((output / ".components.json").read_text(encoding="utf-8"))
     document["components"][0]["deployment_zones"] = ["internet"]
@@ -77,7 +91,9 @@ def test_validate_receipt_rejects_false_injected_component_claim(tmp_path: Path)
     output = tmp_path / "out"
     repo.mkdir()
     output.mkdir()
-    _write_components(output, [_component("api")])
+    rows = [_component("api")]
+    _materialize_component_paths(repo, rows)
+    _write_components(output, rows)
     finalizer.finalize(repo, output)
     receipt_path = output / ".component-inventory-finalization.json"
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -93,7 +109,9 @@ def test_manifest_is_read_only_after_finalization(tmp_path: Path, monkeypatch):
     output = tmp_path / "out"
     repo.mkdir()
     output.mkdir()
-    _write_components(output, [_component("api")])
+    rows = [_component("api")]
+    _materialize_component_paths(repo, rows)
+    _write_components(output, rows)
     finalizer.finalize(repo, output)
     before = (output / ".components.json").read_bytes()
 
@@ -106,3 +124,35 @@ def test_manifest_is_read_only_after_finalization(tmp_path: Path, monkeypatch):
     with pytest.raises(ValueError, match="would change after trust-boundary assessment"):
         manifest.build(output, "standard", {}, PLUGIN_ROOT)
     assert (output / ".components.json").read_bytes() == before
+
+
+def test_finalizer_rejects_component_path_that_matches_nothing(tmp_path: Path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    output.mkdir()
+    _write_components(output, [_component("api", paths=["src/invented/**"])])
+    before = (output / ".components.json").read_bytes()
+
+    with pytest.raises(ValueError, match="matches no repository entry"):
+        finalizer.finalize(repo, output)
+
+    assert (output / ".components.json").read_bytes() == before
+    assert not (output / ".component-inventory-finalization.json").exists()
+
+
+def test_validate_receipt_rechecks_paths_against_repository(tmp_path: Path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    output.mkdir()
+    rows = [_component("api")]
+    _materialize_component_paths(repo, rows)
+    _write_components(output, rows)
+    finalizer.finalize(repo, output)
+    source = repo / "src" / "api" / "component.py"
+    source.unlink()
+    (repo / "src" / "api").rmdir()
+
+    with pytest.raises(ValueError, match="matches no repository entry"):
+        finalizer.validate_receipt(output, repo)

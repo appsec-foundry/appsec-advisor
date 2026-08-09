@@ -250,6 +250,111 @@ def test_components_bad_crown_jewel_type_exits_1(tmp_path: Path):
     assert "VALIDATE_FAILED" in result.stderr
 
 
+def test_components_repo_gate_accepts_existing_glob(tmp_path: Path):
+    repo = tmp_path / "repo"
+    (repo / "routes").mkdir(parents=True)
+    (repo / "routes" / "login.ts").write_text("export const login = true\n", encoding="utf-8")
+    frag = tmp_path / ".components.json"
+    payload = _components(with_criteria=False)
+    payload["components"][0]["paths"] = ["routes/**"]
+    frag.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _run(["components", str(frag), "--repo-root", str(repo)])
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_components_repo_gate_rejects_invented_and_escaping_paths(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    frag = tmp_path / ".components.json"
+    payload = _components(with_criteria=False)
+    payload["components"][0]["paths"] = ["routes/invented.ts", "../outside/**"]
+    frag.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _run(["components", str(frag), "--repo-root", str(repo)])
+
+    assert result.returncode == 1
+    assert "matches no repository entry" in result.stderr
+    assert "unsafe or non-canonical" in result.stderr
+
+
+def test_components_repo_gate_rejects_glob_matching_only_escaping_symlink(tmp_path: Path):
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    (outside / "secret.py").write_text("secret = true\n", encoding="utf-8")
+    (repo / "linked").symlink_to(outside, target_is_directory=True)
+    frag = tmp_path / ".components.json"
+    payload = _components(with_criteria=False)
+    payload["components"][0]["paths"] = ["linked/**"]
+    frag.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _run(["components", str(frag), "--repo-root", str(repo)])
+
+    assert result.returncode == 1
+    assert "matches no repository entry" in result.stderr
+
+
+def _data_flows(evidence: list[dict]) -> dict:
+    return {
+        "schema_version": 1,
+        "component_inventory_fingerprint": "sha256:" + "a" * 64,
+        "data_flows": [
+            {
+                "id": "df-001",
+                "from": "external",
+                "to": "backend-api",
+                "label": "Login",
+                "protocol": "HTTPS",
+                "data_classification": "Confidential",
+                "direction": "request-response",
+                "evidence": evidence,
+                "provenance": "architecture",
+            }
+        ],
+    }
+
+
+def test_data_flow_repo_gate_accepts_existing_source_line(tmp_path: Path):
+    repo = tmp_path / "repo"
+    source = repo / "routes" / "login.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text("first\nsecond\n", encoding="utf-8")
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(json.dumps(_data_flows([{"file": "routes/login.ts", "line": 2}])), encoding="utf-8")
+
+    result = _run(["data-flows", str(frag), "--repo-root", str(repo)])
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_data_flow_repo_gate_rejects_missing_file_and_line(tmp_path: Path):
+    repo = tmp_path / "repo"
+    source = repo / "routes" / "login.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text("only\n", encoding="utf-8")
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(
+        json.dumps(
+            _data_flows(
+                [
+                    {"file": "routes/invented.ts", "line": 1},
+                    {"file": "routes/login.ts", "line": 2},
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(["data-flows", str(frag), "--repo-root", str(repo)])
+
+    assert result.returncode == 1
+    assert "missing or unsafe file" in result.stderr
+    assert "line 2 exceeds" in result.stderr
+
+
 # ---------------------------------------------------------------------------
 # In-process tests (drive functions directly for coverage of error branches)
 # ---------------------------------------------------------------------------

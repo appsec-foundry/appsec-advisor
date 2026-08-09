@@ -10,6 +10,28 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import build_trust_boundary_assessment_input as builder  # noqa: E402
 import finalize_component_inventory as finalizer  # noqa: E402
 
+SIGNAL_KEYS = (
+    "has_public_routes",
+    "has_auth_surface",
+    "has_role_concept",
+    "has_secrets_in_repo",
+    "has_ci_pipeline",
+    "has_external_apis",
+    "has_client_storage",
+    "has_multi_tenancy_signal",
+    "has_open_self_registration",
+)
+
+
+def _recon_signals() -> dict:
+    return {
+        "schema_version": 2,
+        "signals": {key: False for key in SIGNAL_KEYS},
+        "signal_evidence": {key: {"status": "none", "locations": []} for key in SIGNAL_KEYS},
+        "signal_classification": {"has_open_self_registration": "deterministic"},
+        "component_hints": [],
+    }
+
 
 def _component(component_id: str, tier: str, zones: list[str]):
     return {
@@ -35,6 +57,10 @@ def _setup(tmp_path: Path) -> tuple[Path, Path, dict]:
         _component("api", "application", ["internet", "dmz"]),
         _component("database", "data", ["prod-write-db"]),
     ]
+    for component in components:
+        component_dir = repo / "src" / component["id"]
+        component_dir.mkdir()
+        (component_dir / "component.ts").write_text("export const component = true\n", encoding="utf-8")
     (output / ".components.json").write_text(
         json.dumps({"schema_version": 1, "components": components}),
         encoding="utf-8",
@@ -127,7 +153,7 @@ def test_optional_validated_sources_are_bounded_and_fingerprinted(tmp_path: Path
             {
                 "schema_version": 1,
                 "curations": {"include_route_ids": ["R-001"]},
-                "additions": [{"entry_point": "Nightly import", "protocol": "Cron", "auth_required": None}],
+                "additions": [{"entry_point": "Nightly import", "protocol": "Cron", "auth_required": False}],
             }
         ),
         encoding="utf-8",
@@ -152,16 +178,21 @@ def test_optional_validated_sources_are_bounded_and_fingerprinted(tmp_path: Path
         ),
         encoding="utf-8",
     )
-    (output / ".recon-signals.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "signals": {"has_auth_surface": True, "has_public_routes": True},
-                "signal_evidence": {"has_auth_surface": "src/flow.ts:1"},
-            }
-        ),
-        encoding="utf-8",
+    recon = _recon_signals()
+    recon["signals"].update({"has_auth_surface": True, "has_public_routes": True})
+    recon["signal_evidence"].update(
+        {
+            "has_auth_surface": {
+                "status": "supporting",
+                "locations": [{"file": "src/flow.ts", "line": 1}],
+            },
+            "has_public_routes": {
+                "status": "supporting",
+                "locations": [{"file": "src/flow.ts", "line": 1}],
+            },
+        }
     )
+    (output / ".recon-signals.json").write_text(json.dumps(recon), encoding="utf-8")
     declarations = repo / ".appsec"
     declarations.mkdir()
     (declarations / "trust-boundaries.yaml").write_text(
@@ -189,7 +220,36 @@ def test_optional_validated_sources_are_bounded_and_fingerprinted(tmp_path: Path
     assert context["attack_surface_additions"][0]["protocol"] == "Cron"
     assert context["cross_repository"]["entries"][0]["name"] == "Identity service"
     assert context["recon_signals"]["values"]["has_auth_surface"] is True
+    assert context["recon_signals"]["evidence"] == [{"file": "src/flow.ts", "line": 1}]
     assert context["boundary_declarations"]["keys"] == ["internet-api"]
+
+
+@pytest.mark.parametrize("location", [{"file": "missing.ts", "line": 1}, {"file": "src/flow.ts", "line": 99}])
+def test_rejects_invalid_recon_repository_evidence(tmp_path: Path, location: dict) -> None:
+    repo, output, receipt = _setup(tmp_path)
+    _write_flows(output, receipt)
+    recon = _recon_signals()
+    recon["signals"]["has_auth_surface"] = True
+    recon["signal_evidence"]["has_auth_surface"] = {"status": "supporting", "locations": [location]}
+    (output / ".recon-signals.json").write_text(json.dumps(recon), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid recon signal evidence"):
+        builder.build(repo, output, "standard")
+
+
+def test_safe_evidence_drops_missing_directories_and_out_of_range_lines(tmp_path: Path) -> None:
+    (tmp_path / "source.ts").write_text("line\n", encoding="utf-8")
+    (tmp_path / "directory").mkdir()
+
+    assert builder._safe_evidence(
+        [
+            {"file": "missing.ts", "line": 1},
+            {"file": "directory", "line": 1},
+            {"file": "source.ts", "line": 2},
+            {"file": "source.ts", "line": 1},
+        ],
+        tmp_path,
+    ) == [{"file": "source.ts", "line": 1}]
 
 
 def test_rejects_malformed_optional_route_inventory(tmp_path: Path):

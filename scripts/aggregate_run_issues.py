@@ -68,9 +68,9 @@ PHASE_DURATION_LIMITS_SECONDS: dict[str, dict[str, int]] = (
     {d: phase_budgets.budgets_for_depth(d) for d in ("quick", "standard", "thorough")}
     if phase_budgets
     else {
-        "quick": {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
-        "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
-        "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
+        "quick": {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 300, "11": 300},
+        "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 480, "11": 600},
+        "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 720, "11": 900},
     }
 )
 
@@ -473,6 +473,14 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
         if "PHASE_START" in ev["event"]:
             pm = _PHASE_RE.search(ev["detail"])
             if pm:
+                # PHASE_GAPS writes a backdated lifecycle marker so phase
+                # coverage remains complete. It is not an observed start and
+                # intentionally has no matching end, so treating it as a
+                # duration sample creates a phantom multi-phase hard-ceiling
+                # error. Keep synthetic repair events in the audit log, but
+                # exclude them from performance telemetry.
+                if "auto-repaired" in pm.group("label").lower():
+                    continue
                 ts_e = _parse_iso(ev["ts"])
                 if ts_e is not None:
                     phase = pm.group("phase")
@@ -1577,6 +1585,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="aggregate_run_issues.py", description=__doc__.splitlines()[0])
     p.add_argument("output_dir", type=Path)
+    p.add_argument("--repo-root", type=Path, help="Repository root used for size-scaled phase budgets")
     p.add_argument("--depth", choices=["quick", "standard", "thorough"], default="standard")
     p.add_argument(
         "--no-recommend", action="store_true", help="Skip the recommend_fixes.py enrichment pass (testing only)."
@@ -1587,7 +1596,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: output_dir not a directory: {args.output_dir}", file=sys.stderr)
         return 1
 
-    data = aggregate(args.output_dir, args.depth)
+    if args.repo_root is not None and not args.repo_root.is_dir():
+        print(f"error: repo_root not a directory: {args.repo_root}", file=sys.stderr)
+        return 1
+
+    data = aggregate(args.output_dir, args.depth, repo_root=args.repo_root)
 
     # Optionally enrich with fix recommendations. The recommender lives in
     # a separate module so this aggregator stays minimal and testable.

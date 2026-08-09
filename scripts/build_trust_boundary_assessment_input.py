@@ -12,9 +12,11 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+import validate_intermediate as intermediate_contract
 import yaml
 from _atomic_io import atomic_write_json
 from finalize_component_inventory import validate_receipt
+from validate_fragment import repository_path_errors
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 INPUT_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-assessment-input.schema.json"
@@ -22,6 +24,7 @@ FLOW_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "data-flows.schema.json"
 ROUTE_SCHEMA = PLUGIN_ROOT / "schemas" / "route-inventory.schema.json"
 ATTACK_SURFACE_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "attack-surface-overrides.schema.json"
 CROSS_REPO_SCHEMA = PLUGIN_ROOT / "schemas" / "cross-repo-register.schema.json"
+RECON_SIGNALS_SCHEMA = PLUGIN_ROOT / "schemas" / "recon-signals.schema.json"
 DECLARATION_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundaries-repo.schema.yaml"
 _SAFE_RELATIVE = re.compile(r"^(?!/)(?![A-Za-z]:[\\/])(?!.*(?:^|/)\.\.(?:/|$))(?!.*://).+$")
 _IDENTITY_WORDS = re.compile(
@@ -60,6 +63,7 @@ def _safe_evidence(values: Any, repo_root: Path, *, limit: int = 12) -> list[dic
     root = repo_root.resolve()
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, int | None]] = set()
+    line_counts: dict[Path, int] = {}
     for value in values if isinstance(values, list) else []:
         if not isinstance(value, dict) or not isinstance(value.get("file"), str):
             continue
@@ -71,9 +75,23 @@ def _safe_evidence(values: Any, repo_root: Path, *, limit: int = 12) -> list[dic
             canonical = candidate.relative_to(root).as_posix()
         except (OSError, ValueError):
             continue
+        try:
+            if not candidate.is_file():
+                continue
+        except OSError:
+            continue
         line = value.get("line")
         if line is not None and (isinstance(line, bool) or not isinstance(line, int) or line < 1):
             continue
+        if line is not None:
+            if candidate not in line_counts:
+                try:
+                    with candidate.open("r", encoding="utf-8", errors="ignore") as handle:
+                        line_counts[candidate] = sum(1 for _ in handle)
+                except OSError:
+                    continue
+            if line > line_counts[candidate]:
+                continue
         key = (canonical, line)
         if key in seen:
             continue
@@ -319,14 +337,14 @@ _RECON_SIGNAL_KEYS = (
 
 def _signal_evidence(document: dict[str, Any], repo_root: Path) -> list[dict[str, Any]]:
     raw = document.get("signal_evidence")
-    candidates = []
+    candidates: list[dict[str, Any]] = []
     for key in _RECON_SIGNAL_KEYS:
         value = raw.get(key) if isinstance(raw, dict) else None
-        if not isinstance(value, str):
+        if not isinstance(value, dict):
             continue
-        match = re.fullmatch(r"(.+?):([1-9][0-9]*)(?:\s.*)?", value.strip())
-        if match:
-            candidates.append({"file": match.group(1), "line": int(match.group(2))})
+        locations = value.get("locations")
+        if isinstance(locations, list):
+            candidates.extend(locations)
     return _safe_evidence(candidates, repo_root)
 
 
@@ -352,6 +370,8 @@ def _source_context(repo_root: Path, output_dir: Path) -> dict[str, Any]:
                 repo_root,
                 limit=1,
             )
+            if not evidence:
+                raise ValueError(f"route {row['route_id']} has invalid repository evidence")
             route_cards.append(
                 {
                     "route_id": row["route_id"],
@@ -393,6 +413,11 @@ def _source_context(repo_root: Path, output_dir: Path) -> dict[str, Any]:
             )
 
     recon = _read_json(output_dir / ".recon-signals.json", {}) or {}
+    if recon:
+        _validate(recon, RECON_SIGNALS_SCHEMA)
+        valid, errors = intermediate_contract.validate_recon_signals(recon, repo_root=repo_root)
+        if not valid:
+            raise ValueError("invalid recon signal evidence: " + "; ".join(errors))
     raw_signals = recon.get("signals") if isinstance(recon, dict) else {}
     values = {
         key: bool(raw_signals.get(key, False)) if isinstance(raw_signals, dict) else False for key in _RECON_SIGNAL_KEYS
@@ -504,13 +529,16 @@ def _preserve_incremental_flow_ids(output_dir: Path, flow_doc: dict[str, Any]) -
 
 def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
     repo_root, output_dir = repo_root.resolve(), output_dir.resolve()
-    receipt = validate_receipt(output_dir)
+    receipt = validate_receipt(output_dir, repo_root)
     component_doc = _read_json(output_dir / ".components.json")
     flow_doc = _read_json(output_dir / ".data-flows.json")
     if not isinstance(flow_doc, dict):
         raise ValueError("missing required Stage-1a artifact .data-flows.json")
     flow_doc = _preserve_incremental_flow_ids(output_dir, flow_doc)
     _semantic_flow_validation(flow_doc, receipt)
+    evidence_errors = repository_path_errors("data-flows", flow_doc, repo_root)
+    if evidence_errors:
+        raise ValueError("invalid data-flow repository evidence: " + "; ".join(evidence_errors))
     components = _component_cards(component_doc["components"])
     flows = []
     for row in flow_doc["data_flows"]:

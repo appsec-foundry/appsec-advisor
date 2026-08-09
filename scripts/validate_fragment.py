@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 
@@ -82,6 +84,139 @@ _FRAGMENT_FILENAMES: dict[str, str] = {
     "ms-top-mitigations": "ms-top-mitigations.json",
 }
 
+_URL_OR_DRIVE_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)")
+
+
+def _safe_repository_relative(value: Any) -> str | None:
+    """Return one canonical POSIX repository path/glob, or ``None``."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        return None
+    if "\\" in value or value.startswith(("/", "./")) or _URL_OR_DRIVE_RE.match(value):
+        return None
+    parts = value.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return None
+    return value
+
+
+def _repository_pattern_matches(repo_root: Path, pattern: str) -> bool:
+    """Return whether a path/glob resolves to at least one contained entry."""
+    patterns = [pattern]
+    if pattern.endswith("**"):
+        patterns.append(pattern + "/*")
+    root = repo_root.resolve()
+    for candidate_pattern in patterns:
+        try:
+            matches = root.glob(candidate_pattern)
+            for index, candidate in enumerate(matches):
+                if index >= 10_000:
+                    break
+                try:
+                    candidate.resolve().relative_to(root)
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                try:
+                    if candidate.exists():
+                        return True
+                except OSError:
+                    continue
+        except (OSError, RuntimeError, ValueError):
+            return False
+    return False
+
+
+def _regular_repository_file(repo_root: Path, relative: str) -> Path | None:
+    canonical = _safe_repository_relative(relative)
+    if canonical is None or any(char in canonical for char in "*?[]{}!"):
+        return None
+    root = repo_root.resolve()
+    try:
+        candidate = (root / canonical).resolve()
+        candidate.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    try:
+        return candidate if candidate.is_file() else None
+    except OSError:
+        return None
+
+
+def repository_evidence_errors(
+    values: Any,
+    repo_root: Path,
+    *,
+    label: str = "evidence",
+    require_line: bool = False,
+) -> list[str]:
+    """Validate contained regular-file evidence and optional one-based lines."""
+    errors: list[str] = []
+    line_counts: dict[Path, int] = {}
+    rows = values if isinstance(values, list) else []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            errors.append(f"{label}[{index}] is not an evidence object")
+            continue
+        relative = row.get("file")
+        candidate = _regular_repository_file(repo_root, relative) if isinstance(relative, str) else None
+        if candidate is None:
+            errors.append(f"{label}[{index}] names a missing or unsafe file: {relative!r}")
+            continue
+        line = row.get("line")
+        if line is None:
+            if require_line:
+                errors.append(f"{label}[{index}] has no line number")
+            continue
+        if isinstance(line, bool) or not isinstance(line, int) or line < 1:
+            errors.append(f"{label}[{index}] has an invalid line number: {line!r}")
+            continue
+        if candidate not in line_counts:
+            try:
+                with candidate.open("r", encoding="utf-8", errors="ignore") as handle:
+                    line_counts[candidate] = sum(1 for _ in handle)
+            except OSError:
+                errors.append(f"{label}[{index}] cannot read {relative!r}")
+                continue
+        line_count = line_counts[candidate]
+        if line > line_count:
+            errors.append(f"{label}[{index}] line {line} exceeds {relative!r} ({line_count} lines)")
+    return errors
+
+
+def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> list[str]:
+    """Validate repository-backed paths that JSON Schema cannot resolve."""
+    try:
+        root = repo_root.resolve()
+    except (OSError, RuntimeError) as exc:
+        return [f"cannot resolve repository root {repo_root}: {exc}"]
+    if not root.is_dir():
+        return [f"repository root is not a directory: {repo_root}"]
+
+    errors: list[str] = []
+    if fragment_type == "components":
+        components = data.get("components", []) if isinstance(data, dict) else []
+        for component in components if isinstance(components, list) else []:
+            if not isinstance(component, dict):
+                continue
+            component_id = str(component.get("id") or "<unknown>")
+            paths = component.get("paths", [])
+            for raw in paths if isinstance(paths, list) else []:
+                canonical = _safe_repository_relative(raw)
+                if canonical is None:
+                    errors.append(f"component {component_id} has an unsafe or non-canonical path/glob: {raw!r}")
+                elif not _repository_pattern_matches(root, canonical):
+                    errors.append(f"component {component_id} path/glob matches no repository entry: {canonical!r}")
+    elif fragment_type == "data-flows":
+        flows = data.get("data_flows", []) if isinstance(data, dict) else []
+        for flow in flows if isinstance(flows, list) else []:
+            if not isinstance(flow, dict):
+                continue
+            flow_id = str(flow.get("id") or "<unknown>")
+            evidence = flow.get("evidence", [])
+            errors.extend(repository_evidence_errors(evidence, root, label=f"data flow {flow_id} evidence"))
+    return errors
+
 
 def _load_schema(fragment_type: str) -> dict:
     schema_name = FRAGMENT_SCHEMAS.get(fragment_type)
@@ -111,7 +246,7 @@ def _load_fragment(path: Path) -> object:
         )
 
 
-def validate(fragment_type: str, path: Path) -> int:
+def validate(fragment_type: str, path: Path, *, repo_root: Path | None = None) -> int:
     schema = _load_schema(fragment_type)
     data = _load_fragment(path)
     try:
@@ -123,6 +258,12 @@ def validate(fragment_type: str, path: Path) -> int:
             file=sys.stderr,
         )
         return 1
+    if repo_root is not None:
+        errors = repository_path_errors(fragment_type, data, repo_root)
+        if errors:
+            for error in errors:
+                print(f"VALIDATE_FAILED: {path.name} ({fragment_type}) — {error}", file=sys.stderr)
+            return 1
     print(f"VALIDATE_OK: {path.name} matches {fragment_type}")
     return 0
 
@@ -323,8 +464,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Fragment type (maps to a schema in schemas/fragments/).",
     )
     legacy.add_argument("path", type=Path, help="Path to the fragment file.")
+    legacy.add_argument(
+        "--repo-root",
+        type=Path,
+        help="Also validate repository-backed component paths or data-flow evidence.",
+    )
     largs = legacy.parse_args(args)
-    return validate(largs.fragment_type, largs.path)
+    return validate(largs.fragment_type, largs.path, repo_root=largs.repo_root)
 
 
 if __name__ == "__main__":

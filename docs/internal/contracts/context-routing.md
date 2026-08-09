@@ -86,6 +86,13 @@ dependencies, deployment constraints, and analytical architecture assumptions.
 The complete architecture model remains forbidden to focused STRIDE agents;
 assumptions express uncertainty and never prove a boundary, control, or threat.
 
+Known threats, prior findings, actors, canonical trust boundaries, requirement
+violations, and existing controls each use a separate component projection.
+Every projection carries its source fingerprint, bounded normalized records,
+truncation counts, size, and exact-byte receipt. The required evidence bundle
+contains source and deterministic evidence but does not duplicate these
+independently selectable categories.
+
 Migration state, paths, schemas, models, commands, projectors, trust labels,
 and limits are not human routing choices. They stay in internal contracts or
 the implementation plan. Effective-plan receipts report what the runtime

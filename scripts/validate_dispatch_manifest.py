@@ -35,13 +35,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_stride_evidence_bundles import (  # noqa: E402
+    INLINE_SECURITY_CONTEXT_SPECS,
+    SECURITY_CONTEXT_SPECS,
     BundleError,
     architecture_context_projection,
     business_context_projection,
+    component_security_context_projections,
     load_repository_registry,
     validate_architecture_context_bytes,
     validate_bundle,
     validate_business_context_bytes,
+    validate_security_context_bytes,
 )
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -175,6 +179,61 @@ def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], li
                     )
                     if bundle["limits"]["estimated_tokens"] != comp["evidence_bundle_estimated_tokens"]:
                         raise BundleError(f"evidence-bundle token estimate is stale for {cid}")
+                    declared_security = comp.get("security_context_projections", [])
+                    declared_by_id = {row.get("context_id"): row for row in declared_security if isinstance(row, dict)}
+                    if len(declared_by_id) != len(declared_security):
+                        raise BundleError(f"component security-context projections are duplicated for {cid}")
+                    expected_security = component_security_context_projections(output_dir, comp)
+                    for context_id, (_index_name, _evidence_class, filename) in SECURITY_CONTEXT_SPECS.items():
+                        expected_projection = expected_security[context_id]
+                        declared_row = declared_by_id.get(context_id)
+                        if expected_projection is None:
+                            if declared_row is not None:
+                                raise BundleError(f"{context_id} projection is present without source rows for {cid}")
+                            continue
+                        if declared_row is None:
+                            raise BundleError(f"{context_id} projection is missing for {cid}")
+                        expected_path = f".dispatch-context/{cid}/{filename}"
+                        if declared_row.get("artifact_path") != expected_path:
+                            raise BundleError(f"{context_id} projection path is invalid for {cid}")
+                        projection_path = _resolve_contained(output_dir, expected_path)
+                        try:
+                            projection_payload = projection_path.read_bytes()
+                        except OSError as exc:
+                            raise BundleError(f"{context_id} projection is unreadable for {cid}: {exc}") from exc
+                        projection = validate_security_context_bytes(
+                            projection_payload,
+                            expected_component_id=cid,
+                            expected_context_id=context_id,
+                            expected_sha256=declared_row.get("sha256"),
+                        )
+                        if projection != expected_projection[0]:
+                            raise BundleError(f"{context_id} projection is stale for {cid}")
+                        if (len(projection_payload) + 3) // 4 != declared_row.get("estimated_tokens"):
+                            raise BundleError(f"{context_id} projection token estimate is stale for {cid}")
+                    for context_id, (_field_name, filename) in INLINE_SECURITY_CONTEXT_SPECS.items():
+                        expected_projection = expected_security[context_id]
+                        declared_row = declared_by_id.get(context_id)
+                        if expected_projection is None:
+                            if declared_row is not None:
+                                raise BundleError(f"{context_id} projection is present without source rows for {cid}")
+                            continue
+                        if declared_row is None:
+                            raise BundleError(f"{context_id} projection is missing for {cid}")
+                        expected_path = f".dispatch-context/{cid}/{filename}"
+                        if declared_row.get("artifact_path") != expected_path:
+                            raise BundleError(f"{context_id} projection path is invalid for {cid}")
+                        projection_payload = _resolve_contained(output_dir, expected_path).read_bytes()
+                        projection = validate_security_context_bytes(
+                            projection_payload,
+                            expected_component_id=cid,
+                            expected_context_id=context_id,
+                            expected_sha256=declared_row.get("sha256"),
+                        )
+                        if projection != expected_projection[0]:
+                            raise BundleError(f"{context_id} projection is stale for {cid}")
+                        if (len(projection_payload) + 3) // 4 != declared_row.get("estimated_tokens"):
+                            raise BundleError(f"{context_id} projection token estimate is stale for {cid}")
                     business_value = comp.get("business_context_path")
                     if business_value is not None:
                         expected_business = f".dispatch-context/{cid}/business-context.json"

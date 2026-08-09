@@ -34,6 +34,12 @@ The migration has two independent but complementary admission gates:
 2. turn admission prevents status, fixed routing, successful validation, and
    mechanical normalization from entering a model loop at all.
 
+These are standing rules, not plan-local decisions. Their durable ownership,
+generation coexistence, admission, semantic-producer, and context-routing
+contracts live in `docs/internal/contracts/orchestration-actions.md` and
+`docs/internal/contracts/context-routing.md`; this plan records migration and
+acceptance status only.
+
 The first release target is a p50 reduction from 928 to at most 700 usage turns
 on the fixed thorough benchmark, together with at least 20% reconstructed cost
 reduction. A later 650-turn target is a stretch goal, not a release gate for the
@@ -784,7 +790,7 @@ two producers active for the same artifact within one invocation.
 
 ## Implementation status
 
-Status as of 2026-08-08:
+Status as of 2026-08-09:
 
 | Work package | Status | Remaining gate |
 |---|---|---|
@@ -794,7 +800,7 @@ Status as of 2026-08-08:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
-| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active STRIDE component plans, component-scoped related-repository roots, and component business and architecture projections repository-tested | Migrate the remaining Stage-1 inputs source by source, then satisfy full reconstruction and bounded-projection exit gates |
+| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active STRIDE component plans, component-scoped related-repository roots, and component business, architecture, known-threat, prior-finding, actor, boundary, requirement, and control projections repository-tested | Migrate the remaining generated-threat, proposed-mitigation, and abuse-case inputs; bound recon, architecture, evidence, and synthesis inputs; then satisfy reconstruction and projection exit gates |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
 
@@ -825,10 +831,11 @@ The first active migration gives every STRIDE analyzer one receipted component
 context plan instead of the full dispatch manifest. It binds the component
 evidence bundle, taxonomy slice, fixed lens IDs, depth and sampling policy,
 turn and estimate values, resolved STRIDE profile, and the optional
-related-repository, business-context, and architecture-context projections to eight active
-effective-plan delivery decisions. An omitted optional projection remains an
-audited omission and is physically absent from the component plan and Agent
-inputs. The full effective plan stays in the controller
+related-repository, business-context, architecture-context, and six
+security-category projections to fourteen active effective-plan delivery
+decisions. An omitted optional projection remains an audited omission and is
+physically absent from the component plan and Agent inputs. The full effective
+plan stays in the controller
 audit path and is revalidated by exact bytes immediately before dispatch; it is
 never an Agent input.
 
@@ -866,17 +873,57 @@ receipted component projection containing exactly their repository IDs and
 validated roots, binds it to the component plan and source-registry hash, and
 rejects extra, missing, unknown, stale, cross-component, or non-STRIDE use. A
 job with no related source evidence receives no root projection. STRIDE wave
-concurrency is capped at 10 so worst-case projection receipts remain within the
-unchanged 64-artifact immediate verification gate.
+concurrency is capped at five so worst-case projection receipts remain within
+the unchanged 64-artifact immediate verification gate.
 
-Prior findings remain an upstream source inside the component-evidence path.
-Known threats, boundaries, actors, requirements, prior findings, controls,
-threats, mitigations, and abuse cases still require
-source-by-source migration. The Stage-1d abuse-case verifier remains legacy.
-The first six of those sources still share the required Evidence Bundle, so
-their current catalog entries describe provenance but do not yet provide
-independent physical omission. Each must move to its own bounded projection and
-component-plan row before the WP5a reconstruction gate can pass.
+Known threats, canonical boundaries, resolved actors, requirement violations,
+prior findings, and existing controls now use separate bounded component
+projections. Each projection carries a source fingerprint, normalized records,
+limits, an exact-byte receipt, and its own component-plan row; an empty source
+is physically absent. The required Evidence Bundle no longer duplicates those
+categories. Generated threats, proposed mitigations, and abuse cases still
+require source-by-source migration. The Stage-1d abuse-case verifier remains
+legacy.
+
+The 2026-08-08 contract review traced these projections through source index,
+producer, schema, manifest, component plan, action, exact-byte receipt,
+consumer reconstruction, permission, cleanup, and resume-version surfaces. It
+also covers shared-budget reconstruction, wrapper-shaped known-threat input,
+empty and truncated projections, stale sources and hashes, duplicate and
+cross-role admission, and symlinked output paths. `context_routing.py validate`,
+`make lint`, `make test`, and `make check` pass. The final test runs each report
+11,783 passed and 95 skipped; `make test` reports 91.68% coverage.
+
+The first post-projection WP5a smoke reached the architecture, boundary, and
+control stages, then stopped before STRIDE bundle construction. Recon had
+invented conventional source names, the architecture producer copied them
+into component paths and data-flow evidence, and the control producer reused
+one as a focus path. The bundle gate correctly rejected the missing path, but
+the defect had already crossed two stage boundaries. Recon now permits source
+claims only from observed tool output; architecture treats recon paths as
+unverified leads; and the producer plus controller gates resolve every
+component glob, data-flow evidence file and line, and recon `Key files`
+reference against the contained target repository. Deterministic component
+reconciliation no longer emits existence-independent fallback paths.
+
+The next preserved-runtime smoke, run
+`88129c09-c950-4121-9580-880765a82eff`, proved that the new post-recon gate
+blocked the defect before architecture, but also exposed a producer/contract
+format gap: the recon role emitted line ranges, bare files, directories, and
+invented conventional names in `Key files`, then skipped its required local
+validator. The producer and template now require one exact observed
+regular-file and single-line reference per entry. The shared deterministic
+normalizer is a fail-safe at both the producer command and controller boundary;
+it can only delete unverifiable entries or write `none detected`, never create
+path evidence. Exact-entry parsing now rejects ranges and trailing annotations
+instead of accidentally accepting their numeric prefix.
+
+The next checkpoint is a fresh opt-in full Juice Shop run at quick depth with
+runtime files preserved. Prefix the invocation with `APPSEC_CONTEXT_V2=1` and
+verify that the pre-flight `Runtime` row says `context-v2` before dispatch. Do
+not combine it with deadline, cost-limit,
+live-phase, resume, or compact-runtime opt-out flags. This live smoke precedes
+the remaining generated-threat, proposed-mitigation, and abuse-case migrations.
 
 The implemented WP0-WP5 scope includes:
 
@@ -1112,6 +1159,41 @@ The exact completed output passes the full QA replay after that correction, and
 both fixes are covered by the repository-wide gates above. They have not been
 re-exercised in another paid live invocation.
 
+A later preserved-runtime rebuild smoke at
+`/tmp/appsec-context-v2-wp5a-smoke-20260808-r4` confirmed that rebuild cleanup
+retained the resolved context-v2 generation. It completed recon, architecture,
+boundary and control analysis, five independently planned STRIDE jobs, bounded
+merge review, evidence verification, deterministic triage, and post-STRIDE
+synthesis. Final YAML construction then exposed a producer/contract mismatch:
+the runtime-only `rebuild` cleanup mode was copied into the public `meta.mode`
+and changelog mode, whose delivery schema permits only `full` and
+`incremental`. The YAML producer now maps every non-incremental run to `full`
+while retaining the explicit rebuild invocation and audit note. Replaying the
+exact captured artifacts produces a schema-valid model with 37 threats, 37
+mitigations, 108 attack-surface entries, and seven components. Recovery
+classification now also treats an in-window controller `RUN_ABORTED` as
+terminal even when a partial YAML exists, so the headless wrapper cannot
+recommend unsupported context-v2 resume.
+
+The aborted smoke reported 274,170 output tokens, 17,771,358 cache-read tokens,
+1,076,818 cache-write tokens, and USD 12.13. The preceding legacy run reported
+USD 24.07, but the context-v2 run never entered Stage 2, so the apparent 49.6%
+reduction is not an end-to-end comparison. Receipts also exposed remaining
+WP5a pressure: recon emitted 521 lines against its 200-line target,
+architecture received the full 247-route inventory, and the evidence and root-
+cause roles still received full merged-threat artifacts. These projections
+must be bounded before the controlled A/B gate.
+
+A subsequent governance audit moved standing orchestration and admission rules
+into the durable contracts, pinned the legacy/context-v2 tool topology, added a
+review ratchet for every prompt surface, registered the repository-local
+Claude contributor instructions as development resident context, and bound the
+duplicated context-v2 schema vocabularies with cross-schema drift tests. The
+startup aggregate remains measurement-only until WP5a produces reviewed stable
+startup records. GitHub `main` currently has neither required status checks nor
+a ruleset, so merge enforcement remains an external rollout gate rather than a
+repository-tested guarantee.
+
 The acceptance matrix, runtime parity, 700-turn target, resident-context
 targets, and cost-reduction gates remain unverified. WP5a, WP6,
 incremental/resume migration, and rollout slices D2, E, and F must not be
@@ -1164,6 +1246,8 @@ Quality and compatibility:
   cleanup, permission, renderer, QA, or architect-review gates;
 - no increase in unsupported, rejected, ambiguous, or duplicate findings;
 - no increase in incomplete exits or semantic repair frequency;
+- a required GitHub status check enforces the repository test gate before
+  context-v2 becomes the default;
 - full/rebuild parity before incremental/resume activation;
 - no unresolved finding, severity, evidence, or component-selection delta; and
 - runtime generation, schema versions, checkpoints, and artifact fingerprints
@@ -1176,6 +1260,8 @@ Context and turns:
 - total plugin-selected startup payload at or below 10k tokens;
 - initial resident context at or below 30k for each focused threat role unless
   a controlled A/B proves a higher immutable runtime floor;
+- `admission.enforce_startup_totals` enabled after reviewed startup-layer
+  measurements stabilize the WP5a cohort;
 - peak threat-role context below 120k with no automatic compaction on the target
   fixture;
 - p50 total usage turns at or below 700 from the 928-turn baseline;

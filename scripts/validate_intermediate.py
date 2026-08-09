@@ -46,6 +46,7 @@ from _shared_sources import (  # noqa: E402
     ARCH_ALL_SOURCES,
     ARCH_COVERAGE_SOURCES,
 )
+from validate_fragment import repository_evidence_errors  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Schema loading
@@ -1333,15 +1334,32 @@ def _validate_schema_only(kind: str, data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
-def validate_recon_signals(data: Any) -> tuple[bool, list[str]]:
+def validate_recon_signals(data: Any, repo_root: Path | None = None) -> tuple[bool, list[str]]:
     ok, errors = _validate_schema_only("recon_signals", data)
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or not ok:
         return ok, errors
     hints = data.get("component_hints")
     if isinstance(hints, list):
         ids = [hint.get("component_id") for hint in hints if isinstance(hint, dict)]
         if len(ids) != len(set(ids)):
             errors.append("component_hints contains duplicate component_id values")
+    signals = data["signals"]
+    evidence = data["signal_evidence"]
+    for signal, active in signals.items():
+        status = evidence[signal]["status"]
+        if active and status != "supporting":
+            errors.append(f"signal_evidence.{signal}.status must be 'supporting' when the signal is true")
+        if not active and status == "supporting":
+            errors.append(f"signal_evidence.{signal}.status cannot be 'supporting' when the signal is false")
+        if repo_root is not None:
+            errors.extend(
+                repository_evidence_errors(
+                    evidence[signal]["locations"],
+                    repo_root,
+                    label=f"signal_evidence.{signal}.locations",
+                    require_line=True,
+                )
+            )
     return len(errors) == 0, errors
 
 
@@ -1404,9 +1422,19 @@ _VALIDATORS = {
 
 
 def main() -> None:
-    if len(sys.argv) != 3 or sys.argv[1] not in _VALIDATORS:
+    repo_root: Path | None = None
+    if len(sys.argv) == 5 and sys.argv[3] == "--repo-root":
+        repo_root = Path(sys.argv[4])
+    elif len(sys.argv) != 3:
         print(
-            f"Usage: {sys.argv[0]} <{'|'.join(_VALIDATORS)}> <path-to-json-file>",
+            f"Usage: {sys.argv[0]} <{'|'.join(_VALIDATORS)}> <path-to-json-file> [--repo-root <path>]",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if sys.argv[1] not in _VALIDATORS or (repo_root is not None and sys.argv[1] != "recon_signals"):
+        print(
+            f"Usage: {sys.argv[0]} <{'|'.join(_VALIDATORS)}> <path-to-json-file> [--repo-root <path>]",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -1439,11 +1467,14 @@ def main() -> None:
 
     # Pass the output_dir (parent of the file) so validators that need
     # sibling files (e.g. .stride-dispatch-manifest.json) can find them.
-    try:
-        is_valid, errors = _VALIDATORS[schema_type](data, path.parent)
-    except TypeError:
-        # Validators that don't accept output_dir (all except threats_merged).
-        is_valid, errors = _VALIDATORS[schema_type](data)
+    if schema_type == "recon_signals":
+        is_valid, errors = validate_recon_signals(data, repo_root=repo_root)
+    else:
+        try:
+            is_valid, errors = _VALIDATORS[schema_type](data, path.parent)
+        except TypeError:
+            # Validators that don't accept output_dir (all except threats_merged).
+            is_valid, errors = _VALIDATORS[schema_type](data)
 
     # Migration + non-fatal advisories — emitted by validators that detect
     # legacy field names (`[migrated]`) or soft structural drift like a

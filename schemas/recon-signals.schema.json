@@ -6,7 +6,7 @@
   "required": ["schema_version", "signals", "signal_evidence", "signal_classification", "component_hints"],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "signals": {
       "type": "object",
       "required": [
@@ -55,7 +55,7 @@
         "has_ci_pipeline": { "$ref": "#/$defs/evidence" },
         "has_external_apis": { "$ref": "#/$defs/evidence" },
         "has_client_storage": { "$ref": "#/$defs/evidence" },
-        "has_multi_tenancy_signal": { "$ref": "#/$defs/evidence" },
+        "has_multi_tenancy_signal": { "$ref": "#/$defs/multi_tenancy_evidence" },
         "has_open_self_registration": { "$ref": "#/$defs/evidence" }
       }
     },
@@ -117,6 +117,75 @@
     }
   },
   "$defs": {
-    "evidence": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "not": {
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+          }
+        },
+        "line": { "type": "integer", "minimum": 1, "maximum": 10000000 }
+      }
+    },
+    "locations": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/location" }
+    },
+    "evidence": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "locations"],
+          "properties": {
+            "status": { "enum": ["supporting", "candidate"] },
+            "locations": { "$ref": "#/$defs/observed_locations" }
+          }
+        },
+        { "$ref": "#/$defs/no_evidence" }
+      ]
+    },
+    "multi_tenancy_evidence": {
+      "oneOf": [
+        { "$ref": "#/$defs/evidence" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "locations"],
+          "properties": {
+            "status": { "const": "isolation-gap" },
+            "locations": { "$ref": "#/$defs/observed_locations" }
+          }
+        }
+      ]
+    },
+    "observed_locations": {
+      "allOf": [
+        { "$ref": "#/$defs/locations" },
+        { "minItems": 1 }
+      ]
+    },
+    "no_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "locations"],
+      "properties": {
+        "status": { "const": "none" },
+        "locations": {
+          "allOf": [
+            { "$ref": "#/$defs/locations" },
+            { "maxItems": 0 }
+          ]
+        }
+      }
+    }
   }
 }

@@ -37,12 +37,12 @@
       "description": "Attack surfaces NOT in route-inventory (out-of-band management, scheduled jobs, cloud events). Each entry follows the threat-model.output.schema.yaml attack_surface[] shape.",
       "items": {
         "type": "object",
-        "required": ["entry_point", "protocol"],
-        "additionalProperties": true,
+        "required": ["entry_point", "protocol", "auth_required"],
+        "additionalProperties": false,
         "properties": {
           "entry_point": {"type": "string", "minLength": 1},
           "protocol": {"type": "string", "minLength": 1, "description": "HTTP / HTTPS / gRPC / SSH / SMTP / MQTT / Cron / FileWatch / etc."},
-          "auth_required": {"type": ["boolean", "null"]},
+          "auth_required": {"type": "boolean"},
           "notes": {"type": ["string", "null"]}
         }
       }

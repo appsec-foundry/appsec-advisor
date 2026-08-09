@@ -1136,7 +1136,8 @@ else
         PLUGIN_DEV_FLAG=""
         [ "${APPSEC_PLUGIN_DEV:-0}" = "1" ] && PLUGIN_DEV_FLAG="--plugin-dev"
         python3 "$PLUGIN_DIR/scripts/aggregate_run_issues.py" \
-            "$RESULT_DIR" --depth "${ASSESSMENT_DEPTH:-standard}" >/dev/null 2>&1 || true
+            "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \
+            --depth "${ASSESSMENT_DEPTH:-standard}" >/dev/null 2>&1 || true
         python3 "$PLUGIN_DIR/scripts/render_completion_summary.py" \
             --issues-only --output-dir "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \
             $PLUGIN_DEV_FLAG 2>/dev/null || true

@@ -9,6 +9,38 @@ import pytest
 import resolve_actors
 import yaml
 
+SIGNAL_KEYS = (
+    "has_public_routes",
+    "has_auth_surface",
+    "has_role_concept",
+    "has_secrets_in_repo",
+    "has_ci_pipeline",
+    "has_external_apis",
+    "has_client_storage",
+    "has_multi_tenancy_signal",
+    "has_open_self_registration",
+)
+
+
+def _write_recon_signals(path: Path, repo: Path, active: set[str]) -> None:
+    source = repo / "signal-source.py"
+    source.write_text("signal = True\n", encoding="utf-8")
+    evidence = {key: {"status": "none", "locations": []} for key in SIGNAL_KEYS}
+    for key in active:
+        evidence[key] = {"status": "supporting", "locations": [{"file": source.name, "line": 1}]}
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "signals": {key: key in active for key in SIGNAL_KEYS},
+                "signal_evidence": evidence,
+                "signal_classification": {"has_open_self_registration": "deterministic"},
+                "component_hints": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Fixtures: a self-contained plugin-root with a controlled default-library.yaml
@@ -438,7 +470,7 @@ def test_resolve_with_signals_activation(plugin_lib: Path, tmp_path: Path):
     repo.mkdir()
     out = tmp_path / "out"
     sig = tmp_path / "signals.json"
-    sig.write_text(json.dumps({"signals": {"has_public_routes": True}}))
+    _write_recon_signals(sig, repo, {"has_public_routes"})
     resolve_actors.resolve(
         plugin_root=str(plugin_lib),
         repo_root=str(repo),
@@ -854,22 +886,14 @@ def test_incident_regression_full_resolver_rejects_all_four_proposals(
     ]
     discovery = tmp_path / "actors-discovered.json"
     discovery.write_text(json.dumps(_discovery_doc(*proposals)))
-    signals = tmp_path / "signals.json"
-    signals.write_text(
-        json.dumps(
-            {
-                "signals": {
-                    "has_public_routes": True,
-                    "has_auth_surface": True,
-                    "has_role_concept": True,
-                    "has_secrets_in_repo": False,
-                    "has_external_apis": True,
-                }
-            }
-        )
-    )
     repo = tmp_path / "repo"
     repo.mkdir()
+    signals = tmp_path / "signals.json"
+    _write_recon_signals(
+        signals,
+        repo,
+        {"has_public_routes", "has_auth_surface", "has_role_concept", "has_external_apis"},
+    )
     out = tmp_path / "out"
 
     resolve_actors.resolve(

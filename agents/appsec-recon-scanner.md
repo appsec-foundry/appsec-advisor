@@ -687,6 +687,20 @@ Run all 7 patterns listed in category 12 separately (they target different secre
 
 Write results to `$OUTPUT_DIR/.recon-summary.md` (create directory if needed).
 
+Repository paths are evidence, not prose. Name a source file in the summary or
+`.recon-signals.json` only when that exact repository-relative path appeared in
+a Step 1–3 Read, Glob, Grep, or deterministic helper result. Never infer a
+conventional filename from a framework, route, dependency, or neighboring
+file. If the observed evidence does not identify a file, state the uncertainty
+without supplying a path. This rule also applies to `Key files` lists and every
+`signal_evidence` value.
+
+Every comma-separated `Key files` entry must be exactly
+`` `repository/relative-file:single-line` ``. Do not emit line ranges, bare
+paths, directories, globs, or annotations in that field. Use `none detected`
+when no observed regular-file line is available; do not convert a path-only
+observation into line 1.
+
 Immediately before composing, read
 `$CLAUDE_PLUGIN_ROOT/agents/shared/recon-output-template.md` once in full. Use
 its exact Markdown structure and fill every placeholder from the Step 1–3
@@ -702,8 +716,8 @@ Particular care required for §7.9 OAuth / OIDC and §7.10 SPA / BFF:
 - §7.9 must be present even when the codebase has NO server-side OAuth — the template's "Frontend integrations" bullet point covers the SPA-only case. Use `RECON_PATTERNS_JSON.categories["9"]` as the baseline for frontend and backend OAuth/OIDC evidence; a non-empty `oauth-oidc-surface` finding means the section must enumerate the integration even when no server callback exists.
 - §7.10 is anti-pattern oriented. Use `RECON_PATTERNS_JSON.categories["10"]` as the baseline; a `spa-without-bff-candidate`, `spa-client-side-role-trust`, or `spa-withcredentials-token-mix` finding must be named explicitly with its `anti_pattern` value in the observations.
 - Cat 29 mobile findings are also anti-pattern oriented. Route them into existing sections, but do not lose the label: `Mobile WebView bridge`, `Mobile TLS trust disabled`, `Mobile token in app storage`, `Mobile cleartext network policy`, `Mobile IPC boundary exposed`, and `Mobile deep-link trust boundary` are architecture signals, not just implementation smells.
-- Immediately after writing `.recon-summary.md`, the **next tool call** must be `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_recon_summary.py" "$OUTPUT_DIR/.recon-summary.md"`. Do not write `.recon-signals.json` or print completion statistics before this exits 0. If it fails, correct the summary and run the same validator again. This check uses the same exact-heading contract as the controller's post-recon gate.
-- Immediately after writing `.recon-signals.json`, run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" recon_signals "$OUTPUT_DIR/.recon-signals.json"`. Do not print completion before it exits 0; correct the sidecar and repeat the command if it fails.
+- Immediately after writing `.recon-summary.md`, the **next tool call** must be `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_recon_summary.py" "$OUTPUT_DIR/.recon-summary.md" --repo-root "$REPO_ROOT" --normalize-key-files`. Do not write `.recon-signals.json` or print completion statistics before this exits 0. If it fails, correct the summary and run the same validator again. The normalizer may only delete unverifiable `Key files` entries and replace an empty list with `none detected`; it never creates a path or line claim. This check uses the same heading and repository-evidence contract as the controller's post-recon gate.
+- Immediately after writing `.recon-signals.json`, run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" recon_signals "$OUTPUT_DIR/.recon-signals.json" --repo-root "$REPO_ROOT"`. Do not print completion before it exits 0; correct the sidecar and repeat the command if it fails. This validates each evidence location against the current repository; do not replace a rejected location with a guessed path or line.
 - LEGACY top-level numbering ("## Section 1 — Technology Stack", "## Section 4 — Authentication and Authorization", "## Section 7 — Security Controls Assessment", "## Section 9 — Component List") is FORBIDDEN — the legacy schema collapsed §7.1-§7.32 into a single bullet block and lost the per-mechanism granularity that Phase 8 IAM coverage depends on. Always emit the template's structured §7.1-§7.32 headings as separate H3 blocks.
 
 ### Signals block — mandatory (Actor-Layer input)
@@ -717,7 +731,7 @@ already gathered; do not issue additional Grep calls.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "signals": {
     "has_public_routes": "<bool> — true when Cat 11 found ≥1 unauthenticated public HTTP route",
     "has_auth_surface": "<bool> — true only when executable application code authenticates users or authorizes their sessions/tokens",
@@ -730,15 +744,15 @@ already gathered; do not issue additional Grep calls.
     "has_open_self_registration": "<bool> — true when registration route exists WITHOUT invite-token, email-whitelist, payment gate, or admin-approval requirement. Deterministic detection via Cat 11 route listing + Cat 1/2 auth pattern cross-check; falls back to llm-fallback classification when ambiguous."
   },
   "signal_evidence": {
-    "has_public_routes": "<file:line or 'none'>",
-    "has_auth_surface": "<file:line or 'none'>",
-    "has_role_concept": "<file:line or 'none'>",
-    "has_secrets_in_repo": "<file:line or 'none'>",
-    "has_ci_pipeline": "<file:line or 'none'>",
-    "has_external_apis": "<file:line or 'none'>",
-    "has_client_storage": "<file:line or 'none'>",
-    "has_multi_tenancy_signal": "<file:line describing BOTH conditions; OR when a tenant_id column exists but NO scoping pattern is found, prefix the note 'ISOLATION-GAP: ' + the tenant_id location — a cross-tenant access risk (TH-20) the STRIDE analyzer must trace even though the boolean stays false; OR 'none'>",
-    "has_open_self_registration": "<file:line or 'none'>"
+    "has_public_routes": {"status": "supporting | candidate | none", "locations": [{"file": "<repository-relative regular file>", "line": "<existing one-based line>"}]},
+    "has_auth_surface": {"status": "supporting | candidate | none", "locations": []},
+    "has_role_concept": {"status": "supporting | candidate | none", "locations": []},
+    "has_secrets_in_repo": {"status": "supporting | candidate | none", "locations": []},
+    "has_ci_pipeline": {"status": "supporting | candidate | none", "locations": []},
+    "has_external_apis": {"status": "supporting | candidate | none", "locations": []},
+    "has_client_storage": {"status": "supporting | candidate | none", "locations": []},
+    "has_multi_tenancy_signal": {"status": "supporting | candidate | isolation-gap | none", "locations": []},
+    "has_open_self_registration": {"status": "supporting | candidate | none", "locations": []}
   },
   "signal_classification": {
     "has_open_self_registration": "deterministic | llm-fallback"
@@ -755,10 +769,11 @@ already gathered; do not issue additional Grep calls.
 ```
 
 **Signal assignment rules:**
+- Each `signal_evidence` value is a closed object. Use `supporting` only when the corresponding boolean is `true`, `candidate` for an observed location that does not establish the signal, and `none` with an empty `locations` array when there is no observed repository location. Every non-`none` status requires one to eight exact locations; never combine multiple locations into a string or attach prose to a path.
 - `has_auth_surface` requires executable application code for user/service authentication or session/token authorization (for example an auth route, middleware, identity-provider integration, or token verification). Do **not** set it from documentation, prompt text, scanner rules, test fixtures, CI credentials, or an outbound API credential alone.
 - `has_role_concept` requires executable application code that evaluates a principal's role or permission to grant/deny access. Do **not** set it from role words in documentation, taxonomies, prompts, examples, or policy templates.
 - `has_client_storage` requires browser or mobile runtime code that stores a credential or token. Do **not** infer it from prose, build tooling, or files merely mentioning `localStorage` / `sessionStorage`.
-- `has_multi_tenancy_signal` requires **both** sub-conditions — this is the most commonly over-triggered signal. When only a tenant_id column exists without scoping middleware, keep the boolean `false` (avoids over-activating multi-tenant actors) BUT record it in `signal_evidence` with the `ISOLATION-GAP:` prefix — a tenant column with no enforced scoping is exactly the broken-isolation case and must stay visible to the STRIDE analyzer as a TH-20 candidate, not silently dropped.
+- `has_multi_tenancy_signal` requires **both** sub-conditions — this is the most commonly over-triggered signal. When only a tenant ID field exists without scoping middleware, keep the boolean `false` and use `status: "isolation-gap"` with the exact tenant-field location. This status is exclusive to `has_multi_tenancy_signal`; it keeps the broken-isolation evidence visible as a TH-20 candidate without activating multi-tenant actors.
 - `has_open_self_registration` classification: deterministic when a registration route is found AND it clearly lacks gating (no invite/payment/approval patterns in the same file/module). Ambiguous cases → `llm-fallback` classification.
 - All other signals are deterministic from existing Grep evidence — do not call LLM inference.
 - Missing evidence for a signal → `false` (conservative). The Actor resolver will activate actors with `signal_status: activate-with-warning` as fallback only for signals that are structurally unknowable (e.g. single-file repos with no package.json).

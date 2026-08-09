@@ -7,6 +7,42 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 BUDGETS = yaml.safe_load((ROOT / "data" / "context-budgets.yaml").read_text(encoding="utf-8"))
 
+# Review ratchet: a larger ceiling must change this test as well as the data
+# file, so budget growth cannot hide inside a prompt edit. Lower ceilings pass
+# without updating the ratchet; new surfaces must be admitted explicitly.
+SURFACE_MAX_BYTES_RATCHET = {
+    "contributor_instruction_loader": 256,
+    "contributor_instructions": 18500,
+    "skill_router": 8500,
+    "thin_full_runtime": 13250,
+    "thin_rerender_runtime": 10000,
+    "thin_stage1_runtime": 11000,
+    "thin_stage1_v2_runtime": 6000,
+    "thin_stage1b_runtime": 4300,
+    "thin_stage1d_runtime": 3400,
+    "thin_stage2_runtime": 3600,
+    "legacy_initial_slice": 230000,
+    "full_stage1_slice": 57500,
+    "full_stage1d_slice": 15000,
+    "stage2_runtime_dispatch_slice": 20000,
+    "stage3_runtime_gate_slice": 25000,
+    "threat_analyst": 155000,
+    "shared_threat_analysis_kernel": 16000,
+    "architecture_analyst_role": 12000,
+    "control_analyst_role": 12000,
+    "post_stride_synthesizer_role": 12000,
+    "stride_analyzer_role": 12000,
+    "stride_lens_llm": 7000,
+    "stride_lens_agentic": 8000,
+    "stride_lens_spa": 3500,
+    "stride_lens_mobile": 2500,
+    "stride_lens_supply_chain": 14000,
+    "phase_group_recon": 40000,
+    "phase_group_architecture": 190000,
+    "phase_group_threats": 160000,
+    "phase_group_finalization": 155000,
+}
+
 
 def test_context_budget_contract_shape():
     assert BUDGETS["version"] == 1
@@ -25,6 +61,17 @@ def test_context_budget_contract_shape():
         "initial_resident_max_tokens": 30000,
         "enforce_startup_totals": False,
     }
+
+
+def test_surface_budget_increases_require_an_explicit_ratchet_change():
+    surfaces = BUDGETS["surfaces"]
+    assert set(surfaces) == set(SURFACE_MAX_BYTES_RATCHET)
+    increased = {
+        name: (spec["max_bytes"], SURFACE_MAX_BYTES_RATCHET[name])
+        for name, spec in surfaces.items()
+        if spec["max_bytes"] > SURFACE_MAX_BYTES_RATCHET[name]
+    }
+    assert not increased, f"surface budget increase requires ratchet review: {increased}"
 
 
 def _slice_bytes(spec: dict) -> int:

@@ -484,6 +484,10 @@ def test_build_meta_records_invocation():
     assert _meta()["invocation"] is None  # absent → None (renderer falls back)
 
 
+def test_build_meta_serializes_rebuild_as_full_assessment():
+    assert _meta(mode="rebuild")["mode"] == "full"
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
@@ -1204,6 +1208,25 @@ def test_changelog_same_run_rebuild_stays_initial(tmp_path):
     )
     assert run2[0]["delta_basis"] == "fingerprint"
     assert run2[0]["added"]["threats"] == ["T-002"]
+
+
+def test_changelog_serializes_runtime_rebuild_as_full_assessment(tmp_path):
+    cfg = {**_CL_CFG, "mode": "rebuild"}
+    changelog = b.build_changelog(
+        cfg,
+        _CL_THREATS,
+        _CL_COMPS,
+        [],
+        None,
+        tmp_path,
+        current_sha="sha-1",
+        run_id="rebuild-run",
+    )
+
+    assert changelog[0]["mode"] == "full"
+    assert changelog[0]["note"] == (
+        "full rebuild — prior threat model and changelog history were discarded on user request (--rebuild)"
+    )
 
 
 def test_changelog_two_runs_same_commit_day_params_accumulate_via_run_id(tmp_path):
@@ -2386,7 +2409,7 @@ def test_build_attack_surface_curations_and_additions():
         },
         "additions": [
             # collision on existing entry_point → merge authoritative fields
-            {"entry_point": "POST /b", "auth_required": True, "notes": "verified guarded", "linked_threats": ["T-001"]},
+            {"entry_point": "POST /b", "auth_required": True, "notes": "verified guarded"},
             # no entry_point → skipped
             {"notes": "orphan"},
             # genuine new entry
@@ -2404,7 +2427,6 @@ def test_build_attack_surface_curations_and_additions():
     # POST /b collision merged authoritative auth + notes
     assert by_ep["POST /b"]["auth_required"] is True
     assert by_ep["POST /b"]["notes"] == "verified guarded"
-    assert by_ep["POST /b"]["linked_threats"] == ["T-001"]
     assert any("exclude" in w for w in warnings)
     assert any("rationale" in w for w in warnings)
 

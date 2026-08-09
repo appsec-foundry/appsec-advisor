@@ -153,6 +153,23 @@ def test_summary_for_agent_includes_subtype(tmp_path, agent_logger):
     assert "Auth Service" in e["input_summary"]
 
 
+def test_summary_for_agent_decodes_html_entities(tmp_path, agent_logger):
+    agent_logger._record_tool_start(
+        {
+            "tool_use_id": "toolu_agent_entity",
+            "tool_name": "Agent",
+            "tool_input": {
+                "subagent_type": "stride-analyzer",
+                "description": "Authentication &amp; JWT Module",
+            },
+        },
+        sid="abc12345",
+    )
+    summary = _read_active(tmp_path)[0]["input_summary"]
+    assert "Authentication & JWT Module" in summary
+    assert "&amp;" not in summary
+
+
 def test_per_call_files_have_distinct_paths(tmp_path, agent_logger):
     al = agent_logger
     for tid in ("toolu_a", "toolu_b", "toolu_c"):

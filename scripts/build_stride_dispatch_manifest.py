@@ -606,18 +606,26 @@ _CI_GLOBS = (
 # drift. See _detect_cicd().
 _CICD_SUPPLYCHAIN_GLOBS = (
     "Dockerfile",
+    "**/Dockerfile",
     "Dockerfile.*",
+    "**/Dockerfile.*",
     "*.Dockerfile",
+    "**/*.Dockerfile",
     "docker-compose*.yml",
     "docker-compose*.yaml",
     "compose*.yml",
     "compose*.yaml",
     ".dockerignore",
     "package.json",
+    "**/package.json",
     "package-lock.json",
+    "**/package-lock.json",
     "npm-shrinkwrap.json",
+    "**/npm-shrinkwrap.json",
     "yarn.lock",
+    "**/yarn.lock",
     "pnpm-lock.yaml",
+    "**/pnpm-lock.yaml",
     ".npmrc",
     ".github/dependabot.yml",
     ".github/dependabot.yaml",
@@ -810,11 +818,11 @@ def _detect_cicd(repo_root: Path) -> dict | None:
     # (evidence file vs component globs) AND `reclassify_components` could not
     # move it anywhere (no other component globs a root Dockerfile/package.json),
     # so the advisory was emitted on every run with no way to self-heal. The
-    # ci-cd-pipeline component IS the supply-chain boundary, so these files
-    # legitimately belong to it — declare them as part of its scope. Patterns
-    # only (existence-independent); a glob matching nothing is a harmless no-op.
+    # ci-cd-pipeline component IS the supply-chain boundary, so files that
+    # actually exist legitimately belong to it. Do not retain speculative
+    # globs: finalized component paths are repository-backed evidence.
     for g in _CICD_SUPPLYCHAIN_GLOBS:
-        if g not in paths:
+        if g not in paths and _glob_files(repo_root, [g]):
             paths.append(g)
     sample = ", ".join(files[:4]) + (", …" if len(files) > 4 else "")
     return {
@@ -850,7 +858,9 @@ def _detect_realtime(repo_root: Path) -> dict | None:
         sites += _grep_paths(repo_root, rel, needle)
     for d in ("lib", "src"):
         sites += _grep_paths(repo_root, d, needle)
-    paths = sorted(set(sites))[:12] or ["server.ts", "app.ts"]
+    paths = sorted(set(sites))[:12]
+    if not paths:
+        return None
     return {
         "id": "realtime-channel",
         "name": "Real-time WebSocket Channel",

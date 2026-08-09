@@ -44,8 +44,56 @@
     "inputs": {
       "type": "array",
       "minItems": 2,
-      "maxItems": 5,
+      "maxItems": 11,
       "allOf": [
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "controls.component_context"}},
+            "required": ["context_id"]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "actors.component_context"}},
+            "required": ["context_id"]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "prior_run.component_findings"}},
+            "required": ["context_id"]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "requirements.component_context"}},
+            "required": ["context_id"]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "threats.known_threats"}},
+            "required": ["context_id"]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "trust_boundaries.component_context"}},
+            "required": ["context_id"]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
         {
           "contains": {
             "properties": {"context_id": {"const": "architecture.component_context"}},
@@ -96,6 +144,12 @@
               "controls.component_evidence",
               "architecture.component_context",
               "business.component_context",
+              "actors.component_context",
+              "controls.component_context",
+              "prior_run.component_findings",
+              "requirements.component_context",
+              "threats.known_threats",
+              "trust_boundaries.component_context",
               "threats.component_taxonomy",
               "threats.related_repositories"
             ]

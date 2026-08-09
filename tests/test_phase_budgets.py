@@ -53,6 +53,13 @@ def test_known_phase_thorough_budget():
     assert pb.threshold_for_phase("11", "thorough") == 1350
 
 
+def test_phase_10b_budget_covers_blocking_ranking_call():
+    pb = _load()
+    # Standard 10b = 480s; the default 1.5 multiplier yields a 12-minute
+    # liveness threshold for the documented long blocking model call.
+    assert pb.threshold_for_phase("10b", "standard") == 720
+
+
 def test_unlisted_phase_uses_unlisted_fallback():
     pb = _load()
     # Phases 4-8 have no entry → unlisted_phase_fallback (180) × 1.5 = 270.
@@ -132,10 +139,8 @@ phase_budgets_seconds:  # top-level
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_table_matches_legacy_constants(monkeypatch):
-    """When data/phase-budgets.yaml is unreachable, the loader must serve the
-    historical hard-coded values so v1 callers (acquire_lock + check_state
-    pre-M3.6) keep behaving identically."""
+def test_fallback_table_matches_shipped_constants(monkeypatch):
+    """When the YAML is unreachable, fallback budgets retain current behavior."""
     pb = _load()
 
     def _missing():
@@ -146,7 +151,7 @@ def test_fallback_table_matches_legacy_constants(monkeypatch):
 
     cfg = pb._load()  # noqa: SLF001
     assert cfg["budgets"]["quick"]["9"] == 180
-    assert cfg["budgets"]["standard"]["10b"] == 120
+    assert cfg["budgets"]["standard"]["10b"] == 480
     assert cfg["defaults"]["heartbeat_stale_seconds"] == 300
 
 

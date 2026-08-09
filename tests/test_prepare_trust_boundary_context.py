@@ -88,7 +88,23 @@ def _assessment(component_fp: str, input_fp: str, *, with_signal: bool = True) -
                 "paths": ["src/**"],
             }
         ],
-        "data_flows": [{"id": "df-001"}] if with_signal else [],
+        "data_flows": (
+            [
+                {
+                    "id": "df-001",
+                    "from": "external",
+                    "to": "web-api",
+                    "label": "Inbound request",
+                    "protocol": "HTTPS",
+                    "data_classification": "Authenticated",
+                    "direction": "request-response",
+                    "evidence": [{"file": "src/auth.py", "line": 1}],
+                    "provenance": "architecture",
+                }
+            ]
+            if with_signal
+            else []
+        ),
         "signals": [signal] if with_signal else [],
         "prior_boundary_identity_hints": [],
         "source_context": {
@@ -172,6 +188,37 @@ def test_promote_candidates_writes_canonical_and_coverage(tmp_path: Path):
     assert canonical["trust_boundaries"][0]["sources"] == ["detected"]
     assert coverage["status"] == "pass"
     assert coverage["signals"][0]["boundary_ids"] == ["tb-1"]
+
+
+def test_assessment_and_coverage_schemas_close_evidence_locations(tmp_path: Path):
+    component_fp = "sha256:" + "1" * 64
+    input_fp = "sha256:" + "2" * 64
+    assessment = _assessment(component_fp, input_fp)
+    assessment_schema = json.loads(prep.ASSESSMENT_INPUT_SCHEMA.read_text(encoding="utf-8"))
+    assessment["signals"][0]["evidence"][0]["annotation"] = "uncontracted"
+
+    assert list(Draft202012Validator(assessment_schema).iter_errors(assessment))
+
+    coverage_schema = json.loads(prep.COVERAGE_SCHEMA.read_text(encoding="utf-8"))
+    coverage = {
+        "schema_version": 1,
+        "component_inventory_fingerprint": component_fp,
+        "assessment_input_fingerprint": input_fp,
+        "status": "pass",
+        "signals": [
+            {
+                "signal_id": "signal-external-ingress-external-to-web-api",
+                "disposition": "same-trust",
+                "candidate_keys": [],
+                "boundary_ids": [],
+                "evidence": [{"file": "src/auth.py", "line": 1, "annotation": "uncontracted"}],
+                "rationale": "The endpoints share one trust domain.",
+            }
+        ],
+        "issues": [],
+    }
+
+    assert list(Draft202012Validator(coverage_schema).iter_errors(coverage))
 
 
 def test_promote_candidates_rejects_unaccounted_signal(tmp_path: Path):

@@ -1,4 +1,4 @@
-# Implementation Plan — clean up SKILL-impl.md for Sonnet orchestration
+# Implementation plan — clean up SKILL-impl.md for Sonnet orchestration
 
 **File:** `appsec-advisor/skills/create-threat-model/SKILL-impl.md`
 **Branch:** `feature/skill-impl-sonnet-cleanup` · **As of:** 2026-06-20

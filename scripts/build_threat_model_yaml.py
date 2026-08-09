@@ -774,6 +774,11 @@ def build_component_selection(sel: dict | None, components: list) -> dict | None
     }
 
 
+def _output_mode(skill_cfg: dict) -> str:
+    """Map runtime modes to the public threat-model assessment mode."""
+    return "incremental" if str(skill_cfg.get("mode") or "full").lower() == "incremental" else "full"
+
+
 def build_meta(
     *,
     skill_cfg: dict,
@@ -795,7 +800,10 @@ def build_meta(
         "schema_version": 1,
         "project": project,
         "generated": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "mode": skill_cfg.get("mode", "full"),
+        # ``rebuild`` is an orchestration/cleanup mode, not a public assessment
+        # mode.  The output contract deliberately exposes only a complete
+        # assessment (``full``) or a delta assessment (``incremental``).
+        "mode": _output_mode(skill_cfg),
         "model": skill_cfg.get("stride_model", "sonnet"),
         "analyst": f"appsec-threat-analyst ({skill_cfg.get('stride_model', 'sonnet')})",
         "plugin_version": plugin_ver,
@@ -1692,9 +1700,6 @@ def build_attack_surface(routes: dict | None, sidecar: dict | None = None) -> tu
                     base["auth_required"] = bool(add["auth_required"])
                 if add.get("notes"):
                     base["notes"] = add["notes"]
-                for k in ("linked_threats", "threats"):
-                    if add.get(k):
-                        base[k] = add[k]
                 merged += 1
                 continue
             out.append(add)
@@ -1915,7 +1920,8 @@ def build_changelog(
     existing: list[dict] = list(existing_changelog or [])
 
     plugin_ver, analysis_ver = _plugin_version(plugin_root)
-    mode = skill_cfg.get("mode", "full")
+    run_mode = str(skill_cfg.get("mode") or "full").lower()
+    mode = _output_mode(skill_cfg)
     cur_depth = skill_cfg.get("assessment_depth", "standard")
     cur_n = len(threats)
 
@@ -2140,6 +2146,8 @@ def build_changelog(
         n_added=len(added_threats),
         n_resolved=len(resolved_block.get("fingerprints") or resolved_block.get("threats") or []),
     )
+    if run_mode == "rebuild":
+        note = "full rebuild — prior threat model and changelog history were discarded on user request (--rebuild)"
 
     new_entry = {
         "version": 1,  # changelog entry SCHEMA version (the run sequence number

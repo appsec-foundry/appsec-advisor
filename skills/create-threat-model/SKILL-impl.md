@@ -1332,6 +1332,7 @@ Plugin
   <if plugin tier ∈ {minor, major}:>Baseline  : <baseline> (tier=<tier>)  ⚠ DRIFT
   <if compat ∉ {equal, None}:>Schema    : analysis_version drift: <compat_label>
   Mode      : <mode_line>
+  Runtime   : <runtime_generation_label>
 
 Decision
   Verdict   : <verdict>
@@ -4257,7 +4258,8 @@ merely observability data.
 ```bash
 # Aggregate + enrich; non-fatal if the aggregator chokes on a malformed log.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/aggregate_run_issues.py" \
-    "$OUTPUT_DIR" --depth "${ASSESSMENT_DEPTH:-standard}" || true
+    "$OUTPUT_DIR" --repo-root "$REPO_ROOT" \
+    --depth "${ASSESSMENT_DEPTH:-standard}" || true
 ```
 
 **Budget warning banner (turn-budget exhaustion / wrap-up).**

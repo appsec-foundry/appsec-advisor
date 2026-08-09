@@ -48,6 +48,8 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
+from validate_intermediate import validate_recon_signals
+
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -300,12 +302,20 @@ def _is_context_dependent_cwe_match(cwe_field: str, raw_pattern: str, rx: re.Pat
 
 def _is_runtime_surface_evidence(evidence: object) -> bool:
     """Reject catalog, documentation, test, and CI evidence for app surfaces."""
-    if not isinstance(evidence, str):
+    if isinstance(evidence, str):
+        normalized = evidence.strip().lower()
+        return bool(normalized) and not normalized.startswith(_NON_RUNTIME_EVIDENCE_PREFIXES)
+    if not isinstance(evidence, dict) or evidence.get("status") != "supporting":
         return False
-    normalized = evidence.strip().lower()
-    if not normalized or normalized in {"none", "n/a", "unknown"}:
+    locations = evidence.get("locations")
+    if not isinstance(locations, list):
         return False
-    return not normalized.startswith(_NON_RUNTIME_EVIDENCE_PREFIXES)
+    return any(
+        isinstance(location, dict)
+        and isinstance(location.get("file"), str)
+        and not location["file"].strip().lower().startswith(_NON_RUNTIME_EVIDENCE_PREFIXES)
+        for location in locations
+    )
 
 
 def match_step(
@@ -609,7 +619,7 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _load_signals(path: str | None) -> set[str] | None:
+def _load_signals(path: str | None, repo_root: Path | None = None) -> set[str] | None:
     if not path:
         return None
     signal_path = Path(path)
@@ -620,6 +630,9 @@ def _load_signals(path: str | None) -> set[str] | None:
         # Accept a direct {signal: bool} map, {signals: [name, ...]}, and the
         # recon sidecar's canonical {signals: {name: bool}} shape.
         if isinstance(doc.get("signals"), dict):
+            valid, _errors = validate_recon_signals(doc, repo_root=repo_root)
+            if not valid:
+                return None
             active = {str(k) for k, v in doc["signals"].items() if v}
             evidence = doc.get("signal_evidence")
             if isinstance(evidence, dict):
@@ -652,7 +665,8 @@ def cmd_match(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     findings_path = Path(args.findings) if args.findings else out_dir / ".threats-merged.json"
     findings = load_findings(findings_path)
-    signals = _load_signals(args.signals)
+    repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else None
+    signals = _load_signals(args.signals, repo_root=repo_root)
 
     profile = None
     profile_dir = None
@@ -661,7 +675,6 @@ def cmd_match(args: argparse.Namespace) -> int:
         p = Path(args.org_profile)
         profile = rac._load_yaml(p)
         profile_dir = p.parent
-    repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else None
     extra_case_files, only_ids = _scan_case_config(out_dir)
     cases, errors = _rac().resolve_abuse_cases(
         profile, profile_dir, PLUGIN_ROOT, repo_root, extra_case_files=extra_case_files

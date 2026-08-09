@@ -276,13 +276,13 @@ class TestResolveAssessmentDepth:
 class TestResolveStrideConcurrency:
     def test_default(self, monkeypatch):
         monkeypatch.delenv("APPSEC_STRIDE_CONCURRENCY", raising=False)
-        assert rc.resolve_stride_concurrency() == {"stride_concurrency": 8}
+        assert rc.resolve_stride_concurrency() == {"stride_concurrency": 5}
 
     def test_override(self, monkeypatch):
-        monkeypatch.setenv("APPSEC_STRIDE_CONCURRENCY", "10")
-        assert rc.resolve_stride_concurrency() == {"stride_concurrency": 10}
+        monkeypatch.setenv("APPSEC_STRIDE_CONCURRENCY", "5")
+        assert rc.resolve_stride_concurrency() == {"stride_concurrency": 5}
 
-    @pytest.mark.parametrize("value", ["0", "11", "16", "33", "many"])
+    @pytest.mark.parametrize("value", ["0", "6", "11", "33", "many"])
     def test_invalid_override_fails_closed(self, monkeypatch, value):
         monkeypatch.setenv("APPSEC_STRIDE_CONCURRENCY", value)
         with pytest.raises(SystemExit, match="APPSEC_STRIDE_CONCURRENCY"):
@@ -1901,8 +1901,8 @@ class TestSummaryActiveOptions:
     def test_parallel_stride_default_on_for_full(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(mode="full", stride_concurrency=8)))
-        assert "up to 8 concurrent" in rows["STRIDE disp"]
+        rows = dict(rc._summary_active_options(_base_cfg(mode="full", stride_concurrency=5)))
+        assert "up to 5 concurrent" in rows["STRIDE disp"]
 
     def test_parallel_stride_optout(self, monkeypatch):
         monkeypatch.setenv("APPSEC_PARALLEL_STRIDE", "0")
@@ -2692,6 +2692,19 @@ class TestRunPlanCLI:
 
 
 class TestRuntimeGeneration:
+    def test_run_plan_exposes_legacy_runtime_before_dispatch(self):
+        cfg = _base_cfg(runtime_generation="legacy", runtime_generation_label="legacy (default)")
+        out = rc.render_run_plan(cfg, None, None, "equal")
+        assert "Runtime   : legacy (default)" in out
+
+    def test_configuration_summary_exposes_context_v2_runtime(self):
+        cfg = _base_cfg(
+            runtime_generation="context-v2",
+            runtime_generation_label="context-v2 (APPSEC_CONTEXT_V2=1)",
+        )
+        out = rc.render_configuration_summary(cfg)
+        assert "context-v2 (APPSEC_CONTEXT_V2=1)" in out
+
     """context-v2 is operator-selected, mode-restricted, and never repo-selected."""
 
     def test_default_is_legacy(self, monkeypatch):
@@ -2766,3 +2779,5 @@ class TestRuntimeGeneration:
         cfg = json.loads((out_dir / ".skill-config.json").read_text(encoding="utf-8"))
         assert cfg["runtime_generation"] == "context-v2"
         assert cfg["runtime_artifact_schema_versions"]["stride-dispatch-manifest"] == 2
+        assert cfg["runtime_artifact_schema_versions"]["stride-component-architecture-context"] == 1
+        assert cfg["runtime_artifact_schema_versions"]["stride-component-security-context"] == 1

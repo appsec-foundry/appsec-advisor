@@ -91,6 +91,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/stride-component-repository-roots.schema.json#v1": "repositories",
     "schemas/stride-component-architecture-context.schema.json#v1": "attributes",
     "schemas/stride-component-business-context.schema.json#v1": "attributes",
+    "schemas/stride-component-security-context.schema.json#v1": "records",
     "schemas/stride-dispatch-manifest.schema.yaml#v2": "components",
     "schemas/stride-repository-registry.schema.json#v1": "repositories",
     "schemas/threats-merged.schema.yaml#v1": "threats",
@@ -291,7 +292,6 @@ _REBUILD_NAMES = {
     ".phase-epoch",
     ".session-agent-map",
     ".assessment-summary-emitted",
-    ".skill-config.json",
     ".recon-patterns.json",
     ".compose-stats.json",
     ".context-resolver.stdout",
@@ -332,7 +332,14 @@ _REBUILD_GLOBS = (
     ".stride-*.json",
     ".merge-*.json",
 )
-_REBUILD_DIRS = (".fragments", ".appsec-cache", ".progress", ".taxonomy-slices")
+_REBUILD_DIRS = (
+    ".fragments",
+    ".appsec-cache",
+    ".progress",
+    ".taxonomy-slices",
+    ".dispatch-context",
+    ".merge-context",
+)
 _CACHE_READ_RE = re.compile(r"\bcache_read=([0-9][0-9,]*)")
 
 _DISPATCH_KEYS = (
@@ -577,10 +584,17 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
             raise ControllerError(f"dispatch model does not match semantic role {role!r}")
         if role == "stride_analyzer" and job.get("analysis_depth") not in {"full", "light"}:
             raise ControllerError("stride analyzer dispatch job requires analysis_depth full or light")
-        if role != "stride_analyzer" and (
-            job.get("repository_projection_path") is not None or job.get("repository_projection_sha256") is not None
-        ):
-            raise ControllerError("component repository projections are valid only for stride analyzer jobs")
+        component_projection_keys = (
+            "repository_projection_path",
+            "repository_projection_sha256",
+            "business_context_path",
+            "business_context_sha256",
+            "architecture_context_path",
+            "architecture_context_sha256",
+            "security_context_projections",
+        )
+        if role != "stride_analyzer" and any(job.get(key) is not None for key in component_projection_keys):
+            raise ControllerError("component projections are valid only for stride analyzer jobs")
         if role == "stride_analyzer":
             expected_taxonomy = (
                 f".taxonomy-slices/{component_id}/threat-category-taxonomy.yaml" if component_id else None
@@ -797,10 +811,11 @@ def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]
 def _emit(action: dict[str, Any]) -> int:
     try:
         action = _validate_action(action)
-        if action.get("instruction_file") == str(THIN_STAGE1_V2_RUNTIME) and action.get("action") in {
-            "dispatch_agent",
-            "dispatch_parallel",
-        }:
+        if (
+            action.get("instruction_file") == str(THIN_STAGE1_V2_RUNTIME)
+            and action.get("action") in {"dispatch_agent", "dispatch_parallel"}
+            and action.get("dispatch_jobs")
+        ):
             try:
                 plan = context_routing.resolve_action(
                     action,
@@ -1074,6 +1089,37 @@ def _checkpoint_needs_render(output_dir: Path) -> bool:
         return False
     fields = dict(token.split("=", 1) for token in line.split() if "=" in token)
     return fields.get("phase") == "10b" and fields.get("status") == "completed" and fields.get("need_render") == "true"
+
+
+def _need_render_recovery_reason(output_dir: Path) -> str:
+    """Describe the supported recovery without crossing runtime generations."""
+    try:
+        persisted = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        persisted = {}
+    if persisted.get("runtime_generation") == CONTEXT_V2_GENERATION:
+        return (
+            "Stage 1 is complete (phase=10b need_render=true), but context-v2 "
+            "does not support --resume. Repeat --rebuild --force to start a "
+            "fresh run and discard the incomplete assessment."
+        )
+    return (
+        "Stage 1 is complete (phase=10b need_render=true). Use --resume to "
+        "render it, or repeat --rebuild --force to discard the completed analysis."
+    )
+
+
+def _boundary_budget_abort_reason(cfg: dict[str, Any]) -> str:
+    if cfg.get("runtime_generation") == CONTEXT_V2_GENERATION:
+        return (
+            "Stage 1b was not dispatched because the Stage-1a turn budget was "
+            "exhausted. Context-v2 retained the assessment input for diagnostics "
+            "but cannot resume it; start a fresh full or rebuild run."
+        )
+    return (
+        "Stage 1b was not dispatched because the Stage-1a turn budget was exhausted; "
+        "the immutable assessment input was preserved for --resume"
+    )
 
 
 def _activate_markers(cfg: dict[str, Any]) -> None:
@@ -1523,11 +1569,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             "schema_version": 1,
             "action": "abort",
             "mode": "rebuild",
-            "reason": (
-                "Stage 1 is complete (phase=10b need_render=true). "
-                "Use --resume to render it, or repeat --rebuild --force "
-                "to discard the completed analysis."
-            ),
+            "reason": _need_render_recovery_reason(output_dir),
             "exit_code": 0,
         }
 
@@ -1806,22 +1848,22 @@ def _validate_evidence_verification(path: Path, threats_path: Path | None = None
     return value
 
 
-def _validate_recon_signals(path: Path) -> dict[str, Any]:
+def _validate_recon_signals(path: Path, repo_root: Path) -> dict[str, Any]:
     """Validate the mandatory bounded actor/architecture signal artifact."""
     try:
         byte_count = path.stat().st_size
     except OSError as exc:
-        raise ControllerError(f"cannot stat recon-signals-v1 artifact {path}: {exc}") from exc
+        raise ControllerError(f"cannot stat recon-signals-v2 artifact {path}: {exc}") from exc
     if byte_count > MAX_RECON_SIGNALS_BYTES:
-        raise ControllerError(f"recon-signals-v1 artifact exceeds the {MAX_RECON_SIGNALS_BYTES}-byte cap")
+        raise ControllerError(f"recon-signals-v2 artifact exceeds the {MAX_RECON_SIGNALS_BYTES}-byte cap")
     value = _validate_json_artifact(
         path,
         PLUGIN_ROOT / "schemas" / "recon-signals.schema.json",
-        contract="recon-signals-v1",
+        contract="recon-signals-v2",
     )
-    valid, semantic_errors = intermediate_contract.validate_recon_signals(value)
+    valid, semantic_errors = intermediate_contract.validate_recon_signals(value, repo_root=repo_root)
     if not valid:
-        raise ControllerError(f"recon-signals-v1 {semantic_errors[0]}")
+        raise ControllerError(f"recon-signals-v2 {semantic_errors[0]}")
     return value
 
 
@@ -1834,10 +1876,10 @@ def _required_recon_headings() -> tuple[str, ...]:
         raise ControllerError(str(exc)) from exc
 
 
-def _validate_recon_summary(path: Path) -> None:
+def _validate_recon_summary(path: Path, repo_root: Path | None = None) -> None:
     """Validate the shared Markdown contract consumed downstream."""
     try:
-        recon_summary_contract.validate_recon_summary(path)
+        recon_summary_contract.validate_recon_summary(path, repo_root=repo_root)
     except recon_summary_contract.ReconSummaryValidationError as exc:
         raise ControllerError(str(exc)) from exc
 
@@ -2043,6 +2085,7 @@ def _write_stride_component_context_plan(
     business_context_sha256: str | None = None,
     repository_projection_path: str | None = None,
     repository_projection_sha256: str | None = None,
+    security_context_projections: list[dict[str, str]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Write one bounded STRIDE admission plan derived from validated inputs."""
     from _atomic_io import atomic_write_json
@@ -2089,6 +2132,14 @@ def _write_stride_component_context_plan(
                 "context_id": "threats.related_repositories",
                 "artifact_path": repository_projection_path,
                 "sha256": repository_projection_sha256,
+            }
+        )
+    for projection in security_context_projections or []:
+        inputs.append(
+            {
+                "context_id": projection["context_id"],
+                "artifact_path": projection["artifact_path"],
+                "sha256": projection["sha256"],
             }
         )
     value = {
@@ -2359,6 +2410,87 @@ def _validate_stride_component_business_context(
     return value
 
 
+def _validate_stride_component_security_contexts(
+    output_root: Path,
+    job: dict[str, Any],
+    artifact_receipts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Validate independently selectable component security-context projections."""
+    from build_stride_evidence_bundles import (
+        INLINE_SECURITY_CONTEXT_SPECS,
+        SECURITY_CONTEXT_SPECS,
+        component_security_context_projections,
+        validate_security_context_bytes,
+    )
+
+    component_id = job.get("component_id")
+    declared = job.get("security_context_projections", [])
+    if not isinstance(declared, list):
+        raise ControllerError("stride analyzer security-context projections must be an array")
+    by_id = {row.get("context_id"): row for row in declared if isinstance(row, dict)}
+    if len(by_id) != len(declared):
+        raise ControllerError("stride analyzer security-context projections contain duplicate routes")
+    manifest = _load_json_object(
+        _resolve_artifact_path(output_root, ".stride-dispatch-manifest.json"),
+        contract="stride-dispatch-manifest-v2",
+    )
+    if not declared and not manifest.get("components"):
+        return []
+    manifest_components = {
+        row.get("component_id"): row for row in manifest.get("components", []) if isinstance(row, dict)
+    }
+    component = manifest_components.get(component_id)
+    if not isinstance(component, dict):
+        raise ControllerError("stride analyzer security-context projection references an unknown component")
+    expected_by_id = {
+        context_id: projection
+        for context_id, projection in component_security_context_projections(output_root, component).items()
+        if projection is not None
+    }
+    expected_ids = set(expected_by_id)
+    if set(by_id) != expected_ids:
+        raise ControllerError("stride analyzer security-context routes do not match current component sources")
+    validated: list[dict[str, Any]] = []
+    for context_id, row in by_id.items():
+        filename = (
+            SECURITY_CONTEXT_SPECS[context_id][2]
+            if context_id in SECURITY_CONTEXT_SPECS
+            else INLINE_SECURITY_CONTEXT_SPECS[context_id][1]
+        )
+        expected_path = f".dispatch-context/{component_id}/{filename}"
+        if row.get("artifact_path") != expected_path or expected_path not in job.get("input_artifacts", []):
+            raise ControllerError("stride analyzer security-context projection path is invalid")
+        path = _resolve_artifact_path(output_root, expected_path)
+        try:
+            payload = path.read_bytes()
+        except OSError as exc:
+            raise ControllerError(f"cannot read component security-context projection: {exc}") from exc
+        try:
+            value = validate_security_context_bytes(
+                payload,
+                expected_component_id=component_id,
+                expected_context_id=context_id,
+                expected_sha256=row.get("sha256"),
+            )
+        except Exception as exc:
+            raise ControllerError(f"component security-context validation failed: {exc}") from exc
+        if value != expected_by_id[context_id][0]:
+            raise ControllerError("component security-context projection is stale for its source index")
+        matching = [receipt for receipt in artifact_receipts if receipt.get("artifact_path") == expected_path]
+        expected_receipt = {
+            "schema_version": 1,
+            "artifact_path": expected_path,
+            "schema_id": "schemas/stride-component-security-context.schema.json#v1",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "record_count": len(value["records"]),
+            "validation_status": "valid",
+        }
+        if len(matching) != 1 or matching[0] != expected_receipt:
+            raise ControllerError("stride analyzer security-context projection receipt is stale")
+        validated.append(value)
+    return validated
+
+
 def _validate_stride_component_context_plan(
     output_root: Path,
     job: dict[str, Any],
@@ -2394,11 +2526,13 @@ def _validate_stride_component_context_plan(
     )
     architecture_context = _validate_stride_component_architecture_context(output_root, job, artifact_receipts)
     business_context = _validate_stride_component_business_context(output_root, job, artifact_receipts)
+    security_contexts = _validate_stride_component_security_contexts(output_root, job, artifact_receipts)
     expected_input_count = (
         2
         + int(repository_projection is not None)
         + int(architecture_context is not None)
         + int(business_context is not None)
+        + len(security_contexts)
     )
     if (
         plan_receipt.get("schema_id") != "schemas/stride-component-context-plan.schema.json#v1"
@@ -2427,6 +2561,7 @@ def _validate_stride_component_context_plan(
         expected_context_ids.add("business.component_context")
     if repository_projection is not None:
         expected_context_ids.add("threats.related_repositories")
+    expected_context_ids.update(value["context_id"] for value in security_contexts)
     if len(inputs) != len(value["inputs"]) or set(inputs) != expected_context_ids:
         raise ControllerError("stride analyzer component context plan has duplicate or missing inputs")
     if inputs["controls.component_evidence"] != {
@@ -2459,6 +2594,10 @@ def _validate_stride_component_context_plan(
         "sha256": job.get("repository_projection_sha256"),
     }:
         raise ControllerError("stride analyzer related repositories drifted from its component context plan")
+    for projection in job.get("security_context_projections", []):
+        context_id = projection["context_id"]
+        if inputs.get(context_id) != projection:
+            raise ControllerError("stride analyzer security context drifted from its component context plan")
     for row in inputs.values():
         artifact = _resolve_artifact_path(output_root, row["artifact_path"])
         try:
@@ -2792,8 +2931,11 @@ def _recon_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
     if not (output_dir / ".recon-summary.md").is_file() or not (output_dir / ".recon-signals.json").is_file():
         return False
     try:
-        _validate_recon_summary(output_dir / ".recon-summary.md")
-        _validate_recon_signals(output_dir / ".recon-signals.json")
+        _validate_recon_summary(output_dir / ".recon-summary.md", Path(str(cfg.get("repo_root") or output_dir)))
+        _validate_recon_signals(
+            output_dir / ".recon-signals.json",
+            Path(str(cfg.get("repo_root") or output_dir)),
+        )
     except ControllerError:
         return False
     incremental = bool(cfg.get("incremental"))
@@ -2955,8 +3097,21 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
         _append_event(output_dir, "CONTEXT_STRUCTURE_REPAIRED", f"inserted={repaired_names}", level="WARN")
         receipts.append(f"context structure normalized: inserted {repaired_names}")
     _validate_threat_modeling_context(context_path)
-    _validate_recon_summary(output_dir / ".recon-summary.md")
-    recon_line_count = len((output_dir / ".recon-summary.md").read_text(encoding="utf-8").splitlines())
+    recon_summary_path = output_dir / ".recon-summary.md"
+    normalized_key_file_lines = recon_summary_contract.normalize_key_file_references(
+        recon_summary_path,
+        Path(repo_root),
+    )
+    if normalized_key_file_lines:
+        _append_event(
+            output_dir,
+            "RECON_KEY_FILES_NORMALIZED",
+            f"lines={normalized_key_file_lines}",
+            level="WARN",
+        )
+        receipts.append(f"recon Key files normalized: lines={normalized_key_file_lines}")
+    _validate_recon_summary(recon_summary_path, Path(repo_root))
+    recon_line_count = len(recon_summary_path.read_text(encoding="utf-8").splitlines())
     if recon_line_count > TARGET_RECON_SUMMARY_LINES:
         _append_event(
             output_dir,
@@ -2964,7 +3119,7 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
             f"lines={recon_line_count} target={TARGET_RECON_SUMMARY_LINES}",
             level="WARN",
         )
-    _validate_recon_signals(output_dir / ".recon-signals.json")
+    _validate_recon_signals(output_dir / ".recon-signals.json", Path(repo_root))
 
     # Phase 2.5b — normalize and validate the config scan. Enrichment only: a
     # malformed sidecar reduces coverage but must not abort the assessment.
@@ -3288,7 +3443,7 @@ def _context_v2_stride_wave_action(
                 "init",
                 str(output_dir),
                 "--concurrency",
-                str(cfg.get("stride_concurrency") or 8),
+                str(cfg.get("stride_concurrency") or 5),
             ],
         )
     claimed = _run_script("stride_dispatch_waves.py", ["claim", str(output_dir)])
@@ -3388,6 +3543,47 @@ def _context_v2_stride_wave_action(
             if business_context_receipt["sha256"] != business_context_sha256:
                 raise ControllerError(f"business-context manifest hash is stale for {component_id}")
             structured.append(business_context_receipt)
+        security_context_projections: list[dict[str, str]] = []
+        declared_security_contexts = component.get("security_context_projections", [])
+        if not isinstance(declared_security_contexts, list):
+            raise ControllerError(f"security-context projections must be an array for {component_id}")
+        seen_security_context_ids: set[str] = set()
+        for declared_projection in declared_security_contexts:
+            if not isinstance(declared_projection, dict):
+                raise ControllerError(f"security-context projection entry is invalid for {component_id}")
+            context_id = declared_projection.get("context_id")
+            artifact_path = declared_projection.get("artifact_path")
+            declared_sha256 = declared_projection.get("sha256")
+            if (
+                not isinstance(context_id, str)
+                or context_id in seen_security_context_ids
+                or not isinstance(artifact_path, str)
+                or not isinstance(declared_sha256, str)
+            ):
+                raise ControllerError(f"security-context projection metadata is invalid for {component_id}")
+            seen_security_context_ids.add(context_id)
+            projection_value = _validate_json_artifact(
+                _resolve_artifact_path(output_dir, artifact_path),
+                PLUGIN_ROOT / "schemas" / "stride-component-security-context.schema.json",
+                contract="stride-component-security-context-v1",
+            )
+            if projection_value.get("component_id") != component_id or projection_value.get("context_id") != context_id:
+                raise ControllerError(f"security-context projection content mismatch for {component_id}")
+            projection_records = projection_value.get("records")
+            if not isinstance(projection_records, list) or not projection_records:
+                raise ControllerError(f"security-context projection is empty for {component_id}")
+            projection_receipt = _validated_json_receipt(
+                output_dir,
+                artifact_path,
+                schema_id="schemas/stride-component-security-context.schema.json#v1",
+                record_count=len(projection_records),
+            )
+            if projection_receipt["sha256"] != declared_sha256:
+                raise ControllerError(f"security-context manifest hash is stale for {component_id}")
+            structured.append(projection_receipt)
+            security_context_projections.append(
+                {"context_id": context_id, "artifact_path": artifact_path, "sha256": projection_receipt["sha256"]}
+            )
         taxonomy_path, taxonomy_sha256 = _context_v2_taxonomy_slice(output_dir, component_id)
         analysis = {
             "depth": "light"
@@ -3434,6 +3630,7 @@ def _context_v2_stride_wave_action(
             repository_projection_sha256=(
                 repository_projection_receipt["sha256"] if repository_projection_receipt is not None else None
             ),
+            security_context_projections=security_context_projections,
         )
         structured.append(context_plan_receipt)
         input_artifacts = [context_plan_path, bundle_path, taxonomy_path]
@@ -3443,6 +3640,7 @@ def _context_v2_stride_wave_action(
             input_artifacts.append(business_context_path)
         if repository_projection_path is not None:
             input_artifacts.append(repository_projection_path)
+        input_artifacts.extend(row["artifact_path"] for row in security_context_projections)
         jobs.append(
             {
                 "schema_version": 1,
@@ -3466,6 +3664,8 @@ def _context_v2_stride_wave_action(
                 "unresolved_decision_keys": [f"stride:{category}" for category in "STRIDE"],
             }
         )
+        if security_context_projections:
+            jobs[-1]["security_context_projections"] = security_context_projections
         if repository_projection_path is not None and repository_projection_receipt is not None:
             jobs[-1]["repository_projection_path"] = repository_projection_path
             jobs[-1]["repository_projection_sha256"] = repository_projection_receipt["sha256"]
@@ -4034,10 +4234,10 @@ def _gate_architecture_stage(
         ("assets", ".assets.json"),
         ("attack-surface-overrides", ".attack-surface-overrides.json"),
     ):
-        _run_script(
-            "validate_fragment.py",
-            [fragment_type, str(output_dir / name)],
-        )
+        validate_args = [fragment_type, str(output_dir / name)]
+        if fragment_type == "data-flows":
+            validate_args.extend(["--repo-root", str(repo_root)])
+        _run_script("validate_fragment.py", validate_args)
     if controller_owned_handoff:
         _run_script(
             "finalize_component_inventory.py",
@@ -4066,10 +4266,7 @@ def _gate_architecture_stage(
             output_dir / ".appsec-checkpoint",
             "phase=7 status=aborted reason=budget-critical-before-boundary\n",
         )
-        raise ControllerError(
-            "Stage 1b was not dispatched because the Stage-1a turn budget was exhausted; "
-            "the immutable assessment input was preserved for --resume"
-        )
+        raise ControllerError(_boundary_budget_abort_reason(cfg))
     if controller_owned_handoff:
         from _atomic_io import atomic_write_text
 
@@ -4858,7 +5055,7 @@ def _split_remainder(values: list[str]) -> list[str]:
     return values[1:] if values and values[0] == "--" else values
 
 
-def _aggregate_issues_on_abort(output_dir: Any, reason: str) -> None:
+def _aggregate_issues_on_abort(output_dir: Any, reason: str, repo_root: Any = None) -> None:
     """Populate .run-issues.json when the controller aborts the run.
 
     aggregate_run_issues.py has exactly one call site: the Completion step in
@@ -4877,9 +5074,18 @@ def _aggregate_issues_on_abort(output_dir: Any, reason: str) -> None:
         path = Path(output_dir)
         if not path.is_dir():
             return
+        if not repo_root:
+            try:
+                config = json.loads((path / ".skill-config.json").read_text(encoding="utf-8"))
+                repo_root = config.get("repo_root")
+            except (OSError, ValueError, AttributeError):
+                repo_root = None
         _append_event(path, "RUN_ABORTED", reason, level="WARN")
+        command = [sys.executable, str(SCRIPT_DIR / "aggregate_run_issues.py"), str(path)]
+        if repo_root and Path(repo_root).is_dir():
+            command.extend(["--repo-root", str(repo_root)])
         subprocess.run(
-            [sys.executable, str(SCRIPT_DIR / "aggregate_run_issues.py"), str(path)],
+            command,
             capture_output=True,
             timeout=120,
             check=False,
@@ -4997,7 +5203,11 @@ def main(argv: list[str] | None = None) -> int:
             "reason": str(exc),
             "exit_code": code,
         }
-        _aggregate_issues_on_abort(getattr(args, "output_dir", None), str(exc))
+        _aggregate_issues_on_abort(
+            getattr(args, "output_dir", None),
+            str(exc),
+            getattr(args, "repo_root", None),
+        )
     return _emit(action)
 
 

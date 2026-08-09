@@ -36,7 +36,7 @@ else
   # Record which runtime/cache directories actually exist BEFORE wiping, so we
   # never claim to have removed a directory that was absent.
   REMOVED_DIRS=""
-  for d in .fragments .appsec-cache .progress .taxonomy-slices; do
+  for d in .fragments .appsec-cache .progress .taxonomy-slices .dispatch-context .merge-context; do
     [ -d "$d" ] && REMOVED_DIRS="$REMOVED_DIRS + $d/"
   done
   # Delete prior model + cached-state files; capture the real removed list so the
@@ -57,7 +57,7 @@ else
        -o -name ".qa-content-repair-plan.json" -o -name ".architect-repair-plan.json" \
        -o -name ".stage-stats.jsonl" -o -name ".direct-write-blocked" \
        -o -name ".phase-epoch" -o -name ".session-agent-map" \
-       -o -name ".assessment-summary-emitted" -o -name ".skill-config.json" \
+       -o -name ".assessment-summary-emitted" \
        -o -name ".recon-patterns.json" -o -name ".compose-stats.json" \
        -o -name ".context-resolver.stdout" -o -name ".ctx-resolver.pid" \
        -o -name ".recon-scanner.pid" -o -name ".recon-scanner.stdout" \
@@ -89,7 +89,7 @@ else
   # stats at all because it was the second --rebuild in a row).
   # .progress/ and .taxonomy-slices/ are runtime-only dirs that must not
   # survive a rebuild.
-  rm -rf .fragments .appsec-cache .progress .taxonomy-slices 2>/dev/null
+  rm -rf .fragments .appsec-cache .progress .taxonomy-slices .dispatch-context .merge-context 2>/dev/null
   if [ "$WIPED_COUNT" -eq 0 ] && [ -z "$REMOVED_DIRS" ]; then
     printf '\nRebuild: clean slate — nothing to discard.\n'
   else

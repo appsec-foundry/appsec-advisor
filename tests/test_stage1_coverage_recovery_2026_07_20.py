@@ -180,7 +180,7 @@ def _blocked_run(tmp_path: Path) -> Path:
     (out / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     # Build the plan through the real constructor so the fingerprint and schema
     # match, then exhaust the retry budget for the stalled component.
-    plan = waves.build_plan(manifest, 8)
+    plan = waves.build_plan(manifest, 5)
     plan["attempts"] = {"ok-svc": 1, "stalled-svc": 2}
     (out / ".dispatch-waves.json").write_text(json.dumps(plan), encoding="utf-8")
     _write_stride(out, "ok-svc", partial=False, skipped_categories=[])

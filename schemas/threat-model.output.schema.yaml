@@ -360,12 +360,12 @@ properties:
     type: array
     items:
       type: object
-      additionalProperties: true
-      required: [entry_point, protocol]
+      additionalProperties: false
+      required: [entry_point, protocol, auth_required]
       properties:
         entry_point:   { type: string, minLength: 1 }
         protocol:      { type: string }
-        auth_required: { type: [boolean, "null"] }
+        auth_required: { type: boolean }
         notes:         { type: [string, "null"] }
         # Display-relevance reasons carried from .route-inventory.json so §5 keeps
         # a finding-free auth/registration/management/suspect route individually

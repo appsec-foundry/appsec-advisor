@@ -203,6 +203,21 @@ def test_dangling_start_uses_next_start_as_fallback_end():
     assert out[0]["end_inferred"] is True
 
 
+def test_synthetic_auto_repaired_start_is_not_a_duration_sample():
+    log = [
+        (
+            1,
+            _line(
+                "2026-08-08T17:54:21Z",
+                "PHASE_START",
+                "[Phase 4/11] ▶ (auto-repaired — inline within phase group)",
+            ),
+        ),
+        (2, _line("2026-08-08T18:48:20Z", "PHASE_START", "[Phase 9/11] Merge")),
+    ]
+    assert agg._extract_phase_durations(log) == []
+
+
 def test_multi_phase_run_pairs_correctly():
     log = [
         (1, _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 1/11] Context")),
@@ -561,7 +576,7 @@ class TestAbortedMidrunPerfSkip:
         ]
         durs = agg._extract_phase_durations(log)
         assert durs and durs[0]["aborted_midrun"] is True
-        # 13m17s wall but abort-inflated → no perf anomaly at quick (limit 60s).
+        # 13m17s wall but abort-inflated → no perf anomaly at quick.
         assert agg._extract_perf_anomalies(durs, "quick") == []
 
     def test_clean_slow_phase_without_abort_still_flagged(self):
@@ -1126,6 +1141,47 @@ def test_append_reconciliation_silent_when_nothing_transient(tmp_path):
         tmp_path, {"mid_run_stops": 0, "transient_build_fatals": 0, "run_completed": True, "unrecovered": 0}
     )
     assert log_path.read_text(encoding="utf-8") == "existing\n"  # untouched
+
+
+def test_main_forwards_explicit_repo_root(tmp_path, monkeypatch):
+    repo_root = tmp_path / "repo"
+    output_dir = tmp_path / "output"
+    repo_root.mkdir()
+    output_dir.mkdir()
+    observed = {}
+
+    def fake_aggregate(path, depth, repo_root=None):
+        observed.update(path=path, depth=depth, repo_root=repo_root)
+        return {
+            "schema_version": 1,
+            "run_status": "clean",
+            "assessment_depth": depth,
+            "generated": "2026-08-08T00:00:00Z",
+            "summary": {
+                "errors": 0,
+                "warnings": 0,
+                "perf_anomalies": 0,
+                "recovery_events": 0,
+                "auto_applicable_fixes": 0,
+            },
+            "issues": [],
+        }
+
+    monkeypatch.setattr(agg, "aggregate", fake_aggregate)
+    assert (
+        agg.main(
+            [
+                str(output_dir),
+                "--repo-root",
+                str(repo_root),
+                "--depth",
+                "quick",
+                "--no-recommend",
+            ]
+        )
+        == 0
+    )
+    assert observed == {"path": output_dir, "depth": "quick", "repo_root": repo_root}
 
 
 # ---------------------------------------------------------------------------

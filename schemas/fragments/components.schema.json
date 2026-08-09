@@ -38,7 +38,7 @@
           "paths": {
             "type": "array",
             "minItems": 1,
-            "description": "Glob patterns mapping the component to its source files. Source of truth for the Phase-9 dirty-set mapping — MUST reflect actual directory layout.",
+            "description": "Canonical repository-relative glob patterns mapping the component to its source files. Every pattern must stay within the target repository and match at least one existing entry when the component inventory is finalized. Source of truth for the Phase-9 dirty-set mapping.",
             "items": {"type": "string", "minLength": 1}
           },
           "tier": {

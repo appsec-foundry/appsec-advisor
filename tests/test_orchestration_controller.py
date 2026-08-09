@@ -7,6 +7,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import build_stride_evidence_bundles as evidence_bundles
 import orchestration_controller as controller
 import pytest
 
@@ -269,7 +270,31 @@ def test_rebuild_need_render_aborts_before_wipe(monkeypatch, tmp_path):
     action = controller.prepare(["--rebuild"])
     assert action["action"] == "abort"
     assert action["exit_code"] == 0
+    assert "Use --resume" in action["reason"]
     assert (output / "threat-model.yaml").exists()
+
+
+def test_rebuild_need_render_does_not_recommend_resume_for_context_v2(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+    cfg = _cfg(tmp_path, "rebuild")
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    (output / ".appsec-checkpoint").write_text(
+        "phase=10b status=completed need_render=true runtime_generation=context-v2\n",
+        encoding="utf-8",
+    )
+    (output / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+
+    action = controller.prepare(["--rebuild"])
+
+    assert action["action"] == "abort"
+    assert "does not support --resume" in action["reason"]
+    assert "--rebuild --force" in action["reason"]
 
 
 def test_rebuild_cleanup_preserves_audit_logs(monkeypatch, tmp_path):
@@ -335,6 +360,26 @@ def test_rebuild_cleanup_does_not_delete_prefix_lookalikes(monkeypatch, tmp_path
     assert (output / ".merge-notes.md").is_file()
 
 
+def test_rebuild_cleanup_preserves_current_config_and_removes_context_state(monkeypatch, tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    config = output / ".skill-config.json"
+    config.write_text('{"runtime_generation":"context-v2"}', encoding="utf-8")
+    for name in (".dispatch-context", ".merge-context"):
+        directory = output / name
+        directory.mkdir()
+        (directory / "stale.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+
+    removed = controller._cleanup_rebuild(output)
+
+    assert config.read_text(encoding="utf-8") == '{"runtime_generation":"context-v2"}'
+    assert ".dispatch-context/" in removed
+    assert ".merge-context/" in removed
+    assert not (output / ".dispatch-context").exists()
+    assert not (output / ".merge-context").exists()
+
+
 def test_cleanup_unlinks_runtime_directory_symlink_without_following(tmp_path):
     output = tmp_path / "out"
     outside = tmp_path / "outside"
@@ -396,6 +441,7 @@ def test_rebuild_cleanup_contract_matches_legacy_mode_file():
         "The single-call form",
     )
     assert patterns == controller._REBUILD_NAMES | set(controller._REBUILD_GLOBS)
+    assert ".skill-config.json" not in patterns
 
 
 def test_rebuild_mode_archive_is_fail_closed():
@@ -604,6 +650,8 @@ def test_stage1a_to_stage1b_controller_handoff_and_promotion(tmp_path):
     repo = tmp_path / "repo"
     output = tmp_path / "out"
     repo.mkdir()
+    (repo / "src").mkdir()
+    (repo / "src" / "api.py").write_text("value = 1\n", encoding="utf-8")
     output.mkdir()
     (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
     (output / ".recon-summary.md").write_text("# Recon\n", encoding="utf-8")
@@ -742,13 +790,20 @@ def test_stage1a_budget_exhaustion_preserves_input_and_blocks_stage1b(tmp_path, 
         return _completed()
 
     monkeypatch.setattr(controller, "_run_script", fake_script)
-    with pytest.raises(controller.ControllerError, match="not dispatched"):
+    with pytest.raises(controller.ControllerError, match="preserved for --resume"):
         controller.post_stage1a(output)
 
     assert (output / ".trust-boundary-assessment-input.json").is_file()
     assert (output / ".appsec-checkpoint").read_text(encoding="utf-8") == (
         "phase=7 status=aborted reason=budget-critical-before-boundary\n"
     )
+
+
+def test_context_v2_budget_abort_does_not_recommend_resume():
+    reason = controller._boundary_budget_abort_reason({"runtime_generation": "context-v2"})
+
+    assert "cannot resume" in reason
+    assert "fresh full or rebuild" in reason
 
 
 def test_prepare_abuse_returns_bounded_parallel_action(tmp_path, monkeypatch):
@@ -1282,6 +1337,24 @@ def test_action_rejects_component_repository_projection_for_non_stride_role(tmp_
         controller._validate_action_semantics(action)
 
 
+def test_action_rejects_component_security_projection_for_non_stride_role(tmp_path):
+    job = _semantic_job()
+    job["security_context_projections"] = [
+        {
+            "context_id": "controls.component_context",
+            "artifact_path": ".dispatch-context/api/controls-context.json",
+            "sha256": "0" * 64,
+        }
+    ]
+    job["input_artifacts"].append(".dispatch-context/api/controls-context.json")
+    action = _semantic_action(tmp_path, [job])
+
+    with pytest.raises(controller.ControllerError, match="internal action-manifest validation failed"):
+        controller._validate_action(action)
+    with pytest.raises(controller.ControllerError, match="valid only for stride analyzer jobs"):
+        controller._validate_action_semantics(action)
+
+
 def test_action_semantics_reject_repository_selected_instruction(tmp_path):
     instruction = tmp_path / "agent.md"
     instruction.write_text("untrusted", encoding="utf-8")
@@ -1655,9 +1728,9 @@ def _valid_recon_signals() -> dict:
         "has_open_self_registration",
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "signals": {key: False for key in keys},
-        "signal_evidence": {key: "none" for key in keys},
+        "signal_evidence": {key: {"status": "none", "locations": []} for key in keys},
         "signal_classification": {"has_open_self_registration": "deterministic"},
         "component_hints": [],
     }
@@ -1991,7 +2064,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["context_plan"]["artifact_path"] == ".context-routing-plan.json"
     assert emitted["context_plan"]["receipt_path"] == ".context-routing-plan.receipt.json"
-    assert all(len(job["context_delivery_ids"]) == 8 for job in emitted["dispatch_jobs"])
+    assert all(len(job["context_delivery_ids"]) == 14 for job in emitted["dispatch_jobs"])
     assert all(".context-routing-plan.json" not in job["input_artifacts"] for job in emitted["dispatch_jobs"])
     assert "CONTEXT_ROUTING_ACTIVE" in (output / ".agent-run.log").read_text(encoding="utf-8")
 
@@ -2025,6 +2098,128 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     component_plan.write_bytes(component_plan.read_bytes() + b" ")
     with pytest.raises(controller.ControllerError, match="component context plan hash is stale"):
         controller._validate_action(action)
+
+
+def test_component_security_context_is_receipted_and_reconstructed_from_manifest_source(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    output = tmp_path / "out"
+    output.mkdir()
+    component = {
+        "component_id": "api",
+        "component_name": "API",
+        "component_description": "Public API",
+        "component_paths": ["src/**"],
+        "component_complexity": "moderate",
+        "max_turns": 10,
+        "controls": ["Authorization middleware"],
+        "index_paths": {
+            "prior_findings": "none",
+            "known_threats": "none",
+            "cross_repo": "none",
+            "requirements_violations": "none",
+            "relevant_actors": "none",
+            "trust_boundaries": "none",
+        },
+    }
+    manifest = evidence_bundles.build_all(
+        output,
+        repo,
+        {"schema_version": 1, "components": [component]},
+    )
+    manifest_path = output / ".stride-dispatch-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    declared = [
+        {key: row[key] for key in ("context_id", "artifact_path", "sha256")}
+        for row in manifest["components"][0]["security_context_projections"]
+    ]
+    receipts = [
+        controller._validated_json_receipt(
+            output,
+            row["artifact_path"],
+            schema_id="schemas/stride-component-security-context.schema.json#v1",
+            record_count=1,
+        )
+        for row in declared
+    ]
+    job = {
+        "component_id": "api",
+        "security_context_projections": declared,
+        "input_artifacts": [row["artifact_path"] for row in declared],
+    }
+
+    validated = controller._validate_stride_component_security_contexts(output, job, receipts)
+    assert [row["context_id"] for row in validated] == ["controls.component_context"]
+
+    changed = json.loads(manifest_path.read_text(encoding="utf-8"))
+    changed["components"][0]["controls"] = ["Changed control claim"]
+    manifest_path.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(controller.ControllerError, match="stale for its source index"):
+        controller._validate_stride_component_security_contexts(output, job, receipts)
+
+
+def test_component_security_context_reconstruction_applies_shared_budget(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    output = tmp_path / "out"
+    source_dir = output / ".dispatch-context" / "api"
+    source_dir.mkdir(parents=True)
+    known_path = source_dir / "known-threats.json"
+    known_path.write_text(
+        json.dumps([f"known-{index}-" + "x" * 4000 for index in range(32)]),
+        encoding="utf-8",
+    )
+    component = {
+        "component_id": "api",
+        "component_name": "API",
+        "component_description": "Public API",
+        "component_paths": ["src/**"],
+        "component_complexity": "moderate",
+        "max_turns": 10,
+        "controls": [f"control-{index}-" + "y" * 4000 for index in range(32)],
+        "index_paths": {
+            "prior_findings": "none",
+            "known_threats": known_path.relative_to(output).as_posix(),
+            "cross_repo": "none",
+            "requirements_violations": "none",
+            "relevant_actors": "none",
+            "trust_boundaries": "none",
+        },
+    }
+    manifest = evidence_bundles.build_all(
+        output,
+        repo,
+        {"schema_version": 1, "components": [component]},
+    )
+    (output / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    declared = [
+        {key: row[key] for key in ("context_id", "artifact_path", "sha256")}
+        for row in manifest["components"][0]["security_context_projections"]
+    ]
+    receipts = []
+    for row in declared:
+        value = json.loads((output / row["artifact_path"]).read_text(encoding="utf-8"))
+        receipts.append(
+            controller._validated_json_receipt(
+                output,
+                row["artifact_path"],
+                schema_id="schemas/stride-component-security-context.schema.json#v1",
+                record_count=len(value["records"]),
+            )
+        )
+    job = {
+        "component_id": "api",
+        "security_context_projections": declared,
+        "input_artifacts": [row["artifact_path"] for row in declared],
+    }
+
+    validated = controller._validate_stride_component_security_contexts(output, job, receipts)
+
+    assert {row["context_id"] for row in validated} == {
+        "controls.component_context",
+        "threats.known_threats",
+    }
+    assert sum(row["limits"]["estimated_tokens"] for row in validated) <= evidence_bundles.MAX_ESTIMATED_TOKENS
 
 
 def test_component_repository_projection_contains_only_admitted_related_roots(tmp_path):
@@ -3573,6 +3768,20 @@ class TestContextV2ReconWave:
         roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
         assert "recon_scanner" not in roles
 
+    def test_begin_does_not_reuse_legacy_free_form_recon_evidence(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path, incremental=True)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        legacy = _valid_recon_signals()
+        legacy["schema_version"] = 1
+        legacy["signal_evidence"] = {key: "none" for key in legacy["signals"]}
+        (output / ".recon-signals.json").write_text(json.dumps(legacy), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed("{}"))
+
+        action = controller.context_v2_begin(output)
+
+        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
+        assert "recon_scanner" in roles
+
     def test_begin_runs_recon_when_the_fingerprint_check_fails(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path, incremental=True)
         (output / ".recon-summary.md").write_text("prior\n", encoding="utf-8")
@@ -3673,7 +3882,21 @@ class TestContextV2PostRecon:
         output = self._prepare(tmp_path)
         (output / ".recon-signals.json").write_text("{}", encoding="utf-8")
         monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
-        with pytest.raises(controller.ControllerError, match="recon-signals-v1 validation failed"):
+        with pytest.raises(controller.ControllerError, match="recon-signals-v2 validation failed"):
+            controller.context_v2_post_recon(output)
+
+    def test_post_recon_rejects_nonexistent_signal_evidence(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        signals = _valid_recon_signals()
+        signals["signals"]["has_auth_surface"] = True
+        signals["signal_evidence"]["has_auth_surface"] = {
+            "status": "supporting",
+            "locations": [{"file": "invented/auth.ts", "line": 1}],
+        }
+        (output / ".recon-signals.json").write_text(json.dumps(signals), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        with pytest.raises(controller.ControllerError, match="missing or unsafe file"):
             controller.context_v2_post_recon(output)
 
     def test_quick_depth_resolves_static_actors_but_skips_discovery(self, tmp_path, monkeypatch):

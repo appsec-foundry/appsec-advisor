@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/stride-component-security-context.schema.json",
+  "title": "Bounded component security-context projection for STRIDE",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "component_id",
+    "context_id",
+    "source",
+    "records",
+    "limits"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "component_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,99}$" },
+    "context_id": {
+      "enum": [
+        "actors.component_context",
+        "controls.component_context",
+        "prior_run.component_findings",
+        "requirements.component_context",
+        "threats.known_threats",
+        "trust_boundaries.component_context"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": ["kind", "content_sha256"],
+      "properties": {
+        "kind": { "enum": ["component_index", "component_manifest"] },
+        "artifact_path": { "$ref": "#/$defs/relative_path" },
+        "artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "manifest_field": { "const": "controls" },
+        "content_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "component_index" } }, "required": ["kind"] },
+          "then": { "required": ["artifact_path", "artifact_sha256"], "not": { "required": ["manifest_field"] } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "component_manifest" } }, "required": ["kind"] },
+          "then": {
+            "required": ["manifest_field"],
+            "not": {
+              "anyOf": [
+                {"required": ["artifact_path"]},
+                {"required": ["artifact_sha256"]}
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/record" }
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "original_count",
+        "retained_count",
+        "omitted_count",
+        "value_truncations",
+        "serialized_bytes",
+        "estimated_tokens"
+      ],
+      "properties": {
+        "original_count": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "retained_count": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "omitted_count": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "value_truncations": { "type": "integer", "minimum": 0, "maximum": 32 },
+        "serialized_bytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "estimated_tokens": { "type": "integer", "minimum": 1, "maximum": 16384 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "context_id": { "const": "controls.component_context" } },
+        "required": ["context_id"]
+      },
+      "then": {
+        "properties": {
+          "source": {
+            "properties": { "kind": { "const": "component_manifest" } },
+            "required": ["kind"]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "source": {
+            "properties": { "kind": { "const": "component_index" } },
+            "required": ["kind"]
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "record": {
+      "type": "object",
+      "required": ["source", "value", "content_sha256", "truncated"],
+      "properties": {
+        "source": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "value": { "type": "string", "maxLength": 4096 },
+        "content_sha256": { "$ref": "#/$defs/sha256" },
+        "truncated": { "type": "boolean" },
+        "original_chars": { "type": "integer", "minimum": 0, "maximum": 10000000 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "truncated": { "const": true } },
+            "required": ["truncated"]
+          },
+          "then": {
+            "required": ["original_chars"],
+            "properties": { "original_chars": { "minimum": 4097 } }
+          },
+          "else": { "not": { "required": ["original_chars"] } }
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -29,7 +29,7 @@
           "disposition": {"type": "string", "enum": ["boundary", "same-trust", "not-applicable", "unresolved"]},
           "candidate_keys": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^candidate-[a-z0-9-]+$"}},
           "boundary_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^tb-[0-9]+$"}},
-          "evidence": {"type": "array", "maxItems": 12, "items": {"type": "object"}},
+          "evidence": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/evidence_location"}},
           "rationale": {"type": "string", "minLength": 1, "maxLength": 300}
         }
       }
@@ -61,6 +61,22 @@
             "then": {"required": ["signal_id"]}
           }
         ]
+      }
+    }
+  },
+  "$defs": {
+    "evidence_location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"}
+        },
+        "line": {"type": "integer", "minimum": 1, "maximum": 10000000}
       }
     }
   }

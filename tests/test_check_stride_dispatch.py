@@ -71,7 +71,7 @@ def _write_manifest(output_dir: Path, *cids: str, generated_at: str | None = Non
     (output_dir / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
-def _init_waves(output_dir: Path, concurrency: int = 8) -> None:
+def _init_waves(output_dir: Path, concurrency: int = 5) -> None:
     result = subprocess.run(
         [
             sys.executable,

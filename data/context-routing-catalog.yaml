@@ -158,11 +158,21 @@ contexts:
     category: business_and_requirements
     description: Validated requirements selected from operator, organization, repository, or fallback policy.
     scope: whole_run
+  - id: requirements.component_context
+    name: Component requirement violations
+    category: business_and_requirements
+    description: Bounded validated requirement violations that apply to the current component.
+    scope: one_component
   - id: prior_run.findings
     name: Prior findings and stable identity
     category: prior_runs_and_identity
     description: Prior canonical findings and identity anchors used for carry-forward and stable references.
     scope: whole_run
+  - id: prior_run.component_findings
+    name: Component prior findings
+    category: prior_runs_and_identity
+    description: Bounded prior finding and stable-identity records that apply to the current component.
+    scope: one_component
   - id: discovery.recon_patterns
     name: Deterministic recon patterns
     category: repository_discovery
@@ -233,6 +243,11 @@ contexts:
     category: actors_and_abuse_cases
     description: Final actor identities and privileges after static and optional semantic discovery are merged.
     scope: whole_run
+  - id: actors.component_context
+    name: Component actors
+    category: actors_and_abuse_cases
+    description: Bounded resolved actors whose privileges and reachability apply to the current component.
+    scope: one_component
   - id: abuse_cases.matches
     name: Matched abuse-case candidates
     category: actors_and_abuse_cases
@@ -253,16 +268,26 @@ contexts:
     category: trust_boundaries
     description: Validated promoted boundaries, crossings, assumptions, and coverage decisions.
     scope: whole_run
+  - id: trust_boundaries.component_context
+    name: Component trust boundaries
+    category: trust_boundaries
+    description: Bounded canonical boundary records adjacent to the current component.
+    scope: one_component
   - id: controls.analysis_source
     name: Current control-analysis source context
     category: security_controls_and_evidence
     description: Targeted source and requirements reads not yet covered by exact-byte action receipts.
     scope: whole_run
   - id: controls.component_evidence
+    name: Component evidence bundle
+    category: security_controls_and_evidence
+    description: Bounded interfaces, deterministic signals, related-repository evidence, and source slices relevant
+      to one component.
+    scope: one_component
+  - id: controls.component_context
     name: Component controls and existing mitigations
     category: security_controls_and_evidence
-    description: Bounded controls, existing mitigations, gaps, deterministic signals, and source slices relevant to
-      one component.
+    description: Bounded control and existing-mitigation records that apply to the current component.
     scope: one_component
   - id: controls.sampled_evidence
     name: Sampled finding evidence
@@ -278,6 +303,11 @@ contexts:
     name: Component threat taxonomy
     category: threat_analysis
     description: Bounded plugin-owned threat and CWE taxonomy selected for one component.
+    scope: one_component
+  - id: threats.known_threats
+    name: Component known threats
+    category: threat_analysis
+    description: Bounded team-provided known-threat records that apply to the current component.
     scope: one_component
   - id: threats.related_repositories
     name: Component related-repository roots
@@ -558,6 +588,55 @@ assignments:
     importance: essential
     applies_to: current_component
     reason: Each component analyst receives only its bounded and receipted security evidence.
+  - id: stride-component-known-threats
+    context: threats.known_threats
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: Team-provided threats are delivered only through an independently receipted component projection.
+  - id: stride-component-controls
+    context: controls.component_context
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: Existing controls and mitigations are delivered only through an independently receipted component
+      projection.
+  - id: stride-component-prior-findings
+    context: prior_run.component_findings
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: Prior findings are delivered only through an independently receipted component projection.
+  - id: stride-component-actors
+    context: actors.component_context
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: Resolved actors are delivered only when the component-specific actor slice contains applicable records.
+  - id: stride-component-boundaries
+    context: trust_boundaries.component_context
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: Canonical boundaries are delivered only through the current component's bounded projection.
+  - id: stride-component-requirements
+    context: requirements.component_context
+    agents:
+      - stride_analyzer
+    delivery: optional
+    importance: supporting
+    applies_to: current_component
+    reason: Requirement violations are delivered only when they apply to the current component.
   - id: stride-component-taxonomy
     context: threats.component_taxonomy
     agents:
@@ -725,5 +804,5 @@ assignments:
     delivery: forbidden
     importance: essential
     applies_to: whole_run
-    reason: The component analyst receives component-scoped prior findings through its evidence bundle and never
-      the whole-run index.
+    reason: The component analyst receives component-scoped prior findings through a separate bounded projection and
+      never the whole-run index.

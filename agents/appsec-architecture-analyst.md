@@ -36,8 +36,11 @@ the Phase-6 checkpoint, retries, and the next action.
 ## Analysis
 
 Build a complete deployable component inventory from the admitted inputs. Preserve
-the canonical component IDs supplied by deterministic topology evidence.
-Every component needs real repository-relative path globs, a client,
+the canonical component IDs supplied by deterministic topology evidence. Treat
+every path or source claim in recon prose as an unverified lead. Resolve it
+against `REPO_ROOT` before using it in an output; never copy a plausible file
+name from prose. Every component needs repository-relative path globs that
+match at least one existing contained repository entry, a client,
 application, or data tier, and a simple, moderate, or complex rating. Map
 deployment zones only from the canonical access-zone values carried by the
 input. Leave reachability unknown when evidence is insufficient. Keep auth or
@@ -51,7 +54,8 @@ file/line evidence. Use only `Public`, `Internal`, `Confidential`, or
 `Restricted` as the data classification. The controller replaces the
 provisional fingerprint with the finalized inventory fingerprint before any
 consumer can read the artifact. Do not invent a crossing or endpoint from
-prose alone.
+prose alone. Every data-flow evidence file must be a contained regular file in
+`REPO_ROOT`, and an evidence line must exist in that file.
 
 Build the asset inventory from the projected candidates. Reserve its IDs with
 `python3 <plugin-root>/scripts/reserve_ids.py asset --count <N> --output-dir
@@ -63,8 +67,9 @@ leave `linked_threats` empty before STRIDE.
 Curate the deterministic route inventory through route IDs. Keep reachable
 unauthenticated, authenticated, management, file, realtime, and non-route
 surfaces that materially define attack exposure. Unknown authentication is
-not proof of authentication. Add a non-route surface only with concrete
-evidence.
+not proof of authentication. Every non-route addition must set
+`auth_required` to a boolean; use `false` when no authentication requirement
+can be demonstrated. Add a non-route surface only with concrete evidence.
 
 ## Producer contract gate
 
@@ -73,8 +78,8 @@ the shared fragment validator for each output:
 
 ```bash
 set -e
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" components "$OUTPUT_DIR/.components.json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
 ```

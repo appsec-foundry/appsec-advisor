@@ -109,7 +109,9 @@ value from `.skill-config.json`. Each component object may contain only
 as defined by the schema.
 
 Write `focus_paths` and `exclude_paths` only as literal repository-relative
-file or directory paths already owned by that component. Use `focus_paths` to
+file or directory paths already owned by that component and confirmed to exist
+under `REPO_ROOT`. Do not copy a path from recon or architecture prose without
+resolving it. Use `focus_paths` to
 prioritize source that should enter the bounded bundle. Use `exclude_paths`
 only to suppress optional broad discovery; never name a focus path, evidence
 citation, deterministic signal, output artifact, receipt, another component,

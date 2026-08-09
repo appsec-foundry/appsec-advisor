@@ -195,8 +195,8 @@ The field ownership matrix is:
 
 | Contract surface | Producer / owner | Validation | Semantic consumers |
 |---|---|---|---|
-| Final component identity | `finalize_component_inventory.py` after Phase 3 | components schema plus finalization receipt/fingerprint | data-flow producer, Stage-1b input builder, manifest drift gate |
-| Persisted topology | Phase-3 `.data-flows.json` producer | data-flow schema plus dynamic endpoint/fingerprint checks | Stage-1b input builder and YAML builder |
+| Final component identity | `finalize_component_inventory.py` after Phase 3 | components schema, contained repository path/glob resolution, and finalization receipt/fingerprint | data-flow producer, Stage-1b input builder, manifest drift gate |
+| Persisted topology | Phase-3 `.data-flows.json` producer | data-flow schema plus existing repository evidence, dynamic endpoint, and fingerprint checks | Stage-1b input builder and YAML builder |
 | Deterministic crossing signals | `build_trust_boundary_assessment_input.py` | assessment-input schema and bounded source validation | dedicated boundary agent only |
 | Untrusted boundary candidates | `appsec-trust-boundary-analyst` | candidate schema plus disposition/foreign-key gate | `prepare_trust_boundary_context.py promote` only |
 | Repository declarations | Repository author | `schemas/trust-boundaries-repo.schema.yaml` plus whole-file rejection | Normalizer merge only |
@@ -212,3 +212,16 @@ mint IDs or feed semantic consumers. Both Figure-1 implementations,
 cross-repository slicing, query, SARIF, post-build component
 reclassification, rerender, cleanup, and permission tests are part of this
 contract and must change atomically when the row shape changes.
+
+The canonical YAML exposes assessment mode, not cleanup mode. An operational
+`--rebuild` therefore writes `meta.mode: full` and a `changelog[].mode: full`
+entry; its invocation and changelog note retain the explicit rebuild audit.
+
+Context-v2 dispatch vocabulary is one logical contract even where standalone
+schemas repeat it because their runtime validators do not share an external
+reference registry. Analysis depth, threat-count bands, lens IDs, component
+security context IDs, and routing projector enums must remain identical across
+the action, manifest, component-plan, projection, effective-plan, and binding
+schemas. `tests/test_schemas.py` is the cross-schema drift gate; a future shared
+definition may replace the repetitions only when every validator resolves it
+locally and fail-closed without network access.

@@ -5,6 +5,40 @@ the thin full/rebuild and rerender runtimes (the defaults; opt out with
 `APPSEC_THIN_ORCHESTRATOR=0`). Its stdout is validated against
 `schemas/orchestration-action.schema.json` before the skill consumes it.
 
+## Control-plane invariants
+
+Python controls execution and validates state. Models decide security meaning
+only at explicit semantic boundaries, and contracted filesystem artifacts are
+authoritative between boundaries. Extend the existing controller; never add a
+second orchestrator, semantic-role registry, or concurrent producer for one
+artifact.
+
+Every semantic dispatch passes two independent admissions. Context admission
+limits and receipts the instructions, state, and evidence delivered to the
+role. Turn admission keeps deterministic routing, status, validation, and
+normalization out of model loops. The action contract and artifact receipts
+own the first gate; controller commands and fixed successor classification own
+the second.
+
+The standing contract surfaces are:
+
+- action and dispatch receipts in this document and
+  `schemas/orchestration-action.schema.json`;
+- component STRIDE admission in this document and the evidence-bundle,
+  component-plan, and dispatch-manifest schemas;
+- semantic producers and post-STRIDE progression in the boundary map below;
+  and
+- context catalog and effective-plan policy in
+  `docs/internal/contracts/context-routing.md`.
+
+During producer-generation coexistence, dispatch and mutation ownership is
+generation-scoped. Legacy Agent recursion belongs only to
+`appsec-threat-analyst`; context-v2 Level-0 dispatch belongs to the compact
+runtime acting on controller actions. No context-v2 action may enter a legacy
+gate, and no legacy action may enter a context-v2 gate. When WP7 removes the
+legacy generation, its removal must deliberately replace these coexistence
+rules with the resulting global ownership invariant.
+
 ## Ownership
 
 - `resolve_config.py` remains the source of truth for flags, paths, modes,
@@ -76,6 +110,13 @@ into `.dispatch-context/<component-id>/evidence-bundle.json`, validated by
 serialized bytes, 16,384 estimated tokens, 400 referenced source lines, 24
 source slices, and 32 values per evidence class. Deterministic lexical ordering
 and explicit truncation receipts replace qualitative selection by the builder.
+Known threats, prior findings, actors, trust boundaries, requirement
+violations, and existing controls are not duplicated in that required bundle.
+Each non-empty category has its own bounded
+`.dispatch-context/<component-id>/*-context.json` projection under
+`schemas/stride-component-security-context.schema.json`; an inapplicable or
+empty category is physically absent. All six projections together retain the
+former 65,536-byte and 16,384-token aggregate admission budget.
 
 The builder normalizes compatibility string-or-list focus and exclude inputs
 to at most 16 literal repository-relative paths per component. Focus paths
@@ -115,13 +156,14 @@ The controller also builds one component-scoped
 path and SHA-256 in the STRIDE job, and writes a receipted
 `.dispatch-context/<component-id>/context-plan.json`. This bounded projection
 binds the evidence and taxonomy hashes, any selected component business,
-architecture, or repository-root projection, fixed lens IDs, component analysis depth, sampling
-and turn policy, estimates, and resolved STRIDE profile. The
+architecture, repository-root, or security-category projection, fixed lens
+IDs, component analysis depth, sampling and turn policy, estimates, and
+resolved STRIDE profile. The
 thin runtime re-hashes the component plan, taxonomy, effective-plan receipt,
 and structured receipts immediately before dispatch. The STRIDE consumer reads
 the component plan instead of the complete dispatch manifest. A wave contains
-at most 10 components so the worst-case six hashes per component plus the
-effective-plan receipt stay within the fixed 64-artifact verification cap.
+at most five components so the worst-case eleven receipts per component plus
+the effective-plan receipt stay within the fixed 64-artifact verification cap.
 
 ## Context-v2 semantic boundary map
 
@@ -139,12 +181,12 @@ the producer contract for that opt-in path.
 
 | Boundary | Validated inputs | Writer and output contract | Gate and exit class | Checkpoint, retry, and next action |
 |---|---|---|---|---|
-| Phase 1/2 recon wave | `.skill-config.json`; current repository fingerprint and cache decision | `context_resolver` writes bounded `threat-modeling-context-markdown-v1` with controller-validated untrusted-data fences and its declared related-repository sidecars; `recon_scanner` writes the `recon-summary-markdown-v1` numbered security sections plus `recon-signals.schema.json` v1; the conditional `config_scanner` writes `config-scan-findings.schema.yaml` | The recon role admits at most 22 discovery tool calls and reserves at least ten calls for one-shot template loading, publication, shared validation, bounded correction, and completion; repository size may extend the deterministic pre-pass but not the model discovery allowance. `validate_recon_summary.py` and `validate_threat_modeling_context.py` run at their producers and again at the controller boundary. The context contract may insert an omitted level-2 heading with neutral text in canonical order; it never repairs a missing root, reordered authored sections, size violations, or malformed fences. Context headings, non-nested fences, recon safety limits, bounded recon-signal schema, and unique hint IDs are blocking; the tighter recon line target is observable but compatibility-safe; config enrichment failure is non-fatal | No checkpoint; one bounded parallel wave; then deterministic Phase-2.6 work and actor selection |
+| Phase 1/2 recon wave | `.skill-config.json`; current repository fingerprint and cache decision | `context_resolver` writes bounded `threat-modeling-context-markdown-v1` with controller-validated untrusted-data fences and its declared related-repository sidecars; `recon_scanner` writes the `recon-summary-markdown-v1` numbered security sections plus `recon-signals.schema.json` v2; the conditional `config_scanner` writes `config-scan-findings.schema.yaml` | The recon role admits at most 22 discovery tool calls and reserves at least ten calls for one-shot template loading, publication, shared validation, bounded correction, and completion; repository size may extend the deterministic pre-pass but not the model discovery allowance. `validate_recon_summary.py` and `validate_threat_modeling_context.py` run at their producers and again at the controller boundary. A `Key files` entry is one observed contained regular-file and single-line reference; its deterministic normalizer may only delete malformed, missing, directory, range, or out-of-range entries and replace an empty list with `none detected`. Recon signal evidence is structured and every location must resolve to a contained regular file and existing line at both producer and controller gates; malformed evidence is never parsed or repaired. The context contract may insert an omitted level-2 heading with neutral text in canonical order; it never repairs a missing root, reordered authored sections, size violations, or malformed fences. Context headings, non-nested fences, recon safety limits, bounded recon-signal schema, and unique hint IDs are blocking; the tighter recon line target is observable but compatibility-safe; config enrichment failure is non-fatal | No checkpoint; one bounded parallel wave; then deterministic Phase-2.6 work and actor selection |
 | Phase 2.7 actors | Validated recon sidecars, default/org/repository actor catalogs, actor-input fingerprint | `actor_discoverer` may write `actors-discovered.schema.yaml`; `resolve_actors.py` exclusively writes `actors-resolved.schema.yaml` | Discovery is skipped at quick depth or on a valid cache hit; resolver validation is authoritative; discovery failure degrades to the static actor set | No implicit redispatch after an Agent returns; then `architecture_analyst` |
-| Phases 3–6 architecture | Controller-bounded path list for validated recon, route inventory, and resolved actors | `architecture_analyst` writes version-1 components, data-flows, assets, and attack-surface-overrides fragments; the data-flow inventory fingerprint is provisional | `validate_fragment.py`, controller-owned component finalization, deterministic data-flow fingerprint binding, receipt validation, and assessment-input construction; structural failure blocks | The controller writes `phase=6 status=completed need_boundary_assessment=true` only after every gate passes; failure blocks without implicit redispatch; then `trust_boundary_analyst` |
+| Phases 3–6 architecture | Controller-bounded path list for validated recon, route inventory, and resolved actors | `architecture_analyst` writes version-1 components, data-flows, assets, and attack-surface-overrides fragments; every non-route attack-surface addition carries a boolean authentication verdict; the data-flow inventory fingerprint is provisional | `validate_fragment.py`, controller-owned component finalization, deterministic data-flow fingerprint binding, receipt validation, and assessment-input construction; null authentication or structural failure blocks | The controller writes `phase=6 status=completed need_boundary_assessment=true` only after every gate passes; failure blocks without implicit redispatch; then `trust_boundary_analyst` |
 | Phase 7 boundary | `trust-boundary-assessment-input` contract v1 and its exact receipt | `trust_boundary_analyst` writes `trust-boundary-candidates.schema.json` v1 | `prepare_trust_boundary_context.py promote` owns normalization and coverage; non-zero is blocking | `phase=7 status=completed need_threat_analysis=true`; persisted Stage-1b retry behavior; then `control_analyst` |
 | Phase 8 controls | Controller-bounded path list for final components, boundaries, and architecture-control signals | `control_analyst` writes `security-controls.schema.json` v1 and the bounded semantic overlays needed by known component IDs in `stride-analyst-context.schema.json` v1; it omits empty component placeholders and never owns the reserved `_stride_profile` routing value | The controller drops a producer-authored `_stride_profile`, rejects unknown component IDs or an overlay above the byte cap, derives the manifest profile from resolved run configuration, then runs `validate_fragment.py security-controls` and JSON Schema validation; bundle construction normalizes and containment-checks component-local focus/exclude inputs before dispatch; non-zero is blocking | Phase-8 checkpoint; failure blocks without implicit redispatch; then bundle and manifest construction |
-| Phase 9 STRIDE | One receipted component context plan binding a fresh `stride-evidence-bundle` v1, hashed taxonomy slice, lens IDs, analysis policy, and only the related roots cited by that component's admitted source slices | `stride_analyzer` writes `stride.schema.yaml`; no other writer may write the same component file | Manifest and bundle validation, component-plan and repository-projection schema and source-hash validation, active effective-plan binding, immediate receipt re-hash, merge-owned mechanical normalization, per-file `validate_intermediate.py stride`, and `stride_dispatch_waves.py verify`; malformed optional boundary links are dropped before schema validation and remaining invalid output is fatal | Persisted two-attempt component budget; then `context-v2-post-stride` |
+| Phase 9 STRIDE | One receipted component context plan binding a fresh `stride-evidence-bundle` v1, hashed taxonomy slice, lens IDs, analysis policy, independently selected security-category projections, and only the related roots cited by that component's admitted source slices | `stride_analyzer` writes `stride.schema.yaml`; no other writer may write the same component file | Manifest, bundle, component-plan, security-context, and repository-projection schema and source-hash validation, active effective-plan binding, immediate receipt re-hash, merge-owned mechanical normalization, per-file `validate_intermediate.py stride`, and `stride_dispatch_waves.py verify`; malformed optional boundary links are dropped before schema validation and remaining invalid output is fatal | Persisted two-attempt component budget in waves of at most five; then `context-v2-post-stride` |
 | Phase 9 merge | Valid STRIDE outputs and bounded `merge-review-context` v1 projected from `merge-candidates` v1 | `merge_threats.py collect/finalize` owns ordering and T-IDs; `threat_merger` writes `merge-decisions.schema.json` v2 only when candidate groups exist | Candidate-free collect immediately finalizes; context-v2 binds the projection to the full source hash, requires at least one decision per admitted group, validates disjoint partial-cluster subsets, and re-hashes decisions before finalize | No checkpoint; one merger dispatch for at most 64 groups within the 262,144-byte projection cap; then passive posture emitters |
 | Phase 10/10a evidence | `threats-merged.schema.yaml` v1 and repository evidence | Passive posture scripts own their existing sidecars; `evidence_verifier` writes `evidence-verification.schema.json` v1 and annotates the admitted merged-threat artifact in place only when the sampling cap and threat set select work | The mutated merged artifact is structurally revalidated and every valid sidechannel flag must match its merged-threat annotation; an invalid summary supplies no semantic signal but retains non-fatal enrichment semantics; the guard neutralizes degenerate verdicts in the canonical merged artifact before rendering | No model retry for a deterministic emitter; existing evidence-verifier budget; then deterministic triage |
 | Phase 10b triage | `threats-merged.schema.yaml` v1 and optional evidence verdicts | `triage_validate_ratings.py` and `triage_compute_ranking.py --force --bootstrap-yaml` write `triage-flags.schema.yaml` v2 | Rating validation is blocking; a ranking failure selects the focused triage fallback, while every path revalidates both the mutated merged artifact and triage flags before synthesis | No specialist on deterministic success; then optional post-STRIDE synthesis |

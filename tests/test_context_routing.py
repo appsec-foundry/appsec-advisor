@@ -488,16 +488,22 @@ def test_active_stride_deliveries_bind_to_one_receipted_plan_without_agent_expos
     assert active == {
         "architecture.component_context",
         "business.component_context",
+        "actors.component_context",
         "controls.component_evidence",
+        "controls.component_context",
+        "prior_run.component_findings",
+        "requirements.component_context",
         "threats.dispatch_plan",
         "threats.component_taxonomy",
+        "threats.known_threats",
         "threats.related_repositories",
         "threats.analysis_lenses",
         "threats.analysis_settings",
+        "trust_boundaries.component_context",
     }
     bound = routing.bind_action_to_plan(action, plan, output)
     routing.validate_action_plan_reference(bound, output)
-    assert len(bound["dispatch_jobs"][0]["context_delivery_ids"]) == 8
+    assert len(bound["dispatch_jobs"][0]["context_delivery_ids"]) == 14
     assert routing.PLAN_NAME not in bound["dispatch_jobs"][0]["input_artifacts"]
     assert bound["context_plan"]["artifact_path"] == routing.PLAN_NAME
 

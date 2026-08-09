@@ -32,11 +32,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 512,
+          "description": "Canonical repository-relative path to an existing contained regular file, validated at the producer and architecture-stage gates.",
           "not": {
             "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[a-zA-Z][a-zA-Z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)"
           }
         },
-        "line": {"type": "integer", "minimum": 1}
+        "line": {"type": "integer", "minimum": 1, "description": "Existing one-based line in the evidence file."}
       }
     },
     "data_flow": {

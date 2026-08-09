@@ -18,6 +18,7 @@ from typing import Any
 import jsonschema
 from _atomic_io import atomic_write_json
 from build_stride_dispatch_manifest import reconcile_inventory
+from validate_fragment import repository_path_errors
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 COMPONENT_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "components.schema.json"
@@ -58,10 +59,16 @@ def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[st
     document = _load_json(component_path)
     _validate(document, COMPONENT_SCHEMA)
     original = document["components"]
+    path_errors = repository_path_errors("components", document, repo_root)
+    if path_errors:
+        raise ValueError("component repository path validation failed: " + "; ".join(path_errors))
     finalized, injected = reconcile_inventory(original, repo_root)
     payload = dict(document)
     payload["components"] = finalized
     _validate(payload, COMPONENT_SCHEMA)
+    path_errors = repository_path_errors("components", payload, repo_root)
+    if path_errors:
+        raise ValueError("reconciled component path validation failed: " + "; ".join(path_errors))
 
     original_ids = [row.get("id") for row in original if isinstance(row, dict)]
     collapsed = max(0, len(original_ids) + len(injected) - len(finalized))
@@ -78,13 +85,17 @@ def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[st
     return payload, receipt
 
 
-def validate_receipt(output_dir: Path) -> dict[str, Any]:
+def validate_receipt(output_dir: Path, repo_root: Path | None = None) -> dict[str, Any]:
     """Validate the receipt and ensure it still describes `.components.json`."""
     output_dir = output_dir.resolve()
     components = _load_json(output_dir / ".components.json")
     receipt = _load_json(output_dir / ".component-inventory-finalization.json")
     _validate(components, COMPONENT_SCHEMA)
     _validate(receipt, RECEIPT_SCHEMA)
+    if repo_root is not None:
+        path_errors = repository_path_errors("components", components, repo_root.resolve())
+        if path_errors:
+            raise ValueError("component repository path validation failed: " + "; ".join(path_errors))
     actual_ids = [row["id"] for row in components["components"]]
     actual_fp = component_inventory_fingerprint(components["components"])
     if receipt["component_ids"] != actual_ids:
@@ -104,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.validate_only:
-            receipt = validate_receipt(args.output_dir)
+            receipt = validate_receipt(args.output_dir, args.repo_root)
         else:
             _payload, receipt = finalize(args.repo_root, args.output_dir)
     except (ValueError, jsonschema.ValidationError) as exc:

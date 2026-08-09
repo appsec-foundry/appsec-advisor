@@ -22,6 +22,7 @@ Exit codes:
     2 — conflicting flags (e.g. --full + --incremental) or a hard-fail
         precondition (e.g. --incremental with no baseline on disk).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -131,11 +132,11 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
     # bigger and more cross-references need reconciling.
     ("sonnet-economy", "quick"): {
         "context_resolver": HAIKU,
-        "recon_scanner":    HAIKU,
-        "qa_routine":       HAIKU,
-        "qa_content":       SONNET,
-        "config_scanner":   HAIKU,
-        "orchestrator":     SONNET,
+        "recon_scanner": HAIKU,
+        "qa_routine": HAIKU,
+        "qa_content": SONNET,
+        "config_scanner": HAIKU,
+        "orchestrator": SONNET,
         # renderer + abuse_verifier follow the `sonnet` alias → host session at
         # every depth (no depth variation, like orchestrator). Manual pin via
         # APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL for quality buy-back
@@ -148,30 +149,30 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         # finding `ambiguous` (0 verified / 0 refuted, ~57ms batch), which
         # cascaded into an all-review, zero-P1 Mitigation Register. Override via
         # APPSEC_EVIDENCE_VERIFIER_MODEL only with that failure mode in mind.
-        "renderer":         SONNET,
-        "abuse_verifier":   SONNET,
+        "renderer": SONNET,
+        "abuse_verifier": SONNET,
         "evidence_verifier": SONNET,
     },
     ("sonnet-economy", "standard"): {
         "context_resolver": HAIKU,
-        "recon_scanner":    HAIKU,
-        "qa_routine":       HAIKU,
-        "qa_content":       SONNET,
-        "config_scanner":   HAIKU,
-        "orchestrator":     SONNET,
-        "renderer":         SONNET,
-        "abuse_verifier":   SONNET,
+        "recon_scanner": HAIKU,
+        "qa_routine": HAIKU,
+        "qa_content": SONNET,
+        "config_scanner": HAIKU,
+        "orchestrator": SONNET,
+        "renderer": SONNET,
+        "abuse_verifier": SONNET,
         "evidence_verifier": SONNET,
     },
     ("sonnet-economy", "thorough"): {
         "context_resolver": HAIKU,
-        "recon_scanner":    HAIKU,
-        "qa_routine":       SONNET,
-        "qa_content":       SONNET,
-        "config_scanner":   HAIKU,
-        "orchestrator":     SONNET,
-        "renderer":         SONNET,
-        "abuse_verifier":   SONNET,
+        "recon_scanner": HAIKU,
+        "qa_routine": SONNET,
+        "qa_content": SONNET,
+        "config_scanner": HAIKU,
+        "orchestrator": SONNET,
+        "renderer": SONNET,
+        "abuse_verifier": SONNET,
         "evidence_verifier": SONNET,
     },
 }
@@ -183,13 +184,13 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
 # To override, set APPSEC_RECON_SCANNER_MODEL etc.
 _DEFAULT_EXTENDED_ROUTING = {
     "context_resolver": HAIKU,
-    "recon_scanner":    HAIKU,
-    "qa_routine":       SONNET,
-    "qa_content":       SONNET,
-    "config_scanner":   HAIKU,
-    "orchestrator":     SONNET,
-    "renderer":         SONNET,
-    "abuse_verifier":   SONNET,
+    "recon_scanner": HAIKU,
+    "qa_routine": SONNET,
+    "qa_content": SONNET,
+    "config_scanner": HAIKU,
+    "orchestrator": SONNET,
+    "renderer": SONNET,
+    "abuse_verifier": SONNET,
     "evidence_verifier": SONNET,
 }
 
@@ -208,25 +209,25 @@ _DEFAULT_EXTENDED_ROUTING = {
 # the real token-budget reductions while the report regains its
 # scannable-evidence content.
 QUICK_STRIDE_PROFILE = {
-    "skip_verification_greps": True,   # A
-    "max_threats_per_category": 1,     # B (was 2 — quick is a triage pass.
-                                       #     Keep only the top-severity threat
-                                       #     per STRIDE category per component.
-                                       #     CRITICAL-SAFE: the analyzer never
-                                       #     drops a Critical to honour this cap
-                                       #     — see appsec-stride-analyzer.md
-                                       #     Quick-mode table exception.)
-    "skip_code_examples":      False,  # C (R9 — was True; flipped 2026-05.
-                                       #     User feedback: mitigations without
-                                       #     code hints are not actionable.
-                                       #     Marginal cost ≈ 200-400 output
-                                       #     tokens per mitigation × ~20
-                                       #     mitigations ≈ <1 min added to a
-                                       #     ~33-min Quick run. Real turn-
-                                       #     budget savings come from A/B/E/F.)
-    "skip_evidence_excerpt":   False,  # D (P3 — was True; cheap to keep, restores §8 evidence)
-    "skip_cvss_scoring":       True,   # E
-    "turn_budget_hard_cap":    25,     # F (was 40)
+    "skip_verification_greps": True,  # A
+    "max_threats_per_category": 1,  # B (was 2 — quick is a triage pass.
+    #     Keep only the top-severity threat
+    #     per STRIDE category per component.
+    #     CRITICAL-SAFE: the analyzer never
+    #     drops a Critical to honour this cap
+    #     — see appsec-stride-analyzer.md
+    #     Quick-mode table exception.)
+    "skip_code_examples": False,  # C (R9 — was True; flipped 2026-05.
+    #     User feedback: mitigations without
+    #     code hints are not actionable.
+    #     Marginal cost ≈ 200-400 output
+    #     tokens per mitigation × ~20
+    #     mitigations ≈ <1 min added to a
+    #     ~33-min Quick run. Real turn-
+    #     budget savings come from A/B/E/F.)
+    "skip_evidence_excerpt": False,  # D (P3 — was True; cheap to keep, restores §8 evidence)
+    "skip_cvss_scoring": True,  # E
+    "turn_budget_hard_cap": 25,  # F (was 40)
 }
 
 # NOTE: the per-depth STRIDE-component COUNT (formerly "components": 3/5/8) was
@@ -236,15 +237,33 @@ QUICK_STRIDE_PROFILE = {
 # the STRIDE turn budget + diagram/QA depth here; WHICH components get analyzed is
 # decided by the criteria predicate over the full inventory in .components.json.
 DEPTH_PARAMS = {
-    "quick":    {"simple": 10, "moderate": 15, "complex": 20,
-                 "diagrams": "minimal",  "qa": "core", "qa_label": "skipped",
-                 "max_repair_iterations": 1},
-    "standard": {"simple": 15, "moderate": 22, "complex": 31,
-                 "diagrams": "standard", "qa": "full", "qa_label": "full",
-                 "max_repair_iterations": 1},
-    "thorough": {"simple": 20, "moderate": 28, "complex": 35,
-                 "diagrams": "extended", "qa": "extended", "qa_label": "extended",
-                 "max_repair_iterations": 3},
+    "quick": {
+        "simple": 10,
+        "moderate": 15,
+        "complex": 20,
+        "diagrams": "minimal",
+        "qa": "core",
+        "qa_label": "skipped",
+        "max_repair_iterations": 1,
+    },
+    "standard": {
+        "simple": 15,
+        "moderate": 22,
+        "complex": 31,
+        "diagrams": "standard",
+        "qa": "full",
+        "qa_label": "full",
+        "max_repair_iterations": 1,
+    },
+    "thorough": {
+        "simple": 20,
+        "moderate": 28,
+        "complex": 35,
+        "diagrams": "extended",
+        "qa": "extended",
+        "qa_label": "extended",
+        "max_repair_iterations": 3,
+    },
 }
 
 # Optional trust-boundary context is capped independently from the STRIDE turn
@@ -273,13 +292,13 @@ STRIDE_COMPONENT_CEILING = 10
 # Maximum number of per-component STRIDE agents dispatched in one foreground
 # wave. Selection remains uncapped for exposed/security-relevant components;
 # this bounds only concurrent execution pressure. Override for a particular
-# host with APPSEC_STRIDE_CONCURRENCY (1..10). The upper bound keeps one
+# host with APPSEC_STRIDE_CONCURRENCY (1..5). The upper bound keeps one
 # context-v2 wave within the 64-artifact immediate receipt-verification cap:
 # bundle, component plan, optional business and architecture projections,
-# optional repository projection, and taxonomy per component, plus the
-# effective-plan receipt.
-STRIDE_DISPATCH_CONCURRENCY = 8
-STRIDE_DISPATCH_CONCURRENCY_MAX = 10
+# optional repository projection, and six independently receipted component
+# security projections, plus the effective-plan receipt.
+STRIDE_DISPATCH_CONCURRENCY = 5
+STRIDE_DISPATCH_CONCURRENCY_MAX = 5
 
 
 # ---------------------------------------------------------------------------
@@ -289,20 +308,24 @@ STRIDE_DISPATCH_CONCURRENCY_MAX = 10
 
 CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     # (attr_a, attr_b, error_message)
-    ("yaml",         "no_yaml",         "--yaml and --no-yaml cannot be used together."),
+    ("yaml", "no_yaml", "--yaml and --no-yaml cannot be used together."),
     ("requirements", "no_requirements", "--requirements and --no-requirements cannot be used together."),
-    ("full",         "incremental",     "--full and --incremental cannot be used together."),
-    ("full",         "resume",          "--full starts a complete assessment; --resume continues a checkpoint. Pick one."),
-    ("rebuild",      "incremental",     "--rebuild discards all prior state; --incremental requires it. Pick one."),
-    ("rebuild",      "resume",          "--rebuild wipes the checkpoint file; --resume needs it. Pick one."),
-    ("rerender",     "full",            "--rerender re-renders the existing assessment; --full rebuilds it. Pick one."),
-    ("rerender",     "incremental",     "--rerender reuses Stage-1 outputs; --incremental re-analyzes a delta. Pick one."),
-    ("rerender",     "rebuild",         "--rerender reuses existing artifacts; --rebuild wipes them. Pick one."),
-    ("rerender",     "resume",          "--rerender starts a fresh render; --resume continues a checkpoint. Pick one."),
-    ("architect_review", "no_architect_review", "--architect-review and --no-architect-review cannot be used together."),
-    ("quick",        "thorough",        "--quick and --thorough cannot be used together."),
-    ("enrich_arch",  "no_enrich_arch",  "--enrich-arch and --no-enrich-arch cannot be used together."),
-    ("abuse_cases",  "no_abuse_cases",  "--abuse-cases and --no-abuse-cases cannot be used together."),
+    ("full", "incremental", "--full and --incremental cannot be used together."),
+    ("full", "resume", "--full starts a complete assessment; --resume continues a checkpoint. Pick one."),
+    ("rebuild", "incremental", "--rebuild discards all prior state; --incremental requires it. Pick one."),
+    ("rebuild", "resume", "--rebuild wipes the checkpoint file; --resume needs it. Pick one."),
+    ("rerender", "full", "--rerender re-renders the existing assessment; --full rebuilds it. Pick one."),
+    ("rerender", "incremental", "--rerender reuses Stage-1 outputs; --incremental re-analyzes a delta. Pick one."),
+    ("rerender", "rebuild", "--rerender reuses existing artifacts; --rebuild wipes them. Pick one."),
+    ("rerender", "resume", "--rerender starts a fresh render; --resume continues a checkpoint. Pick one."),
+    (
+        "architect_review",
+        "no_architect_review",
+        "--architect-review and --no-architect-review cannot be used together.",
+    ),
+    ("quick", "thorough", "--quick and --thorough cannot be used together."),
+    ("enrich_arch", "no_enrich_arch", "--enrich-arch and --no-enrich-arch cannot be used together."),
+    ("abuse_cases", "no_abuse_cases", "--abuse-cases and --no-abuse-cases cannot be used together."),
     ("cheap_stride", "no_cheap_stride", "--cheap-stride and --no-cheap-stride cannot be used together."),
 ]
 
@@ -315,8 +338,7 @@ def detect_conflicts(ns: argparse.Namespace) -> Optional[str]:
     # "__auto__" is the bare-flag sentinel (random slug generated at resolve
     # time) — only an explicit user value is validated for filename-safety.
     if slug is not None and slug != "__auto__" and not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", slug):
-        return ("--slug must be 1-64 filename-safe characters "
-                "([A-Za-z0-9._-]); got: " + repr(slug))
+        return "--slug must be 1-64 filename-safe characters ([A-Za-z0-9._-]); got: " + repr(slug)
     # `--slug` takes an OPTIONAL value, so argparse refuses to consume a token
     # that starts with '-'. In `--slug --keep-runtime-files my-label` the label
     # therefore lands in the positional `scope` and the run silently stamps a
@@ -359,42 +381,43 @@ def resolve_requirements(ns: argparse.Namespace, config_enabled: bool) -> dict:
     explicitly opted in via --requirements.
     """
     if ns.no_requirements:
-        return {"check_requirements": False,
-                "requirements_url_override": None,
-                "requirements_label": "disabled (--no-requirements)"}
-    if ns.requirements is not None:
-        return {"check_requirements": True,
-                "requirements_url_override": ns.requirements or None,
-                "requirements_label": (
-                    f"enabled (--requirements {ns.requirements})"
-                    if ns.requirements else "enabled (--requirements)"
-                )}
-    if config_enabled:
-        return {"check_requirements": True,
-                "requirements_url_override": None,
-                "requirements_label": "enabled (config)"}
-    return {"check_requirements": False,
+        return {
+            "check_requirements": False,
             "requirements_url_override": None,
-            "requirements_label": "disabled (config)"}
+            "requirements_label": "disabled (--no-requirements)",
+        }
+    if ns.requirements is not None:
+        return {
+            "check_requirements": True,
+            "requirements_url_override": ns.requirements or None,
+            "requirements_label": (
+                f"enabled (--requirements {ns.requirements})" if ns.requirements else "enabled (--requirements)"
+            ),
+        }
+    if config_enabled:
+        return {"check_requirements": True, "requirements_url_override": None, "requirements_label": "enabled (config)"}
+    return {"check_requirements": False, "requirements_url_override": None, "requirements_label": "disabled (config)"}
 
 
 def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
     depth = ns.assessment_depth or "standard"
     params = DEPTH_PARAMS[depth]
-    label = (f"{depth} (components: criteria-selected, STRIDE turns: "
-             f"{params['simple']}/{params['moderate']}/{params['complex']}, "
-             f"diagrams: {params['diagrams']}, QA: {params['qa_label']})")
+    label = (
+        f"{depth} (components: criteria-selected, STRIDE turns: "
+        f"{params['simple']}/{params['moderate']}/{params['complex']}, "
+        f"diagrams: {params['diagrams']}, QA: {params['qa_label']})"
+    )
     return {
-        "assessment_depth":      depth,
+        "assessment_depth": depth,
         "max_stride_components": STRIDE_COMPONENT_CEILING,
         "max_boundary_candidates_per_component": BOUNDARY_CANDIDATE_LIMITS[depth],
-        "stride_turns_simple":   params["simple"],
+        "stride_turns_simple": params["simple"],
         "stride_turns_moderate": params["moderate"],
-        "stride_turns_complex":  params["complex"],
-        "diagram_depth":         params["diagrams"],
-        "qa_depth":              params["qa"],
+        "stride_turns_complex": params["complex"],
+        "diagram_depth": params["diagrams"],
+        "qa_depth": params["qa"],
         "max_repair_iterations": params["max_repair_iterations"],
-        "depth_label":           label,
+        "depth_label": label,
         # Severity floor for the canonical register (2026-06-26). Default
         # 'medium' drops Low/Informational — low-risk findings are noise in a
         # threat model. Override with --register-severity-floor low to keep them.
@@ -413,9 +436,7 @@ def resolve_stride_concurrency() -> dict:
             f"Error: APPSEC_STRIDE_CONCURRENCY must be an integer between 1 and {STRIDE_DISPATCH_CONCURRENCY_MAX}"
         ) from exc
     if not 1 <= value <= STRIDE_DISPATCH_CONCURRENCY_MAX:
-        raise SystemExit(
-            f"Error: APPSEC_STRIDE_CONCURRENCY must be between 1 and {STRIDE_DISPATCH_CONCURRENCY_MAX}"
-        )
+        raise SystemExit(f"Error: APPSEC_STRIDE_CONCURRENCY must be between 1 and {STRIDE_DISPATCH_CONCURRENCY_MAX}")
     return {"stride_concurrency": value}
 
 
@@ -426,7 +447,7 @@ def resolve_stride_concurrency() -> dict:
 CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS = {
     "orchestration-action": 1,
     "route-inventory": 1,
-    "recon-signals": 1,
+    "recon-signals": 2,
     "actors-resolved": 1,
     "trust-boundary-assessment-input": 1,
     "trust-boundaries": 2,
@@ -435,6 +456,8 @@ CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS = {
     "stride-evidence-bundle": 1,
     "stride-component-context-plan": 1,
     "stride-component-business-context": 1,
+    "stride-component-architecture-context": 1,
+    "stride-component-security-context": 1,
     "stride-component-repository-roots": 1,
     "stride-repository-registry": 1,
     "context-effective-plan": 1,
@@ -529,16 +552,12 @@ def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
     The two flags are mutually exclusive (see ``CONFLICT_PAIRS``).
     """
     if getattr(ns, "no_abuse_cases", False):
-        return {"skip_abuse_case_verification": True,
-                "abuse_case_label": "skipped (--no-abuse-cases)"}
+        return {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (--no-abuse-cases)"}
     if getattr(ns, "abuse_cases", False):
-        return {"skip_abuse_case_verification": False,
-                "abuse_case_label": "enabled (--abuse-cases)"}
+        return {"skip_abuse_case_verification": False, "abuse_case_label": "enabled (--abuse-cases)"}
     if depth == "quick":
-        return {"skip_abuse_case_verification": True,
-                "abuse_case_label": "skipped (auto - quick depth)"}
-    return {"skip_abuse_case_verification": False,
-            "abuse_case_label": "enabled"}
+        return {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (auto - quick depth)"}
+    return {"skip_abuse_case_verification": False, "abuse_case_label": "enabled"}
 
 
 def resolve_cheap_stride(ns: argparse.Namespace, depth: str) -> dict:
@@ -605,9 +624,25 @@ LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
 # (defaults to the cheap model, user overrides).
 ORCHESTRATOR_SONNET5_FILE_THRESHOLD = 2500
 SOURCE_FILE_EXTENSIONS = (
-    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
-    ".py", ".go", ".java", ".kt", ".rb", ".php",
-    ".cs", ".rs", ".swift", ".scala", ".cpp", ".c", ".h",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".py",
+    ".go",
+    ".java",
+    ".kt",
+    ".rb",
+    ".php",
+    ".cs",
+    ".rs",
+    ".swift",
+    ".scala",
+    ".cpp",
+    ".c",
+    ".h",
 )
 
 
@@ -620,7 +655,9 @@ def _count_source_files(repo_root: Path) -> int:
     try:
         r = subprocess.run(
             ["git", "-C", str(repo_root), "ls-files"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if r.returncode != 0:
             return 0
@@ -803,13 +840,12 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
         if v:
             models[k] = v
 
-    label = (f"{mode} (STRIDE: {models['stride']}, "
-             f"triage: {models['triage']}, merger: {models['merger']})")
+    label = f"{mode} (STRIDE: {models['stride']}, triage: {models['triage']}, merger: {models['merger']})"
     return {
         "reasoning_model": mode,
-        "stride_model":    models["stride"],
-        "triage_model":    models["triage"],
-        "merger_model":    models["merger"],
+        "stride_model": models["stride"],
+        "triage_model": models["triage"],
+        "merger_model": models["merger"],
         "reasoning_label": label,
     }
 
@@ -865,13 +901,13 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
 
     env_map = {
         "context_resolver": "APPSEC_CONTEXT_RESOLVER_MODEL",
-        "recon_scanner":    "APPSEC_RECON_SCANNER_MODEL",
-        "qa_routine":       "APPSEC_QA_ROUTINE_MODEL",
-        "qa_content":       "APPSEC_QA_CONTENT_MODEL",
-        "config_scanner":   "APPSEC_CONFIG_SCANNER_MODEL",
-        "orchestrator":     "APPSEC_ORCHESTRATOR_MODEL",
-        "renderer":         "APPSEC_RENDERER_MODEL",
-        "abuse_verifier":   "APPSEC_ABUSE_VERIFIER_MODEL",
+        "recon_scanner": "APPSEC_RECON_SCANNER_MODEL",
+        "qa_routine": "APPSEC_QA_ROUTINE_MODEL",
+        "qa_content": "APPSEC_QA_CONTENT_MODEL",
+        "config_scanner": "APPSEC_CONFIG_SCANNER_MODEL",
+        "orchestrator": "APPSEC_ORCHESTRATOR_MODEL",
+        "renderer": "APPSEC_RENDERER_MODEL",
+        "abuse_verifier": "APPSEC_ABUSE_VERIFIER_MODEL",
         "evidence_verifier": "APPSEC_EVIDENCE_VERIFIER_MODEL",
     }
     for k, env in env_map.items():
@@ -880,24 +916,31 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
 
     return {
         "context_resolver_model": models["context_resolver"],
-        "recon_scanner_model":    models["recon_scanner"],
-        "qa_routine_model":       models["qa_routine"],
-        "qa_content_model":       models["qa_content"],
-        "config_scanner_model":   models["config_scanner"],
-        "orchestrator_model":     models["orchestrator"],
-        "renderer_model":         models["renderer"],
-        "abuse_verifier_model":   models["abuse_verifier"],
+        "recon_scanner_model": models["recon_scanner"],
+        "qa_routine_model": models["qa_routine"],
+        "qa_content_model": models["qa_content"],
+        "config_scanner_model": models["config_scanner"],
+        "orchestrator_model": models["orchestrator"],
+        "renderer_model": models["renderer"],
+        "abuse_verifier_model": models["abuse_verifier"],
         "evidence_verifier_model": models["evidence_verifier"],
     }
 
 
-_OPUS_TOKEN = "opus"   # matches "opus", "opus-cheap", "claude-opus-4-7"
+_OPUS_TOKEN = "opus"  # matches "opus", "opus-cheap", "claude-opus-4-7"
 _MODEL_FIELDS = (
-    "stride_model", "triage_model", "merger_model",
-    "architect_model", "orchestrator_model",
-    "context_resolver_model", "recon_scanner_model",
-    "qa_routine_model", "qa_content_model", "config_scanner_model",
-    "renderer_model", "abuse_verifier_model",
+    "stride_model",
+    "triage_model",
+    "merger_model",
+    "architect_model",
+    "orchestrator_model",
+    "context_resolver_model",
+    "recon_scanner_model",
+    "qa_routine_model",
+    "qa_content_model",
+    "config_scanner_model",
+    "renderer_model",
+    "abuse_verifier_model",
 )
 
 
@@ -942,9 +985,7 @@ def apply_opus_ban(cfg: dict, disable_opus: bool) -> dict:
     return patch
 
 
-def resolve_stride_profile(
-    reasoning_mode: str, depth: str, stride_cap: int | None = None
-) -> dict:
+def resolve_stride_profile(reasoning_mode: str, depth: str, stride_cap: int | None = None) -> dict:
     """Return the STRIDE-analyzer depth profile.
 
     The STRIDE depth-reduction (A-F) is gated on
@@ -988,15 +1029,15 @@ def resolve_stride_profile(
         profile["stride_profile_label"] = "quick (depth-reduced via sonnet-economy)"
         if cap is not None:
             profile["max_threats_per_category"] = cap
-            profile["stride_profile_label"] = (
-                f"quick (depth-reduced via sonnet-economy, per-category cap {cap})"
-            )
+            profile["stride_profile_label"] = f"quick (depth-reduced via sonnet-economy, per-category cap {cap})"
         return {"stride_profile": profile}
     if cap is not None:
-        return {"stride_profile": {
-            "max_threats_per_category": cap,
-            "stride_profile_label": f"full (per-category cap {cap})",
-        }}
+        return {
+            "stride_profile": {
+                "max_threats_per_category": cap,
+                "stride_profile_label": f"full (per-category cap {cap})",
+            }
+        }
     return {"stride_profile": {"stride_profile_label": "full"}}
 
 
@@ -1015,16 +1056,14 @@ def resolve_skip_attack_paths_authoring(depth: str) -> dict:
     keep authoring on.
     """
     if depth == "quick":
-        return {"skip_attack_paths_authoring": True,
-                "skip_attack_paths_authoring_label":
-                    "skipped (quick depth — deterministic fallback)"}
-    return {"skip_attack_paths_authoring": False,
-            "skip_attack_paths_authoring_label":
-                "authored (LLM)"}
+        return {
+            "skip_attack_paths_authoring": True,
+            "skip_attack_paths_authoring_label": "skipped (quick depth — deterministic fallback)",
+        }
+    return {"skip_attack_paths_authoring": False, "skip_attack_paths_authoring_label": "authored (LLM)"}
 
 
-def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
-                                   dry_run: bool) -> dict:
+def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str, dry_run: bool) -> dict:
     """LLM enrichment of the security-architecture.md fragment (§7).
 
     Note (2026-06): architecture-diagrams.md (§2) is NOT enriched — it is
@@ -1056,30 +1095,22 @@ def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
     sonnet-4-6) on top of the standard Stage 2 budget.
     """
     if dry_run:
-        return {"enrich_arch_fragments": False,
-                "enrich_arch_label": "disabled (dry-run)"}
+        return {"enrich_arch_fragments": False, "enrich_arch_label": "disabled (dry-run)"}
     if getattr(ns, "no_enrich_arch", False):
-        return {"enrich_arch_fragments": False,
-                "enrich_arch_label": "disabled (--no-enrich-arch)"}
+        return {"enrich_arch_fragments": False, "enrich_arch_label": "disabled (--no-enrich-arch)"}
     if getattr(ns, "enrich_arch", False):
-        return {"enrich_arch_fragments": True,
-                "enrich_arch_label": "enabled (--enrich-arch)"}
+        return {"enrich_arch_fragments": True, "enrich_arch_label": "enabled (--enrich-arch)"}
     if depth == "quick":
-        return {"enrich_arch_fragments": False,
-                "enrich_arch_label": "disabled (default at quick depth)"}
+        return {"enrich_arch_fragments": False, "enrich_arch_label": "disabled (default at quick depth)"}
     if depth == "standard":
-        return {"enrich_arch_fragments": True,
-                "enrich_arch_label": "enabled (default at standard depth)"}
-    return {"enrich_arch_fragments": True,
-            "enrich_arch_label": "enabled (auto-thorough)"}
+        return {"enrich_arch_fragments": True, "enrich_arch_label": "enabled (default at standard depth)"}
+    return {"enrich_arch_fragments": True, "enrich_arch_label": "enabled (auto-thorough)"}
 
 
-def resolve_architect_review(ns: argparse.Namespace, depth: str,
-                              dry_run: bool) -> dict:
+def resolve_architect_review(ns: argparse.Namespace, depth: str, dry_run: bool) -> dict:
     """Auto-enable at thorough, off at quick/standard. Dry-run force-off."""
     if dry_run:
-        return {"architect_review": False, "architect_model": None,
-                "architect_label": "disabled (dry-run)"}
+        return {"architect_review": False, "architect_model": None, "architect_label": "disabled (dry-run)"}
     if ns.no_architect_review:
         enabled = False
         trigger = "--no-architect-review"
@@ -1096,8 +1127,7 @@ def resolve_architect_review(ns: argparse.Namespace, depth: str,
     if not enabled:
         # Honour the env-var escape hatch even when off (for "always on" CI)?
         # No — the env var is about model choice, not enable/disable.
-        return {"architect_review": False, "architect_model": None,
-                "architect_label": f"disabled ({trigger})"}
+        return {"architect_review": False, "architect_model": None, "architect_label": f"disabled ({trigger})"}
 
     # Model resolution — default opus when on; the flag overrides with a tier
     # alias (sonnet|opus) OR an explicit version id (claude-sonnet-5, …), passed
@@ -1109,8 +1139,7 @@ def resolve_architect_review(ns: argparse.Namespace, depth: str,
 
     short = model.replace("claude-", "")
     label = f"enabled ({short}, {trigger})"
-    return {"architect_review": True, "architect_model": model,
-            "architect_label": label}
+    return {"architect_review": True, "architect_model": model, "architect_label": label}
 
 
 def resolve_paths(ns: argparse.Namespace, dry_run: bool) -> dict:
@@ -1138,7 +1167,9 @@ def resolve_paths(ns: argparse.Namespace, dry_run: bool) -> dict:
         try:
             r = subprocess.run(
                 ["git", "-C", str(repo_in), "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             repo_root = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout else repo_in
         except (OSError, subprocess.SubprocessError):
@@ -1146,6 +1177,7 @@ def resolve_paths(ns: argparse.Namespace, dry_run: bool) -> dict:
 
     if dry_run:
         import tempfile
+
         output_dir = Path(tempfile.mkdtemp(prefix="appsec-dry-run-"))
     elif ns.output:
         output_dir = Path(ns.output).resolve()
@@ -1157,8 +1189,8 @@ def resolve_paths(ns: argparse.Namespace, dry_run: bool) -> dict:
     output_outside_repo = not _is_within(output_dir, repo_root)
 
     return {
-        "repo_root":           str(repo_root),
-        "output_dir":          str(output_dir),
+        "repo_root": str(repo_root),
+        "output_dir": str(output_dir),
         "output_outside_repo": output_outside_repo,
     }
 
@@ -1171,9 +1203,9 @@ def _is_within(path: Path, parent: Path) -> bool:
         return False
 
 
-def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
-                              dry_run: bool,
-                              cur_check_requirements: Optional[bool] = None) -> dict:
+def resolve_incremental_mode(
+    ns: argparse.Namespace, output_dir: Path, dry_run: bool, cur_check_requirements: Optional[bool] = None
+) -> dict:
     """Detect baseline state + apply the first-match-wins rules.
 
     Returns a dict with ``mode``, ``mode_label``, ``incremental``,
@@ -1182,11 +1214,11 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
     """
     if dry_run:
         return {
-            "mode":             "full",
-            "mode_label":       "full (dry-run)",
-            "incremental":      False,
-            "rebuild":          False,
-            "baseline_state":   _detect_baseline_state(output_dir),
+            "mode": "full",
+            "mode_label": "full (dry-run)",
+            "incremental": False,
+            "rebuild": False,
+            "baseline_state": _detect_baseline_state(output_dir),
             "post_summary_note": None,
         }
 
@@ -1206,12 +1238,12 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
                 f"the existing Stage-1 fragments."
             )
         return {
-            "mode":             "rerender",
-            "mode_label":       "rerender (re-render existing fragments + QA)",
-            "incremental":      False,
-            "rebuild":          False,
-            "rerender":         True,
-            "baseline_state":   state,
+            "mode": "rerender",
+            "mode_label": "rerender (re-render existing fragments + QA)",
+            "incremental": False,
+            "rebuild": False,
+            "rerender": True,
+            "baseline_state": state,
             "post_summary_note": None,
         }
 
@@ -1219,15 +1251,17 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
     if ns.rebuild:
         note = None
         if state in ("structured", "legacy"):
-            note = (f"Warning: existing threat model, cache, and changelog "
-                    f"history at {output_dir} will be deleted before the run. "
-                    "Audit logs (.agent-run.log, .hook-events.log) are preserved.")
+            note = (
+                f"Warning: existing threat model, cache, and changelog "
+                f"history at {output_dir} will be deleted before the run. "
+                "Audit logs (.agent-run.log, .hook-events.log) are preserved."
+            )
         return {
-            "mode":             "rebuild",
-            "mode_label":       "rebuild (fresh — prior model and history discarded)",
-            "incremental":      False,
-            "rebuild":          True,
-            "baseline_state":   state,
+            "mode": "rebuild",
+            "mode_label": "rebuild (fresh — prior model and history discarded)",
+            "incremental": False,
+            "rebuild": True,
+            "baseline_state": state,
             "post_summary_note": note,
         }
 
@@ -1235,15 +1269,17 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
     if ns.full:
         note = None
         if state in ("structured", "legacy"):
-            note = (f"Warning: existing threat model at {output_dir} will be "
-                    "overwritten. Changelog history is preserved; a Change "
-                    "Summary will be printed after the run.")
+            note = (
+                f"Warning: existing threat model at {output_dir} will be "
+                "overwritten. Changelog history is preserved; a Change "
+                "Summary will be printed after the run."
+            )
         return {
-            "mode":             "full",
-            "mode_label":       "full (--full)",
-            "incremental":      False,
-            "rebuild":          False,
-            "baseline_state":   state,
+            "mode": "full",
+            "mode_label": "full (--full)",
+            "incremental": False,
+            "rebuild": False,
+            "baseline_state": state,
             "post_summary_note": note,
         }
 
@@ -1267,11 +1303,11 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
                 f"will automatically use incremental mode."
             )
         return {
-            "mode":             "incremental",
-            "mode_label":       "incremental (--incremental)",
-            "incremental":      True,
-            "rebuild":          False,
-            "baseline_state":   state,
+            "mode": "incremental",
+            "mode_label": "incremental (--incremental)",
+            "incremental": True,
+            "rebuild": False,
+            "baseline_state": state,
             "post_summary_note": None,
         }
 
@@ -1289,11 +1325,11 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
         base_depth, _src = _extract_baseline_assessment_depth(output_dir)
         if base_depth is not None and _depth_increased(cur_depth, base_depth):
             return {
-                "mode":              "full",
-                "mode_label":        f"full (depth increased: {base_depth} → {cur_depth})",
-                "incremental":       False,
-                "rebuild":           False,
-                "baseline_state":    state,
+                "mode": "full",
+                "mode_label": f"full (depth increased: {base_depth} → {cur_depth})",
+                "incremental": False,
+                "rebuild": False,
+                "baseline_state": state,
                 # Auto-upgraded full (user did not type --full): the repo is
                 # unchanged, only the requested depth deepened. Eligible to reuse
                 # the prior recon if the tree is git-provably clean — the recon
@@ -1333,11 +1369,11 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
             if base_req is not None and base_req != cur_check_requirements:
                 if cur_check_requirements and not base_req:
                     return {
-                        "mode":              "full",
-                        "mode_label":        "full (requirements added — model rebuilt against security requirements)",
-                        "incremental":       False,
-                        "rebuild":           False,
-                        "baseline_state":    state,
+                        "mode": "full",
+                        "mode_label": "full (requirements added — model rebuilt against security requirements)",
+                        "incremental": False,
+                        "rebuild": False,
+                        "baseline_state": state,
                         # Auto-upgraded full (user did not type --full): repo
                         # unchanged, only --requirements newly requested. Eligible
                         # to reuse prior recon when the tree is git-provably clean.
@@ -1368,20 +1404,20 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
                     f"pass --requirements to keep the compliance coverage."
                 )
         return {
-            "mode":             "incremental",
-            "mode_label":       "incremental (auto)",
-            "incremental":      True,
-            "rebuild":          False,
-            "baseline_state":   state,
+            "mode": "incremental",
+            "mode_label": "incremental (auto)",
+            "incremental": True,
+            "rebuild": False,
+            "baseline_state": state,
             "post_summary_note": "Tip: pass --full to force a complete re-assessment.",
         }
     if state == "legacy":
         return {
-            "mode":             "full",
-            "mode_label":       "full (bootstrap — legacy threat-model.md detected)",
-            "incremental":      False,
-            "rebuild":          False,
-            "baseline_state":   state,
+            "mode": "full",
+            "mode_label": "full (bootstrap — legacy threat-model.md detected)",
+            "incremental": False,
+            "rebuild": False,
+            "baseline_state": state,
             "post_summary_note": (
                 "Legacy threat-model.md found but no structured baseline "
                 "(threat-model.yaml). Bootstrapping yaml now — the next run "
@@ -1390,11 +1426,11 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
         }
     # empty
     return {
-        "mode":             "full",
-        "mode_label":       "full (first run)",
-        "incremental":      False,
-        "rebuild":          False,
-        "baseline_state":   state,
+        "mode": "full",
+        "mode_label": "full (first run)",
+        "incremental": False,
+        "rebuild": False,
+        "baseline_state": state,
         "post_summary_note": None,
     }
 
@@ -1492,10 +1528,10 @@ def build_parser() -> argparse.ArgumentParser:
         add_help=False,  # the skill handles --help itself
     )
     # YAML
-    p.add_argument("--yaml",        action="store_true")
-    p.add_argument("--no-yaml",     action="store_true")
+    p.add_argument("--yaml", action="store_true")
+    p.add_argument("--no-yaml", action="store_true")
     # SARIF / pentest / requirements
-    p.add_argument("--sarif",       action="store_true")
+    p.add_argument("--sarif", action="store_true")
     p.add_argument("--pentest-tasks", action="store_true")
     p.add_argument("--pentest-format", choices=("generic", "strix"), default="generic")
     p.add_argument("--pentest-target", default=None)
@@ -1508,44 +1544,48 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--requirements", nargs="?", const="", default=None)
     p.add_argument("--no-requirements", action="store_true")
     # Deprecated aliases
-    p.add_argument("--with-requirements",   action="store_true",
-                   help=argparse.SUPPRESS)
-    p.add_argument("--ignore-requirements", action="store_true",
-                   help=argparse.SUPPRESS)
-    p.add_argument("--requirements-url",    default=None,
-                   help=argparse.SUPPRESS)
+    p.add_argument("--with-requirements", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--ignore-requirements", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--requirements-url", default=None, help=argparse.SUPPRESS)
     # Run-mode
-    p.add_argument("--dry-run",   action="store_true")
-    p.add_argument("--resume",    action="store_true")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--resume", action="store_true")
     p.add_argument("--incremental", action="store_true")
-    p.add_argument("--full",      action="store_true")
-    p.add_argument("--rebuild",   action="store_true")
-    p.add_argument("--rerender",  action="store_true")
+    p.add_argument("--full", action="store_true")
+    p.add_argument("--rebuild", action="store_true")
+    p.add_argument("--rerender", action="store_true")
     p.add_argument("--keep-runtime-files", action="store_true")
-    p.add_argument("--verbose",   action="store_true")
-    p.add_argument("--quiet",     action="store_true",
-                   help="Compact console summary — print only the essentials "
-                        "(repository, run, results, outputs, warnings); omit the "
-                        "verdict, change summary, next steps, and run statistics.")
+    p.add_argument("--verbose", action="store_true")
+    p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Compact console summary — print only the essentials "
+        "(repository, run, results, outputs, warnings); omit the "
+        "verdict, change summary, next steps, and run statistics.",
+    )
     # Tracing default flipped to ON in M3.6 (was opt-in pre-M3.6). Per-agent
     # token / turn / cost / wall-time tracking writes to .appsec-trace.log
     # — small file (~10 KB / run), zero token cost, materially better
     # diagnostics. ``--no-tracing`` opts out for environments that prefer
     # not to maintain the trace artifact (CI without log-retention budget,
     # privacy-restricted pipelines).
-    p.add_argument("--tracing",    dest="tracing", action="store_true",
-                   default=True,
-                   help="Record per-agent token/cost/timing to .appsec-trace.log "
-                        "(default: ON since M3.6).")
-    p.add_argument("--no-tracing", dest="tracing", action="store_false",
-                   help="Disable tracing — skips .appsec-trace.log creation.")
+    p.add_argument(
+        "--tracing",
+        dest="tracing",
+        action="store_true",
+        default=True,
+        help="Record per-agent token/cost/timing to .appsec-trace.log (default: ON since M3.6).",
+    )
+    p.add_argument(
+        "--no-tracing", dest="tracing", action="store_false", help="Disable tracing — skips .appsec-trace.log creation."
+    )
     # Paths
-    p.add_argument("--repo",   default=None)
+    p.add_argument("--repo", default=None)
     p.add_argument("--output", default=None)
     # Models / depth
-    p.add_argument("--reasoning-model",
-                   choices=("sonnet", "opus-cheap", "opus",
-                            "sonnet-economy", "haiku-economy"))  # haiku-economy: deprecated alias
+    p.add_argument(
+        "--reasoning-model", choices=("sonnet", "opus-cheap", "opus", "sonnet-economy", "haiku-economy")
+    )  # haiku-economy: deprecated alias
     # Per-stage model overrides — the inline (console) equivalent of the
     # APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL env vars, but without needing
     # ~/.claude/settings.json + a session restart. Each overrides just that one
@@ -1562,9 +1602,11 @@ def build_parser() -> argparse.ArgumentParser:
     # vars), not at parse time. The ``sonnet`` alias still follows the session; a
     # concrete id pins that exact version regardless of the host. --no-opus still
     # clamps any Opus id (alias or ``claude-opus-*``) to Sonnet last.
-    _model_help = ("Tier alias (sonnet|opus) or explicit version id "
-                   "(e.g. claude-sonnet-5, claude-sonnet-4-6). Overrides the "
-                   "--reasoning-model tier for this stage only.")
+    _model_help = (
+        "Tier alias (sonnet|opus) or explicit version id "
+        "(e.g. claude-sonnet-5, claude-sonnet-4-6). Overrides the "
+        "--reasoning-model tier for this stage only."
+    )
     p.add_argument("--stride-model", default=None, metavar="MODEL", help=_model_help)
     p.add_argument("--triage-model", default=None, metavar="MODEL", help=_model_help)
     p.add_argument("--merger-model", default=None, metavar="MODEL", help=_model_help)
@@ -1576,31 +1618,43 @@ def build_parser() -> argparse.ArgumentParser:
     # none can loosen. Enforced by apply_opus_ban() as the last model step in
     # resolve(), so it overrides env-var per-agent overrides and an explicit
     # --reasoning-model opus alike.
-    p.add_argument("--no-opus", action="store_true", dest="no_opus",
-                   help="Forbid Opus anywhere; downgrade every Opus model "
-                        "selection to Sonnet. Also settable via org-profile "
-                        "policy.disable_opus or env APPSEC_DISABLE_OPUS=1.")
+    p.add_argument(
+        "--no-opus",
+        action="store_true",
+        dest="no_opus",
+        help="Forbid Opus anywhere; downgrade every Opus model "
+        "selection to Sonnet. Also settable via org-profile "
+        "policy.disable_opus or env APPSEC_DISABLE_OPUS=1.",
+    )
     p.add_argument("--assessment-depth", choices=("quick", "standard", "thorough"))
     # Convenience shortcuts: --quick / --thorough for the two non-default
     # depth levels. Mapped to --assessment-depth in resolve() below.
     # Mutually exclusive with --assessment-depth and with each other —
     # detect_conflicts() raises on collision.
-    p.add_argument("--quick",    action="store_true",
-                   help="Shortcut for --assessment-depth quick.")
-    p.add_argument("--thorough", action="store_true",
-                   help="Shortcut for --assessment-depth thorough.")
+    p.add_argument("--quick", action="store_true", help="Shortcut for --assessment-depth quick.")
+    p.add_argument("--thorough", action="store_true", help="Shortcut for --assessment-depth thorough.")
     # Opt-in per-category STRIDE threat cap (cost lever). OFF by default — the
     # full STRIDE depth at standard/thorough is preserved unless this is set.
-    p.add_argument("--stride-cap", type=int, default=None, metavar="N",
-                   help="Opt-in: keep at most N threats per STRIDE category per "
-                        "component (Critical-safe — Criticals are never dropped). "
-                        "Trims the High/Medium/Low tail to cut tokens/cost; the "
-                        "rest of full depth (CVSS, evidence, verification greps) "
-                        "stays intact. Off by default.")
-    p.add_argument("--evidence-verifier-cap", type=int, default=None, metavar="N",
-                   help="Verify at most N non-Critical findings in Phase 10a; "
-                        "Critical findings do not count toward the cap. Defaults: 20 "
-                        "(quick), 30 (standard), 100 (thorough).")
+    p.add_argument(
+        "--stride-cap",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Opt-in: keep at most N threats per STRIDE category per "
+        "component (Critical-safe — Criticals are never dropped). "
+        "Trims the High/Medium/Low tail to cut tokens/cost; the "
+        "rest of full depth (CVSS, evidence, verification greps) "
+        "stays intact. Off by default.",
+    )
+    p.add_argument(
+        "--evidence-verifier-cap",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Verify at most N non-Critical findings in Phase 10a; "
+        "Critical findings do not count toward the cap. Defaults: 20 "
+        "(quick), 30 (standard), 100 (thorough).",
+    )
     # Screening-depth STRIDE for the internal tail (cost lever). ON by default at
     # quick/standard, OFF at thorough — see resolve_cheap_stride. Exposed / auth /
     # frontend / LLM (priority <=2) plus the file-upload / realtime / data-store /
@@ -1608,69 +1662,100 @@ def build_parser() -> argparse.ArgumentParser:
     # component (ci-cd excepted — role-identified); the rest gets a flat ~8-turn
     # six-category screening pass. Defaulting it is only safe BECAUSE of the
     # exposure-unknown fail-safe: unreliable zone tags cost budget, never depth.
-    p.add_argument("--cheap-stride", action="store_true", dest="cheap_stride",
-                   help="Force light-depth STRIDE (~8 turns, all 6 categories "
-                        "kept) for the internal tail at any depth; exposed, auth, "
-                        "frontend, LLM, file-upload, realtime, data-store and "
-                        "core-backend (API/gateway) components keep full depth, as "
-                        "does anything exposure-unknown. Default: on at "
-                        "quick/standard, off at thorough.")
-    p.add_argument("--no-cheap-stride", action="store_true", dest="no_cheap_stride",
-                   help="Full STRIDE depth on every selected component, including "
-                        "the provably-internal tail and ci-cd.")
+    p.add_argument(
+        "--cheap-stride",
+        action="store_true",
+        dest="cheap_stride",
+        help="Force light-depth STRIDE (~8 turns, all 6 categories "
+        "kept) for the internal tail at any depth; exposed, auth, "
+        "frontend, LLM, file-upload, realtime, data-store and "
+        "core-backend (API/gateway) components keep full depth, as "
+        "does anything exposure-unknown. Default: on at "
+        "quick/standard, off at thorough.",
+    )
+    p.add_argument(
+        "--no-cheap-stride",
+        action="store_true",
+        dest="no_cheap_stride",
+        help="Full STRIDE depth on every selected component, including the provably-internal tail and ci-cd.",
+    )
     # Architect
-    p.add_argument("--architect-review",   action="store_true")
+    p.add_argument("--architect-review", action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
-    p.add_argument("--architect-model", default=None, metavar="MODEL",
-                   help="Tier alias (sonnet|opus) or explicit version id for the "
-                        "architect reviewer. --no-opus clamps any Opus id to Sonnet.")
+    p.add_argument(
+        "--architect-model",
+        default=None,
+        metavar="MODEL",
+        help="Tier alias (sonnet|opus) or explicit version id for the "
+        "architect reviewer. --no-opus clamps any Opus id to Sonnet.",
+    )
     # Architecture-fragment enrichment (M3.3 / D2). On by default at standard
     # and thorough; off at quick since 2026-05.
-    p.add_argument("--no-enrich-arch", action="store_true",
-                   dest="no_enrich_arch",
-                   help="Disable LLM enrichment of the security-architecture.md "
-                        "(§7) fragment (on by default at standard/thorough). "
-                        "architecture-diagrams.md/§2 is always deterministic.")
-    p.add_argument("--enrich-arch", action="store_true",
-                   dest="enrich_arch",
-                   help="Force LLM enrichment of the security-architecture.md "
-                        "(§7) fragment at any depth (overrides the quick-depth "
-                        "default-off).")
+    p.add_argument(
+        "--no-enrich-arch",
+        action="store_true",
+        dest="no_enrich_arch",
+        help="Disable LLM enrichment of the security-architecture.md "
+        "(§7) fragment (on by default at standard/thorough). "
+        "architecture-diagrams.md/§2 is always deterministic.",
+    )
+    p.add_argument(
+        "--enrich-arch",
+        action="store_true",
+        dest="enrich_arch",
+        help="Force LLM enrichment of the security-architecture.md "
+        "(§7) fragment at any depth (overrides the quick-depth "
+        "default-off).",
+    )
     # v2 13-section §7 layout — the only supported layout.
     # `--schema-v2` is kept as a no-op alias so explicit declarations in
     # CI scripts do not break. `--schema-v1` is accepted by the parser only
     # to return a clear removal error instead of "unrecognized argument".
-    p.add_argument("--schema-v2", action="store_true",
-                   dest="schema_v2",
-                   help="Explicitly request the 13-section §7 security "
-                        "architecture layout. No-op because v2 is the only "
-                        "supported schema.")
-    p.add_argument("--schema-v1", action="store_true",
-                   dest="schema_v1",
-                   help="Removed legacy option. Schema v2 is the only "
-                        "supported §7 layout.")
+    p.add_argument(
+        "--schema-v2",
+        action="store_true",
+        dest="schema_v2",
+        help="Explicitly request the 13-section §7 security "
+        "architecture layout. No-op because v2 is the only "
+        "supported schema.",
+    )
+    p.add_argument(
+        "--schema-v1",
+        action="store_true",
+        dest="schema_v1",
+        help="Removed legacy option. Schema v2 is the only supported §7 layout.",
+    )
     # Walkthroughs opt-out (2026-05). Stage 2 normally authors
     # `attack-walkthroughs.md` (sequence diagrams per Critical) — costs
     # ~1 min in quick depth, more in thorough. Skipping renders §3 with
     # the deterministic chain-overview only, no per-finding sequence
     # diagrams. Useful for CI / regression / fast iteration.
-    p.add_argument("--no-walkthroughs", action="store_true",
-                   dest="no_walkthroughs",
-                   help="Skip authoring attack-walkthroughs.md in Stage 2; "
-                        "§3 falls back to chain-overview-only rendering.")
+    p.add_argument(
+        "--no-walkthroughs",
+        action="store_true",
+        dest="no_walkthroughs",
+        help="Skip authoring attack-walkthroughs.md in Stage 2; §3 falls back to chain-overview-only rendering.",
+    )
     # Abuse-case verification gating (2026-06). Stage 1d runs a deterministic
     # matcher + per-candidate verifier fan-out that confirms attack chains and
     # can elevate keystone findings. ON by default at standard/thorough; the
     # quick fast-mode skips it. --abuse-cases forces it on at any depth;
     # --no-abuse-cases forces it off at any depth. Mutually exclusive
     # (detect_conflicts()).
-    p.add_argument("--abuse-cases", action="store_true", dest="abuse_cases",
-                   help="Force abuse-case verification ON at any depth "
-                        "(overrides the quick-depth default-off).")
-    p.add_argument("--no-abuse-cases", action="store_true", dest="no_abuse_cases",
-                   help="Force abuse-case verification OFF at any depth "
-                        "(skip the Stage 1d verifier fan-out even at "
-                        "standard/thorough).")
+    p.add_argument(
+        "--abuse-cases",
+        action="store_true",
+        dest="abuse_cases",
+        help="Force abuse-case verification ON at any depth (overrides the quick-depth default-off).",
+    )
+    p.add_argument(
+        "--no-abuse-cases",
+        action="store_true",
+        dest="no_abuse_cases",
+        help="Force abuse-case verification OFF at any depth "
+        "(skip the Stage 1d verifier fan-out even at "
+        "standard/thorough).",
+    )
     p.add_argument(
         "--abuse-case-file",
         action="append",
@@ -1685,18 +1770,20 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="ID",
         help="Verify only the named active abuse case. May be repeated.",
     )
-    p.add_argument("--register-severity-floor",
-                   dest="register_severity_floor",
-                   choices=("critical", "high", "medium", "low", "informational"),
-                   default=None,
-                   help="Drop threats below this severity from the canonical "
-                        "register and every downstream count. Default 'medium' "
-                        "(Low/Informational excluded — they are noise in a "
-                        "threat model). Pass 'low' to keep Low findings.")
+    p.add_argument(
+        "--register-severity-floor",
+        dest="register_severity_floor",
+        choices=("critical", "high", "medium", "low", "informational"),
+        default=None,
+        help="Drop threats below this severity from the canonical "
+        "register and every downstream count. Default 'medium' "
+        "(Low/Informational excluded — they are noise in a "
+        "threat model). Pass 'low' to keep Low findings.",
+    )
     # PR / base / no-qa / qa-scan-repo
-    p.add_argument("--base",         default=None)
-    p.add_argument("--pr-mode",      action="store_true")
-    p.add_argument("--no-qa",        action="store_true")
+    p.add_argument("--base", default=None)
+    p.add_argument("--pr-mode", action="store_true")
+    p.add_argument("--no-qa", action="store_true")
     p.add_argument("--qa-scan-repo", action="store_true")
     # Scan manifest — log all scanned files to OUTPUT_DIR/.scan-manifest.txt
     p.add_argument("--scan-manifest", action="store_true")
@@ -1704,80 +1791,102 @@ def build_parser() -> argparse.ArgumentParser:
     # postfix-stamped, copy-ready deliverable set (threat-model-<slug>.md /
     # .yaml / .figure*.svg / …) so several models can share one directory
     # without overwriting each other. Default None = canonical names only.
-    p.add_argument("--slug", nargs="?", const="__auto__", default=None,
-                   help="Postfix for an additional copy-ready deliverable set "
-                        "(threat-model-<slug>.*). Bare --slug generates a "
-                        "random one; --slug <value> uses it. Default: none.")
+    p.add_argument(
+        "--slug",
+        nargs="?",
+        const="__auto__",
+        default=None,
+        help="Postfix for an additional copy-ready deliverable set "
+        "(threat-model-<slug>.*). Bare --slug generates a "
+        "random one; --slug <value> uses it. Default: none.",
+    )
     # Suppress interactive confirmation prompts (auto-accept current mode).
-    p.add_argument("--no-confirm", "--yes", action="store_true",
-                   dest="no_confirm",
-                   help="Skip interactive confirmation prompts; accept auto-detected mode.")
+    p.add_argument(
+        "--no-confirm",
+        "--yes",
+        action="store_true",
+        dest="no_confirm",
+        help="Skip interactive confirmation prompts; accept auto-detected mode.",
+    )
     # M11 — wall-time hard deadline. Skill watchdog checks the elapsed seconds
     # since ASSESSMENT_START_EPOCH and aborts the in-flight Stage 1/2/3/4
     # Agent dispatch via TaskStop when reached. Format accepts plain seconds
     # ("3600"), minutes ("60m"), or hours ("1h"). Default unset = no deadline.
-    p.add_argument("--max-wall-time", type=str, default=None,
-                   metavar="DURATION",
-                   help="Hard wall-time deadline (e.g. 3600, 60m, 1h). "
-                        "Skill watchdog aborts the run when reached. "
-                        "Default: unbounded.")
+    p.add_argument(
+        "--max-wall-time",
+        type=str,
+        default=None,
+        metavar="DURATION",
+        help="Hard wall-time deadline (e.g. 3600, 60m, 1h). "
+        "Skill watchdog aborts the run when reached. "
+        "Default: unbounded.",
+    )
     # M9 — cost budget hard cap (USD). Skill watchdog scans .hook-events.log
     # for cumulative cost and aborts when reached.
-    p.add_argument("--max-cost", type=float, default=None,
-                   metavar="USD",
-                   help="Hard cost cap in USD (e.g. 15.0). Skill watchdog "
-                        "aborts the run when cumulative cost exceeds this. "
-                        "Default: unbounded.")
+    p.add_argument(
+        "--max-cost",
+        type=float,
+        default=None,
+        metavar="USD",
+        help="Hard cost cap in USD (e.g. 15.0). Skill watchdog "
+        "aborts the run when cumulative cost exceeds this. "
+        "Default: unbounded.",
+    )
     # Negative flags for tri-state semantics. When org profiles set output
     # defaults via a preset, the user needs an explicit way to opt back
     # out without selecting a different preset. ``--sarif`` still wins over
     # ``--no-sarif`` (positive overrides negative) for compatibility with
     # the existing direct-flag-wins precedence.
-    p.add_argument("--no-sarif", action="store_true", dest="no_sarif",
-                   help="Disable SARIF export even if a preset enables it.")
-    p.add_argument("--no-pentest-tasks", action="store_true", dest="no_pentest_tasks",
-                   help="Disable pentest-tasks export even if a preset enables it.")
-    p.add_argument("--no-pdf", action="store_true", dest="no_pdf",
-                   help="Disable PDF export even if a preset enables it.")
+    p.add_argument(
+        "--no-sarif", action="store_true", dest="no_sarif", help="Disable SARIF export even if a preset enables it."
+    )
+    p.add_argument(
+        "--no-pentest-tasks",
+        action="store_true",
+        dest="no_pentest_tasks",
+        help="Disable pentest-tasks export even if a preset enables it.",
+    )
+    p.add_argument(
+        "--no-pdf", action="store_true", dest="no_pdf", help="Disable PDF export even if a preset enables it."
+    )
 
     # Org-profile selection flags. These are consumed by resolve_org_profile.
     # The resolver merges the resulting defaults below CLI flags.
     # Cover-page branding. Local overrides for the org-profile `branding`
     # block; consumed by compose_threat_model.py via .skill-config.json.
-    p.add_argument("--report-title", default=None,
-                   help="Override the report cover title (project name is still appended).")
-    p.add_argument("--contact-name", default=None,
-                   help="Contact name shown in the report cover metadata.")
-    p.add_argument("--contact-email", default=None,
-                   help="Contact e-mail shown in the report cover metadata.")
-    p.add_argument("--logo", default=None,
-                   help="Cover logo: local file path or http(s) URL (staged before render).")
+    p.add_argument(
+        "--report-title", default=None, help="Override the report cover title (project name is still appended)."
+    )
+    p.add_argument("--contact-name", default=None, help="Contact name shown in the report cover metadata.")
+    p.add_argument("--contact-email", default=None, help="Contact e-mail shown in the report cover metadata.")
+    p.add_argument("--logo", default=None, help="Cover logo: local file path or http(s) URL (staged before render).")
 
-    p.add_argument("--org-profile", default=None,
-                   help="Path to an org-profile YAML; overrides the packaged default.")
-    p.add_argument("--preset", default=None,
-                   help="Name of the preset to use from the active org profile.")
-    p.add_argument("--no-org-profile", action="store_true",
-                   help="Ignore any packaged or env-pointed org profile for this run.")
+    p.add_argument("--org-profile", default=None, help="Path to an org-profile YAML; overrides the packaged default.")
+    p.add_argument("--preset", default=None, help="Name of the preset to use from the active org profile.")
+    p.add_argument(
+        "--no-org-profile", action="store_true", help="Ignore any packaged or env-pointed org profile for this run."
+    )
 
     # Skill-layer flags. The resolver itself does not act on them but
     # accepts them so ``--validate-only`` does not reject documented
     # create-threat-model invocations. The skill layer reads these
     # directly from argv.
-    p.add_argument("--pdf", action="store_true",
-                   help="Skill-layer flag — exports threat-model.pdf after Stage 4.")
-    p.add_argument("--html", action="store_true",
-                   help="Skill-layer flag — exports threat-model.html after Stage 4.")
-    p.add_argument("--embed-figures", action="store_true",
-                   help="Embed Figure 1 inline in threat-model.md as a base64 data: URI "
-                        "(self-contained doc); figure1.svg is still written. NOTE: GitHub "
-                        "strips data: URIs, so the default file reference is best for GitHub.")
-    p.add_argument("--max-resumes", type=int, default=None,
-                   help="Skill-layer flag — cap on Stage 1 auto-resume dispatches.")
-    p.add_argument("--clean-cache", action="store_true",
-                   help="Skill-layer flag — clean cache and exit.")
-    p.add_argument("--clean-all", action="store_true",
-                   help="Skill-layer flag — clean everything in OUTPUT_DIR and exit.")
+    p.add_argument("--pdf", action="store_true", help="Skill-layer flag — exports threat-model.pdf after Stage 4.")
+    p.add_argument("--html", action="store_true", help="Skill-layer flag — exports threat-model.html after Stage 4.")
+    p.add_argument(
+        "--embed-figures",
+        action="store_true",
+        help="Embed Figure 1 inline in threat-model.md as a base64 data: URI "
+        "(self-contained doc); figure1.svg is still written. NOTE: GitHub "
+        "strips data: URIs, so the default file reference is best for GitHub.",
+    )
+    p.add_argument(
+        "--max-resumes", type=int, default=None, help="Skill-layer flag — cap on Stage 1 auto-resume dispatches."
+    )
+    p.add_argument("--clean-cache", action="store_true", help="Skill-layer flag — clean cache and exit.")
+    p.add_argument(
+        "--clean-all", action="store_true", help="Skill-layer flag — clean everything in OUTPUT_DIR and exit."
+    )
 
     # Remaining positional args = scope words.
     p.add_argument("scope", nargs="*")
@@ -1812,8 +1921,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         raise SystemExit(f"Error: {err}")
     if getattr(ns, "schema_v1", False):
         raise SystemExit(
-            "Error: --schema-v1 was removed. Schema v2 is the only supported "
-            "§7 security-architecture layout."
+            "Error: --schema-v1 was removed. Schema v2 is the only supported §7 security-architecture layout."
         )
 
     # Depth shortcuts: --quick / --thorough are sugar for --assessment-depth.
@@ -1823,44 +1931,43 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         if getattr(ns, short_attr, False):
             if ns.assessment_depth and ns.assessment_depth != depth_value:
                 raise SystemExit(
-                    f"Error: --{short_attr} conflicts with --assessment-depth "
-                    f"{ns.assessment_depth}. Pick one."
+                    f"Error: --{short_attr} conflicts with --assessment-depth {ns.assessment_depth}. Pick one."
                 )
             ns.assessment_depth = depth_value
 
     # Build the resolved config by composing per-resolver outputs.
     cfg: dict[str, Any] = {
         "invocation_args": " ".join(argv),
-        "scope":           ns.scope,
-        "dry_run":         ns.dry_run,
-        "write_sarif":     ns.sarif,
+        "scope": ns.scope,
+        "dry_run": ns.dry_run,
+        "write_sarif": ns.sarif,
         "write_pentest_tasks": ns.pentest_tasks,
-        "pentest_format":  ns.pentest_format,
-        "pentest_target":  ns.pentest_target,
+        "pentest_format": ns.pentest_format,
+        "pentest_target": ns.pentest_target,
         "write_threatdragon": bool(ns.threatdragon),
         "keep_runtime_files": ns.keep_runtime_files,
-        "slug":            (secrets.token_hex(2) if ns.slug == "__auto__" else ns.slug),
-        "verbose":         ns.verbose,
-        "quiet":           ns.quiet,
-        "tracing":         ns.tracing,
-        "resume":          ns.resume,
-        "pr_mode":         ns.pr_mode,
-        "base_ref":        ns.base,
-        "qa_scan_repo":    ns.qa_scan_repo,
-        "scan_manifest":   ns.scan_manifest,
-        "no_confirm":      ns.no_confirm,
+        "slug": (secrets.token_hex(2) if ns.slug == "__auto__" else ns.slug),
+        "verbose": ns.verbose,
+        "quiet": ns.quiet,
+        "tracing": ns.tracing,
+        "resume": ns.resume,
+        "pr_mode": ns.pr_mode,
+        "base_ref": ns.base,
+        "qa_scan_repo": ns.qa_scan_repo,
+        "scan_manifest": ns.scan_manifest,
+        "no_confirm": ns.no_confirm,
         # Persisted to .skill-config.json so compose_threat_model.py honours it
         # on EVERY invocation (renderer, recompose, fragment-fixer) without
         # threading a CLI flag through each call site.
-        "embed_figures":   bool(ns.embed_figures),
+        "embed_figures": bool(ns.embed_figures),
         # Cover branding. CLI value (or None) here; an active org profile may
         # fill in a None field in _apply_org_profile (CLI always wins).
-        "report_title":    ns.report_title,
-        "contact_name":    ns.contact_name,
-        "contact_email":   ns.contact_email,
-        "logo":            ns.logo,
-        "write_pdf":       bool(ns.pdf),
-        "write_html":      bool(ns.html),
+        "report_title": ns.report_title,
+        "contact_name": ns.contact_name,
+        "contact_email": ns.contact_email,
+        "logo": ns.logo,
+        "write_pdf": bool(ns.pdf),
+        "write_html": bool(ns.html),
     }
 
     cfg.update(resolve_write_yaml(ns))
@@ -1891,36 +1998,28 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
 
     # Quick-depth post-override for requirements — force off unless the
     # user explicitly opted in via --requirements.
-    if cfg["assessment_depth"] == "quick" and ns.requirements is None \
-            and not ns.no_requirements:
+    if cfg["assessment_depth"] == "quick" and ns.requirements is None and not ns.no_requirements:
         cfg["check_requirements"] = False
         cfg["requirements_label"] = "disabled (auto — quick depth)"
 
     cfg.update(resolve_reasoning_model(ns, depth_info["assessment_depth"]))
-    cfg.update(resolve_extended_models(
-        cfg["reasoning_model"], depth_info["assessment_depth"]
-    ))
-    cfg.update(resolve_stride_profile(
-        cfg["reasoning_model"], depth_info["assessment_depth"],
-        getattr(ns, "stride_cap", None),
-    ))
-    cfg.update(resolve_architect_review(
-        ns, depth_info["assessment_depth"], ns.dry_run
-    ))
-    cfg.update(resolve_enrich_arch_fragments(
-        ns, depth_info["assessment_depth"], ns.dry_run
-    ))
+    cfg.update(resolve_extended_models(cfg["reasoning_model"], depth_info["assessment_depth"]))
+    cfg.update(
+        resolve_stride_profile(
+            cfg["reasoning_model"],
+            depth_info["assessment_depth"],
+            getattr(ns, "stride_cap", None),
+        )
+    )
+    cfg.update(resolve_architect_review(ns, depth_info["assessment_depth"], ns.dry_run))
+    cfg.update(resolve_enrich_arch_fragments(ns, depth_info["assessment_depth"], ns.dry_run))
     cfg["security_schema"] = "v2"
     cfg["security_schema_label"] = "v2 (13-section security architecture layout)"
-    cfg.update(resolve_skip_attack_paths_authoring(
-        depth_info["assessment_depth"]
-    ))
+    cfg.update(resolve_skip_attack_paths_authoring(depth_info["assessment_depth"]))
     # Walkthroughs opt-out (2026-05). Quick depth is the fast mode and skips
     # per-finding sequenceDiagram authoring by default; standard/thorough only
     # skip it when the user passes --no-walkthroughs.
-    cfg["skip_attack_walkthroughs"] = bool(
-        getattr(ns, "no_walkthroughs", False) or quick_depth
-    )
+    cfg["skip_attack_walkthroughs"] = bool(getattr(ns, "no_walkthroughs", False) or quick_depth)
     if getattr(ns, "no_walkthroughs", False):
         cfg["skip_attack_walkthroughs_label"] = "skipped (--no-walkthroughs)"
     elif quick_depth:
@@ -1951,10 +2050,14 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # so forcing them down to Sonnet was backwards. repo_size_capped is now
     # purely informational. See docs/analysis/plan-opus-stride-default-2026-06-21.md.)
 
-    cfg.update(resolve_incremental_mode(
-        ns, Path(cfg["output_dir"]), ns.dry_run,
-        cur_check_requirements=cfg.get("check_requirements"),
-    ))
+    cfg.update(
+        resolve_incremental_mode(
+            ns,
+            Path(cfg["output_dir"]),
+            ns.dry_run,
+            cur_check_requirements=cfg.get("check_requirements"),
+        )
+    )
 
     # M11 — wall-time deadline parsing. Accept "3600" (s), "60m", "1h".
     cfg["max_wall_time_seconds"] = _parse_duration(ns.max_wall_time) if ns.max_wall_time else None
@@ -1962,7 +2065,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     cfg["max_cost_usd"] = ns.max_cost
 
     # Plugin metadata (always present).
-    cfg["plugin_root"]   = str(plugin_root)
+    cfg["plugin_root"] = str(plugin_root)
     cfg["plugin_version"] = _read_plugin_version(plugin_root)
     cfg["analysis_version"] = _read_analysis_version(plugin_root)
 
@@ -1976,11 +2079,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # resolved. Context-v2 executes inside the compact top-level runtime; a
     # deadline, cost cap, live-phase run, or explicit compact-runtime opt-out
     # retains both the legacy runtime and the legacy producer generation.
-    cfg.update(
-        resolve_runtime_generation(
-            cfg["mode"], compact_eligible=compact_runtime_eligible(cfg)
-        )
-    )
+    cfg.update(resolve_runtime_generation(cfg["mode"], compact_eligible=compact_runtime_eligible(cfg)))
 
     # Opus ceiling — MUST be the last model step. Sourced from (CLI --no-opus)
     # OR (env APPSEC_DISABLE_OPUS) OR (org-profile policy.disable_opus, merged
@@ -1989,8 +2088,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # ceiling non-bypassable.
     disable_opus = bool(
         getattr(ns, "no_opus", False)
-        or os.environ.get("APPSEC_DISABLE_OPUS", "").strip().lower()
-            in ("1", "true", "yes", "on")
+        or os.environ.get("APPSEC_DISABLE_OPUS", "").strip().lower() in ("1", "true", "yes", "on")
         or cfg.get("disable_opus")
     )
     cfg.update(apply_opus_ban(cfg, disable_opus))
@@ -2034,11 +2132,9 @@ def _preflight_status_line(cfg: dict) -> str:
     if cfg.get("rerender"):
         return "🖉 Re-rendering the report from existing analysis fragments …"
     if cfg.get("incremental") and has_model:
-        return ("📋 Existing threat model found — computing the incremental "
-                "delta (changed files vs. baseline) …")
+        return "📋 Existing threat model found — computing the incremental delta (changed files vs. baseline) …"
     if has_model:
-        return ("📋 Existing threat model found — preparing a full "
-                "re-assessment …")
+        return "📋 Existing threat model found — preparing a full re-assessment …"
     return "🔍 No prior threat model — preparing a full assessment …"
 
 
@@ -2106,6 +2202,7 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
         return org_block
 
     defaults = effective.get("defaults") or {}
+
     # Tri-state booleans: positive CLI > negative CLI > preset > current.
     def _resolve_bool(cli_pos: bool, cli_neg: bool, preset_val, current: bool) -> bool:
         if cli_pos:
@@ -2116,11 +2213,11 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
             return preset_val
         return current
 
-    org_block["write_sarif"] = _resolve_bool(
-        ns.sarif, ns.no_sarif, defaults.get("write_sarif"), cfg["write_sarif"]
-    )
+    org_block["write_sarif"] = _resolve_bool(ns.sarif, ns.no_sarif, defaults.get("write_sarif"), cfg["write_sarif"])
     org_block["write_pentest_tasks"] = _resolve_bool(
-        ns.pentest_tasks, ns.no_pentest_tasks, defaults.get("write_pentest_tasks"),
+        ns.pentest_tasks,
+        ns.no_pentest_tasks,
+        defaults.get("write_pentest_tasks"),
         cfg["write_pentest_tasks"],
     )
 
@@ -2134,11 +2231,7 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
     # The fetch gate reads the actual URL from .org-profile-effective.json; this
     # merge only decides whether CHECK_REQUIREMENTS is on for the create skill.
     profile_rs = effective.get("requirements_source") or {}
-    if (
-        profile_rs.get("requirements_yaml_url")
-        and ns.requirements is None
-        and not ns.no_requirements
-    ):
+    if profile_rs.get("requirements_yaml_url") and ns.requirements is None and not ns.no_requirements:
         ctm = profile_rs.get("create_threat_model") or {}
         enabled = bool(ctm.get("default_active", True))
         reason = "org-profile"
@@ -2194,6 +2287,7 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
 
 def _load_resolve_org_profile_module(plugin_root: Path):
     import importlib.util
+
     spec = importlib.util.spec_from_file_location(
         "resolve_org_profile",
         plugin_root / "scripts" / "resolve_org_profile.py",
@@ -2221,9 +2315,10 @@ def _parse_duration(value: str) -> int:
 def _read_plugin_version(plugin_root: Path) -> str:
     try:
         r = subprocess.run(
-            ["python3", str(plugin_root / "scripts" / "plugin_meta.py"),
-             "get", "plugin_version"],
-            capture_output=True, text=True, timeout=5,
+            ["python3", str(plugin_root / "scripts" / "plugin_meta.py"), "get", "plugin_version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return r.stdout.strip() or "unknown"
     except (OSError, subprocess.SubprocessError):
@@ -2233,9 +2328,10 @@ def _read_plugin_version(plugin_root: Path) -> str:
 def _read_analysis_version(plugin_root: Path) -> int:
     try:
         r = subprocess.run(
-            ["python3", str(plugin_root / "scripts" / "plugin_meta.py"),
-             "get", "analysis_version"],
-            capture_output=True, text=True, timeout=5,
+            ["python3", str(plugin_root / "scripts" / "plugin_meta.py"), "get", "analysis_version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return int(r.stdout.strip())
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -2339,11 +2435,12 @@ def render_run_plan(
     # --- Section: Plugin ---
     lines.append("")
     lines.append("Plugin")
-    lines.extend(kv(
-        "Version",
-        f"appsec-advisor {cfg['plugin_version']} "
-        f"(analysis v{cfg['analysis_version']})",
-    ))
+    lines.extend(
+        kv(
+            "Version",
+            f"appsec-advisor {cfg['plugin_version']} (analysis v{cfg['analysis_version']})",
+        )
+    )
     if pre_check:
         ver = pre_check.get("plugin_version", {}) or {}
         baseline_v = ver.get("baseline")
@@ -2354,6 +2451,7 @@ def render_run_plan(
     if compat_label and compat_label not in ("equal", None, ""):
         lines.extend(kv("Schema", f"analysis_version drift: {compat_label}"))
     lines.extend(kv("Mode", verdict["mode_line"]))
+    lines.extend(kv("Runtime", _format_runtime_generation(cfg)))
 
     # --- Section: Decision ---
     lines.append("")
@@ -2395,12 +2493,14 @@ def render_run_plan(
             known = len(dirty_set.get("all_components_known", []) or [])
             dirty_ids = dirty_set.get("dirty_component_ids", []) or []
             carry = max(0, known - len(dirty_ids))
-            lines.extend(kv(
-                "Components",
-                f"{known} known, {len(dirty_ids)} dirty"
-                + (f" ({', '.join(dirty_ids[:5])})" if dirty_ids else "")
-                + f", {carry} carried forward",
-            ))
+            lines.extend(
+                kv(
+                    "Components",
+                    f"{known} known, {len(dirty_ids)} dirty"
+                    + (f" ({', '.join(dirty_ids[:5])})" if dirty_ids else "")
+                    + f", {carry} carried forward",
+                )
+            )
 
     # --- Section: Why (file list with reasons) ---
     if pre_check:
@@ -2410,8 +2510,8 @@ def render_run_plan(
             lines.append("")
             lines.append(
                 "Why this run is going to launch"
-                if verdict["will_run"] else
-                "Why this run will NOT execute Stage 1+2+3"
+                if verdict["will_run"]
+                else "Why this run will NOT execute Stage 1+2+3"
             )
             for f in sec_files[:6]:
                 rs = reasons.get(f, [])
@@ -2522,17 +2622,17 @@ def render_run_plan_notes(
 # the user-facing rationale in docs/model-selection.md aligned with it.
 _ROUTING_ROWS: list[tuple[str, str | None, str]] = [
     # (display label, cfg key or None, note)
-    ("STRIDE (discovery)",       "stride_model",           "reasoning core"),
-    ("Triage (severity)",        "triage_model",           "reasoning core"),
-    ("Merger (dedup)",           "merger_model",           "inline unless hybrid/Opus"),
-    ("Context resolver",         "context_resolver_model", "deterministic"),
-    ("Recon scanner",            "recon_scanner_model",    "deterministic"),
-    ("Config scanner",           "config_scanner_model",   "deterministic"),
-    ("QA routine",               "qa_routine_model",       "mechanical fixes"),
-    ("QA content",               "qa_content_model",       "contract reasoning"),
-    ("Orchestrator (main loop)", "orchestrator_model",     "= host session"),
-    ("Renderer (§7 ‖ MS)",       "renderer_model",         "follows session; pin APPSEC_RENDERER_MODEL"),
-    ("Abuse-case verifier",      "abuse_verifier_model",   "follows session; pin APPSEC_ABUSE_VERIFIER_MODEL"),
+    ("STRIDE (discovery)", "stride_model", "reasoning core"),
+    ("Triage (severity)", "triage_model", "reasoning core"),
+    ("Merger (dedup)", "merger_model", "inline unless hybrid/Opus"),
+    ("Context resolver", "context_resolver_model", "deterministic"),
+    ("Recon scanner", "recon_scanner_model", "deterministic"),
+    ("Config scanner", "config_scanner_model", "deterministic"),
+    ("QA routine", "qa_routine_model", "mechanical fixes"),
+    ("QA content", "qa_content_model", "contract reasoning"),
+    ("Orchestrator (main loop)", "orchestrator_model", "= host session"),
+    ("Renderer (§7 ‖ MS)", "renderer_model", "follows session; pin APPSEC_RENDERER_MODEL"),
+    ("Abuse-case verifier", "abuse_verifier_model", "follows session; pin APPSEC_ABUSE_VERIFIER_MODEL"),
 ]
 
 
@@ -2701,19 +2801,23 @@ def _full_over_existing_reason(
         # it first.
         base = str(cfg["depth_upgrade_reason"])
     elif compat_label == "incompatible":
-        base = ("existing model present, but its analysis_version is "
-                "incompatible with this plugin — full rebuild required")
+        base = (
+            "existing model present, but its analysis_version is incompatible with this plugin — full rebuild required"
+        )
     elif compat_label == "older-compatible":
-        base = ("existing model present; analysis schema drifted (older but "
-                "compatible) — full refresh applies new categories to all findings")
+        base = (
+            "existing model present; analysis schema drifted (older but "
+            "compatible) — full refresh applies new categories to all findings"
+        )
     elif tier in ("minor", "major"):
-        base = (f"existing model present; plugin upgraded ({tier}) — full "
-                f"refresh re-applies updated analysis to all components")
+        base = (
+            f"existing model present; plugin upgraded ({tier}) — full "
+            f"refresh re-applies updated analysis to all components"
+        )
     elif cfg.get("mode_upgraded_reason"):
         base = str(cfg["mode_upgraded_reason"])
     else:
-        base = ("existing model present; --full requested — complete "
-                "re-assessment (changelog history preserved)")
+        base = "existing model present; --full requested — complete re-assessment (changelog history preserved)"
     prior = cfg.get("baseline_prior_label")
     return f"{base} [replaces {prior}]" if prior else base
 
@@ -2734,11 +2838,11 @@ def _run_plan_verdict(
 
     if mode == "rebuild":
         return {
-            "verdict":   "REBUILD — wipe + full re-assessment",
+            "verdict": "REBUILD — wipe + full re-assessment",
             "mode_line": cfg.get("mode_label", "rebuild"),
-            "pipeline":  _pipeline_string(cfg, full=True),
-            "reason":    "wipes prior model + cache, no T-ID stability",
-            "will_run":  True,
+            "pipeline": _pipeline_string(cfg, full=True),
+            "reason": "wipes prior model + cache, no T-ID stability",
+            "will_run": True,
         }
     if not incremental:
         # full / first-run / bootstrap-from-legacy
@@ -2754,13 +2858,13 @@ def _run_plan_verdict(
             # an existing model?" question).
             reason = _full_over_existing_reason(cfg, pre_check, compat_label)
         return {
-            "verdict":   "RUN — full assessment (existing model)"
-                         if baseline_state not in ("empty", "legacy")
-                         else "RUN — full assessment",
+            "verdict": "RUN — full assessment (existing model)"
+            if baseline_state not in ("empty", "legacy")
+            else "RUN — full assessment",
             "mode_line": cfg.get("mode_label", "full"),
-            "pipeline":  _pipeline_string(cfg, full=True),
-            "reason":    reason,
-            "will_run":  True,
+            "pipeline": _pipeline_string(cfg, full=True),
+            "reason": reason,
+            "will_run": True,
         }
 
     # Incremental — refine via pre-check + dirty-set.
@@ -2770,38 +2874,38 @@ def _run_plan_verdict(
 
     if cc_status == "unchanged":
         return {
-            "verdict":   "NO-OP — no source changes; pipeline skipped",
+            "verdict": "NO-OP — no source changes; pipeline skipped",
             "mode_line": "incremental — fast-abort",
-            "pipeline":  "SKIPPED (no agents will run)",
-            "reason":    "no committed or working-tree changes since baseline",
-            "will_run":  False,
+            "pipeline": "SKIPPED (no agents will run)",
+            "reason": "no committed or working-tree changes since baseline",
+            "will_run": False,
         }
     if cc_status == "noise_only":
         n = len((pre_check or {}).get("noise_only_changes", []) or [])
         return {
-            "verdict":   "NOISE-ONLY — pipeline skipped",
+            "verdict": "NOISE-ONLY — pipeline skipped",
             "mode_line": "incremental — fast-abort",
-            "pipeline":  "SKIPPED (no agents will run)",
-            "reason":    f"{n} non-security file(s); no security-relevant change",
-            "will_run":  False,
+            "pipeline": "SKIPPED (no agents will run)",
+            "reason": f"{n} non-security file(s); no security-relevant change",
+            "will_run": False,
         }
     if cc_status == "unchanged_plugin_drift":
         ver = (pre_check or {}).get("plugin_version", {}) or {}
         return {
-            "verdict":   f"PLUGIN-DRIFT — plugin upgraded ({ver.get('baseline','?')} → {ver.get('current','?')}, tier={plugin_tier})",
+            "verdict": f"PLUGIN-DRIFT — plugin upgraded ({ver.get('baseline', '?')} → {ver.get('current', '?')}, tier={plugin_tier})",
             "mode_line": "incremental (auto)",
-            "pipeline":  "PROMPT (interactive) / ABORT (CI)",
-            "reason":    ver.get("message") or "plugin upgraded, source unchanged",
-            "will_run":  False,
+            "pipeline": "PROMPT (interactive) / ABORT (CI)",
+            "reason": ver.get("message") or "plugin upgraded, source unchanged",
+            "will_run": False,
         }
     if cc_status == "changed":
         if ds_decision in ("noop_global_only", "noop_empty_input"):
             return {
-                "verdict":   "NO-OP — relevant changes touch no component",
+                "verdict": "NO-OP — relevant changes touch no component",
                 "mode_line": "incremental — fast-abort (global manifest only)",
-                "pipeline":  "SKIPPED (no agents will run)",
-                "reason":    "all relevant files are top-level globals — no component glob matches",
-                "will_run":  False,
+                "pipeline": "SKIPPED (no agents will run)",
+                "reason": "all relevant files are top-level globals — no component glob matches",
+                "will_run": False,
             }
         if ds_decision == "boundary_recompose":
             steps = ["normalize boundaries", "carry findings", "render"]
@@ -2816,11 +2920,11 @@ def _run_plan_verdict(
             }
         if ds_decision == "ambiguous_potential_new_component":
             return {
-                "verdict":   "AMBIGUOUS — possible new component",
+                "verdict": "AMBIGUOUS — possible new component",
                 "mode_line": "incremental (auto, conservative)",
-                "pipeline":  _pipeline_string(cfg, full=False),
-                "reason":    "relevant files unmapped; Phase 2 will decide",
-                "will_run":  True,
+                "pipeline": _pipeline_string(cfg, full=False),
+                "reason": "relevant files unmapped; Phase 2 will decide",
+                "will_run": True,
             }
         if ds_decision == "dirty":
             ids = (dirty_set or {}).get("dirty_component_ids", []) or []
@@ -2829,20 +2933,20 @@ def _run_plan_verdict(
             if plugin_tier in ("minor", "major"):
                 drift_suffix = f" (⚠ plugin tier={plugin_tier} — consider --full)"
             return {
-                "verdict":   f"RUN — {len(ids)} component(s) dirty{drift_suffix}",
+                "verdict": f"RUN — {len(ids)} component(s) dirty{drift_suffix}",
                 "mode_line": f"incremental — STRIDE delta on {len(ids)} component(s)",
-                "pipeline":  scoped,
-                "reason":    f"changes in {', '.join(ids[:5])}",
-                "will_run":  True,
+                "pipeline": scoped,
+                "reason": f"changes in {', '.join(ids[:5])}",
+                "will_run": True,
             }
         # Pre-check exit 1 but dirty-set not consulted (or skipped) —
         # fall through to standard incremental conservatively.
         return {
-            "verdict":   "RUN — incremental (delta scope unresolved)",
+            "verdict": "RUN — incremental (delta scope unresolved)",
             "mode_line": "incremental (auto)",
-            "pipeline":  _pipeline_string(cfg, full=False),
-            "reason":    "relevant changes detected; agent will compute dirty set",
-            "will_run":  True,
+            "pipeline": _pipeline_string(cfg, full=False),
+            "reason": "relevant changes detected; agent will compute dirty set",
+            "will_run": True,
         }
 
     # Default fall-through (no pre-check ran for some reason — e.g. --dry-run
@@ -2850,16 +2954,19 @@ def _run_plan_verdict(
     # short-circuited at no_baseline). Treat as full pipeline so the box is
     # still informative.
     return {
-        "verdict":   "RUN — full pipeline (default)",
+        "verdict": "RUN — full pipeline (default)",
         "mode_line": cfg.get("mode_label", "full"),
-        "pipeline":  _pipeline_string(cfg, full=True),
-        "reason":    "no incremental pre-check signal available",
-        "will_run":  True,
+        "pipeline": _pipeline_string(cfg, full=True),
+        "reason": "no incremental pre-check signal available",
+        "will_run": True,
     }
 
 
 def _pipeline_string(
-    cfg: dict, *, full: bool, dirty_components: list[str] | None = None,
+    cfg: dict,
+    *,
+    full: bool,
+    dirty_components: list[str] | None = None,
 ) -> str:
     """Return the human-readable list of stages that will execute.
 
@@ -3065,12 +3172,12 @@ def _render_summary_box(cfg: dict) -> list[str]:
     lines.extend(
         _box_kv(
             "Plugin",
-            f"appsec-advisor {cfg['plugin_version']} "
-            f"(analysis v{cfg['analysis_version']})",
+            f"appsec-advisor {cfg['plugin_version']} (analysis v{cfg['analysis_version']})",
             width,
         )
     )
     lines.extend(_box_kv("Mode", cfg["mode_label"], width))
+    lines.extend(_box_kv("Runtime", _format_runtime_generation(cfg), width))
     lines.extend(_box_kv("Depth", _format_depth_summary(cfg), width))
     lines.extend(_box_kv("Pipeline", _format_pipeline_summary(cfg), width))
     lines.extend(_box_kv("Reasoning", _format_reasoning_summary(cfg), width))
@@ -3085,6 +3192,15 @@ def _render_summary_box(cfg: dict) -> list[str]:
 
     lines.append(_box_footer(width))
     return lines
+
+
+def _format_runtime_generation(cfg: dict) -> str:
+    """Expose the selected producer graph before any semantic dispatch."""
+    label = cfg.get("runtime_generation_label")
+    if isinstance(label, str) and label.strip():
+        return label.strip()
+    generation = cfg.get("runtime_generation") or "legacy"
+    return "context-v2" if generation == "context-v2" else "legacy (default)"
 
 
 def _format_target_scope(cfg: dict) -> str:
@@ -3187,10 +3303,7 @@ def _format_stride_depth(cfg: dict) -> str:
         cap_part = "no per-category cap (all threats kept)"
     label = cfg.get("cheap_stride_label") or ("on" if cheap else "off")
     if cheap:
-        depth_part = (
-            f"cheap-stride {label} — internal tail at light depth "
-            "(~8 turns, all 6 categories)"
-        )
+        depth_part = f"cheap-stride {label} — internal tail at light depth (~8 turns, all 6 categories)"
     else:
         depth_part = f"cheap-stride {label} — every component at full depth"
     return f"{cap_part}; {depth_part}"
@@ -3224,19 +3337,13 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     if cfg.get("skip_qa"):
         skips.append(f"QA {cfg.get('skip_qa_label', 'skipped')}")
     if cfg.get("skip_attack_walkthroughs"):
-        skips.append(
-            "walkthroughs "
-            f"{cfg.get('skip_attack_walkthroughs_label', 'skipped')}"
-        )
+        skips.append(f"walkthroughs {cfg.get('skip_attack_walkthroughs_label', 'skipped')}")
     # Stage 1d abuse-case verifier fan-out (matcher + verifiers + chain fold) is
     # the most expensive part of Stage 1d — surface whenever it is skipped
     # (explicit --no-abuse-cases, or the auto quick-depth default), mirroring how
     # QA / walkthroughs surface their skip.
     if cfg.get("skip_abuse_case_verification"):
-        skips.append(
-            "abuse-case verification "
-            f"{cfg.get('abuse_case_label', 'skipped')}"
-        )
+        skips.append(f"abuse-case verification {cfg.get('abuse_case_label', 'skipped')}")
     if skips:
         rows.append(("Skips", ", ".join(skips)))
 
@@ -3248,9 +3355,7 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     # The per-category cap is NOT shown via this row — it has its own always-on
     # "STRIDE depth" line in the Configuration block, so a "full (per-category
     # cap N)" label would only duplicate it.
-    sp_label = (cfg.get("stride_profile") or {}).get(
-        "stride_profile_label", "full"
-    )
+    sp_label = (cfg.get("stride_profile") or {}).get("stride_profile_label", "full")
     if not sp_label.startswith("full"):
         rows.append(("STRIDE", sp_label))
 
@@ -3266,15 +3371,19 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     parallel_active = cfg.get("mode") in ("full", "rebuild") and not _ps_optout
     if cfg.get("mode") in ("full", "rebuild"):
         if parallel_active:
-            rows.append((
-                "STRIDE disp",
-                f"bounded waves (up to {cfg.get('stride_concurrency', STRIDE_DISPATCH_CONCURRENCY)} concurrent; Level-0)",
-            ))
+            rows.append(
+                (
+                    "STRIDE disp",
+                    f"bounded waves (up to {cfg.get('stride_concurrency', STRIDE_DISPATCH_CONCURRENCY)} concurrent; Level-0)",
+                )
+            )
         else:
-            rows.append((
-                "STRIDE disp",
-                "serial inline (disabled via APPSEC_PARALLEL_STRIDE=0)",
-            ))
+            rows.append(
+                (
+                    "STRIDE disp",
+                    "serial inline (disabled via APPSEC_PARALLEL_STRIDE=0)",
+                )
+            )
 
     # Live-phase console surfacing (opt-in, experimental). Mirror the skill-Bash
     # resolution: honoured only when PARALLEL_STRIDE is NOT active (that path has
@@ -3284,10 +3393,12 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
         if not parallel_active:
             rows.append(("Live phase", "on (background dispatch + console phase)"))
         else:
-            rows.append((
-                "Live phase",
-                "requested — inactive (PARALLEL_STRIDE wins)",
-            ))
+            rows.append(
+                (
+                    "Live phase",
+                    "requested — inactive (PARALLEL_STRIDE wins)",
+                )
+            )
 
     # M11/M9 — wall-time + cost deadline display (existing behaviour).
     deadline_parts = []
@@ -3296,9 +3407,7 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
         if sec >= 3600:
             h = sec // 3600
             m = (sec % 3600) // 60
-            deadline_parts.append(
-                f"wall-time {h} h" + (f" {m} min" if m else "")
-            )
+            deadline_parts.append(f"wall-time {h} h" + (f" {m} min" if m else ""))
         else:
             deadline_parts.append(f"wall-time {sec // 60} min")
     if cfg.get("max_cost_usd"):
@@ -3355,10 +3464,7 @@ def _configuration_post_summary_notes(cfg: dict) -> list[str]:
 
     # --- Post-summary notes (preserved) -----------------------------------
     if cfg.get("output_outside_repo"):
-        post_lines.append(
-            "Note: output directory is outside the repository — "
-            ".gitignore entries will be skipped."
-        )
+        post_lines.append("Note: output directory is outside the repository — .gitignore entries will be skipped.")
     if cfg.get("post_summary_note"):
         post_lines.append(cfg["post_summary_note"])
     if cfg.get("mode") == "incremental":
@@ -3366,8 +3472,7 @@ def _configuration_post_summary_notes(cfg: dict) -> list[str]:
             f"Recommendation: Run with --full periodically to ensure "
             f"complete coverage with plugin v{cfg['plugin_version']}."
         )
-    if not cfg.get("check_requirements") \
-            and cfg["requirements_label"].startswith("disabled (config)"):
+    if not cfg.get("check_requirements") and cfg["requirements_label"].startswith("disabled (config)"):
         post_lines.append(
             "Tip: requirements compliance is disabled. Pass --requirements "
             "or set requirements_yaml_url in "
@@ -3392,6 +3497,7 @@ def _configuration_post_summary_notes(cfg: dict) -> list[str]:
     # jsdom before trusting the run's Mermaid output.
     try:
         import os as _os
+
         plugin_root = _os.environ.get("CLAUDE_PLUGIN_ROOT") or ""
         if plugin_root:
             scripts_dir = Path(plugin_root) / "scripts"
@@ -3442,14 +3548,22 @@ def _format_run_flags(cfg: dict) -> str:
     The opt-out (``--no-tracing``) is the deviation worth flagging.
     """
     flags = []
-    if cfg.get("dry_run"):            flags.append("dry-run")
-    if cfg.get("verbose"):            flags.append("verbose")
-    if cfg.get("quiet"):              flags.append("quiet")
-    if not cfg.get("tracing"):        flags.append("no-tracing")
-    if cfg.get("scan_manifest"):      flags.append("scan-manifest")
-    if cfg.get("keep_runtime_files"): flags.append("keep-runtime-files")
-    if cfg.get("pr_mode"):             flags.append("pr-mode")
-    if cfg.get("qa_scan_repo"):        flags.append("qa-scan-repo")
+    if cfg.get("dry_run"):
+        flags.append("dry-run")
+    if cfg.get("verbose"):
+        flags.append("verbose")
+    if cfg.get("quiet"):
+        flags.append("quiet")
+    if not cfg.get("tracing"):
+        flags.append("no-tracing")
+    if cfg.get("scan_manifest"):
+        flags.append("scan-manifest")
+    if cfg.get("keep_runtime_files"):
+        flags.append("keep-runtime-files")
+    if cfg.get("pr_mode"):
+        flags.append("pr-mode")
+    if cfg.get("qa_scan_repo"):
+        flags.append("qa-scan-repo")
     return ", ".join(flags)
 
 
@@ -3472,9 +3586,9 @@ def main(argv: list[str] | None = None) -> int:
     # fail-fast on unknown/invalid flags before any state-cleanup runs.
     # ``--force`` is a skill-layer flag (rebuild guard) and is stripped here
     # too so validate-only doesn't reject otherwise-valid invocations.
-    emit_file_flag     = "--emit-file" in argv
-    config_summary     = "--config-summary" in argv
-    validate_only      = "--validate-only" in argv
+    emit_file_flag = "--emit-file" in argv
+    config_summary = "--config-summary" in argv
+    validate_only = "--validate-only" in argv
 
     # ``--run-plan`` renders the consolidated post-pre-check box. Its
     # companion flags carry the JSON payloads the renderer needs:
@@ -3523,11 +3637,21 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             i += 1
 
-    filtered = [a for a in argv if a not in (
-        "--emit-file", "--config-summary", "--validate-only", "--force",
-        "--run-plan", "--run-plan-notes", "--effective-routing",
-        "--orchestrator-recommendation",
-    )]
+    filtered = [
+        a
+        for a in argv
+        if a
+        not in (
+            "--emit-file",
+            "--config-summary",
+            "--validate-only",
+            "--force",
+            "--run-plan",
+            "--run-plan-notes",
+            "--effective-routing",
+            "--orchestrator-recommendation",
+        )
+    ]
     # Strip the --session-model companion flag + its value (used by both
     # --effective-routing and --run-plan) so resolve() doesn't choke on it.
     if "--session-model" in filtered:
@@ -3652,9 +3776,7 @@ def main(argv: list[str] | None = None) -> int:
     # Side-effect: persist to .skill-config.json for downstream scripts.
     if emit_file_flag:
         try:
-            (Path(cfg["output_dir"]) / ".skill-config.json").write_text(
-                js, encoding="utf-8"
-            )
+            (Path(cfg["output_dir"]) / ".skill-config.json").write_text(js, encoding="utf-8")
         except OSError:
             pass  # non-fatal; JSON is on stdout regardless
         # Also persist the org-profile slice on its own — the status skill,

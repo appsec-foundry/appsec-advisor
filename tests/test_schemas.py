@@ -47,6 +47,42 @@ def test_threat_model_output_example_validates() -> None:
     assert not errors, "\n".join(f"{'.'.join(str(p) for p in e.absolute_path) or 'root'}: {e.message}" for e in errors)
 
 
+def test_attack_surface_output_requires_closed_boolean_auth_contract() -> None:
+    schema = yaml.safe_load((SCHEMAS_DIR / "threat-model.output.schema.yaml").read_text())
+    data = yaml.safe_load((ROOT / "tests" / "fixtures" / "schema" / "threat-model.valid.yaml").read_text())
+    validator = Draft202012Validator(schema)
+
+    data["attack_surface"][0]["auth_required"] = None
+    assert list(validator.iter_errors(data)), "unknown authentication must not reach the final report contract"
+
+    data["attack_surface"][0]["auth_required"] = True
+    data["attack_surface"][0]["uncontracted"] = "value"
+    assert list(validator.iter_errors(data)), "attack-surface rows are closed structured artifacts"
+
+
+def test_attack_surface_override_additions_require_boolean_auth() -> None:
+    validator = _json_validator("fragments/attack-surface-overrides.schema.json")
+    value = {
+        "schema_version": 1,
+        "additions": [
+            {
+                "entry_point": "/socket.io",
+                "protocol": "WebSocket",
+                "auth_required": False,
+                "notes": "No connection middleware was observed.",
+            }
+        ],
+    }
+    assert not list(validator.iter_errors(value))
+
+    value["additions"][0]["auth_required"] = None
+    assert list(validator.iter_errors(value)), "null authentication must fail at the Phase-6 producer gate"
+
+    value["additions"][0]["auth_required"] = False
+    value["additions"][0]["uncontracted"] = "value"
+    assert list(validator.iter_errors(value)), "Phase-6 additions must reject undeclared fields"
+
+
 def test_boundary_verdict_fields_are_constrained() -> None:
     """`trust_boundaries` items are `additionalProperties: false`, so the two
     fields triage writes back have to be declared — and constrained, because a
@@ -85,6 +121,45 @@ def test_json_schemas_directory_not_empty() -> None:
 def _json_validator(name: str) -> Draft202012Validator:
     schema = json.loads((SCHEMAS_DIR / name).read_text(encoding="utf-8"))
     return Draft202012Validator(schema)
+
+
+def test_context_v2_dispatch_vocabularies_do_not_drift_between_schemas() -> None:
+    action = json.loads((SCHEMAS_DIR / "orchestration-action.schema.json").read_text(encoding="utf-8"))
+    plan = json.loads((SCHEMAS_DIR / "stride-component-context-plan.schema.json").read_text(encoding="utf-8"))
+    manifest = yaml.safe_load((SCHEMAS_DIR / "stride-dispatch-manifest.schema.yaml").read_text(encoding="utf-8"))
+
+    job = action["$defs"]["dispatch_job"]["properties"]
+    analysis = plan["properties"]["analysis"]["properties"]
+    manifest_component = manifest["properties"]["components"]["items"]["properties"]
+
+    assert job["analysis_depth"]["enum"] == analysis["depth"]["enum"]
+    assert job["estimated_threat_count"]["enum"] == analysis["estimated_threat_count"]["enum"]
+    assert job["estimated_threat_count"]["enum"] == manifest_component["estimated_threat_count_label"]["enum"]
+    assert job["lens_ids"]["items"]["enum"] == plan["properties"]["lens_ids"]["items"]["enum"]
+    assert job["lens_ids"]["items"]["enum"] == manifest_component["lens_ids"]["items"]["enum"]
+
+
+def test_context_v2_projection_vocabularies_do_not_drift_between_schemas() -> None:
+    action = json.loads((SCHEMAS_DIR / "orchestration-action.schema.json").read_text(encoding="utf-8"))
+    plan = json.loads((SCHEMAS_DIR / "stride-component-context-plan.schema.json").read_text(encoding="utf-8"))
+    security = json.loads((SCHEMAS_DIR / "stride-component-security-context.schema.json").read_text(encoding="utf-8"))
+    effective = json.loads((SCHEMAS_DIR / "context-effective-plan.schema.json").read_text(encoding="utf-8"))
+    bindings = json.loads((SCHEMAS_DIR / "context-routing-bindings.schema.json").read_text(encoding="utf-8"))
+
+    security_ids = set(security["properties"]["context_id"]["enum"])
+    action_ids = set(
+        action["$defs"]["dispatch_job"]["properties"]["security_context_projections"]["items"]["properties"][
+            "context_id"
+        ]["enum"]
+    )
+    plan_ids = set(plan["properties"]["inputs"]["items"]["properties"]["context_id"]["enum"])
+
+    assert security_ids == action_ids
+    assert security_ids < plan_ids
+    assert (
+        effective["$defs"]["delivery"]["properties"]["projector"]["enum"]
+        == bindings["$defs"]["context_binding"]["properties"]["projector"]["enum"]
+    )
 
 
 def _component_context_plan() -> dict:
@@ -204,6 +279,47 @@ def test_component_architecture_context_schema_keeps_categories_separate() -> No
     invalid = json.loads(json.dumps(value))
     invalid["attributes"] = {}
     assert list(validator.iter_errors(invalid)), "an empty projection must be physically omitted"
+
+
+def test_component_security_context_schema_binds_category_source_and_truncation() -> None:
+    validator = _json_validator("stride-component-security-context.schema.json")
+    value = {
+        "schema_version": 1,
+        "component_id": "api",
+        "context_id": "controls.component_context",
+        "source": {
+            "kind": "component_manifest",
+            "manifest_field": "controls",
+            "content_sha256": "0" * 64,
+        },
+        "records": [
+            {
+                "source": "controls",
+                "value": "Authorization middleware",
+                "content_sha256": "1" * 64,
+                "truncated": False,
+            }
+        ],
+        "limits": {
+            "original_count": 1,
+            "retained_count": 1,
+            "omitted_count": 0,
+            "value_truncations": 0,
+            "serialized_bytes": 500,
+            "estimated_tokens": 125,
+        },
+    }
+    assert not list(validator.iter_errors(value))
+
+    invalid = json.loads(json.dumps(value))
+    invalid["source"]["kind"] = "component_index"
+    invalid["source"].pop("manifest_field")
+    invalid["source"].update({"artifact_path": ".controls.json", "artifact_sha256": "2" * 64})
+    assert list(validator.iter_errors(invalid)), "control projections must originate in the component manifest"
+
+    invalid = json.loads(json.dumps(value))
+    invalid["records"][0].update({"truncated": True, "value": "x" * 4096})
+    assert list(validator.iter_errors(invalid)), "truncated records must disclose their original length"
 
 
 def test_component_repository_roots_reject_primary_and_identical_duplicates() -> None:

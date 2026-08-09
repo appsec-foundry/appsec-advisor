@@ -44,9 +44,9 @@ from typing import Any
 # loaded. Kept identical to the values that lived in the three duplicated
 # dicts so behaviour is unchanged on systems without the file.
 _FALLBACK_BUDGETS: dict[str, dict[str, int]] = {
-    "quick": {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 60, "11": 300},
-    "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 120, "11": 600},
-    "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 180, "11": 900},
+    "quick": {"1": 180, "2": 120, "3": 60, "9": 180, "10b": 300, "11": 300},
+    "standard": {"1": 240, "2": 180, "3": 120, "9": 360, "10b": 480, "11": 600},
+    "thorough": {"1": 360, "2": 240, "3": 180, "9": 720, "10b": 720, "11": 900},
 }
 _FALLBACK_DEFAULTS: dict[str, Any] = {
     "heartbeat_stale_seconds": 300,

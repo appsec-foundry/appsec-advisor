@@ -33,11 +33,20 @@
           "tier": {"type": "string", "enum": ["client", "application", "data"]},
           "deployment_zones": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 80}},
           "handles_sensitive_data": {"type": "boolean"},
-          "paths": {"type": "array", "maxItems": 40, "items": {"type": "string", "maxLength": 512}}
+          "paths": {
+            "type": "array",
+            "maxItems": 40,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"}
+            }
+          }
         }
       }
     },
-    "data_flows": {"type": "array", "maxItems": 500, "items": {"type": "object"}},
+    "data_flows": {"type": "array", "maxItems": 500, "items": {"$ref": "#/$defs/data_flow"}},
     "signals": {
       "type": "array",
       "maxItems": 800,
@@ -76,7 +85,7 @@
           "mandatory": {"type": "boolean"},
           "trigger": {"type": "string", "minLength": 1, "maxLength": 240},
           "false_positive_exclusions": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 180}},
-          "evidence": {"type": "array", "maxItems": 12, "items": {"type": "object"}},
+          "evidence": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/evidence_location"}},
           "provenance": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 80}},
           "flow_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^df-[0-9]{3,}$"}}
         }
@@ -138,7 +147,7 @@
                   "authn_signal": {"type": "string", "maxLength": 32},
                   "authz_signal": {"type": "string", "maxLength": 32},
                   "management_surface": {"type": "boolean"},
-                  "evidence": {"type": "array", "maxItems": 1, "items": {"type": "object"}}
+                  "evidence": {"type": "array", "maxItems": 1, "items": {"$ref": "#/$defs/evidence_location"}}
                 }
               }
             }
@@ -154,7 +163,7 @@
             "properties": {
               "entry_point": {"type": "string", "minLength": 1, "maxLength": 180},
               "protocol": {"type": "string", "minLength": 1, "maxLength": 80},
-              "auth_required": {"type": ["boolean", "null"]}
+              "auth_required": {"type": "boolean"}
             }
           }
         },
@@ -209,7 +218,7 @@
                 "has_multi_tenancy_signal": {"type": "boolean"}
               }
             },
-            "evidence": {"type": "array", "maxItems": 12, "items": {"type": "object"}}
+            "evidence": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/evidence_location"}}
           }
         },
         "boundary_declarations": {
@@ -231,6 +240,46 @@
           }
         },
         "incremental": {"type": "boolean"}
+      }
+    }
+  },
+  "$defs": {
+    "endpoint": {
+      "type": "string",
+      "pattern": "^(?:external|[a-z][a-z0-9-]+)$",
+      "maxLength": 128
+    },
+    "evidence_location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"}
+        },
+        "line": {"type": "integer", "minimum": 1, "maximum": 10000000}
+      }
+    },
+    "data_flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "from", "to", "label", "protocol", "data_classification", "direction", "evidence", "provenance"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^df-[0-9]{3,}$"},
+        "from": {"$ref": "#/$defs/endpoint"},
+        "to": {"$ref": "#/$defs/endpoint"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "protocol": {"type": "string", "minLength": 1, "maxLength": 80},
+        "data_classification": {"type": "string", "minLength": 1, "maxLength": 80},
+        "direction": {"type": "string", "enum": ["unidirectional", "bidirectional", "request-response"]},
+        "evidence": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/evidence_location"}},
+        "route_refs": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 120}},
+        "interface_refs": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 120}},
+        "provenance": {"type": "string", "enum": ["recon", "architecture", "route-extraction", "repo-declared"]},
+        "threats": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^T-[0-9]{3,}$"}}
       }
     }
   }
