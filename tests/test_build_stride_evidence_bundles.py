@@ -311,6 +311,47 @@ def test_known_threat_projection_preserves_one_record_per_catalog_threat(tmp_pat
     assert {json.loads(record["value"])["id"] for record in projection["records"]} == {"KT-1", "KT-2"}
 
 
+def test_analyst_known_vulnerabilities_are_receipted_as_known_threats(tmp_path):
+    repo, output = _repo(tmp_path)
+    component = _component(known_vulns=["src/app.py:1 — login trusts an unverified identity claim"])
+
+    manifest = bundles.build_all(output, repo, _manifest(component))
+    row = next(
+        item
+        for item in manifest["components"][0]["security_context_projections"]
+        if item["context_id"] == "threats.known_threats"
+    )
+    projection = json.loads((output / row["artifact_path"]).read_text(encoding="utf-8"))
+
+    assert projection["source"]["kind"] == "component_manifest"
+    assert projection["source"]["manifest_field"] == "known_vulns"
+    assert [record["value"] for record in projection["records"]] == [
+        "src/app.py:1 — login trusts an unverified identity claim"
+    ]
+
+
+def test_team_and_analyst_known_threats_share_one_receipted_route(tmp_path):
+    repo, output = _repo(tmp_path)
+    context_dir = output / ".dispatch-context" / "backend-api"
+    context_dir.mkdir(parents=True)
+    source = context_dir / "known-threats.json"
+    source.write_text(json.dumps({"threats": [{"id": "KT-1"}]}), encoding="utf-8")
+    component = _component(known_vulns=["src/app.py:1 — analyst candidate"])
+    component["index_paths"]["known_threats"] = source.relative_to(output).as_posix()
+
+    manifest = bundles.build_all(output, repo, _manifest(component))
+    rows = [
+        item
+        for item in manifest["components"][0]["security_context_projections"]
+        if item["context_id"] == "threats.known_threats"
+    ]
+    projection = json.loads((output / rows[0]["artifact_path"]).read_text(encoding="utf-8"))
+
+    assert len(rows) == 1
+    assert projection["source"]["kind"] == "component_index_and_manifest"
+    assert projection["limits"]["original_count"] == 2
+
+
 def test_empty_security_category_is_physically_omitted_and_removes_stale_projection(tmp_path):
     repo, output = _repo(tmp_path)
     manifest = bundles.build_all(output, repo, _manifest(_component(controls=["Session cookie"])))

@@ -312,7 +312,7 @@ contexts:
   - id: threats.known_threats
     name: Component known threats
     category: threat_analysis
-    description: Bounded team-provided known-threat records that apply to the current component.
+    description: Bounded team-provided and analyst-identified threat candidates that apply to the current component.
     scope: one_component
   - id: threats.related_repositories
     name: Component related-repository roots

@@ -82,6 +82,9 @@ class TestHardExcludes:
         assert not rp._is_excluded("src/auth/login.ts")
         assert not rp._is_excluded("services/api/app.py")
 
+    def test_served_codefix_snippets_are_not_runtime_source(self):
+        assert rp._is_excluded("data/static/codefixes/update-user-role.ts")
+
     def test_package_json_in_root_included(self):
         """The application's own package.json MUST be scanned (for Cat 17)."""
         assert not rp._is_excluded("package.json")

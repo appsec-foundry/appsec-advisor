@@ -185,6 +185,10 @@ _HARD_EXCLUDE_DIRS = frozenset(
         ".gradle",
         ".cache",
         ".appsec-cache",
+        # Served remediation/tutorial snippets contain deliberately vulnerable
+        # before/after code and are evidence about a solution guide, not the
+        # runtime application. Source-auth uses the same scanner-local rule.
+        "codefixes",
         "__pycache__",
         "dist",
         "build",

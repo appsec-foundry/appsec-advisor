@@ -77,6 +77,7 @@ SECURITY_CONTEXT_SPECS = {
 INLINE_SECURITY_CONTEXT_SPECS = {
     "controls.component_context": ("controls", "controls-context.json"),
 }
+INLINE_KNOWN_THREATS_FIELD = "known_vulns"
 DETACHED_SECURITY_CONTEXT_CLASSES = (*tuple(spec[1] for spec in SECURITY_CONTEXT_SPECS.values()), "controls")
 ALL_EVIDENCE_CLASSES = (*EVIDENCE_CLASSES, *DETACHED_SECURITY_CONTEXT_CLASSES)
 INDEX_TO_CLASS = {
@@ -470,6 +471,54 @@ def component_inline_security_context_projection(
     )
 
 
+def component_known_threats_projection(
+    output_dir: Path,
+    component: dict[str, Any],
+) -> tuple[dict[str, Any], bytes] | None:
+    """Merge analyst candidates and an optional team index into one route.
+
+    ``known_vulns`` was historically left inline in the dispatch manifest. In
+    context-v2 the manifest is deliberately not delivered to analyzers, so
+    those high-value candidates vanished despite being produced correctly.
+    This projector keeps the semantic ``threats.known_threats`` route singular
+    while preserving the provenance of both possible producers.
+    """
+    component_id = component["component_id"]
+    inline_rows = _rows(component.get(INLINE_KNOWN_THREATS_FIELD))
+    index_name, _evidence_class, _filename = SECURITY_CONTEXT_SPECS["threats.known_threats"]
+    source_value = (component.get("index_paths") or {}).get(index_name)
+    index_rows: list[Any] = []
+    source: dict[str, Any]
+    if source_value not in (None, "none"):
+        source_path = _output_artifact(output_dir, str(source_value))
+        try:
+            source_payload = source_path.read_bytes()
+            index_rows = _rows(json.loads(source_payload))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BundleError(f"validated component index is unreadable: {source_value}: {exc}") from exc
+        source = {
+            "kind": "component_index_and_manifest" if inline_rows else "component_index",
+            "artifact_path": source_path.relative_to(output_dir.resolve()).as_posix(),
+            "artifact_sha256": hashlib.sha256(source_payload).hexdigest(),
+        }
+        if inline_rows:
+            source["manifest_field"] = INLINE_KNOWN_THREATS_FIELD
+    else:
+        source = {
+            "kind": "component_manifest",
+            "manifest_field": INLINE_KNOWN_THREATS_FIELD,
+        }
+    rows = [*index_rows, *inline_rows]
+    source["content_sha256"] = hashlib.sha256(_canonical_bytes(rows)).hexdigest()
+    return _finish_security_context_projection(
+        component_id=component_id,
+        context_id="threats.known_threats",
+        source=source,
+        record_source="known_threats",
+        rows=rows,
+    )
+
+
 def validate_security_context_bytes(
     payload: bytes,
     *,
@@ -557,7 +606,9 @@ def component_security_context_projections(
             context_id=context_id,
         )
         for context_id, (index_name, _evidence_class, _filename) in SECURITY_CONTEXT_SPECS.items()
+        if context_id != "threats.known_threats"
     }
+    projections["threats.known_threats"] = component_known_threats_projection(output_dir, component)
     projections.update(
         {
             context_id: component_inline_security_context_projection(

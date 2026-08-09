@@ -156,6 +156,7 @@ directories:
   # Runtime artifacts
   - .cache
   - .appsec-cache   # plugin's own cache — avoid self-reference scan
+  - .active-tool-calls
   - tmp
 
   # Generated docs sites (build output of Hugo/Jekyll/Antora/Sphinx etc.)
@@ -377,6 +378,31 @@ file_patterns:
   - "coverage.xml"        # Cobertura/pytest-cov XML
   - "cobertura.xml"
   - "clover.xml"          # PHPUnit/Clover
+
+  # AppSec Advisor run products and transient controller state. Exact
+  # basenames keep arbitrary dotfiles and ordinary JSON source in scope while
+  # preventing a repository-local output directory from becoming evidence for
+  # a later scan.
+  - ".abuse-case-matches.json"
+  - ".agent-run.log"
+  - ".appsec-checkpoint"
+  - ".appsec-lock"
+  - ".appsec-progress.json"
+  - ".config-scan-findings.json"
+  - ".headless-result.json"
+  - ".hook-events.log"
+  - ".recon-patterns.json"
+  - ".recon-signals.json"
+  - ".recon-summary.md"
+  - ".route-inventory.json"
+  - ".run-issues.json"
+  - ".skill-config.json"
+  - ".source-auth-findings.json"
+  - ".stage-stats.jsonl"
+  - ".threats-merged.json"
+  - "threat-model.md"
+  - "threat-model.sarif.json"
+  - "threat-model.yaml"
 
   # Lockfiles — exact dependency pins. Bodies carry no signal beyond the
   # manifest (recon Step 2 reads only existence). Dependency CHANGES are still

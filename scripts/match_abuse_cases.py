@@ -48,6 +48,7 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
+import scan_excludes
 from validate_intermediate import validate_recon_signals
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -112,6 +113,11 @@ def load_findings(path: Path) -> list[dict]:
     if isinstance(doc, dict):
         return doc.get("findings") or doc.get("threats") or []
     return doc if isinstance(doc, list) else []
+
+
+def matchable_findings(findings: list[dict]) -> list[dict]:
+    """Exclude findings that authoritative evidence verification refuted."""
+    return [finding for finding in findings if finding.get("evidence_check") != "refuted"]
 
 
 def _compile(patterns: list[str]) -> list[re.Pattern]:
@@ -221,6 +227,14 @@ def _repo_source_files(repo_root: Path) -> tuple[Path, ...]:
                 continue
             if any(part in _SOURCE_PROBE_SKIP_DIRS for part in rel.parts):
                 continue
+            relative = rel.as_posix()
+            try:
+                if scan_excludes.is_excluded(relative):
+                    continue
+            except (FileNotFoundError, ValueError):
+                # Keep the matcher usable in a partially packaged plugin, but
+                # retain the local hard exclusions above as the fail-open floor.
+                pass
             if not path.is_file():
                 continue
             try:
@@ -664,7 +678,10 @@ def _scan_case_config(output_dir: Path) -> tuple[list[Path], set[str]]:
 def cmd_match(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     findings_path = Path(args.findings) if args.findings else out_dir / ".threats-merged.json"
-    findings = load_findings(findings_path)
+    # Evidence verification runs before abuse matching. A refuted candidate is
+    # no longer a finding and must not bind a later chain step merely because
+    # the pre-verification merged register retains it for auditability.
+    findings = matchable_findings(load_findings(findings_path))
     repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else None
     signals = _load_signals(args.signals, repo_root=repo_root)
 

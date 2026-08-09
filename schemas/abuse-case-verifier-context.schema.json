@@ -19,10 +19,13 @@
     },
     "limits": {
       "type": "object",
-      "required": ["max_chain_steps", "max_patterns_per_field", "max_bytes", "serialized_bytes"],
+      "required": ["max_chain_steps", "max_patterns_per_field", "max_source_window_lines", "max_source_chars", "source_chars", "max_bytes", "serialized_bytes"],
       "properties": {
         "max_chain_steps": {"const": 16},
         "max_patterns_per_field": {"const": 32},
+        "max_source_window_lines": {"const": 17},
+        "max_source_chars": {"const": 32768},
+        "source_chars": {"type": "integer", "minimum": 0, "maximum": 32768},
         "max_bytes": {"const": 65536},
         "serialized_bytes": {"type": "integer", "minimum": 1, "maximum": 65536}
       },
@@ -66,6 +69,18 @@
         "line": {"type": ["integer", "null"], "minimum": 1}
       },
       "required": ["file", "line"],
+      "additionalProperties": false
+    },
+    "source_window": {
+      "type": ["object", "null"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "content": {"type": "string", "maxLength": 32768},
+        "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "required": ["file", "start_line", "end_line", "content", "content_sha256"],
       "additionalProperties": false
     },
     "finding": {
@@ -130,7 +145,7 @@
     },
     "step_match": {
       "type": "object",
-      "required": ["step", "label", "required", "grants", "requires", "matched", "matched_finding_id", "evidence", "match_basis", "controls_found"],
+      "required": ["step", "label", "required", "grants", "requires", "matched", "matched_finding_id", "evidence", "source_window", "match_basis", "controls_found"],
       "properties": {
         "step": {"type": "integer", "minimum": 1, "maximum": 16},
         "label": {"type": "string", "minLength": 1, "maxLength": 500},
@@ -140,6 +155,7 @@
         "matched": {"type": "boolean"},
         "matched_finding_id": {"type": ["string", "null"], "maxLength": 100},
         "evidence": {"$ref": "#/$defs/evidence"},
+        "source_window": {"$ref": "#/$defs/source_window"},
         "match_basis": {"type": ["string", "null"], "maxLength": 100},
         "controls_found": {"$ref": "#/$defs/string_list"}
       },

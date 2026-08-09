@@ -12,11 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from _atomic_io import atomic_write_json
+import scan_excludes
 
 MAX_CANDIDATES = 64
 MAX_CONTEXT_BYTES = 65_536
 MAX_CHAIN_STEPS = 16
 MAX_PATTERNS = 32
+MAX_SOURCE_WINDOW_LINES = 17
+MAX_SOURCE_WINDOW_CHARS = 32_768
 _CANDIDATE_RE = re.compile(r"^(?:AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$")
 
 
@@ -114,10 +117,65 @@ def _project_chain(value: Any) -> list[dict[str, Any]]:
     return projected
 
 
-def _project_step_matches(value: Any, step_count: int) -> list[dict[str, Any]]:
+def _source_window(repo_root: Path | None, evidence: dict[str, Any] | None, remaining_chars: int) -> dict | None:
+    """Return a bounded exact locator window for one matched source anchor."""
+    if repo_root is None or not isinstance(evidence, dict) or remaining_chars <= 0:
+        return None
+    relative = evidence.get("file")
+    line = evidence.get("line")
+    if not isinstance(relative, str) or not isinstance(line, int) or isinstance(line, bool) or line < 1:
+        return None
+    rel = Path(relative)
+    if rel.is_absolute() or any(part in {"", ".", ".."} for part in rel.parts):
+        return None
+    try:
+        if scan_excludes.is_excluded(rel.as_posix()):
+            return None
+    except (FileNotFoundError, ValueError):
+        pass
+    root = repo_root.resolve()
+    raw_path = root / rel
+    if raw_path.is_symlink():
+        return None
+    path = raw_path.resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        raw_lines = path.read_bytes().splitlines()
+    except OSError:
+        return None
+    if line > len(raw_lines):
+        return None
+    radius = MAX_SOURCE_WINDOW_LINES // 2
+    start = max(1, line - radius)
+    end = min(len(raw_lines), line + radius)
+    raw = b"\n".join(raw_lines[start - 1 : end])
+    content = raw.decode("utf-8", errors="replace")
+    if len(content) > remaining_chars:
+        return None
+    return {
+        "file": rel.as_posix(),
+        "start_line": start,
+        "end_line": end,
+        "content": content,
+        "content_sha256": _sha256(raw),
+    }
+
+
+def _project_step_matches(
+    value: Any,
+    step_count: int,
+    *,
+    repo_root: Path | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     if not isinstance(value, list) or len(value) != step_count:
         raise AbuseContextError("candidate step_matches do not cover the chain")
     projected: list[dict[str, Any]] = []
+    source_chars = 0
     for index, match in enumerate(value, start=1):
         if not isinstance(match, dict) or match.get("step") != index:
             raise AbuseContextError("candidate step_matches must be sequential objects")
@@ -131,6 +189,9 @@ def _project_step_matches(value: Any, step_count: int) -> list[dict[str, Any]]:
                 "file": _string(evidence.get("file"), "step_matches.evidence.file", maximum=1000),
                 "line": line,
             }
+        source_window = _source_window(repo_root, projected_evidence, MAX_SOURCE_WINDOW_CHARS - source_chars)
+        if source_window is not None:
+            source_chars += len(source_window["content"])
         projected.append(
             {
                 "step": index,
@@ -148,16 +209,17 @@ def _project_step_matches(value: Any, step_count: int) -> list[dict[str, Any]]:
                     nullable=True,
                 ),
                 "evidence": projected_evidence,
+                "source_window": source_window,
                 "match_basis": _string(
                     match.get("match_basis"), f"step_matches[{index}].match_basis", maximum=100, nullable=True
                 ),
                 "controls_found": _strings(match.get("controls_found"), f"step_matches[{index}].controls_found"),
             }
         )
-    return projected
+    return projected, source_chars
 
 
-def project_candidate(payload: bytes, candidate_id: str) -> dict[str, Any]:
+def project_candidate(payload: bytes, candidate_id: str, repo_root: Path | None = None) -> dict[str, Any]:
     if not _CANDIDATE_RE.fullmatch(candidate_id):
         raise AbuseContextError(f"invalid abuse-case candidate id {candidate_id!r}")
     try:
@@ -180,6 +242,7 @@ def project_candidate(payload: bytes, candidate_id: str) -> dict[str, Any]:
     attacker = case.get("attacker")
     if not isinstance(attacker, dict):
         raise AbuseContextError("candidate attacker must be an object")
+    step_matches, source_chars = _project_step_matches(row.get("step_matches"), len(chain), repo_root=repo_root)
     value = {
         "schema_version": 1,
         "source": {
@@ -191,6 +254,9 @@ def project_candidate(payload: bytes, candidate_id: str) -> dict[str, Any]:
         "limits": {
             "max_chain_steps": MAX_CHAIN_STEPS,
             "max_patterns_per_field": MAX_PATTERNS,
+            "max_source_window_lines": MAX_SOURCE_WINDOW_LINES,
+            "max_source_chars": MAX_SOURCE_WINDOW_CHARS,
+            "source_chars": source_chars,
             "max_bytes": MAX_CONTEXT_BYTES,
             "serialized_bytes": 0,
         },
@@ -209,7 +275,7 @@ def project_candidate(payload: bytes, candidate_id: str) -> dict[str, Any]:
             },
             "goal": _string(case.get("goal"), "candidate.goal", maximum=2000),
             "chain": chain,
-            "step_matches": _project_step_matches(row.get("step_matches"), len(chain)),
+            "step_matches": step_matches,
         },
     }
     return value
@@ -219,9 +285,9 @@ def _payload(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=False) + "\n").encode("utf-8")
 
 
-def write_candidate(output_dir: Path, candidate_id: str) -> Path:
+def write_candidate(output_dir: Path, candidate_id: str, repo_root: Path | None = None) -> Path:
     source = output_dir / ".abuse-case-matches.json"
-    value = project_candidate(source.read_bytes(), candidate_id)
+    value = project_candidate(source.read_bytes(), candidate_id, repo_root=repo_root)
     target_dir = output_dir / ".dispatch-context" / "abuse-cases"
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"{candidate_id}.json"
@@ -237,12 +303,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--candidate", action="append", required=True)
+    parser.add_argument("--repo-root", type=Path)
     args = parser.parse_args(argv)
     if len(args.candidate) > MAX_CANDIDATES:
         print(f"build_abuse_case_contexts: maximum is {MAX_CANDIDATES} candidates", file=sys.stderr)
         return 1
     try:
-        paths = [write_candidate(args.output_dir.resolve(), candidate) for candidate in args.candidate]
+        repo_root = args.repo_root.resolve() if args.repo_root else None
+        paths = [write_candidate(args.output_dir.resolve(), candidate, repo_root) for candidate in args.candidate]
     except (OSError, AbuseContextError) as exc:
         print(f"build_abuse_case_contexts: {exc}", file=sys.stderr)
         return 1

@@ -84,6 +84,25 @@ def test_candidate_projection_is_exact_source_bound_and_schema_valid(tmp_path: P
     assert not _schema_errors(value)
 
 
+def test_candidate_projection_embeds_bounded_exact_source_window(tmp_path: Path) -> None:
+    source = {"schema_version": 1, "matches": [_match()]}
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(source), encoding="utf-8")
+    target = tmp_path / "routes" / "feedback.ts"
+    target.parent.mkdir()
+    target.write_text("\n".join(f"line {number}" for number in range(1, 25)) + "\n", encoding="utf-8")
+
+    path = contexts.write_candidate(tmp_path, "AC-T-001", repo_root=tmp_path)
+    value = json.loads(path.read_text())
+    window = value["candidate"]["step_matches"][0]["source_window"]
+
+    assert window["file"] == "routes/feedback.ts"
+    assert window["start_line"] == 4
+    assert window["end_line"] == 20
+    assert "line 12" in window["content"]
+    assert value["limits"]["source_chars"] == len(window["content"])
+    assert not _schema_errors(value)
+
+
 def test_candidate_projection_rejects_non_candidate(tmp_path: Path) -> None:
     row = _match()
     row["structural_verdict"] = "not_applicable"

@@ -4684,7 +4684,11 @@ def _finalized_abuse_verdicts(output_dir: Path, candidates: list[str]) -> list[s
     return done
 
 
-def _context_v2_abuse_candidate_receipt(output_dir: Path, candidate_id: str) -> dict[str, Any]:
+def _context_v2_abuse_candidate_receipt(
+    output_dir: Path,
+    candidate_id: str,
+    repo_root: Path,
+) -> dict[str, Any]:
     """Reconstruct one candidate projection and bind it to the complete match set."""
     from build_abuse_case_contexts import AbuseContextError, project_candidate  # noqa: PLC0415
 
@@ -4696,7 +4700,11 @@ def _context_v2_abuse_candidate_receipt(output_dir: Path, candidate_id: str) -> 
         contract="abuse-case-verifier-context-v1",
     )
     try:
-        expected = project_candidate((output_dir / ".abuse-case-matches.json").read_bytes(), candidate_id)
+        expected = project_candidate(
+            (output_dir / ".abuse-case-matches.json").read_bytes(),
+            candidate_id,
+            repo_root=repo_root,
+        )
     except (OSError, AbuseContextError) as exc:
         raise ControllerError(f"abuse-case-verifier-context-v1 validation failed: {exc}") from exc
     for key in ("source", "candidate"):
@@ -4755,11 +4763,13 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
     if not candidates or (output_dir / ".budget-critical").exists():
         return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
     if (cfg.get("runtime_generation") or LEGACY_GENERATION) == CONTEXT_V2_GENERATION:
-        projection_args = ["--output-dir", str(output_dir)]
+        projection_args = ["--output-dir", str(output_dir), "--repo-root", repo_root]
         for candidate in candidates:
             projection_args.extend(["--candidate", candidate])
         _run_script("build_abuse_case_contexts.py", projection_args)
-        artifact_receipts = [_context_v2_abuse_candidate_receipt(output_dir, candidate) for candidate in candidates]
+        artifact_receipts = [
+            _context_v2_abuse_candidate_receipt(output_dir, candidate, Path(repo_root)) for candidate in candidates
+        ]
         jobs = [
             {
                 "schema_version": 1,

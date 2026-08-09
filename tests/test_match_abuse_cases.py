@@ -291,6 +291,25 @@ def test_direct_source_probe_makes_case_a_candidate_without_finding(tmp_path: Pa
     assert step["evidence"] == {"file": "src/template.ts", "line": 1, "excerpt": "render(innerHTML);"}
 
 
+def test_direct_source_probe_ignores_prior_run_telemetry(tmp_path: Path):
+    (tmp_path / ".agent-run.log").write_text("render(innerHTML);\n", encoding="utf-8")
+    case = _case([_step(1, "innerHTML")])
+
+    result = mac.match_case(case, [], signals=None, repo_root=tmp_path)
+
+    assert result["structural_verdict"] == "not_applicable"
+    assert result["step_matches"][0]["evidence"] is None
+
+
+def test_refuted_findings_are_not_matchable_abuse_inputs():
+    refuted = _finding("T-007", "mass assignment role")
+    refuted["evidence_check"] = "refuted"
+    verified = _finding("T-008", "ownership bypass")
+    verified["evidence_check"] = "verified"
+
+    assert mac.matchable_findings([refuted, verified]) == [verified]
+
+
 def test_scope_path_patterns_gate_case_without_shell_path_expansion(tmp_path: Path):
     (tmp_path / "services").mkdir()
     (tmp_path / "services" / "payments.py").write_text("refund()\n", encoding="utf-8")

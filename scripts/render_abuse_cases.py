@@ -301,6 +301,12 @@ def render_case(
             fid = _norm_fid(sv.get("matched_finding_id"))
             ev = sv.get("evidence") or {}
         finding = findings_idx.get(fid, {})
+        # The final report register is authoritative. A matcher/verifier row
+        # can outlive a finding that evidence verification refuted or a later
+        # deterministic gate removed. Preserve the step and its source locator,
+        # but never emit a dead report link.
+        if fid and not finding:
+            fid = ""
         if finding:
             matched_findings.append(finding)
             step_of_fid.setdefault(fid, n)

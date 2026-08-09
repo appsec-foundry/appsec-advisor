@@ -45,6 +45,39 @@ def _load():
 
 rac = _load()
 
+
+def test_stale_matcher_identity_does_not_render_dead_finding_link():
+    case = {
+        "id": "AC-T-999",
+        "title": "Stale chain",
+        "source": "mandatory",
+        "goal": "change privileged state",
+        "attacker": {"actor_id": "anonymous", "initial_access": "unauthenticated"},
+        "chain": [{"step": 1, "description": "Submit a privileged field"}],
+    }
+    verdict = {
+        "chain_verdict": "inconclusive",
+        "step_verdicts": [
+            {
+                "step": 1,
+                "verdict": "inconclusive",
+                "matched_finding_id": "T-007",
+                "evidence": {"file": "routes/verify.ts", "line": 53},
+            }
+        ],
+    }
+    model = rac.render_case(
+        case,
+        verdict,
+        findings_idx={},
+        mitigations=[],
+        match_steps={1: {"matched_finding_id": "T-007", "evidence": {"file": "routes/verify.ts", "line": 53}}},
+    )
+
+    assert model["rows"][0]["fid"] == ""
+    assert model["rows"][0]["evidence"] == "routes/verify.ts:53"
+    assert model["matched_finding_ids"] == []
+
 _THREAT_MODEL = {
     "threats": [
         {"t_id": "T-010", "title": "Persistent XSS via bypassSecurityTrustHtml", "risk": "High"},

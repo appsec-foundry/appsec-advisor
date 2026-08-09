@@ -644,6 +644,21 @@ class TestSourceCodePassthrough:
         )
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".agent-run.log",
+        "nested/.appsec-progress.json",
+        "archive/.recon-patterns.json",
+        "archive/.threats-merged.json",
+        "archive/threat-model.yaml",
+        "archive/threat-model.md",
+    ],
+)
+def test_assessment_runtime_products_are_excluded(path):
+    assert scan_excludes.is_excluded(path)
+
+
 # ---------------------------------------------------------------------------
 # Opt-in relief (SCAN_TEST_FILES)
 # ---------------------------------------------------------------------------
