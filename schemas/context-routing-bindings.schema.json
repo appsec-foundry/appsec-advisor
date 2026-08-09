@@ -67,7 +67,7 @@
       "required": ["id", "runtime", "agent_type", "limits"],
       "properties": {
         "id": {"$ref": "#/$defs/id"},
-        "runtime": {"enum": ["context_v2", "stage1d_legacy"]},
+        "runtime": {"const": "context_v2"},
         "semantic_role": {"$ref": "#/$defs/id"},
         "agent_type": {"type": "string", "pattern": "^appsec-[a-z0-9][a-z0-9-]{0,99}$"},
         "model_setting": {"$ref": "#/$defs/id"}

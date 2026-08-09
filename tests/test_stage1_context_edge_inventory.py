@@ -91,7 +91,7 @@ def test_inventory_hidden_edges_still_exist_in_consumer_contracts():
         "agents/appsec-control-analyst.md": ("Requirements violations",),
         "agents/appsec-stride-analyzer-v2.md": ("path_routing.focus_paths", "path_routing.exclude_paths"),
         "agents/appsec-triage-validator.md": (".recon-summary.md", "data/critical-criteria.yaml"),
-        "agents/appsec-abuse-case-verifier.md": ("MATCH_RESULT_PATH",),
+        "agents/appsec-abuse-case-verifier.md": ("ABUSE_CASE_CONTEXT_PATH",),
     }
     for relative, markers in prompt_markers.items():
         text = (REPO_ROOT / relative).read_text(encoding="utf-8")

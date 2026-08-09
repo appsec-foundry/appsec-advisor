@@ -175,16 +175,16 @@ def _frontmatter_max_turns(path: Path) -> int:
 
 
 def _turns_needed(sample: int) -> int:
-    """N reads + 2 writes per 5-finding flush + pre-seed + startup."""
-    return sample + 2 * math.ceil(sample / 5) + 3
+    """One projected-context read, one write per flush, pre-seed, and startup."""
+    return 1 + math.ceil(sample / 5) + 3
 
 
 def test_evidence_verifier_budget_covers_the_standard_sample() -> None:
     """The default depth must be able to finish what it is told to sample.
 
-    standard = all Criticals (uncapped) + up to 30 non-Criticals. The 2026-07-20
-    run sampled 38 and needed ~57 turns against a ceiling of 40, so it resolved
-    nothing and left the untouched pre-seed behind.
+    Standard selects all Criticals plus up to 30 non-Criticals. Source windows
+    are now projected into one read and canonical annotations are controller-
+    owned, so the role needs only periodic side-channel flushes.
     """
     ceiling = _frontmatter_max_turns(AGENTS / "appsec-evidence-verifier.md")
     observed_sample = 38  # 8 Critical + 30 capped non-Critical

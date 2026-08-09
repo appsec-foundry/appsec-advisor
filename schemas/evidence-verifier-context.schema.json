@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/evidence-verifier-context.schema.json",
+  "title": "Bounded evidence-verifier sample with source windows",
+  "type": "object",
+  "required": ["schema_version", "source", "policy", "limits", "samples"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "source": {
+      "type": "object",
+      "required": ["artifact_path", "sha256", "threat_count"],
+      "properties": {
+        "artifact_path": {"const": ".threats-merged.json"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "threat_count": {"type": "integer", "minimum": 0, "maximum": 1000000}
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": ["depth", "noncritical_cap", "critical_uncapped", "window_radius"],
+      "properties": {
+        "depth": {"enum": ["quick", "standard", "thorough"]},
+        "noncritical_cap": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "critical_uncapped": {"const": true},
+        "window_radius": {"const": 5}
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": ["max_samples", "max_bytes", "selected_samples", "serialized_bytes", "ordering_key"],
+      "properties": {
+        "max_samples": {"const": 256},
+        "max_bytes": {"const": 524288},
+        "selected_samples": {"type": "integer", "minimum": 0, "maximum": 256},
+        "serialized_bytes": {"type": "integer", "minimum": 1, "maximum": 524288},
+        "ordering_key": {"const": "severity,t_id with stable depth sampling"}
+      },
+      "additionalProperties": false
+    },
+    "samples": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "required": ["t_id", "title", "scenario", "risk", "source", "evidence_summary", "evidence", "source_sha256", "source_window"],
+        "properties": {
+          "t_id": {"type": "string", "pattern": "^T-[0-9]{3,}$"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 500},
+          "scenario": {"type": "string", "minLength": 1, "maxLength": 10000},
+          "risk": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]},
+          "source": {"type": ["string", "null"], "maxLength": 100},
+          "evidence_summary": {"type": ["string", "null"], "maxLength": 5000},
+          "evidence": {
+            "type": "object",
+            "required": ["file", "line"],
+            "properties": {
+              "file": {"type": "string", "minLength": 1, "maxLength": 1000},
+              "line": {"type": ["integer", "null"], "minimum": 1}
+            },
+            "additionalProperties": false
+          },
+          "source_sha256": {"$ref": "#/$defs/sha256"},
+          "source_window": {
+            "type": "array",
+            "maxItems": 11,
+            "items": {
+              "type": "object",
+              "required": ["line", "text"],
+              "properties": {
+                "line": {"type": "integer", "minimum": 1},
+                "text": {"type": "string", "maxLength": 1000}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {"sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+}

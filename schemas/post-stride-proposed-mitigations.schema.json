@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/post-stride-proposed-mitigations.schema.json",
+  "title": "Bounded proposed-mitigation projection for post-STRIDE synthesis",
+  "type": "object",
+  "required": ["schema_version", "source", "limits", "mitigations"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "source": {"$ref": "#/$defs/source"},
+    "limits": {"$ref": "#/$defs/limits"},
+    "mitigations": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "required": ["t_id", "mitigation_title", "effort", "steps", "verification", "reference"],
+        "properties": {
+          "t_id": {"type": "string", "pattern": "^T-[0-9]{3,}$"},
+          "mitigation_title": {"type": ["string", "null"], "maxLength": 500},
+          "effort": {"type": ["string", "null"], "maxLength": 100},
+          "steps": {"type": "array", "maxItems": 20, "items": {"type": "string", "minLength": 1, "maxLength": 2000}},
+          "verification": {"type": ["string", "null"], "maxLength": 5000},
+          "reference": {"type": ["string", "null"], "maxLength": 1000}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source": {
+      "type": "object",
+      "required": ["artifact_path", "sha256", "threat_count", "components_artifact_path", "components_sha256"],
+      "properties": {
+        "artifact_path": {"const": ".threats-merged.json"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "threat_count": {"type": "integer", "minimum": 0, "maximum": 512},
+        "components_artifact_path": {"const": ".components.json"},
+        "components_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": ["max_records", "max_bytes", "serialized_bytes", "ordering_key"],
+      "properties": {
+        "max_records": {"const": 512},
+        "max_bytes": {"const": 524288},
+        "serialized_bytes": {"type": "integer", "minimum": 1, "maximum": 524288},
+        "ordering_key": {"const": "canonical merged threat order"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

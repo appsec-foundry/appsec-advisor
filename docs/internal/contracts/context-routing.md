@@ -93,6 +93,19 @@ truncation counts, size, and exact-byte receipt. The required evidence bundle
 contains source and deterministic evidence but does not duplicate these
 independently selectable categories.
 
+After merge, evidence verification receives only the controller-selected
+sample and embedded 11-line source windows. The controller reconstructs that
+selection, re-hashes every source, and owns the canonical annotation. Root-
+cause synthesis receives separate generated-threat and proposed-mitigation
+projections. Neither focused role receives the complete merged-threat artifact
+or triage flags.
+
+Stage 1d projects one matched abuse-case candidate into its own bounded
+artifact. The candidate definition, probe patterns, and matched finding hints
+are exact-source-bound and receipted. Targeted repository reads remain a
+separate optional route and cannot expose another candidate or the complete
+match set.
+
 Recon patterns are capped across the run and per category while retaining
 pre-cap counts and deterministic omission metadata. Actor, triage, and
 architecture roles receive a 200-line recon projection, and architecture

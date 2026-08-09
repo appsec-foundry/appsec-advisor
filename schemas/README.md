@@ -31,6 +31,10 @@ output template and validated at the same two boundaries through
 | `merge-review-context.schema.json` | `$OUTPUT_DIR/.merge-context/candidates.json` | context-v2 controller | focused threat merger |
 | `threats-merged.schema.yaml` | `$OUTPUT_DIR/.threats-merged.json` | orchestrator Phase 9 | diagram annotator, YAML/SARIF exporters, changelog writer, triage validator |
 | `evidence-verification.schema.json` | `$OUTPUT_DIR/.evidence-verification.json` | `appsec-evidence-verifier` | evidence guard and Phase 10b triage |
+| `evidence-verifier-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/post-stride/evidence-sample.json` | `scripts/build_post_stride_contexts.py` | evidence verifier and controller-owned canonical annotation |
+| `post-stride-generated-threats.schema.json` | `$OUTPUT_DIR/.dispatch-context/post-stride/generated-threats.json` | `scripts/build_post_stride_contexts.py` | post-STRIDE synthesizer |
+| `post-stride-proposed-mitigations.schema.json` | `$OUTPUT_DIR/.dispatch-context/post-stride/proposed-mitigations.json` | `scripts/build_post_stride_contexts.py` | post-STRIDE synthesizer |
+| `abuse-case-verifier-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/abuse-cases/<candidate-id>.json` | `scripts/build_abuse_case_contexts.py` | one abuse-case verifier job |
 | `merge-decisions.schema.json` | `$OUTPUT_DIR/.merge-decisions.json` | `appsec-threat-merger` (Phase 9) | `scripts/merge_threats.py finalize` |
 | `triage-flags.schema.yaml` | `$OUTPUT_DIR/.triage-flags.json` | `appsec-triage-validator` (Phase 10b) | Phase 11 rendering, QA reviewer |
 | `threat-model.output.schema.yaml` | `$OUTPUT_DIR/threat-model.yaml` | orchestrator Phase 10/11 | CI/CD, DefectDojo, SonarQube, cross-repo discovery |

@@ -37,6 +37,8 @@ Four sidecars share the prefix and are written **before** the Phase-9 fan-out:
 | `.stride-selection.json` | Component-selection report (`build_stride_dispatch_manifest.py`) |
 | `.stride-analyst-context.json` | Analyst-A per-component context |
 | `.stride-repository-registry.json` | Controller-only context-v2 mapping from declared local related repositories to validated roots; component projections under `.dispatch-context/` are the only mappings sent to STRIDE analyzers, and runtime cleanup removes both |
+| `.dispatch-context/post-stride/` | Receipted evidence-sample, generated-threat, and proposed-mitigation projections; each binds exact canonical sources and is removed by normal runtime cleanup |
+| `.dispatch-context/abuse-cases/` | One receipted candidate definition and matched-evidence projection per Stage-1d verifier; the complete match set remains controller-only and cleanup removes the directory |
 
 Cleanup and never-publish lists keep the broad `.stride-*.json` pattern on
 purpose. Anything that **reads or counts** per-component results must go

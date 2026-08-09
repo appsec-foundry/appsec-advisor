@@ -62,9 +62,9 @@ This agent is a **validator + reconciliation owner.** The raw severity fields re
 ## Context window discipline
 
 - Read `.threats-merged.json` **once** at start, store in working memory
-- Read `.recon-summary.md` only if needed for endpoint/auth context (Sections 7.3–7.5)
+- Read the bounded recon-summary projection only when it appears in `INPUT_ARTIFACTS`
 - Do NOT read `.threat-modeling-context.md` — the threat data in `.threats-merged.json` is sufficient
-- Prefer Grep over Read for targeted lookups in recon summary
+- Do not read `.recon-summary.md`; missing projected context remains unknown
 
 ## Task — Step 6 only (Ranking & Effective Severity)
 

@@ -473,8 +473,13 @@ only those repository IDs. Jobs without related source evidence receive no
 projection. The projection is bound to the component plan and source-registry
 hash; extra, missing, unknown, stale, or cross-component entries block.
 
-Generated threats, proposed mitigations, and abuse cases remain on their
-inventoried paths. The Stage-1d abuse-case verifier remains legacy.
+Generated threats and proposed mitigations now enter synthesis through separate
+bounded projections bound to exact merged-threat and component bytes. Evidence
+verification receives a deterministic sample with exact-source-bound code
+windows, and the controller exclusively applies accepted annotations. Stage 1d
+now projects and receipts one candidate per abuse verifier job; the complete
+match set stays controller-only while targeted source investigation remains a
+separately routed optional evidence path.
 
 ## Exit gates
 

@@ -7,7 +7,9 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import build_abuse_case_contexts as abuse_contexts
 import build_architecture_analysis_context as architecture_context
+import build_post_stride_contexts as post_stride_contexts
 import build_stride_evidence_bundles as evidence_bundles
 import orchestration_controller as controller
 import pytest
@@ -828,6 +830,72 @@ def test_prepare_abuse_returns_bounded_parallel_action(tmp_path, monkeypatch):
     controller._validate_action(action)
 
 
+def test_context_v2_prepare_abuse_dispatches_receipted_candidate_projections(tmp_path, monkeypatch, capsys):
+    output = _write_context_v2_config(tmp_path, skip_abuse_case_verification=False)
+    case = {
+        "id": "AC-T-001",
+        "title": "Stored script to token theft",
+        "source": "mandatory",
+        "attacker": {"actor_id": "anonymous", "initial_access": "unauthenticated"},
+        "goal": "Steal an authenticated session.",
+        "chain": [
+            {
+                "step": 1,
+                "label": "Inject script",
+                "grants": "script execution",
+                "required": True,
+                "probe": {"sink_patterns": ["innerHTML"]},
+            }
+        ],
+    }
+    match_row = {
+        "abuse_case_id": "AC-T-001",
+        "title": case["title"],
+        "source": "mandatory",
+        "structural_verdict": "candidate",
+        "reason": None,
+        "matched_finding_ids": ["T-001"],
+        "step_matches": [
+            {
+                "step": 1,
+                "label": "Inject script",
+                "required": True,
+                "grants": "script execution",
+                "requires": None,
+                "matched": True,
+                "matched_finding_id": "T-001",
+                "evidence": {"file": "routes/feedback.ts", "line": 12},
+                "match_basis": "finding",
+                "controls_found": [],
+            }
+        ],
+        "case": case,
+    }
+
+    def fake_script(name, args, **kwargs):
+        if name == "match_abuse_cases.py" and "match" in args:
+            (output / ".abuse-case-matches.json").write_text(
+                json.dumps({"schema_version": 1, "matches": [match_row]}), encoding="utf-8"
+            )
+        if name == "match_abuse_cases.py" and "list-candidates" in args:
+            return _completed("AC-T-001\n")
+        if name == "build_abuse_case_contexts.py":
+            abuse_contexts.write_candidate(output, "AC-T-001")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.prepare_abuse(output)
+
+    assert action["semantic_role"] == "abuse_case_verifier"
+    assert action["dispatch_jobs"][0]["candidate_id"] == "AC-T-001"
+    assert action["dispatch_jobs"][0]["input_artifacts"] == [".dispatch-context/abuse-cases/AC-T-001.json"]
+    assert action["artifact_receipts"][0]["validation_status"] == "valid"
+    assert controller._emit(action) == 0
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["context_plan"]["receipt_sha256"]
+    assert emitted["dispatch_jobs"][0]["context_delivery_ids"]
+
+
 def test_prepare_abuse_carries_candidate_titles_for_dispatch_labels(tmp_path, monkeypatch):
     """Without titles the verifier fan-out is a column of bare AC-ids in the
     agent list. Titles are advisory: an id with none stays unlabelled rather
@@ -1578,6 +1646,41 @@ def _write_context_v2_config(tmp_path: Path, **overrides) -> Path:
     cfg.update(overrides)
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
     return output
+
+
+def _post_stride_threat(t_id: str = "T-001", *, risk: str = "Critical") -> dict:
+    return {
+        "t_id": t_id,
+        "title": "Untrusted input reaches a sink",
+        "scenario": "An attacker submits an untrusted value to the sink.",
+        "risk": risk,
+        "source": "stride",
+        "evidence_summary": "The cited call consumes untrusted input.",
+        "evidence": {"file": "app.py", "line": 1},
+        "evidence_check": "unchecked",
+        "component_id": "api",
+        "stride": "Tampering",
+        "cwe": "CWE-20",
+        "evidence_tier": "confirmed-exploitable",
+        "mitigation_title": "Validate input before the sink",
+        "remediation": {
+            "effort": "Low",
+            "steps": ["Validate the value before use."],
+            "verification": "Submit an invalid value and expect rejection.",
+            "reference": "CWE-20",
+        },
+    }
+
+
+def _write_post_stride_sources(tmp_path: Path, output: Path, threats: list[dict]) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir(exist_ok=True)
+    (repo / "app.py").write_text("sink(user_input)\n", encoding="utf-8")
+    (output / ".threats-merged.json").write_text(json.dumps({"version": 1, "threats": threats}), encoding="utf-8")
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "api", "tier": "application"}]}),
+        encoding="utf-8",
+    )
 
 
 def test_context_v2_dispatch_clears_prior_output_but_preserves_in_place_input(tmp_path):
@@ -2589,18 +2692,20 @@ def test_context_v2_candidate_free_success_runs_to_stage2_handoff_without_agent(
 
 def test_context_v2_after_merge_dispatches_evidence_only_when_sample_has_work(tmp_path, monkeypatch):
     output = _write_context_v2_config(tmp_path, evidence_verifier_max_findings=30)
-    (output / ".threats-merged.json").write_text(
-        json.dumps({"version": 1, "threats": [{"t_id": "T-001"}]}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    _write_post_stride_sources(tmp_path, output, [_post_stride_threat()])
+
+    def fake_script(name, args, **kwargs):
+        if name == "build_post_stride_contexts.py":
+            post_stride_contexts.write_evidence_context(output, tmp_path / "repo", "standard", 30)
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
     monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
     action = controller._context_v2_after_merge(output, _cfg(tmp_path) | {"evidence_verifier_max_findings": 30})
     assert action["semantic_role"] == "evidence_verifier"
     assert action["unresolved_decision_keys"] == ["sampled_evidence_verdicts"]
     assert action["dispatch_jobs"][0]["output_artifacts"] == [
         ".evidence-verification.json",
-        ".threats-merged.json",
     ]
 
 
@@ -2733,10 +2838,7 @@ def test_context_v2_analyst_context_rejects_oversized_artifact(tmp_path):
 
 def test_context_v2_after_evidence_skips_triage_agent_and_dispatches_only_root_cause_synthesis(tmp_path, monkeypatch):
     output = _write_context_v2_config(tmp_path)
-    (output / ".threats-merged.json").write_text(
-        json.dumps({"version": 1, "threats": [{"t_id": "T-001"}]}),
-        encoding="utf-8",
-    )
+    _write_post_stride_sources(tmp_path, output, [_post_stride_threat()])
 
     def fake_script(name, args, **kwargs):
         if name == "triage_validate_ratings.py":
@@ -2744,6 +2846,8 @@ def test_context_v2_after_evidence_skips_triage_agent_and_dispatches_only_root_c
                 json.dumps({"version": 2, "flags": []}),
                 encoding="utf-8",
             )
+        if name == "build_post_stride_contexts.py":
+            post_stride_contexts.write_synthesis_contexts(output)
         return _completed()
 
     monkeypatch.setattr(controller, "_run_script", fake_script)
@@ -2898,6 +3002,107 @@ def test_context_v2_invalid_evidence_summary_is_nonfatal_enrichment(tmp_path, mo
             ["evidence verification rejected: invalid contract"],
         )
     ]
+
+
+def test_context_v2_applies_receipted_evidence_verdicts_controller_side(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path, evidence_verifier_max_findings=20)
+    _write_post_stride_sources(tmp_path, output, [_post_stride_threat()])
+    post_stride_contexts.write_evidence_context(output, tmp_path / "repo", "standard", 20)
+    (output / ".evidence-verification.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-08-09T12:00:00Z",
+                "model_id": "sonnet",
+                "depth": "standard",
+                "summary": {
+                    "total_threats": 1,
+                    "sampled": 1,
+                    "verified": 1,
+                    "refuted": 0,
+                    "ambiguous": 0,
+                    "unchecked": 0,
+                },
+                "flags": [
+                    {
+                        "flag_id": "EV-001",
+                        "t_id": "T-001",
+                        "verdict": "verified",
+                        "reason": "The cited sink is present.",
+                        "line_excerpt": "sink(user_input)",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_script(name, args, **kwargs):
+        if name == "triage_validate_ratings.py":
+            (output / ".triage-flags.json").write_text(json.dumps({"version": 2, "flags": []}), encoding="utf-8")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_best_effort_script", lambda *args, **kwargs: True)
+    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_args: {"action": "sentinel"})
+
+    assert controller._context_v2_after_evidence(output, _cfg(tmp_path)) == {"action": "sentinel"}
+    threat = json.loads((output / ".threats-merged.json").read_text())["threats"][0]
+    assert threat["evidence_check"] == "verified"
+    assert threat["evidence_flags"][0]["flag_id"] == "EV-001"
+
+
+def test_context_v2_rejected_evidence_application_preserves_canonical_merge(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path, evidence_verifier_max_findings=20)
+    _write_post_stride_sources(tmp_path, output, [_post_stride_threat()])
+    post_stride_contexts.write_evidence_context(output, tmp_path / "repo", "standard", 20)
+    verification = {
+        "version": 1,
+        "generated_at": "2026-08-09T12:00:00Z",
+        "model_id": "sonnet",
+        "depth": "standard",
+        "summary": {
+            "total_threats": 1,
+            "sampled": 1,
+            "verified": 1,
+            "refuted": 0,
+            "ambiguous": 0,
+            "unchecked": 0,
+        },
+        "flags": [
+            {
+                "flag_id": "EV-001",
+                "t_id": "T-001",
+                "verdict": "verified",
+                "reason": "The cited sink is present.",
+                "line_excerpt": "sink(user_input)",
+            }
+        ],
+    }
+    (output / ".evidence-verification.json").write_text(json.dumps(verification), encoding="utf-8")
+    original = (output / ".threats-merged.json").read_bytes()
+    validation_calls = 0
+
+    def validate_sidechannel(*_paths):
+        nonlocal validation_calls
+        validation_calls += 1
+        if validation_calls == 1:
+            return verification
+        raise controller.ControllerError("staged evidence correspondence failed")
+
+    def fake_script(name, args, **kwargs):
+        if name == "triage_validate_ratings.py":
+            (output / ".triage-flags.json").write_text(json.dumps({"version": 2, "flags": []}), encoding="utf-8")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_validate_evidence_verification", validate_sidechannel)
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_best_effort_script", lambda *args, **kwargs: True)
+    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_args: {"action": "sentinel"})
+
+    assert controller._context_v2_after_evidence(output, _cfg(tmp_path)) == {"action": "sentinel"}
+    assert (output / ".threats-merged.json").read_bytes() == original
+    assert not (output / ".dispatch-context/post-stride/threats-merged-verified.json").exists()
 
 
 def test_context_v2_dispatches_triage_only_when_deterministic_ranking_fails(tmp_path, monkeypatch):

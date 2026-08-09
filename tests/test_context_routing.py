@@ -79,7 +79,13 @@ def _resolve(action: dict, output: Path) -> dict:
 
 
 def _generic_action(
-    output: Path, role: str, job_id: str, inputs: list[str], *, component_id: str | None = None
+    output: Path,
+    role: str,
+    job_id: str,
+    inputs: list[str],
+    *,
+    component_id: str | None = None,
+    candidate_id: str | None = None,
 ) -> dict:
     job = {
         "schema_version": 1,
@@ -99,6 +105,8 @@ def _generic_action(
             max_turns=12,
             sampling_required=False,
         )
+    if candidate_id:
+        job["candidate_id"] = candidate_id
     return {
         "schema_version": 1,
         "action": "dispatch_agent",
@@ -372,9 +380,22 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
             "api",
         ),
         ("threat_merger", "phase9-merge", [".merge-context/candidates.json"], None),
-        ("evidence_verifier", "phase10-evidence", [".threats-merged.json"], None),
+        (
+            "evidence_verifier",
+            "phase10-evidence",
+            [".dispatch-context/post-stride/evidence-sample.json"],
+            None,
+        ),
         ("triage_validator", "phase10-triage", [".threats-merged.json", ".triage-flags.json"], None),
-        ("post_stride_synthesizer", "phase10-synthesis", [".threats-merged.json", ".triage-flags.json"], None),
+        (
+            "post_stride_synthesizer",
+            "phase10-synthesis",
+            [
+                ".dispatch-context/post-stride/generated-threats.json",
+                ".dispatch-context/post-stride/proposed-mitigations.json",
+            ],
+            None,
+        ),
     ]
     for _, _, inputs, _ in jobs:
         for relative in inputs:
@@ -415,6 +436,29 @@ def test_forbidden_shared_context_cannot_enter_focused_agent_inputs(tmp_path):
     action = _generic_action(output, "stride_analyzer", "phase9-stride-api", inputs, component_id="api")
     with pytest.raises(routing.ContextRoutingError, match="forbidden context"):
         _resolve(action, output)
+
+
+def test_candidate_scoped_abuse_context_resolves_only_for_its_job(tmp_path):
+    output = tmp_path / "out"
+    relative = ".dispatch-context/abuse-cases/AC-T-001.json"
+    path = output / relative
+    path.parent.mkdir(parents=True)
+    path.write_text("{}\n", encoding="utf-8")
+
+    plan = _resolve(
+        _generic_action(
+            output,
+            "abuse_case_verifier",
+            "phase10c-AC-T-001",
+            [relative],
+            candidate_id="AC-T-001",
+        ),
+        output,
+    )
+
+    delivery = next(row for row in plan["deliveries"] if row["context_id"] == "abuse_cases.matches")
+    assert delivery["candidate_id"] == "AC-T-001"
+    assert delivery["scope"] == "one_candidate"
 
 
 def test_shadow_plan_rejects_unassigned_declared_input(tmp_path):

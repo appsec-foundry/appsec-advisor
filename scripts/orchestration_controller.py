@@ -106,12 +106,22 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/recon-summary-context.schema.json#v1": "sections",
     "schemas/architecture-route-context.schema.json#v1": "routes",
     "schemas/recon-signals.schema.json#v2": "signals",
+    "schemas/evidence-verifier-context.schema.json#v1": "samples",
+    "schemas/post-stride-generated-threats.schema.json#v1": "threats",
+    "schemas/post-stride-proposed-mitigations.schema.json#v1": "mitigations",
+    "schemas/abuse-case-verifier-context.schema.json#v1": "candidate",
     "schemas/actors-resolved.schema.yaml#v1": "resolved_actors",
 }
 _OPTIONAL_RECEIPT_RECORD_KEYS = {
     "schemas/fragments/mitigation-overrides.schema.json#v1",
 }
 SEMANTIC_ROLE_REGISTRY: dict[str, dict[str, Any]] = {
+    "abuse_case_verifier": {
+        "agent": "appsec-abuse-case-verifier",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-abuse-case-verifier.md",
+        "tools": ("Read", "Grep", "Bash", "Write"),
+        "output_contracts": ("schemas/fragments/verdict.schema.json",),
+    },
     "actor_discoverer": {
         "agent": "appsec-actor-discoverer",
         "instruction": PLUGIN_ROOT / "agents" / "appsec-actor-discoverer.md",
@@ -153,11 +163,8 @@ SEMANTIC_ROLE_REGISTRY: dict[str, dict[str, Any]] = {
     "evidence_verifier": {
         "agent": "appsec-evidence-verifier",
         "instruction": PLUGIN_ROOT / "agents" / "appsec-evidence-verifier.md",
-        "tools": ("Read", "Grep", "Bash", "Write"),
-        "output_contracts": (
-            "schemas/evidence-verification.schema.json",
-            "schemas/threats-merged.schema.yaml",
-        ),
+        "tools": ("Read", "Bash", "Write"),
+        "output_contracts": ("schemas/evidence-verification.schema.json",),
     },
     "post_stride_synthesizer": {
         "agent": "appsec-post-stride-synthesizer",
@@ -207,6 +214,7 @@ SEMANTIC_ROLE_REGISTRY: dict[str, dict[str, Any]] = {
 }
 
 SEMANTIC_ROLE_MODEL_KEYS = {
+    "abuse_case_verifier": "abuse_verifier_model",
     "actor_discoverer": "actor_discovery_model",
     "architecture_analyst": "orchestrator_model",
     "config_scanner": "config_scanner_model",
@@ -228,6 +236,7 @@ SEMANTIC_ROLE_MODEL_KEYS = {
 # same validator errors and redispatches only the affected component.
 CONTEXT_V2_PRODUCER_GATED_ROLES = frozenset(
     {
+        "abuse_case_verifier",
         "actor_discoverer",
         "architecture_analyst",
         "config_scanner",
@@ -816,7 +825,7 @@ def _emit(action: dict[str, Any]) -> int:
     try:
         action = _validate_action(action)
         if (
-            action.get("instruction_file") == str(THIN_STAGE1_V2_RUNTIME)
+            action.get("instruction_file") in {str(THIN_STAGE1_V2_RUNTIME), str(THIN_STAGE1D_RUNTIME)}
             and action.get("action") in {"dispatch_agent", "dispatch_parallel"}
             and action.get("dispatch_jobs")
         ):
@@ -3834,6 +3843,100 @@ def context_v2_prepare_stride(output_dir: Path) -> dict[str, Any]:
     return action
 
 
+def _projection_size_is_current(path: Path, value: dict[str, Any]) -> None:
+    limits = value.get("limits")
+    try:
+        actual = path.stat().st_size
+    except OSError as exc:
+        raise ControllerError(f"cannot stat context projection {path}: {exc}") from exc
+    if not isinstance(limits, dict) or limits.get("serialized_bytes") != actual:
+        raise ControllerError(f"context projection size metadata is stale for {path.name}")
+
+
+def _context_v2_evidence_projection_receipt(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Reconstruct and receipt the exact selected evidence sample."""
+    from build_post_stride_contexts import (  # noqa: PLC0415
+        PostStrideContextError,
+        build_evidence_context,
+        validate_evidence_context_sources,
+    )
+
+    relative = ".dispatch-context/post-stride/evidence-sample.json"
+    path = output_dir / relative
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas/evidence-verifier-context.schema.json",
+        contract="evidence-verifier-context-v1",
+    )
+    try:
+        merged_payload = (output_dir / ".threats-merged.json").read_bytes()
+        expected = build_evidence_context(
+            merged_payload,
+            Path(str(cfg.get("repo_root") or output_dir)),
+            depth=str(cfg.get("assessment_depth") or "standard"),
+            noncritical_cap=int(cfg.get("evidence_verifier_max_findings") or 0),
+        )
+        validate_evidence_context_sources(
+            value,
+            merged_payload,
+            Path(str(cfg.get("repo_root") or output_dir)),
+        )
+    except (OSError, PostStrideContextError) as exc:
+        raise ControllerError(f"evidence-verifier-context-v1 validation failed: {exc}") from exc
+    for key in ("source", "policy", "samples"):
+        if value.get(key) != expected.get(key):
+            raise ControllerError(f"evidence-verifier-context-v1 {key} differs from deterministic selection")
+    _projection_size_is_current(path, value)
+    return _validated_json_receipt(
+        output_dir,
+        relative,
+        schema_id="schemas/evidence-verifier-context.schema.json#v1",
+        record_count=len(value["samples"]),
+    )
+
+
+def _context_v2_synthesis_projection_receipt(output_dir: Path, *, generated: bool) -> dict[str, Any]:
+    """Reconstruct and receipt one exact post-STRIDE synthesis projection."""
+    from build_post_stride_contexts import (  # noqa: PLC0415
+        PostStrideContextError,
+        build_synthesis_contexts,
+    )
+
+    if generated:
+        relative = ".dispatch-context/post-stride/generated-threats.json"
+        schema_name = "post-stride-generated-threats.schema.json"
+        record_key = "threats"
+        expected_index = 0
+    else:
+        relative = ".dispatch-context/post-stride/proposed-mitigations.json"
+        schema_name = "post-stride-proposed-mitigations.schema.json"
+        record_key = "mitigations"
+        expected_index = 1
+    path = output_dir / relative
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / schema_name,
+        contract=f"{schema_name}#v1",
+    )
+    try:
+        expected = build_synthesis_contexts(
+            (output_dir / ".threats-merged.json").read_bytes(),
+            (output_dir / ".components.json").read_bytes(),
+        )[expected_index]
+    except (OSError, PostStrideContextError) as exc:
+        raise ControllerError(f"{schema_name} validation failed: {exc}") from exc
+    for key in ("source", record_key):
+        if value.get(key) != expected.get(key):
+            raise ControllerError(f"{schema_name} differs from deterministic projection")
+    _projection_size_is_current(path, value)
+    return _validated_json_receipt(
+        output_dir,
+        relative,
+        schema_id=f"schemas/{schema_name}#v1",
+        record_count=len(value[record_key]),
+    )
+
+
 def _context_v2_after_merge(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     """Advance from a finalized merge to evidence verification or triage."""
     _run_script(
@@ -3844,24 +3947,38 @@ def _context_v2_after_merge(output_dir: Path, cfg: dict[str, Any]) -> dict[str, 
     threats = merged.get("threats")
     if not isinstance(threats, list):
         raise ControllerError("threats-merged-v1 artifact has no threats array")
-    structured = [
-        _validated_json_receipt(
-            output_dir,
-            ".threats-merged.json",
-            schema_id="schemas/threats-merged.schema.yaml#v1",
-            record_count=len(threats),
-        )
-    ]
     human: list[str] = []
     _context_v2_run_posture_emitters(output_dir, cfg, human)
     if threats and int(cfg.get("evidence_verifier_max_findings") or 0) != 0:
+        _run_script(
+            "build_post_stride_contexts.py",
+            [
+                "evidence",
+                "--output-dir",
+                str(output_dir),
+                "--repo-root",
+                str(cfg.get("repo_root") or output_dir),
+                "--depth",
+                str(cfg.get("assessment_depth") or "standard"),
+                "--noncritical-cap",
+                str(int(cfg.get("evidence_verifier_max_findings") or 0)),
+            ],
+        )
+        evidence_context = _validate_json_artifact(
+            output_dir / ".dispatch-context/post-stride/evidence-sample.json",
+            PLUGIN_ROOT / "schemas/evidence-verifier-context.schema.json",
+            contract="evidence-verifier-context-v1",
+        )
+        if not evidence_context["samples"]:
+            return _context_v2_after_evidence(output_dir, cfg)
+        structured = [_context_v2_evidence_projection_receipt(output_dir, cfg)]
         return _context_v2_dispatch(
             output_dir,
             cfg,
             role="evidence_verifier",
             job_id="phase10a-evidence",
-            input_artifacts=[".threats-merged.json"],
-            output_artifacts=[".evidence-verification.json", ".threats-merged.json"],
+            input_artifacts=[".dispatch-context/post-stride/evidence-sample.json"],
+            output_artifacts=[".evidence-verification.json"],
             decision_keys=["sampled_evidence_verdicts"],
             receipts=structured,
         )
@@ -3878,16 +3995,45 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
     if (output_dir / ".evidence-verification.json").is_file():
         evidence_summary_valid = True
         try:
-            _validate_evidence_verification(
-                output_dir / ".evidence-verification.json",
-                output_dir / ".threats-merged.json",
+            verification = _validate_evidence_verification(output_dir / ".evidence-verification.json")
+            context = _validate_json_artifact(
+                output_dir / ".dispatch-context/post-stride/evidence-sample.json",
+                PLUGIN_ROOT / "schemas/evidence-verifier-context.schema.json",
+                contract="evidence-verifier-context-v1",
             )
+            from _atomic_io import atomic_write_json  # noqa: PLC0415
+            from build_post_stride_contexts import (  # noqa: PLC0415
+                apply_evidence_verification,
+                validate_evidence_context_sources,
+            )
+
+            merged_path = output_dir / ".threats-merged.json"
+            merged_payload = merged_path.read_bytes()
+            validate_evidence_context_sources(
+                context,
+                merged_payload,
+                Path(str(cfg.get("repo_root") or output_dir)),
+            )
+            merged = _load_json_object(merged_path, contract="threats-merged-v1")
+            annotated = apply_evidence_verification(merged, context, verification)
+            staged_path = output_dir / ".dispatch-context/post-stride/threats-merged-verified.json"
+            try:
+                atomic_write_json(staged_path, annotated, sort_keys=False)
+                _run_script("validate_intermediate.py", ["threats_merged", str(staged_path)])
+                _validate_evidence_verification(output_dir / ".evidence-verification.json", staged_path)
+                staged_path.replace(merged_path)
+            finally:
+                staged_path.unlink(missing_ok=True)
         except ControllerError as exc:
             # Evidence verification is optional enrichment. Invalid side-channel
             # data supplies no refutation signal, while the guard still inspects
             # annotations in the canonical merged-threat artifact.
             evidence_summary_valid = False
             receipts.append("evidence verification rejected: invalid contract")
+            _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+        except (OSError, ValueError) as exc:
+            evidence_summary_valid = False
+            receipts.append("evidence verification rejected: stale or invalid projection")
             _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
         _best_effort_script(
             output_dir,
@@ -3918,12 +4064,17 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
         inputs = [".threats-merged.json"]
         if (output_dir / ".triage-flags.json").is_file():
             inputs.append(".triage-flags.json")
+        if (output_dir / ".dispatch-context/architecture/recon-summary-context.json").is_file():
+            inputs.append(".dispatch-context/architecture/recon-summary-context.json")
         receipt = _validated_json_receipt(
             output_dir,
             ".threats-merged.json",
             schema_id="schemas/threats-merged.schema.yaml#v1",
             record_count=len(threats),
         )
+        repair_receipts = [receipt]
+        if ".dispatch-context/architecture/recon-summary-context.json" in inputs:
+            repair_receipts.append(_context_v2_recon_projection_receipt(output_dir))
         return _context_v2_dispatch(
             output_dir,
             cfg,
@@ -3932,7 +4083,7 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
             input_artifacts=inputs,
             output_artifacts=[".triage-flags.json", ".threats-merged.json"],
             decision_keys=["triage_ranking"],
-            receipts=[receipt],
+            receipts=repair_receipts,
         )
     return _context_v2_after_triage(output_dir, cfg)
 
@@ -3956,26 +4107,20 @@ def _context_v2_after_triage(output_dir: Path, cfg: dict[str, Any]) -> dict[str,
     if not isinstance(threats, list):
         raise ControllerError("threats-merged-v1 artifact has no threats array")
     if threats:
+        _run_script("build_post_stride_contexts.py", ["synthesis", "--output-dir", str(output_dir)])
         structured = [
-            _validated_json_receipt(
-                output_dir,
-                ".threats-merged.json",
-                schema_id="schemas/threats-merged.schema.yaml#v1",
-                record_count=len(threats),
-            ),
-            _validated_json_receipt(
-                output_dir,
-                ".triage-flags.json",
-                schema_id="schemas/triage-flags.schema.yaml#v2",
-                record_count=len(flag_values),
-            ),
+            _context_v2_synthesis_projection_receipt(output_dir, generated=True),
+            _context_v2_synthesis_projection_receipt(output_dir, generated=False),
         ]
         return _context_v2_dispatch(
             output_dir,
             cfg,
             role="post_stride_synthesizer",
             job_id="phase10b-root-causes",
-            input_artifacts=[".threats-merged.json", ".triage-flags.json"],
+            input_artifacts=[
+                ".dispatch-context/post-stride/generated-threats.json",
+                ".dispatch-context/post-stride/proposed-mitigations.json",
+            ],
             output_artifacts=[".tier-root-causes.json"],
             decision_keys=["tier_root_causes"],
             receipts=structured,
@@ -4494,6 +4639,33 @@ def _finalized_abuse_verdicts(output_dir: Path, candidates: list[str]) -> list[s
     return done
 
 
+def _context_v2_abuse_candidate_receipt(output_dir: Path, candidate_id: str) -> dict[str, Any]:
+    """Reconstruct one candidate projection and bind it to the complete match set."""
+    from build_abuse_case_contexts import AbuseContextError, project_candidate  # noqa: PLC0415
+
+    relative = f".dispatch-context/abuse-cases/{candidate_id}.json"
+    path = output_dir / relative
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas/abuse-case-verifier-context.schema.json",
+        contract="abuse-case-verifier-context-v1",
+    )
+    try:
+        expected = project_candidate((output_dir / ".abuse-case-matches.json").read_bytes(), candidate_id)
+    except (OSError, AbuseContextError) as exc:
+        raise ControllerError(f"abuse-case-verifier-context-v1 validation failed: {exc}") from exc
+    for key in ("source", "candidate"):
+        if value.get(key) != expected.get(key):
+            raise ControllerError(f"abuse-case-verifier-context-v1 {key} differs from deterministic projection")
+    _projection_size_is_current(path, value)
+    return _validated_json_receipt(
+        output_dir,
+        relative,
+        schema_id="schemas/abuse-case-verifier-context.schema.json#v1",
+        record_count=len(value["candidate"]),
+    )
+
+
 def prepare_abuse(output_dir: Path) -> dict[str, Any]:
     """Match abuse cases and return a bounded verifier fan-out action."""
     output_dir, cfg = _load_run_config(output_dir)
@@ -4537,6 +4709,39 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
         candidates = [item for item in candidates if item not in already]
     if not candidates or (output_dir / ".budget-critical").exists():
         return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
+    if (cfg.get("runtime_generation") or LEGACY_GENERATION) == CONTEXT_V2_GENERATION:
+        projection_args = ["--output-dir", str(output_dir)]
+        for candidate in candidates:
+            projection_args.extend(["--candidate", candidate])
+        _run_script("build_abuse_case_contexts.py", projection_args)
+        artifact_receipts = [_context_v2_abuse_candidate_receipt(output_dir, candidate) for candidate in candidates]
+        jobs = [
+            {
+                "schema_version": 1,
+                "job_id": f"phase10c-abuse-{candidate}",
+                "semantic_role": "abuse_case_verifier",
+                "candidate_id": candidate,
+                **_context_v2_job_metadata(cfg, "abuse_case_verifier"),
+                "input_artifacts": [f".dispatch-context/abuse-cases/{candidate}.json"],
+                "output_artifacts": [f".abuse-case-verdict-{candidate}.json"],
+                "unresolved_decision_keys": [candidate],
+            }
+            for candidate in candidates
+        ]
+        action = {
+            **common,
+            "action": "dispatch_parallel",
+            "instruction_file": str(THIN_STAGE1D_RUNTIME),
+            "semantic_role": "abuse_case_verifier",
+            "dispatch_jobs": jobs,
+            "artifact_receipts": artifact_receipts,
+            "unresolved_decision_keys": candidates,
+            "candidates": candidates,
+            "candidate_titles": _abuse_candidate_titles(output_dir, candidates),
+            "receipts": receipts,
+        }
+        _prepare_context_v2_dispatch_outputs(output_dir, jobs)
+        return _validate_action(action)
     return {
         **common,
         "action": "dispatch_parallel",

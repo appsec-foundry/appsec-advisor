@@ -153,6 +153,7 @@
         "agent_id": {"$ref": "#/$defs/identifier"},
         "agent_name": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]+$"},
         "component_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"},
+        "candidate_id": {"type": "string", "pattern": "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"},
         "context_id": {"$ref": "#/$defs/identifier"},
         "context_name": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]+$"},
         "category_id": {"$ref": "#/$defs/identifier"},

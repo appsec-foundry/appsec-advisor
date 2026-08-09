@@ -259,9 +259,9 @@ contexts:
     description: Bounded resolved actors whose privileges and reachability apply to the current component.
     scope: one_component
   - id: abuse_cases.matches
-    name: Matched abuse-case candidates
+    name: Matched abuse-case candidate projection
     category: actors_and_abuse_cases
-    description: Bounded abuse-case candidates matched from plugin, organization, and repository catalogs.
+    description: One bounded candidate definition and its matched finding evidence, projected from the complete match set.
     scope: one_candidate
   - id: abuse_cases.evidence
     name: Abuse-case verification evidence
@@ -299,11 +299,6 @@ contexts:
     category: security_controls_and_evidence
     description: Bounded control and existing-mitigation records that apply to the current component.
     scope: one_component
-  - id: controls.sampled_evidence
-    name: Sampled finding evidence
-    category: security_controls_and_evidence
-    description: Bounded source windows selected from existing finding citations for verification.
-    scope: whole_run
   - id: threats.dispatch_plan
     name: Component STRIDE context plan
     category: threat_analysis
@@ -354,6 +349,21 @@ contexts:
     category: threat_analysis
     description: Validated semantic and deterministic threats with their proposed mitigations before evidence and
       triage updates.
+    scope: whole_run
+  - id: threats.generated_projection
+    name: Generated threat synthesis input
+    category: threat_analysis
+    description: Bounded threat mechanisms and component tiers selected from the canonical merged set.
+    scope: whole_run
+  - id: threats.proposed_mitigations_projection
+    name: Proposed mitigation synthesis input
+    category: threat_analysis
+    description: Bounded proposed remediation and verification records paired with canonical threat IDs.
+    scope: whole_run
+  - id: verification.evidence_sample
+    name: Evidence verification sample
+    category: verification_and_risk
+    description: Deterministically selected findings with exact-source-bound cited code windows.
     scope: whole_run
   - id: verification.triage_flags
     name: Triage decisions
@@ -714,21 +724,35 @@ assignments:
   - id: merged-threats-for-late-analysis
     context: threats.merged
     agents:
-      - evidence_verifier
       - triage_validator
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Exceptional semantic triage repair retains controlled ownership of the canonical threat set.
+  - id: evidence-sample-for-verification
+    context: verification.evidence_sample
+    agents:
+      - evidence_verifier
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Verification receives only the deterministically selected findings and exact-source-bound cited windows.
+  - id: generated-threats-for-synthesis
+    context: threats.generated_projection
+    agents:
       - post_stride_synthesizer
     delivery: required
     importance: essential
     applies_to: whole_run
-    reason: Evidence verification, triage, and synthesis use the same validated canonical threat set.
-  - id: sampled-evidence-for-verification
-    context: controls.sampled_evidence
+    reason: Root-cause synthesis receives bounded threat mechanisms and component tiers, not the canonical merged set.
+  - id: proposed-mitigations-for-synthesis
+    context: threats.proposed_mitigations_projection
     agents:
-      - evidence_verifier
-    delivery: optional
-    importance: supporting
+      - post_stride_synthesizer
+    delivery: required
+    importance: essential
     applies_to: whole_run
-    reason: Verification may read only bounded windows selected from existing finding citations.
+    reason: Synthesis compares only bounded proposed mitigations paired to the supplied threat IDs.
   - id: optional-triage-flags-for-repair
     context: verification.triage_flags
     agents:
@@ -737,14 +761,6 @@ assignments:
     importance: supporting
     applies_to: whole_run
     reason: Failed deterministic ranking may or may not leave a usable triage sidecar.
-  - id: required-triage-flags-for-synthesis
-    context: verification.triage_flags
-    agents:
-      - post_stride_synthesizer
-    delivery: required
-    importance: essential
-    applies_to: whole_run
-    reason: Post-STRIDE synthesis requires validated final triage decisions.
   - id: current-triage-context
     context: verification.triage_context
     agents:
@@ -753,6 +769,14 @@ assignments:
     importance: supporting
     applies_to: whole_run
     reason: Shadow mode records current policy and helper reads without claiming exact-byte delivery.
+  - id: bounded-recon-for-triage-repair
+    context: discovery.recon_projection
+    agents:
+      - triage_validator
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Exceptional triage repair may use the same bounded recon projection already admitted for architecture.
   - id: requested-synthesis-scope
     context: verification.synthesis_scope
     agents:
@@ -761,6 +785,15 @@ assignments:
     importance: supporting
     applies_to: whole_run
     reason: The controller constrains synthesis to explicitly requested decisions.
+  - id: no-complete-threat-set-for-focused-post-stride-roles
+    context: threats.merged
+    agents:
+      - evidence_verifier
+      - post_stride_synthesizer
+    delivery: forbidden
+    importance: essential
+    applies_to: whole_run
+    reason: Evidence verification and synthesis receive their bounded projections, never the complete canonical set.
   - id: abuse-case-candidates
     context: abuse_cases.matches
     agents:

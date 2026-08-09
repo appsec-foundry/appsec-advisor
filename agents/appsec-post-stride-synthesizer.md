@@ -16,9 +16,12 @@ at runtime.
 ## Inputs and outputs
 
 The invocation provides `OUTPUT_DIR`, `MODEL_ID`, the bounded controller-authored
-`INPUT_ARTIFACTS` path list, and `UNRESOLVED_DECISION_KEYS`. Read each listed
-artifact once. Act only on those keys. An empty key set is a controller defect
-and must produce no semantic output.
+`INPUT_ARTIFACTS` path list, and `UNRESOLVED_DECISION_KEYS`. The two receipted
+inputs separate generated threats from their proposed mitigations and bind both
+to the exact merged-threat and component sources. Read each listed artifact
+once. Do not read `.threats-merged.json`, `.triage-flags.json`, component
+fragments, or repository source. Act only on the unresolved keys. An empty key
+set is a controller defect and must produce no semantic output.
 
 Write exactly the requested subset of:
 

@@ -121,9 +121,9 @@ def _safe_template(template: str) -> None:
     if "\\" in template or "://" in template or template.startswith("/"):
         raise ContextRoutingError(f"unsafe context artifact template: {template!r}")
     placeholders = set(re.findall(r"\{([^{}]+)\}", template))
-    if placeholders - {"component_id"}:
+    if placeholders - {"component_id", "candidate_id"}:
         raise ContextRoutingError(f"unknown context artifact placeholder in {template!r}")
-    rendered = template.replace("{component_id}", "component")
+    rendered = template.replace("{component_id}", "component").replace("{candidate_id}", "candidate")
     if any(part in {"", ".", ".."} for part in Path(rendered).parts):
         raise ContextRoutingError(f"unsafe context artifact template: {template!r}")
     if any(token in rendered for token in ("*", "?", "[", "]")):
@@ -198,10 +198,6 @@ def validate_catalog_semantics(
             raise ContextRoutingError(f"agent binding does not match semantic role {role!r}")
         if binding["model_setting"] != model_keys.get(role):
             raise ContextRoutingError(f"agent binding model setting does not match semantic role {role!r}")
-    legacy = [binding for binding in agent_bindings.values() if binding["runtime"] == "stage1d_legacy"]
-    if legacy != [agent_bindings.get("abuse_case_verifier")]:
-        raise ContextRoutingError("only the inventoried abuse-case verifier may use the Stage-1d legacy binding")
-
     for context in contexts.values():
         if context["category"] not in categories:
             raise ContextRoutingError(f"unknown category {context['category']!r} for context {context['id']!r}")
@@ -303,11 +299,15 @@ def _resolve_output_path(output_root: Path, relative: str, *, require_file: bool
     return resolved
 
 
-def _render_artifact(pattern: str, component_id: str | None) -> str:
+def _render_artifact(pattern: str, component_id: str | None, candidate_id: str | None = None) -> str:
     if "{component_id}" in pattern:
         if not component_id or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", component_id):
             raise ContextRoutingError(f"component-scoped context requires a valid component id for {pattern!r}")
-        return pattern.replace("{component_id}", component_id)
+        pattern = pattern.replace("{component_id}", component_id)
+    if "{candidate_id}" in pattern:
+        if not candidate_id or not re.fullmatch(r"(?:AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}", candidate_id):
+            raise ContextRoutingError(f"candidate-scoped context requires a valid candidate id for {pattern!r}")
+        pattern = pattern.replace("{candidate_id}", candidate_id)
     return pattern
 
 
@@ -424,6 +424,8 @@ def _delivery_base(
     }
     if job.get("component_id") is not None:
         result["component_id"] = job["component_id"]
+    if job.get("candidate_id") is not None:
+        result["candidate_id"] = job["candidate_id"]
     return result
 
 
@@ -446,7 +448,7 @@ def _resolve_delivery(
 
     if delivery == "forbidden":
         if source["kind"] == "output_artifact":
-            artifact = _render_artifact(source["artifact_pattern"], job.get("component_id"))
+            artifact = _render_artifact(source["artifact_pattern"], job.get("component_id"), job.get("candidate_id"))
             if artifact in inputs:
                 raise ContextRoutingError(f"forbidden context {binding['id']!r} is present in job {job['job_id']!r}")
         base.update(
@@ -467,7 +469,7 @@ def _resolve_delivery(
         )
 
     if source["kind"] == "output_artifact":
-        artifact = _render_artifact(source["artifact_pattern"], job.get("component_id"))
+        artifact = _render_artifact(source["artifact_pattern"], job.get("component_id"), job.get("candidate_id"))
         declared = artifact in inputs
         if delivery_mode == "declared" and not declared:
             if delivery == "required":

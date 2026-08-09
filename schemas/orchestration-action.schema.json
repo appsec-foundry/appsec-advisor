@@ -326,6 +326,7 @@
     "semantic_role": {
       "enum": [
         "actor_discoverer",
+        "abuse_case_verifier",
         "architecture_analyst",
         "config_scanner",
         "context_resolver",
@@ -363,12 +364,17 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
         },
+        "candidate_id": {
+          "type": "string",
+          "pattern": "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"
+        },
         "semantic_role": {
           "$ref": "#/$defs/semantic_role"
         },
         "agent_type": {
           "enum": [
             "appsec-advisor:appsec-actor-discoverer",
+            "appsec-advisor:appsec-abuse-case-verifier",
             "appsec-advisor:appsec-architecture-analyst",
             "appsec-advisor:appsec-config-scanner",
             "appsec-advisor:appsec-context-resolver",
@@ -582,6 +588,13 @@
         {
           "if": {"required": ["architecture_context_sha256"]},
           "then": {"required": ["architecture_context_path"]}
+        },
+        {
+          "if": {
+            "properties": {"semantic_role": {"const": "abuse_case_verifier"}},
+            "required": ["semantic_role"]
+          },
+          "then": {"required": ["candidate_id"]}
         }
       ],
       "additionalProperties": false

@@ -800,7 +800,7 @@ Status as of 2026-08-09:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
-| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active STRIDE component plans, component-scoped related-repository roots, component business, architecture, known-threat, prior-finding, actor, boundary, requirement, and control projections, and bounded recon-pattern, recon-summary, and route projections repository-tested | Migrate the remaining generated-threat, proposed-mitigation, and abuse-case inputs; bound evidence and synthesis inputs; then satisfy reconstruction and projection exit gates |
+| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active receipted projections for STRIDE components, recon, architecture, evidence verification, post-STRIDE synthesis, and abuse-case candidates repository-tested | Satisfy the reconstruction and projection exit gates in the next live run |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
 
@@ -881,9 +881,12 @@ prior findings, and existing controls now use separate bounded component
 projections. Each projection carries a source fingerprint, normalized records,
 limits, an exact-byte receipt, and its own component-plan row; an empty source
 is physically absent. The required Evidence Bundle no longer duplicates those
-categories. Generated threats, proposed mitigations, and abuse cases still
-require source-by-source migration. The Stage-1d abuse-case verifier remains
-legacy.
+categories. Generated threats and proposed mitigations now use separate
+receipted post-STRIDE projections. Evidence verification receives only its
+deterministically selected sample with exact-source-bound code windows, and the
+controller owns canonical annotations. Stage 1d receives one receipted abuse-
+case candidate projection per job; the complete match set remains controller-
+owned.
 
 The 2026-08-08 contract review traced these projections through source index,
 producer, schema, manifest, component plan, action, exact-byte receipt,
@@ -1193,6 +1196,52 @@ source lines to 197 retained lines, and routes from 247 to 96 records. All
 three inputs have schemas, active catalog routes, exact-byte action receipts,
 source-hash freshness checks, cleanup under `.dispatch-context/`, and existing
 output-tree permissions.
+
+The remaining R4 pressure fix moves evidence sampling into the deterministic
+controller and embeds one exact 11-line source window per selected finding.
+The verifier writes only its verdict sidecar; the controller stages, validates,
+and atomically applies accepted annotations. Post-STRIDE synthesis receives
+separate generated-threat and proposed-mitigation projections instead of the
+complete merged set and triage flags. Stage 1d similarly receives one bounded
+candidate projection per verifier job instead of the complete abuse-case match
+set. Against the preserved R4 artifacts, the 146,456-byte merged input becomes
+a 38,208-byte, 17-finding evidence sample plus 27,102-byte threat and
+26,551-byte mitigation projections for 41 pre-render threats. An offline match
+of the same artifacts produced five abuse candidates whose individual inputs
+range from 2,670 to 6,153 bytes, compared with the 29,119-byte complete match
+set. The four schemas, deterministic producers, controller reconstruction,
+focused consumers, cleanup ownership, artifact-version registry, catalog
+routes, permissions, and regression tests move together.
+
+The next required live checkpoint uses Juice Shop commit
+`33518f5a0911e25d9df747b1e70fb7af279a755c`, Claude Code 2.1.226, and the same
+quick-depth model cohort as R4 while forcing Stage 1d so its candidate routing
+is exercised:
+
+```bash
+APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
+  --repo /home/mrohr/juice-shop \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r5 \
+  --model claude-sonnet-4-6 \
+  --reasoning-model sonnet-economy \
+  --assessment-depth quick \
+  --abuse-cases \
+  --keep-runtime-files \
+  --rebuild
+```
+
+The checkpoint passes only if the invocation exits successfully through final
+rendering, resolves `runtime_generation=context-v2`, preserves the R4 component
+and STRIDE-selection mechanisms, and completes all six STRIDE categories for
+every selected component. The effective plan and action receipts must show the
+bounded recon, route, evidence, generated-threat, proposed-mitigation, and
+per-candidate abuse inputs with current hashes and sizes. Focused evidence and
+synthesis jobs must not receive `.threats-merged.json`; abuse jobs must not
+receive `.abuse-case-matches.json` or another candidate. Record retained and
+omitted counts, bytes, per-role peak context, automatic compactions, usage turns,
+cache reads and writes, output tokens, wall time, cost, evidence verdict mix,
+finding correspondence, and every routing or producer-gate warning. This is one
+smoke checkpoint, not the controlled three-pair A/B acceptance cohort.
 
 A subsequent governance audit moved standing orchestration and admission rules
 into the durable contracts, pinned the legacy/context-v2 tool topology, added a
