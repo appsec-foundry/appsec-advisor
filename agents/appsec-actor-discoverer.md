@@ -22,8 +22,7 @@ This agent runs on `sonnet`. Budget: 15–25k tokens — breadth-first identific
 - Read `.actors-merged-static.json` once; cache the full `catalog_actors[]`
   list in working memory. Fall back to `resolved_actors[]` only for legacy
   files.
-- Read `.recon-summary.md` and `.recon-signals.json` once each.
-- Read `.threat-modeling-context.md` only if `.recon-summary.md` is missing.
+- Read the receipted recon-summary projection and `.recon-signals.json` once each.
 - Do NOT read source files — the recon summary is your evidence base.
 
 ## Operational signals (print + log)
@@ -104,9 +103,12 @@ When `miss` or file absent: continue to Step 2.
 Read these files once:
 1. `$OUTPUT_DIR/.actors-merged-static.json` — merged actor set from Plugin + Enterprise + Repo layers (written by `resolve_actors.py`). Extract `catalog_actors[]` so dormant static classes still prevent duplicate discovery proposals; `resolved_actors[]` contains only currently active classes.
 2. `$OUTPUT_DIR/.recon-signals.json` — boolean signals. Extract `signals` map and `component_hints[]`.
-3. `$OUTPUT_DIR/.recon-summary.md` — evidence source. Read the full file (capped at 200 lines per the recon output template).
-4. `$OUTPUT_DIR/.threat-modeling-context.md` — additional business context (read only if recon-summary is absent or < 20 lines).
-5. `$OUTPUT_DIR/.cross-repo-register.json` — if present, read for external service context (max 5 entries).
+3. `$OUTPUT_DIR/.dispatch-context/architecture/recon-summary-context.json` —
+   bounded evidence source. Read `sections[]` and honor its omission metadata.
+
+Do not read `.recon-summary.md`, `.threat-modeling-context.md`, or the complete
+cross-repository register. Missing required projected input is a controller
+error; do not replace it with broader discovery.
 
 Print: `[actor-discoverer]   ↳ Loaded: <n> static actors, <m> recon-signals, <k> component hints`
 
@@ -143,7 +145,7 @@ into `distinct_trust_positions[]`.
 
 ### Section B — Free-form discovery
 
-Without any prescribed checklist, reason over the recon-summary and context:
+Without any prescribed checklist, reason over the recon-summary projection:
 
 > Which attacker access or authority positions are structurally part of this
 > system and absent from every static actor? Justify the new position

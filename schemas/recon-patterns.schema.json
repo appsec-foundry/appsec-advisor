@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/recon-patterns.schema.json",
+  "title": "Bounded deterministic reconnaissance patterns",
+  "type": "object",
+  "required": ["version", "repo_root", "categories", "limits"],
+  "properties": {
+    "version": {"const": 1},
+    "repo_root": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "categories": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "propertyNames": {"pattern": "^[0-9]{1,3}$"},
+      "additionalProperties": {"$ref": "#/$defs/category"}
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "max_findings_per_category",
+        "max_findings_total",
+        "minimum_per_nonempty_category",
+        "original_findings",
+        "retained_findings",
+        "omitted_findings",
+        "ordering_key"
+      ],
+      "properties": {
+        "max_findings_per_category": {"const": 12},
+        "max_findings_total": {"const": 96},
+        "minimum_per_nonempty_category": {"const": 3},
+        "original_findings": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "retained_findings": {"type": "integer", "minimum": 0, "maximum": 96},
+        "omitted_findings": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "ordering_key": {"const": "severity,strength,category,file,line,subcategory,match"}
+      },
+      "additionalProperties": false
+    },
+    "scan_manifest": {
+      "type": "array",
+      "maxItems": 100000,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+    },
+    "scan_manifest_count": {"type": "integer", "minimum": 0, "maximum": 10000000},
+    "skipped_oversize": {
+      "type": "array",
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+    },
+    "skipped_oversize_count": {"type": "integer", "minimum": 0, "maximum": 10000000}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "scalar": {
+      "oneOf": [
+        {"type": "string", "maxLength": 1000},
+        {"type": "integer", "minimum": -1000000000, "maximum": 1000000000},
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "null"}
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 24,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"},
+      "additionalProperties": {"$ref": "#/$defs/scalar"}
+    },
+    "category": {
+      "type": "object",
+      "required": ["category", "name", "findings", "count"],
+      "properties": {
+        "category": {"type": "integer", "minimum": 1, "maximum": 999},
+        "name": {"type": "string", "minLength": 1, "maxLength": 200},
+        "findings": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {"$ref": "#/$defs/finding"}
+        },
+        "count": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "findings_truncated": {"type": "integer", "minimum": 1, "maximum": 10000000},
+        "truncated": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

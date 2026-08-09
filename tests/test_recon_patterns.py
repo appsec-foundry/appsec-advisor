@@ -1383,14 +1383,15 @@ class TestFindingsCap:
                 "count": cap + 30,
             }
         }
-        rp._cap_category_findings(cats, cap)
+        limits = rp._cap_category_findings(cats, cap, rp._MAX_FINDINGS_TOTAL)
         assert len(cats["11"]["findings"]) == cap
         assert cats["11"]["count"] == cap + 30  # true magnitude retained
         assert cats["11"]["findings_truncated"] == 30
+        assert limits["omitted_findings"] == 30
 
     def test_small_category_untouched(self):
         cats = {"18": {"category": 18, "findings": [{"file": "x"}] * 3, "count": 3}}
-        rp._cap_category_findings(cats, rp._MAX_FINDINGS_PER_CATEGORY)
+        rp._cap_category_findings(cats, rp._MAX_FINDINGS_PER_CATEGORY, rp._MAX_FINDINGS_TOTAL)
         assert len(cats["18"]["findings"]) == 3
         assert "findings_truncated" not in cats["18"]
 
@@ -1401,7 +1402,7 @@ class TestFindingsCap:
         findings = [{"file": f"w{i}", "strength": "weak"} for i in range(cap + 5)]
         findings.append({"file": "STRONG", "strength": "strong", "line": 9})
         cats = {"13": {"category": 13, "findings": findings, "count": len(findings)}}
-        rp._cap_category_findings(cats, cap)
+        rp._cap_category_findings(cats, cap, rp._MAX_FINDINGS_TOTAL)
         kept = cats["13"]["findings"]
         assert len(kept) == cap
         assert any(f.get("strength") == "strong" for f in kept)
@@ -1415,3 +1416,24 @@ class TestFindingsCap:
         cat11 = out["categories"]["11"]
         assert len(cat11["findings"]) <= rp._MAX_FINDINGS_PER_CATEGORY
         assert cat11["count"] >= len(cat11["findings"])
+        assert out["limits"]["retained_findings"] <= rp._MAX_FINDINGS_TOTAL
+
+    def test_global_cap_keeps_each_nonempty_category_represented(self):
+        cats = {
+            str(category): {
+                "category": category,
+                "name": f"Category {category}",
+                "findings": [
+                    {"file": f"src/{category}/{index}.ts", "line": index, "severity": "High"} for index in range(20)
+                ],
+                "count": 20,
+            }
+            for category in range(1, 18)
+        }
+
+        limits = rp._cap_category_findings(cats, rp._MAX_FINDINGS_PER_CATEGORY, rp._MAX_FINDINGS_TOTAL)
+
+        assert sum(len(cat["findings"]) for cat in cats.values()) == rp._MAX_FINDINGS_TOTAL
+        assert all(len(cat["findings"]) >= rp._MIN_FINDINGS_PER_NONEMPTY_CATEGORY for cat in cats.values())
+        assert limits["original_findings"] == 340
+        assert limits["omitted_findings"] == 340 - rp._MAX_FINDINGS_TOTAL

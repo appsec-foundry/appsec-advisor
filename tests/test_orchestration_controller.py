@@ -7,6 +7,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import build_architecture_analysis_context as architecture_context
 import build_stride_evidence_bundles as evidence_bundles
 import orchestration_controller as controller
 import pytest
@@ -1694,25 +1695,23 @@ def _write_architecture_receipt_inputs(output: Path, *, discovery_enabled: bool 
         ),
         encoding="utf-8",
     )
-    (output / ".actors-resolved.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "quick_mode": False,
-                "discovery_enabled": discovery_enabled,
-                "discovery_skip_reason": None,
-                "actors_inputs_fingerprint": "0" * 64,
-                "alias_map": {},
-                "resolved_actors": [],
-                "confirmed_relevant": [],
-                "inputs_questioned": [],
-                "run_issues": [],
-                "discovery_actor_count": 0,
-                "rejected_discovery_actors": [],
-            }
-        ),
-        encoding="utf-8",
-    )
+    actors = {
+        "schema_version": 1,
+        "quick_mode": False,
+        "discovery_enabled": discovery_enabled,
+        "discovery_skip_reason": None,
+        "actors_inputs_fingerprint": "0" * 64,
+        "alias_map": {},
+        "resolved_actors": [],
+        "confirmed_relevant": [],
+        "inputs_questioned": [],
+        "run_issues": [],
+        "discovery_actor_count": 0,
+        "rejected_discovery_actors": [],
+    }
+    (output / ".actors-resolved.json").write_text(json.dumps(actors), encoding="utf-8")
+    (output / ".actors-merged-static.json").write_text(json.dumps(actors), encoding="utf-8")
+    architecture_context.build(output)
 
 
 def _valid_recon_signals() -> dict:
@@ -3899,6 +3898,28 @@ class TestContextV2PostRecon:
         with pytest.raises(controller.ControllerError, match="missing or unsafe file"):
             controller.context_v2_post_recon(output)
 
+    def test_post_recon_rejects_invalid_architecture_projection(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        projection_path = output / ".dispatch-context/architecture/route-context.json"
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        projection["limits"]["max_routes"] = 97
+        projection_path.write_text(json.dumps(projection), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        with pytest.raises(controller.ControllerError, match="architecture-route-context.*validation failed"):
+            controller.context_v2_post_recon(output)
+
+    def test_post_recon_rejects_stale_recon_projection(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        projection_path = output / ".dispatch-context/architecture/recon-summary-context.json"
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        projection["source"]["sha256"] = "f" * 64
+        projection_path.write_text(json.dumps(projection), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        with pytest.raises(controller.ControllerError, match="stale for .recon-summary.md"):
+            controller.context_v2_post_recon(output)
+
     def test_quick_depth_resolves_static_actors_but_skips_discovery(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path, assessment_depth="quick")
         calls: list[tuple[str, list[str]]] = []
@@ -3963,7 +3984,7 @@ class TestContextV2PostRecon:
 class TestContextV2PostActors:
     def _prepare(self, tmp_path):
         output = _context_v2_run(tmp_path)
-        (output / ".recon-summary.md").write_text("recon\n", encoding="utf-8")
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         _write_architecture_receipt_inputs(output)
         return output
 

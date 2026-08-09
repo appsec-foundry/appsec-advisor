@@ -800,7 +800,7 @@ Status as of 2026-08-09:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
-| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active STRIDE component plans, component-scoped related-repository roots, and component business, architecture, known-threat, prior-finding, actor, boundary, requirement, and control projections repository-tested | Migrate the remaining generated-threat, proposed-mitigation, and abuse-case inputs; bound recon, architecture, evidence, and synthesis inputs; then satisfy reconstruction and projection exit gates |
+| WP5a | Focus/exclude repair, Stage-1 inventory, human catalog, resolver, active STRIDE component plans, component-scoped related-repository roots, component business, architecture, known-threat, prior-finding, actor, boundary, requirement, and control projections, and bounded recon-pattern, recon-summary, and route projections repository-tested | Migrate the remaining generated-threat, proposed-mitigation, and abuse-case inputs; bound evidence and synthesis inputs; then satisfy reconstruction and projection exit gates |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
 
@@ -918,12 +918,9 @@ it can only delete unverifiable entries or write `none detected`, never create
 path evidence. Exact-entry parsing now rejects ranges and trailing annotations
 instead of accidentally accepting their numeric prefix.
 
-The next checkpoint is a fresh opt-in full Juice Shop run at quick depth with
-runtime files preserved. Prefix the invocation with `APPSEC_CONTEXT_V2=1` and
-verify that the pre-flight `Runtime` row says `context-v2` before dispatch. Do
-not combine it with deadline, cost-limit,
-live-phase, resume, or compact-runtime opt-out flags. This live smoke precedes
-the remaining generated-threat, proposed-mitigation, and abuse-case migrations.
+At that point, the next checkpoint was a fresh opt-in full Juice Shop run at
+quick depth with runtime files preserved. The later R4 run superseded that
+checkpoint and exposed the remaining projection work described below.
 
 The implemented WP0-WP5 scope includes:
 
@@ -1183,6 +1180,19 @@ WP5a pressure: recon emitted 521 lines against its 200-line target,
 architecture received the full 247-route inventory, and the evidence and root-
 cause roles still received full merged-threat artifacts. These projections
 must be bounded before the controlled A/B gate.
+
+The first R4 pressure fix bounds deterministic recon patterns to 12 findings
+per category and 96 across the run, with category-diverse risk ordering and
+explicit pre-cap and omission counts. Actor discovery and architecture now
+consume an exact-source-bound recon projection capped at 200 retained heading
+and body lines. Architecture also receives at most 96 risk-shaped and
+framework-diverse routes while the complete inventory remains available to
+deterministic consumers. Against the preserved R4 artifacts, those projections
+reduce recon patterns from 151,318 to 31,807 bytes, recon Markdown from 521
+source lines to 197 retained lines, and routes from 247 to 96 records. All
+three inputs have schemas, active catalog routes, exact-byte action receipts,
+source-hash freshness checks, cleanup under `.dispatch-context/`, and existing
+output-tree permissions.
 
 A subsequent governance audit moved standing orchestration and admission rules
 into the durable contracts, pinned the legacy/context-v2 tool topology, added a

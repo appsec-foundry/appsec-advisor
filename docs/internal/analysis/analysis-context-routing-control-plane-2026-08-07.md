@@ -457,6 +457,15 @@ lens IDs, and controller-owned analysis policy to active effective-plan
 delivery IDs. The shared effective plan remains controller-only and is
 revalidated immediately before dispatch.
 
+Recon patterns now have an active schema and an exact-byte action receipt, with
+12 findings per category and 96 across the run. Actor discovery and
+architecture receive an exact-source-bound recon projection capped at 200
+retained heading and body lines. Architecture receives a separate projection
+of at most 96 risk-shaped and framework-diverse routes; the complete route
+inventory remains controller-owned for deterministic consumers. The projected
+files live below the already-cleaned `.dispatch-context/` directory and use the
+existing output-tree permissions.
+
 The complete related-repository registry is now controller-only. A component
 bundle fingerprints only related roots named by its admitted source slices,
 and a STRIDE job receives an exact-byte-receipted root projection containing

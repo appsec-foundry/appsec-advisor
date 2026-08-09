@@ -3108,7 +3108,7 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-# Cap findings per category in the aggregate `.recon-patterns.json` the
+# Cap findings per category and across the aggregate `.recon-patterns.json` the
 # recon-scanner agent Reads into its LLM context. A recon pre-pass is a SIGNAL,
 # not an exhaustive enumeration — the analyst re-greps on demand — so an
 # unbounded findings list (juice-shop 2026-07-14: 319 KB of `categories`,
@@ -3116,27 +3116,93 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
 # cache_read that made the streaming call fragile) only inflates context. The
 # true magnitude stays in each category's `count`; strong-strength hits are kept
 # ahead of the cap so build_stride_dispatch_manifest still sees them.
-_MAX_FINDINGS_PER_CATEGORY = 40
+_MAX_FINDINGS_PER_CATEGORY = 12
+_MAX_FINDINGS_TOTAL = 96
+_MIN_FINDINGS_PER_NONEMPTY_CATEGORY = 3
+
+_SEVERITY_ORDER = {
+    "Critical": 0,
+    "High": 1,
+    "Medium": 2,
+    "Low": 3,
+    "Informational": 4,
+    "Info": 4,
+}
 
 
-def _cap_category_findings(categories: dict[str, Any], cap: int) -> None:
-    """Truncate each category's ``findings`` to ``cap`` in place, strong first.
+def _finding_order_key(category_id: str, finding: Any) -> tuple[Any, ...]:
+    """Order signals without inferring a finding beyond scanner-owned fields."""
+    if not isinstance(finding, dict):
+        return (9, 1, category_id, "", 0, "")
+    severity = _SEVERITY_ORDER.get(str(finding.get("severity") or ""), 8)
+    strength = 0 if finding.get("strength") == "strong" else 1
+    line = finding.get("line")
+    return (
+        severity,
+        strength,
+        category_id,
+        str(finding.get("file") or ""),
+        line if isinstance(line, int) and not isinstance(line, bool) else 0,
+        str(finding.get("subcategory") or ""),
+        str(finding.get("match") or finding.get("evidence") or ""),
+    )
+
+
+def _cap_category_findings(categories: dict[str, Any], cap: int, total_cap: int) -> dict[str, Any]:
+    """Retain a deterministic, category-diverse risk-ordered signal sample.
 
     ``count`` is set by the scanners before this runs, so it keeps the true
-    pre-cap total. A ``findings_truncated`` marker records how many were dropped.
+    pre-cap total. Per-category and aggregate omission metadata records every
+    dropped row. The retained rows are signals for semantic recon, not an
+    exhaustive scanner export.
     """
-    for cat in categories.values():
+    ranked: dict[str, list[Any]] = {}
+    original_total = 0
+    for category_id, cat in sorted(categories.items(), key=lambda item: int(item[0])):
         if not isinstance(cat, dict):
             continue
         findings = cat.get("findings")
-        if not isinstance(findings, list) or len(findings) <= cap:
+        if not isinstance(findings, list):
             continue
-        ordered = sorted(
-            findings,
-            key=lambda f: 0 if isinstance(f, dict) and f.get("strength") == "strong" else 1,
-        )
-        cat["findings"] = ordered[:cap]
-        cat["findings_truncated"] = len(findings) - cap
+        original_total += len(findings)
+        ranked[category_id] = sorted(findings, key=lambda row: _finding_order_key(category_id, row))[:cap]
+
+    retained: dict[str, list[Any]] = {category_id: [] for category_id in ranked}
+    for category_id, findings in ranked.items():
+        retained[category_id].extend(findings[:_MIN_FINDINGS_PER_NONEMPTY_CATEGORY])
+
+    remaining = [
+        (category_id, finding)
+        for category_id, findings in ranked.items()
+        for finding in findings[_MIN_FINDINGS_PER_NONEMPTY_CATEGORY:]
+    ]
+    remaining.sort(key=lambda row: _finding_order_key(row[0], row[1]))
+    capacity = max(0, total_cap - sum(len(values) for values in retained.values()))
+    for category_id, finding in remaining[:capacity]:
+        retained[category_id].append(finding)
+
+    retained_total = 0
+    for category_id, cat in categories.items():
+        findings = cat.get("findings") if isinstance(cat, dict) else None
+        if not isinstance(findings, list):
+            continue
+        kept = sorted(retained.get(category_id, []), key=lambda row: _finding_order_key(category_id, row))
+        cat["findings"] = kept
+        omitted = len(findings) - len(kept)
+        if omitted:
+            cat["findings_truncated"] = omitted
+        else:
+            cat.pop("findings_truncated", None)
+        retained_total += len(kept)
+    return {
+        "max_findings_per_category": cap,
+        "max_findings_total": total_cap,
+        "minimum_per_nonempty_category": _MIN_FINDINGS_PER_NONEMPTY_CATEGORY,
+        "original_findings": original_total,
+        "retained_findings": retained_total,
+        "omitted_findings": original_total - retained_total,
+        "ordering_key": "severity,strength,category,file,line,subcategory,match",
+    }
 
 
 def run_all(
@@ -3167,7 +3233,11 @@ def run_all(
             "29": scan_mobile_architecture(repo_root),
         },
     }
-    _cap_category_findings(out["categories"], _MAX_FINDINGS_PER_CATEGORY)
+    out["limits"] = _cap_category_findings(
+        out["categories"],
+        _MAX_FINDINGS_PER_CATEGORY,
+        _MAX_FINDINGS_TOTAL,
+    )
     if include_manifest:
         manifest: list[str] = []
         # Re-walk once purely to collect the manifest; the per-category

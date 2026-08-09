@@ -447,6 +447,9 @@ def resolve_stride_concurrency() -> dict:
 CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS = {
     "orchestration-action": 1,
     "route-inventory": 1,
+    "recon-patterns": 1,
+    "recon-summary-context": 1,
+    "architecture-route-context": 1,
     "recon-signals": 2,
     "actors-resolved": 1,
     "trust-boundary-assessment-input": 1,

@@ -93,6 +93,13 @@ truncation counts, size, and exact-byte receipt. The required evidence bundle
 contains source and deterministic evidence but does not duplicate these
 independently selectable categories.
 
+Recon patterns are capped across the run and per category while retaining
+pre-cap counts and deterministic omission metadata. Actor, triage, and
+architecture roles receive a 200-line recon projection, and architecture
+receives at most 96 risk-shaped, framework-diverse routes. The authoritative
+recon summary and route inventory remain available only to their deterministic
+consumers.
+
 Migration state, paths, schemas, models, commands, projectors, trust labels,
 and limits are not human routing choices. They stay in internal contracts or
 the implementation plan. Effective-plan receipts report what the runtime

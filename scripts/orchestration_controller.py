@@ -102,6 +102,10 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/merge-review-context.schema.json#v1": "candidate_groups",
     "schemas/merge-decisions.schema.json#v2": "decisions",
     "schemas/route-inventory.schema.json#v1": "routes",
+    "schemas/recon-patterns.schema.json#v1": "categories",
+    "schemas/recon-summary-context.schema.json#v1": "sections",
+    "schemas/architecture-route-context.schema.json#v1": "routes",
+    "schemas/recon-signals.schema.json#v2": "signals",
     "schemas/actors-resolved.schema.yaml#v1": "resolved_actors",
 }
 _OPTIONAL_RECEIPT_RECORD_KEYS = {
@@ -2968,6 +2972,7 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
         raise ControllerError(f"cannot reset context routing effective plan: {exc}") from exc
     repo_root = Path(str(cfg.get("repo_root") or output_dir))
     receipts: list[str] = []
+    structured: list[dict[str, Any]] = []
 
     # These optional late-stage outputs may not get a producer in this run.
     # Clear them at the fresh context-v2 entry boundary so a skipped verifier,
@@ -3004,6 +3009,19 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
         try:
             completed = _run_script("recon_patterns.py", pattern_args)
             (output_dir / ".recon-patterns.json").write_text(completed.stdout, encoding="utf-8")
+            patterns = _validate_json_artifact(
+                output_dir / ".recon-patterns.json",
+                PLUGIN_ROOT / "schemas" / "recon-patterns.schema.json",
+                contract="recon-patterns-v1",
+            )
+            structured.append(
+                _validated_json_receipt(
+                    output_dir,
+                    ".recon-patterns.json",
+                    schema_id="schemas/recon-patterns.schema.json#v1",
+                    record_count=len(patterns["categories"]),
+                )
+            )
         except (ControllerError, OSError) as exc:
             # The recon-scanner falls back to LLM grep for these categories.
             receipts.append("recon_patterns.py: best-effort failure")
@@ -3038,13 +3056,16 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
     else:
         receipts.append("context resolution reused from cache")
     if not recon_skip:
+        recon_inputs = [".skill-config.json"]
+        if (output_dir / ".recon-patterns.json").is_file():
+            recon_inputs.append(".recon-patterns.json")
         jobs.append(
             {
                 "schema_version": 1,
                 "job_id": "phase2-recon",
                 "semantic_role": "recon_scanner",
                 **_context_v2_job_metadata(cfg, "recon_scanner"),
-                "input_artifacts": [".skill-config.json"],
+                "input_artifacts": recon_inputs,
                 "output_artifacts": [".recon-summary.md", ".recon-signals.json"],
                 "unresolved_decision_keys": [],
             }
@@ -3076,6 +3097,7 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
             **_context_v2_common(output_dir, cfg),
             "action": "dispatch_parallel",
             "dispatch_jobs": jobs,
+            "artifact_receipts": structured,
             "receipts": ["Context-v2 Phase-1/2 pre-passes complete", *receipts],
         }
     )
@@ -3153,6 +3175,10 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
         "route_inventory.py",
         ["--repo-root", repo_root, "--output-dir", str(output_dir)],
     )
+    _run_script(
+        "build_architecture_analysis_context.py",
+        ["--output-dir", str(output_dir)],
+    )
     if depth == "thorough":
         _best_effort_script(
             output_dir,
@@ -3210,10 +3236,14 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
         cfg,
         role="actor_discoverer",
         job_id="phase2_7-actors",
-        input_artifacts=[".actors-merged-static.json", ".recon-summary.md"],
+        input_artifacts=[
+            ".actors-merged-static.json",
+            ".dispatch-context/architecture/recon-summary-context.json",
+            ".recon-signals.json",
+        ],
         output_artifacts=[".actors-discovered.json"],
         decision_keys=["discovered_actor_set"],
-        receipts=[],
+        receipts=_context_v2_actor_input_receipts(output_dir),
     )
 
 
@@ -3254,14 +3284,87 @@ def _actor_discovery_enabled(output_dir: Path) -> bool:
     return bool(resolved.get("discovery_enabled"))
 
 
-def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> dict[str, Any]:
-    structured = [
+def _validated_projection_receipt(
+    output_dir: Path,
+    artifact_path: str,
+    *,
+    schema_id: str,
+    record_key: str,
+    source_artifact: str,
+) -> dict[str, Any]:
+    """Bind a bounded projection to both its exact bytes and exact source."""
+    schema_relative = schema_id.partition("#")[0]
+    projected = _validate_json_artifact(
+        output_dir / artifact_path,
+        PLUGIN_ROOT / schema_relative,
+        contract=schema_id,
+    )
+    source = projected.get("source")
+    if not isinstance(source, dict) or source.get("artifact_path") != source_artifact:
+        raise ControllerError(f"{artifact_path} names an unexpected source artifact")
+    try:
+        source_sha256 = hashlib.sha256((output_dir / source_artifact).read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ControllerError(f"cannot re-hash projection source {source_artifact}: {exc}") from exc
+    if source.get("sha256") != source_sha256:
+        raise ControllerError(f"{artifact_path} is stale for {source_artifact}")
+    records = projected.get(record_key)
+    if not isinstance(records, (list, dict)):
+        raise ControllerError(f"{artifact_path} has no {record_key!r} records")
+    return _validated_json_receipt(
+        output_dir,
+        artifact_path,
+        schema_id=schema_id,
+        record_count=len(records),
+    )
+
+
+def _context_v2_recon_projection_receipt(output_dir: Path) -> dict[str, Any]:
+    return _validated_projection_receipt(
+        output_dir,
+        ".dispatch-context/architecture/recon-summary-context.json",
+        schema_id="schemas/recon-summary-context.schema.json#v1",
+        record_key="sections",
+        source_artifact=".recon-summary.md",
+    )
+
+
+def _context_v2_route_projection_receipt(output_dir: Path) -> dict[str, Any]:
+    return _validated_projection_receipt(
+        output_dir,
+        ".dispatch-context/architecture/route-context.json",
+        schema_id="schemas/architecture-route-context.schema.json#v1",
+        record_key="routes",
+        source_artifact=".route-inventory.json",
+    )
+
+
+def _context_v2_actor_input_receipts(output_dir: Path) -> list[dict[str, Any]]:
+    signals = _load_json_object(output_dir / ".recon-signals.json", contract="recon-signals-v2")
+    signal_values = signals.get("signals")
+    if not isinstance(signal_values, dict):
+        raise ControllerError("recon-signals-v2 artifact has no signals object")
+    return [
         _validated_json_receipt(
             output_dir,
-            ".route-inventory.json",
-            schema_id="schemas/route-inventory.schema.json#v1",
-            record_count=_record_count(output_dir / ".route-inventory.json", "routes"),
+            ".actors-merged-static.json",
+            schema_id="schemas/actors-resolved.schema.yaml#v1",
+            record_count=_record_count(output_dir / ".actors-merged-static.json", "resolved_actors"),
         ),
+        _context_v2_recon_projection_receipt(output_dir),
+        _validated_json_receipt(
+            output_dir,
+            ".recon-signals.json",
+            schema_id="schemas/recon-signals.schema.json#v2",
+            record_count=len(signal_values),
+        ),
+    ]
+
+
+def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> dict[str, Any]:
+    structured = [
+        _context_v2_recon_projection_receipt(output_dir),
+        _context_v2_route_projection_receipt(output_dir),
         _validated_json_receipt(
             output_dir,
             ".actors-resolved.json",
@@ -3274,7 +3377,11 @@ def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], rec
         cfg,
         role="architecture_analyst",
         job_id="phase3-6-architecture",
-        input_artifacts=[".recon-summary.md", ".route-inventory.json", ".actors-resolved.json"],
+        input_artifacts=[
+            ".dispatch-context/architecture/recon-summary-context.json",
+            ".dispatch-context/architecture/route-context.json",
+            ".actors-resolved.json",
+        ],
         output_artifacts=[
             ".components.json",
             ".data-flows.json",

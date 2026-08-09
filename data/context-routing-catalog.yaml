@@ -203,6 +203,11 @@ contexts:
     category: repository_discovery
     description: Bounded numbered summary of the discovered application and security surface.
     scope: whole_run
+  - id: discovery.recon_projection
+    name: Bounded reconnaissance projection
+    category: repository_discovery
+    description: Canonical recon headings with deterministic per-section and whole-context omission disclosure.
+    scope: whole_run
   - id: discovery.recon_signals
     name: Structured reconnaissance signals
     category: repository_discovery
@@ -212,6 +217,11 @@ contexts:
     name: Route inventory
     category: architecture_and_data_flows
     description: Deterministically extracted application routes and entry-point metadata.
+    scope: whole_run
+  - id: architecture.route_projection
+    name: Bounded architecture route projection
+    category: architecture_and_data_flows
+    description: Risk-shaped and framework-diverse route records selected from the complete deterministic inventory.
     scope: whole_run
   - id: architecture.targeted_source
     name: Targeted architecture source reads
@@ -492,14 +502,14 @@ assignments:
     applies_to: whole_run
     reason: Semantic actor discovery extends a validated set rather than replacing it.
   - id: recon-summary-for-actors-and-architecture
-    context: discovery.recon_summary
+    context: discovery.recon_projection
     agents:
       - actor_discoverer
       - architecture_analyst
     delivery: required
     importance: essential
     applies_to: whole_run
-    reason: Actor and architecture decisions depend on the validated bounded reconnaissance summary.
+    reason: Actor and architecture decisions receive only the validated bounded reconnaissance projection.
   - id: recon-signals-for-actors
     context: discovery.recon_signals
     agents:
@@ -517,13 +527,21 @@ assignments:
     applies_to: whole_run
     reason: Architecture must use finalized actor identities and privileges.
   - id: routes-for-architecture
-    context: architecture.routes
+    context: architecture.route_projection
     agents:
       - architecture_analyst
     delivery: required
     importance: essential
     applies_to: whole_run
-    reason: Deterministically extracted routes anchor attack-surface decisions.
+    reason: A bounded risk-shaped and diverse route projection anchors semantic attack-surface decisions while deterministic consumers retain the complete inventory.
+  - id: no-complete-route-inventory-for-architecture
+    context: architecture.routes
+    agents:
+      - architecture_analyst
+    delivery: forbidden
+    importance: essential
+    applies_to: whole_run
+    reason: Semantic architecture analysis receives the bounded route projection, never the complete route inventory.
   - id: targeted-source-for-architecture
     context: architecture.targeted_source
     agents:

@@ -328,11 +328,24 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
         ("context_resolver", "phase1-context", [".skill-config.json"], None),
         ("recon_scanner", "phase2-recon", [".skill-config.json"], None),
         ("config_scanner", "phase2-config", [".skill-config.json"], None),
-        ("actor_discoverer", "phase2-actors", [".actors-merged-static.json", ".recon-summary.md"], None),
+        (
+            "actor_discoverer",
+            "phase2-actors",
+            [
+                ".actors-merged-static.json",
+                ".dispatch-context/architecture/recon-summary-context.json",
+                ".recon-signals.json",
+            ],
+            None,
+        ),
         (
             "architecture_analyst",
             "phase3-architecture",
-            [".recon-summary.md", ".route-inventory.json", ".actors-resolved.json"],
+            [
+                ".dispatch-context/architecture/recon-summary-context.json",
+                ".dispatch-context/architecture/route-context.json",
+                ".actors-resolved.json",
+            ],
             None,
         ),
         ("trust_boundary_analyst", "phase7-boundary", [".trust-boundary-assessment-input.json"], None),

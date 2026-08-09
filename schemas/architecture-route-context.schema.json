@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/architecture-route-context.schema.json",
+  "title": "Bounded route inventory projection for architecture analysis",
+  "type": "object",
+  "required": ["schema_version", "source", "limits", "coverage", "routes"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "source": {
+      "type": "object",
+      "required": ["artifact_path", "sha256", "route_count"],
+      "properties": {
+        "artifact_path": {"const": ".route-inventory.json"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "route_count": {"type": "integer", "minimum": 0, "maximum": 10000000}
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": ["max_routes", "original_routes", "retained_routes", "omitted_routes", "max_unsupported_route_files", "omitted_unsupported_route_files", "ordering_key", "diversity_key"],
+      "properties": {
+        "max_routes": {"const": 96},
+        "original_routes": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "retained_routes": {"type": "integer", "minimum": 0, "maximum": 96},
+        "omitted_routes": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "max_unsupported_route_files": {"const": 64},
+        "omitted_unsupported_route_files": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "ordering_key": {"type": "string", "minLength": 1, "maxLength": 200},
+        "diversity_key": {"type": "string", "minLength": 1, "maxLength": 100}
+      },
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["frameworks_detected", "unsupported_route_files"],
+      "properties": {
+        "frameworks_detected": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 100}},
+        "unsupported_route_files": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1000}}
+      },
+      "additionalProperties": false
+    },
+    "routes": {"type": "array", "maxItems": 96, "items": {"$ref": "#/$defs/route"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "route": {
+      "type": "object",
+      "required": ["route_id", "method", "path", "framework", "handler_file", "handler_line", "authn_signal", "authz_signal", "management_surface", "confidence"],
+      "properties": {
+        "route_id": {"type": "string", "pattern": "^R-[0-9]{3,5}$"},
+        "method": {"enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ANY", "ALL", "GRAPHQL", "UNKNOWN"]},
+        "path": {"type": "string", "maxLength": 2000},
+        "framework": {"enum": ["express", "koa", "fastify", "hapi", "nestjs", "fastapi", "flask", "django", "spring", "jaxrs", "aspnet-minimal", "graphql", "rails", "laravel", "gin", "echo", "unknown"]},
+        "handler_file": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "handler_line": {"type": "integer", "minimum": 1, "maximum": 1000000000},
+        "authn_signal": {"enum": ["present", "absent", "unknown", "middleware_present", "decorator_present", "inherited_unknown"]},
+        "authz_signal": {"enum": ["present", "absent", "unknown", "middleware_present", "decorator_present", "inherited_unknown"]},
+        "management_surface": {"type": "boolean"},
+        "missing_auth_suspect": {"type": "boolean"},
+        "missing_authz_suspect": {"type": "boolean"},
+        "relevance_tags": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 100}},
+        "confidence": {"enum": ["low", "medium", "high"]},
+        "notes": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 200}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

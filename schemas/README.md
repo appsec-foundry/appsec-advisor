@@ -44,6 +44,9 @@ output template and validated at the same two boundaries through
 | `context-routing-bindings.schema.json` | `data/context-routing-bindings.json` | plugin maintainers | semantic validator and context-v2 resolver |
 | `context-effective-plan.schema.json` | `$OUTPUT_DIR/.context-routing-plan.json` | `scripts/context_routing.py` | local audit, active delivery binding, and migration diagnostics |
 | `context-effective-plan-receipt.schema.json` | `$OUTPUT_DIR/.context-routing-plan.receipt.json` | `scripts/context_routing.py` | exact-byte plan freshness validation |
+| `recon-patterns.schema.json` | `$OUTPUT_DIR/.recon-patterns.json` | `scripts/recon_patterns.py` | receipted recon-scanner input |
+| `recon-summary-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/architecture/recon-summary-context.json` | `scripts/build_architecture_analysis_context.py` | actor, architecture, and exceptional triage roles |
+| `architecture-route-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/architecture/route-context.json` | `scripts/build_architecture_analysis_context.py` | architecture analyst |
 | `threat-summary.schema.json` | `<OUTPUT_DIR>/threat-summary.json` (when `--format json` or `both`) | `scripts/aggregate_threat_summary.py` | External dashboards / internal reporting jobs |
 
 ## Design notes
