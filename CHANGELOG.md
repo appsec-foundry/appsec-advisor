@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requested Threat Dragon and SARIF exports are now always written and listed in the completion summary.
 - Reconnaissance now reserves its final turns for validated output, so large repositories cannot crowd out required security sections.
 - Reconnaissance and architecture handoffs now remove unverifiable summary path claims, carry structured signal evidence, and reject stale repository paths before they can reach component analysis.
+- The Findings index now orders entries by effective severity, with Critical findings first and stable IDs within each tier.
 - Context-v2 now builds project context deterministically, excludes prior-run evidence, routes analyst candidates and bounded abuse evidence through receipted inputs, preserves rebuild and STRIDE retry state, serializes rebuild deliverables as full assessments, and rejects resume after authoritative controller aborts.
 - Context-v2 now evaluates the complete Config/IaC catalog without a model turn.
 - Context-v2 STRIDE routing now accepts component-owned focus directories under recursive file globs.

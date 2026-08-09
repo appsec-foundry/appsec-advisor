@@ -5165,6 +5165,27 @@ def _severity_by_finding_num(threats: list) -> dict:
     return out
 
 
+_FINDING_INDEX_SEVERITY_RANK = {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+    "info": 4,
+    "informational": 4,
+}
+
+
+def _severity_ordered_finding_nums(nums: list[int], sev_by_num: dict[int, str]) -> list[int]:
+    """Order finding links by visible criticality, then stable numeric ID."""
+    return sorted(
+        set(nums),
+        key=lambda number: (
+            _FINDING_INDEX_SEVERITY_RANK.get((sev_by_num.get(number) or "").strip().lower(), 99),
+            number,
+        ),
+    )
+
+
 def _build_register_index(
     label: str,
     prefix: str,
@@ -16703,7 +16724,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         lines.append("")
 
     # ---- Findings index (jump-list) --------------------------------------
-    # A compact, ID-ordered list of every finding card in §8 so the reader can
+    # A compact, severity-ordered list of every finding card in §8 so the reader can
     # jump straight to an entry instead of scrolling the severity groups
     # (2026-05-30 user request). Each chip targets the `<a id="f-NNN">` anchor
     # the Story Card below declares, so the link always resolves.
@@ -16715,6 +16736,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         # severity circle and the short title so the index is scannable at
         # 48 findings (2026-05-31 user request — bare ID links were unreadable).
         _sev_by_num = _severity_by_finding_num(threats)
+        _idx_nums = _severity_ordered_finding_nums(_idx_nums, _sev_by_num)
         _title_by_num = {
             int(m.group(1)): (_canonical_finding_title(t) or (t.get("title") or "").strip())
             for t in threats

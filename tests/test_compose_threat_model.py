@@ -4187,6 +4187,37 @@ def test_severity_by_finding_num_reads_risk_then_severity() -> None:
     assert sev == {1: "critical", 2: "high", 3: "low"}
 
 
+def test_findings_index_orders_criticality_before_stable_id() -> None:
+    severities = {
+        1: "high",
+        2: "critical",
+        3: "medium",
+        4: "critical",
+        5: "low",
+        6: "informational",
+    }
+
+    ordered = compose._severity_ordered_finding_nums([6, 5, 4, 3, 2, 1], severities)
+    rendered = compose._build_register_index(
+        "Findings index",
+        "F",
+        ordered,
+        {number: f"Finding {number}" for number in severities},
+        severities,
+    )
+
+    assert ordered == [2, 4, 1, 3, 5, 6]
+    chips = rendered.split("<br/>")[1:]
+    assert [re.match(r"^(.+?) \[F-(\d{3})\]", chip).groups() for chip in chips] == [
+        ("🔴", "002"),
+        ("🔴", "004"),
+        ("🟠", "001"),
+        ("🟡", "003"),
+        ("🟢", "005"),
+        ("⚪", "006"),
+    ]
+
+
 def test_normalize_emdashes_preserves_mermaid_alt_else_labels() -> None:
     """§3 walkthrough sequenceDiagram `alt`/`else` branch labels follow the
     'Current state — T-NNN' / 'After M-NNN — …' convention where the em-dash
