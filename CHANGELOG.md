@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Eligible full and rebuild scans now use context-v2 by default; `APPSEC_CONTEXT_V2=0` selects the legacy producer.
 - Attack walkthroughs now balance severity and chain relevance with threat-category diversity, while reserving coverage for Critical Access Control and LLM Abuse findings when present.
 - Verified findings at a confirmed internet ingress can now be raised by one severity band, up to High, within CWE caps.
 - Findings of the same kind at different trust boundaries now stay separate instead of consolidating into one row.

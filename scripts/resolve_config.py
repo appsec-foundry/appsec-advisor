@@ -495,16 +495,16 @@ def compact_runtime_eligible(cfg: dict) -> bool:
 def resolve_runtime_generation(mode: str, *, compact_eligible: bool = True) -> dict:
     """Select the producer generation for a NEW invocation.
 
-    Only the operator environment may select context-v2; repository content
-    never reaches this decision. Context-v2 is offered for compact full and
-    rebuild runs only. Special paths that retain the legacy top-level runtime
-    must also persist the legacy producer generation.
+    Context-v2 is the default for compact full and rebuild runs. The operator
+    may select the legacy producer with ``APPSEC_CONTEXT_V2=0``; repository
+    content never reaches this decision. Special paths that retain the legacy
+    top-level runtime must also persist the legacy producer generation.
     """
-    requested = os.environ.get("APPSEC_CONTEXT_V2", "").strip() == "1"
-    if not requested:
+    override = os.environ.get("APPSEC_CONTEXT_V2", "").strip()
+    if override not in ("", "1"):
         return {
             "runtime_generation": "legacy",
-            "runtime_generation_label": "legacy (default)",
+            "runtime_generation_label": f"legacy (APPSEC_CONTEXT_V2={override or '0'})",
             "runtime_artifact_schema_versions": {},
         }
     if mode not in ("full", "rebuild"):
@@ -521,7 +521,9 @@ def resolve_runtime_generation(mode: str, *, compact_eligible: bool = True) -> d
         }
     return {
         "runtime_generation": "context-v2",
-        "runtime_generation_label": "context-v2 (APPSEC_CONTEXT_V2=1)",
+        "runtime_generation_label": (
+            "context-v2 (APPSEC_CONTEXT_V2=1)" if override == "1" else "context-v2 (default)"
+        ),
         "runtime_artifact_schema_versions": dict(CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS),
     }
 

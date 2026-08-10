@@ -1993,7 +1993,7 @@ def _load_context_v2_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
     The generation is read from the run's persisted config, never from the
     current environment: the producer that already wrote artifacts into this
     output directory is the only one allowed to continue writing them. An
-    operator who flips APPSEC_CONTEXT_V2 mid-run gets an explicit
+    operator who changes APPSEC_CONTEXT_V2 mid-run gets an explicit
     incompatible-state abort instead of a second producer for one artifact.
     """
     output_dir, cfg = _load_run_config(output_dir)
@@ -2002,7 +2002,7 @@ def _load_context_v2_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
         raise ControllerError(
             f"incompatible runtime generation: this run was prepared as {generation!r} and a "
             "context-v2 action cannot continue it. Select the prior runtime for this "
-            "invocation, or start a new run with APPSEC_CONTEXT_V2=1."
+            "invocation, or start a new eligible full/rebuild run."
         )
     versions = cfg.get("runtime_artifact_schema_versions")
     expected_versions = resolve_config.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS
@@ -2010,12 +2010,12 @@ def _load_context_v2_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
         raise ControllerError(
             "incompatible context-v2 artifact schema versions; start a new run with the current plugin generation"
         )
-    env_opt_in = os.environ.get("APPSEC_CONTEXT_V2", "").strip() == "1"
-    if not env_opt_in:
+    env_override = os.environ.get("APPSEC_CONTEXT_V2", "").strip()
+    if env_override not in ("", "1"):
         _append_event(
             output_dir,
             "RUNTIME_GENERATION_ENV_IGNORED",
-            "continuing persisted runtime_generation=context-v2; APPSEC_CONTEXT_V2 is not set in this environment",
+            "continuing persisted runtime_generation=context-v2; the current APPSEC_CONTEXT_V2 override selects legacy",
             level="WARN",
         )
     return output_dir, cfg

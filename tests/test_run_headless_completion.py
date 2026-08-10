@@ -87,6 +87,15 @@ def test_context_v2_resume_fails_before_dispatch() -> None:
     assert body.index(hint) < body.index('warn "Resume from the last checkpoint:"')
 
 
+def test_context_v2_is_the_headless_default_with_a_legacy_escape_hatch() -> None:
+    body = _body()
+    assert "APPSEC_CONTEXT_V2=0        Use the legacy producer" in body
+    assert "CONTEXT_V2_RESUME_TARGET=0" in body
+    assert '[ "$PERSISTED_RUNTIME_GENERATION" = "legacy" ]' in body
+    assert "context-v2) CONTEXT_V2_SELECTED=1" in body
+    assert "legacy) CONTEXT_V2_SELECTED=0" in body
+
+
 def test_headless_scans_default_to_untrusted_mode() -> None:
     """A repository checkout must opt in before bypassing untrusted preflight."""
     body = _body()

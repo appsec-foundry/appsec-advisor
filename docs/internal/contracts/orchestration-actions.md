@@ -146,8 +146,8 @@ dispatch.
 bundle path, exact file SHA-256, and token estimate for every selected
 component. It also applies containment to retained legacy `index_paths` and
 fails closed without `jsonschema`. `--context-v2` on the manifest builder is an
-internal producer switch; the live path can reach it only through the explicit
-full/rebuild `APPSEC_CONTEXT_V2=1` opt-in.
+internal producer switch; the live path reaches it only through an eligible
+context-v2 full/rebuild generation.
 
 Optional STRIDE lenses are fixed manifest enums. The role registry maps them to
 plugin-owned files; no bundle or repository value can select a lens path.
@@ -173,11 +173,10 @@ deterministic owners. The commands run the boundary chain in order:
 `context-v2-post-architecture`, `context-v2-post-boundary`,
 `context-v2-prepare-stride`, then the `context-v2-post-*` post-STRIDE chain.
 
-The generation is reachable only through the explicit full/rebuild
-`APPSEC_CONTEXT_V2=1` A/B opt-in. `prepare` returns the plugin-owned
-`SKILL-thin-stage1-v2.md` instruction path, and the compact parent runtime loads
-that returned path rather than choosing a Stage-1 producer itself. The table is
-the producer contract for that opt-in path.
+The generation is the default for eligible full/rebuild runs. `prepare` returns
+the plugin-owned `SKILL-thin-stage1-v2.md` instruction path, and the compact
+parent runtime loads that returned path rather than choosing a Stage-1 producer
+itself. The table is the producer contract for that path.
 
 | Boundary | Validated inputs | Writer and output contract | Gate and exit class | Checkpoint, retry, and next action |
 |---|---|---|---|---|
@@ -275,19 +274,21 @@ error.
 A run is prepared as exactly one producer generation, `legacy` or `context-v2`,
 and `resolve_config.py` persists it as `runtime_generation` in
 `.skill-config.json` together with the artifact schema versions a context-v2
-successor action is reconstructed from. Only `APPSEC_CONTEXT_V2=1` selects
-context-v2, and only for full and rebuild invocations eligible for the compact
-top-level runtime. Deadline, cost-limited, live-phase, dry-run, resume, and
-explicit compact-runtime opt-out paths persist `legacy`; repository content
-never reaches the decision. The runtime router rejects any state that combines
-`context-v2` with an ineligible top-level runtime.
+successor action is reconstructed from. Context-v2 is selected by default only
+for full and rebuild invocations eligible for the compact top-level runtime;
+`APPSEC_CONTEXT_V2=0` selects the legacy producer for a new invocation.
+Deadline, cost-limited, live-phase, dry-run, resume, and explicit compact-runtime
+opt-out paths persist `legacy`; repository content never reaches the decision.
+The runtime router rejects any state that combines `context-v2` with an
+ineligible top-level runtime.
 
 The controller reads the generation from that persisted state, never from the
 current environment. A context-v2 action refuses a run prepared as legacy, and a
 legacy Stage-1 gate refuses a run prepared as context-v2, so one invocation
-never gets two producers for the same artifact. Clearing `APPSEC_CONTEXT_V2`
+never gets two producers for the same artifact. Changing `APPSEC_CONTEXT_V2`
 mid-run does not switch producers: the run continues on its persisted generation
-and records `RUNTIME_GENERATION_ENV_IGNORED`. A context-v2 successor also
+and records `RUNTIME_GENERATION_ENV_IGNORED` for a conflicting explicit
+override. A context-v2 successor also
 requires the persisted artifact-version map to match the current producer
 generation; a mismatch requires a new run. Rollback selects the prior runtime
 for a new invocation.
@@ -304,9 +305,9 @@ effective (21=21), remaining deltas attributable to STRIDE-analyzer run
 variance rather than the orchestrator runtime.
 
 The context-v2 role registry, structured dispatch jobs, and artifact receipts
-remain opt-in migration contracts. They select the focused-agent runtime only
-for a new full/rebuild invocation with `APPSEC_CONTEXT_V2=1`; parity and rollout
-gates still prevent default selection.
+select the focused-agent runtime for new eligible full/rebuild invocations.
+This branch default is an R10 testing convenience, not evidence that the parity,
+incremental/resume, or release-rollout gates have passed.
 
 Legacy mode also uses bounded post-Stage-1 reads: normal Stage 2, conditional
 recovery, Stage 3, optional Stage 4, completion, and error handling are loaded

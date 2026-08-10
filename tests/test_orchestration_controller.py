@@ -1957,11 +1957,29 @@ def test_context_v2_action_refuses_stale_persisted_schema_versions(tmp_path):
         controller.context_v2_begin(output)
 
 
-def test_context_v2_continues_persisted_generation_when_env_is_unset(tmp_path, monkeypatch):
-    """A cleared APPSEC_CONTEXT_V2 must not switch producers mid-run."""
+def test_context_v2_default_continues_without_an_environment_warning(tmp_path, monkeypatch):
     output = _write_context_v2_config(tmp_path)
     _write_minimal_context_v2_manifest(output)
     monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
+
+    def fake_script(name, args, **kwargs):
+        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+            return _completed(json.dumps({"status": "complete"}))
+        if name == "merge_threats.py" and args[0] == "collect":
+            (output / ".merge-candidates.json").write_text(json.dumps(_merge_candidates()), encoding="utf-8")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_context_v2_after_merge", lambda *_a, **_k: {"action": "run_gate"})
+    assert controller.context_v2_post_stride(output)["action"] == "run_gate"
+    log_path = output / ".agent-run.log"
+    assert not log_path.exists() or "RUNTIME_GENERATION_ENV_IGNORED" not in log_path.read_text(encoding="utf-8")
+
+
+def test_context_v2_continues_persisted_generation_despite_legacy_override(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    _write_minimal_context_v2_manifest(output)
+    monkeypatch.setenv("APPSEC_CONTEXT_V2", "0")
 
     def fake_script(name, args, **kwargs):
         if name == "stride_dispatch_waves.py" and args[0] == "claim":

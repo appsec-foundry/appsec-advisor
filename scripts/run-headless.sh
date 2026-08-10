@@ -60,6 +60,7 @@
 # Environment:
 #   ANTHROPIC_API_KEY       Anthropic API key (optional — uses subscription if unset)
 #   CLAUDE_PLUGIN_DIR       Override plugin directory (default: auto-detected)
+#   APPSEC_CONTEXT_V2=0     Use the legacy producer for a new full/rebuild run
 # ──────────────────────────────────────────────────────────────────────
 set -eu
 
@@ -139,6 +140,7 @@ Skill selection:
 Environment:
   ANTHROPIC_API_KEY          Anthropic API key (optional — uses subscription auth if unset)
   CLAUDE_PLUGIN_DIR          Override plugin directory (default: auto-detected)
+  APPSEC_CONTEXT_V2=0        Use the legacy producer for a new full/rebuild run
   CI=true                    Enables CI mode (skips stale-lock wait, bumps caches,
                              adjusts defaults for non-interactive runners)
 HELP
@@ -419,21 +421,34 @@ else
     OUTPUT_PATH="$REPO_PATH/docs/security"
 fi
 
-# Context-v2 resume is a WP7 capability and is not implemented yet. Letting a
-# resume request fall through to the legacy skill runtime silently restarts a
+# Context-v2 is the default for a new eligible full/rebuild run. Resume remains
+# a WP7 capability and is not implemented yet. Letting a context-v2 resume
+# request fall through to the legacy skill runtime silently restarts a
 # full assessment while reusing context-v2 artifacts, which wastes tokens and
 # produces a mixed output directory. Fail before trust preflight or dispatch.
 CONTEXT_V2_SELECTED=0
+PERSISTED_RUNTIME_GENERATION=""
+if [ -f "$OUTPUT_PATH/.skill-config.json" ]; then
+    PERSISTED_RUNTIME_GENERATION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("runtime_generation", ""))' \
+        "$OUTPUT_PATH/.skill-config.json" 2>/dev/null || true)
+fi
 if [ "${APPSEC_CONTEXT_V2:-}" = "1" ]; then
     CONTEXT_V2_SELECTED=1
-elif [ -f "$OUTPUT_PATH/.skill-config.json" ] \
-    && python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("runtime_generation", ""))' \
-        "$OUTPUT_PATH/.skill-config.json" 2>/dev/null | grep -qx 'context-v2'; then
+elif [ -n "${APPSEC_CONTEXT_V2:-}" ]; then
+    CONTEXT_V2_SELECTED=0
+elif [ "$PERSISTED_RUNTIME_GENERATION" = "legacy" ]; then
+    CONTEXT_V2_SELECTED=0
+else
     CONTEXT_V2_SELECTED=1
+fi
+CONTEXT_V2_RESUME_TARGET=0
+if [ "${APPSEC_CONTEXT_V2:-}" = "1" ] \
+   || [ "$PERSISTED_RUNTIME_GENERATION" = "context-v2" ]; then
+    CONTEXT_V2_RESUME_TARGET=1
 fi
 if [ "$SKILL" = "create-threat-model" ] \
    && [ "$RESUME_REQUESTED" = "1" ] \
-   && [ "$CONTEXT_V2_SELECTED" = "1" ]; then
+   && [ "$CONTEXT_V2_RESUME_TARGET" = "1" ]; then
     die "Context-v2 does not support --resume yet (WP7). Start a fresh context-v2 run with --rebuild and a clean output directory; refusing to fall back to the legacy full runtime."
 fi
 
@@ -956,6 +971,17 @@ print_recovery_hint() {
         done
         printf '%s %s\n' "$_cmd" "$1"
     }
+    # The resolver may have selected legacy for an unsupported mode or
+    # context-v2 for a fresh default run after this wrapper's preflight. Its
+    # persisted generation is authoritative for the recovery advice.
+    if [ -f "$_rh_dir/.skill-config.json" ]; then
+        _rh_generation=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("runtime_generation", ""))' \
+            "$_rh_dir/.skill-config.json" 2>/dev/null || true)
+        case "$_rh_generation" in
+            context-v2) CONTEXT_V2_SELECTED=1 ;;
+            legacy) CONTEXT_V2_SELECTED=0 ;;
+        esac
+    fi
     if [ "$CONTEXT_V2_SELECTED" = "1" ]; then
         warn "Context-v2 resume is not available yet (WP7) — start fresh:"
         printf '    %s\n' "$(_rerun_cmd --rebuild)"

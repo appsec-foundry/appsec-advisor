@@ -423,6 +423,13 @@ Example:
 > [!TIP]
 > The interactive session model is billed separately from `--reasoning-model`. Running the session itself on Opus added about 25–55% to measured total cost without changing the analysis model. Use a Sonnet session for routine runs.
 
+## Analysis runtime
+
+New full and rebuild assessments use the bounded context-v2 runtime. Set
+`APPSEC_CONTEXT_V2=0` before starting a new run to use the legacy producer.
+Incremental, resume, rerender, dry-run, deadline/cost-limited, and live-phase
+paths remain on the legacy runtime.
+
 ## Repo-local context
 
 Three optional files add team-owned context. None of them can suppress a finding supported by repository evidence.

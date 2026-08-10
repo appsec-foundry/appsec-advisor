@@ -2700,18 +2700,20 @@ class TestRuntimeGeneration:
     def test_configuration_summary_exposes_context_v2_runtime(self):
         cfg = _base_cfg(
             runtime_generation="context-v2",
-            runtime_generation_label="context-v2 (APPSEC_CONTEXT_V2=1)",
+            runtime_generation_label="context-v2 (default)",
         )
         out = rc.render_configuration_summary(cfg)
-        assert "context-v2 (APPSEC_CONTEXT_V2=1)" in out
+        assert "context-v2 (default)" in out
 
-    """context-v2 is operator-selected, mode-restricted, and never repo-selected."""
+    """context-v2 is the eligible default, mode-restricted, and never repo-selected."""
 
-    def test_default_is_legacy(self, monkeypatch):
+    @pytest.mark.parametrize("mode", ["full", "rebuild"])
+    def test_default_is_context_v2_for_full_and_rebuild(self, monkeypatch, mode):
         monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
-        resolved = rc.resolve_runtime_generation("full")
-        assert resolved["runtime_generation"] == "legacy"
-        assert resolved["runtime_artifact_schema_versions"] == {}
+        resolved = rc.resolve_runtime_generation(mode)
+        assert resolved["runtime_generation"] == "context-v2"
+        assert resolved["runtime_generation_label"] == "context-v2 (default)"
+        assert resolved["runtime_artifact_schema_versions"] == rc.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS
 
     @pytest.mark.parametrize("mode", ["full", "rebuild"])
     def test_env_opt_in_selects_context_v2_for_full_and_rebuild(self, monkeypatch, mode):
@@ -2728,13 +2730,25 @@ class TestRuntimeGeneration:
         assert resolved["runtime_generation"] == "legacy"
         assert mode in resolved["runtime_generation_label"]
 
-    @pytest.mark.parametrize("value", ["", "0", "true", "yes", " 1 x"])
-    def test_only_the_exact_opt_in_value_selects_context_v2(self, monkeypatch, value):
+    @pytest.mark.parametrize("mode", ["incremental", "rerender"])
+    def test_unsupported_modes_stay_legacy_by_default(self, monkeypatch, mode):
+        monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
+        resolved = rc.resolve_runtime_generation(mode)
+        assert resolved["runtime_generation"] == "legacy"
+        assert mode in resolved["runtime_generation_label"]
+
+    @pytest.mark.parametrize("value", ["0", "true", "yes", " 1 x"])
+    def test_non_opt_in_override_selects_legacy(self, monkeypatch, value):
         monkeypatch.setenv("APPSEC_CONTEXT_V2", value)
         assert rc.resolve_runtime_generation("full")["runtime_generation"] == "legacy"
 
+    def test_zero_override_is_labeled_as_legacy_selection(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_CONTEXT_V2", "0")
+        resolved = rc.resolve_runtime_generation("full")
+        assert resolved["runtime_generation_label"] == "legacy (APPSEC_CONTEXT_V2=0)"
+
     def test_ineligible_compact_runtime_keeps_legacy_generation(self, monkeypatch):
-        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
+        monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
         resolved = rc.resolve_runtime_generation("full", compact_eligible=False)
         assert resolved["runtime_generation"] == "legacy"
         assert resolved["runtime_artifact_schema_versions"] == {}
@@ -2767,7 +2781,7 @@ class TestRuntimeGeneration:
 
     def test_generation_is_persisted_to_skill_config(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
+        monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         result = subprocess.run(
