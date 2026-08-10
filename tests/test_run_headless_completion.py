@@ -175,3 +175,8 @@ def test_headless_exit_clears_live_tool_markers() -> None:
     cleanup = "--clear-active-tool-calls >/dev/null 2>&1 || true"
     assert cleanup in body
     assert body.index(cleanup) < body.index("# If the run was interrupted by Ctrl-C")
+    assert "cleanup_headless_runtime()" in body
+    assert "trap 'cleanup_headless_runtime' EXIT INT TERM HUP" in body
+    assert "trap 'cleanup_headless_runtime' EXIT\n\nset -m" in body
+    terminal_block = body[body.index("# PreToolUse markers are live-state") :]
+    assert terminal_block.index("cleanup_live_tool_markers") < terminal_block.index("cleanup_tails")

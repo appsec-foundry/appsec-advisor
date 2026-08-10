@@ -760,6 +760,19 @@ cleanup_tails() {
     fi
 }
 
+cleanup_live_tool_markers() {
+    _cleanup_dir="${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}"
+    OUTPUT_DIR="$_cleanup_dir" python3 "$PLUGIN_DIR/scripts/agent_logger.py" \
+        --clear-active-tool-calls >/dev/null 2>&1 || true
+}
+
+cleanup_headless_runtime() {
+    # Clear live state first. A stuck progress-monitor reap must not prevent
+    # terminal marker cleanup after the Claude child has already exited.
+    cleanup_live_tool_markers
+    cleanup_tails
+}
+
 # Tail both logs in the background and pipe them through render_progress.py,
 # which turns the raw event stream into a stateful, human-readable progress view
 # (current phase, sub-agent invokes, sub-steps, wall-clock elapsed).
@@ -802,7 +815,7 @@ if [ -n "$VERBOSE" ]; then
     # Ensure tails are cleaned up on any exit path (normal, signal, error).
     # Without this trap, Ctrl-C or a crashed claude-code leaks tail processes
     # that pile up and duplicate stderr output on the next verbose run.
-    trap 'cleanup_tails' EXIT INT TERM HUP
+    trap 'cleanup_headless_runtime' EXIT INT TERM HUP
 
     # APPSEC_VERBOSE=1 makes agent_logger.py emit compact `[appsec] ▶ …`
     # progress lines to stderr. These are distinct from the raw log lines
@@ -826,7 +839,7 @@ elif [ -z "$QUIET" ]; then
     RUN_LOG_FILE="$RESULT_DIR/.agent-run.log"
     touch "$LOG_FILE" "$RUN_LOG_FILE"
 
-    trap 'cleanup_tails' EXIT INT TERM HUP
+    trap 'cleanup_headless_runtime' EXIT INT TERM HUP
     start_progress_monitor
 
     info "Starting Claude Code in headless mode (live phase progress; --verbose for the raw event log, --quiet to silence)..."
@@ -998,6 +1011,10 @@ print_recovery_hint() {
     fi
 }
 
+# Every mode, including --quiet, owns an EXIT backstop. Signal handlers may
+# forward or escalate first, but once the wrapper exits no live marker remains.
+trap 'cleanup_headless_runtime' EXIT
+
 set -m
 if [ -n "$RESULT_CAPTURE" ]; then
     eval "$CLAUDE_CMD" < /dev/null > "$RESULT_CAPTURE" &
@@ -1027,17 +1044,15 @@ if [ -n "$ESCALATION_WATCHDOG_PID" ]; then
     ESCALATION_WATCHDOG_PID=""
 fi
 
-# Restore the tail-cleanup trap that the verbose/default branches installed.
-trap 'cleanup_tails' INT TERM HUP
+# Restore terminal cleanup for signals received after the Claude child exits.
+trap 'cleanup_headless_runtime' INT TERM HUP
 set -e
-
-cleanup_tails
 
 # PreToolUse markers are live-state, not audit evidence. Ctrl-C, capacity
 # errors, and other CLI-level aborts may never emit the outer Stop hook that
 # normally clears them, so close the lifecycle after the child is gone.
-OUTPUT_DIR="$RESULT_DIR" python3 "$PLUGIN_DIR/scripts/agent_logger.py" \
-    --clear-active-tool-calls >/dev/null 2>&1 || true
+cleanup_live_tool_markers
+cleanup_tails
 
 # Re-emit what claude's stdout used to show. `result` holds the final assistant
 # text verbatim (what `--output-format text` printed); --json additionally dumps
