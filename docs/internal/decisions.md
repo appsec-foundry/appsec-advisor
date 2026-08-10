@@ -244,6 +244,18 @@ to touch — each row names them. One row is one decision and carries everything
 | EX-5 | What a build kept and what it dropped is recorded in `.claude-plugin/package-surface.json`, so a shipped plugin can be audited against its policy | — *(guard not located)* | `docs/internal-plugin-packaging.md` |
 | EX-6 | An organization baseline replaces the upstream copy instead of shipping both | `test_org_baseline_drops_the_unused_upstream_copy` | `scripts/package_internal_plugin.py` |
 
+## AuthN/AuthZ analysis
+
+| ID | Decision | Guard | Rationale |
+|---|---|---|---|
+| AZ-1 | A dedicated `appsec-authnz-analyzer` agent runs cross-component AuthN/AuthZ analysis; it consumes pre-extracted scanner output and does not re-read source files | — *(no guard written)* | `agents/appsec-authnz-analyzer.md`; separates reasoning budget from discovery budget |
+| AZ-2 | The authnz-review skill is standalone — it requires only a repository root, not a prior threat model run | — *(no guard written)* | `skills/authnz-review/SKILL.md`; `route_inventory.py`, `source_auth_scanner.py`, `authz_confirm.py` all take only `--repo-root` |
+| AZ-3 | The STRIDE analyzer retains EoP as a shallow signal-collection pass; the authnz agent deduplicates against those signals rather than replacing them | — *(no guard written)* | `agents/appsec-authnz-analyzer.md` → Step 3e; avoids double-counting EoP findings across the two passes |
+| AZ-4 | Requirement references in authnz findings are sourced from `.phase-8b-violations.json` when present, falling back to `.requirements.yaml`; no requirement ID is guessed | — *(no guard written)* | `agents/appsec-authnz-analyzer.md` → Step 5; mirrors RQ-4 |
+| AZ-5 | M3.4 (Auth-as-separate-component) remains in place as a structural inventory rule; the authnz agent does not replace it — it complements the per-component STRIDE pass with cross-component reasoning | — *(no guard written)* | `agents/phases/phase-group-threats.md` → M3.4; the structural separation still produces a dedicated `.stride-auth-*.json` useful for downstream dedup |
+| AZ-6 | In console-only runs (`--save` absent) the authnz-analyzer emits its JSON between `AUTHNZ_REPORT_START`/`AUTHNZ_REPORT_END` markers in its final message instead of writing a file; `--save` enables file output and partial-write safety | — *(no guard written)* | `agents/appsec-authnz-analyzer.md` → `SAVE_MODE`; avoids tmp-file permission prompts and unintended disk writes in the default case |
+| AZ-7 | When all three scanners return zero signals the skill skips the agent dispatch and emits a single High finding (CWE-306) directly | — *(no guard written)* | `skills/authnz-review/SKILL.md` → Step 4b; avoids wasting agent turns on repositories with no auth layer |
+
 ## Target agnosticism
 
 | ID | Decision | Guard | Rationale |
