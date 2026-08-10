@@ -155,7 +155,7 @@ to touch — each row names them. One row is one decision and carries everything
 | RN-1 | The render path is a mutation sequence and its order is load-bearing: `compose_threat_model.py --strict`, then `apply_prose_fixes.py`, then `qa_checks.py autofix` | — *(guard not located)* | `AGENTS.md` → Validation and repair |
 | RN-2 | A normalization pass is idempotent; running it twice changes nothing, or a re-render invents differences | `test_apply_fixes_is_idempotent_for_core_rewrites`, `test_autofix_is_idempotent_on_paths`, `test_r7_full_pipeline_is_idempotent` | `scripts/apply_prose_fixes.py`, `scripts/qa_checks.py` |
 | RN-3 | A renderer or QA autofix owns normalization only where a contract assigns it; otherwise the upstream producer is fixed and the autofix stays a documented backstop tested on both layers | — *(no guard written)* | `AGENTS.md` → Fix the source, not the symptom |
-| RN-4 | The deterministic emitters run in a fixed sequence | `test_emitter_sequence_preserved_in_order` | `scripts/auto_emitter_pass.py` |
+| RN-4 | The deterministic emitters run in a fixed sequence | `test_emitter_sequence_preserved_in_order` | `scripts/auto_emitter_pass.sh` |
 
 ## Report and artifacts
 
